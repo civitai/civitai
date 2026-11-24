@@ -228,6 +228,7 @@ produce. `FEED_GO_COMPUTE_MISSES=false` restores the fallbacks.
 | `model-tags-miss` | `modelTagCache` (`packed:caches:model-tags:<modelId>`): model.getAll, asked for the models the data cache answered (the data cache's appendFn) | the same file's lookupFn (a plain fetch's `dbRead`) | `TagsOnModels` of the models on the replica (with write-back on too), `{modelId, tagIds}` in row order, a `notFound` marker for a model with none (whose data entry then keeps its own `tags`); the tag records from `basic-tags` as for a hit |
 | `image-tags-miss` | `imageTagsCache` (`packed:caches:image-tags:<imageId>`): image.getInfinite with `include: ['tags']` | `src/server/redis/caches.ts` lookupFn: `readImageTagsForImages` → `listImageTagsForImages` (`packages/civitai-db-queries/src/hot-reads.db.ts`, the fetch's `kyselyRead`) | the `ImageTag` view's `imageTagCompositeSelect` columns on the replica, `score DESC, tagId ASC`, the numeric `score` and bigint vote counts read as numbers (as `@civitai/db/kysely` parses them), `lastUpvote` a Date; `{imageId, tags}` per image with a row, a `notFound` marker otherwise. ttl an hour, `staleWhileRevalidate` off (an entry is never stale). Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written (only kept in process for `recentTTL`) |
 | `v1-models-showcase-miss`, `prioritized-showcase-miss` | `getVersionShowcaseCache` (`packed:caches:version-showcase:<versionId>`): the curated-showcase guard of the model routes and image.getInfinite's carousel (§16.9) | `src/server/services/version-showcase.service.ts` lookupFn (`getDbWithoutLagBatch('modelVersion', ids)`), as `curatedSiteFor` reads it for `withCuratedShowcases` and `getCarouselShowcaseIds` | only the decision: whether any of the missed versions has a `ModelVersionShowcaseItem` row that is not removed, one `LIMIT 1` query on the replica (never the primary), and none while any missed version carries its `lag-helper:modelVersion:<id>` flag or the flag read fails (it falls back as a miss; §16.9). No entry is built, written or kept in process; a row or a failed read (`<reason>-failed`) falls back. Counted as `version-showcase` in `feed_go_cache_miss_total` |
+| `image-resources-miss` | `imageResourcesCache` (`packed:caches:image-resources:<imageId>`): `GET /api/v1/images` | `src/server/redis/caches.ts` lookupFn: on a plain fetch's miss `getDbWithoutLagBatch('imageResource', ids)` (the replica unless an id carries its lag flag), or the primary for every miss while the Flipt flag `image-resource-use-write` is on | the lookupFn's own query (`ImageResourceNew` joined to `ModelVersion` and `Model`, no `ORDER BY`: the row order is the cached order) on the replica, ONLY while `image-resource-use-write` is known off (`hydrate.ImageResourceUseWriteFlag`, read from Flipt in the background; unread, unreadable past `flipt.DefaultMaxStale`, or on, the miss falls back as before); none while any missed image carries `lag-helper:imageResource:<id>` or that read fails (nothing in the Node app sets that flag today), nor for a miss Node would not write back (a bust's debounce marker, a failed cache read). An image with no row is absent, as its `notFound` marker is. Nothing is written back or kept in process (the entry stays a miss until Node fills it); a failed query is `image-resources-miss-failed`. Counted as `image-resources` in `feed_go_cache_miss_total` |
 | `user-follows-miss` | `userFollowsCache` (`packed:caches:user-follows:<userId>`): image.getInfinite with `followed: true`, signed in | `src/server/redis/caches.ts` lookupFn (a plain fetch's `dbRead`) | `UserEngagement` rows of type `Follow` on the replica, no `ORDER BY` (Prisma sends none), `{userId, follows}` with the target ids in row order, a `notFound` marker (no follows) for a user with none. ttl a day, `staleWhileRevalidate` off. Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written, and not kept in process either (the viewer's own follow set, read back after they change it) |
 
 The tag-ids values are `{imageId, tags}` with the tag ids in row order (Node's lookup has no `ORDER
@@ -334,7 +335,8 @@ cache before and after); `TestMetricsMissGolden` holds Go to it with write-back 
 `locked-never-filled` case records fetch's zeros, which Node's caller never sees (its 3 s budget
 ends first): Go is held to the fallback there.
 
-Not computed: on the REST endpoint `image-resources-miss` (Node picks a replica by write lag). On
+On the REST images endpoint `image-resources-miss` is computed only while the Node lookup reads the
+replica too (the table above); otherwise it falls back. On
 model.getAll the user-cosmetics and creator-membership misses still fall back, and the
 official-models entry is read and refilled as §15.2.2 describes.
 
@@ -1606,12 +1608,13 @@ So roughly three to five weeks of focused work from merge to serving a meaningfu
 in step 2, which only production traffic can size. The CPU-per-call answer itself arrives earlier:
 step 1 plus a few days of shadow traffic.
 
-## 13. `GET /api/v1/images` (REST, shadow only)
+## 13. `GET /api/v1/images` (REST, shadow; served only behind `FEED_GO_SERVE_V1_IMAGES`, default off)
 
 The public images API: `src/pages/api/v1/images/index.ts` (`handleImagesRequest`) →
 `runImageSearch` (`src/server/services/image-search.service.ts`) → `getImagesFromFeedServiceForRest`
 (`image.service.ts`). Ported in `internal/feed/v1query.go` (the query) and `v1images.go` (the rest);
-compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
+compared at `POST /internal/shadow/api/v1/images`. The public route exists but computes nothing unless
+`FEED_GO_SERVE_V1_IMAGES` is on (§13.8).
 
 ### 13.1 What the Node path does
 
@@ -1664,7 +1667,7 @@ compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
 | Viewer | signed out; session cookies (the same resolver as §4); a banned session as signed out | API keys / bearer tokens (`bearer-token`); the sampler does not send them at all (§13.4) |
 | Gates | withheld, held level, unknown version / post; the per-post hold on every page | a gallery settings key Node would rebuild (`gallery-settings-miss`); a held model whose settings carry no level (`v1-held-level-unset`) |
 | Pages | the feed's page, its cursor, the empty-page answers (`requiringMeta`, `limit=0`, an empty feed answer); the legacy page (§13.2.1) | a feed failure or a non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-refused`, `v1-cursor`, `v1-page-limit`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`: Node retries an empty one on another replica); on the legacy path a cursor that is not a positive integer (`v1-legacy-cursor`) and a query error (`v1-legacy-error`) |
-| Hydration | basic users (cache, replica on a miss), thumbnails, metric hashes, image resources (cache), the hold's post→version and version→model caches (replica on a miss or past their TTL), a `username` on the replica; with `withMeta`, `imageMetaCache` (brotli-compressed values and plain ones, notFound markers; a miss computed from the replica with its lookup's query, §3.1, never written back) | a metric hash miss without a ClickHouse reader (`metrics-miss`; with one it is computed, §3.1), an image-resources miss (`image-resources-miss`: Node picks a replica by write lag), a username the replica does not hold (`v1-username-miss`: Node reads the primary next); an image-meta miss without the miss computation (`image-meta-miss`) or one whose lookup failed (`image-meta-miss-failed`), a cached meta holding a value JSON.stringify writes as a Buffer (`image-meta-shape`) |
+| Hydration | basic users (cache, replica on a miss), thumbnails, metric hashes, image resources (cache; a miss computed from the replica while the Node lookup reads it too, §3.1), the hold's post→version and version→model caches (replica on a miss or past their TTL), a `username` on the replica; with `withMeta`, `imageMetaCache` (brotli-compressed values and plain ones, notFound markers; a miss computed from the replica with its lookup's query, §3.1, never written back) | a metric hash miss without a ClickHouse reader (`metrics-miss`; with one it is computed, §3.1), an image-resources miss Node would not answer from the replica (`image-resources-miss`: `image-resource-use-write` on or not known off, a lag-flagged image, a debounce marker or a failed read; `image-resources-miss-failed` for a failed query), a username the replica does not hold (`v1-username-miss`: Node reads the primary next); an image-meta miss without the miss computation (`image-meta-miss`) or one whose lookup failed (`image-meta-miss-failed`), a cached meta holding a value JSON.stringify writes as a Buffer (`image-meta-shape`) |
 | Config | | no `FEED_SERVICE_URL` (`index-feed-unconfigured`), no `NEXT_PUBLIC_IMAGE_LOCATION` (`v1-image-location-unconfigured`) |
 
 The endpoint publishes no cosmetics, frames, tags, reactions or event decorations, so this port does
@@ -1797,6 +1800,78 @@ the per-route CPU attribution over the same window.
 - `imageMetaCache`: an entry past its 4h TTL is served as it is (Node re-reads the row when it takes
   the refresh lock, which only matters when the meta changed since); a miss is read from the replica
   and not written back, so it stays a miss for the next reader until Node fills it.
+
+### 13.8 Serving (`FEED_GO_SERVE_V1_IMAGES`, default off) and the response headers
+
+**Route and switch.** With `FEED_GO_V1_FALLBACK_URL` set, the public listener routes exactly
+`GET /api/v1/images` (no subtree: Node's pages under it are other routes) to `ServeV1ImagesHTTP`
+(`internal/server/v1images_serve.go`); unset, the path is not mounted. With `FEED_GO_SERVE_V1_IMAGES`
+off (the default) every request there is the `v1-images-off` fallback: nothing is computed, no serve
+slot is taken, and the request is proxied as it came to `FEED_GO_V1_FALLBACK_URL`, the upstream the
+model routes use (§16.8). The switch on without that URL fails startup. Every answer carries
+`X-Feed-Go-Served`.
+
+**The gates, in order** (the model routes', §16.8):
+
+1. The API request policy (§6.2): `region-blocked` (Node answers its 451), `crawler-user-agent`. No
+   origin check: `PublicEndpoint` answers any origin with `Access-Control-Allow-Origin: *` and no
+   credentials, and this route has no block-scope middleware.
+2. A serve slot from the one shared pool (`bulkhead`), the request budget (`deadline`), `canceled`
+   not proxied, as every public route.
+3. Before anything is computed, in the shadow too: not a GET (`method`: HEAD and an OPTIONS
+   preflight included, which Node answers itself), any API credential (`bearer-token`: an
+   Authorization header of any value, any non-empty `?token=`). On the public route only
+   (`v1ImagesServeOnly`): a conditional request whose `If-None-Match`, `If-Modified-Since` or
+   `Cache-Control` is not one ASCII line (`v1-images-conditional`), and a cookie under any session
+   cookie name, valid or not (`v1-images-session-cookie`). **Signed-out callers only:** every
+   credentialed request is handed back to Node, as the model list does; a session the resolver
+   still resolves (any cookie name it reads) falls back too (`v1-images-session`), so a served answer
+   is never one viewer's. An absolute-form request line falls back (`v1-host`: the Host header
+   `nextPage` is built from is gone).
+4. The port, with every fallback of §13.2 (the query, the shapes not ported, the cache misses Go does
+   not compute, the feed service's refusals).
+5. The body as `JSON.stringify` writes it (`v1models.NodeBody`); a body with an escaped U+FFFD falls
+   back (`v1-images-invalid-utf8`; in the shadow it is compared as computed, its headers uncompared).
+
+An answer is that body with the headers below, Next's `Content-Type: application/json;
+charset=utf-8` and `X-Feed-Go-Served: go`, counted `served` (or `served_empty`). A conditional
+request is answered by Next's `fresh` over the answer's ETag exactly as on the model routes (§16.8:
+a 304 with every header of the 200 but `Content-Type`, the one known divergence).
+
+**The response headers** (`v1models.ResponseHeaders` with `HeaderInput.NoStore`), the same function
+the model routes write and the shadow compares:
+
+| Header | Value | Set by (Node) |
+|---|---|---|
+| `X-Frame-Options` | `DENY` | next.config.mjs `headers()` (configheaders.json, §16.8) |
+| `Vary` | `Authorization` (a served request presents no credential); `Authorization, Cookie` on a credentialed shadow sample | `PublicEndpoint` (`ANONYMOUS_VARY` / `CREDENTIALED_VARY`) |
+| `Access-Control-Allow-Origin` / `-Headers` / `-Methods` | `*` / `Authorization, Content-Type, *` / `GET` | `addCorsHeaders` |
+| `Cache-Control` | `public, s-maxage=300, stale-while-revalidate=150`; `max-age=0, private, no-cache` with a credential or a verified crawler (shadow samples only); `private, no-store` when the requested level is not within SFW | `PublicEndpoint`, then the handler: `withinSfw` over `browsingLevel ?? nsfw ?? PG` before the region clamp (`feed.V1Input.WithinSFW`: an integer from 0 to PG\|PG-13 with only SFW bits) |
+| `ETag` | Next's `generateETag` over the body string | `res.json` → `sendData` |
+
+**The shadow.** The sampler has always sent a v1-images sample's REST response headers
+(`responseHeaderSet: "rest"`); the shadow now computes the route's headers too, so
+`feed_go_shadow_response_total{feed_endpoint="v1-images"}` reads `match` / `mismatch` instead of
+`uncompared`. Its ETag compares the exact body text, so a key order or number spelling that differs
+from Node's while the structural body compare matches shows there. A sample is marked as one
+(`withSampled`), so its verified-crawler header is the app's decision. The shadow keeps computing a
+signed-in sample for its viewer; only the public route hands it back.
+
+**Go-first probe.** Registered as `api/v1/images` (`/internal/probe/api/v1/images`, feed_endpoint
+`v1-images`): `probeV1Images` runs the public route's compute (`v1ImagesCompute(true)`, so a session
+sample is `unsupported` there as serving would hand it back) under `hydrate.WithPresence`, as
+model.getAll's probe does: the image-resources (while computed), image-meta and metric-hash (with a
+ClickHouse reader) misses are recorded with their one lookup and answered as no entry; any other
+cache miss falls back and is reported by its reason (`image-resources-miss`, `image-meta-miss`,
+`metrics-miss`, `gallery-settings-miss`). The Node route starts it where it decides its sample (after
+the cheap rejects and the bulkhead slot, before the gallery gates and the search), at its own rate
+`FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE` (default 0: off) under the same `feed-go-gofirst-probe`
+flag, posting `{input: <raw query>, path, headers, startedAt}`. Its served share is an upper bound by
+the race (no `raced` entries, as model.getAll's).
+
+**Kill and routing.** The kill is the switch: `FEED_GO_SERVE_V1_IMAGES` off proxies every request
+again, with nothing computed. Routing public traffic to the path (a weighted ingress route in the
+infrastructure repo) is a separate step; with the switch on and no route, nothing is served.
 
 ## 14. `image.getInfinite` (tRPC, shadow; served only behind `FEED_GO_SERVE_INFINITE`, default off)
 

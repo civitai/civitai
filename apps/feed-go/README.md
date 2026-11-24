@@ -5,7 +5,8 @@ and, in shadow only, of the tRPC procedures `image.getInfinite` (the flat image 
 behind `FEED_GO_SERVE_INFINITE`, default off) and `model.getAll` (the model browse feed; also servable
 behind `FEED_GO_SERVE_MODEL_GETALL`, default off) and the public
 REST endpoints `GET /api/v1/images` and `GET /api/v1/models` / `/api/v1/models/{id}` (the model ones
-also servable behind `FEED_GO_SERVE_V1_MODELS`, default off), built to measure CPU per
+also servable behind `FEED_GO_SERVE_V1_MODELS`, the images one behind `FEED_GO_SERVE_V1_IMAGES`, both
+default off), built to measure CPU per
 request against the Node path on the same traffic. It answers the request shapes it has ported and
 proxies everything else to the Node app unchanged. **Read
 [DESIGN.md](DESIGN.md) first** — it covers scope, auth, wire format, routing, shadow comparison, the
@@ -22,10 +23,11 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 |                                   | `GET /api/trpc/model.getAll`                           | computed only with `FEED_GO_SERVE_MODEL_GETALL=true` (default off: proxied to the Node app as the `model-getall-off` fallback; DESIGN.md §15.8) |
 |                                   | `GET /api/trpc/image.getInfinite`                      | computed only with `FEED_GO_SERVE_INFINITE=true` (default off: proxied to the Node app as the `infinite-off` fallback; DESIGN.md §14.8)         |
 |                                   | `GET /api/v1/models`, `GET /api/v1/models/{id}`        | mounted only with `FEED_GO_V1_FALLBACK_URL`; computed only with `FEED_GO_SERVE_V1_MODELS=true` (default off: proxied as `v1-models-off`; §16.8) |
+|                                   | `GET /api/v1/images`                                   | mounted only with `FEED_GO_V1_FALLBACK_URL`; computed only with `FEED_GO_SERVE_V1_IMAGES=true` (default off: proxied as `v1-images-off`; §13.8) |
 | `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz`                                         | liveness / readiness                                                                                                                            |
 |                                   | `GET /metrics`                                         | Prometheus (`feed_go_*`, Go runtime, process CPU)                                                                                               |
 |                                   | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7)                                                                                                                |
-|                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly                                                                   |
+|                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST images endpoint, body and response headers (DESIGN.md §13)                                                        |
 |                                   | `POST /internal/shadow/image.getInfinite`              | shadow comparison of `image.getInfinite` (DESIGN.md §14)                                                                                        |
 |                                   | `POST /internal/shadow/model.getAll`                   | shadow comparison of `model.getAll` (DESIGN.md §15)                                                                                             |
 |                                   | `POST /internal/shadow/api/v1/models`, `…/models/id`   | shadow comparison of the REST model endpoints, body and response headers (DESIGN.md §16)                                                        |

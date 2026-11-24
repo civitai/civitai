@@ -247,3 +247,44 @@ func TestAttachMetricsSwitch(t *testing.T) {
 		t.Fatalf("Flipt asked %v, want the flag image-metrics-dedicated-clickhouse for the global entity", got)
 	}
 }
+
+// The image-resources miss computation follows image-resource-use-write, read from Flipt under the
+// Node app's key: computed (ImageResourcesFromReplica true) only while the flag reads off, never while
+// it reads on, and not before the first read. Without FLIPT_URL, or without the miss computation,
+// nothing is read and every image-resources miss keeps falling back (no reader).
+func TestAttachImageResourcesSwitch(t *testing.T) {
+	fsrv, setFlag, asked := fliptServer(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cfg := loadConfig(t, map[string]string{"FLIPT_URL": "", "FLIPT_FETCHER_SECRET": "flipt-tok"})
+	c := dedicatedCompute(t, cfg)
+	if sw, err := attachImageResourcesSwitch(ctx, cfg, c, log); sw != nil || err != nil || c.ImageResourcesFromReplica != nil {
+		t.Fatalf("no FLIPT_URL: switch %v, %v; want none", sw, err)
+	}
+	cfg = loadConfig(t, map[string]string{"FLIPT_URL": fsrv.URL, "FLIPT_FETCHER_SECRET": "flipt-tok"})
+	if sw, err := attachImageResourcesSwitch(ctx, cfg, nil, log); sw != nil || err != nil {
+		t.Fatalf("no miss computation: switch %v, %v; want none", sw, err)
+	}
+	if n := len(asked()); n != 0 {
+		t.Fatalf("Flipt asked %d times, want none", n)
+	}
+
+	c = dedicatedCompute(t, cfg)
+	setFlag(true)
+	sw, err := attachImageResourcesSwitch(ctx, cfg, c, log)
+	if sw == nil || err != nil || c.ImageResourcesFromReplica == nil {
+		t.Fatalf("switch %v, %v; want one", sw, err)
+	}
+	for _, v := range []bool{true, false, true, false} {
+		setFlag(v)
+		sw.Refresh(ctx)
+		if got := c.ImageResourcesFromReplica(); got != !v {
+			t.Fatalf("flag %v: ImageResourcesFromReplica %v, want %v", v, got, !v)
+		}
+	}
+	if got := asked(); len(got) == 0 || got[len(got)-1] != "/evaluate/v1/boolean image-resource-use-write global civitai-app Bearer flipt-tok" {
+		t.Fatalf("Flipt asked %v, want the flag image-resource-use-write for the global entity", got)
+	}
+}
