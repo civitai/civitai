@@ -229,6 +229,34 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS defaults off; TIER_METADATA_KEY is the app's own variable,
+// `tier` when unset or empty.
+func TestLoadGetAllMembershipMiss(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeMembershipMiss != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS=%q -> %v, want %v", in, c.GetAllServeMembershipMiss, want)
+		}
+	}
+	for in, want := range map[string]string{"": "tier", "plan": "plan"} {
+		t.Setenv("TIER_METADATA_KEY", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.TierMetadataKey != want {
+			t.Errorf("TIER_METADATA_KEY=%q -> %q, want %q", in, c.TierMetadataKey, want)
+		}
+	}
+}
+
 // TRPC_WRITE_DEVALUE is read as the main app reads it (`=== 'true'`): only the exact string turns it
 // on, and unset is off.
 func TestLoadWriteDevalue(t *testing.T) {

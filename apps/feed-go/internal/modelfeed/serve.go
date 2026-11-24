@@ -36,6 +36,9 @@ type Sources interface {
 	ModelPage(ctx context.Context, req hydrate.ModelPageRequest) (*hydrate.ModelPage, error)
 	VersionImages(ctx context.Context, versionIDs []int) (map[int][]superjson.Object, error)
 	CreatorMemberships(ctx context.Context, userIDs []int) (map[int]bool, error)
+	// CreatorMembershipsComputed is CreatorMemberships with its misses computed
+	// (hydrate.Sources.CreatorMembershipsComputed), read only with Config.ServeMembershipMiss.
+	CreatorMembershipsComputed(ctx context.Context, userIDs []int) (map[int]bool, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
 	// OfficialModels is getOfficialModelIds (hydrate.Sources.OfficialModels).
 	OfficialModels(ctx context.Context) ([]hydrate.OfficialModel, error)
@@ -62,6 +65,10 @@ type Config struct {
 	LoadingOpenToAll bool
 	// VisibleDecorationEvents is FEED_GO_DECORATION_EVENTS (as the image feed reads it).
 	VisibleDecorationEvents map[string]bool
+	// ServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (default off): compute an owner's
+	// creator-membership miss (Sources.CreatorMembershipsComputed) instead of the `membership-miss`
+	// fallback.
+	ServeMembershipMiss bool
 }
 
 // Deps are model.getAll's collaborators.
@@ -732,7 +739,11 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 	}
 	memberships := map[int]bool{}
 	if len(candidates) > 0 {
-		if memberships, err = d.Sources.CreatorMemberships(ctx, candidates); err != nil {
+		read := d.Sources.CreatorMemberships
+		if d.Config.ServeMembershipMiss {
+			read = d.Sources.CreatorMembershipsComputed
+		}
+		if memberships, err = read(ctx, candidates); err != nil {
 			return nil, err
 		}
 	}

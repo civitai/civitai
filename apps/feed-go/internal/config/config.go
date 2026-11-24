@@ -4,6 +4,7 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
@@ -72,6 +73,15 @@ type Config struct {
 	// route (`/api/trpc/model.getAll`). Off, every request there is the `model-getall-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeModelGetAll bool
+	// GetAllServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (default off): on, a
+	// model.getAll page computes its owners' creator-membership misses (getValidCreatorMembershipMap's
+	// origin, on the replica) instead of falling back (`membership-miss`); written back only as
+	// FEED_GO_CACHE_WRITEBACK lists `creator-memberships`. It needs the miss computation
+	// (FEED_GO_COMPUTE_MISSES, default on).
+	GetAllServeMembershipMiss bool
+	// TierMetadataKey is TIER_METADATA_KEY, the Node app's own variable read the same way (unset or
+	// empty: `tier`): the product metadata key a membership's tier is read from.
+	TierMetadataKey string
 	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
@@ -248,6 +258,9 @@ func Load() (*Config, error) {
 		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		GetAllServeMembershipMiss: boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
+		TierMetadataKey:           cmp.Or(os.Getenv("TIER_METADATA_KEY"), "tier"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),

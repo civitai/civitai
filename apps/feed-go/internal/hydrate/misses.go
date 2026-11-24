@@ -48,7 +48,7 @@ const (
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
 	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags,
-	MissUserFollows, MissVersionShowcase, MissImageResources}
+	MissUserFollows, MissVersionShowcase, MissImageResources, MissCreatorMemberships}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -120,6 +120,9 @@ type MissCompute struct {
 	// (computeImageResources); nil, or false (the flag on, or not known), leaves it falling back
 	// (`image-resources-miss`).
 	ImageResourcesFromReplica func() bool
+	// TierMetadataKey is TIER_METADATA_KEY (the Node app's own variable, default `tier`): the product
+	// metadata key the creator-membership origin reads a tier from (CreatorMembershipsComputed).
+	TierMetadataKey string
 	// waitSleep, when set (tests), replaces the timer between lock-wait reads (sleepLockWait): called
 	// with the delay, it returns nil to read next or an error to end the wait.
 	waitSleep func(ctx context.Context, d time.Duration) error

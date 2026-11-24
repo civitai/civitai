@@ -112,7 +112,7 @@ are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default
 caches `FEED_GO_CACHE_WRITEBACK` lists (default none), e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`; the names
 are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-frames`, `event-decorations`,
 `tag-ids`, `model-frames`, `model-decorations`, `version-images`, `model-data`, `model-tags`,
-`official-models`, `metrics`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
+`official-models`, `metrics`, `creator-memberships`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
 `model-data` cache also needs `DATABASE_URL`, the primary. Each write is counted in
 `feed_go_cache_writes_total{cache,result}` (`written` | `nx_lost` | `error`; not per endpoint), and
 `FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0) logs each written key, rate-limited, never its value
@@ -137,7 +137,10 @@ Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `in
 samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 `feed-go-shadow-infinite` and `feed-go-shadow-model-getall` (both default off), sharing
 `FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
-are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
+are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). An owner's creator-membership miss on a
+`model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off: the
+`membership-miss` fallback; DESIGN.md §15.2.6), reading the tier under the app's own
+`TIER_METADATA_KEY`. The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 
