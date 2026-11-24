@@ -26,7 +26,8 @@ export async function serviceReviewViewer({
 }) {
   return {
     levels: (browsingLevel ?? servable) & servable,
-    // Not isReviewImageBlockedForViewer's block set; the two can disagree.
+    // Drops buyers this viewer hid as well as a block either way. The image page drops a review
+    // image for a block with its buyer or its seller only, and hides nothing for a hidden user.
     excludedUserIds: viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [],
   };
 }

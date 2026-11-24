@@ -53,9 +53,10 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TYPE "ServiceOfferingStatus" AS ENUM ('Draft', 'Active', 'Paused', 'Removed');
     CREATE TABLE "User" (
       id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, username text, image text,
-      "profilePictureId" int
+      "profilePictureId" int, muted boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}'
     );
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
@@ -87,7 +88,10 @@ beforeAll(async () => {
     CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public');
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
-    CREATE TABLE "ServiceOffering" (id int PRIMARY KEY, "allowReviewWork" boolean NOT NULL DEFAULT true);
+    CREATE TABLE "ServiceOffering" (
+      id int PRIMARY KEY, "sellerId" int NOT NULL, "allowReviewWork" boolean NOT NULL DEFAULT true,
+      status "ServiceOfferingStatus" NOT NULL DEFAULT 'Active'
+    );
     CREATE TABLE "ServiceDeal" (
       id int PRIMARY KEY, "offeringId" int NOT NULL, "sellerId" int NOT NULL, "buyerId" int NOT NULL,
       "maxNsfwLevel" int NOT NULL DEFAULT 1
@@ -114,7 +118,8 @@ beforeEach(async () => {
     TRUNCATE "User", "Image", "Post", "Article", "CollectionContributor", "Bounty", "BountyEntry",
       "ImageConnection", "ServiceOffering", "ServiceDeal", "ServiceDealReview", "ServiceDealReviewImage";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER});
-    INSERT INTO "ServiceOffering" (id) VALUES (1);
+    UPDATE "User" SET settings = '{"creatorShop":{"enabled":true}}' WHERE id = ${SELLER};
+    INSERT INTO "ServiceOffering" (id, "sellerId") VALUES (1, ${SELLER});
     INSERT INTO "ServiceDeal" (id, "offeringId", "sellerId", "buyerId", "maxNsfwLevel")
       VALUES (1, 1, ${SELLER}, ${BUYER}, ${R});
     INSERT INTO "ServiceDealReview" (id, "dealId", "buyerId", "sellerId", "publishedAt")
@@ -150,6 +155,20 @@ async function opens(viewer: Viewer, levels: number | undefined, id = IMAGE) {
     .queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
   return rows.length === 1;
 }
+
+// The offering page's own rule: Active, a seller in good standing, a shop that is on.
+const OFFERING_NOT_VIEWABLE: Array<[string, string]> = [
+  ['the offering is removed', `UPDATE "ServiceOffering" SET status = 'Removed'`],
+  ['the seller is banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = ${SELLER}`],
+  ['the seller is deleted', `UPDATE "User" SET "deletedAt" = now() WHERE id = ${SELLER}`],
+  ['the seller is muted', `UPDATE "User" SET muted = true WHERE id = ${SELLER}`],
+  [
+    'the seller shop is off',
+    `UPDATE "User" SET settings = '{"creatorShop":{"enabled":false}}' WHERE id = ${SELLER}`,
+  ],
+  // getCreatorShopSettings reads a missing setting as {}, which the shop check treats as off.
+  ['the seller shop setting is unset', `UPDATE "User" SET settings = '{}' WHERE id = ${SELLER}`],
+];
 
 describe('the image page opt-in', () => {
   it('opens a shown review image to anyone at a level the deal fits', async () => {
@@ -196,12 +215,22 @@ describe('the image page opt-in', () => {
     ['the image is not scanned', `UPDATE "Image" SET ingestion = 'Pending'`],
     ['the image is unrated', `UPDATE "Image" SET "nsfwLevel" = 0`],
     ['the image is not the buyer upload', `UPDATE "Image" SET "userId" = ${SELLER}`],
+    ...OFFERING_NOT_VIEWABLE,
   ])('stays shut to a stranger when %s', async (_label, change) => {
     expect(await opens(STRANGER, allBrowsingLevelsFlag)).toBe(true);
     await db.exec(change);
     expect(await opens(STRANGER, allBrowsingLevelsFlag)).toBe(false);
     expect(await opens(ANON, allBrowsingLevelsFlag)).toBe(false);
   });
+
+  it.each(OFFERING_NOT_VIEWABLE)(
+    'still opens to its uploader and moderators when %s',
+    async (_label, change) => {
+      await db.exec(change);
+      expect(await opens({ userId: BUYER }, allBrowsingLevelsFlag)).toBe(true);
+      expect(await opens(MOD, allBrowsingLevelsFlag)).toBe(true);
+    }
+  );
 
   it('leaves a moderator read unchanged', async () => {
     await db.exec(`UPDATE "ServiceDealReview" SET "hiddenAt" = now()`);

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
+import { viewableServiceOfferingSql } from '~/server/services/creator-service-offering-viewable-sql';
 
 /**
  * A review image's level, with `i` the image and `d` its deal: the deal's when that is higher, so
@@ -43,8 +44,9 @@ export const notReviewImageSql = Prisma.sql`NOT EXISTS (
 )`;
 
 /**
- * True in SQL when image `i` is shown on its review at `levels`: the offering page's rule for the
- * review (`shownReviewSql`) and for its images (`reviewImageVisibleSql`).
+ * True in SQL when image `i` is shown on its review at `levels`: the offering is one a visitor may open
+ * (`viewableServiceOfferingSql`), the review is shown (`shownReviewSql`) and so is the image
+ * (`reviewImageVisibleSql`). Blocks are checked apart from this.
  */
 export const shownReviewImageSql = (levels: number) => Prisma.sql`EXISTS (
   SELECT 1 FROM "ServiceDealReviewImage" ri
@@ -53,4 +55,5 @@ export const shownReviewImageSql = (levels: number) => Prisma.sql`EXISTS (
   JOIN "User" u ON u."id" = r."buyerId"
   WHERE ri."imageId" = i."id" AND r."buyerId" = i."userId"
     AND ${shownReviewSql} AND ${reviewImageVisibleSql(levels)}
+    AND ${viewableServiceOfferingSql(Prisma.raw('d."offeringId"'))}
 )`;
