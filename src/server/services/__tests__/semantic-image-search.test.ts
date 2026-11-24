@@ -799,13 +799,18 @@ describe('"more like this" never rates above its anchor', () => {
 });
 
 describe('"more like this" with a preferred tag', () => {
-  const run = (preferTagIds: number[], over: Partial<SemanticImageSearchInput> = {}) => {
+  const run = (
+    preferTagIds: number[],
+    over: Partial<SemanticImageSearchInput> = {},
+    collection: 'images' | 'videos' = 'images'
+  ) => {
     const { source, calls } = rankedSource([101, 102, 103]);
     h.fakeGetAllImages = visibleOnly(new Set([101, 102, 103]));
     return searchSemanticImages({
       ...SESSION_VIEWS,
       input: input({ preferTagIds, ...over }),
       user: VIEWER,
+      collection,
       candidateSource: source,
     }).then(() => calls.filter((call) => call.filter.ids?.length));
   };
@@ -823,6 +828,10 @@ describe('"more like this" with a preferred tag', () => {
     ['a tag a browsing add-on excludes', 701],
   ])('does not boost %s', async (_name, tagId) => {
     expect(await run([tagId])).toHaveLength(0);
+  });
+
+  it('does not boost a video search', async () => {
+    expect(await run([555], {}, 'videos')).toHaveLength(0);
   });
 
   it('does not boost a text search', async () => {
