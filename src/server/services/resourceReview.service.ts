@@ -356,7 +356,9 @@ async function syncLikedModel({
   wasLiked: boolean;
   isLiked: boolean;
 }) {
-  if (!isLiked && !wasLiked) return;
+  // A write that leaves the like as it was changes nothing, so a model the user took out of
+  // the collection by hand stays out when they edit the review.
+  if (isLiked === wasLiked) return;
   if (!isLiked) {
     // primary: the review written a moment ago must be visible.
     const stillLiked = await dbWrite.resourceReview.findFirst({

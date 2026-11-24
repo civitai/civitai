@@ -3,7 +3,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 
 // A thumbs-up from any review surface puts the model in the reviewer's Liked Models collection,
-// against real Postgres (PGlite) for the review, collection and collection-item rows.
+// against real Postgres (PGlite) for the review, collection and collection-item rows. The add
+// keeps toggleBookmarked's visibility gate (assertCollectionItemsVisibleToViewer). Rules: #10268.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -256,9 +257,17 @@ describe('Liked Models from a review thumbs-up', () => {
     });
   });
 
-  it('a second thumbs-up on another version leaves one entry', async () => {
-    await thumbs(true);
+  it('deleting one of two liked versions keeps the model', async () => {
+    const { id } = await thumbs(true);
     await thumbs(true, OTHER_VERSION);
+    await deleteResourceReview({ id });
     expect(await likedModels()).toEqual([MODEL]);
+  });
+
+  it('editing a liked review does not re-add a model the user took out by hand', async () => {
+    const { id } = await thumbs(true);
+    await toggleBookmarked({ type: 'Model', entityId: MODEL, userId: LIKER, setTo: false });
+    await updateResourceReview({ id, details: 'Still great', userId: LIKER });
+    expect(await likedModels()).toEqual([]);
   });
 });
