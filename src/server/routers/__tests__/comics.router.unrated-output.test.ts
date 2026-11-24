@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as OrchestrationNew from '~/server/services/orchestrator/orchestration-new.service';
 import type * as ImageService from '~/server/services/image.service';
@@ -105,13 +107,14 @@ const output = (id: string, over: Record<string, unknown> = {}) => ({
 
 function givenWorkflow(
   outputs: Array<Record<string, unknown>>,
-  normalized: Record<string, unknown> = {}
+  normalized: Record<string, unknown> = {},
+  { unlocked = false } = {}
 ) {
-  // The raw read the unlock guard checks: still locked, with an output rated mature.
+  // The raw read the unlock guard checks: locked (or not), with an output rated mature.
   mocks.getWorkflow.mockResolvedValue({
     id: 'wf-1',
     status: 'succeeded',
-    allowMatureContent: false,
+    allowMatureContent: unlocked,
     steps: [{ $type: 'comfy', name: '$0', output: { blobs: [output('b0', { nsfwLevel: 'x' })] } }],
   });
   mocks.formatGenerationResponse2.mockResolvedValue([
@@ -167,6 +170,8 @@ beforeEach(() => {
       ? { muted: false, bannedAt: null }
       : undefined) as never);
   vi.clearAllMocks();
+  // The unlock's per-panel claim takes the panel.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: PANEL_ID }] as never);
   // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
   // hold. Every case asserts nothing was logged, so a broken fixture cannot pass as a held output.
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -391,5 +396,141 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
     await caller().unlockPanelGeneration({ panelId: PANEL_ID });
 
     await expectEachStoredKeyRecorded(2);
+  });
+});
+
+/** Unlocking a multi-image panel the owner already picked from; the per-panel claim on PGlite. */
+const pg = new PGlite();
+beforeAll(async () => {
+  await pg.exec(`CREATE TABLE "ComicPanel" (id int PRIMARY KEY, metadata jsonb)`);
+});
+const runRaw = (strings: TemplateStringsArray, values: unknown[]) => {
+  const sql = Prisma.sql(strings, ...(values as never[]));
+  return pg.query(sql.text, sql.values as unknown[]);
+};
+beforeEach(async () => {
+  await pg.exec(`DELETE FROM "ComicPanel"; INSERT INTO "ComicPanel" VALUES (${PANEL_ID}, '{}')`);
+  dbMock.dbWrite.$queryRaw.mockImplementation(
+    (async (s: TemplateStringsArray, ...v: unknown[]) => (await runRaw(s, v)).rows) as never
+  );
+  dbMock.dbWrite.$executeRaw.mockImplementation(
+    (async (s: TemplateStringsArray, ...v: unknown[]) =>
+      (await runRaw(s, v)).affectedRows ?? 0) as never
+  );
+});
+
+/** A two-image panel the owner picked 'picked' from; slot 2 was mature and still locked. */
+const selectedPanel = () =>
+  givenPanel({
+    status: 'Ready',
+    imageUrl: 'picked',
+    imageId: 5,
+    metadata: {
+      quantity: 2,
+      candidateImages: [{ key: 'picked' }, { requiresUnlock: true, blockedReason: 'canUpgrade' }],
+    },
+  });
+const bothRated = [output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'x' })];
+
+describe('comics.unlockPanelGeneration - a multi-image panel with a selection', () => {
+  it('keeps the selection and unlocks the paid slot', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('Ready');
+    const [data] = writes();
+    expect(data).not.toHaveProperty('imageUrl');
+    expect(data).not.toHaveProperty('imageId');
+    expect(data.status).toBe('Ready');
+    const slots = (data.metadata as { candidateImages: Array<Record<string, unknown>> })
+      .candidateImages;
+    expect(slots[0]).toMatchObject({ key: 'picked' });
+    expect(slots[1]).toEqual({ key: expect.any(String), nsfwLevel: expect.any(Number) });
+    expect(mocks.createImage).not.toHaveBeenCalled();
+  });
+
+  it('collects the slots of an unlock already paid for, without charging again', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true }, { unlocked: true });
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    const [data] = writes();
+    const slots = (data.metadata as { candidateImages: Array<Record<string, unknown>> })
+      .candidateImages;
+    expect(slots[1]).toHaveProperty('key');
+  });
+
+  it('charges once when two unlocks of one panel overlap', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    mocks.updateWorkflow.mockImplementationOnce(async () => {
+      await held;
+    });
+
+    const first = caller().unlockPanelGeneration({ panelId: PANEL_ID });
+    await vi.waitFor(() => expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1));
+    const second = caller().unlockPanelGeneration({ panelId: PANEL_ID });
+    await expect(second).rejects.toThrow(/already being unlocked/);
+    release();
+    await first;
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: a failed charge releases the claim, so the next unlock can pay', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockRejectedValueOnce(new Error('You need more yellow Buzz.'));
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/Buzz/);
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(2);
+  });
+
+  it('CONTROL: a panel still choosing goes to AwaitingSelection as before', async () => {
+    givenPanel({
+      status: 'AwaitingSelection',
+      metadata: {
+        quantity: 2,
+        candidateImages: [{ key: 'a' }, { requiresUnlock: true, blockedReason: 'canUpgrade' }],
+      },
+    });
+    givenWorkflow(bothRated, { allowMatureContent: true });
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(result.status).toBe('AwaitingSelection');
+  });
+
+  it('CONTROL: a single-image panel still takes the single-image path', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' })]);
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(result.status).toBe('Ready');
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: an already-unlocked generation with nothing locked is still refused', async () => {
+    givenPanel({
+      status: 'Ready',
+      imageUrl: 'a',
+      metadata: { quantity: 2, candidateImages: [{ key: 'a' }, { key: 'b' }] },
+    });
+    givenWorkflow(bothRated, { allowMatureContent: true }, { unlocked: true });
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /already unlocked/
+    );
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
   });
 });

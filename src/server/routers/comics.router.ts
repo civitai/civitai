@@ -728,6 +728,29 @@ async function getReferenceImages(referenceId: number) {
 }
 
 // Shared helper: create a single panel record and submit generation
+/**
+ * Claims a panel's unlock before the charge, so two concurrent unlocks cannot both pay. The panel
+ * write that ends a successful unlock replaces `metadata` and drops the claim; a failed charge
+ * releases it; one left by a crash expires.
+ */
+async function claimPanelUnlock(panelId: number) {
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "ComicPanel"
+    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('unlockClaimedAt', now())
+    WHERE id = ${panelId}
+      AND (metadata->>'unlockClaimedAt' IS NULL
+        OR (metadata->>'unlockClaimedAt')::timestamptz < now() - interval '10 minutes')
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
+async function releasePanelUnlock(panelId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "ComicPanel" SET metadata = metadata - 'unlockClaimedAt' WHERE id = ${panelId}
+  `;
+}
+
 async function createSinglePanel(args: {
   projectId: number;
   chapterPosition: number;
@@ -3266,9 +3289,11 @@ export const comicsRouter = router({
       // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
       // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
       const meta = (panel.metadata as any) ?? {};
-      const isSinglePanelBlocked = panel.status !== ComicPanelStatus.AwaitingSelection;
       const candidates: Array<{ key?: string; requiresUnlock?: boolean; blockedReason?: string }> =
         meta.candidateImages ?? [];
+      // Only a multi-image generation stores candidates; a selection leaves them stored and the
+      // panel Ready, so the status cannot tell the two apart.
+      const isSinglePanelBlocked = candidates.length === 0;
 
       // 1) Lift the mature restriction at the orchestrator. It charges yellow Buzz even when the
       //    workflow's cap leaves nothing to release, so the cap check runs before the write.
@@ -3278,14 +3303,30 @@ export const comicsRouter = router({
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       }
-      await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
-      // Uncaught: the mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
-      await updateWorkflow({
-        token,
-        workflowId: panel.workflowId,
-        allowMatureContent: true,
-        throwOnError: true,
-      });
+      // Already unlocked with slots still locked here (an earlier unlock that did not reach them):
+      // collect them below without charging again.
+      const alreadyPaid =
+        candidates.some((c) => c?.requiresUnlock === true) &&
+        (await getWorkflow({ token, path: { workflowId: panel.workflowId } }))
+          .allowMatureContent === true;
+      if (!alreadyPaid) {
+        await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
+        // One charge per panel: a second unlock while this one is charging is refused.
+        if (!(await claimPanelUnlock(panel.id)))
+          throw throwBadRequestError('This panel is already being unlocked.');
+        try {
+          // The mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
+          await updateWorkflow({
+            token,
+            workflowId: panel.workflowId,
+            allowMatureContent: true,
+            throwOnError: true,
+          });
+        } catch (error) {
+          await releasePanelUnlock(panel.id);
+          throw error;
+        }
+      }
 
       // 2) Re-fetch the workflow and run it through the same `BlobData`
       //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
@@ -3498,10 +3539,12 @@ export const comicsRouter = router({
         }
       }
 
+      // A selection stays selected: only the slots change.
+      const keepsSelection = panel.status === ComicPanelStatus.Ready && !!panel.imageUrl;
       const updated = await dbWrite.comicPanel.update({
         where: { id: panel.id },
         data: {
-          status: ComicPanelStatus.AwaitingSelection,
+          status: keepsSelection ? panel.status : ComicPanelStatus.AwaitingSelection,
           metadata: {
             ...meta,
             candidateImages: newCandidates,

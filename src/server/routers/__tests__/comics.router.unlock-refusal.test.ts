@@ -76,6 +76,8 @@ beforeEach(() => {
       ? { muted: false, bannedAt: null }
       : undefined) as never);
   vi.clearAllMocks();
+  // The unlock's per-panel claim takes the panel.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: PANEL_ID }] as never);
   vi.mocked(handleError).mockImplementation((error) => (error as { detail: string }).detail);
   const panel = {
     id: PANEL_ID,
