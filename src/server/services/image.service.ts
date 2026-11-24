@@ -6609,6 +6609,13 @@ async function afterImageNsfwLevelSet({
   status?: UpdateImageNsfwLevelOutput['status'];
   activity: ImageModActivity['activity'];
 }) {
+  // Ahead of the cache work: a caller that sees the level landed does not retry when that throws.
+  if (status) {
+    await dbWrite.imageRatingRequest.updateMany({
+      where: { imageId: id, status: 'Pending' },
+      data: { status },
+    });
+  }
   await Promise.all([
     imageMetadataCache.refresh(id),
     refreshThumbnailCache(id),
@@ -6617,12 +6624,6 @@ async function afterImageNsfwLevelSet({
     postId ? bustCachesForPosts(postId) : undefined,
   ]);
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
-  if (status) {
-    await dbWrite.imageRatingRequest.updateMany({
-      where: { imageId: id, status: 'Pending' },
-      data: { status },
-    });
-  }
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId });
   await trackModActivity(userId, { entityType: 'image', entityId: id, activity });
 }
@@ -6707,7 +6708,7 @@ export async function updateImageNsfwLevel({
           userId: userId,
           weight: current.userId === userId ? 3 : 1,
         },
-        update: { nsfwLevel },
+        update: { nsfwLevel, status: 'Pending' },
       });
 
       if (current.userId === userId) {

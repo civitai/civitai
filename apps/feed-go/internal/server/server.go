@@ -1,6 +1,7 @@
 // Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s
 // and `image.getInfinite`'s, computed only with ServeModelGetAll / ServeInfinite), the public REST
-// `GET /api/v1/models` routes (computed only with ServeV1Models, v1models_serve.go), and the internal
+// `GET /api/v1/models` routes (computed only with ServeV1Models, v1models_serve.go) and
+// `GET /api/v1/images` route (computed only with ServeV1Images, v1images_serve.go), and the internal
 // shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
 // `GET /api/v1/images` and `/api/v1/models` routes).
 package server
@@ -170,10 +171,23 @@ type Server struct {
 	V1Models *V1ModelsDeps
 	// ServeV1Models is FEED_GO_SERVE_V1_MODELS (default off); off, every request is the v1-models-off fallback.
 	ServeV1Models bool
+	// ServeV1Images is FEED_GO_SERVE_V1_IMAGES (default off); off, every request on the public
+	// `/api/v1/images` route is the v1-images-off fallback (v1images_serve.go).
+	ServeV1Images bool
+	// V1BearerAuth is FEED_GO_V1_BEARER_AUTH (default off; needs FEED_GO_BEARER_AUTH, so Resolver.APIKeys
+	// is set): `[id]`, shadow and public alike, decides an API credential as the Node route does
+	// (v1DetailCredential, auth.Resolver.DetailCredential; DESIGN.md §16.10) instead of falling back on
+	// every one (`bearer-token`). The list is unaffected either way. Off, both routes behave exactly as
+	// before it existed.
+	V1BearerAuth bool
 	// V1Fallback serves what the public `/api/v1/models` routes do not (a reverse proxy to the Node app
 	// that answers `/api/v1`, FEED_GO_V1_FALLBACK_URL: a different upstream from Fallback). The routes
 	// are mounted only when it is set.
 	V1Fallback http.Handler
+	// V1ImagesFallback serves what the public `/api/v1/images` route does not
+	// (FEED_GO_V1_IMAGES_FALLBACK_URL: the Node pool that answers that route). The route is mounted
+	// only when it is set; V1Fallback is never used for it.
+	V1ImagesFallback http.Handler
 	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
 	// such sample falls back.
 	Associated *modelfeed.AssocDeps
@@ -500,6 +514,14 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 // computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other
 // error. The body is plain JSON, as `res.json` writes it.
 func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, error) {
+	return s.computeV1For(ctx, r, false)
+}
+
+// computeV1For is computeV1; serving, a request whose session resolves to a user (a banned one
+// included) falls back (`v1-images-session`) instead of being answered for that viewer: the public
+// route serves signed-out callers only (v1ImagesServeOnly hands a session cookie back first; this
+// holds whatever cookie name the resolver reads).
+func (s *Server) computeV1For(ctx context.Context, r *http.Request, serving bool) (*computed, error) {
 	if s.V1 == nil {
 		return nil, fallback.New("v1-unconfigured")
 	}
@@ -519,6 +541,14 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return nil, err
+	}
+	if serving && user != nil {
+		return nil, fallback.New("v1-images-session")
+	}
+	if serving && r.URL != nil && r.URL.Host != "" {
+		// An absolute-form request line: r.Host is the URL's host and the Host header Node reads for
+		// nextPage is gone (v1ModelsHost). A Node sample is rebuilt in origin form.
+		return nil, fallback.New("v1-host")
 	}
 	var viewer *feed.Viewer
 	viewerUsername := ""
@@ -1123,9 +1153,11 @@ func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure stri
 }
 
 // SyntheticV1Request rebuilds the REST request a v1-images sample describes: its path and raw query
-// string as Node received them, and the forwarded headers.
+// string as Node received them, and the forwarded headers. It is marked as a sample (withSampled): its
+// verified-crawler header is the app's own decision, which the response headers read
+// (v1ImagesCompute), as on the model routes.
 func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, error) {
-	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, V1ImagesPath, nil)
+	r, err := http.NewRequestWithContext(withSampled(auth.WithRedactedCredentials(ctx)), http.MethodGet, V1ImagesPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1152,11 +1184,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	}
 	switch endpoint {
 	case EndpointV1Images:
-		build, computeFn = SyntheticV1Request, s.computeV1
+		// The public route's compute, with the headers it writes (v1ImagesCompute; computeV1Fn in tests).
+		build, computeFn = SyntheticV1Request, s.v1ImagesCompute(false)
 		compareFn, classify = shadow.CompareJSON, shadow.ClassifyJSON
-		if s.computeV1Fn != nil {
-			computeFn = s.computeV1Fn
-		}
 	case EndpointInfinite:
 		// The superjson envelope, as for the gallery; classified by image id (a flat page).
 		build, computeFn = SyntheticInfiniteRequest, s.computeInfinite
@@ -1251,14 +1281,14 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	var respDiffs []shadow.Diff
 	switch {
 	case req.ResponseHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
-		// A sampler that predates the field sends none; the /api/v1/images port writes no headers of
-		// its own yet; and a model list sample with an `etag` query has none computed
-		// (v1ModelsHeadersUnknown): nothing to compare.
+		// A sampler that predates the field sends none; a model list sample with an `etag` query has
+		// none computed (v1ModelsHeadersUnknown), nor an images sample whose body has no known
+		// JSON.stringify text (v1ImagesCompute): nothing to compare.
 		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "uncompared").Inc()
 	default:
 		goHeaders, names := trpc.ResultHeaders(c.ttl), shadow.ComparedHeaders
 		if isRESTEndpoint(endpoint) {
-			// The model routes: the headers the public route writes (v1models_serve.go).
+			// The REST routes: the headers the public route writes (v1models_serve.go, v1images_serve.go).
 			goHeaders = v1models.HeaderMap(c.headers)
 			if req.ResponseHeaderSet == ResponseHeaderSetREST {
 				names = shadow.RESTComparedHeaders

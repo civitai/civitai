@@ -183,6 +183,15 @@ describe('an NSFW image report rating request', () => {
     });
   });
 
+  // A ruling settles every request on the image; a later report from the same user is a new one.
+  it("reopens the reporter's earlier request that a ruling settled", async () => {
+    await fileNsfwReport(member, ReportEntity.Image);
+
+    expect(ratingRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { nsfwLevel: 4, status: 'Pending' } })
+    );
+  });
+
   it('is recorded for an older account with no verified email', async () => {
     await fileNsfwReport(olderUnverified, ReportEntity.Image);
 

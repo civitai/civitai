@@ -19,6 +19,8 @@ const reviewUrl = (model: TrainingCompleteEmailData['model']) =>
   getBaseUrl() + `/models/${model.id}/wizard`;
 
 export const trainingCompleteEmail = createEmail({
+  template: 'trainingComplete',
+  mailClass: 'transactional',
   header: ({ user, model, mName }: TrainingCompleteEmailData) => ({
     subject: `Your model "${model.name} - ${mName}" is ready for review`,
     to: user.email,

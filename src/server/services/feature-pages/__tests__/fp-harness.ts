@@ -119,6 +119,8 @@ export const platform = {
   failNext: [] as ('429' | '5xx' | 'timeout' | 'bad' | 'stale')[],
   /** Per comment: what its current version carries, to answer a push that changes nothing. */
   held: new Map<number, string>(),
+  /** The by-source read answers 200 with a body that is not a record. */
+  badBySource: false,
 };
 export const urnOf = (sourceId: number) =>
   `urn:data.civitai.com:feature-pages/comments/c${sourceId}`;
@@ -307,8 +309,20 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
     }
     case '/internal/verdict/site':
     case '/internal/verdict/mod': {
-      const sourceId = sourceOfUrn(body.target.urn);
+      const bySource = body.target.sourceId !== undefined;
+      if (bySource && url.pathname.endsWith('/site') && body.verdict !== 'hidden')
+        return json(400, { code: 'bad_request', message: 'target' });
+      const sourceId = bySource ? Number(body.target.sourceId) : sourceOfUrn(body.target.urn);
       if (platform.removed.has(sourceId)) return json(409, { code: 'removed' });
+      const held = platform.posts.some((p) => p.sourceId === sourceId);
+      if (bySource) {
+        // Stored on the derived urn under a token that is no version's, so it waits for a post.
+        platform.verdicts.push({
+          path: url.pathname,
+          body: { ...body, target: { urn: urnOf(sourceId), digest: `source:${sourceId}` } },
+        });
+        return json(200, { ok: true, held, ...(held ? {} : { preverdict: true }) });
+      }
       if (url.pathname.endsWith('/site') && body.target.digest !== tokenOf(sourceId))
         return json(409, { code: 'stale_digest', details: { digest: tokenOf(sourceId) } });
       platform.verdicts.push({ path: url.pathname, body });
@@ -317,6 +331,25 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
         return json(504, { code: 'gateway_timeout' });
       }
       return json(200, { ok: true });
+    }
+    case '/internal/comments/by-source': {
+      if (platform.badBySource) return json(200, { ok: true });
+      const sourceId = Number(url.searchParams.get('sourceId'));
+      const last = platform.posts.filter((p) => p.sourceId === sourceId).at(-1);
+      if (!last) return json(404, { code: 'not_held' });
+      const verdict = deciding(sourceId)?.verdict;
+      const state = platform.removed.has(sourceId)
+        ? 'removed'
+        : platform.erasedUids.has(last.uid as number)
+        ? 'erased'
+        : last.text === null
+        ? 'retracted'
+        : verdict === 'visible'
+        ? 'visible'
+        : verdict
+        ? 'hidden'
+        : 'withheld';
+      return json(200, { urn: urnOf(sourceId), digest: tokenOf(sourceId), state });
     }
     case '/internal/author/erase':
       platform.erased.push(body.uid);
@@ -424,6 +457,7 @@ export async function resetFpState(flags: { mirror: boolean }) {
     holdPosts: false,
     failNext: [],
     held: new Map(),
+    badBySource: false,
   });
   // The text-scan rollout: CommentV3 fully active.
   redisMock.sysRedis.hGetAll.mockImplementation((async () => ({

@@ -30,19 +30,39 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: () => undefined }),
 }));
-vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'yellow' }));
+// The Buzz balance behind the real button needs a signed-in session; these tests are about what it sends.
+vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
+  BuzzTransactionButton: (props: {
+    label: string;
+    disabled?: boolean;
+    onPerformTransaction: () => void;
+  }) =>
+    createElement(
+      'button',
+      { disabled: props.disabled, onClick: () => props.onPerformTransaction() },
+      props.label
+    ),
+}));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({
   CurrencyBadge: () => null,
 }));
 
+const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
 const { ServiceRequestModal } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
 const { PublishServiceModal } = await import('~/components/CreatorShop/Services/SellerAffirmation');
 
-const html = (component: ReactNode) =>
-  renderToStaticMarkup(createElement(MantineProvider, null, component));
+// Flags {} is a viewer outside every rollout, creatorServicesNext included.
+const html = (component: ReactNode, flags: object = {}) =>
+  renderToStaticMarkup(
+    createElement(
+      MantineProvider,
+      null,
+      createElement(FeatureFlagsProvider, { flags: flags as never, children: component })
+    )
+  );
 
 const escaped = (text: string) => text.replace(/'/g, '&#x27;');
 
@@ -53,12 +73,29 @@ describe('buyer disclosure in the request modal', () => {
   );
 
   it("shows the offering's own price, revisions and days, and the deal-code hours", () => {
-    expect(out).toContain('2,500 Buzz is held now');
-    expect(out).toContain('Includes 1 revision. Delivery within 4 days of acceptance.');
+    expect(out).toContain('2,500 Buzz is held now.');
+    expect(out).toContain('Delivery within 4 days of acceptance.');
+    expect(out).toContain('1 revision included.');
     expect(out).toContain('doesn&#x27;t accept within 48 hours');
-    expect(out).toContain('completes after 72 hours');
-    expect(out).toContain('48-hour dispute window');
+    expect(out).toContain('it completes 72 hours after the latest delivery');
+    expect(out).toContain('You have 48 hours after completion to dispute.');
     expect(out).toContain(escaped("Civitai isn't a party to this deal."));
+  });
+
+  // Empty flags: a buyer outside the creatorServicesNext rollout, so no review sentence.
+  it('shows the dispute line without the review sentence outside the rollout', () => {
+    expect(out).toContain('Then the seller is paid. Moderator decisions on disputes');
+    expect(out).not.toContain('review the work as Happy');
+  });
+
+  it('adds the review sentence inside the rollout', () => {
+    const inRollout = html(
+      createElement(ServiceRequestModal, { offering, sellerUsername: 'seller' } as never),
+      { creatorServicesNext: true }
+    );
+    expect(inRollout).toContain(
+      'If you review the work as Happy, the seller is paid right away and you can no longer dispute.'
+    );
   });
 
   it('puts the disclosure before the button that holds the Buzz', () => {
@@ -71,7 +108,7 @@ describe('buyer disclosure in the request modal', () => {
 
 describe('license in the request modal', () => {
   const base = { id: 9, title: 'Badge', price: 2500, deliveryDays: 4, revisionsIncluded: 1 };
-  // No flags provider: a buyer outside the creatorServicesNext rollout.
+  // Empty flags: a buyer outside the creatorServicesNext rollout.
   const render = (license: object) =>
     html(
       createElement(ServiceRequestModal, {

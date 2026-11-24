@@ -1610,11 +1610,10 @@ type LegacyPrepaidRow = {
 
 // Legacy annual-sub-payment + migration-era reward comps (yellow account). Description-based
 // filtering for rewards happens server-side (in the caller) to keep the SQL fast.
-// The query reads a closed date window, so a user's rows never change: cache them, empty
-// included (most lookups find none), for a month. The window is in the key, so moving it starts
-// a fresh cache rather than serving rows from the old one. Plain redis get/set, like the combined
-// cache below: this module is imported by many tests with a partial env mock, and cache-helpers
-// builds a logger from env at import time.
+// The window is closed, so a user's rows never change: cache them, empty included. The window
+// is in the key, so moving it starts a fresh cache. Plain redis get/set, like the combined cache
+// below, rather than fetchThroughCache: cache-helpers builds a logger from env at import time,
+// which breaks the many tests that import this module with a partial env mock.
 const getLegacyPrepaidRows = async (userId: number): Promise<LegacyPrepaidRow[]> => {
   if (!clickhouse) return [];
   const cacheKey =
@@ -1662,9 +1661,7 @@ export const getHistoricalPrepaidDeliveries = async ({
   //   2. buzzTransactions (raw, yellow only, narrow date window) → annual-sub-payment + reward
   //      rows from the Paddle migration era. Slow (~10s) due to the table being sorted by
   //      (date, fromAccountId, toAccountId); the date filter limits the scan. The byToAccount
-  //      projection exists but can't be used with SharedReplacingMergeTree. Its window is closed,
-  //      so its rows are cached per user for a month on their own (getLegacyPrepaidRows).
-  // The combined result is cached for an hour, since new membership deliveries keep arriving.
+  //      projection exists but can't be used with SharedReplacingMergeTree.
   const cacheKey =
     `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}:v2` as RedisKeyTemplateCache;
   try {

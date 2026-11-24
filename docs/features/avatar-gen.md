@@ -37,8 +37,8 @@ from the queue. It is open to everyone; there is no feature flag.
 An avatar depicts a real person. Generating that likeness is allowed; posting it is not.
 
 - **PG-13.** The workflow config sets `sfwOnly`, so output is capped at PG-13 with
-  mature content off, whatever the user's own setting (`workflowOutputRestrictions` in
-  `form-graph/output-restrictions.ts`, the same cap private generation uses).
+  mature content off, whatever the user's own setting (`capsGenerationOutput` in
+  `form-graph/output-restrictions.ts`; private generation gets the same PG-13 cap).
 - **Results can't be posted, fed to another workflow or trained on.** Every workflow config states
   its `outputUses`, out of `post` (posts, contest entries, comics), `derive` (input to another
   workflow) and `train` (training datasets). The field is required, so a new workflow has to

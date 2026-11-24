@@ -30,14 +30,14 @@ import (
 func TestRequestOutcomesAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	// serve: 5 public routes x served, served_empty, fallback, error, + v1-models-id served_cached,
+	// serve: 6 public routes x served, served_empty, fallback, error, + v1-models-id served_cached,
 	// - served_empty on as-posts and v1-models-id; shadow: 7 endpoints x the same 4, + v1-models-id
 	// served_cached, - served_empty on as-posts.
-	if n := testutil.CollectAndCount(m.Requests); n != 5*4+1-2+7*4+1-1 {
-		t.Fatalf("feed_go_requests_total has %d series at construction, want 47", n)
+	if n := testutil.CollectAndCount(m.Requests); n != 6*4+1-2+7*4+1-1 {
+		t.Fatalf("feed_go_requests_total has %d series at construction, want 51", n)
 	}
-	served := []string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id"}
-	all := append([]string{"v1-images", "model-associated"}, served...)
+	served := []string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id", "v1-images"}
+	all := append([]string{"model-associated"}, served...)
 	for mode, endpoints := range map[string][]string{"serve": served, "shadow": all} {
 		for _, e := range endpoints {
 			outcomes := []string{"served", "fallback", "error"}
@@ -69,8 +69,11 @@ func TestRequestOutcomesAreSeeded(t *testing.T) {
 			t.Errorf("requests%v exists, but its path cannot count it", l)
 		}
 	}
-	if _, found := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": "v1-images", "mode": "serve", "outcome": "served"}); found {
-		t.Error("v1-images has no public route, yet a serve series exists")
+	if _, found := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": "model-associated", "mode": "serve", "outcome": "served"}); found {
+		t.Error("model-associated has no public route, yet a serve series exists")
+	}
+	if _, found := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": "v1-images", "mode": "serve", "outcome": "served_cached"}); found {
+		t.Error("v1-images has no cached answer, yet a served_cached series exists")
 	}
 }
 
@@ -116,17 +119,17 @@ func TestShadowResultsAreSeeded(t *testing.T) {
 func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	// serve: 5 routes x (bulkhead, error, deadline, canceled, panic); shadow: 7 x 3; probe: 3 x 3;
-	// and the 172 request-determined serve series.
-	if n := testutil.CollectAndCount(m.Fallbacks); n != 5*5+7*3+3*3+172 {
-		t.Fatalf("feed_go_fallback_total has %d series at construction, want 227", n)
+	// serve: 6 routes x (bulkhead, error, deadline, canceled, panic); shadow: 7 x 3; probe: 4 x 3;
+	// and the 198 request-determined serve series.
+	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+198 {
+		t.Fatalf("feed_go_fallback_total has %d series at construction, want 261", n)
 	}
 	cases := map[string]struct {
 		endpoints, reasons []string
 	}{
-		"serve":  {[]string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id"}, []string{"bulkhead", "error", "deadline", "canceled", "panic"}},
+		"serve":  {[]string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id", "v1-images"}, []string{"bulkhead", "error", "deadline", "canceled", "panic"}},
 		"shadow": {[]string{"as-posts", "v1-images", "infinite", "model-getall", "v1-models", "v1-models-id", "model-associated"}, []string{"deadline", "canceled", "panic"}},
-		"probe":  {[]string{"as-posts", "infinite", "model-getall"}, []string{"deadline", "canceled", "panic"}},
+		"probe":  {[]string{"as-posts", "infinite", "model-getall", "v1-images"}, []string{"deadline", "canceled", "panic"}},
 	}
 	for mode, c := range cases {
 		for _, e := range c.endpoints {
@@ -222,6 +225,14 @@ var wantRequestFallbackReasons = map[string][]string{
 		"method", "region-blocked", "crawler-user-agent", "bearer-token",
 		"v1-models-conditional", "v1-models-host", "v1-models-origin", "v1-models-path", "v1-models-id",
 	},
+	EndpointV1Images: {
+		"method", "region-blocked", "crawler-user-agent", "bearer-token",
+		"v1-images-conditional", "v1-images-session-cookie", "input-unknown-key",
+		"v1-host", "v1-query-encoding", "v1-input-duplicate", "v1-input-number", "v1-input-username",
+		"v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool", "v1-image-id", "v1-tags",
+		"v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort", "v1-with-tags", "v1-cursor",
+		"v1-legacy-cursor", "v1-page-limit",
+	},
 }
 
 // The request-determined fallback reasons exist at 0 on a fresh registry, for mode serve on their
@@ -240,8 +251,8 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 		}
 		total += len(want)
 	}
-	if total != 172 {
-		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 172", total)
+	if total != 198 {
+		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 198", total)
 	}
 
 	reg := prometheus.NewRegistry()
@@ -271,7 +282,10 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 		{EndpointInfinite, "verified-bot"},        // getInfinite reads a verified crawler
 		{EndpointInfinite, "input-collectionId"},  // getInfinite answers a collection
 		{EndpointV1Models, "bearer-malformed"},    // preflight refuses every credential first
-		{EndpointAsPosts, "v1-host"},              // GET /api/v1/images has no public route
+		{EndpointAsPosts, "v1-host"},              // GET /api/v1/images's reason, not the gallery's
+		{EndpointV1Images, "v1-path"},             // the route's pattern is the images path itself
+		{EndpointV1Images, "v1-models-host"},      // the model routes' check
+		{EndpointV1Images, "v1-images-session"},   // a resolved session: not the request alone
 	} {
 		l := map[string]string{"feed_endpoint": c[0], "mode": "serve", "reason": c[1]}
 		if _, found := metricValue(t, reg, "feed_go_fallback_total", l); found {
@@ -285,17 +299,13 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 // It mirrors the reason set an external consumer of feed_go_fallback_total subtracts as
 // request-determined (plus `bearer-token`, seeded here on the REST model routes): a change to either
 // list must be made to both, and to unservedRequestReasons below.
-var requestDeterminedRe = regexp.MustCompile(`^(?:input-.+|method|region-blocked|crawler-user-agent|verified-bot|bearer-token|bearer-malformed|bearer-multiple-headers|bearer-query-token|model-cursor|model-sort-recently-added|model-collection-id|collection-id|collection-tag-id|ids-not-int4|infinite-user-zero|prioritized-cursor|v1-models-(?:origin|session-cookie|conditional|etag|host|path|id|ids|query|query-encoding|authed-only|sort|limit|page-limit|cursor|input-enum|input-number|input-bool|input-duplicate|tagname|user|rating|favorites|hidden|checkpointType|needsReview|paidAccess|hidePaid|onSale|modelVersionIds|supportsGeneration|fromPlatform|followed|newCreators|collectionId|collectionItemStatus|fileFormats|pending|collectionTagId|availability|disablePoi|disableMinor|isFeatured|poiOnly|minorOnly|allowNoCredit|allowCommercialUse|allowDerivatives|allowDifferentLicense|browsingLevel|excludedModelIds|excludedUserIds|excludedTagIds|excludedImageIds)|v1-(?:host|path|query-encoding|input-duplicate|input-number|input-username|input-period|input-type|input-ids|input-bool|image-id|tags|base-models|user-zero|model-only|sort|with-tags|cursor|legacy-cursor|page-limit))$`)
+var requestDeterminedRe = regexp.MustCompile(`^(?:input-.+|method|region-blocked|crawler-user-agent|verified-bot|bearer-token|bearer-malformed|bearer-multiple-headers|bearer-query-token|model-cursor|model-sort-recently-added|model-collection-id|collection-id|collection-tag-id|ids-not-int4|infinite-user-zero|prioritized-cursor|v1-images-(?:conditional|session-cookie)|v1-models-(?:origin|session-cookie|conditional|etag|host|path|id|ids|query|query-encoding|authed-only|sort|limit|page-limit|cursor|input-enum|input-number|input-bool|input-duplicate|tagname|user|rating|favorites|hidden|checkpointType|needsReview|paidAccess|hidePaid|onSale|modelVersionIds|supportsGeneration|fromPlatform|followed|newCreators|collectionId|collectionItemStatus|fileFormats|pending|collectionTagId|availability|disablePoi|disableMinor|isFeatured|poiOnly|minorOnly|allowNoCredit|allowCommercialUse|allowDerivatives|allowDifferentLicense|browsingLevel|excludedModelIds|excludedUserIds|excludedTagIds|excludedImageIds)|v1-(?:host|path|query-encoding|input-duplicate|input-number|input-username|input-period|input-type|input-ids|input-bool|image-id|tags|base-models|user-zero|model-only|sort|with-tags|cursor|legacy-cursor|page-limit))$`)
 
-// unservedRequestReasons are the request-determined reasons no public route produces: GET
-// /api/v1/images's own (feed.ParseV1, feed.ServeV1), which is shadowed only. Part of the same mirrored
-// reason set as requestDeterminedRe: keep it in step with that consumer's list.
-var unservedRequestReasons = []string{
-	"v1-host", "v1-path", "v1-query-encoding", "v1-input-duplicate", "v1-input-number",
-	"v1-input-username", "v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool",
-	"v1-image-id", "v1-tags", "v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort",
-	"v1-with-tags", "v1-cursor", "v1-legacy-cursor", "v1-page-limit",
-}
+// unservedRequestReasons are the request-determined reasons no public route produces: `v1-path`
+// (feed.ServeV1's nextPage on a path other than the images route's, which a shadow sample can carry
+// and the public route, mounted on that exact path, cannot). Part of the same mirrored reason set as
+// requestDeterminedRe: keep it in step with that consumer's list.
+var unservedRequestReasons = []string{"v1-path"}
 
 // prefixedReasonSites are the call sites that build a fallback reason at run time (`"input-" + k`),
 // per file. A new one fails TestRequestFallbackReasonsAreEmitted until its reasons are seeded, or it
@@ -314,7 +324,7 @@ var (
 )
 
 // Every seeded reason is one the code emits, and every request-determined reason the code emits is
-// seeded (or is GET /api/v1/images's, which has no public route). A reason written as a literal at a
+// seeded (or is one no public route produces: unservedRequestReasons). A reason written as a literal at a
 // fallback call site is found in the module's source; a reason built from a key is produced by the
 // route's own parser on an input holding that key.
 func TestRequestFallbackReasonsAreEmitted(t *testing.T) {

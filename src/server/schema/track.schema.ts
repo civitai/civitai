@@ -1,4 +1,8 @@
-import { FEED_EVENT_FEEDS, FEED_EVENT_TYPES } from '~/shared/constants/feed-events.constants';
+import {
+  FEED_EVENT_FEEDS,
+  FEED_EVENT_INDEX_MAX,
+  FEED_EVENT_TYPES,
+} from '~/shared/constants/feed-events.constants';
 import * as z from 'zod';
 import {
   BRIDGE_HOSTS,
@@ -1164,11 +1168,11 @@ export const trackFeedSchema = z.object({
   // The route pattern; the server maps anything it does not know to 'other'.
   page: z.string().max(200),
   sort: z.string().max(64).default(''),
-  pageIndex: z.number().int().min(0).max(10_000).default(0),
+  pageIndex: z.number().int().min(0).max(FEED_EVENT_INDEX_MAX).default(0),
   filters: z.record(z.string().max(64), z.string()).default({}),
   entityType: z.enum(IMPRESSION_ENTITY_TYPES).optional(),
   entityId: z.number().int().positive().max(2_147_483_647).optional(),
-  position: z.number().int().min(0).max(10_000).optional(),
+  position: z.number().int().min(0).max(FEED_EVENT_INDEX_MAX).optional(),
   seenIds: z
     .array(z.number().int().positive().max(2_147_483_647))
     .max(IMPRESSION_ENTITIES_MAX)

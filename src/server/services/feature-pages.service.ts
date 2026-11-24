@@ -4,17 +4,24 @@ import { CIVITAI_OWNED_DOMAINS, hubBaseUrl, hubFetch, registrableDomain } from '
 import { env } from '~/env/server';
 import { isLocalOrigin } from '~/env/local-origin';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import type {
   FeaturePageMineInput,
   FeaturePageVoteInput,
 } from '~/server/schema/feature-pages.schema';
 import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
 import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
-import { FEATURE_PAGES_HOST_ORIGINS } from '~/shared/constants/feature-pages.constants';
 import {
+  FEATURE_PAGES_FEATURE_URN_PREFIX,
+  FEATURE_PAGES_HOST_ORIGINS,
+  featurePageSlugRegex,
+} from '~/shared/constants/feature-pages.constants';
+import {
+  PLATFORM_HANDLE_PATH,
   PLATFORM_ROUTE_MISSING,
   platformRefusalSchema,
+  viewerHandleSchema,
 } from '~/server/services/feature-pages/platform-wire';
 
 // The data.civitai.com platform's internal write path (no ingress), and the audience of its tokens.
@@ -28,6 +35,9 @@ const HUB_TOKEN_TIMEOUT_MS = 8_000;
 // its refresh while another pod refreshes it, so the TTL stays under half the token's life.
 const SERVICE_TOKEN_TTL_SECONDS = 5 * 60;
 const SERVICE_TOKEN_KEY = REDIS_KEYS.CACHES.FEATURE_PAGES_SERVICE_TOKEN;
+const VIEWER_HANDLE_TTL_SECONDS = 24 * 60 * 60;
+const VIEWER_HANDLE_TIMEOUT_MS = 1_500;
+const VIEWER_HANDLE_MISS_TTL_SECONDS = 60;
 
 const log = (data: MixedObject) => logToAxiom({ name: 'feature-pages', type: 'error', ...data });
 
@@ -121,9 +131,10 @@ export type SignerReply = { status: number; body: unknown };
  */
 export async function callSigner(
   path: string,
-  init:
+  init: (
     | { method: 'POST'; body: Record<string, unknown> }
     | { method: 'GET'; query: URLSearchParams }
+  ) & { timeoutMs?: number }
 ): Promise<SignerReply> {
   const config = signerConfig();
   if (!config)
@@ -135,7 +146,7 @@ export async function callSigner(
       : `${config.signerUrl}${path}`;
   const send = (token: string) =>
     outboundFetch(url, {
-      timeoutMs: SIGNER_TIMEOUT_MS,
+      timeoutMs: init.timeoutMs ?? SIGNER_TIMEOUT_MS,
       method: init.method,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -166,6 +177,67 @@ export async function callSigner(
     body = null;
   }
   return { status: res.status, body };
+}
+
+type FeaturePageRequest = {
+  ctx: {
+    query: { slug?: string | string[] };
+    req: { headers: { host?: string } };
+    res: { setHeader: (name: string, value: string) => unknown };
+  };
+  features?: { featurePages?: boolean } | null;
+  session?: { user?: { id: number } } | null;
+};
+
+/** The server-side props of /features/[slug]. */
+export async function getFeaturePageProps({ ctx, features, session }: FeaturePageRequest) {
+  // The frame's props depend on the request, so no cache may hold the page for another viewer.
+  ctx.res.setHeader('Cache-Control', 'private, no-store');
+  if (!features?.featurePages) return { notFound: true as const };
+  const slug = ctx.query.slug;
+  if (typeof slug !== 'string' || !featurePageSlugRegex.test(slug))
+    return { notFound: true as const };
+  const feature = `${FEATURE_PAGES_FEATURE_URN_PREFIX}${slug}`;
+  const embed = resolveFeaturePageEmbed(env.FEATURE_PAGES_EMBED_URL, feature, ctx.req.headers.host);
+  if (!embed || !isFeaturePagesSignerConfigured()) return { notFound: true as const };
+  const viewerAuthor = session?.user ? await getFeaturePageViewerHandle(session.user.id) : null;
+  return { props: { ...embed, feature, viewerAuthor } };
+}
+
+/** The viewer's platform handle for fp-init, or null when the platform gives none. */
+export async function getFeaturePageViewerHandle(userId: number): Promise<string | null> {
+  const key = `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${userId}` as const;
+  const missKey = `${key}:miss` as const;
+  // The page render waits on this, so after a failure it is not asked again for a while.
+  const missed = await clusterCacheGuard.readOr(
+    'feature-pages.viewerHandleMiss',
+    () => redis.packed.get(missKey),
+    null
+  );
+  if (missed) return null;
+  try {
+    return await fetchThroughCache(
+      key,
+      async () => {
+        const reply = await callSigner(PLATFORM_HANDLE_PATH, {
+          method: 'GET',
+          query: new URLSearchParams({ uid: String(userId) }),
+          timeoutMs: VIEWER_HANDLE_TIMEOUT_MS,
+        });
+        const parsed = viewerHandleSchema.safeParse(reply.body);
+        // Thrown, so the handle key never holds a failure.
+        if (!parsed.success) throw new Error(`viewer handle unavailable (${reply.status})`);
+        return parsed.data.author;
+      },
+      { ttl: VIEWER_HANDLE_TTL_SECONDS }
+    );
+  } catch (e) {
+    log({ message: 'viewer handle unavailable', error: safeError(e) });
+    await clusterCacheGuard.writeBestEffort('feature-pages.viewerHandleMiss', () =>
+      redis.packed.set(missKey, 1, { EX: VIEWER_HANDLE_MISS_TTL_SECONDS })
+    );
+    return null;
+  }
 }
 
 /** The refusal code of a non-2xx answer (`{ code, message, details }`), if it has one. */

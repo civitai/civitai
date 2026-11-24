@@ -258,6 +258,71 @@ func TestSwitchStalenessBound(t *testing.T) {
 	}
 }
 
+// Off is "known off": false before any read, after a failed first read, while on, and once the last
+// good read is older than MaxStale (even when that read was off, unlike On, which then also reads
+// false); true for a fresh off read and for a flag Flipt says does not exist. A nil switch is not off.
+func TestSwitchOffIsKnownOff(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	fail, notFound, answer := true, false, false
+	sw := NewSwitch(func(context.Context) (bool, error) {
+		switch {
+		case fail:
+			return false, errors.New("flipt: http 503")
+		case notFound:
+			return false, ErrFlagNotFound
+		}
+		return answer, nil
+	})
+	sw.Now = func() time.Time { return now }
+	ctx := context.Background()
+	if sw.Off() {
+		t.Fatal("never read: Off, want not off")
+	}
+	sw.Refresh(ctx)
+	if sw.Off() || sw.On() {
+		t.Fatalf("a failed first read: Off %v On %v, want neither", sw.Off(), sw.On())
+	}
+	fail = false
+	sw.Refresh(ctx)
+	if !sw.Off() {
+		t.Fatal("read off: not Off")
+	}
+	answer = true
+	sw.Refresh(ctx)
+	if sw.Off() || !sw.On() {
+		t.Fatalf("read on: Off %v On %v", sw.Off(), sw.On())
+	}
+	answer = false
+	sw.Refresh(ctx)
+	fail = true
+	for _, step := range []struct {
+		at   time.Duration
+		want bool
+	}{{time.Minute, true}, {DefaultMaxStale, true}, {DefaultMaxStale + time.Second, false}} {
+		now = time.Unix(1_800_000_000, 0).Add(step.at)
+		sw.Refresh(ctx)
+		if got := sw.Off(); got != step.want {
+			t.Fatalf("%v after the last good (off) read: Off %v, want %v", step.at, got, step.want)
+		}
+	}
+	// Past the bound without a Refresh in between: Off reads the clock itself.
+	fail = false
+	sw.Refresh(ctx)
+	now = now.Add(DefaultMaxStale + time.Second)
+	if sw.Off() {
+		t.Fatal("no read for longer than MaxStale: Off, want not off")
+	}
+	fail, notFound = false, true
+	sw.Refresh(ctx)
+	if !sw.Off() {
+		t.Fatal("flag not found: not Off, want off (as Node reads a missing flag)")
+	}
+	var nilSwitch *Switch
+	if nilSwitch.Off() {
+		t.Fatal("a nil switch reads off")
+	}
+}
+
 // Run reads at once and then once per tick, until its context ends.
 func TestSwitchRunReadsPerTick(t *testing.T) {
 	var mu sync.Mutex

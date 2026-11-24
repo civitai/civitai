@@ -131,6 +131,12 @@ type Config struct {
 	// Node fills on read (user cosmetics, image frames, event decorations) with the Node
 	// lookup's own query instead of falling back. Off restores the fallbacks.
 	ComputeMisses bool
+	// ComputeImageResourcesMiss is FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS (default OFF): compute the
+	// public images endpoint's image-resources misses from the replica (hydrate.MissImageResources,
+	// still only with ComputeMisses and while image-resource-use-write is known off). Its own switch,
+	// so that one computation can be killed without FEED_GO_COMPUTE_MISSES=false (every endpoint's)
+	// or a Flipt flip; off, those misses fall back (`image-resources-miss`) and the flag is not read.
+	ComputeImageResourcesMiss bool
 	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default none): the caches whose computed misses are
 	// written back to the cache cluster exactly as the Node lookup writes them, as a comma-separated
 	// list of hydrate.WriteCaches names (hydrate.ParseWriteBack; an unknown name, the old true/false
@@ -279,6 +285,7 @@ func Load() (*Config, error) {
 		c.ModerationAccountID = n
 	}
 	c.ComputeMisses = boolEnv("FEED_GO_COMPUTE_MISSES", true)
+	c.ComputeImageResourcesMiss = boolEnv("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", false)
 	writeBack, err := hydrate.ParseWriteBack(os.Getenv("FEED_GO_CACHE_WRITEBACK"))
 	if err != nil {
 		return nil, err

@@ -90,6 +90,15 @@ const (
 	CacheCreatorMemberships = "creator-memberships"
 )
 
+// GET /api/v1/images's caches (internal/hydrate/v1page.go) beyond the page caches it shares: its probe
+// runs the serving path itself, as model.getAll's does; a miss Go computes (the image resources while
+// the Node lookup reads the replica, the image meta, the metric hashes with a ClickHouse reader) is
+// recorded instead (hydrate.WithPresence), and one it falls back on is reported by its reason.
+const (
+	CacheImageResources = hydrate.MissImageResources
+	CacheImageMeta      = hydrate.MissImageMeta
+)
+
 var preHydrateMissReasons = map[string]string{
 	"session-cache-miss":     CacheSessionUser,     // the session user is fetched from the auth hub
 	"session-cache-cleared":  CacheSessionUser,     // a cleared entry is refetched the same way
@@ -109,6 +118,10 @@ var preHydrateMissReasons = map[string]string{
 	"model-decoration-miss": CacheModelDecorations,
 	"model-images-miss":     CacheVersionImages,
 	"membership-miss":       CacheCreatorMemberships,
+	// GET /api/v1/images falls back on these without their miss computation (the image resources also
+	// while the Node lookup reads the primary, or for a miss it would not write back).
+	"image-resources-miss": CacheImageResources,
+	"image-meta-miss":      CacheImageMeta,
 }
 
 // fallbackMissCache is the cache a fallback reason is a miss on: a pre-hydration or model cache, or
@@ -137,13 +150,16 @@ func probeCaches() []string {
 		out = append(out, c.Name)
 	}
 	return append(out, CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations,
-		CacheVersionImages, CacheOfficialModels, CacheCreatorMemberships)
+		CacheVersionImages, CacheOfficialModels, CacheCreatorMemberships, CacheImageResources, CacheImageMeta)
 }
 
 // ProbeRequest is what the Node app posts at the start of a sampled request.
 type ProbeRequest struct {
-	// Input is the raw `input` query parameter, as in ShadowRequest.
+	// Input is the raw `input` query parameter, or a REST request's raw query string, as in
+	// ShadowRequest.
 	Input string `json:"input"`
+	// Path is a REST request's path, as in ShadowRequest (unused for tRPC).
+	Path string `json:"path,omitempty"`
 	// Headers are the request headers the page depends on, as in ShadowRequest.
 	Headers map[string]string `json:"headers"`
 	// StartedAt is when Node's route began handling the request, in epoch milliseconds (fractional).
@@ -162,16 +178,23 @@ type probeSpec struct {
 	run      func(s *Server, ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error
 }
 
-// probes is the registry, by procedure. A ported procedure plugs in with one entry (its endpoint
-// label and its run); ProbeEndpoints lists the labels for seeding.
 // ProbeEndpoints are the feed_endpoint labels the registered probes report under.
-var ProbeEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll}
+var ProbeEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll, EndpointV1Images}
 
+// ProbeV1Images is the probe registry's key for `GET /api/v1/images`: its probe path is
+// `/internal/probe/api/v1/images`.
+const ProbeV1Images = "api/v1/images"
+
+// probes is the registry, by procedure (or REST path without its leading slash). A ported endpoint
+// plugs in with one entry (its endpoint label and its run); ProbeEndpoints lists the labels for
+// seeding.
 var probes = map[string]probeSpec{
 	Procedure:         {endpoint: EndpointAsPosts, run: (*Server).probeAsPosts},
 	ProcedureInfinite: {endpoint: EndpointInfinite, run: (*Server).probeInfinite},
 	// model.getAll: every cache miss falls back, so the serving path itself is the probe.
 	ProcedureModelGetAll: {endpoint: EndpointModelGetAll, run: (*Server).probeModelGetAll},
+	// GET /api/v1/images: as model.getAll, the serving path itself is the probe.
+	ProbeV1Images: {endpoint: EndpointV1Images, run: (*Server).probeV1Images},
 }
 
 // probeAsPosts resolves an image.getImagesAsPostsInfinite page exactly as compute does — the same
@@ -223,6 +246,23 @@ func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hy
 		return err
 	}
 	_, err = modelfeed.Serve(ctx, s.Models, mreq)
+	return err
+}
+
+// probeV1Images runs `GET /api/v1/images`'s serving compute (v1ImagesCompute(true): the serve-only
+// checks, a session handed back, the port, the body and headers) under hydrate.WithPresence(rec):
+// misses Go computes are recorded on rec and never looked up; any other cache miss falls back, and its
+// reason is the presence answer. The feed service is asked for the page as serving asks (marked as
+// shadow traffic), and the replica reads for misses Go answers from the replica (basic users,
+// thumbnails, the gallery hold's lookups) run and are not counted. Its answer is discarded.
+func (s *Server) probeV1Images(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
+	ctx = hydrate.WithPresence(ctx, rec)
+	r, err := SyntheticV1Request(ctx, ShadowRequest{Input: req.Input, Path: req.Path, Headers: req.Headers})
+	if err != nil {
+		return err
+	}
+	c, err := s.v1ImagesCompute(true)(ctx, r)
+	c.release()
 	return err
 }
 

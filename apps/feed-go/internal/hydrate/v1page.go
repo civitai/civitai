@@ -26,8 +26,13 @@ type V1Page struct {
 // The lookups are then finished one after another in the order the endpoint reads them (the meta
 // last: Node reads it after getAllImages returns), so a page with several failures reports the same
 // (first) one, and each lookup's misses, staleness and fallbacks are its finish half's
-// (basicUsersFrom, thumbnailsFrom, metricsRead.result, imageResourcesFrom, imageMetasFrom).
+// (basicUsersFrom, thumbnailsFrom, metricsRead.result, imageResourcesFrom, imageMetasFrom). Under a
+// Go-first probe (WithPresence) each call counts as a page, and the misses Go computes (metric hashes,
+// image resources, image meta) are recorded instead of looked up.
 func (s *Sources) V1Page(ctx context.Context, req V1PageRequest) (*V1Page, error) {
+	if p := presenceOf(ctx); p != nil {
+		p.notePage()
+	}
 	users, images, videos := Unique(req.UserIDs), Unique(req.ImageIDs), Unique(req.VideoIDs)
 	var metas []int
 	if len(req.MetaIDs) > 0 {
@@ -54,7 +59,8 @@ func (s *Sources) V1Page(ctx context.Context, req V1PageRequest) (*V1Page, error
 	if out.Metrics, err = metrics.result(ctx, s); err != nil {
 		return nil, err
 	}
-	if out.Resources, err = imageResourcesFrom(images, resources.Entries()); err != nil {
+	resGot, resWritable := resources.read()
+	if out.Resources, err = s.imageResourcesFrom(ctx, images, resGot, resWritable); err != nil {
 		return nil, err
 	}
 	if len(metas) > 0 {

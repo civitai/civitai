@@ -81,6 +81,27 @@ type V1Answer struct {
 	Trivial bool
 }
 
+// RequestedLevel is handleImagesRequest's `browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag`: the
+// level the request asks for, before a restricted region clamps it or a gallery hold narrows it.
+func (in *V1Input) RequestedLevel() int {
+	switch {
+	case in.BrowsingLevel != nil:
+		return *in.BrowsingLevel
+	case in.Nsfw != nil:
+		return *in.Nsfw
+	}
+	return browsing.PublicLevels
+}
+
+// WithinSFW is handleImagesRequest's `withinSfw` over RequestedLevel: an integer from 0 to
+// sfwBrowsingLevelsFlag whose every bit is an SFW level. Outside it the handler answers
+// `Cache-Control: private, no-store` (the body depends on the caller's region, which a shared cache
+// does not key on).
+func (in *V1Input) WithinSFW() bool {
+	l := in.RequestedLevel()
+	return l >= 0 && l <= browsing.SFWLevels && l&browsing.SFWLevels == l
+}
+
 // ServeV1 is the `/api/v1/images` handler (handleImagesRequest) on the feed-service path
 // (runImageSearch → getImagesFromFeedServiceForRest), for the supported subset.
 func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
@@ -101,12 +122,7 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 		viewer = *req.Viewer
 	}
 
-	level := browsing.PublicLevels
-	if in.BrowsingLevel != nil {
-		level = *in.BrowsingLevel
-	} else if in.Nsfw != nil {
-		level = *in.Nsfw
-	}
+	level := in.RequestedLevel()
 	if req.RegionRestricted {
 		level = browsing.SFWLevels
 	}
