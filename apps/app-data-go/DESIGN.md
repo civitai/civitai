@@ -179,7 +179,10 @@ as a replay, so `exchange.BlockCache` sits in front of the block exchange:
   first"), so it never reaches the hub or spends this service's one exchange budget there, which its
   user exchanges share.
 - **Failed** (the hub unreachable, a `5xx`, a `429`, a timeout): forgotten, so a later read may try
-  again after the stream cooldown. The hub issued nothing, and gives back a claim it made (including
+  again after the stream cooldown. A `429` also holds back every exchange, user and block, for the
+  wait the hub named (the longest of `Retry-After` and the body's `rateLimit.retryAfterSeconds` or
+  `retry_after`, at least 1 s, at most 15 minutes): the budget is this client's, so no exchange
+  reaches the hub until the wait is over, and each one in it fails the same way. The hub issued nothing, and gives back a claim it made (including
   one whose replay-store write timed out). If this service timed out after the hub did issue, the
   retry is refused as a replay and remembered: that block token reads REST.
 - Entries are keyed by SHA-256 of the whole token, never by its `jti`: a token that merely reuses
