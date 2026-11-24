@@ -215,7 +215,7 @@ describe('the id table', () => {
   });
 
   it('a per-user cap is a registry entry OR a table row, never both (one place decides its class)', () => {
-    const registry = new Set(usageLimitDefs.map((def) => def.id));
+    const registry = new Set<string>(usageLimitDefs.map((def) => def.id));
     expect(Object.keys(APP_RATE_LIMITS).filter((id) => registry.has(id))).toEqual([]);
   });
 });
