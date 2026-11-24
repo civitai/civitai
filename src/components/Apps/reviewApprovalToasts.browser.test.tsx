@@ -85,7 +85,7 @@ describe('🔴 many decisions hold ONE toast, at the top — never one per appro
     enqueue(queue, 3);
     await queue.commitNow('req-1');
     queue.undo('req-2');
-    noteReviewDecision('rejected', queue);
+    noteReviewDecision('rejected', 'app-4 v1.0.0', queue);
     expect(held().map((n) => [n.id, n.position])).toEqual([['review-decisions', 'top-center']]);
     // No "Approved … Build started." or "Undone — …" toast of its own.
     expect(shown.map((n) => n.id)).toEqual(['review-decisions']);

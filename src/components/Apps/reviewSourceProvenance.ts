@@ -12,6 +12,7 @@
  */
 
 import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
+import { validateRepositoryUrl } from '~/server/schema/blocks/external-app.schema';
 
 export type ReviewProvenanceLine = {
   key: 'claimed' | 'actions-run';
@@ -46,28 +47,23 @@ function claimedValue(p: ReviewSourceProvenance): string {
  * labelled as the developer's claim and never as "verified" (that word belongs to the
  * GitHub-signed Actions run alone). The commit beside it is the client's claim, labelled so.
  *
- * 🔴 A LINK ONLY FOR `https:` ON A KNOWN CODE HOST. `javascript:`, `data:`, `http:`, a bare
- * `github.com/a/b`, credentials in the URL or any other host stay PLAIN TEXT. The host list is
- * the three public forges developers actually declare; a one-click link from a moderator's
- * session to an arbitrary author-chosen host is the affordance a hostile submission wants, and
- * any other host is still readable as text. The link text is the PARSED URL (`URL.href`), the
- * same string as the `href`, so what the moderator reads is where the click goes.
+ * 🔴 A LINK ONLY WHERE THE STORE WOULD LINK IT: `validateRepositoryUrl`, the same rule the server
+ * and the manifest editor run (https, no credentials, no port, an allowlisted forge host, exactly
+ * `/<owner>/<repo>`). Anything it refuses — `javascript:`, `http:`, a bare `github.com/a/b`,
+ * another host, a deep link — stays PLAIN TEXT as the developer wrote it. A linked value shows
+ * the canonical URL, the same string as its `href`, so what the moderator reads is where the
+ * click goes.
  */
 export const DECLARED_REPOSITORY_LABEL = 'Repository (declared by the developer, not checked)';
-export const DECLARED_REPOSITORY_HOSTS: ReadonlySet<string> = new Set([
-  'github.com',
-  'gitlab.com',
-  'codeberg.org',
-]);
 
 export type DeclaredRepository = {
-  /** What to show: the parsed URL when it links, else the value as the developer wrote it. */
+  /** What to show: the canonical URL when it links, else the value as the developer wrote it. */
   text: string;
-  /** Only set for an `https:` URL on a host in `DECLARED_REPOSITORY_HOSTS`. */
+  /** Only set when `validateRepositoryUrl` accepts the value. */
   href: string | null;
   /** The client-claimed commit, shortened; `null` when none was sent. */
   claimedCommit: string | null;
-  /** `<repo>/commit/<sha>`, only for a github.com `owner/repo` URL and a full 40-hex claim. */
+  /** `<repo>/commit/<sha>`, only for a github.com repository and a full 40-hex claim. */
   claimedCommitHref: string | null;
 };
 
@@ -76,32 +72,20 @@ export function declaredRepository(
   claimedCommit?: string | null
 ): DeclaredRepository | null {
   if (typeof repository !== 'string' || repository.trim() === '') return null;
-  const raw = repository.trim();
   const sha =
     typeof claimedCommit === 'string' && SHA_RE.test(claimedCommit) ? claimedCommit : null;
   const out: DeclaredRepository = {
-    text: raw,
+    text: repository.trim(),
     href: null,
     claimedCommit: sha ? sha.slice(0, 7) : null,
     claimedCommitHref: null,
   };
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return out;
-  }
-  if (url.protocol !== 'https:') return out;
-  if (url.username || url.password) return out;
-  const host = url.hostname.toLowerCase();
-  if (!DECLARED_REPOSITORY_HOSTS.has(host)) return out;
-  out.text = url.href;
-  out.href = url.href;
-  if (sha && host === 'github.com') {
-    const ownerRepo = url.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/, '');
-    if (REPOSITORY_RE.test(ownerRepo)) {
-      out.claimedCommitHref = `https://github.com/${ownerRepo}/commit/${sha}`;
-    }
+  const checked = validateRepositoryUrl(repository);
+  if (!checked.ok) return out;
+  out.text = checked.url;
+  out.href = checked.url;
+  if (sha && new URL(checked.url).hostname === 'github.com') {
+    out.claimedCommitHref = `${checked.url}/commit/${sha}`;
   }
   return out;
 }

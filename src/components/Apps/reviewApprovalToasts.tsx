@@ -81,10 +81,18 @@ export function reviewDecisionsSummary(t: { pending: number } & ReviewDecisionTa
 
 const isActive = (e: PendingApprovalEntry) => e.status === 'pending' || e.status === 'committing';
 
+/** The line under the headline naming the newest decision, so the toast says WHICH app. */
+export function reviewDecisionLine(kind: keyof ReviewDecisionTally, label: string): string {
+  if (kind === 'approved') return `Approved ${label}. Build started.`;
+  if (kind === 'rejected') return `Rejected ${label}.`;
+  return `Undone — ${label} was not approved.`;
+}
+
 /** The tally and the show/hide timing of ONE queue's decisions toast. */
 function createDecisionsToast(queue: PendingApprovalQueue) {
   const zero: ReviewDecisionTally = { approved: 0, rejected: 0, undone: 0 };
   let tally = zero;
+  let last: string | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((l) => l());
@@ -105,6 +113,7 @@ function createDecisionsToast(queue: PendingApprovalQueue) {
       };
     },
     getTally: () => tally,
+    getLast: () => last,
     /**
      * Show the toast if it is not up. A toast that is gone (hidden, or cleared by anything)
      * starts a fresh tally: the count is "since this toast appeared", never the whole session.
@@ -113,6 +122,7 @@ function createDecisionsToast(queue: PendingApprovalQueue) {
       clearHide();
       if (isShown()) return;
       tally = zero;
+      last = null;
       emit();
       showNotification({
         id: REVIEW_DECISIONS_TOAST_ID,
@@ -125,8 +135,9 @@ function createDecisionsToast(queue: PendingApprovalQueue) {
         message: <ReviewDecisionsToastBody queue={queue} toast={toast} />,
       });
     },
-    count(kind: keyof ReviewDecisionTally) {
+    count(kind: keyof ReviewDecisionTally, label: string) {
       tally = { ...tally, [kind]: tally[kind] + 1 };
+      last = reviewDecisionLine(kind, label);
       emit();
     },
     /** Hide the toast once nothing is pending, after a short linger; keep it while anything is. */
@@ -159,11 +170,12 @@ function decisionsToastFor(queue: PendingApprovalQueue): DecisionsToast {
  */
 export function noteReviewDecision(
   kind: 'approved' | 'rejected',
+  label: string,
   queue: PendingApprovalQueue = reviewApprovalQueue
 ) {
   const toast = decisionsToastFor(queue);
   toast.ensureShown();
-  toast.count(kind);
+  toast.count(kind, label);
   toast.settle();
 }
 
@@ -208,12 +220,18 @@ function ReviewDecisionsToastBody({
 }) {
   const entries = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
   const tally = useSyncExternalStore(toast.subscribe, toast.getTally, toast.getTally);
+  const last = useSyncExternalStore(toast.subscribe, toast.getLast, toast.getLast);
   const active = entries.filter(isActive);
   return (
     <Stack gap={8} data-testid="apps-review-decisions-toast">
       <Text size="sm" fw={600} data-testid="apps-review-decisions-summary">
         {reviewDecisionsSummary({ pending: active.length, ...tally })}
       </Text>
+      {last && (
+        <Text size="xs" c="dimmed" data-testid="apps-review-decisions-last">
+          {last}
+        </Text>
+      )}
       {active.map((e) => (
         <PendingApprovalCountdown
           key={e.id}
@@ -335,13 +353,13 @@ export function enqueueReviewApproval({
           autoClose: false,
         });
       } else {
-        toast.count('approved');
+        toast.count('approved', label);
       }
       toast.settle();
       void onCommitted?.();
     } else if (event.type === 'undone') {
       unsubscribe();
-      toast.count('undone');
+      toast.count('undone', label);
       toast.settle();
     } else if (event.type === 'failed') {
       unsubscribe();

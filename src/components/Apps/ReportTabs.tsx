@@ -359,7 +359,9 @@ export function FindingCard({
         <Group gap={6} wrap="nowrap" align="flex-start" justify="space-between">
           <Group gap={6} wrap="wrap" align="center" style={{ minWidth: 0, flex: 1 }}>
             <Badge size="sm" variant="light" color={severityColor(finding.severity)}>
-              {finding.severity ?? 'info'}
+              {/* Compact (Overview) lists an unrated finding rather than collapsing it with
+                  low/info, so it must not be badged "info" there. */}
+              {finding.severity ?? (compact ? 'unrated' : 'info')}
             </Badge>
             {!compact && finding.category && (
               <Badge size="sm" variant="outline" color="gray">

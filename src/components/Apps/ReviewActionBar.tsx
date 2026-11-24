@@ -176,14 +176,16 @@ export function ReviewActionBar({
     onSuccess: async (result) => {
       const lateHold = lateHoldNotice(request, result);
       if (lateHold) {
+        // Persistent, like the delayed path's notice: the request stays suspended.
         showErrorNotification({
           title: lateHold.title,
           error: new Error(lateHold.message),
           position: REVIEW_TOAST_POSITION,
+          autoClose: false,
         });
       } else {
         // Counted in the one decisions toast (`reviewApprovalToasts`), not a toast of its own.
-        noteReviewDecision('approved');
+        noteReviewDecision('approved', `${request.slug} v${request.version}`);
       }
       // A late hold leaves the request pending: the approve did not take.
       onStatusChange?.(lateHold ? 'error' : 'approved');
@@ -203,7 +205,7 @@ export function ReviewActionBar({
   });
   const rejectMut = trpc.blocks.rejectRequest.useMutation({
     onSuccess: async () => {
-      noteReviewDecision('rejected');
+      noteReviewDecision('rejected', `${request.slug} v${request.version}`);
       onStatusChange?.('rejected');
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listRejectedRequests.invalidate();

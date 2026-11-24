@@ -286,6 +286,10 @@ describe('"Approve & next" — the delayed commit, wired to the page', () => {
     await reviewApprovalQueue.commitNow(reqs[0].id);
     // req 2 and 3 are still pending, so the toast cannot leave while this is read.
     await expect.element(summary).toHaveTextContent('2 approvals pending · 1 approved');
+    // And it names WHICH app the newest decision was about.
+    await expect
+      .element(page.getByTestId('apps-review-decisions-last'))
+      .toHaveTextContent('Approved gen-matrix v0.2.0. Build started.');
     // ONE notification on screen — not a countdown toast per approval plus a "Build started"
     // toast per commit — and it sits at the top, away from the bar's Approve buttons.
     expect(document.querySelectorAll('.mantine-Notification-root')).toHaveLength(1);
@@ -293,7 +297,6 @@ describe('"Approve & next" — the delayed commit, wired to the page', () => {
       summary.element().closest('.mantine-Notifications-root')?.getAttribute('data-position')
     ).toBe('top-center');
     expect(page.getByTestId('apps-review-approve-countdown').elements()).toHaveLength(2);
-    expect(document.body.textContent ?? '').not.toContain('Build started');
   });
 
   test('🔴 the sticky bar reserves the viewport bottom for itself: bottom toasts sit above it', async () => {
@@ -546,6 +549,7 @@ describe('the header names what is under review', () => {
     ['github.com/dev-user/gen-matrix'],
     ['https://evil.example/dev-user/gen-matrix'],
     ['https://user:pw@github.com/dev-user/gen-matrix'],
+    ['https://github.com/login/oauth/authorize?client_id=x'],
   ])('🔴 %s is shown as text, never as a link', async (repository) => {
     renderPage(pendingRequest({ manifest: { name: 'Gen Matrix', repository } }));
     const line = page.getByTestId('apps-review-declared-repo');
