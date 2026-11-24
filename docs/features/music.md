@@ -135,6 +135,14 @@ whose `metadata.parentId` is the song) is deleted; any other linked image is lef
 hold is kept the way any image is: a child-safety case keeps and blocks it, and the moderator app's
 own holds refuse it and report it. A song a hold keeps keeps its cover.
 
+Replacing a cover (`setSongCover`) links the new one first, then deletes the old one through
+`deleteImages`, so an old cover under a hold is kept and blocked instead, and never shown again. The
+editor refreshes `image.getSongCovers` after the save. A player that still names the deleted cover
+(another tab, another viewer) shows the placeholder instead of a broken image (`SongArt`), and the
+detail backdrop keeps its colour wash alone, until its cover list refetches (at most
+`SONG_LIST_STALE_MS`, 5 minutes). A load error does not refetch: during a CDN outage every card would
+re-read the list at once.
+
 ## Playlists
 
 A playlist is a collection of type `Music` ("Playlist" in the UI). It holds songs only, as
