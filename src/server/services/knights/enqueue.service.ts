@@ -1,5 +1,5 @@
 import { sql, type Kysely } from 'kysely';
-import { readWithoutJit, servableImage } from '@civitai/db/knights';
+import { postHiddenFromKnights, readWithoutJit, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
@@ -137,7 +137,7 @@ export async function enqueueKnightsItems(
             still: row.type === 'image',
             servable: Boolean(row.servable),
             hasPost: row.postRowId !== null,
-            privatePost: row.availability === 'Private',
+            privatePost: postHiddenFromKnights(row.availability),
             publishesAt:
               row.publishedEpoch === null ? null : new Date(Number(row.publishedEpoch) * 1000),
           },

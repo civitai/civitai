@@ -106,9 +106,17 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     ),
   ]);
 
-/** The post is not Private. Unsearchable and EarlyAccess posts stay served, as the site serves them. */
+/** Post availabilities whose images Knights never shows. Unsearchable and EarlyAccess stay served, as the site serves them. */
+export const KNIGHTS_HIDDEN_POST_AVAILABILITIES = ['Private'] as const;
+
+/** `postNotPrivate` for a row already read: the same list, so the two cannot drift. */
+export const postHiddenFromKnights = (availability: string | null | undefined): boolean =>
+  availability != null &&
+  (KNIGHTS_HIDDEN_POST_AVAILABILITIES as readonly string[]).includes(availability);
+
+/** The post's availability is one Knights shows. */
 export const postNotPrivate = (eb: ExpressionBuilder<Joined, 'p'>) =>
-  eb('p.availability', '!=', 'Private');
+  eb('p.availability', 'not in', KNIGHTS_HIDDEN_POST_AVAILABILITIES);
 
 /**
  * Hides an image whose uploader is banned or muted, or whose post's model or version is not Published or is Private. Each

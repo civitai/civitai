@@ -2,6 +2,7 @@ import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import {
+  postHiddenFromKnights,
   readWithoutJit,
   REFERENCE_POOL,
   REFERENCE_SOURCE,
@@ -240,7 +241,7 @@ export async function unservableReason(
   if (!image.publishedAt || image.publishedAt > new Date()) {
     return `Image ${imageId} is not published, so Acolytes could not see it.`;
   }
-  if (image.availability === 'Private') {
+  if (postHiddenFromKnights(image.availability)) {
     return `Image ${imageId} is on a Private post, so Knights does not show it.`;
   }
   return `Image ${imageId} cannot be shown to Acolytes: it must be a rated image with no review hold.`;

@@ -10,10 +10,13 @@ import {
   type QueryResult,
 } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Availability } from '@civitai/db-schema/enums';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   closeYesNoItemRow,
   gradeKnightsVotes,
+  postHiddenFromKnights,
+  postNotPrivate,
   servableImage,
   servableImageForSweeps,
 } from './knights';
@@ -125,6 +128,34 @@ describe('servableImage', () => {
 
   it('keeps an image on a Private post for the sweeps, which must only hide it', async () => {
     expect(await servedBy(servableImageForSweeps)).toEqual([990000205, 990000206, 990000207]);
+  });
+
+  it('hides the same availabilities whether the rule runs in SQL or on a row already read', async () => {
+    const values = Object.values(Availability);
+    for (const [index, availability] of values.entries()) {
+      await pg.query(
+        `INSERT INTO "Post" (id, "publishedAt", availability) VALUES ($1, now() - interval '1 day', $2)`,
+        [100 + index, availability]
+      );
+      await pg.query(`INSERT INTO "Image" (id, "postId") VALUES ($1, $2)`, [
+        990000300 + index,
+        100 + index,
+      ]);
+    }
+    const shown = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select('p.availability')
+      .where('img.id', '>=', 990000300)
+      .where(postNotPrivate)
+      .orderBy('img.id')
+      .execute();
+
+    expect(shown.map((r) => r.availability)).toEqual(
+      values.filter((a) => !postHiddenFromKnights(a))
+    );
+    expect(values.filter(postHiddenFromKnights)).toEqual(['Private']);
+    await pg.exec(`DELETE FROM "Image" WHERE id >= 990000300; DELETE FROM "Post" WHERE id >= 100`);
   });
 
   // Moderation Lead ruling 2026-11-23 on the Knights exclusions: CSAM-listed or held, ToS-violating, deleted-uploader and
