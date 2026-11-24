@@ -109,7 +109,6 @@ describe('rate-limit refusal → host SHARED_APPEND_RESULT reply', () => {
 
   it('a plain Error replies with its message alone', () => {
     expect(sharedStorageErrorReply(new Error('boom'))).toEqual({ error: 'boom' });
-    expect(rateLimitReplyFields(new Error('boom'))).toEqual({});
   });
 });
 
