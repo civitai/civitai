@@ -1,0 +1,169 @@
+/**
+ * The song player every moderator song card shares: nothing plays until a moderator asks, one song
+ * plays at a time, and each song starts at the last volume chosen (kept in this browser).
+ *
+ * Each card owns its `<audio>` element and registers it here; the card forwards the element's `play`
+ * and `volumechange` events. `playSongAt` is how anything else on the page (a report's time chip)
+ * starts a card's song at a given time.
+ */
+
+/** What the player reads and drives of an `<audio>` element. */
+export type SongMedia = {
+  play(): Promise<void> | void;
+  pause(): void;
+  currentTime: number;
+  volume: number;
+  readonly paused: boolean;
+};
+
+export type VolumeStore = { read(): number | null; write(volume: number): void };
+
+/** Which card a song is on, where the same song shows twice (one card per report). */
+export type SongCardKey = string | number;
+
+type Entry = { media: SongMedia; cardKey?: SongCardKey };
+
+// Closer than this to the playhead, a seek-bar value is the bar echoing the playhead back.
+const SEEK_TOLERANCE_SEC = 0.5;
+
+/** Whether the seek bar's value is a move by the moderator rather than the bar following the song. */
+export const isSeek = (target: number, current: number) =>
+  Math.abs(target - current) >= SEEK_TOLERANCE_SEC;
+
+/** The `<audio>` events that start or end a load. */
+export type SongLoadEvent = 'play' | 'waiting' | 'playing' | 'canplay' | 'pause' | 'error';
+
+/**
+ * Whether a card's song is loading after `event`: from a play until it can play, and while it waits
+ * for data. A removed song from storage loads only once played, so without this the button would
+ * read Pause over a silent 0:00.
+ */
+export function songLoading(loading: boolean, event: SongLoadEvent): boolean {
+  if (event === 'play' || event === 'waiting') return true;
+  if (event === 'playing' || event === 'canplay' || event === 'pause' || event === 'error')
+    return false;
+  return loading;
+}
+
+let keySeq = 0;
+/** A key of its own for a card no caller named, so its controls drive that card and no other
+ *  showing the same song. */
+export const uniqueCardKey = (): SongCardKey => `song-card-${++keySeq}`;
+
+/**
+ * Whether a card's song goes on playing when its source is swapped (the CDN refused it, storage is
+ * next): only when the moderator asked for play and has not paused it since.
+ */
+export function createPlayIntent() {
+  let wanted = false;
+  return {
+    /** The play button or a lyric line. */
+    requested() {
+      wanted = true;
+    },
+    /** The element's `pause` event, which `ended` fires too. */
+    paused() {
+      wanted = false;
+    },
+    /** Read before the swap: removing the old element pauses it. */
+    resumeAfterSwap: () => wanted,
+  };
+}
+
+export function createSongPlayer(store: VolumeStore) {
+  const cards = new Map<number, Entry[]>();
+  let current: SongMedia | null = null;
+
+  /** Pauses whichever other song is playing. Call from the element's `play` event. */
+  function played(media: SongMedia) {
+    if (current && current !== media && !current.paused) current.pause();
+    current = media;
+  }
+
+  return {
+    /** A card's element, which takes the last volume and is never started here. Returns the
+     *  cleanup, which stops the song: a card that leaves the page takes its sound with it. */
+    register(imageId: number, media: SongMedia, cardKey?: SongCardKey): () => void {
+      const volume = store.read();
+      if (volume != null) media.volume = volume;
+      cards.set(imageId, [...(cards.get(imageId) ?? []), { media, cardKey }]);
+      return () => {
+        media.pause();
+        if (current === media) current = null;
+        const rest = (cards.get(imageId) ?? []).filter((entry) => entry.media !== media);
+        if (rest.length) cards.set(imageId, rest);
+        else cards.delete(imageId);
+      };
+    },
+    played,
+    /** Remembers the volume for the next song. Call from the element's `volumechange` event. */
+    volumeChanged(media: SongMedia) {
+      store.write(media.volume);
+    },
+    /**
+     * Starts song `imageId` at `seconds` on the card `cardKey` names, else on a card showing it: the
+     * one already playing it, else the first. False when no card on the page shows that song.
+     */
+    playAt(imageId: number, seconds: number, cardKey?: SongCardKey): boolean {
+      const shown = cards.get(imageId) ?? [];
+      const media = (
+        shown.find((entry) => cardKey != null && entry.cardKey === cardKey) ??
+        shown.find((entry) => entry.media === current) ??
+        shown[0]
+      )?.media;
+      if (!media) return false;
+      media.currentTime = Math.max(0, seconds);
+      played(media);
+      // A refused play (the file failed) is the card's to show, through the element's own events.
+      void Promise.resolve(media.play()).catch(() => undefined);
+      return true;
+    },
+  };
+}
+
+const VOLUME_KEY = 'moderator:song-volume';
+
+/** The volume in this browser's localStorage; nothing on the server or where storage is refused. */
+const localVolume: VolumeStore = {
+  read() {
+    try {
+      const raw = globalThis.localStorage?.getItem(VOLUME_KEY);
+      const volume = raw == null ? NaN : Number(raw);
+      return volume >= 0 && volume <= 1 ? volume : null;
+    } catch {
+      return null;
+    }
+  },
+  write(volume) {
+    try {
+      globalThis.localStorage?.setItem(VOLUME_KEY, String(volume));
+    } catch {
+      // Private mode or a full quota: the volume just is not remembered.
+    }
+  },
+};
+
+export const songPlayer = createSongPlayer(localVolume);
+
+/**
+ * Plays song `imageId` from `seconds` on its card on this page, pausing any other song. Pass the
+ * card's `cardKey` (the grid's item key, e.g. a report id) where the same song can show on more than
+ * one card. Returns false when no card on the page shows that song.
+ */
+export const playSongAt = (imageId: number, seconds: number, cardKey?: SongCardKey) =>
+  songPlayer.playAt(imageId, seconds, cardKey);
+
+/** The lyric line playing at `timeSec`: the last timed line that has started (`t` in ms), or -1. A
+ *  line without a time is never the playing one. */
+export function playingLyricIndex<L extends { t: number | null }>(
+  lines: readonly L[],
+  timeSec: number
+): number {
+  const ms = timeSec * 1000;
+  let playing = -1;
+  lines.forEach((line, i) => {
+    if (line.t != null && line.t <= ms && (playing === -1 || line.t >= lines[playing].t!))
+      playing = i;
+  });
+  return playing;
+}

@@ -6,9 +6,10 @@ import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
- * A song is published only by its own scan. A moderator's rating locks the level, and a locked level
- * counts as reviewed, so the rating writer refuses a song and writes nothing. A picture's rating is
- * covered in image-nsfw-level-models-reindex.test.ts. Pins the decision of PR #10162.
+ * A song is published only by its own scans. A moderator's rating locks the level, and a locked level
+ * counts as reviewed, so the rating writer refuses a song its scans have not yet given their verdict
+ * on (PR #10162), and rates one they have (Music T10, docs/features/music.md "Moderating songs"). A
+ * picture's rating is covered in image-nsfw-level-models-reindex.test.ts.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -49,12 +50,14 @@ CREATE TABLE "Image" (
   "postId" INTEGER,
   "metadata" JSONB NOT NULL DEFAULT '{}',
   "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
-  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
+  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
+  "ingestion" TEXT NOT NULL DEFAULT 'Scanned'
 );
 CREATE TABLE "ImageRatingRequest" ("imageId" INTEGER, "status" TEXT);
 `;
 
 const SONG = 990000101;
+const REVIEWED_SONG = 990000102;
 
 let db: PGlite;
 
@@ -72,7 +75,8 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`TRUNCATE "Image";
-    INSERT INTO "Image" ("id", "type") VALUES (${SONG}, 'audio');`);
+    INSERT INTO "Image" ("id", "type", "ingestion") VALUES (${SONG}, 'audio', 'Pending');
+    INSERT INTO "Image" ("id", "type", "ingestion", "postId") VALUES (${REVIEWED_SONG}, 'audio', 'Scanned', 7);`);
 });
 
 const row = async (id: number) =>
@@ -84,11 +88,69 @@ const row = async (id: number) =>
   ).rows[0];
 
 describe("a moderator's rating", () => {
-  it('refuses a song and writes nothing', async () => {
-    await expect(
-      updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 })
-    ).rejects.toBeInstanceOf(SongRatingRefusedError);
+  it('refuses a song its scans have not given their verdict on, and writes nothing', async () => {
+    for (const ingestion of ['Pending', 'Rescan', 'Error']) {
+      await db.query(`UPDATE "Image" SET "ingestion" = $1 WHERE id = $2`, [ingestion, SONG]);
+      const refusal = updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 });
+      await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
+      await expect(refusal).rejects.toThrow(/not been reviewed yet/);
+      expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
+    }
+  });
 
-    expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
+  it('refuses a removed song as removed, and writes nothing', async () => {
+    for (const ingestion of ['Blocked', 'NotFound']) {
+      await db.query(`UPDATE "Image" SET "ingestion" = $1 WHERE id = $2`, [ingestion, SONG]);
+      const refusal = updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 });
+      await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
+      await expect(refusal).rejects.toThrow("This song was removed, so it can't be rated.");
+      expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
+    }
+  });
+
+  it('refuses a song a rescan returned to Pending between the read and the write', async () => {
+    // Another writer commits between this writer's read and its UPDATE: the read saw Scanned.
+    let raced = false;
+    const racing = new Proxy(db, {
+      get(target, key) {
+        if (key === 'query')
+          return async (text: string, params?: unknown[]) => {
+            if (!raced && /^update "Image"/i.test(text.trim())) {
+              raced = true;
+              await target.query(`UPDATE "Image" SET "ingestion" = 'Pending' WHERE id = $1`, [
+                REVIEWED_SONG,
+              ]);
+            }
+            return target.query(text, params);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const before = dbHandle.current;
+    dbHandle.current = new Kysely({ dialect: pgliteDialect(racing) });
+    try {
+      const refusal = updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 1 });
+      await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
+      await expect(refusal).rejects.toThrow('This song changed while it was being rated. Reload.');
+    } finally {
+      dbHandle.current = before;
+    }
+    expect(raced).toBe(true);
+    expect(await row(REVIEWED_SONG)).toEqual({
+      nsfwLevel: 1,
+      nsfwLevelLocked: false,
+      metadata: {},
+    });
+  });
+
+  it('rates a song its own scans already reviewed, as it rates a picture', async () => {
+    await updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 1, reason: 'mod' });
+
+    expect(await row(REVIEWED_SONG)).toEqual({
+      nsfwLevel: 8,
+      nsfwLevelLocked: true,
+      metadata: { nsfwLevelReason: 'mod' },
+    });
   });
 });

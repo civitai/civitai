@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { heldImageSql, isNotHeldAnswer, playedFraction, WATCHED_FRACTION } from '../held-media';
+import {
+  heldImageSql,
+  heldMediaContentType,
+  isNotHeldAnswer,
+  playedFraction,
+  WATCHED_FRACTION,
+} from '../held-media';
 
 const answer = (status: number, headers: Record<string, string> = {}) => ({
   status,
@@ -82,5 +88,25 @@ describe('playedFraction', () => {
 
   it.each([NaN, Infinity, 0])('is 0 when the duration is %s', (duration) => {
     expect(playedFraction(video(duration, [[0, 100]]))).toBe(0);
+  });
+});
+
+describe('heldMediaContentType', () => {
+  it('serves a song as the audio type the store or the row names, so the player can play it', () => {
+    expect(heldMediaContentType('audio', ['audio/mpeg', null])).toBe('audio/mpeg');
+    expect(heldMediaContentType('audio', ['binary/octet-stream', 'audio/mpeg'])).toBe('audio/mpeg');
+  });
+
+  it('serves a song of any other type opaque, as before, never as svg or html', () => {
+    expect(heldMediaContentType('audio', ['text/html', 'image/svg+xml'])).toBe(
+      'application/octet-stream'
+    );
+  });
+
+  it('still serves images and videos only as their own whitelisted types', () => {
+    expect(heldMediaContentType('image', ['image/png'])).toBe('image/png');
+    expect(heldMediaContentType('image', ['audio/mpeg'])).toBe('application/octet-stream');
+    expect(heldMediaContentType('video', ['video/mp4'])).toBe('video/mp4');
+    expect(heldMediaContentType('video', ['audio/mpeg'])).toBeNull();
   });
 });

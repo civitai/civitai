@@ -9,8 +9,12 @@
 		class: className,
 		"aria-label": ariaLabel,
 		"aria-labelledby": ariaLabelledby,
+		trackClass,
 		...restProps
-	}: WithoutChildrenOrChild<SliderPrimitive.RootProps> = $props();
+	}: WithoutChildrenOrChild<SliderPrimitive.RootProps> & {
+		/** Classes for the track, e.g. a colour where the default `bg-muted` matches the surface. */
+		trackClass?: string;
+	} = $props();
 </script>
 
 <!--
@@ -34,7 +38,8 @@ bits-ui puts role="slider" on each thumb, not the root, so the accessible name g
 			data-orientation={orientation}
 			data-slot="slider-track"
 			class={cn(
-				"bg-muted relative grow overflow-hidden rounded-full data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-1.5"
+				"bg-muted relative grow overflow-hidden rounded-full data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-1.5",
+				trackClass
 			)}
 		>
 			<SliderPrimitive.Range

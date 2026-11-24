@@ -1,0 +1,214 @@
+import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
+import { removedKind, removedTitle, type RemovedState } from '$lib/image-review';
+
+/**
+ * Audio review (`/audio-review`): songs and their covers, on the shared triage shell. Only the
+ * Reported tab works today; Appeals, Held and Disputes are shown and arrive later on this page.
+ */
+export const AUDIO_TABS = ['reported', 'appeals', 'held', 'disputes'] as const;
+export type AudioTab = (typeof AUDIO_TABS)[number];
+export const DEFAULT_AUDIO_TAB: AudioTab = 'reported';
+
+export const AUDIO_TAB_LABELS: Record<AudioTab, string> = {
+  reported: 'Reported',
+  appeals: 'Appeals',
+  held: 'Held',
+  disputes: 'Disputes',
+};
+
+/** The tabs that work on this page; the rest render disabled. */
+export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported'];
+
+export const REPORTED_SORTS = ['oldest', 'newest', 'most'] as const;
+export type ReportedSort = (typeof REPORTED_SORTS)[number];
+export const REPORTED_SORT_LABELS: Record<ReportedSort, string> = {
+  oldest: 'Oldest first',
+  newest: 'Newest first',
+  most: 'Most reports',
+};
+
+export const REPORTED_FILTERS = ['all', 'timed', 'many'] as const;
+export type ReportedFilter = (typeof REPORTED_FILTERS)[number];
+export const REPORTED_FILTER_LABELS: Record<ReportedFilter, string> = {
+  all: 'All',
+  timed: 'Has a time',
+  many: '3+ reports',
+};
+/** A song with at least this many reporters is in the "3+ reports" chip. */
+export const MANY_REPORTS = 3;
+
+/** The levels a moderator may give a song here: PG to XXX. Removal is its own decision, and the
+ *  Minor and POI flags do not apply to songs. */
+export const SONG_RATING_LEVELS = browsingLevels;
+export const isSongRatingLevel = (level: number) =>
+  (SONG_RATING_LEVELS as readonly number[]).includes(level);
+export const songRatingLabel = (level: number) => getBrowsingLevelLabel(level);
+
+/**
+ * The time in the song a report points at, in seconds, or null. `Report.details.timestampSec` is
+ * written by the main app's song report form; older reports and reports on anything else have none,
+ * and a malformed value reads as none.
+ */
+export function reportTimeSec(details: unknown): number | null {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const raw = (details as Record<string, unknown>).timestampSec;
+  const value = typeof raw === 'string' && raw.trim() ? Number(raw) : raw;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** One report on a song, as the queue shows it. */
+export type SongReport = {
+  id: number;
+  reason: string;
+  /** The violation or stated reason the reporter picked (`reportReasonLabel`). */
+  label: string;
+  /** The reporter's own words. */
+  comment: string | null;
+  timeSec: number | null;
+  createdAt: Date;
+  reporter: { id: number; username: string | null };
+  /** Others merged into this report (`alsoReportedBy`). */
+  also: number;
+};
+
+/** A song with pending reports: one row per song, its reports gathered under it. */
+export type ReportedSongRow = {
+  id: number;
+  /** Withheld from this moderator by the media access rule: no title, media, cover, owner or report
+   *  text, only the id and what is waiting. */
+  withheld: boolean;
+  title: string | null;
+  /** The song's storage key; null when withheld. */
+  url: string | null;
+  coverUrl: string | null;
+  /** Null when withheld. */
+  nsfwLevel: number | null;
+  /** Removed (`ingestion` Blocked); kept on a withheld song for its Removed chip. */
+  removed: boolean;
+  /** How it was removed, which decides what a verdict does to it; null when live or withheld. */
+  removal: RemovedState | null;
+  owner: { id: number; username: string | null } | null;
+  /** When the oldest pending report was filed. */
+  waitingSince: Date;
+  /** Reporters, merged ones included. */
+  reportCount: number;
+  reports: SongReport[];
+};
+
+/** Labels of a song's reports, most common first, without repeats. */
+export function songReportReasons(reports: readonly Pick<SongReport, 'label' | 'also'>[]) {
+  const tally = new Map<string, number>();
+  for (const r of reports) tally.set(r.label, (tally.get(r.label) ?? 0) + 1 + r.also);
+  return [...tally].sort((a, b) => b[1] - a[1]).map(([label]) => label);
+}
+
+/** The decisions in key order: 1 Dismiss reports, 2 Remove song, 3 Remove cover, 4 Set rating. */
+export const REPORTED_DECISIONS = ['dismiss', 'remove', 'removeCover', 'rate'] as const;
+
+type DecisionRow = Pick<ReportedSongRow, 'withheld' | 'removed' | 'removal'>;
+const SONG_VERBS = { restore: 'Restore and dismiss', remove: 'Remove song' };
+
+/**
+ * Which decision keys a song takes, as Image reports rules on a removed image: a live song takes
+ * Dismiss, Remove and Set rating; a rule-blocked or otherwise blocked one is restored by its
+ * dismissal and can be made a moderator removal; a moderator-removed one can only have its reports
+ * closed; one removed for CSAM, or under CSAM review, takes nothing here. A withheld song takes
+ * nothing, and Remove cover is not built on this page yet.
+ */
+export function reportedDecisionsEnabled(row: DecisionRow, canAct: boolean): boolean[] {
+  if (!canAct || row.withheld) return REPORTED_DECISIONS.map(() => false);
+  if (!row.removed || !row.removal) return [true, true, false, true];
+  switch (removedKind(row.removal)) {
+    case 'rule':
+    case 'other':
+      return [true, true, false, false];
+    case 'moderator':
+      return [true, false, false, false];
+    default:
+      return [false, false, false, false];
+  }
+}
+
+/** Key 1's label and the outcome it shows once pressed. */
+export function dismissDecision(row: DecisionRow): { label: string; outcome: string } {
+  const kind = row.removed && row.removal ? removedKind(row.removal) : null;
+  if (kind === 'rule' || kind === 'other')
+    return { label: 'Restore and dismiss', outcome: 'Restored, reports dismissed' };
+  if (kind === 'moderator') return { label: 'Close reports', outcome: 'Closed: already removed' };
+  return { label: 'Dismiss reports', outcome: 'Reports dismissed' };
+}
+
+/** The Removed chip's tooltip, in this page's verbs. */
+export const songRemovedTitle = (row: DecisionRow) =>
+  row.removal ? removedTitle(row.removal, SONG_VERBS) : 'Removed';
+
+/** What a decided song shows: the writer's own word when it did something other than asked (a
+ *  removal held for a second moderator, reports closed on a song already removed). */
+export function reportedOutcome(
+  result: { type: string; data?: Record<string, unknown> },
+  outcome: string
+): string {
+  if (result.type !== 'success') return outcome;
+  if (typeof result.data?.held === 'string') return result.data.held;
+  if (result.data?.alreadyRemoved) return 'Closed: already removed';
+  return outcome;
+}
+
+/** The rating keys while the picker is open: every level the song can be given but the one it has. */
+export const ratingKeysEnabled = (current: number | null, canRate: boolean) =>
+  SONG_RATING_LEVELS.map((level) => canRate && level !== current);
+
+/** How a lyrics source reads on the generation card. */
+export const LYRICS_SOURCE_LABELS: Record<string, string> = {
+  generator: 'Generated with the song',
+  user: 'Written by the owner',
+  aligned: 'Timed to the audio',
+  transcribed: 'Transcribed from the audio',
+};
+
+/** A scan's state as a pill: what it decided, never why. */
+export type CheckState = 'passed' | 'blocked' | 'held' | 'pending' | 'failed';
+
+/** The pill for a song or cover from its `ingestion`, `needsReview` and `blockedFor`. */
+export function checkState(media: {
+  ingestion: string;
+  needsReview: string | null;
+  blockedFor: string | null;
+}): CheckState {
+  if (media.ingestion === 'Blocked' || media.blockedFor) return 'blocked';
+  if (media.needsReview) return 'held';
+  if (media.ingestion === 'Scanned') return 'passed';
+  if (media.ingestion === 'Error' || media.ingestion === 'NotFound') return 'failed';
+  return 'pending';
+}
+
+/** What the open song's side cards show, beyond its row. `/audio-review/details/[imageId]`. */
+export type SongDetails = {
+  facts: {
+    durationSec: number | null;
+    genre: string | null;
+    postId: number | null;
+    postedAt: Date | null;
+    allowRemix: boolean;
+  };
+  checks: { song: CheckState; cover: CheckState | null };
+  cover: { id: number; url: string | null; nsfwLevel: number; shown: boolean } | null;
+  generation: {
+    model: string | null;
+    seed: string | null;
+    prompt: string | null;
+    musicDescription: string | null;
+    lyricsSource: string | null;
+  };
+  owner: {
+    id: number;
+    username: string | null;
+    createdAt: Date | null;
+    removedSongs: number;
+    strikes: number;
+    /** Their other songs with a pending report. */
+    otherReported: number;
+  } | null;
+};
+
+export const songDetailsUrl = (imageId: number) => `/audio-review/details/${imageId}`;

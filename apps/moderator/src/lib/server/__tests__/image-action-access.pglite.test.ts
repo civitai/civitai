@@ -78,7 +78,10 @@ vi.mock('../image-moderation.service', async (importOriginal) => ({
   resolveImageAppeal,
   sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
-vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
+vi.mock('../image-nsfw-level', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../image-nsfw-level')>()),
+  updateImageNsfwLevel,
+}));
 const { resolveIngestionError, ruleOnInquisitorItem } = vi.hoisted(() => ({
   resolveIngestionError: vi.fn(async (_input: unknown) => undefined),
   ruleOnInquisitorItem: vi.fn(async (..._args: unknown[]) => ({ ok: true as const })),
@@ -122,6 +125,7 @@ const userLookupPage = await import('../../../routes/retool/user-lookup/[section
 const ingestionPage = await import('../../../routes/images/ingestion-errors/+page.server');
 const inquisitorPage = await import('../../../routes/knights-of-new-order/inquisitor/+page.server');
 const { getImageLookup } = await import('../image-lookup.service');
+const { SongRatingRefusedError } = await import('../image-nsfw-level');
 const reRemovalsPage = await import('../../../routes/images/re-removals/+page.server');
 
 // A routine block reason, kept by the other row on its url, which has not finished its scan.
@@ -419,6 +423,33 @@ describe("the image queues' flag and rating actions", () => {
       event(WITH_GRANT, { imageIds: String(WITHHELD), nsfwLevel: '1' })
     );
     expect(updateImageNsfwLevel).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the image queues' rating action on a song (Music T10)", () => {
+  type Refusal = { status?: number; data?: { error: string; ratedImageId?: number } };
+
+  it('names the one card it refused, so the card shows the refusal, not the page', async () => {
+    updateImageNsfwLevel.mockRejectedValueOnce(new SongRatingRefusedError(504, 'unreviewed'));
+    const result = (await queuePage.actions.setRating(
+      event(WITH_GRANT, { imageIds: '504', nsfwLevel: '1' })
+    )) as Refusal;
+    expect(result.status).toBe(409);
+    expect(result.data).toEqual({
+      error: new SongRatingRefusedError(504, 'unreviewed').message,
+      ratedImageId: 504,
+    });
+  });
+
+  it('names no card for a refused batch, which the page reports', async () => {
+    updateImageNsfwLevel
+      .mockRejectedValueOnce(new SongRatingRefusedError(504, 'unreviewed'))
+      .mockRejectedValueOnce(new SongRatingRefusedError(502, 'unreviewed'));
+    const result = (await queuePage.actions.setRating(
+      event(WITH_GRANT, { imageIds: '504,502', nsfwLevel: '1' })
+    )) as Refusal;
+    expect(result.status).toBe(409);
+    expect(result.data?.ratedImageId).toBeUndefined();
   });
 });
 

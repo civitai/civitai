@@ -5,11 +5,15 @@ import {
   parseRemovedAppealRuling,
   resolveRemovedAppeal,
 } from '$lib/server/removed-appeals.service';
+import { withheldImageIds } from '$lib/server/retracted-media';
 
 const LIMIT = 100;
 
-export const load: PageServerLoad = async () => {
-  const { items, hasMore } = await getRemovedAppeals({ limit: LIMIT });
+export const load: PageServerLoad = async ({ locals }) => {
+  const { items, hasMore } = await getRemovedAppeals({
+    limit: LIMIT,
+    withheld: (ids) => withheldImageIds(locals.user, ids),
+  });
   return { items, hasMore, limit: LIMIT };
 };
 
