@@ -18,7 +18,7 @@ import {
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { holdsCsamReview } from './held-media';
-import { APPEAL_RULING_REFUSED, SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
+import { WITHHELD_REFUSED, SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
 import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
@@ -100,10 +100,8 @@ type AccessRow = ScannerRow & {
 };
 
 /**
- * Which of `rows` a moderator without `csamReview` may see: the one decision behind
- * `readRetractedMedia` and `restrictedImageIds`. A row Postgres refuses (`restricted`, a `blockedFor`
- * signal) is not read from the scanner; the rest go to `retractedViewable`, with `readVerdicts` for
- * the rows and one scanner read for their url siblings. A verdict that could not be read refuses.
+ * Which of `rows` a moderator without `csamReview` may see. A row Postgres refuses (`restricted`, a
+ * `blockedFor` signal) is not read from the scanner; a verdict that could not be read refuses.
  */
 async function viewableToNonGrant(
   rows: AccessRow[],
@@ -238,7 +236,7 @@ export async function withheldRefusal(user: App.Locals['user'] | undefined, imag
     });
     return `${SCANNER_UNAVAILABLE_REFUSED} Nothing was changed: ${withheld.join(', ')}.`;
   }
-  return `${APPEAL_RULING_REFUSED} Nothing was changed: ${withheld.join(', ')}.`;
+  return `${WITHHELD_REFUSED} Nothing was changed: ${withheld.join(', ')}.`;
 }
 
 /** The most images of one account `withheldAccountRefusal` reads; an account with more is refused
@@ -257,7 +255,7 @@ export async function withheldAccountRefusal(user: App.Locals['user'] | undefine
     .limit(ACCOUNT_CHECK_CAP + 1)
     .execute();
   if (rows.length > ACCOUNT_CHECK_CAP)
-    return `${APPEAL_RULING_REFUSED} This account has too many images to check — nothing was changed.`;
+    return `${WITHHELD_REFUSED} This account has too many images to check — nothing was changed.`;
   return withheldRefusal(
     user,
     rows.map((r) => r.id)

@@ -224,7 +224,7 @@ export async function getInquisitorQueue(
         !viewable.has(item.imageId) && !eligible.has(item.imageId) && item.ingestion !== 'Blocked'
     )
     .map((item) => item.imageId);
-  // A read that fails withholds them all, as `retractedMediaFor` does.
+  // A failed read withholds every row it was asked about.
   const withheld = await restrictedImageIds(cdnIds, { csamReview }).catch(() => new Set(cdnIds));
 
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {

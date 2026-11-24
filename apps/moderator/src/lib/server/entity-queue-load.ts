@@ -578,7 +578,6 @@ function itemEvidence(
   imgPage: number,
   cursor: TranscriptCursor
 ) {
-  // Each image batch is sent as the media access rule lets this moderator see it.
   const csamReview = holdsCsamReview(locals.user);
   switch (type) {
     case 'article':

@@ -172,7 +172,6 @@ export async function getImageLookup(
 ): Promise<ImageLookupResult | null> {
   const found = await getImage(imageId);
   if (!found) return null;
-  // Withheld: no media, and nothing that says why (as the appeal cards).
   if ((await restrictedImageIds([imageId], { csamReview })).has(imageId)) {
     const [reactions, appeals] = await Promise.all([
       getReactions(imageId),
@@ -232,8 +231,6 @@ export type PostDetail = {
   availability: string;
   modelVersionId: number | null;
 };
-
-/** What a withheld image is served with in place of its media. */
 
 export type PostLookupResult = {
   post: PostDetail;

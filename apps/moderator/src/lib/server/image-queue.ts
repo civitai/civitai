@@ -4,7 +4,7 @@ import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { holdsCsamReview } from '$lib/server/held-media';
-import { APPEAL_RULING_REFUSED } from '$lib/held-media';
+import { WITHHELD_REFUSED } from '$lib/held-media';
 import {
   withheldAccountRefusal,
   withheldImageIds,
@@ -481,7 +481,7 @@ export const imageQueueActions = {
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
     if ((await withheldImageIds(locals.user, [imageId])).length)
-      return fail(403, { error: APPEAL_RULING_REFUSED, imageId });
+      return fail(403, { error: WITHHELD_REFUSED, imageId });
 
     let closed;
     try {
@@ -756,7 +756,7 @@ export const imageQueueActions = {
     const kept = await withheldImageIds(locals.user, imageIds);
     if (kept.length)
       return fail(403, {
-        error: `${APPEAL_RULING_REFUSED} Nothing was resolved: ${kept.join(', ')}.`,
+        error: `${WITHHELD_REFUSED} Nothing was resolved: ${kept.join(', ')}.`,
       });
     const refused: number[] = [];
     const closed = await Promise.all(

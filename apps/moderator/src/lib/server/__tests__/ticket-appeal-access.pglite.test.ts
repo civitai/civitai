@@ -32,7 +32,7 @@ vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 const { ticketAppealDeps } = await import('../tickets/appeal-actions');
 const { createTicketAppealActions } = await import('../tickets/appeal-write');
 const { applyGrants, SUPER_ROLE } = await import('../access');
-const { APPEAL_RULING_REFUSED } = await import('$lib/held-media');
+const { WITHHELD_REFUSED } = await import('$lib/held-media');
 
 const OWNER = 7;
 const WITHHELD = 301;
@@ -104,7 +104,7 @@ describe('ticket appeal ruling on a withheld image', () => {
     async (status) => {
       const result = await rule(WITHOUT_GRANT, status);
 
-      expect(result).toMatchObject({ status: 403, data: { error: APPEAL_RULING_REFUSED } });
+      expect(result).toMatchObject({ status: 403, data: { error: WITHHELD_REFUSED } });
       expect(resolve).not.toHaveBeenCalled();
     }
   );

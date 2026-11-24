@@ -612,7 +612,6 @@ export type AppealImageItem = {
 };
 
 // needsReview='appeal' with no ingestion gate — blocked images stay visible so they can be appealed.
-// A row `restrictedImageIds` keeps from this moderator stays listed, with no media.
 export async function getAppealImageQueue({
   browsingLevel,
   cursor,

@@ -15,7 +15,7 @@
   import QueueSelectionBar from './QueueSelectionBar.svelte';
   import ReviewActions from './ReviewActions.svelte';
   import AppealActions from './AppealActions.svelte';
-  import { APPEAL_RULING_REFUSED } from '$lib/held-media';
+  import { WITHHELD_REFUSED } from '$lib/held-media';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
@@ -532,7 +532,7 @@
         {/if}
       </div>
       {#if item.restricted}
-        <p class="text-xs text-dark-2">{APPEAL_RULING_REFUSED}</p>
+        <p class="text-xs text-dark-2">{WITHHELD_REFUSED}</p>
       {:else}
         <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
       {/if}

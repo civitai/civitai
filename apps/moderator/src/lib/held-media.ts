@@ -10,7 +10,7 @@ export const RETRACTED_REFUSED =
 
 /** The refusal shown, and returned by image actions, when the image is withheld from this
  *  moderator. Names no reason. */
-export const APPEAL_RULING_REFUSED = 'Not ruled on here. Ask a lead.';
+export const WITHHELD_REFUSED = 'Not ruled on here. Ask a lead.';
 export const SCANNER_UNAVAILABLE_REFUSED =
   'The scanner is unavailable: try again, or ask a CSAM reviewer.';
 

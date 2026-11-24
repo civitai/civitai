@@ -2,7 +2,7 @@ import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
 import { AppealRestoreRefusedError, APPEAL_RESTORE_REFUSED } from '../image-moderation.service';
-import { APPEAL_RULING_REFUSED } from '$lib/held-media';
+import { WITHHELD_REFUSED } from '$lib/held-media';
 import { classifyAppeal } from '$lib/tickets/appeals';
 import {
   NOT_PERMITTED,
@@ -98,7 +98,7 @@ export function createTicketAppealActions(deps: AppealWriteDeps) {
           error: 'That image is no longer in the appeals queue — nothing was changed.',
         });
       if (await deps.withheld(event.locals.user, appeal.entityId))
-        return fail(403, { error: APPEAL_RULING_REFUSED });
+        return fail(403, { error: WITHHELD_REFUSED });
 
       const reason = deps.parseReason(ok.form, input.status);
       if (typeof reason === 'string') return fail(400, { error: reason });
