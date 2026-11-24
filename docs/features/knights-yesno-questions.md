@@ -29,6 +29,13 @@ Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `s
 escalation and settle sweeps never touch it (it has no `expiresAt`; its own stage escalation is below). Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
+"Not sure" answers are stored in `KnightsUnsure` (migration `20271128120100_knights_unsure`, by hand, then SELECT and INSERT for
+Knights' database role plus USAGE on `KnightsUnsure_id_seq`, before deploying): one row per player and question (`itemId`, or
+`yesNoReferenceId` for an Acolyte practice pair), with the question key and image as a snapshot and no foreign keys, so a count
+outlives the item. It is never a vote and nothing is paid, graded or decided from it. Count per question with
+`SELECT "itemId", count(*) FROM "KnightsUnsure" GROUP BY 1`. It lives in Postgres rather than ClickHouse because the game reads it
+back (an Acolyte pair answered "Not sure" is not dealt again).
+
 ## Import
 
 The CSV comes from the question producer (an offline pipeline that proposes the questions); it is not in this repository, and no real file is ever committed. Save it anywhere and pass its path. The header row names the columns; order does not matter and extra columns are ignored.
@@ -196,7 +203,7 @@ and whichever side rules first takes it out of the other's queue. Off unless the
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
 any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. On a question, Skip is a "Not sure" answer pill (Space, the same `?/skip`
-action: no pay, no smite); ratings keep Skip. A run of questions opens with "Question time" and ends with a "Questions done"
+action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. A run of questions opens with "Question time" and ends with a "Questions done"
 banner ([motion](knights-motion-and-sound.md)). A hidden check is rolled only on a rating slot, at its own rate
 (`KNIGHTS_HIDDEN_CHECK_RATE`).
 

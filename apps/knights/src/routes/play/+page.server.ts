@@ -47,6 +47,7 @@ import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { castYesNoVote } from '$lib/server/yesno/vote';
+import { recordUnsure } from '$lib/server/yesno/unsure';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
 import { crossedMilestone } from '$lib/server/apprenticeship/standing';
 import { acolyteLevelGoldSince } from '$lib/server/apprenticeship/level-gold';
@@ -448,7 +449,10 @@ export const actions: Actions = {
       skipRefused('bad-token');
       return fail(400, { message: 'That one cannot be skipped.' });
     }
-    await recordSkip(skipStore, locals.user.id, ref, queueDeps.now());
+    const now = queueDeps.now();
+    await recordSkip(skipStore, locals.user.id, ref, now);
+    // On a question the skip is the "Not sure" answer, counted per question; the reply stays the same for every kind.
+    if (ref.kind === 'yesno') await recordUnsure(db, { playerId: locals.user.id, itemId: ref.id, now });
     return { success: true };
   },
 

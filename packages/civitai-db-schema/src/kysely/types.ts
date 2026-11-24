@@ -4136,6 +4136,15 @@ export type KnightsShopPurchase = {
   lastAttemptAt: Timestamp | null;
   grantedAt: Timestamp | null;
 };
+export type KnightsUnsure = {
+  id: Generated<string>;
+  playerId: number;
+  itemId: number | null;
+  yesNoReferenceId: number | null;
+  questionKey: string;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type KnightsVote = {
   itemId: number;
   playerId: number;
@@ -7357,6 +7366,7 @@ export type DB = {
   KnightsShopItem: KnightsShopItem;
   KnightsShopItemChange: KnightsShopItemChange;
   KnightsShopPurchase: KnightsShopPurchase;
+  KnightsUnsure: KnightsUnsure;
   KnightsVote: KnightsVote;
   KnightsYesNoReference: KnightsYesNoReference;
   Leaderboard: Leaderboard;

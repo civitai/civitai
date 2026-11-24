@@ -5322,6 +5322,16 @@ export interface KnightsPlayer {
   hiddenTagGroups: string[];
 }
 
+export interface KnightsUnsure {
+  id: bigint;
+  playerId: number;
+  itemId: number | null;
+  yesNoReferenceId: number | null;
+  questionKey: string;
+  imageId: number;
+  createdAt: Date;
+}
+
 export interface KnightsLegacyPlayerDay {
   playerId: number;
   day: Date;
