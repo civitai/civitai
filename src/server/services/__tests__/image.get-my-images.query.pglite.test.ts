@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 // getMyImages with a typed query (the showcase picker's search), run against real Postgres (PGlite):
@@ -27,6 +30,7 @@ const UNRELATED = 5;
 const DISABLED_POST_TAG_ONLY = 6;
 const DISABLED_TAG_POST = 1003;
 const OTHER_USERS_MATCH = 9;
+const OTHER_USERS_SFW_MATCH = 8;
 
 const SCHEMA = `
   CREATE TYPE "ImageIngestionStatus" AS ENUM
@@ -64,6 +68,9 @@ beforeAll(async () => {
       (${UNRELATED}, ${OWNER}, ${PLAIN_POST}, 'image', '{"prompt": "sunset"}'),
       (${DISABLED_POST_TAG_ONLY}, ${OWNER}, ${DISABLED_TAG_POST}, 'image', NULL),
       (${OTHER_USERS_MATCH}, ${OTHER_USER}, ${OTHER_USERS_POST}, 'image', '{"prompt": "kuro"}');
+    UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = ${OTHER_USERS_MATCH};
+    INSERT INTO "Image" (id, "userId", "postId", type, meta) VALUES
+      (${OTHER_USERS_SFW_MATCH}, ${OTHER_USER}, ${OTHER_USERS_POST}, 'image', '{"prompt": "kuro"}');
     INSERT INTO "TagsOnPost" VALUES
       (${TAGGED_POST}, ${KURO_TAG}, false),
       (${DISABLED_TAG_POST}, ${KURO_TAG}, true),
@@ -97,8 +104,22 @@ describe('getMyImages: a typed query', () => {
 
   // The other user's image matches on every field the query reads.
   it('never returns another user’s media', async () => {
-    expect(await search('kuro', OTHER_USER)).toEqual([OTHER_USERS_MATCH]);
+    expect(await search('kuro', OTHER_USER)).toEqual([OTHER_USERS_SFW_MATCH, OTHER_USERS_MATCH]);
     expect(await search('kuro')).not.toContain(OTHER_USERS_MATCH);
+    expect(await search('kuro')).not.toContain(OTHER_USERS_SFW_MATCH);
+  });
+
+  // The ids only narrow the list: the request's level cap still applies to what they match.
+  it('leaves a match above the request’s level cap out', async () => {
+    const { items } = await getMyImages({
+      userId: OTHER_USER,
+      query: 'kuro',
+      publishedOnly: true,
+      servableLevels: sfwBrowsingLevelsFlag,
+      mediaTypes: [MediaType.image],
+      limit: 10,
+    });
+    expect(items.map((i) => i.id)).toEqual([OTHER_USERS_SFW_MATCH]);
   });
 
   it('reads LIKE wildcards in the query as text', async () => {

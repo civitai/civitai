@@ -401,7 +401,6 @@ type QuickSearchDropdownContentProps<TIndex extends SearchIndexKey> = QuickSearc
   carriedSearchText: React.MutableRefObject<string>;
 };
 
-// The owner picker pages on scroll; every other search shows its first page.
 function QuickSearchDropdownContent<TIndex extends SearchIndexKey>(
   props: QuickSearchDropdownContentProps<TIndex>
 ) {

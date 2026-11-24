@@ -8139,7 +8139,7 @@ async function getOwnMediaIdsMatching({
   const pattern = ilikeContains(query);
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     WITH recent AS (
-      SELECT i.id, i."postId", i.meta
+      SELECT i.id, i."postId", i.meta->>'prompt' AS prompt
       FROM "Image" i
       WHERE i."userId" = ${userId}
         AND i.type = ANY(${types}::"MediaType"[])
@@ -8150,7 +8150,7 @@ async function getOwnMediaIdsMatching({
     SELECT r.id
     FROM recent r
     LEFT JOIN "Post" p ON p.id = r."postId"
-    WHERE r.meta->>'prompt' ILIKE ${pattern}
+    WHERE r.prompt ILIKE ${pattern}
       OR p.title ILIKE ${pattern}
       OR EXISTS (
         SELECT 1 FROM "TagsOnPost" top JOIN "Tag" t ON t.id = top."tagId"

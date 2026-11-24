@@ -298,6 +298,7 @@ export function createOwnerImageSearch({
   /** The caller, whose images these are: that query's rows carry no `user`. */
   getUser?: () => OwnerImageUser | undefined;
 } = {}) {
+  // Not createOffsetPager: its fallback for an unfetched page is an offset, and this cursor is an image id.
   const cursors = new Map<string, number>();
   return async function searchOwnerImages(indexName: string, params: RequestParams) {
     const empty = emptyResult(indexName, params);
