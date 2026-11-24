@@ -420,6 +420,41 @@ describe('a clone of a system block', () => {
     expect(state.sharedCalls).toEqual([BLOCK_ID]);
   });
 
+  // The home page reads a clone by its system block's id (homeBlockContentId): that read must
+  // answer the same collection, as shared, as the clone's own. An invariant guard: it held before.
+  it("read by its system block's id, answers what its own id does, from the shared entry", async () => {
+    seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Model' }, BLOCK_OWNER);
+    getHomeBlockRow.mockImplementation(async (_db: unknown, id: number) =>
+      id === BLOCK_ID
+        ? cloneRow({})
+        : id === SYSTEM_BLOCK_ID
+        ? {
+            id,
+            type: HomeBlockType.Collection,
+            userId: -1,
+            sourceId: null,
+            metadata: { collection: { id: COLLECTION_ID } },
+          }
+        : undefined
+    );
+    dbMock.dbRead.homeBlock.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.homeBlock.findFirst.mockResolvedValue({
+      metadata: { collection: { id: COLLECTION_ID } },
+    } as never);
+    const byClone = ctxFor(STRANGER);
+    const bySource = ctxFor(STRANGER);
+    const own = await getHomeBlocksByIdHandler({ ctx: byClone, input: { id: BLOCK_ID } });
+    const shared = await getHomeBlocksByIdHandler({
+      ctx: bySource,
+      input: { id: SYSTEM_BLOCK_ID },
+    });
+    expect(shared.metadata).toEqual(own.metadata);
+    expect(itemsOf(shared)).toEqual(itemsOf(own));
+    expect(itemsOf(shared)).toEqual(['shared']);
+    expect(state.sharedCalls).toEqual([BLOCK_ID, SYSTEM_BLOCK_ID]);
+    expect([byClone.cache.skip, bySource.cache.skip]).toEqual([false, false]);
+  });
+
   it("is judged as its owner's block when its system block is gone", async () => {
     seed({ read: 'Private', userId: COLLECTION_OWNER, type: 'Model' }, BLOCK_OWNER);
     getHomeBlockRow.mockImplementation(async (_db: unknown, id: number) =>

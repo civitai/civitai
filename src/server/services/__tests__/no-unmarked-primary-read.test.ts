@@ -234,7 +234,7 @@ const BASELINE: Counts = {
   'src/server/services/orchestrator/models.ts': 1,
   'src/server/services/orchestrator/scanned-file-airs.ts': 1,
   'src/server/services/orchestrator/training/move-asset.ts': 1,
-  'src/server/services/orchestrator/training/publish-from-workflow.ts': 2,
+  'src/server/services/orchestrator/training/publish-from-workflow.ts': 1,
   'src/server/services/orchestrator/training/studio-dataset-archive.service.ts': 1,
   'src/server/services/orchestrator/training/training-canary.ts': 1,
   'src/server/services/orchestrator/training/training-state.ts': 1,

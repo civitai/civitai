@@ -84,7 +84,10 @@ The game-tuning variables Knights read from its environment can also be saved un
 `apprenticeSmites` (`KNIGHTS_APPRENTICE_SMITES`), `shopDisabled` (`KNIGHTS_SHOP_DISABLED`), `conversionDisabled`
 (`KNIGHTS_CONVERSION_DISABLED`) and `signalsDisabled` (`KNIGHTS_SIGNALS_DISABLED`, [live updates](knights-live-updates.md)), plus the harvest's `harvest` (boolean, true runs it; overrides `KNIGHTS_HARVEST`, which without a
 saved value runs the harvest when unset, `on`, `true` or `1`) and `harvestHiddenCheckShare` (`KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, 0-1).
-The harvest job reads both per run. The list, its ranges (the same as the Knights environment readers) and the reader are
+The harvest job reads both per run. The [in-game inquisitor](knights-inquisitor.md) pool adds `skillCheckPoolCap`
+(`KNIGHTS_SKILL_CHECK_POOL_CAP`, whole number `>0`, default 500: mod-confirmed checks kept, oldest retired first) and the boolean
+`skillCheckServeJudged` (`KNIGHTS_SKILL_CHECK_SERVE_JUDGED`, default off: a player may be served a mod-confirmed check on an image
+they already judged or answered as an Acolyte). The switch for the whole feature is the boolean `inquisitorQueue` (`KNIGHTS_INQUISITOR_QUEUE`, default off). `inquisitorMaxOpen` (`KNIGHTS_INQUISITOR_MAX_OPEN`, whole number `>0`, default 5000) caps the open reviews. The list, its ranges (the same as the Knights environment readers) and the reader are
 `KNIGHTS_GAME_SETTINGS` / `readKnightsSourcesConfig` in `@civitai/shared/new-order`; a stored field that is out of range is dropped
 on read, so that setting falls back to the environment.
 

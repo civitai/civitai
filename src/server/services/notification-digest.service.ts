@@ -14,6 +14,14 @@ import { logToAxiom } from '~/server/logging/client';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
+import {
+  DIGEST_ALL_POSITION,
+  DIGEST_FALLBACK_PATH,
+  digestTargetPath,
+  getDigestClickUrl,
+  recordDigestEvents,
+  type DigestEvent,
+} from '~/server/notifications/digest-tracking';
 import { MISSED_DIGEST_EMAIL_TYPE } from '~/server/notifications/missed-digest.constants';
 import {
   silenceCheckTypeAges,
@@ -202,20 +210,47 @@ async function unclaimSend(db: Kysely<DB>, userId: number, at: Date, previous: D
       WHERE "userId" = ${userId} AND "lastSentAt" = ${utc(at)}`.execute(db);
 }
 
+type RenderedItem = MissedNotificationsDigestItem & { type: string };
+
 /** The listed lines, rendered the way the bell renders them; a type with no message is left out. */
-async function renderItems(user: UnseenNotifications): Promise<MissedNotificationsDigestItem[]> {
+async function renderItems(user: UnseenNotifications): Promise<RenderedItem[]> {
   const bare: BareNotification[] = user.items.map((item) => ({
     id: item.id,
     type: item.type,
     details: { ...item.details },
   }));
   await populateNotificationDetails(bare, { showSfwFace: true });
-  const items: MissedNotificationsDigestItem[] = [];
+  const items: RenderedItem[] = [];
   for (const notification of bare) {
     const prepared = getNotificationMessage(notification);
-    if (prepared?.message) items.push({ message: prepared.message, url: prepared.url });
+    if (prepared?.message)
+      items.push({ message: prepared.message, url: prepared.url, type: notification.type });
   }
   return items;
+}
+
+/**
+ * The email's links, each routed through the click endpoint with the user, the pass and the
+ * item's position and type signed into it. A link off the site is left as it is, untracked.
+ */
+function trackedLinks(userId: number, cycleStartedAt: Date, items: RenderedItem[]) {
+  const linked: MissedNotificationsDigestItem[] = items.map(({ message, url, type }, i) => {
+    const to = digestTargetPath(url);
+    return {
+      message,
+      url: to
+        ? getDigestClickUrl({ userId, cycleStartedAt, position: i + 1, notificationType: type, to })
+        : url,
+    };
+  });
+  const allUrl = getDigestClickUrl({
+    userId,
+    cycleStartedAt,
+    position: DIGEST_ALL_POSITION,
+    notificationType: '',
+    to: DIGEST_FALLBACK_PATH,
+  });
+  return { items: linked, allUrl };
 }
 
 /**
@@ -271,6 +306,16 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
     if (isUndefinedTable(e)) return { ...result, idle: 'table-missing' };
     throw e;
   }
+
+  const cycleStartedAt = new Date(cursor.cycleStartedAt);
+  // One `notificationDigestEvents` row per real send (never a start floor, a skip or a failed
+  // send), written per page.
+  let sends: DigestEvent[] = [];
+  const flushSends = async () => {
+    const batch = sends;
+    sends = [];
+    await recordDigestEvents(batch);
+  };
 
   const silenceTypes = await silenceCheckTypeAges(silenceCheckTypes);
   let nextSendAt = 0;
@@ -383,16 +428,30 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
           continue;
         }
         try {
+          const links = trackedLinks(user.id, cycleStartedAt, items);
+          // `c` names the pass, so an unsubscribe from this email counts against it.
+          const unsubscribeUrl = `${getEmailUnsubscribeUrl(
+            user.id,
+            MISSED_DIGEST_EMAIL_TYPE
+          )}&c=${cycleStartedAt.getTime()}`;
           await withThrottleRetry(() =>
             missedNotificationsDigestEmail.send({
               to,
-              items,
+              items: links.items,
+              allUrl: links.allUrl,
               total: Math.max(missed.total, items.length),
               totalIsFloor: missed.floor,
-              unsubscribeUrl: getEmailUnsubscribeUrl(user.id, MISSED_DIGEST_EMAIL_TYPE),
+              unsubscribeUrl,
             })
           );
           result.emailed++;
+          sends.push({
+            event: 'send',
+            userId: user.id,
+            cycleStartedAt,
+            sentAt,
+            itemCount: items.length,
+          });
         } catch (e) {
           result.failed++;
           // A transport rejection's message names the recipient's address: log only its class.
@@ -406,6 +465,7 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
         }
       }
 
+      await flushSends();
       // Every user on the page is now handled, including the ones skipped before the loop.
       if (page.length) cursor.lastUserId = page[page.length - 1]!.id;
       if (page.length < batchSize) {
@@ -416,6 +476,7 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
       await dbKV.set(DIGEST_CURSOR_KEY, cursor);
     }
   } finally {
+    await flushSends();
     await dbKV.set(DIGEST_CURSOR_KEY, cursor);
     logToAxiom({
       type: 'info',

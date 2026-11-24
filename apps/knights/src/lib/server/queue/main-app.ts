@@ -1,8 +1,7 @@
 import { env } from '$env/dynamic/private';
+import { mainAppBase } from '../main-app-base';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { type ApplyOutcome, type ConsensusApplication } from './queue.service';
-
-const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
 
 const SKIP_REASONS = ['missing', 'blocked', 'locked'] as const;
 
@@ -15,7 +14,7 @@ export async function applyConsensusToMainApp(
   const token = env.WEBHOOK_TOKEN;
   if (!token) throw new Error('WEBHOOK_TOKEN is not configured');
 
-  const base = trimSlash(env.CIVITAI_APP_URL || 'https://civitai.com');
+  const base = mainAppBase();
   const res = await fetch(`${base}/api/mod/image/kono-set-nsfw-level`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-webhook-token': token },

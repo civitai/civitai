@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
 import { kohyaBound, kohyaFieldSupported } from '$lib/data/kohya';
+import { removeTag } from './tagReplace';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
   LORA_TYPES,
@@ -15,6 +16,9 @@ import {
   type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import {
+  datasetBatches,
+  imagesInScope,
+  newBatch,
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
   asDatasetFilter,
@@ -1274,5 +1278,46 @@ describe('rating filters', () => {
     expect(matchesRatingFilter(img('X'), 'rating:x')).toBe(true);
     expect(matchesRatingFilter(img('x', 'blocked'), 'rating:x')).toBe(false);
     expect(matchesRatingFilter(img('pg'), 'all')).toBeUndefined();
+  });
+});
+
+describe('dataset batches', () => {
+  const at = (h: number, m: number) => new Date(2026, 10, 24, h, m).getTime();
+
+  it('scopes a tag removal to one batch and leaves the other batch untouched', () => {
+    const first = newBatch('upload', at(15, 0));
+    const second = newBatch('upload', at(15, 41));
+    const images = [
+      { id: 1, tags: ['1boy', 'smile'], batch: first },
+      { id: 2, tags: ['1boy'], batch: first },
+      { id: 3, tags: ['1boy', 'hat'], batch: second },
+    ];
+    for (const img of imagesInScope(images, second.id)) img.tags = removeTag(img.tags, '1boy');
+    expect(images.map((i) => i.tags)).toEqual([['1boy', 'smile'], ['1boy'], ['hat']]);
+    expect(imagesInScope(images, null)).toBe(images);
+  });
+
+  it('names each batch by source, per-source number, size and time, oldest first', () => {
+    const upload = newBatch('upload', at(15, 0));
+    const zip = newBatch('zip', at(15, 10));
+    const upload2 = newBatch('upload', at(15, 41));
+    const options = datasetBatches(
+      [{ batch: upload2 }, { batch: upload }, { batch: zip }, { batch: upload2 }, {}],
+      'image'
+    );
+    expect(options.map((o) => o.label.replace(/ · [^·]+$/, ''))).toEqual([
+      'Upload 1 · 1 image',
+      'Zip import 1 · 1 image',
+      'Upload 2 · 2 images',
+    ]);
+    // 12- or 24-hour, whichever the runner's locale uses.
+    expect(options[2]!.label).toMatch(/(3|15):41/);
+  });
+
+  it('gives batches added in the same millisecond distinct, increasing ids', () => {
+    const now = at(9, 0);
+    const a = newBatch('zip', now);
+    const b = newBatch('upload', now);
+    expect(b.id).toBeGreaterThan(a.id);
   });
 });

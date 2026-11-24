@@ -158,7 +158,7 @@ describe('creating tag review items', () => {
     ['an image whose owner is under a legal hold', `INSERT INTO "EvidenceHeldUser" VALUES (5)`],
     [
       'an image with an open report',
-      `INSERT INTO "Report" (id, status) VALUES (1, 'Processing'); INSERT INTO "ImageReport" VALUES (100, 1)`,
+      `INSERT INTO "Report" (id, status) VALUES (1, 'Processing'); INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (100, 1)`,
     ],
   ])('creates nothing for %s', async (_, change) => {
     await pg.exec(change);

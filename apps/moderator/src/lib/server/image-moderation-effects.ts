@@ -757,6 +757,21 @@ export async function refundAppealFee(appeal: {
   }
 }
 
+/** civitai.com will not show a mature, mixed or unrated image; those, a missing row and a failed read
+ *  are left out, so their links go to .red, which serves every level. */
+async function comServableImageIds(imageIds: number[]): Promise<Set<number>> {
+  try {
+    const rows = await dbRead
+      .selectFrom('Image')
+      .select(['id', 'nsfwLevel'])
+      .where('id', 'in', imageIds)
+      .execute();
+    return new Set(rows.filter((r) => getIsSafeBrowsingLevel(r.nsfwLevel)).map((r) => r.id));
+  } catch {
+    return new Set();
+  }
+}
+
 export async function notifyAppealResolved(input: {
   appeal: { id: number; userId: number };
   entityType?: string;
@@ -768,6 +783,14 @@ export async function notifyAppealResolved(input: {
 }): Promise<void> {
   const entityType = input.entityType ?? 'Image';
   try {
+    // The bell resolves a relative path on its own host, so an image civitai.com does not serve needs
+    // an absolute .red url. A site appeal's copy builds its own link and ignores `url`.
+    const redUrl =
+      entityType === 'Image' &&
+      !input.details?.category &&
+      !(await comServableImageIds([input.entityId])).has(input.entityId)
+        ? `${civitaiLinkUrl()}/images/${input.entityId}`
+        : undefined;
     await getNotifications().createNotification({
       userId: input.appeal.userId,
       type: 'entity-appeal-resolved',
@@ -776,6 +799,7 @@ export async function notifyAppealResolved(input: {
       key: `entity-appeal-resolved:${entityType}:${input.entityId}:${input.appeal.id}`,
       details: {
         ...input.details,
+        ...(redUrl && { url: redUrl }),
         entityType,
         entityId: input.entityId,
         status: input.status,
@@ -796,17 +820,7 @@ export async function emailAppealResolution(input: {
 }): Promise<void> {
   if (!input.imageIds.length) return;
   try {
-    // civitai.com will not show a mature, mixed or unrated image; those, a missing row and a failed
-    // read all link to .red.
-    const rows = await dbRead
-      .selectFrom('Image')
-      .select(['id', 'nsfwLevel'])
-      .where('id', 'in', input.imageIds)
-      .execute()
-      .catch(() => []);
-    const comSafe = new Set(
-      rows.filter((r) => getIsSafeBrowsingLevel(r.nsfwLevel)).map((r) => r.id)
-    );
+    const comSafe = await comServableImageIds(input.imageIds);
     const base = (id: number) => (comSafe.has(id) ? civitaiAppUrl() : civitaiLinkUrl());
     await appealResolutionEmail.send({
       to: input.to,

@@ -33,6 +33,15 @@ describe('toSemanticImageSearchInput', () => {
     ).toBeUndefined();
   });
 
+  it('sends a preferred tag only for "more like this"', () => {
+    const base = { filters: {}, browsingLevel: 1, preferTagId: 1676 };
+    expect(toSemanticImageSearchInput({ ...base, imageId: 6 }).preferTagIds).toEqual([1676]);
+    expect(
+      toSemanticImageSearchInput({ ...base, imageId: 6, query: 'cat' }).preferTagIds
+    ).toBeUndefined();
+    expect(toSemanticImageSearchInput({ ...base, query: 'cat' }).preferTagIds).toBeUndefined();
+  });
+
   it('sends the filters the index can apply and never the ones it cannot', () => {
     const input = toSemanticImageSearchInput({
       query: 'castle',

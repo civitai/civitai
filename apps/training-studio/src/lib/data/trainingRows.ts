@@ -604,8 +604,10 @@ export interface TrainingDetail {
   sourceWorkflowId?: string;
   sourceEpoch?: number;
   /** The run's model on Civitai — draft or published (see TrainingStudioMeta.modelId); drives the
-   *  model-page link. */
+   *  model-page link. `modelVersionId` is the run's own version (on a model the run was added to, not
+   *  the first); for a draft made before versions carried the link, it can be another version. */
   modelId?: number;
+  modelVersionId?: number;
   settings: TrainingSettingsExport;
 }
 
@@ -750,6 +752,7 @@ export function workflowToDetail(w: FetchedWorkflow): TrainingDetail | null {
     sourceWorkflowId,
     sourceEpoch,
     modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
+    modelVersionId: typeof meta.modelVersionId === 'number' ? meta.modelVersionId : undefined,
     settings,
   };
 }

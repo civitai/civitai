@@ -124,7 +124,7 @@ describe('serving tag review items', () => {
     ['owned by a user under a legal hold', `INSERT INTO "EvidenceHeldUser" VALUES (50)`],
     [
       'under an open report',
-      `INSERT INTO "Report" (id, status) VALUES (1, 'Pending'); INSERT INTO "ImageReport" VALUES (100, 1)`,
+      `INSERT INTO "Report" (id, status) VALUES (1, 'Pending'); INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (100, 1)`,
     ],
   ])(
     'pulls an item whose image becomes %s: not served, vote refused, swept unplayable',

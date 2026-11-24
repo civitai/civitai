@@ -10,6 +10,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { checkStudioModelLive } from '~/components/Training/studio-model-live';
+import { getModelUrl } from '~/utils/string-helpers';
 import { studioPublishUrl } from '~/components/Training/studio-publish-url';
 import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
@@ -241,7 +242,9 @@ function TrainingStudioEmbed({
         // Relative on purpose (same-tab). Not gated on canGenerate — the publish entry guards
         // muted/onboarding itself, and publishing doesn't ride the generation lanes.
         publishUrl: studioPublishUrl,
-        modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
+        publishVersionUrl: (req: Parameters<typeof studioPublishUrl>[0]) =>
+          studioPublishUrl({ ...req, asVersion: true }),
+        modelPageUrl: (req: { modelId: number; modelVersionId?: number }) => getModelUrl(req),
         modelLive: checkStudioModelLive,
         // The studio's Custom base: open this app's resource-select modal and hand back the picked
         // checkpoint as an AIR (the same urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>

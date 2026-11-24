@@ -34,6 +34,15 @@ ordinary vote in every way a player can see.
   bounded number per level bucket. A probation check grades nobody. Once enough independent players have answered it, the
   review promotes it to `active` or retires it; the review runs even while the harvest is paused. Active checks are not
   reviewed this way. The rules live in those two services.
+- Mod-confirmed checks (`skill-check/pool.ts`, pool `skillCheck`, source `inquisitor`): an image two moderators gave the same
+  level in the [in-game inquisitor queue](knights-inquisitor.md) becomes a check at that level, served to Acolytes and Knights
+  alike. An image already in another pool moves here with its counters reset; a core trial image never moves. The pool keeps
+  `skillCheckPoolCap` active checks (Config page, default 500) and retires the oldest when a new one comes in. An image under
+  a review or hold never enters, checked again at every serve: the shared safety predicates, listed in
+  `skill-check/eligible.ts`. A check that cannot be read keeps the image out (fail closed): the serve skips the pool rather than
+  failing. An answered check's image is shown again (notices, the Acolyte recap, `/judgments`) only while it still passes
+  them, and is hidden when they cannot be read. The pool is served only while the inquisitor queue is switched on. These checks have no age limit; they leave by the cap, by Knights' own
+  failures (below), or when a moderator moves the image off their level (the harvest job's stale sweep).
 
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
@@ -56,7 +65,9 @@ ordinary vote in every way a player can see.
   active smites, whether it reset the career), and the page reads its data again after the vote, so the notice shows at once.
   `settleHiddenChecks` (run by the tick) is now only the sweep for checks still pending after `settleDelayMinutes`, such as ones
   answered before inline grading shipped. Grading on the spot shows which images were checks; that is accepted because a player is
-  never served a check on an image they already voted on, and the harvest keeps renewing the pool.
+  never served a check on an image they already voted on (unless `skillCheckServeJudged` is on, for mod-confirmed checks
+  only; the same check is never served twice), and the harvest and the inquisitor queue keep renewing the pool. The draw reads
+  the `hiddenCheck` and `skillCheck` pools together.
 - An exact match is correct. A rating one level from the known answer, on either side (`isCloseAnswer`, `levelDistance` = 1;
   Blocked is not a level, so Blocked against the top level is a miss) is **close**: graded `inconclusive` for the player (no
   payout, no warning, no smite, not in accuracy, not an earlier failure for the warning rule) and marked `consequence = 'close'`,
@@ -67,6 +78,10 @@ ordinary vote in every way a player can see.
   `KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE` (default 0.5) of at least `KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS` (default 20)
   answers is retired in the same transaction: its known answer is more likely wrong or unclear than its players in bad faith.
   The harvest never re-adds a retired image (`imageId` is unique).
+  A mod-confirmed check skips that shared-counter rule, since Acolytes' exact-match misses land on the same counters; it
+  retires when Knights' graded answers in the ledger (correct or failed; close answers are inconclusive) pass the same two
+  thresholds, counting only answers since the check entered the pool (`knights_skill_checks_retired_total{reason="failures"}`).
+  A check whose answers were already graded at another level is never moved into the mod-confirmed pool.
   A check still pending when its reference is retired (by this rule or by hand) is graded `inconclusive`: no pay, no penalty.
 - A wrong answer can cost the player a warning or a smite, decided when the check is graded: the first failure (a `warning`
   or `smite` consequence, never `close`) in `failureWindowHours` is a warning, each later one (or a severe under-rating) a smite, one check at a time. It is stored on the

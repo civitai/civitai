@@ -336,8 +336,8 @@ const VISIBILITY_RANK: Record<ModelFileVisibility, number> = {
 };
 
 /**
- * Whether `modelVersionId` is a Training Studio version: it has a Studio dataset row, or its model
- * was published from Studio (a server-owned meta key, so deleting the row does not change the
+ * Whether `modelVersionId` is a Training Studio version: it has a Studio dataset row, or it or its
+ * model was published from Studio (a server-owned meta key, so deleting the row does not change the
  * answer). Any other `Training Data` file on that version stays Private for everyone but
  * moderators, so a second upload can't share what the Studio rules keep unshared.
  */
@@ -351,7 +351,8 @@ export async function versionHasStudioDataset(
       AND mf.metadata ? 'selectedEpochUrl'
     UNION ALL
     SELECT mv.id FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId} AND m.meta ? 'trainingStudioWorkflowId'
+    WHERE mv.id = ${modelVersionId}
+      AND (mv.meta ? 'trainingStudioWorkflowId' OR m.meta ? 'trainingStudioWorkflowId')
     LIMIT 1
   `;
   return rows.length > 0;

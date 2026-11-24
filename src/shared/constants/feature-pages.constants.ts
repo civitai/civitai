@@ -14,6 +14,9 @@ export const featurePageSubjectUrnRegex =
 export const featurePageCommentUrnRegex = /^urn:data\.civitai\.com:[A-Za-z0-9._@/:-]{1,300}$/;
 
 export const FEATURE_PAGES_MINE_MAX_REQUESTS = 100;
+/** Pinned to the platform's own host list (its frame-ancestors), not derived from the server
+ * domains: an origin it does not list cannot frame the page. */
+export const FEATURE_PAGES_HOST_ORIGINS = ['https://civitai.com', 'https://civitai.red'] as const;
 
 export const FeaturePageFrameMessage = {
   Ready: 'fp-ready',

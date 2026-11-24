@@ -779,7 +779,7 @@ const FINAL_STATES: readonly FpCommentState[] = ['mod-removed', 'retracted', 'er
 export function reconcileAction(
   e: Evaluated,
   item: PlatformCommentItem
-): FpReconcileAction | 'counted' | null {
+): FpReconcileAction | 'counted' | 'pipeline-hidden' | null {
   const seen = observed(item);
   const textHeld = seen !== 'retracted' && seen !== 'removed';
   if (e.state === 'refused') return null;
@@ -791,6 +791,7 @@ export function reconcileAction(
   if (e.state === 'mod-hidden') return seen === 'visible' ? 'restrict' : null;
   // Retracted there is final: its text is never sent again.
   if (seen === 'retracted') return 'counted';
+  if (seen === 'hidden' && item.verdict?.source === 'pipeline') return 'pipeline-hidden';
   // Visible: a takedown's tombstone or another post moved the token, so the text goes again.
   if (item.digest && item.digest !== e.row.platformDigest) return 'repost';
   if (seen === null) return 'due';
@@ -807,6 +808,7 @@ export async function runFpReconcile() {
   let cursor: string | null = null;
   let checked = 0;
   let mismatched = 0;
+  let pipelineHidden = 0;
   do {
     const query = new URLSearchParams({
       app: PLATFORM_FEATURE_PAGES_APP,
@@ -817,7 +819,7 @@ export async function runFpReconcile() {
     const page = commentsPageSchema.safeParse(reply.body);
     if (reply.status !== 200 || !page.success) {
       log('error', 'reconcile read failed', { status: reply.status, checked });
-      return { on, checked, mismatched, failed: true };
+      return { on, checked, mismatched, pipelineHidden, failed: true };
     }
     const byUrn = await readFpMirrorByUrns(
       kyselyWrite,
@@ -840,6 +842,10 @@ export async function runFpReconcile() {
       const e = evaluate(row);
       const action = reconcileAction(e, item);
       if (!action) continue;
+      if (action === 'pipeline-hidden') {
+        pipelineHidden += 1;
+        continue;
+      }
       mismatched += 1;
       log('warning', 'mismatched', {
         commentId: row.commentId,
@@ -851,8 +857,8 @@ export async function runFpReconcile() {
     }
     cursor = page.data.next;
   } while (cursor);
-  log('info', 'heartbeat', { job: 'reconcile', on, checked, mismatched });
-  return { on, checked, mismatched };
+  log('info', 'heartbeat', { job: 'reconcile', on, checked, mismatched, pipelineHidden });
+  return { on, checked, mismatched, pipelineHidden };
 }
 
 async function readVisibleFpUrns() {

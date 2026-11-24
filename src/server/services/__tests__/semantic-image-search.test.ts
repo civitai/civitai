@@ -844,6 +844,47 @@ describe('"more like this" refuses a minor- or POI-flagged anchor at every level
   });
 });
 
+describe('"more like this" with a preferred tag', () => {
+  const run = (
+    preferTagIds: number[],
+    over: Partial<SemanticImageSearchInput> = {},
+    collection: 'images' | 'videos' = 'images'
+  ) => {
+    const { source, calls } = rankedSource([101, 102, 103]);
+    h.fakeGetAllImages = visibleOnly(new Set([101, 102, 103]));
+    return searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ preferTagIds, ...over }),
+      user: VIEWER,
+      collection,
+      candidateSource: source,
+    }).then(() => calls.filter((call) => call.filter.ids?.length));
+  };
+
+  it('asks for the tag within the closest matches', async () => {
+    const matches = await run([555]);
+    expect(matches).toHaveLength(1);
+    expect(matches[0].filter.tagIds).toContain(555);
+    expect(matches[0].filter.ids).toEqual([101, 102, 103]);
+  });
+
+  it.each([
+    ['a blocked tag', 601],
+    ['a tag the viewer hides', 801],
+    ['a tag a browsing add-on excludes', 701],
+  ])('does not boost %s', async (_name, tagId) => {
+    expect(await run([tagId])).toHaveLength(0);
+  });
+
+  it('does not boost a video search', async () => {
+    expect(await run([555], {}, 'videos')).toHaveLength(0);
+  });
+
+  it('does not boost a text search', async () => {
+    expect(await run([555], { imageId: undefined, query: 'otters' })).toHaveLength(0);
+  });
+});
+
 describe('the query audit and the browsing level', () => {
   const MOD = { id: 501, isModerator: true } as SessionUser;
   const SAFE = 1 | 2;
