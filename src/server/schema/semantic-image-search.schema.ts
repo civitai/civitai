@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { baseQuerySchema } from '~/server/schema/base.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { videoLengthPresets } from '~/shared/constants/video-length.constants';
 
 export const SEMANTIC_QUERY_MAX_LENGTH = 500;
 export const SEMANTIC_SEARCH_PAGE_SIZE = 50;
@@ -39,6 +40,8 @@ export const semanticImageSearchSchema = baseQuerySchema
     // Bounds on `sortAt`, the publish time for a published image.
     postedAfter: z.coerce.date().optional(),
     postedBefore: z.coerce.date().optional(),
+    // Video searches only; ignored for images.
+    length: z.enum(videoLengthPresets).optional(),
     // The feed's "Made On-site": generated here, as the feed judges it from the image's meta.
     fromPlatform: z.boolean().optional(),
     withMeta: z.boolean().optional(),
