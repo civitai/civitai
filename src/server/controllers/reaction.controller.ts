@@ -255,8 +255,8 @@ export const toggleReactionHandler = async ({
         if (!hidden) throw error;
         // A reaction the user already holds stays removable on an image hidden from them since.
         if (await holdsReaction({ ...input, userId: ctx.user.id })) return;
-        // A crucible entry from a draft post publishes when the crucible ends; its judges react
-        // to it before then.
+        // A crucible entry made from a draft post is scheduled to publish at the crucible's end;
+        // its judges react to it before then.
         if (!ctx.features?.crucible) throw error;
         const judgingCrucibleIds = await getJudgingCrucibleIdsForImage({
           imageId: input.entityId,
