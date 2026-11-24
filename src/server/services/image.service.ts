@@ -90,6 +90,7 @@ import {
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
   LIFT_KEPT_ACTIVITY,
+  ratingRecordedUnderGrace,
 } from '@civitai/shared/account-deletion-grace';
 import {
   PRIOR_BLOCKED_FOR_KEY,
@@ -6583,7 +6584,11 @@ export async function updateImageNsfwLevel({
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
     if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
-    const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
+    const updatedMetadata = {
+      ...metadata,
+      nsfwLevelReason: reason ?? null,
+      ...ratingRecordedUnderGrace(metadata, nsfwLevel),
+    };
 
     await dbWrite.image.update({
       where: { id },

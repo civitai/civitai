@@ -20,6 +20,18 @@ export const GRACE_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
 export const GRACE_PRIOR_NSFW_LEVEL_KEY = 'accountDeletionPriorNsfwLevel';
 export const GRACE_PRIOR_NSFW_LOCKED_KEY = 'accountDeletionPriorNsfwLevelLocked';
 
+/**
+ * The recorded rating a moderator's re-rate of a grace-blocked image leaves: theirs, locked, so an account
+ * restore puts back their rating rather than the one from before the deletion. Nothing for any other row.
+ */
+export function ratingRecordedUnderGrace(
+  metadata: Record<string, unknown> | null | undefined,
+  nsfwLevel: number
+): Record<string, unknown> {
+  if (!metadata || metadata[GRACE_PRIOR_INGESTION_KEY] == null) return {};
+  return { [GRACE_PRIOR_NSFW_LEVEL_KEY]: nsfwLevel, [GRACE_PRIOR_NSFW_LOCKED_KEY]: true };
+}
+
 /** Every breadcrumb above. A write that strips them strips this list, so a new key is never missed. */
 export const GRACE_PRIOR_KEYS = [
   GRACE_PRIOR_INGESTION_KEY,

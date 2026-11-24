@@ -197,7 +197,7 @@ export async function unblockAccountDeletionImages(userId: number) {
       BlockedReason.CSAM
     }
               AND jsonb_typeof(i."metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
-              AND i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[0-9]{1,2}$'
+              AND i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[1-9][0-9]{0,1}$'
             THEN (i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text)::int
           END AS "recordedLevel"
         FROM "Image" i

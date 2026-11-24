@@ -1788,12 +1788,14 @@ describe('a restore puts back the rating the grace block replaced', () => {
         (124, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4.5, false)}),
         (125, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(123456789012, false)}),
         (126, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4)}),
-        (127, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4, false)});
+        (127, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4, false)}),
+        -- Unrated before the deletion: re-rated, so the rescan of an unrated image still runs.
+        (130, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(0, false)});
     `);
 
     await unblockAccountDeletionImages(OWNER);
 
-    expect(resetIds()).toEqual(expect.arrayContaining([123, 124, 125, 126]));
+    expect(resetIds()).toEqual(expect.arrayContaining([123, 124, 125, 126, 130]));
     // Control: a whole level with its lock is put back, not re-rated.
     expect(resetIds()).not.toContain(127);
     expect(await rating(127)).toEqual({

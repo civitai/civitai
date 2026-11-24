@@ -8,6 +8,7 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
+import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -33,9 +34,11 @@ export async function updateImageNsfwLevel({
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
 
+  const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
-    ...((image.metadata as Record<string, unknown> | null) ?? {}),
+    ...stored,
     nsfwLevelReason: reason ?? null,
+    ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
   await dbWrite

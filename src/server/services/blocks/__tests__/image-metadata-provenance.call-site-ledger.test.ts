@@ -693,7 +693,8 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       const value = propertyValue(propertyValue(region, 'data') ?? '', 'metadata');
       if (!value) return 'no longer writes metadata as a property';
       const literal = resolveLiteral(value, body);
-      const spreads = [...literal.matchAll(/\.\.\./g)];
+      // The grace-block rating record (account-deletion-grace.ts) is server keys too.
+      const spreads = [...literal.matchAll(/\.\.\.(?!ratingRecordedUnderGrace\()/g)];
       const source = /^\{\s*\.\.\.([\w$]+(?:\.metadata)?)\s*,/.exec(literal)?.[1];
       if (!source || spreads.length !== 1)
         return 'metadata is not one spread of stored metadata plus literal keys';
