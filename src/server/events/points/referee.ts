@@ -226,8 +226,8 @@ type RestrictedUser = { id: number; fromMs: number };
 
 // Who must not earn or give points. Hidden (banned, deleted, excluded from event points), each from
 // their exclusion start (eventPointsExcludedFromSql): looked up in Postgres among the people the
-// recomputed rows involve. New accounts: every id from the first
-// account registered inside the new-account window, since ids are assigned in registration order.
+// recomputed rows involve. New accounts: every id from the first account registered inside the
+// new-account window, since ids are assigned in registration order.
 // A threshold, not a list: a month of signups is ~250k ids, past what fits in a query's URL.
 async function restrictedUsers(event: RefereeEvent, window: Window, deadline: number) {
   if (!clickhouse) throw new Error('ClickHouse is not configured');

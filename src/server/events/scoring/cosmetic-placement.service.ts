@@ -123,8 +123,9 @@ async function readTeamHourly(event: StandingsEvent, fromDay: Date) {
 
 // Banned, deleted and event-points-excluded users drop out of the standings (team totals, history and
 // rankings) from their exclusion start day (eventPointsExcludedFromSql); days before it count. Their
-// rows stay in the table, so a reversal restores them; per-cosmetic reads below are not filtered. The hourly job passes the primary: it builds this right after writing the day, and
-// a lagging replica would freeze stale numbers into the snapshot for an hour.
+// rows stay in the table, so a reversal restores them; per-cosmetic reads below are not filtered.
+// The hourly job passes the primary: it builds this right after writing the day, and a lagging
+// replica would freeze stale numbers into the snapshot for an hour.
 async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof dbRead) {
   const fromDay = scoreFromDay(event);
   // The few hidden users and the day each is hidden from, found once over the event's distinct users,
