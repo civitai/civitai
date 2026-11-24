@@ -18,6 +18,14 @@ describe('classifyAppeal', () => {
     expect(classifyAppeal(row)).toBe('image');
   });
 
+  it('puts a song or a song’s own cover in its own kind, decided on Audio review', () => {
+    expect(classifyAppeal(row, true)).toBe('song');
+    expect(
+      classifyAppeal({ ...row, entityRemovedAt: new Date('2026-10-01T00:00:00Z') }, true)
+    ).toBe('removed');
+    expect(classifyAppeal({ ...row, entityType: 'Model' }, true)).toBe('modelFlag');
+  });
+
   it('drops a row of a type no queue shows', () => {
     expect(classifyAppeal({ ...row, entityType: 'Article' })).toBeNull();
   });
@@ -26,6 +34,7 @@ describe('classifyAppeal', () => {
 describe('appealQueuePath', () => {
   it('names the queue whose grant reads each kind', () => {
     expect(appealQueuePath('image', null)).toBe('/images/appeals');
+    expect(appealQueuePath('song', null)).toBe('/audio-review');
     expect(appealQueuePath('removed', null)).toBe('/images/removed-appeals');
     expect(appealQueuePath('modelFlag', null)).toBe('/models/flags/appeals');
     expect(appealQueuePath('site', 'Account')).toBe('/appeals/account');
@@ -41,6 +50,7 @@ describe('appealQueuePath', () => {
         '/appeals/articles',
         '/appeals/models',
         '/appeals/other',
+        '/audio-review',
         '/images/appeals',
         '/images/removed-appeals',
         '/models/flags/appeals',

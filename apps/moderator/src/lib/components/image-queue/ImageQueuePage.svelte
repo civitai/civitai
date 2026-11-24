@@ -21,7 +21,8 @@
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { page } from '$app/state';
   import { clearPaging } from '$lib/paging';
-  import { csamCaptureReportUrl, csamReportUrl, userLookupUrl } from '$lib/entity-url';
+  import { csamCaptureReportUrl, csamReportUrl, imageLookupUrl, userLookupUrl } from '$lib/entity-url';
+  import { coverOfSongLabel } from '$lib/music/song-tos';
   import type { FeedbackCaptureStamp } from '$lib/server/image-review.service';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
   import { isFlagOnlyRemaining, removedTitle } from '$lib/image-review';
@@ -283,7 +284,12 @@
   profilePicture?: boolean | null;
   capture?: FeedbackCaptureStamp | null;
   modelRestricted: boolean;
+  coverOf?: { songId: number; title: string | null } | null;
 })}
+  {#if item.coverOf}
+    <!-- A song's cover reviewed on its own: the song it belongs to is one click away. -->
+    <a href={imageLookupUrl(item.coverOf.songId)} class="link w-fit text-xs">{coverOfSongLabel(item.coverOf)}</a>
+  {/if}
   {#if item.capture}
     <!-- A capture's owner is a system account and its reporter is not its subject: never a profile. -->
     <div class="truncate text-xs text-muted-foreground">

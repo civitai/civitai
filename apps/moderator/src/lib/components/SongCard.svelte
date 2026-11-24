@@ -19,6 +19,8 @@
   import { fetchJson } from '$lib/fetch-json';
   import { SSR_PENDING } from '$lib/ssr-pending';
   import { songCardUrl, type SongCard } from '$lib/music/song-card';
+  import { removedCovers } from '$lib/music/removed-covers';
+  import { shownCover } from '$lib/music/song-tos';
   import {
     createPlayIntent,
     isSeek,
@@ -205,6 +207,7 @@
 
 <!-- `phase`: the card's details are loading, came back, or could not be read (the song still plays). -->
 {#snippet player(song: SongCard | null, phase: 'loading' | 'loaded' | 'failed')}
+  {@const cover = shownCover(song?.cover ?? null, removedCovers)}
   <div
     class={cn(
       'flex w-full flex-col text-left',
@@ -215,8 +218,8 @@
     <div class={cn('flex flex-col gap-2', detail && PANEL)}>
       <div class="flex items-center gap-2">
         <div class="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-dark-6">
-          {#if song?.cover}
-            <EdgeImage src={song.cover.url} width={320} alt="" class="size-full object-cover" />
+          {#if cover}
+            <EdgeImage src={cover.url} width={320} alt="" class="size-full object-cover" />
           {:else}
             <IconMusic size={28} class="text-dark-2" aria-label="No cover" />
           {/if}

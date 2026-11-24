@@ -1,3 +1,5 @@
+import { sql } from 'kysely';
+import { songOrOwnCoverText } from '../audio-review-count';
 import { dbRead } from '../db';
 import { canAccess } from '../access';
 import { resolveImageAppeal } from '../image-moderation.service';
@@ -23,6 +25,13 @@ export const ticketAppealDeps: AppealWriteDeps = {
       .select(['userId', 'status', 'entityType', 'entityId', 'entityRemovedAt', 'category'])
       .where('id', '=', id)
       .executeTakeFirst()) ?? null,
+  songImage: async (imageId) =>
+    !!(await dbRead
+      .selectFrom('Image as i')
+      .select('i.id')
+      .where('i.id', '=', imageId)
+      .where(sql<boolean>`${sql.raw(songOrOwnCoverText('i'))}`)
+      .executeTakeFirst()),
   needsReviewOf: async (imageId) =>
     (
       await dbRead

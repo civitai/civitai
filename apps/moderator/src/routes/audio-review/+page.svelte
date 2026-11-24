@@ -29,16 +29,20 @@
     type ReportedSongRow,
   } from '$lib/audio-review';
   import { LINK_CLASS, plural, shortAge } from '$lib/format';
+  import { removedCovers } from '$lib/music/removed-covers';
   import { submitDecisionForm } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
+  import AppealsQueue from './AppealsQueue.svelte';
   import ReportedSongDetail from './ReportedSongDetail.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const SELECTION = 'selected';
-  const f = $derived(data.filters);
+  // The Reported tab's data; the Appeals tab has its own queue (`AppealsQueue`).
+  const reported = $derived(data.tab === 'reported' ? data.reported : null);
+  const f = $derived(data.tab === 'reported' ? data.filters : { sort: 'oldest', filter: 'all' });
 
   // Key 4 opens the rating row for the open song; the next digit picks its level. Moving to another
   // song closes it.
@@ -53,6 +57,12 @@
   // reload, so the level each song was given here is kept for when the moderator comes back to it.
   const rated = new SvelteMap<number, number>();
   const levelOf = (row: ReportedSongRow) => rated.get(row.id) ?? row.nsfwLevel;
+  // A cover removed on this page is no longer there to remove: key 3 goes off, and the thumbnail
+  // drops to the placeholder, without reading the queue again.
+  const live = (row: ReportedSongRow): ReportedSongRow =>
+    row.removableCoverId != null && removedCovers.has(row.removableCoverId)
+      ? { ...row, removableCoverId: null, coverUrl: null }
+      : row;
 
   const actionHref = (action: string) =>
     formActionHref(action, {
@@ -85,7 +95,7 @@
     labels: REPORTED_FILTER_LABELS,
     active: f.filter,
     defaultValue: 'all',
-    counts: data.facets,
+    counts: reported?.facets,
     compact: true,
   } satisfies ChipGroup);
 
@@ -100,7 +110,7 @@
 
   const picking = (row: ReportedSongRow) => ratingOpen && row.id === current;
   const decisionsFor = (row: ReportedSongRow) => {
-    const enabled = reportedDecisionsEnabled(row, data.canAct);
+    const enabled = reportedDecisionsEnabled(live(row), data.canAct);
     return picking(row) ? ratingKeysEnabled(levelOf(row), enabled[3]) : enabled;
   };
 
@@ -119,7 +129,7 @@
       ratingOpen = true;
       return;
     }
-    submitDecisionForm(REPORTED_DECISIONS, reportedDecisionsEnabled(row, data.canAct), index);
+    submitDecisionForm(REPORTED_DECISIONS, reportedDecisionsEnabled(live(row), data.canAct), index);
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -132,17 +142,21 @@
 
 <svelte:window {onkeydown} />
 
+{#snippet tabsBar()}
+  <TriageParamTabs
+    {tabs}
+    current={data.tab}
+    param="tab"
+    defaultValue={DEFAULT_AUDIO_TAB}
+    label="Audio review"
+    selectionParam={SELECTION}
+    counts={data.counts}
+  />
+{/snippet}
+
 {#snippet listHeader()}
   <div class="flex flex-col gap-2.5">
-    <TriageParamTabs
-      {tabs}
-      current={f.tab}
-      param="tab"
-      defaultValue={DEFAULT_AUDIO_TAB}
-      label="Audio review"
-      selectionParam={SELECTION}
-      counts={{ reported: data.facets.all }}
-    />
+    {@render tabsBar()}
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
       <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
     </div>
@@ -171,97 +185,110 @@
     title="Audio review"
     subtitle="Songs and their covers: reports, appeals and holds. Decide on the song, its cover and its rating together."
     placeholder="Song, owner or ID"
-    searchLabel="Search reported songs"
+    searchLabel={data.tab === 'appeals' ? 'Search appealed songs and covers' : 'Search reported songs'}
   />
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-    <TriageShell
-      flush
-      rows={data.items}
-      rowKey={(row: ReportedSongRow) => row.id}
-      parseKey={(raw) => Number(raw) || null}
-      selectionParam={SELECTION}
-      queueLabel="Reported songs"
-      itemLabel="Song"
-      decisionEnabled={decisionsFor}
-      decisionActions={REPORTED_DECISIONS}
-      ondecision={decide}
-      ondecisionrefused={(row) => {
-        // The digit of the level the song already has: nothing to change, so the picker closes.
-        if (picking(row)) closeRating();
-      }}
-      outcomeFor={reportedOutcome}
-      pinned={data.pinned}
-      bind:current={() => current, select}
-      pageNumber={data.page}
-      hasMore={data.hasMore}
-      offset={data.offset}
-      total={data.total}
-      {form}
-      {listHeader}
-      {empty}
-    >
-      {#snippet listRow(row, state)}
-        {@const reasons = songReportReasons(row.reports)}
-        <TriageRow
-          id={state.id}
-          href={state.href}
-          selected={state.selected}
-          title={rowTitle(row)}
-          meta={waitedLong(row) ? `waiting ${shortAge(row.waitingSince)}` : shortAge(row.waitingSince)}
-          metaClass={waitedLong(row) ? 'text-amber-300' : 'text-dark-2'}
-          coverUrl={row.coverUrl ?? undefined}
-          verdict={state.verdict}
-          error={state.error}
-          onselect={state.select}
-        >
-          {#snippet coverIcon()}<IconMusic aria-hidden="true" />{/snippet}
-          {#snippet badges()}
-            {#if reasons[0]}
-              <span class="rounded bg-red-500/15 px-1.5 py-px text-[11px] font-medium text-red-300">
-                {reasons[0]}
+    {#if data.tab === 'appeals'}
+      <AppealsQueue
+        appeals={data.appeals}
+        filters={data.appeals.filters}
+        q={data.q}
+        page={data.page}
+        canAct={data.canAct}
+        civitaiUrl={data.civitaiUrl}
+        {form}
+        {tabsBar}
+      />
+    {:else if reported}
+      <TriageShell
+        flush
+        rows={reported.items}
+        rowKey={(row: ReportedSongRow) => row.id}
+        parseKey={(raw) => Number(raw) || null}
+        selectionParam={SELECTION}
+        queueLabel="Reported songs"
+        itemLabel="Song"
+        decisionEnabled={decisionsFor}
+        decisionActions={REPORTED_DECISIONS}
+        ondecision={decide}
+        ondecisionrefused={(row) => {
+          // The digit of the level the song already has: nothing to change, so the picker closes.
+          if (picking(row)) closeRating();
+        }}
+        outcomeFor={reportedOutcome}
+        pinned={reported.pinned}
+        bind:current={() => current, select}
+        pageNumber={data.page}
+        hasMore={reported.hasMore}
+        offset={reported.offset}
+        total={reported.total}
+        {form}
+        {listHeader}
+        {empty}
+      >
+        {#snippet listRow(row, state)}
+          {@const reasons = songReportReasons(row.reports)}
+          <TriageRow
+            id={state.id}
+            href={state.href}
+            selected={state.selected}
+            title={rowTitle(row)}
+            meta={waitedLong(row) ? `waiting ${shortAge(row.waitingSince)}` : shortAge(row.waitingSince)}
+            metaClass={waitedLong(row) ? 'text-amber-300' : 'text-dark-2'}
+            coverUrl={live(row).coverUrl ?? undefined}
+            verdict={state.verdict}
+            error={state.error}
+            onselect={state.select}
+          >
+            {#snippet coverIcon()}<IconMusic aria-hidden="true" />{/snippet}
+            {#snippet badges()}
+              {#if reasons[0]}
+                <span class="rounded bg-red-500/15 px-1.5 py-px text-[11px] font-medium text-red-300">
+                  {reasons[0]}
+                </span>
+              {/if}
+              <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-medium text-dark-0">
+                {plural(row.reportCount, 'report')}
               </span>
-            {/if}
-            <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-medium text-dark-0">
-              {plural(row.reportCount, 'report')}
-            </span>
-            {#if firstTime(row) != null}
-              {@const at = firstTime(row) ?? 0}
-              <span
-                class="inline-flex items-center gap-0.5 rounded bg-blue-500/15 px-1.5 py-px text-[11px] font-medium text-blue-300"
-              >
-                <IconPlayerPlay size={11} aria-hidden="true" />{formatPlaybackTime(at)}
-              </span>
-            {/if}
-            {#if row.removed}
-              <span class="text-[11px] text-dark-2 italic" title={songRemovedTitle(row)}>Removed</span>
-            {/if}
-            {#if row.owner}
-              <span class="ml-auto truncate text-xs text-dark-2">
-                {row.owner.username ?? `User #${row.owner.id}`}
-              </span>
-            {/if}
-          {/snippet}
-        </TriageRow>
-      {/snippet}
-      {#snippet detail(row, state)}
-        <ReportedSongDetail
-          {row}
-          civitaiUrl={data.civitaiUrl}
-          canAct={data.canAct}
-          verdict={state.verdict}
-          error={state.error}
-          submit={state.submit}
-          {actionHref}
-          level={levelOf(row)}
-          ratingOpen={picking(row)}
-          onrate={() => (ratingOpen = true)}
-          onrated={(level) => {
-            closeRating();
-            if (level === null) rated.delete(row.id);
-            else rated.set(row.id, level);
-          }}
-        />
-      {/snippet}
-    </TriageShell>
+              {#if firstTime(row) != null}
+                {@const at = firstTime(row) ?? 0}
+                <span
+                  class="inline-flex items-center gap-0.5 rounded bg-blue-500/15 px-1.5 py-px text-[11px] font-medium text-blue-300"
+                >
+                  <IconPlayerPlay size={11} aria-hidden="true" />{formatPlaybackTime(at)}
+                </span>
+              {/if}
+              {#if row.removed}
+                <span class="text-[11px] text-dark-2 italic" title={songRemovedTitle(row)}>Removed</span>
+              {/if}
+              {#if row.owner}
+                <span class="ml-auto truncate text-xs text-dark-2">
+                  {row.owner.username ?? `User #${row.owner.id}`}
+                </span>
+              {/if}
+            {/snippet}
+          </TriageRow>
+        {/snippet}
+        {#snippet detail(row, state)}
+          <ReportedSongDetail
+            row={live(row)}
+            civitaiUrl={data.civitaiUrl}
+            canAct={data.canAct}
+            verdict={state.verdict}
+            error={state.error}
+            submit={state.submit}
+            {actionHref}
+            level={levelOf(row)}
+            ratingOpen={picking(row)}
+            onrate={() => (ratingOpen = true)}
+            onrated={(level) => {
+              closeRating();
+              if (level === null) rated.delete(row.id);
+              else rated.set(row.id, level);
+            }}
+          />
+        {/snippet}
+      </TriageShell>
+    {/if}
   </div>
 </div>

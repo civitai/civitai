@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
 import { DEFAULT_REPORT_REASONS, reportCountKey } from '$lib/reports';
 import { dbRead } from './db';
 
@@ -37,4 +38,41 @@ export function withSongBadges(
   if (!songs) return reports;
   const image = reportCountKey('image');
   return { ...reports, [image]: (reports[image] ?? 0) - songs.reports, audioReview: songs.songs };
+}
+
+/**
+ * Whether the `Image` aliased `image` is a song or a song's own cover (`songsOwnCoverText`, the public
+ * player's rule): what Audio review's Appeals tab decides, and what the image Appeals queue leaves
+ * out, so an appeal is in exactly one of the two.
+ */
+export const songOrOwnCoverText = (image: string) =>
+  `(${image}.type::text = 'audio' OR EXISTS (
+    SELECT 1 FROM "Track" song_track JOIN "Image" song_image ON song_image.id = song_track."imageId"
+    WHERE song_track."coverImageId" = ${image}.id AND ${songsOwnCoverText(image, 'song_image')}
+  ))`;
+
+/** The image appeals Audio review lists: on a song or its own cover, flagged for appeal, with a
+ *  Pending appeal that `resolveImageAppeal` closes (one not on a removed-before-review entity). */
+export const songAppealImages = () =>
+  dbRead
+    .selectFrom('Image as i')
+    .where('i.needsReview', '=', 'appeal')
+    .where(sql<boolean>`${sql.raw(songOrOwnCoverText('i'))}`)
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('Appeal as pa')
+          .select('pa.id')
+          .where('pa.entityType', '=', 'Image')
+          .whereRef('pa.entityId', '=', 'i.id')
+          .where('pa.status', '=', 'Pending')
+          .where('pa.entityRemovedAt', 'is', null)
+      )
+    );
+
+/** The Appeals tab's badge: songs and covers with a Pending appeal. */
+export async function countSongAppeals(): Promise<number> {
+  const row = await songAppealImages()
+    .select(sql<number>`count(*)::int`.as('n'))
+    .executeTakeFirst();
+  return row?.n ?? 0;
 }

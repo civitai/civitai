@@ -13,6 +13,7 @@ const parseReason = vi.fn();
 const needsReviewOf = vi.fn();
 const resolve = vi.fn();
 const note = vi.fn();
+const songImage = vi.fn();
 
 const actions = createTicketAppealActions({
   linkedUser: (...a) => linkedUser(...a),
@@ -20,6 +21,7 @@ const actions = createTicketAppealActions({
   withheld: async () => false,
   appealOf: (...a) => appealOf(...a),
   needsReviewOf: (...a) => needsReviewOf(...a),
+  songImage: (...a) => songImage(...a),
   parseReason: (...a) => parseReason(...a),
   resolve: (...a) => resolve(...a),
   note: (...a) => note(...a),
@@ -62,6 +64,7 @@ beforeEach(() => {
     .mockReturnValue({ resolvedReason: 'not-violation', internalNotes: undefined });
   resolve.mockReset().mockResolvedValue({ id: 12 });
   note.mockReset().mockResolvedValue({ status: 'ok' });
+  songImage.mockReset().mockResolvedValue(false);
 });
 
 describe('appealResolveImage', () => {
@@ -201,5 +204,15 @@ describe('appealResolveImage', () => {
     resolve.mockRejectedValue(new Error('db down'));
 
     await expect(run()).rejects.toThrow('db down');
+  });
+
+  it('refuses a song or song-cover appeal: Audio review decides it', async () => {
+    songImage.mockResolvedValue(true);
+    expect(await run()).toMatchObject({
+      status: 409,
+      data: { error: expect.stringMatching(/Audio review/) },
+    });
+    expect(songImage).toHaveBeenCalledWith(100);
+    expect(resolve).not.toHaveBeenCalled();
   });
 });

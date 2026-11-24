@@ -3,13 +3,12 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
-  import { IconCheck, IconExternalLink, IconFlag, IconSearch, IconUser } from '@tabler/icons-svelte';
+  import { IconExternalLink, IconFlag, IconSearch, IconUser } from '@tabler/icons-svelte';
   import { formatPlaybackTime, getBrowsingLevelLabel } from '@civitai/shared';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import EdgeImage from '$lib/components/EdgeImage.svelte';
   import SongBadge from '$lib/components/SongBadge.svelte';
   import SongCard from '$lib/components/SongCard.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
@@ -24,17 +23,18 @@
     songRemovedTitle,
     songRatingLabel,
     SONG_RATING_LEVELS,
-    type CheckState,
     type ReportedSongRow,
     type SongDetails,
   } from '$lib/audio-review';
   import { entityUrl, userUrl } from '$lib/entity-url';
   import { fetchJson } from '$lib/fetch-json';
-  import { dateTime, LINK_BUTTON, LINK_CLASS, plural, shortAge, shortDate, timeSince } from '$lib/format';
+  import { dateTime, LINK_BUTTON, LINK_CLASS, plural, shortAge, shortDate } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
   import { SSR_PENDING } from '$lib/ssr-pending';
   import type { Outcome } from '$lib/triage/queue';
   import { VIOLATION_LABELS, VIOLATION_TYPES } from '$lib/violations';
+  import { removedCovers } from '$lib/music/removed-covers';
+  import SongSideCards from './SongSideCards.svelte';
 
   let {
     row,
@@ -90,31 +90,38 @@
     return submit('Song removed')(input);
   };
 
+  // Remove cover, key 3: the cover alone, with the bar's violation type and note. Not a verdict on
+  // the song, whose reports stay open, so the song stays open too; the cover drops to the
+  // placeholder on every card showing it (`removedCovers`). A held removal leaves the cover up.
+  let note = $state('');
+  const removeCoverSubmit: SubmitFunction = async (input) => {
+    if (!violationType) {
+      input.cancel();
+      problem = 'Pick a violation type first.';
+      await tick();
+      violationSelect?.focus();
+      return;
+    }
+    problem = null;
+    return async ({ result, update }) => {
+      if (result.type === 'success') {
+        const held = result.data?.held;
+        if (typeof held === 'string') problem = held;
+        else if (typeof result.data?.coverId === 'number') removedCovers.add(result.data.coverId);
+      }
+      await update({ invalidateAll: false });
+    };
+  };
+
   // A rating is a correction, not a verdict: the song stays open, its reports still to decide.
   const rate = optimisticEnhancer(({ formData }) => {
     onrated(Number(formData.get('nsfwLevel')));
     return () => onrated(null);
   });
 
-  const CHECK_LOOK: Record<CheckState, { label: string; class: string }> = {
-    passed: { label: 'passed', class: 'bg-green-500/15 text-green-300' },
-    blocked: { label: 'blocked', class: 'bg-red-500/15 text-red-300' },
-    held: { label: 'held', class: 'bg-amber-500/15 text-amber-300' },
-    pending: { label: 'not finished', class: 'bg-dark-5 text-dark-0' },
-    failed: { label: 'failed', class: 'bg-dark-5 text-dark-0' },
-  };
-
   // The design's fact rows: a fixed label column, values left-aligned beside it.
   const FACT_ROW = 'grid grid-cols-[104px_1fr] gap-3 py-0.5';
   const SONG_FACT_ROW = 'grid grid-cols-[92px_1fr] gap-3 py-0.5';
-
-  const COVER_STATE: Record<CheckState, string> = {
-    passed: 'Scanned',
-    blocked: 'Blocked',
-    held: 'Held for review',
-    pending: 'Scan not finished',
-    failed: 'Scan failed',
-  };
 
 </script>
 
@@ -130,7 +137,9 @@
 {/snippet}
 
 {#snippet decision()}
+  <!-- `contents`: the hidden forms take no room in the column; their buttons post through `form=`. -->
   <form
+    class="contents"
     method="POST"
     action={actionHref('dismiss')}
     data-triage-action="dismiss"
@@ -141,6 +150,7 @@
     <input type="hidden" name="reportIds" value={reportIds} />
   </form>
   <form
+    class="contents"
     method="POST"
     action={actionHref('remove')}
     data-triage-action="remove"
@@ -150,13 +160,27 @@
     <input type="hidden" name="imageId" value={row.id} />
     <input type="hidden" name="reportIds" value={reportIds} />
     <input type="hidden" name="violationType" value={violationType} />
+    <input type="hidden" name="violationDetails" value={note} />
+  </form>
+  <form
+    class="contents"
+    method="POST"
+    action={actionHref('removeCover')}
+    data-triage-action="removeCover"
+    id="remove-cover-{row.id}"
+    use:enhance={removeCoverSubmit}
+  >
+    <input type="hidden" name="imageId" value={row.id} />
+    <input type="hidden" name="violationType" value={violationType} />
+    <input type="hidden" name="violationDetails" value={note} />
   </form>
   <TriageDecisionBar
     compact
     {problem}
     hint={ratingOpen
       ? 'Rating: 1 to 5 picks the level · Esc cancels. A rating leaves the reports open.'
-      : `J/K to move · 1 to 4 decide. Remove song asks for a violation type. ${dismiss.label} closes ${plural(row.reports.length, 'report')}.`}
+      : 'J/K to move · 1 to 4 decide. Remove song and Remove cover ask for a violation type; ' +
+        'Remove cover leaves the reports open.'}
   >
     {#snippet buttons()}
       <!-- Dimmed while the rating picker owns the digits. -->
@@ -182,9 +206,14 @@
       </TriageKeyButton>
       <TriageKeyButton
         key={3}
-        type="button"
-        disabled
-        title="Removing only the cover is not on this page yet"
+        type="submit"
+        form="remove-cover-{row.id}"
+        tone="red-outline"
+        disabled={!enabled[2]}
+        class={cn(ratingOpen && 'opacity-50')}
+        title={enabled[2]
+          ? 'Removes only the cover: the song stays up with the placeholder'
+          : 'No cover to remove'}
       >
         Remove cover
       </TriageKeyButton>
@@ -244,8 +273,7 @@
         </Select.Content>
       </Select.Root>
       <Input
-        name="violationDetails"
-        form="remove-{row.id}"
+        bind:value={note}
         maxlength={1000}
         aria-label="Note for the owner"
         placeholder="Note for the owner (optional)"
@@ -390,78 +418,7 @@
       {#await details}
         <p class="m-0 text-sm text-dark-2">Loading the cover, checks and owner…</p>
       {:then d}
-        <TriageCard title="Cover" dense>
-          {#if d.cover}
-            <div class="flex items-center gap-3">
-              <div class="size-14 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-6">
-                {#if d.cover.url}
-                  <EdgeImage src={d.cover.url} width={160} alt="" class="size-full object-cover" />
-                {/if}
-              </div>
-              <div class="min-w-0 space-y-1">
-                <p class="m-0 font-medium text-white">Cover of this song</p>
-                <div class="flex flex-wrap gap-1">
-                  {@render chip(d.cover.nsfwLevel ? getBrowsingLevelLabel(d.cover.nsfwLevel) : 'Not rated')}
-                  {#if d.checks.cover}
-                    <span
-                      class="inline-flex items-center gap-1 rounded px-1.5 py-px text-[11px] font-medium {CHECK_LOOK[
-                        d.checks.cover
-                      ].class}"
-                    >
-                      {#if d.checks.cover === 'passed'}<IconCheck size={11} aria-hidden="true" />{/if}
-                      {COVER_STATE[d.checks.cover]}
-                    </span>
-                  {/if}
-                  {#if !d.cover.shown}{@render chip('Placeholder shown')}{/if}
-                </div>
-              </div>
-            </div>
-          {:else}
-            <p class="m-0 text-dark-2">No cover: the player shows the placeholder.</p>
-          {/if}
-        </TriageCard>
-
-        <TriageCard title="Automated checks" dense>
-          <div class="flex flex-wrap gap-1.5">
-            {@render chip(`Song scan: ${CHECK_LOOK[d.checks.song].label}`, CHECK_LOOK[d.checks.song].class)}
-            {#if d.checks.cover}
-              {@render chip(
-                `Cover scan: ${CHECK_LOOK[d.checks.cover].label}`,
-                CHECK_LOOK[d.checks.cover].class
-              )}
-            {/if}
-          </div>
-        </TriageCard>
-
-        <TriageCard title="Generation details" dense>
-          {@render fact('Model', d.generation.model)}
-          {@render fact('Seed', d.generation.seed)}
-          {#if d.generation.prompt}{@render fact('Prompt', d.generation.prompt)}{/if}
-          {@render fact('Music description', d.generation.musicDescription)}
-          {@render fact('Lyrics source', d.generation.lyricsSource ?? 'No lyrics')}
-        </TriageCard>
-
-        {#if d.owner}
-          <TriageCard title="Owner" dense>
-            {#if d.owner.username}
-              <div class={FACT_ROW}>
-                <span class="text-dark-2">Username</span>
-                <a
-                  href={userUrl(civitaiUrl, d.owner.username)}
-                  target="_blank"
-                  rel="noreferrer"
-                  class={LINK_CLASS}>{d.owner.username}</a
-                >
-              </div>
-            {:else}
-              {@render fact('User', `#${d.owner.id}`)}
-            {/if}
-            {@render fact('Account age', timeSince(d.owner.createdAt))}
-            {@render fact('Removed songs', String(d.owner.removedSongs))}
-            {@render fact('Strikes', String(d.owner.strikes))}
-            {@render fact('Other reported', plural(d.owner.otherReported, 'song'))}
-          </TriageCard>
-        {/if}
+        <SongSideCards details={d} {civitaiUrl} />
       {:catch}
         <!-- Reported in the middle column. -->
       {/await}

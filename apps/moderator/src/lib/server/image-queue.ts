@@ -46,6 +46,7 @@ import { approvedAppealOf } from '$lib/server/removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
+import { NO_SONG_LINKS, visibleSongLinks } from '$lib/server/song-links.service';
 import { ReportStatus } from '$lib/reports';
 import {
   FLAG_KEPT_THROUGH_BLOCK,
@@ -97,23 +98,26 @@ function parseViolation(
   return parseForm(violationInputSchema, form);
 }
 
-/** Each card's Model3D parent, and the image's latest approved appeal, so a moderator sees it before
- *  removing the image again. */
-async function withModel3d<T extends { id: number }>(items: T[]) {
+/** Each card's Model3D parent, the image's latest approved appeal, so a moderator sees it before
+ *  removing the image again, and its song links (a song's cover to remove, a cover's song). */
+async function withModel3d<T extends { id: number }>(
+  items: T[],
+  user: App.Locals['user'] | undefined
+) {
   const ids = items.map((i) => i.id);
-  const [model3ds, appeals] = await Promise.all([
+  const [model3ds, appeals, songLinks] = await Promise.all([
     getModel3DsByThumbnailImageIds(ids),
     getLatestApprovedImageAppeals(dbRead, ids),
+    visibleSongLinks(ids, user),
   ]);
   return items.map((i) => ({
     ...i,
     model3d: model3ds[i.id] ?? null,
     approvedAppeal: approvedAppealOf(appeals.get(i.id)),
+    ...(songLinks.get(i.id) ?? NO_SONG_LINKS),
   }));
 }
 
-/** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule, review tags, report
- *  reason or 3D model parent. */
 async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
   const withheld = await restrictedImageIds(
     items.map((i) => i.id),
@@ -125,6 +129,7 @@ async function withheldCards<T extends { id: number }>(items: T[], user?: App.Lo
     return {
       ...withheldRow(item),
       model3d: null,
+      ...NO_SONG_LINKS,
       promptHighlight: null,
       ruleDefinition: null,
       ruleReason: null,
@@ -169,7 +174,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       ...base,
       view,
       kind: 'reported' as const,
-      items: await withheldCards(await withModel3d(items), user),
+      items: await withheldCards(await withModel3d(items, user), user),
       nextCursor: reportId ? undefined : nextCursor,
       singleReport: reportId ?? null,
       // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
@@ -183,11 +188,18 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       cursor,
       limit,
       csamReview: holdsCsamReview(user),
+      // Audio review's Appeals tab decides these.
+      songs: 'exclude',
     });
-    // model3d would draw a withheld image's media; drop it.
-    const cards = (await withModel3d(items)).map((item) =>
+    // model3d would draw a withheld image's media, and a song link would name it; drop both.
+    const cards = (await withModel3d(items, user)).map((item) =>
       item.restricted
-        ? { ...item, model3d: null, approvedAppeal: withheldApprovedAppeal(item.approvedAppeal) }
+        ? {
+            ...item,
+            model3d: null,
+            ...NO_SONG_LINKS,
+            approvedAppeal: withheldApprovedAppeal(item.approvedAppeal),
+          }
         : item
     );
     return { ...base, view, kind: 'appeal' as const, items: cards, nextCursor };
@@ -216,7 +228,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
             promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
               categories,
             }),
-          }))
+          })),
+          user
         ),
         user
       ),
@@ -254,7 +267,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
         stripped.map((item) => ({
           ...item,
           ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
-        }))
+        })),
+        user
       ),
       user
     ),

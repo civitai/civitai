@@ -41,8 +41,14 @@ describe('the decision keys on a reported song', () => {
     return REPORTED_DECISIONS.filter((_, i) => enabled[i]);
   };
 
-  it('offers Dismiss, Remove song and Set rating on a live song, never Remove cover yet', () => {
+  it('offers Dismiss, Remove song and Set rating on a live song, and Remove cover only with a cover to remove', () => {
     expect(offered(live)).toEqual(['dismiss', 'remove', 'rate']);
+    expect(offered({ ...live, removableCoverId: 620 })).toEqual([
+      'dismiss',
+      'remove',
+      'removeCover',
+      'rate',
+    ]);
     expect(dismissDecision(live)).toEqual({
       label: 'Dismiss reports',
       outcome: 'Reports dismissed',
@@ -58,6 +64,8 @@ describe('the decision keys on a reported song', () => {
   it('only closes the reports of a song a moderator removed', () => {
     const row = removed('moderated');
     expect(offered(row)).toEqual(['dismiss']);
+    // Its cover is its own row, still removable while the song stays removed.
+    expect(offered({ ...row, removableCoverId: 620 })).toEqual(['dismiss', 'removeCover']);
     expect(dismissDecision(row)).toEqual({
       label: 'Close reports',
       outcome: 'Closed: already removed',
@@ -67,11 +75,12 @@ describe('the decision keys on a reported song', () => {
   it('takes nothing on a song removed for CSAM or under CSAM review', () => {
     expect(offered(removed('CSAM'))).toEqual([]);
     expect(offered(removed(null, false, 'csam'))).toEqual([]);
+    expect(offered({ ...removed('CSAM'), removableCoverId: 620 })).toEqual([]);
   });
 
   it('offers nothing on a withheld song, or without the grant', () => {
-    expect(offered({ ...live, withheld: true })).toEqual([]);
-    expect(offered(live, false)).toEqual([]);
+    expect(offered({ ...live, withheld: true, removableCoverId: 620 })).toEqual([]);
+    expect(offered({ ...live, removableCoverId: 620 }, false)).toEqual([]);
   });
 
   it('shows what the writer did when it was not what was asked', () => {

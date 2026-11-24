@@ -282,6 +282,7 @@ describe('the appeals panel', () => {
       !p.startsWith('/images/') &&
       !p.startsWith('/models/') &&
       !p.startsWith('/appeals/') &&
+      p !== '/audio-review' &&
       p !== '/retool/user-lookup' &&
       p !== '/ratings';
     expect(await loadPanels(decision, none, loaders)).toEqual({});

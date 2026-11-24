@@ -12,7 +12,12 @@ import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getRedis } from './redis';
 import { getImageReviewCounts } from './image-review.service';
-import { countReportedSongs, withSongBadges } from './audio-review-count';
+import {
+  countReportedSongs,
+  countSongAppeals,
+  songAppealImages,
+  withSongBadges,
+} from './audio-review-count';
 import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
 import { countImageTagsNeedingReview, IMAGE_TAGS_COUNT_TIMEOUT_MS } from './image-tags-count';
 import { getImageRatingReviewCount } from './image-rating-review.service';
@@ -191,6 +196,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bountyUnpaidAwards,
     trainingDataReview,
     reportedSongs,
+    songAppeals,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Waited on for 3 seconds at most, and at most one scan runs across all servers: it can take
@@ -203,6 +209,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
       .selectFrom('Image')
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .where('needsReview', '=', 'appeal')
+      // Pending song and cover appeals are decided on Audio review, as the Appeals queue leaves them out.
+      .where('id', 'not in', songAppealImages().select('i.id'))
       .executeTakeFirst(),
     countModeratorArticles(),
     getRatingReviewCounts(),
@@ -258,6 +266,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     withLastGood('training-data-review', countTrainingDataReview, 3_000),
     // Bounded: it reads every Pending image report to find the songs among them.
     bounded(countReportedSongs),
+    bounded(countSongAppeals),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -277,7 +286,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bountyUnpaidAwards,
     imageTags,
     trainingDataReview,
-    audioReview: reportedSongs?.songs ?? null,
+    audioReview: reportedSongs && songAppeals != null ? reportedSongs.songs + songAppeals : null,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);

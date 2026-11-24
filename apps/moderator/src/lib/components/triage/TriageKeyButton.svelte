@@ -30,7 +30,8 @@
     blue: 'bg-blue-600 hover:bg-blue-700',
     'dark-red': 'bg-red-800 hover:bg-red-900',
     'darker-red': 'bg-red-950 hover:bg-red-900',
-    'red-outline': 'border-red-500 bg-transparent text-red-300 hover:bg-red-950 dark:bg-transparent',
+    'red-outline':
+      'border-red-500 bg-transparent text-red-300 hover:bg-red-950 dark:border-red-500 dark:bg-transparent',
   } as const;
 </script>
 

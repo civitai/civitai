@@ -6,17 +6,23 @@ import {
   LYRICS_SOURCE_LABELS,
   MANY_REPORTS,
   reportTimeSec,
+  removalReasonLabel,
+  type AppealFilter,
+  type AppealSort,
   type ReportedFilter,
+  type SongAppealRow,
   type ReportedSongRow,
   type ReportedSort,
   type SongDetails,
   type SongReport,
 } from '$lib/audio-review';
 import { reportDetail, reportReasonLabel } from '$lib/reports';
-import { pendingSongReports } from './audio-review-count';
+import { pendingSongReports, songAppealImages } from './audio-review-count';
 import { dbRead } from './db';
-import { ruleBlockedSql } from './image-review.service';
+import { getAppealImageQueue, ruleBlockedSql } from './image-review.service';
+import { visibleSongLinks } from './song-links.service';
 import { int4Id } from './query';
+import { holdsCsamReview } from './held-media';
 import { withheldImageIds } from './retracted-media';
 import { getActiveStrikes } from './user-lookup.service';
 
@@ -120,7 +126,7 @@ export async function getReportedSongRows(
   knownWithheld?: Set<number>
 ): Promise<ReportedSongRow[]> {
   if (!imageIds.length) return [];
-  const [songs, reports, withheld] = await Promise.all([
+  const [songs, reports, withheld, links] = await Promise.all([
     dbRead
       .selectFrom('Image as s')
       .innerJoin('User as owner', 'owner.id', 's.userId')
@@ -137,6 +143,7 @@ export async function getReportedSongRows(
         sql<string | null>`s.metadata->>'title'`.as('title'),
         'owner.id as ownerId',
         'owner.username as ownerUsername',
+        'c.id as coverId',
         sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
           playerSongCoverText('c')
         )} THEN c.url END`.as('coverUrl'),
@@ -161,8 +168,10 @@ export async function getReportedSongRows(
       .orderBy('r.id', 'asc')
       .execute(),
     knownWithheld ? [...knownWithheld] : withheldImageIds(user, imageIds),
+    visibleSongLinks(imageIds, user),
   ]);
   const withheldSet = new Set(withheld);
+  const coversWithheld = await withheldCovers(songs, user);
   const reportsBySong = new Map<number, SongReport[]>();
   for (const r of reports) {
     const list = reportsBySong.get(r.imageId) ?? [];
@@ -188,7 +197,7 @@ export async function getReportedSongRows(
       withheld: false,
       title: song.title || null,
       url: song.url,
-      coverUrl: song.coverUrl,
+      coverUrl: shownThumb(song, coversWithheld),
       nsfwLevel: song.nsfwLevel,
       removed: song.ingestion === 'Blocked',
       removal:
@@ -203,10 +212,26 @@ export async function getReportedSongRows(
       waitingSince: songReports[0].createdAt,
       reportCount: songReports.reduce((n, r) => n + 1 + r.also, 0),
       reports: songReports,
+      removableCoverId: links.get(id)?.songCoverId ?? null,
     };
     return [withheldSet.has(id) ? withheldSongRow(row) : row];
   });
 }
+
+/** The covers among these rows' thumbnails withheld from `user`: the list hides them, as the open
+ *  song's cover card does (`getSongDetails`). */
+async function withheldCovers(
+  rows: { coverId: number | null; coverUrl: string | null }[],
+  user: App.Locals['user'] | undefined
+) {
+  const ids = rows.flatMap((r) => (r.coverUrl && r.coverId != null ? [r.coverId] : []));
+  return new Set(ids.length ? await withheldImageIds(user, ids) : []);
+}
+
+const shownThumb = (
+  row: { coverId: number | null; coverUrl: string | null },
+  withheld: Set<number>
+) => (row.coverId != null && withheld.has(row.coverId) ? null : row.coverUrl);
 
 /**
  * A song withheld from this moderator: what is waiting (its id, when, how many) and nothing that
@@ -223,6 +248,7 @@ export function withheldSongRow(row: ReportedSongRow): ReportedSongRow {
     nsfwLevel: null,
     removal: null,
     owner: null,
+    removableCoverId: null,
     reports: row.reports.map((r) => ({
       ...r,
       reason: '',
@@ -394,4 +420,157 @@ export async function getSongDetails(
         }
       : null,
   };
+}
+
+/** Every browsing level, Blocked included: a removed song or cover is what an appeal is about. */
+const ALL_LEVELS = 0x7fffffff;
+/** The appeals read at once. Songs and covers under appeal stay few, as reported songs do; past this
+ *  the oldest are listed and the rest wait for them to be decided. */
+const APPEALS_READ = 500;
+
+/**
+ * One page of the Appeals tab: owners' Pending appeals of a removed song or a song's removed cover,
+ * read through the image Appeals queue's own reader (`getAppealImageQueue`, `songs: 'only'`) and
+ * filtered here like the Reported tab, since an appeal withheld from this moderator matches only its
+ * exact id. A cover's song is named only when it is not withheld too (`visibleSongLinks`).
+ */
+export async function getSongAppeals({
+  sort,
+  filter,
+  q,
+  page,
+  user,
+}: {
+  sort: AppealSort;
+  filter: AppealFilter;
+  q: string;
+  page: number;
+  user: App.Locals['user'] | undefined;
+}) {
+  const { items } = await getAppealImageQueue({
+    browsingLevel: ALL_LEVELS,
+    limit: APPEALS_READ,
+    csamReview: holdsCsamReview(user),
+    songs: 'only',
+  });
+  const ids = items.map((i) => i.id);
+  const [links, songs, counts] = await Promise.all([
+    visibleSongLinks(ids, user),
+    ids.length
+      ? dbRead
+          .selectFrom('Image as s')
+          .leftJoin('Track as t', 't.imageId', 's.id')
+          .leftJoin('Image as c', 'c.id', 't.coverImageId')
+          .select([
+            's.id',
+            'c.id as coverId',
+            sql<string | null>`s.metadata->>'title'`.as('title'),
+            sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
+              playerSongCoverText('c')
+            )} THEN c.url END`.as('coverUrl'),
+          ])
+          .where('s.type', '=', 'audio')
+          .where((eb) =>
+            eb.or([
+              eb('s.id', 'in', ids),
+              eb(
+                's.id',
+                'in',
+                eb.selectFrom('Track').select('imageId').where('coverImageId', 'in', ids)
+              ),
+            ])
+          )
+          .execute()
+      : [],
+    ids.length
+      ? dbRead
+          .selectFrom('Appeal')
+          .select(['entityId', sql<number>`count(*)::int`.as('n')])
+          .where('entityType', '=', 'Image')
+          .where('entityId', 'in', ids)
+          .groupBy('entityId')
+          .execute()
+      : [],
+  ]);
+  const songById = new Map(songs.map((s) => [s.id, s]));
+  const coversWithheld = await withheldCovers(songs, user);
+  const appealsOf = new Map(counts.map((c) => [c.entityId, c.n]));
+  const rows = items.map((item): SongAppealRow => {
+    // From the song read, not `item.type`, which a withheld row no longer carries.
+    const kind = songById.has(item.id) ? 'song' : 'cover';
+    const base = {
+      id: item.id,
+      appealId: item.appeal.id,
+      kind,
+      waitingSince: item.appeal.createdAt,
+      appeals: appealsOf.get(item.id) ?? 1,
+    } as const;
+    if (item.restricted)
+      return {
+        ...base,
+        withheld: true,
+        song: null,
+        url: null,
+        coverUrl: null,
+        owner: null,
+        message: null,
+        removal: null,
+        nsfwLevel: null,
+      };
+    const coverOf = links.get(item.id)?.coverOf ?? null;
+    const songId = kind === 'song' ? item.id : coverOf?.songId ?? null;
+    const song = songId != null ? songById.get(songId) : undefined;
+    return {
+      ...base,
+      withheld: false,
+      song: songId != null ? { id: songId, title: song?.title || null } : null,
+      url: item.url,
+      coverUrl: song ? shownThumb(song, coversWithheld) : null,
+      owner: { id: item.userId, username: item.username },
+      message: item.appeal.message || null,
+      removal: {
+        reason: removalReasonLabel(item.tosReason, item.blockedFor),
+        by: item.moderatorUsername,
+        at: item.removedAt,
+      },
+      nsfwLevel: item.nsfwLevel,
+    };
+  });
+
+  const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
+  const term = q.toLowerCase();
+  const searched = !q
+    ? rows
+    : rows.filter((r) =>
+        asId?.success
+          ? r.id === asId.data || r.song?.id === asId.data
+          : !r.withheld &&
+            (!!r.song?.title?.toLowerCase().includes(term) ||
+              !!r.owner?.username?.toLowerCase().startsWith(term))
+      );
+  const facets = {
+    all: searched.length,
+    song: searched.filter((r) => r.kind === 'song').length,
+    cover: searched.filter((r) => r.kind === 'cover').length,
+  };
+  const filtered = searched.filter((r) => filter === 'all' || r.kind === filter);
+  if (sort === 'newest') filtered.reverse();
+  const offset = (page - 1) * PAGE_SIZE;
+  return {
+    items: filtered.slice(offset, offset + PAGE_SIZE),
+    hasMore: filtered.length > offset + PAGE_SIZE,
+    total: facets[filter],
+    facets,
+    offset,
+    pageSize: PAGE_SIZE,
+  };
+}
+
+/** Whether `imageId` has an appeal the Appeals tab decides: a song or its own cover, Pending. */
+export async function isSongAppeal(imageId: number): Promise<boolean> {
+  const row = await songAppealImages()
+    .select('i.id')
+    .where('i.id', '=', imageId)
+    .executeTakeFirst();
+  return !!row;
 }

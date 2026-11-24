@@ -1061,6 +1061,7 @@ describe('the reported and review queues, without the grant', () => {
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TABLE IF NOT EXISTS "JobQueue" ("type" TEXT, "entityType" "EntityType", "entityId" INTEGER, "data" JSONB);
       CREATE TABLE IF NOT EXISTS "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+      CREATE TABLE IF NOT EXISTS "Track" ("imageId" INTEGER PRIMARY KEY, "coverImageId" INTEGER UNIQUE);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "needsReview") VALUES
         (${KEPT}, 'queue-key', 'Scanned', NULL, 9, 'minor'),
         (990000081, 'queue-key', 'Blocked', 'unrecognised-reason', 8, NULL),
@@ -1118,6 +1119,43 @@ describe('the reported and review queues, without the grant', () => {
     });
     expect((await reported(WITH_GRANT)).get(KEPT)).toMatchObject({
       report: { reason: 'TOSViolation', details: {} },
+    });
+  });
+
+  // Song links name another image than the card's own, so each is checked for this moderator too.
+  describe('song links', () => {
+    const SONG = 990000083;
+    const WITHHELD_SONG = 990000084;
+    beforeEach(() =>
+      db.exec(`
+        INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview", metadata) VALUES
+          (${SONG}, 'song-key', 'audio', 'Scanned', 9, 'minor', '{"title": "Night drive"}'),
+          (${WITHHELD_SONG}, 'queue-key', 'audio', 'Scanned', 9, NULL, '{"title": "Hidden"}');
+        INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${SONG}, ${KEPT}), (${WITHHELD_SONG}, ${CLEAN});`)
+    );
+
+    it('offers no "Remove cover" for a cover withheld from the moderator, and offers it to a grant holder', async () => {
+      expect((await minor(WITHOUT_GRANT)).get(SONG)).toMatchObject({ songCoverId: null });
+      expect((await minor(WITH_GRANT)).get(SONG)).toMatchObject({ songCoverId: KEPT });
+    });
+
+    it("drops a visible cover's link to a song withheld from the moderator, and keeps it for a grant holder", async () => {
+      expect((await minor(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ coverOf: null });
+      expect((await minor(WITH_GRANT)).get(CLEAN)).toMatchObject({
+        coverOf: { songId: WITHHELD_SONG, title: 'Hidden' },
+      });
+    });
+
+    it('still loads the queue when the song links cannot be read, with none on its cards', async () => {
+      await db.exec(`DROP TABLE "Track"`);
+      for (const read of [minor, reported]) {
+        const cards = await read(WITH_GRANT);
+        expect(cards.get(CLEAN)).toMatchObject({
+          restricted: false,
+          songCoverId: null,
+          coverOf: null,
+        });
+      }
     });
   });
 

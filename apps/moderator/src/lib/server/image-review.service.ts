@@ -18,6 +18,7 @@ import { pendingDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
+import { songAppealImages } from './audio-review-count';
 import {
   FEEDBACK_CAPTURE_METADATA_KEY,
   FEEDBACK_CAPTURE_OWNER_ID,
@@ -629,11 +630,17 @@ export async function getAppealImageQueue({
   cursor,
   limit,
   csamReview,
+  songs,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
   csamReview: boolean;
+  /** Pending appeals of songs and their own covers (`songAppealImages`) are decided on Audio
+   *  review's Appeals tab: `exclude` leaves them out (the image Appeals queue), `only` lists just
+   *  those. A song or cover left flagged with no Pending appeal stays in the image queue, whose
+   *  resolve clears the flag. */
+  songs?: 'only' | 'exclude';
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
   const fetched = await dbRead
     .selectFrom('Image as i')
@@ -698,6 +705,8 @@ export async function getAppealImageQueue({
     ])
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', 'appeal')
+    .$if(songs === 'exclude', (qb) => qb.where('i.id', 'not in', songAppealImages().select('i.id')))
+    .$if(songs === 'only', (qb) => qb.where('i.id', 'in', songAppealImages().select('i.id')))
     // Oldest appeal first, by appeal id: ordering by image id served the newest uploads first whatever
     // the appeal's age. Appeal ids follow `createdAt` (1 inversion of 1ms in 21,864 on 2026-10-07).
     .$if(cursor != null, (qb) => qb.where('appeal.id', '>', cursor!))

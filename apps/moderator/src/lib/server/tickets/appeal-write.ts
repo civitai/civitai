@@ -30,6 +30,8 @@ export type AppealWriteDeps = TicketActionDeps & {
   withheld: (user: App.Locals['user'], imageId: number) => Promise<boolean>;
   /** The image's `needsReview` flag, read from the database. */
   needsReviewOf: (imageId: number) => Promise<string | null>;
+  /** Whether the image is a song or a song's own cover, whose appeal Audio review decides. */
+  songImage: (imageId: number) => Promise<boolean>;
   /** The image queue's own reason rules, so a ruling from a ticket records what the queue would. */
   parseReason: (
     form: FormData,
@@ -88,6 +90,11 @@ export function createTicketAppealActions(deps: AppealWriteDeps) {
       const owned = await loadOwnedAppeal(deps.appealOf, input.appealId, ok.userId);
       if (owned.refused) return owned.refused;
       const { appeal } = owned;
+      if (classifyAppeal(appeal) === 'image' && (await deps.songImage(appeal.entityId)))
+        return fail(409, {
+          error:
+            'That is a song or cover appeal; it is decided on Audio review — nothing was changed.',
+        });
       if (classifyAppeal(appeal) !== 'image')
         return fail(409, {
           error:
