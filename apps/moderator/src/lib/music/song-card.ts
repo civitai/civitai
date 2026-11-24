@@ -21,3 +21,6 @@ export const songCardUrl = (imageId: number) => `/api/song-card/${imageId}`;
 
 /** A queue item that renders as a song card rather than an image or video. */
 export const isSong = (item: { type?: MediaType | string | null }) => item.type === 'audio';
+
+/** Whether a card offers the Minor and POI flags: never on a song, which shows no person. */
+export const offersImageFlags = (item: { type?: MediaType | string | null }) => !isSong(item);

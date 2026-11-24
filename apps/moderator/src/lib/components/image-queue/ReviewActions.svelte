@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { SvelteSet } from 'svelte/reactivity';
+  import { offersImageFlags } from '$lib/music/song-card';
   import ImageCardModTools from './ImageCardModTools.svelte';
   import TosDeleteButton from './TosDeleteButton.svelte';
   import VerdictBadge from './VerdictBadge.svelte';
@@ -24,6 +25,7 @@
       nsfwLevel: number;
       minor: boolean;
       poi: boolean;
+      type?: string | null;
       version?: string;
       needsReview?: string | null;
     };
@@ -58,6 +60,7 @@
     minor={item.minor}
     poi={item.poi}
     rating={!dismissFlag}
+    flags={offersImageFlags(item)}
   />
   <!-- Dismiss is per card only, so it stays on the card even while the card is selected. -->
   {#if dismissFlag}

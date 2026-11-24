@@ -471,13 +471,10 @@ export async function getReportedImageQueue({
   limit,
   reportId,
   agents,
-  songsOnly = false,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
-  /** Only reports on songs (`type` audio). Applied before the limit, so the cursor holds. */
-  songsOnly?: boolean;
   /** Only, or all but, the reports agent accounts filed. Applied before the limit, so the cursor holds. */
   agents?: AgentReportWhere;
   /** One report, whatever its status or rating — what `reportActionPath` links to from User Lookup and
@@ -528,11 +525,12 @@ export async function getReportedImageQueue({
           // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
           // number. Today it removes nothing: Automated reports are filed for other entity types.
           .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
+          // Songs are judged in Audio review (`/audio-review`). Before the limit, so the cursor holds.
+          .where('i.type', '<>', 'audio')
       )
       .$if(agents != null, (qb) =>
         qb.where('r.userId', agents!.mode === 'only' ? 'in' : 'not in', agents!.ids)
       )
-      .$if(songsOnly, (qb) => qb.where('i.type', '=', 'audio'))
       .orderBy('r.id', 'asc');
 
   // Reports on an image its owner deleted come first: it is kept only until its review is done. Up

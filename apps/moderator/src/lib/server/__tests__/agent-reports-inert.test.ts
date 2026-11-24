@@ -63,35 +63,6 @@ describe('with no agent accounts configured, the reported image queue', () => {
   });
 });
 
-describe("the reported image queue's Songs only filter (Music T10)", () => {
-  const songsOnlyAsked = () =>
-    (getReportedImageQueue.mock.lastCall![0] as { songsOnly?: boolean }).songsOnly;
-
-  it('narrows to songs on ?songs=1 and shows the control on', async () => {
-    const q = await loadImageQueue(
-      'reported',
-      new URL('https://mod.example/reports/image?songs=1')
-    );
-    expect(q).toMatchObject({ kind: 'reported', songsOnly: true });
-    expect(songsOnlyAsked()).toBe(true);
-  });
-
-  it('shows the control off, and queries every report, without it', async () => {
-    const q = await loadImageQueue('reported', new URL('https://mod.example/reports/image'));
-    expect(q).toMatchObject({ kind: 'reported', songsOnly: false });
-    expect(songsOnlyAsked()).toBe(false);
-  });
-
-  it('hides the control and runs unfiltered on a ?report= view', async () => {
-    const q = await loadImageQueue(
-      'reported',
-      new URL('https://mod.example/reports/image?report=5&songs=1')
-    );
-    expect(q).toMatchObject({ kind: 'reported', songsOnly: null });
-    expect(songsOnlyAsked()).toBe(false);
-  });
-});
-
 describe('parseAgentReporterIds', () => {
   it('reads empty or blank as none', () => {
     expect(parseAgentReporterIds(undefined)).toEqual([]);
