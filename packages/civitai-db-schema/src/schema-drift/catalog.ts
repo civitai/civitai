@@ -34,6 +34,24 @@ const TABLES_SQL = `
 `;
 
 /**
+ * Views and materialised views.
+ *
+ * Captured so the differ can tell a model mapped to a view (correctly unmanaged) from a model
+ * mapped to nothing at all (the largest divergence there is). Without this list both look the
+ * same to the differ and both are dropped in silence — see `classifySkip` in compare.ts.
+ *
+ * A snapshot captured before this query existed has no `views` key, and that is treated as
+ * "could not classify" rather than "there are no views" — reading an absent list as an empty
+ * one would report every view-backed model as a missing table.
+ */
+const VIEWS_SQL = `
+  SELECT c.relname AS table_name
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = $1 AND c.relkind IN ('v', 'm')
+`;
+
+/**
  * Nullability.
  *
  * The result column is `is_not_null`, NOT `notnull`. `NOTNULL` is a reserved word in
@@ -156,8 +174,9 @@ export async function readCatalog(
   runner: CatalogQueryRunner,
   dbSchema: string = DEFAULT_DB_SCHEMA
 ): Promise<DbCatalog> {
-  const [tableRows, columnRows, fkRows, uniqueRows] = await Promise.all([
+  const [tableRows, viewRows, columnRows, fkRows, uniqueRows] = await Promise.all([
     runner.query<{ table_name: string }>(TABLES_SQL, [dbSchema]),
+    runner.query<{ table_name: string }>(VIEWS_SQL, [dbSchema]),
     runner.query<{ table_name: string; column_name: string; is_not_null: boolean }>(COLUMNS_SQL, [
       dbSchema,
     ]),
@@ -209,6 +228,7 @@ export async function readCatalog(
 
   return {
     tables: tableRows.rows.map((r) => r.table_name),
+    views: viewRows.rows.map((r) => r.table_name),
     columns,
     foreignKeys,
     uniqueIndexes,
