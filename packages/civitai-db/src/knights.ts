@@ -51,12 +51,14 @@ export const isModeratedSql = sql<SqlBool>`COALESCE("KnightsQueueItem"."meta" ? 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
 /**
- * The image half of `servableImage`, whatever its post's state: a rated still image with no block marker, no review hold,
- * no real-person or minor flag (those go to the moderators' own queues), no CSAM flag or held owner (`heldImageSql`), no
- * listing on a CSAM report, no ToS violation, an uploader who is not deleted, and no model or version on its post that is
- * deleted or unpublished for a violation.
- * Only rules that are permanent belong here: sweeps retire references and close items over a failure. Expects
- * `Image as img` joined to `Post as p`.
+ * The content half of `servableImage`, independent of the post's publish state and privacy: a rated still image with
+ * no block marker, no review hold, no real-person or minor flag (those go to the moderators' own queues), no CSAM flag or
+ * held owner (`heldImageSql`), no listing on a CSAM report, no ToS violation, an uploader who is not deleted, and no
+ * model or version on its post that is deleted or unpublished for a violation. Sweeps close items and retire references
+ * over a failure here. Some of these states can lift (a hold, a ToS flag, an unpublish for a violation) and nothing
+ * reopens what they closed, by design; a state that should only hide belongs in `imageSourceVisible`. Keep every clause
+ * true or false, never NULL: the queue sweep reads `NOT servableImageContent` while other sweeps test membership, and a
+ * NULL would split them. Expects `Image as img` joined to `Post as p`.
  */
 export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
