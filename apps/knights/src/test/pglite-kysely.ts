@@ -29,6 +29,7 @@ const MIGRATIONS = [
   '20261210120000_knights_v2_tables',
   '20271120160000_knights_inquisitor_review',
   '20271125120000_knights_legacy_player_days',
+  '20271128120000_knights_player_question_settings',
 ].map((name) =>
   fileURLToPath(
     new URL(

@@ -100,6 +100,12 @@ votes, never player rows.
   "Yes/no questions" switch on the moderator app's Knights of New Order Config page (On stores 1, Off 0, Default clears it; read by
   Knights at most every 30 s), else from `KNIGHTS_YESNO_SHARE`.
   The stretch and the max age below work the same way ([game settings](knights-sources.md#game-settings)).
+- Players can turn questions off on `/settings` ("Yes/no questions", labelled beta; `KnightsPlayer.yesNoQuestions`, migration
+  `20271128120000_knights_player_question_settings`, by hand). The switch is read in `pickItem` (`playerPrefs`, on every pick, no
+  cache), the one place a queue yes/no becomes due, so it covers the generated questions, the Paladin tag review source and
+  `GET /play/next` alike. A player who never touched it follows `yesNoPlayerDefault` on the Config page (off unless set), and a
+  failed read serves no question. Items handed out before a change can still be answered. Acolytes get no switch: their practice
+  pairs (`KnightsYesNoReference`) are part of the apprenticeship.
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the

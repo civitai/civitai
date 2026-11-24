@@ -9,6 +9,8 @@ export type YesNoSettings = {
   maxAgeDays: number;
   /** The moderator tag review source: created, served and written back only when the Config page switched it on. */
   tagReview: boolean;
+  /** Whether a player who never set the questions switch in Knights settings is served yes/no questions. */
+  playerDefault: boolean;
 };
 
 export const DEFAULT_YESNO: YesNoSettings = {
@@ -16,6 +18,7 @@ export const DEFAULT_YESNO: YesNoSettings = {
   stretch: 8,
   maxAgeDays: 14,
   tagReview: false,
+  playerDefault: false,
 };
 
 const read = (raw: string | undefined, fallback: number, valid: (n: number) => boolean) => {
@@ -43,5 +46,8 @@ export function yesNoSettings(
       read(env.KNIGHTS_YESNO_MAX_AGE_DAYS, DEFAULT_YESNO.maxAgeDays, (n) => n > 0),
     // No environment fallback: turning it on is the moderators' call, made and audited on the Config page.
     tagReview: stored.modTagReview === true,
+    // Off unless turned on: the Moderation Lead's condition for default-on (a working report path) is not met yet.
+    playerDefault:
+      stored.yesNoPlayerDefault ?? env.KNIGHTS_YESNO_PLAYER_DEFAULT?.trim().toLowerCase() === 'on',
   };
 }

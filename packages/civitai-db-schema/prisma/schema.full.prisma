@@ -8785,6 +8785,10 @@ model KnightsPlayer {
   startAtSeen DateTime?
   /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
   recapPopupOptOut Boolean @default(false)
+  /// The yes/no questions switch in Knights settings. Null follows the default saved on the moderator Config page.
+  yesNoQuestions   Boolean?
+  /// Keys of the preset tag groups the player hides in Knights settings.
+  hiddenTagGroups  String[] @default([])
 }
 
 /// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with

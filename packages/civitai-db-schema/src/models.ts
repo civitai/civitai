@@ -5318,6 +5318,8 @@ export interface KnightsPlayer {
   recapDismissedFor: Date | null;
   startAtSeen: Date | null;
   recapPopupOptOut: boolean;
+  yesNoQuestions: boolean | null;
+  hiddenTagGroups: string[];
 }
 
 export interface KnightsLegacyPlayerDay {

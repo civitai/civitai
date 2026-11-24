@@ -82,6 +82,15 @@ type ToggleOption = { value: ToggleChoice; label: string };
 
 /** Positive labels, the Knights default first. `on`/`off` are the stored boolean (true/false), whatever the label says. */
 export const TOGGLE_ROWS: Record<ToggleKey, { description: string; options: ToggleOption[] }> = {
+  yesNoPlayerDefault: {
+    description:
+      'Whether players who never touched the questions switch in Knights settings get yes/no questions. Their own choice always wins.',
+    options: [
+      { value: 'default', label: 'Default (off)' },
+      { value: 'on', label: 'On' },
+      { value: 'off', label: 'Off' },
+    ],
+  },
   apprenticeSmites: {
     description: 'Too many wrong answers earn an Acolyte a smite.',
     options: [
