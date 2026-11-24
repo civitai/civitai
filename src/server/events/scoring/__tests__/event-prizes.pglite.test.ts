@@ -229,9 +229,9 @@ describe('comebackCup', () => {
 
 describe('comebackPace', () => {
   it("ranks each team's week so far against its own pace, over the days played, and says no more", async () => {
-    dbMock.dbRead.cosmetic.findUnique.mockResolvedValue({
-      data: { url: 'cup-badge', animated: true },
-    } as never);
+    dbMock.dbRead.cosmetic.findMany.mockResolvedValue([
+      { id: CUP_BADGE, data: { url: 'cup-badge', animated: true } },
+    ] as never);
     const json = { mode: 'live', prizes: { comeback: comeback('shadow') } };
     // Six days in: Blue's 1000 over its 20 a day is +733%; Pink's 1000 over its 200 a day is -17%
     // (over the full seven days it would read -29%).
@@ -244,6 +244,11 @@ describe('comebackPace', () => {
       week: WEEK,
       badge: { url: 'cup-badge', animated: true },
     });
+    const pinkAt = async (now: string) =>
+      (await comebackPace(event, json, new Date(now)))?.teams.find((t) => t.team === 'Pink')?.pct;
+    // Ten minutes in, the points are spread over an hour; after the week, over all seven days.
+    expect(await pinkAt('2026-11-24T00:10:00.000Z')).toBe(11900);
+    expect(await pinkAt('2026-12-05T00:00:00.000Z')).toBe(-29);
     expect(await comebackPace(event, json, new Date('2026-11-23T12:00:00.000Z'))).toBeNull();
     const off = { mode: 'live', prizes: { comeback: comeback('off') } };
     expect(await comebackPace(event, off, new Date('2026-11-30T00:00:00.000Z'))).toBeNull();

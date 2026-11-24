@@ -10,6 +10,7 @@ import {
   type PrizeEvent,
 } from '~/server/events/scoring/event-prizes';
 import { logToAxiom } from '~/server/logging/client';
+import { cosmeticCache } from '~/server/redis/caches';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 
@@ -34,6 +35,7 @@ export async function comebackPace(
   now = new Date()
 ): Promise<ComebackPace | null> {
   const comeback = parseEventPrizes(flagRaceJson)?.comeback;
+  // Shown in shadow as well as live on purpose: the Cup is flipped to live before the payout.
   if (!comeback || comeback.mode === 'off') return null;
   const { week } = comeback;
   if (now < week.from) return null;
@@ -41,10 +43,11 @@ export async function comebackPace(
     week.to.getTime() - week.from.getTime(),
     Math.max(HOUR_MS, now.getTime() - week.from.getTime())
   );
-  const [teams, cosmetic] = await Promise.all([
+  const [teams, cosmetics] = await Promise.all([
     comebackTeams(event, comeback, dbRead),
-    dbRead.cosmetic.findUnique({ where: { id: comeback.badge }, select: { data: true } }),
+    cosmeticCache.fetch([comeback.badge]),
   ]);
+  const cosmetic = cosmetics[comeback.badge];
   const { teams: scored } = comebackCup(teams, comeback, elapsedMs / DAY_MS);
   const data = cosmetic?.data as { url?: string; animated?: boolean } | null | undefined;
   return {
