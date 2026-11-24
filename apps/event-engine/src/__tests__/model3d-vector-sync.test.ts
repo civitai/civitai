@@ -144,12 +144,10 @@ describe('3D model removal', () => {
     ['flagged minor', `UPDATE "Model3D" SET minor = true WHERE id = 1`],
     ['flagged POI', `UPDATE "Model3D" SET poi = true WHERE id = 1`],
     ['owner banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = 7`],
-    ['owner reported', `INSERT INTO "CsamReport" ("userId") VALUES (7)`],
     ['thumbnail sent to review', `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 10`],
     ['thumbnail taken down', `UPDATE "Image" SET "tosViolation" = true WHERE id = 10`],
     ['thumbnail blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 10`],
     ['thumbnail rated Blocked', `UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 10`],
-    ['thumbnail listed on a report', `INSERT INTO "CsamReport" (images) VALUES ('["10"]')`],
   ];
   test.each(leaves)(
     'a model %s loses its point on the next sync',
@@ -192,16 +190,18 @@ describe('3D model removal', () => {
     }
   }, 60_000);
 
-  // Listed on a report is a leg only the held-content rule catches: the image is otherwise clean.
-  test('a held thumbnail is never sent to the embedder', async () => {
+  // Search removes only on delete or block: an owner named on a report, or a thumbnail listed on
+  // one, hides nothing. Red if the held filter returns.
+  test('a reported owner or a reported thumbnail keeps the model in search', async () => {
     const pg = await pglite();
     try {
       await pg.exec(eligibleModel(1) + eligibleModel(2, 8));
-      await pg.exec(`INSERT INTO "CsamReport" (images) VALUES ('[{"id": 20}]')`);
+      await pg.exec(`INSERT INTO "CsamReport" ("userId") VALUES (7);
+        INSERT INTO "CsamReport" (images) VALUES ('[{"id": 20}]')`);
       const { points, sent, deps } = fakes(pg);
       await syncIds(getModel3DDocs, [1, 2], deps);
-      expect([...points.keys()]).toEqual([1]);
-      expect(sent.map((i) => i.id)).toEqual(['1']);
+      expect([...points.keys()].sort()).toEqual([1, 2]);
+      expect(sent.map((i) => i.id).sort()).toEqual(['1', '2']);
     } finally {
       await pg.close();
     }

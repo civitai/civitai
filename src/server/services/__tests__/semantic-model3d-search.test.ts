@@ -171,14 +171,13 @@ describe('semantic 3D model search', () => {
     expect(shown(await search([2, 1]))).toEqual([2, 1]);
   });
 
-  it("does not serve a held owner's model whose point is still in the index", async () => {
+  // Holds hide nothing. Red if the held filter returns.
+  it('serves a model whose owner is named on a report', async () => {
     await model(1);
     await model(2, { owner: 77 });
     await model(3, { owner: 78 });
     await h.pg!.exec(`INSERT INTO "CsamReport" ("userId") VALUES (77), (78);`);
-    expect(shown(await search([3, 2, 1]))).toEqual([1]);
-    // Dropped before the card read, so nothing of theirs is fetched.
-    expect(h.fetched).toEqual([[1]]);
+    expect(shown(await search([3, 2, 1]))).toEqual([3, 2, 1]);
   });
 
   it('does not serve a model that lost eligibility since it was indexed', async () => {

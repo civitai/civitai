@@ -156,14 +156,12 @@ describe('storyline removal', () => {
       `INSERT INTO "Image" (id, "userId", minor) VALUES (900, 7, true);
        UPDATE "Storyline" SET "coverImageId" = 900 WHERE id = 1`,
     ],
-    ['owner reported', `INSERT INTO "CsamReport" ("userId") VALUES (7)`],
     ['chapter 1 removed', `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 10`],
     ['chapter 1 post deleted', `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 10`],
     ['chapter 1 post taken down', `UPDATE "Post" SET "tosViolation" = true WHERE id = 10`],
     ['chapter 1 post blocked', `UPDATE "Post" SET "nsfwLevel" = 32 WHERE id = 10`],
     ['chapter 1 image in CSAM review', `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 100`],
     ['chapter 1 image blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 100`],
-    ['chapter 1 image listed on a report', `INSERT INTO "CsamReport" (images) VALUES ('[100]')`],
     ['chapter 1 text item held', `INSERT INTO "PostText" ("postId", "csamHeld") VALUES (10, true)`],
     [
       'chapter 1 text item pending a hold',
@@ -172,6 +170,25 @@ describe('storyline removal', () => {
        VALUES ('PostText', 500, 'csam', 'Pending')`,
     ],
   ];
+  // Search removes only on delete or block: a reported owner, or a chapter 1 image listed on a
+  // report, hides nothing. Red if the held filter returns.
+  test('a reported owner or a reported chapter 1 image keeps the storyline in search', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    try {
+      await pg.exec(`${SCHEMA}
+      INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'other', NULL, NULL);
+      ${eligibleStoryline(1)} ${eligibleStoryline(2, 8)}
+      INSERT INTO "CsamReport" ("userId") VALUES (7);
+      INSERT INTO "CsamReport" (images) VALUES ('[100]');`);
+      const { points, deps } = fakes(pg);
+      await syncIds(getStorylineDocs, [1, 2], deps);
+      expect([...points.keys()].sort()).toEqual([1, 2]);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
   test.each(leaves)(
     'a storyline whose %s loses its point on the next sync',
     async (_, change) => {

@@ -1,7 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { heldUserSql } from '@civitai/shared/held-media';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import * as eventEngine from '../../../../apps/event-engine/src/vector-sync/held';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -68,9 +67,5 @@ describe('heldUserSql', () => {
       [OVERFLOW_PREFIX, false],
       [null, false],
     ]);
-  });
-
-  it("is the event-engine copy's result too", async () => {
-    expect(await held(eventEngine.heldUserSql)).toEqual(await held(heldUserSqlBefore));
   });
 });

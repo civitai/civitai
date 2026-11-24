@@ -12,26 +12,6 @@ export const orphanBrake = (orphans: number, points: number) =>
   orphans > 10 && orphans > points / 10;
 
 /**
- * The next `batch` points after `cursor`, the ones whose row is in the domain's slice of its table
- * (by primary key), and the cursor for the following call: 0 once the collection is exhausted.
- */
-export async function nextRefreshPoints(
-  pg: Pick<Pool, 'query'>,
-  domain: Pick<Domain<any>, 'table' | 'where'>,
-  store: { idsFrom(offset: number, limit: number): Promise<{ ids: number[]; next: number }> },
-  cursor: number,
-  batch: number
-): Promise<{ ids: number[]; points: number[]; next: number }> {
-  const page = await store.idsFrom(cursor + 1, batch);
-  if (!page.ids.length) return { ids: [], points: [], next: 0 };
-  const { rows } = await pg.query<{ id: number }>(
-    `SELECT id FROM "${domain.table}" WHERE id = ANY($1::int[])${andWhere(domain)}`,
-    [page.ids]
-  );
-  return { ids: rows.map((r) => Number(r.id)), points: page.ids, next: page.next && page.next - 1 };
-}
-
-/**
  * The next `batch` ids of the domain's table after `cursor`, by keyset, and the cursor for the
  * following call: 0 once the table is exhausted, so the walk wraps.
  */
@@ -61,9 +41,7 @@ type RefreshQueue = {
 
 /**
  * Every `everyMs`, walks the domain's whole table `batch` ids a read into its lane, with the
- * collection's points in the same id range (or, with `pointsOnly`, only the collection's points,
- * looked up in the table by primary key), flushing the
- * queue whenever it fills. A failed read or flush stops the pass, and the next tick resumes it from
+ * collection's points in the same id range, flushing the queue whenever it fills. A failed read or flush stops the pass, and the next tick resumes it from
  * the same cursor; a tick is skipped while the previous pass runs. With `startupDelayMs`, one more
  * tick runs that long after start: the cursor lives in memory, so a process restarting more often
  * than `everyMs` would otherwise never finish a pass.
@@ -78,10 +56,6 @@ export function startRefreshers(
     const lane = queue.lanes.get(domain.name);
     if (!refresh || !lane) return [];
     const store = domain.store?.();
-    if (refresh.pointsOnly && !store) {
-      logger.error(`${domain.name}-sync: a points-only walk needs a store; not walking`);
-      return [];
-    }
     // Orphans held on the last full pass: still orphans a pass later, they are rows really deleted.
     let heldLastPass = new Set<number>();
     // This pass's holds; kept when a pass fails partway, since its next tick resumes the same pass.
@@ -92,15 +66,10 @@ export function startRefreshers(
       do {
         if (queue.isFull) await queue.flush();
         const from = cursor + 1;
-        const walked = refresh.pointsOnly
-          ? await nextRefreshPoints(pg, domain, store!, cursor, refresh.batch)
-          : undefined;
-        const { ids, next } = walked ?? (await nextRefreshIds(pg, domain, cursor, refresh.batch));
+        const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
         // A deleted row is not in the table to walk, so its point is found from the collection
         // side: every point in this batch's id range is queued too, and one with no row is deleted.
-        const points = walked
-          ? walked.points
-          : store
+        const points = store
           ? await store
               .idsInRange(from, next === 0 ? Number.MAX_SAFE_INTEGER : next + 1)
               .catch((err) => {
@@ -113,9 +82,7 @@ export function startRefreshers(
         // A table read that came back empty is a bad read, or a cleanup to run by hand: never trusted,
         // however few points it would delete. Its orphans are not held either, since a hold would
         // exempt them from the brake on the next pass.
-        // A points batch is read by primary key, so one that finds no rows is the same bad read anywhere
-        // in the pass, and the held-orphan recheck would repeat it rather than check it.
-        if ((cursor === 0 || walked) && ids.length === 0) {
+        if (cursor === 0 && ids.length === 0) {
           if (orphans.length) {
             logger.error(
               { points: points.length, sample: orphans.slice(0, 10) },

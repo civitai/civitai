@@ -113,17 +113,18 @@ const spec: ParitySpec = {
     model(13, 'poi', { poi: 'true' }),
     model(14, 'bannedOwner', { userId: '2', thumbnail: `2, 'Scanned', NULL, false, NULL` }),
     model(15, 'deletedOwner', { userId: '3', thumbnail: `3, 'Scanned', NULL, false, NULL` }),
-    // A held owner with their own thumbnail, as eligibility requires; with someone else's, the row
-    // would fall to thumbnailOtherOwner and prove nothing about the hold.
-    model(16, 'ownerReported', { userId: '4', thumbnail: `4, 'Scanned', NULL, false, NULL` }),
-    model(17, 'ownerSecondaryReported', {
+    // Reported owners with their own thumbnail, as eligibility requires: holds hide nothing.
+    model(16, 'eligible:ownerReported', {
+      userId: '4',
+      thumbnail: `4, 'Scanned', NULL, false, NULL`,
+    }),
+    model(17, 'eligible:ownerSecondaryReported', {
       userId: '5',
       thumbnail: `5, 'Scanned', NULL, false, NULL`,
     }),
     model(19, 'thumbnailBlockedCsam', { thumbnail: `1, 'Scanned', NULL, false, 'CSAM'` }),
-    model(21, 'thumbnailListed', {}),
-    model(22, 'thumbnailListedAsText', {}),
-    model(23, 'thumbnailOwnerHeld', { thumbnail: `8, 'Scanned', NULL, false, NULL` }),
+    model(21, 'eligible:thumbnailListed', {}),
+    model(22, 'eligible:thumbnailListedAsText', {}),
     // Every other value on each boundary, so a rule that widens or narrows one is caught.
     model(24, 'status:Unpublished', { status: `'Unpublished'` }),
     model(25, 'availability:Private', { availability: `'Private'` }),
@@ -133,7 +134,6 @@ const spec: ParitySpec = {
     model(30, 'thumbnailBlockedLevel', { thumbnailLevel: '32' }),
     model(31, 'thumbnailUnrated', { thumbnailLevel: '0' }),
     model(32, 'thumbnailBlockedFor', { thumbnail: `1, 'Scanned', NULL, false, 'TOS'` }),
-    model(33, 'thumbnailOwnerSecondaryReported', { thumbnail: `5, 'Scanned', NULL, false, NULL` }),
     // The thumbnail must be the model owner's own image.
     model(35, 'thumbnailOtherOwner', { thumbnail: `7, 'Scanned', NULL, false, NULL` }),
     model(36, 'thumbnailMinor', { thumbnailFlags: 'true, false' }),
@@ -150,21 +150,15 @@ const spec: ParitySpec = {
     'availability',
     'bannedOwner',
     'deletedOwner',
-    'ownerReported',
-    'ownerSecondaryReported',
     'thumbnail',
     'thumbnailScanned',
     'thumbnailNotInReview',
     'thumbnailTos',
     'thumbnailBlockedCsam',
-    'thumbnailListed',
-    'thumbnailListedAsText',
-    'thumbnailOwnerHeld',
     'modelBlocked',
     'thumbnailBlockedLevel',
     'thumbnailUnrated',
     'thumbnailBlockedFor',
-    'thumbnailOwnerSecondaryReported',
     'thumbnailOtherOwner',
     'thumbnailMinor',
     'thumbnailPoi',
