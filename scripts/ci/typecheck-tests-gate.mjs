@@ -511,8 +511,7 @@ console.error('');
 console.error('  Reproduce locally:');
 console.error('    pnpm run typecheck:tests');
 console.error('================================================================');
-// Under Actions, put file/line/TS code on the check run itself; otherwise the
-// check shows only the exit code. Additive: nothing above changes.
+// Under Actions, annotate the blocking diagnostics.
 if (process.env.GITHUB_ACTIONS === 'true') {
   for (const line of formatAnnotations({ diagnostics: measured.parsed.diagnostics, result })) {
     console.log(line);

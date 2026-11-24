@@ -109,8 +109,7 @@ describe('parseDiagnostics', () => {
   });
 
   it('keeps each diagnostic with its position, code and chained message', () => {
-    // Shape measured from TypeScript 7.0.2 `--pretty false`: a chain continues on
-    // indented lines after the first.
+    // A plain-format message chain continues on indented lines after the first.
     const out = [
       `src/a/__tests__/x.test.ts(2,7): ${TS}2322: Type '{ a: { b: string; }; }' is not assignable to type 'A'.`,
       "  The types of 'a.b' are incompatible between these types.",

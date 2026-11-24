@@ -157,8 +157,6 @@ export function parseDiagnostics(output) {
   const counts = new Map();
   const formats = new Set();
   const unparsedSample = [];
-  // One entry per counted line, `{ file, line, col, code, message }`, for the
-  // gate's CI annotations. It never feeds a count: `counts`/`total` are the verdict.
   const diagnostics = [];
   let lastPlain = null;
   let total = 0;

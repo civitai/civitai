@@ -2,13 +2,9 @@
  * GitHub Actions annotations for the test-file typecheck ratchet
  * (`typecheck-tests-gate.mjs`).
  *
- * Without these a blocked run shows only "Process completed with exit code 1."
- * on the check, and the job log names files and counts but no line or message.
- * This turns each blocking diagnostic into an `::error` workflow command so the
- * check run carries file, line, column and TS code.
- *
- * Pure: nothing here reads the environment or prints. The gate decides whether
- * it is running under Actions.
+ * Turns each blocking diagnostic into an `::error` workflow command so the check
+ * run carries file, line, column and TS code. Pure: no environment reads or
+ * printing; the gate decides whether it is running under Actions.
  */
 
 // GitHub keeps at most 10 error annotations per step; further `::error` lines
