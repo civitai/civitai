@@ -10,7 +10,7 @@
   }: {
     item: {
       id: number;
-      type: string;
+      type: string | null;
       mimeType?: string | null;
       size?: string | null;
       duration?: string | null;

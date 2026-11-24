@@ -384,7 +384,7 @@
     <!-- `selectable` is the FILTERED set, so "Select all" means what is on screen. -->
     <ImageActionBar
       {selected}
-      selectable={filteredItems.map((i) => i.id)}
+      selectable={filteredItems.filter((i) => !i.restricted).map((i) => i.id)}
       onSubmit={onSubmit.enhance}
       submitting={onSubmit.submitting}
       owners={selectedOwners}

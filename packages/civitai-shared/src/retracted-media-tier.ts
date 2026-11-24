@@ -193,6 +193,17 @@ export function urlSiblingsSql(image: string): string {
   ), '[]'::json)`;
 }
 
+/** `siblingsServable` without its scanner read. */
+export function siblingsClearInPostgres(
+  siblings: UrlSibling[],
+  isSignal: (blockedFor: string | null) => boolean
+): boolean {
+  return (
+    siblings.length < URL_SIBLING_CAP &&
+    !siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))
+  );
+}
+
 /**
  * Whether no row in `siblings` (`urlSiblingsSql`) keeps the shared url from a moderator without the
  * CSAM grant: the list is under `URL_SIBLING_CAP`, every row has finished its scan, `isSignal`
@@ -203,8 +214,7 @@ export async function siblingsServable(
   isSignal: (blockedFor: string | null) => boolean,
   readVerdicts: (imageIds: number[]) => Promise<Map<number, ScannerVerdict> | null>
 ): Promise<boolean> {
-  if (siblings.length >= URL_SIBLING_CAP) return false;
-  if (siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))) return false;
+  if (!siblingsClearInPostgres(siblings, isSignal)) return false;
   if (!siblings.length) return true;
   const verdicts = await readVerdicts(siblings.map((s) => s.id));
   if (!verdicts) return false;
