@@ -248,6 +248,8 @@ describe('posting', () => {
       await q(`SELECT hidden FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`)
     ).toEqual([{ hidden: true }]);
     expect(posts()).toEqual([]);
+    // Known again to the lookup, so only the stored refusal refuses the resend.
+    platform.unknown.delete(UNKNOWN_LATER);
     await expect(
       comments.postFeaturePageComment(ctxFor(AUTHOR), {
         requestId: `r${seq}`,

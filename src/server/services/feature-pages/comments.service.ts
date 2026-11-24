@@ -8,6 +8,7 @@ import { fileReport } from '~/server/controllers/report.controller';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
+import { logToAxiom } from '~/server/logging/client';
 import {
   afterCommentsV3Deleted,
   deleteOwnCommentV3,
@@ -162,6 +163,13 @@ async function assertSubjectHeld(subject: string) {
     throw tryAgain(e);
   }
   if (reply.status === 200 && subjectLookupSchema.safeParse(reply.body).success) return;
+  if (isRouteMissing(reply))
+    logToAxiom({
+      name: 'feature-pages',
+      type: 'error',
+      message: 'platform route missing',
+      payload: { path: PLATFORM_SUBJECT_PATH, status: reply.status },
+    });
   if (!isRouteMissing(reply) && signerErrorCode(reply) === PlatformRefusal.UnknownSubject)
     throw refused('Unknown feature');
   throw tryAgain();
