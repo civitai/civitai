@@ -371,7 +371,9 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
+  coversOfDeletedSongs,
   deleteImageRows,
+  readSongCovers,
   moderatorDecides,
   moderatorPurge,
   queueImageStorageDelete as queueStorageDelete,
@@ -1058,8 +1060,34 @@ const withDeleteTransaction = <T>(
     ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 120_000 })
     : run(kyselyOver(dbWrite));
 
-/** `deleteImages`, with the images it left for their child-safety case. */
+type ImageDeleteWithOutcomeOptions = PurgeResizeCacheRetraction &
+  ImageDeleteOptions & {
+    /** Once set (by a 429 or a timeout here or earlier in the caller's run), no retraction is
+     *  sent; those rows come back `busy` so the caller can queue them. */
+    retractionGate?: RetractionGate;
+  };
+
+/**
+ * `deleteImages`, with the images it left for their child-safety case. A deleted song's cover is
+ * deleted after it, with the same options, so a hold on the cover keeps it as it would any image.
+ */
 export async function deleteImagesWithOutcome(
+  ids: number[],
+  options: ImageDeleteWithOutcomeOptions
+): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
+  const retractionGate = options.retractionGate ?? newRetractionGate();
+  const coverIds: number[] = [];
+  const outcome = await deleteListedImages(ids, { ...options, retractionGate }, coverIds);
+  if (!coverIds.length) return outcome;
+  const covers = await deleteListedImages(coverIds, { ...options, retractionGate }, []);
+  return {
+    deleted: [...outcome.deleted, ...covers.deleted],
+    kept: [...outcome.kept, ...covers.kept],
+  };
+}
+
+/** Deletes `ids`, adding to `coverIds` the covers of the songs it deleted. */
+async function deleteListedImages(
   ids: number[],
   {
     actor,
@@ -1070,12 +1098,8 @@ export async function deleteImagesWithOutcome(
     queueKept,
     retractPublicBlobs = false,
     retractionGate = newRetractionGate(),
-  }: PurgeResizeCacheRetraction &
-    ImageDeleteOptions & {
-      /** Once set (by a 429 or a timeout here or earlier in the caller's run), no retraction is
-       *  sent; those rows come back `busy` so the caller can queue them. */
-      retractionGate?: RetractionGate;
-    }
+  }: ImageDeleteWithOutcomeOptions,
+  coverIds: number[]
 ): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
@@ -1085,7 +1109,9 @@ export async function deleteImagesWithOutcome(
   const deleted = await Limiter({ batchSize: 100 }).process(uniq(ids), async (ids) => {
     // Read before the DELETE, which cascades `CollectionItem` and the report links and nulls
     // `User.profilePictureId`. Neither read throws.
-    const [collections, profilePictureUserIds, reported] = await Promise.all([
+    // The song's delete cascades its `Track` row, the only link to its cover.
+    const [covers, collections, profilePictureUserIds, reported] = await Promise.all([
+      readSongCovers(kyselyOver(dbWrite), ids),
       getCollectionIdsForImages({ imageIds: ids, source: 'image-delete' }),
       getProfilePictureUserIds(ids).catch(() => [] as number[]),
       // Only an owner delete can keep an object. A failed read counts as reported, so it purges.
@@ -1131,6 +1157,7 @@ export async function deleteImagesWithOutcome(
     );
 
     keptForCase.push(...caseKept);
+    coverIds.push(...coversOfDeletedSongs(covers, rows, ids));
     // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
     // caller's condition or ownership skipped.
     const accounted = new Set([...rows.map((row) => row.id), ...caseKept, ...gone]);
