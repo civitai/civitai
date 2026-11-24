@@ -223,9 +223,14 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   on restore: the resolver lifts the removal and rescans an unrated image, and a moderator rates it
   afterwards. A withheld appeal shows no media, owner, words or removal and takes no decision.
 - **Image reports** lists images and videos only, and its badge leaves songs out. The image Appeals
-  queue (`/images/appeals`) and its badge leave out songs and their own covers, which Audio review's
-  Appeals tab decides, so an appeal is decided in one place; the Audio review badge counts reported
-  songs and these appeals.
+  queue (`/images/appeals`) and its badge leave out the Pending appeals of songs and their own covers,
+  which Audio review's Appeals tab decides, so an appeal is decided in one place; the Audio review
+  badge counts reported songs and these appeals. A song or cover still flagged for appeal with no
+  Pending appeal stays in the image Appeals queue, whose decision clears the flag. On a help-desk
+  ticket a song or cover appeal is listed as "Song or cover" under the Audio review page grant, with
+  a link to it there instead of a ruling.
+- **List thumbnails** follow the cover card's rule: a cover withheld from the moderator is not sent
+  for a Reported or Appeals row either.
 - **Minor and POI** are not offered on a song in the image queues, and `setImageFlag` refuses to set
   either on a song, whichever page asks; clearing one still works.
 
