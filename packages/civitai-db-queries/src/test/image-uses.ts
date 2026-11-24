@@ -44,6 +44,8 @@ export const imageUseTablesSql = [
     `CREATE TABLE IF NOT EXISTS "${table}" ()`,
     `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" int`,
   ]),
+  // A song delete reads its cover through the song's own Track row.
+  `ALTER TABLE "Track" ADD COLUMN IF NOT EXISTS "imageId" int`,
   `ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "reviewId" int`,
   `CREATE TABLE IF NOT EXISTS "ServiceDealReviewReport" ("reportId" int NOT NULL)`,
   `ALTER TABLE "ServiceDealReviewReport" ADD COLUMN IF NOT EXISTS "serviceDealReviewId" int`,

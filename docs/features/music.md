@@ -127,6 +127,22 @@ linked when the song is posted, copied into a scanned image row (`linkGeneratedS
 queue shows that image over the song. Songs posted before this, as an MP4 over their cover, fail the
 song scan and need posting again.
 
+Deleting a song deletes its cover. The song's `Track` row cascades with it and is the only link to
+the cover, so both apps' image deletes (`deleteImagesWithOutcome` in the main app, `deleteImages` in
+the moderator app) read the covers first (`readSongCovers`) and, once a song is gone, delete its cover
+through the same delete. Only a row made for the song (`isCoverOfSong`: the owner's image, in no post,
+whose `metadata.parentId` is the song) is deleted; any other linked image is left. A cover under a
+hold is kept the way any image is: a child-safety case keeps and blocks it, and the moderator app's
+own holds refuse it and report it. A song a hold keeps keeps its cover.
+
+Replacing a cover (`setSongCover`) links the new one first, then deletes the old one through
+`deleteImages`, so an old cover under a hold is kept and blocked instead, and never shown again. The
+editor refreshes `image.getSongCovers` after the save. A player that still names the deleted cover
+(another tab, another viewer) shows the placeholder instead of a broken image (`SongArt`), and the
+detail backdrop keeps its colour wash alone, until its cover list refetches (at most
+`SONG_LIST_STALE_MS`, 5 minutes). A load error does not refetch: during a CDN outage every card would
+re-read the list at once.
+
 ## Playlists
 
 A playlist is a collection of type `Music` ("Playlist" in the UI). It holds songs only, as

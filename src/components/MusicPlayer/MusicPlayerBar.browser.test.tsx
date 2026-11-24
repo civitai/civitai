@@ -9,6 +9,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { recordImageLoadErrors } from '../../../test/image-load-errors';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as MusicPlayerAudioModule from '~/components/MusicPlayer/MusicPlayerAudio';
 import type * as ToursProvider from '~/components/Tours/ToursProvider';
@@ -59,6 +60,9 @@ import {
 } from '~/components/MusicPlayer/music-accent';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
+
+// A cover's <img> that rendered, recorded when its load fails (see the helper).
+const failedCovers = recordImageLoadErrors();
 
 const SONG_ID = 1;
 const song: MusicTrack = {
@@ -427,9 +431,11 @@ describe('the global player bar', () => {
     expect(bar().style.getPropertyValue('--music-accent')).toBe('');
 
     mocks.browsingLevel = 1 | 4;
+    failedCovers.length = 0;
     await rerender(<MusicPlayerBar />);
-    expect(page.getByTestId('music-cover-placeholder').elements()).toHaveLength(0);
-    expect(bar().querySelector('img')).not.toBeNull();
+    await expect
+      .poll(() => failedCovers.some((src) => src.startsWith(LOADABLE_IMAGE_DATA_URI)))
+      .toBe(true);
   });
 
   test('stays above an open dialog: never dimmed, and its controls and Up next still work', async () => {
