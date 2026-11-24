@@ -6,6 +6,7 @@ import {
   recordFeedSeen,
 } from '~/components/TrackView/impressionBuffer';
 import type { FeedEventContext } from '~/components/TrackView/impressionBuffer';
+import { __trackImpressionTestHooks as dwellHooks } from '~/components/TrackView/useTrackImpression';
 import { setFeedEventsCache, setFeedEventsEnabled, trackSearchPage } from '~/utils/feed-events';
 import { __trackBufferTestHooks } from '~/components/TrackView/trackEventBuffer';
 import type { TrackBatchEvent } from '~/server/schema/track.schema';
@@ -13,7 +14,10 @@ import type { TrackBatchEvent } from '~/server/schema/track.schema';
 vi.mock('next/router', () => ({
   default: { pathname: '/search/models', events: { on: () => undefined, off: () => undefined } },
 }));
-vi.stubGlobal('window', new EventTarget());
+vi.stubGlobal(
+  'window',
+  Object.assign(new EventTarget(), { location: { pathname: '/search/models' } })
+);
 // The network is the boundary: rows are read off the bodies the shared buffer POSTs.
 const fetchMock = vi.fn<(url: string, init: { body: string }) => Promise<{ ok: boolean }>>(() =>
   Promise.resolve({ ok: true })
@@ -63,6 +67,38 @@ describe('feed seen rows', () => {
     expect(feedRows().map((row) => row.seenIds?.length)).toEqual([250]);
     flushImpressions();
     expect(feedRows().map((row) => row.seenIds?.length)).toEqual([250, 1]);
+  });
+});
+
+describe('the card hook', () => {
+  it('a matured dwell adds the card to its feed load seen set', () => {
+    vi.useFakeTimers();
+    const client = new QueryClient();
+    setFeedEventsCache(client.getQueryCache());
+    setFeedEventsEnabled(true);
+    client.setQueryData([['image', 'getInfinite'], { input: {}, type: 'infinite' }], {
+      pages: [{ items: [{ id: 8 }, { id: 9 }] }],
+      pageParams: [0],
+    });
+    const element = {} as Element;
+    const state = { targets: [{ entityType: 'Image' as const, entityId: 9 }], timer: null };
+    const registry = {
+      observer: { unobserve: () => undefined } as unknown as IntersectionObserver,
+      elements: new Map([[element, state]]),
+      intersecting: new Set([element]),
+    };
+    dwellHooks.armDwell(registry, element, state);
+    vi.advanceTimersByTime(dwellHooks.DWELL_MS);
+    flushImpressions();
+    vi.useRealTimers();
+    expect(feedRows().filter((row) => row.event === 'seen')).toEqual([
+      expect.objectContaining({
+        feed: 'images',
+        page: '/search/models',
+        pageIndex: 0,
+        seenIds: [9],
+      }),
+    ]);
   });
 });
 
