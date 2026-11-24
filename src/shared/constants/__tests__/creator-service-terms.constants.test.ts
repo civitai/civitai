@@ -1,10 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buyerDisclosureItems } from '~/shared/constants/creator-service-terms.constants';
 
 /** The revisions line of the buyer disclosure, as the buyer reads it. */
 describe('buyerDisclosureItems price line', () => {
   // The server stores these lines as the buyer's record, so they must not vary with its locale.
-  it('groups the price the same way whatever the runtime locale', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('groups the price the same way under a de-DE default locale', () => {
+    const original = Number.prototype.toLocaleString;
+    vi.spyOn(Number.prototype, 'toLocaleString').mockImplementation(function (
+      this: number,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.NumberFormatOptions
+    ) {
+      return original.call(this, locales ?? 'de-DE', options);
+    });
+    // The stub does change the default: a bare call groups the German way.
+    expect((1000).toLocaleString()).toBe('1.000');
+
     const [{ lead }] = buyerDisclosureItems({
       price: 1000,
       revisionsIncluded: 1,
