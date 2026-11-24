@@ -312,7 +312,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		}
 		p.images[vid] = imgs
 	}
-	if err := curatedShowcaseGuard(showcaseRead, listed); err != nil {
+	if err := curatedShowcaseGuard(ctx, d.Sources, showcaseRead, listed); err != nil {
 		return nil, err
 	}
 	p.showsImage = d.showcaseFilter(ctx, in)
@@ -576,11 +576,17 @@ func (d *Deps) showcaseFilter(ctx context.Context, in RawInput) func(superjson.O
 // which getModelsWithVersions runs over the images-for-version entries it read (`curate`): a version
 // whose creator curated its showcase serves that list in place of its own images. That is not ported,
 // so the request falls back unless every listed version (an images entry that is not a notFound
-// marker, Object.keys of Node's answer) has a fresh uncurated entry. Not gated on Node's
+// marker, Object.keys of Node's answer) is uncurated: a fresh uncurated entry, or, for a version with
+// no usable entry and the miss computation on, no row on the replica (hydrate.Sources.ShowcaseState;
+// a failed query is v1-models-showcase-miss-failed). Not gated on Node's
 // `model-version-showcase-serve` flag: off, a fallback here is only a lost answer, never a different
 // one (DESIGN.md §16.9).
-func curatedShowcaseGuard(r *hydrate.ShowcaseRead, listed []int) error {
-	switch r.State(listed) {
+func curatedShowcaseGuard(ctx context.Context, s *hydrate.Sources, r *hydrate.ShowcaseRead, listed []int) error {
+	st, err := s.ShowcaseState(ctx, r, listed)
+	if err != nil {
+		return fallback.Wrap("v1-models-showcase-miss-failed", err)
+	}
+	switch st {
 	case hydrate.ShowcaseCurated:
 		return fallback.New("v1-models-curated-showcase")
 	case hydrate.ShowcaseUnknown:

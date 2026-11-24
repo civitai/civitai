@@ -81,7 +81,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/app-data-go/go.mod
-          cache-dependency-path: apps/app-data-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
 
       - name: gofmt
         run: |
@@ -131,6 +136,9 @@ jobs:
       - name: go build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/app-data-go ./cmd/app-data-go
 
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
+
   lint:
     name: app-data-go golangci-lint
     runs-on: ubuntu-latest
@@ -142,7 +150,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/app-data-go/go.mod
-          cache-dependency-path: apps/app-data-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
 
       # Configuration: apps/app-data-go/.golangci.yml (v2 format, feed-go's linter set). Any finding
       # fails the step.
@@ -150,8 +163,13 @@ jobs:
         # golangci/golangci-lint-action v9.3.0
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
+          # Restores everywhere; saves only on a push / dispatch / schedule run on `main`.
+          skip-save-cache: ${{ !(contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main') }}
           version: v2.15.0
           working-directory: apps/app-data-go
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   vuln:
     name: app-data-go govulncheck
@@ -170,13 +188,21 @@ jobs:
         with:
           go-version: '1.26'
           check-latest: true
-          cache-dependency-path: apps/app-data-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
 
       # Exits non-zero when a vulnerability is REACHABLE from this module's code (symbol-level).
       - name: govulncheck
         run: |
           go version
           go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   mod:
     name: app-data-go go.mod tidy + verify
@@ -192,7 +218,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/app-data-go/go.mod
-          cache-dependency-path: apps/app-data-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
 
       - name: go mod tidy
         run: |
@@ -202,6 +233,9 @@ jobs:
           fi
       - name: go mod verify
         run: go mod verify
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save
 
   # Each fuzz target for a fixed number of executions (beacon-go.yml explains why a count, not a
   # time). A crasher is written to the package's testdata/fuzz/<Target>/ and uploaded; commit it as
@@ -226,7 +260,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/app-data-go/go.mod
-          cache-dependency-path: apps/app-data-go/go.sum
+          cache: false
+
+      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
+      - uses: ./.github/actions/go-cache-restore
+        with:
+          dependency-path: apps/app-data-go/go.sum
 
       - name: The fuzz targets are the listed set
         run: |
@@ -274,3 +313,6 @@ jobs:
           name: app-data-go-fuzz-crashers
           path: apps/app-data-go/internal/*/testdata/fuzz/
           if-no-files-found: ignore
+
+      # Last, so the build cache holds what the steps above built. Saves only on `main`.
+      - uses: ./.github/actions/go-cache-save

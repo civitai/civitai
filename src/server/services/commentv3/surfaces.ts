@@ -351,6 +351,16 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     },
     onCreated: (comment, ctx) => void notifyPostTextOwner(comment, ctx).catch(handleLogError),
   },
+  // Feature Pages threads: members read and write them only in the feature frame (featurePages.*,
+  // which also keeps the platform mirror); here only moderators reach them, to moderate.
+  featurePage: {
+    assertVisible: async (_id, ctx) => {
+      if (!ctx.user?.isModerator) throw throwNotFoundError('No comments on featurePage');
+    },
+    assertWritable: async () => {
+      throw throwBadRequestError('Feature page comments are written from the feature page.');
+    },
+  },
 };
 
 export function commentSurface(entityType: string): CommentSurface {

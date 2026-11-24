@@ -108,7 +108,8 @@ var (
 		"excludedUserIds", "include", "tools", "tags", "techniques",
 	}
 	ignoredKeys = []string{
-		"hatSort", "hatTeams", "hatTurfMine", "hideTurfHats", "hideWornHats", "includePG13",
+		"hatSort", "hatTeams", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats",
+		"includePG13",
 		"remixesOnly", "nonRemixesOnly", "hideAutoResources", "hideManualResources",
 	}
 )

@@ -1,12 +1,6 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ResourceData } from '~/shared/generation/values';
 import type { SnippetReferenceValue } from '~/shared/generation/schemas/snippet-schema';
 import { usePromptEnhanceStore, type PromptEnhanceImage } from './promptEnhanceStore';
-
-const PromptEnhanceDrawer = dynamic(
-  () => import('~/components/Generation/PromptEnhance/PromptEnhanceDrawer')
-);
 
 export type PromptEnhanceProps = {
   prompt: string;
@@ -55,16 +49,4 @@ export function triggerPromptEnhance(
     images: data.images,
   });
   setWorkflow('prompt:enhance');
-}
-
-/**
- * Trigger prompt enhancement via a dialog drawer.
- * Used by the legacy generation form (non-graph).
- */
-export function triggerPromptEnhanceDialog(props: PromptEnhanceProps) {
-  dialogStore.trigger({
-    id: 'prompt-enhance-drawer',
-    component: PromptEnhanceDrawer,
-    props,
-  });
 }

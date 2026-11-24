@@ -170,7 +170,8 @@ describe('getUsageLimits', () => {
     commentAttemptsBy['user:8'] = [NOW - 1000, NOW - 2 * HOUR];
     const { limits } = await getUsageLimits({ tokenScope: TokenScope.Full, user: newcomer, req });
     const productIds = usageLimitDefs
-      .filter((d) => d.kind === 'product' && isBucketCountable(d.window))
+      // An owner-counted entry (`countedBy: 'owner'`) has no bucket to list from.
+      .filter((d) => d.kind === 'product' && isBucketCountable(d.window) && !('countedBy' in d))
       .map((d) => d.id);
     expect(limits.map((l) => l.id)).toEqual(productIds);
     expect(limits.find((l) => l.id === 'comments.hourly')).toMatchObject({

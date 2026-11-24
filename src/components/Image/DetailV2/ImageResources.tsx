@@ -1,6 +1,6 @@
 import { Alert, Badge, Skeleton, Stack, Text } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo } from 'react';
@@ -150,10 +150,9 @@ function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVer
   const queryUtils = trpc.useUtils();
   const { mutate, isPending: isLoading } = trpc.image.removeResource.useMutation();
   const handleRemoveResource = () => {
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Remove Resource',
-      children:
+      message:
         'Are you sure you want to remove this resource from this image? This action is destructive and cannot be reverted.',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },

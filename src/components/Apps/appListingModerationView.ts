@@ -142,6 +142,9 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   'storage-doc-unhide': { label: 'Stored document unhidden', color: 'blue' },
   'storage-doc-delete': { label: 'Stored document deleted', color: 'red' },
   'storage-doc-dismiss': { label: 'Stored document reports dismissed', color: 'blue' },
+  // Document-store data migration of one collection; mod-view only (`OWNER_HIDDEN_MODERATION_ACTIONS`).
+  'storage-mark-migration': { label: 'Stored marks migrated', color: 'blue' },
+  'storage-collection-purge': { label: 'Stored collection purged', color: 'red' },
   'moderator-edit': { label: 'Edited by a moderator', color: 'blue' },
   'set-official': { label: 'Official mark changed', color: 'blue' },
   // The offline-access cut after a takedown of a connect listing; mod-view only

@@ -50,6 +50,7 @@ beforeAll(async () => {
       status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int, availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public',
       mode "ModelModifier", minor boolean NOT NULL DEFAULT false,

@@ -1,31 +1,27 @@
-import type { ImageDetailDialog } from './image-detail.dialog';
-import type { CollectionEditDialog } from './collection-edit.dialog';
-import type { HiddenCommentsDialog } from './hidden-comments.dialog';
-import type { ResourceReviewDialog } from './resource-review.dialog';
-import type { FilesEditDialog } from './files-edit.dialog';
-import type { CommentEditDialog } from './comment-edit.dialog';
-import type { CommentThreadDialog } from './comment-thread.dialog';
-import type { SupportDialog } from './support.dialog';
-import './image-detail.dialog';
-import './collection-edit.dialog';
-import './hidden-comments.dialog';
-import './resource-review.dialog';
-import './files-edit.dialog';
-import './comment-edit.dialog';
-import './comment-thread.dialog';
-import './support.dialog';
-import { routedDialogDictionary } from './utils';
-import type { ComponentProps } from 'react';
+import type { RoutedDialog } from './utils';
+import { collectionEditDialog } from './collection-edit.dialog';
+import { commentEditDialog } from './comment-edit.dialog';
+import { commentThreadDialog } from './comment-thread.dialog';
+import { filesEditDialog } from './files-edit.dialog';
+import { hiddenCommentsDialog } from './hidden-comments.dialog';
+import { imageDetailDialog } from './image-detail.dialog';
+import { resourceReviewDialog } from './resource-review.dialog';
+import { supportDialog } from './support.dialog';
 
-type Dialogs = ImageDetailDialog &
-  CollectionEditDialog &
-  HiddenCommentsDialog &
-  ResourceReviewDialog &
-  FilesEditDialog &
-  CommentEditDialog &
-  CommentThreadDialog &
-  SupportDialog;
-
-export const dialogs = routedDialogDictionary.getItems<Dialogs>();
+/** URL rules only: no modal is imported here. The components are in `RoutedDialogProvider`. */
+export const dialogs = {
+  imageDetail: imageDetailDialog,
+  collectionEdit: collectionEditDialog,
+  hiddenComments: hiddenCommentsDialog,
+  resourceReview: resourceReviewDialog,
+  filesEdit: filesEditDialog,
+  commentEdit: commentEditDialog,
+  commentThread: commentThreadDialog,
+  support: supportDialog,
+};
 export type DialogKey = keyof typeof dialogs;
-export type DialogState<T extends DialogKey> = ComponentProps<(typeof dialogs)[T]['component']>;
+export type DialogState<T extends DialogKey> = Parameters<(typeof dialogs)[T]['resolve']>[1];
+
+/** One dialog's URL rule, typed for its own state (indexing `dialogs` with a generic name would intersect every rule's arguments). */
+export const getRoutedDialog = <T extends DialogKey>(name: T) =>
+  dialogs[name] as unknown as RoutedDialog<DialogState<T>> | undefined;

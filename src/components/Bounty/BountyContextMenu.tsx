@@ -1,6 +1,7 @@
 import type { ActionIconProps, MenuItemProps, MenuProps } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { IconEdit, IconReceiptRefund, IconTrash } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
@@ -13,6 +14,9 @@ import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem'
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { isViewer } from '~/utils/is-viewer';
+
+const DELETE_BOUNTY_DIALOG_ID = 'delete-bounty';
+const REFUND_BOUNTY_DIALOG_ID = 'refund-bounty';
 
 export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) {
   const currentUser = useCurrentUser();
@@ -33,18 +37,18 @@ export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) 
           e.stopPropagation();
           e.preventDefault();
 
-          openConfirmModal({
+          openConfirm({
+            id: DELETE_BOUNTY_DIALOG_ID,
             title: 'Delete bounty',
-            children:
+            message:
               'Are you sure that you want to delete this bounty? This action is destructive and cannot be reverted.',
-            centered: true,
             closeOnConfirm: false,
             labels: { cancel: 'No, keep it', confirm: 'Delete bounty' },
             confirmProps: { color: 'red' },
             onConfirm: async () => {
               try {
                 await deleteBounty();
-                closeAllModals();
+                dialogStore.closeById(DELETE_BOUNTY_DIALOG_ID);
                 const atDetailsPage = router.pathname === '/bounties/[id]/[[...slug]]';
                 if (atDetailsPage) await router.push('/bounties');
               } catch (error) {
@@ -76,18 +80,18 @@ export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) 
         component="button"
         leftSection={<IconReceiptRefund size={14} stroke={1.5} />}
         onClick={() => {
-          openConfirmModal({
+          openConfirm({
+            id: REFUND_BOUNTY_DIALOG_ID,
             title: 'Refund bounty',
-            children:
+            message:
               'Are you sure that you want to refund this bounty? This action cannot be reverted.',
-            centered: true,
             closeOnConfirm: false,
             labels: { cancel: 'No, keep it', confirm: 'Refund bounty' },
             confirmProps: { color: 'yellow' },
             onConfirm: async () => {
               try {
                 await refundBounty();
-                closeAllModals();
+                dialogStore.closeById(REFUND_BOUNTY_DIALOG_ID);
               } catch (error) {
                 // Do nothing since the query event will show an error notification
               }

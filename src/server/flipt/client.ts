@@ -244,8 +244,16 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
+  // Every push of a Feature Pages comment or its moderation state to the data.civitai.com platform,
+  // inline at post time and from the mirror jobs. Read with no user everywhere, so a segment rollout
+  // never matches: on is `enabled` true, the brake is `enabled` false.
+  FEATURE_PAGES_MIRROR = 'feature-pages-mirror',
   // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
   MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
+  // The "see it on civitai.red" pointer for a training dataset .com refuses for its rating
+  // (`trainingDataPublicView`). Off, missing or unreachable: no pointer, the dataset is absent as
+  // before. BOOLEAN ONLY: evaluated with no entity and no context.
+  TRAINING_DATA_RED_POINTER = 'training-data-red-pointer',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -465,6 +473,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // ids. DEFAULT-OFF — absent or Flipt unreachable, both paths answer as an unknown route. See
   // PUBLISH in `doc-store-api.ts`.
   APP_BLOCKS_STORAGE_PUBLISH = 'app-blocks-storage-publish',
+  // The REPORT MODERATION API (`POST /api/v1/blocks/moderation/reports`, the replacement for the
+  // `report` mark; `doc-store-report-api.ts`). EVALUATED PER APP like the publish flag above
+  // (entityId = the REQUESTING app's block id, NO context). DEFAULT-OFF — absent or Flipt
+  // unreachable, the path answers as an unknown route; the `report` mark is unaffected either way.
+  APP_BLOCKS_STORAGE_REPORT_API = 'app-blocks-storage-report-api',
   // A shared document PUT that would change no stored row is free of the shared-write budget:
   // when the body's content hash and index rows equal the stored document's (the caller's own,
   // visible, at the version any `ifVersion` names), the route answers with the stored document
@@ -476,6 +489,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF — absent or Flipt unreachable, every shared write spends and scans as before. See
   // `putIfUnchanged` in `doc-store.ts`.
   APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE = 'app-blocks-storage-unchanged-writes-free',
+  // Viewer-keyed collection writes (see `isViewerKeyedOpen`): create DEFAULT ON, with a closed segment
+  // (app block id = SOURCE app through an import, context { collection }) per migration target.
+  // Absent or unreachable reads as closed.
+  APP_BLOCKS_STORAGE_VIEWER_KEYED_OPEN = 'app-blocks-storage-viewer-keyed-open',
   // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
   // submit, on the git-push path and at approve, for a hook that is new or changed against the
   // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push
@@ -499,6 +516,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
   // See `github-actions-oidc.service.ts`.
   APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
+  // App Blocks "Request access" (`submitAppAccessRequest`). On for a requester whose account
+  // passes `isEligibleForAutoApproval`: the request is written APPROVED, which is the builder
+  // grant, instead of waiting in the moderator queue. EVALUATED PER REQUESTER — entityId = the
+  // user id, context = `buildFliptContext(user)`. DEFAULT-OFF: off, absent or Flipt unreachable,
+  // every request lands pending, as before.
+  APP_ACCESS_AUTO_APPROVE = 'app-access-auto-approve',
   // App Block host media serving, per viewer. See `decideBlockMediaServing` in
   // `block-media-serving.ts`, including what happens with no flag answer.
   APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
@@ -538,6 +561,9 @@ export enum FLIPT_FEATURE_FLAGS {
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
   DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
+  // Variant: `log` | `enforce`; any other answer, a missing flag or an error included, is off.
+  // Read by bearer-scope-tighten.ts.
+  BEARER_SCOPE_TIGHTEN = 'bearer-scope-tighten',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by

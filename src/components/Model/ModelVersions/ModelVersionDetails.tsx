@@ -84,6 +84,9 @@ import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { OffDomainTrainingDataNotice } from '~/components/Model/ModelVersions/OffDomainTrainingDataNotice';
+import { useRedHref } from '~/hooks/useRedHref';
+import type { OffDomainTrainingData } from '~/server/services/training-data-restricted.service';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { DetailsAccordion } from '~/components/DetailsAccordion/DetailsAccordion';
 import {
@@ -295,6 +298,7 @@ function ModelVersionDetailsContent({
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
+  const redHref = useRedHref();
 
   // Group files by variant for the download dropdown
   const groupedFiles = useMemo(
@@ -1200,6 +1204,13 @@ function ModelVersionDetailsContent({
             files={version.files}
             baseModel={version.baseModel}
             usageControl={version.usageControl}
+          />
+          <OffDomainTrainingDataNotice
+            stub={
+              (version as { offDomainTrainingData?: OffDomainTrainingData | null })
+                .offDomainTrainingData
+            }
+            href={redHref()}
           />
           <BaseModelWarningAlert baseModel={version.baseModel} />
 

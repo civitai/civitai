@@ -29,9 +29,7 @@ const { mockSysRedis, mockMulti } = vi.hoisted(() => {
     incr: vi.fn(() => multiChain),
     exec: vi.fn(async () => {
       if (mockMulti.throwExec) throw new Error('redis down');
-      return mockMulti.malformedExec !== false
-        ? mockMulti.malformedExec
-        : ['OK', mockMulti.value];
+      return mockMulti.malformedExec !== false ? mockMulti.malformedExec : ['OK', mockMulti.value];
     }),
   });
   let multiChain: ReturnType<typeof multiFactory>;
@@ -114,7 +112,9 @@ describe('enforceAppsCatalogRateLimit', () => {
     const limited = await enforceAppsCatalogRateLimit({ req, res, user: MOD });
     expect(limited).toBe(true);
     expect((res as { _status: () => number })._status()).toBe(429);
-    expect((res as { _headers: () => Record<string, string> })._headers()['Retry-After']).toBeDefined();
+    expect(
+      (res as { _headers: () => Record<string, string> })._headers()['Retry-After']
+    ).toBeDefined();
   });
 
   it('the 429 body conforms to the shared app-catalog error envelope (civitai#3845)', async () => {
@@ -130,6 +130,22 @@ describe('enforceAppsCatalogRateLimit', () => {
     // The pre-existing informational fields are retained, not replaced.
     expect(body.limit).toBe(60);
     expect(body.windowSeconds).toBe(60);
+  });
+
+  it('the 429 carries the house rateLimit meta: the abuse id and the wait, no counts', async () => {
+    mockMulti.value = 61; // > 60
+    const { req, res } = makeReqRes();
+    await enforceAppsCatalogRateLimit({ req, res, user: MOD });
+    const body = (res as { _json: () => unknown })._json() as Record<string, unknown>;
+    expect(body.rateLimit).toEqual({
+      retryAfterSeconds: 60,
+      retryAt: expect.any(String),
+      id: 'apps.directory',
+      kind: 'abuse',
+    });
+    expect((res as { _headers: () => Record<string, string> })._headers()['Retry-After']).toBe(
+      '60'
+    );
   });
 
   it('FAILS OPEN (proceeds, no 503) when the limiter exec throws — public-read divergence', async () => {

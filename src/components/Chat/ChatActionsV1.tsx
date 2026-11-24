@@ -1,6 +1,6 @@
 import { Group, Text } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
   IconArrowsJoin2,
@@ -112,10 +112,9 @@ export const ChatActionsV1 = ({ chatObj }: { chatObj?: ChatListMessage }) => {
 
   // TODO probably don't close modal until left
   const leaveModal = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Really leave this chat?',
-      children: <Text size="sm">You can rejoin at any time from the Archived tab.</Text>,
-      centered: true,
+      message: <Text size="sm">You can rejoin at any time from the Archived tab.</Text>,
       labels: { confirm: 'Confirm', cancel: 'Cancel' },
       onConfirm: () => adjustChat(ChatMemberStatus.Left),
     });

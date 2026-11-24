@@ -1,5 +1,4 @@
 import { Alert, Button, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { confirmForce } from '~/components/Moderation/HuggingFaceImport/confirm-force';
 import { ImportGroupList } from '~/components/Moderation/HuggingFaceImport/ImportGroupList';
 import { useImportActions } from '~/components/Moderation/HuggingFaceImport/use-import-actions';
@@ -7,6 +6,7 @@ import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { HuggingFaceImportView } from '~/server/services/huggingface-import.service';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export function UnattachedSection({ filter }: { filter: string }) {
   const queryUtils = trpc.useUtils();
@@ -34,12 +34,11 @@ export function UnattachedSection({ filter }: { filter: string }) {
   });
 
   const confirmDelete = (rows: HuggingFaceImportView[]) =>
-    openConfirmModal({
+    openConfirm({
       title: `Delete ${rows.length} file${rows.length === 1 ? '' : 's'}?`,
-      centered: true,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      children: (
+      message: (
         <Stack gap="sm">
           <Text size="sm">
             Frees{' '}

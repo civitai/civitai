@@ -4,10 +4,10 @@ import type {
   GetUserNotificationsSchema,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
+import { getUserNotifications } from '~/server/services/notification-feed.service';
 import {
   createUserNotificationSetting,
   deleteUserNotificationSetting,
-  getUserNotifications,
 } from '~/server/services/notification.service';
 import { isOptInNotification } from '~/server/notifications/utils.notifications';
 import { throwDbError } from '~/server/utils/errorHandling';

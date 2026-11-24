@@ -2761,6 +2761,7 @@ export type CommentV3 = {
   deletedAt: Timestamp | null;
   tosViolation: Generated<boolean>;
   hidden: Generated<boolean>;
+  hiddenAt: Timestamp | null;
   locked: Generated<boolean>;
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
@@ -3380,6 +3381,39 @@ export type FeaturedModelVersion = {
   validFrom: Timestamp;
   validTo: Timestamp;
   position: number;
+};
+export type FeaturePageCommentMirror = {
+  commentId: number;
+  userId: number;
+  requestId: string;
+  urn: string | null;
+  goneCause: string | null;
+  version: Generated<number>;
+  pushedState: string | null;
+  pushedDigest: string | null;
+  platformDigest: string | null;
+  pendingDigest: string | null;
+  pushAttempts: Generated<number>;
+  scanAttempts: Generated<number>;
+  scanHash: string | null;
+  editRequestIds: Generated<string[]>;
+  postAttemptedAt: Timestamp | null;
+  postSeq: Generated<number>;
+  goneAt: Timestamp | null;
+  subjectMissingAt: Timestamp | null;
+  contentAt: Generated<Timestamp>;
+  removeWantedAt: Timestamp | null;
+  restrictedAt: Timestamp | null;
+  nextPushAt: Timestamp | null;
+  leaseUntil: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type FeaturePageTopic = {
+  id: Generated<number>;
+  urn: string;
+  kind: string;
+  createdAt: Generated<Timestamp>;
 };
 export type Feedback = {
   id: Generated<number>;
@@ -7290,6 +7324,8 @@ export type DB = {
   EvidenceHoldImage: EvidenceHoldImage;
   EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;
+  FeaturePageCommentMirror: FeaturePageCommentMirror;
+  FeaturePageTopic: FeaturePageTopic;
   Feedback: Feedback;
   File: File;
   FlagDay: FlagDay;

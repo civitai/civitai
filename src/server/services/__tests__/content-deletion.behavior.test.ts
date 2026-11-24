@@ -22,7 +22,8 @@ const db = () => kyselyOver({ $queryRaw: pgliteRaw(pg).queryRaw } as never);
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
+      "publishedAt" timestamp, metadata jsonb);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, "userId" int NOT NULL, "postId" int,
       "nsfwLevel" int NOT NULL DEFAULT 1, ingestion text NOT NULL DEFAULT 'Scanned',
@@ -126,7 +127,7 @@ describe('deleteImageRows', () => {
         ids: [],
         actor: { system: 'test' },
       })
-    ).toEqual({ deleted: [], kept: [], gone: [] });
+    ).toEqual({ deleted: [], kept: [], hidden: [], gone: [] });
     expect(queryRaw).not.toHaveBeenCalled();
   });
 });

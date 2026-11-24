@@ -2151,6 +2151,8 @@ func goldenSetupModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) *gol
 		},
 		Now: env.now,
 	}
+	// gen-models.mjs models getModelsFeed with the personal-hot-lead flag off for every viewer.
+	env.server.PersonalHotLead = &stubUserFlag{}
 	return env
 }
 

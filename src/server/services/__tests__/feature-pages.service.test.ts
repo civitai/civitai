@@ -146,6 +146,10 @@ describe('castFeaturePageVote', () => {
     ['a reply without a tally', 'INTERNAL_SERVER_ERROR', () => json(200, { votes: 'x' })],
     ['429', 'TOO_MANY_REQUESTS', () => json(429, { code: 'rate_limited' })],
     ['403', 'FORBIDDEN', () => json(403, { code: 'no_grant' })],
+    // A route the platform does not have is a deploy gap, retried; a record it does not know is final.
+    ['404 for a missing route', 'INTERNAL_SERVER_ERROR', () => json(404, { code: 'not_found' })],
+    ['404 with no body', 'INTERNAL_SERVER_ERROR', () => new Response('', { status: 404 })],
+    ['404 unknown_subject', 'FORBIDDEN', () => json(404, { code: 'unknown_subject' })],
   ])('maps a signer answering %s to %s', async (_, code, reply) => {
     signerReplies.push(reply as () => Response);
     await expect(

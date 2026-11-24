@@ -51,6 +51,7 @@ func TestParseInfiniteFallsBack(t *testing.T) {
 		{"the hidden worn hats", map[string]any{"hideWornHats": true}, "infinite-hat-turf"},
 		{"the hidden turf hats", map[string]any{"hideTurfHats": true}, "infinite-hat-turf"},
 		{"the viewer's own hats", map[string]any{"hatTurfMine": true}, "infinite-hat-turf"},
+		{"the viewer's expired hats", map[string]any{"hatTurfExpired": true}, "infinite-hat-turf"},
 		{"userId 0", map[string]any{"userId": num("0")}, "infinite-user-zero"},
 		{"a negative userId", map[string]any{"userId": num("-1")}, "input-invalid"},
 		{"a username outside the schema", map[string]any{"username": "a-b"}, "input-invalid"},

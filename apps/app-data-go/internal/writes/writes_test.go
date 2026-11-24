@@ -314,7 +314,10 @@ func TestEachRouteIsForwardedExactly(t *testing.T) {
 		{"increment", "increment",
 			call{method: "PATCH", path: "/v1/apps/click-count/collections/counters/records/c-7", auth: "Bearer civitai_tok-inc-28",
 				body: []byte(`{"$inc":{"clicks":2}}`)},
-			"PATCH", "/api/internal/blocks/storage/counters/c-7", "from=click-count", 429, `{"code":"rate_limited"}`},
+			// The site's 429 carries the house rateLimit meta; it is passed on byte for byte. An INVARIANT
+			// guard: the pass-through predates the meta, so this pins it rather than covering a regression.
+			"PATCH", "/api/internal/blocks/storage/counters/c-7", "from=click-count", 429,
+			`{"code":"rate_limited","rateLimit":{"retryAfterSeconds":7,"retryAt":"2026-01-01T00:00:07.000Z","id":"apps.doc-store","kind":"abuse"}}`},
 		{"info", "info",
 			call{method: "GET", path: "/v1/apps/quota-view/info", auth: "Bearer civitai_tok-info-39"},
 			"GET", "/api/internal/blocks/storage", "from=quota-view", 200, `{"usage":{"bytes":10}}`},

@@ -1,5 +1,5 @@
 import { ActionIcon, Alert, Button, Group, Paper, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconDotsVertical, IconTrash } from '@tabler/icons-react';
 import {
   keptAppsOf,
@@ -32,9 +32,9 @@ export function sleepingLine(app: SleepingApp): string {
  * carries on once it is gone ("Your request continues", "tip-calculator wakes").
  */
 export function confirmDeleteOldest(oldest: string, then: string, onConfirm: () => void) {
-  openConfirmModal({
+  openConfirm({
     title: `Delete ${oldest}?`,
-    children: (
+    message: (
       <Text size="sm">
         {`${oldest} is your oldest sleeping app. It and its files are deleted for good, and this cannot be undone. ${then}`}
       </Text>

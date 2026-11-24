@@ -18,6 +18,7 @@ import {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   RemovedImageNotRestorableError,
+  ImageChangedError,
   ModeratorRemovedImageError,
   CsamReviewImageError,
   AppealRestoreRefusedError,
@@ -273,6 +274,29 @@ export function parseResolutionReason(form: FormData, status: ResolutionVerdict<
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
 }
 
+const IMAGE_CHANGED = 'This image changed since this page loaded. Reload and try again.';
+
+/** The review flag a card showed, posted with its accept: '' is no flag; absent, nothing to check. */
+function shownFlag(value: FormDataEntryValue | null): string | null | undefined {
+  return typeof value === 'string' ? value || null : undefined;
+}
+
+/** The review flag each selected card showed, posted as JSON keyed by image id. */
+function shownFlags(value: FormDataEntryValue | null): Map<number, string | null> | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return new Map(
+      Object.entries(parsed).map(([id, flag]) => [
+        Number(id),
+        typeof flag === 'string' ? flag : null,
+      ])
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export const imageQueueActions = {
   accept: async ({ request, locals }) => {
     const form = await request.formData();
@@ -289,6 +313,7 @@ export const imageQueueActions = {
         removeMinorFlag,
         userId: locals.user.id,
         keepModeratorRemoved: !!reportId,
+        shownNeedsReview: shownFlag(form.get('needsReview')),
       });
     } catch (e) {
       if (e instanceof ModeratorRemovedImageError && reportId) {
@@ -313,6 +338,7 @@ export const imageQueueActions = {
           error: `This image was ${REMOVED_REASON}. ${REMOVED_REMEDY}`,
           imageId,
         });
+      if (e instanceof ImageChangedError) return fail(409, { error: IMAGE_CHANGED, imageId });
       throw e;
     }
     if (reportId)
@@ -525,7 +551,9 @@ export const imageQueueActions = {
     const posted = parseIds(form.get('reportIds'));
     const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
+    const shown = shownFlags(form.get('needsReviewByImage'));
     const refused: number[] = [];
+    const changed: number[] = [];
     const removed: number[] = [];
     const underCsamReview: number[] = [];
     const unpaidImages = new Set<number>();
@@ -538,7 +566,12 @@ export const imageQueueActions = {
           userId: locals.user.id,
           deferAppealEmail: true,
           keepModeratorRemoved: posted.length > 0,
+          shownNeedsReview: shown?.get(imageId),
         }).catch((e) => {
+          if (e instanceof ImageChangedError) {
+            changed.push(imageId);
+            return undefined;
+          }
           if (e instanceof ModeratorRemovedImageError) {
             removed.push(imageId);
             if (e.unpaid) unpaidImages.add(imageId);
@@ -576,18 +609,25 @@ export const imageQueueActions = {
       ...(notMoved && { notMoved }),
     };
     // A partial batch moves no other report: the refused images' reports stay open.
-    if (refused.length || underCsamReview.length)
+    if (refused.length || underCsamReview.length || changed.length)
       return fail(409, {
         ...notice,
         error: [
-          `${imageIds.length - refused.length - underCsamReview.length - removed.length} of ${
-            imageIds.length
-          } accepted.`,
+          `${
+            imageIds.length -
+            refused.length -
+            underCsamReview.length -
+            removed.length -
+            changed.length
+          } of ${imageIds.length} accepted.`,
           reportIds.length ? `No ${closedReportIds.length ? 'other ' : ''}report was moved.` : '',
           refused.length ? `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.` : '',
           refused.length ? REMOVED_REMEDY : '',
           underCsamReview.length
             ? `Not accepted (under CSAM review, left to that queue): ${underCsamReview.join(', ')}.`
+            : '',
+          changed.length
+            ? `Not accepted (changed since this page loaded; reload): ${changed.join(', ')}.`
             : '',
         ]
           .filter(Boolean)

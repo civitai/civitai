@@ -133,7 +133,7 @@ var infiniteAbsentKeys = func() map[string]bool {
 // pages from the turf rank or drops images by turfHiddenIds; none of that is read here, so a request
 // carrying one falls back whatever the flags say. `hatTeams` only narrows a hat sort, so it is
 // ignored alone.
-var hatKeys = []string{"hatSort", "hatTurfMine", "hideTurfHats", "hideWornHats"}
+var hatKeys = []string{"hatSort", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats"}
 
 // ParseInfinite validates image.getInfinite's decoded input. A shape outside the supported subset is
 // a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST).
@@ -438,8 +438,10 @@ type InfiniteSources interface {
 	// on, with the viewer's contributor permissions (viewerID 0: signed out); nil when the collection
 	// does not exist.
 	CollectionPermission(ctx context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error)
-	// VersionShowcase is what the version-showcase cache says about the versions (hydrate.Showcase).
-	VersionShowcase(ctx context.Context, versionIDs []int) hydrate.Showcase
+	// VersionShowcase is what the version-showcase cache says about the versions (hydrate.Showcase),
+	// a version it holds no usable entry for answered from the replica when misses are computed; an
+	// error is a failed replica read (the state is then ShowcaseCurated).
+	VersionShowcase(ctx context.Context, versionIDs []int) (hydrate.Showcase, error)
 }
 
 // maxFollowedBinds bounds the follow list the Postgres path binds (`i."userId" IN (…)`, one Prisma
@@ -1016,10 +1018,16 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 		if in.ModelVersionID != 0 {
 			// getAllImages reads the version's curated showcase (getCarouselShowcaseIds) for every
 			// prioritizedUserIds request with a modelVersionId; curated, the carousel is that list in
-			// its order. Not ported, so anything but a fresh uncurated entry falls back. Read
-			// regardless of Node's `model-version-showcase-serve` flag: off, Node serves the live list
-			// and a fallback here is only a lost answer (DESIGN.md §16.9).
-			switch d.Sources.VersionShowcase(ctx, []int{in.ModelVersionID}) {
+			// its order. Not ported, so anything but an uncurated version falls back: a fresh
+			// uncurated entry or, with no usable entry and the miss computation on, no row on the
+			// replica (a failed query is prioritized-showcase-miss-failed). Read regardless of Node's
+			// `model-version-showcase-serve` flag: off, Node serves the live list and a fallback here
+			// is only a lost answer (DESIGN.md §16.9).
+			st, err := d.Sources.VersionShowcase(ctx, []int{in.ModelVersionID})
+			if err != nil {
+				return nil, fallback.Wrap("prioritized-showcase-miss-failed", err)
+			}
+			switch st {
 			case hydrate.ShowcaseCurated:
 				return nil, fallback.New("prioritized-curated-showcase")
 			case hydrate.ShowcaseUnknown:

@@ -207,7 +207,8 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
 
   it('applies the per-user 60-per-hour rateLimit to THIS procedure', async () => {
     await call();
-    expect(h.rateLimitApplied).toEqual([expect.objectContaining({ limit: 60, period: 3600 })]);
+    // The registry entry (60 an hour by default, pinned in app-usage-limits.registry.test.ts).
+    expect(h.rateLimitApplied).toEqual([{ usageLimitIds: ['apps.generation-source-saves'] }]);
   });
 
   it.each([

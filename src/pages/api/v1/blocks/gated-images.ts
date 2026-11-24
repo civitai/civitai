@@ -13,6 +13,7 @@ import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-li
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * GET /api/v1/blocks/gated-images?ids=1,2,3 → `{ images: BlockGatedImage[] }`
@@ -207,8 +208,11 @@ export const baseHandler = withAxiom(async function handler(
       endpoint: 'gated_images',
       retryAfterSeconds: rate.retryAfterSeconds,
     });
-    res.setHeader('Retry-After', String(rate.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rate.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 

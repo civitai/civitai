@@ -188,10 +188,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Deliberately ONE step driving a script, not one `pnpm --filter` step per app. Per-app
       # steps abort at the first red app, so a shared type change that breaks several of them
@@ -294,11 +297,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         id: install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Which app suites this run selects. On a pull_request it may leave moderator out; on push
       # and dispatch it always selects `app:*`. See the header and the script.

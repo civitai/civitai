@@ -50,7 +50,7 @@ import {
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useQueryBuzzPackages } from '~/components/Buzz/useQueryBuzzPackages';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import { openAlert } from '~/components/Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
@@ -263,27 +263,24 @@ export const BuzzPurchase = ({
   };
 
   const onPaypalSuccess = useCallback(() => {
-    dialogStore.trigger({
-      component: AlertDialog,
-      props: {
-        type: 'success',
-        title: 'Payment successful!',
-        children: ({ handleClose }: { handleClose: () => void }) => (
-          <>
-            <Stack>
-              <Text>Thank you for your purchase!</Text>
-              <Text>Purchased Buzz has been credited to your account.</Text>
-            </Stack>
-            <Button
-              onClick={() => {
-                handleClose();
-              }}
-            >
-              Close
-            </Button>
-          </>
-        ),
-      },
+    openAlert({
+      type: 'success',
+      title: 'Payment successful!',
+      children: ({ handleClose }: { handleClose: () => void }) => (
+        <>
+          <Stack>
+            <Text>Thank you for your purchase!</Text>
+            <Text>Purchased Buzz has been credited to your account.</Text>
+          </Stack>
+          <Button
+            onClick={() => {
+              handleClose();
+            }}
+          >
+            Close
+          </Button>
+        </>
+      ),
     });
 
     onPurchaseSuccess?.();

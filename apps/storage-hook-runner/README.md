@@ -26,9 +26,9 @@ missing fields are a 400):
 | `timeoutMs`  | number, optional                                                   | clamped to [1, 500]; default 50                                                                                           |
 | `input`      | object                                                             | the hook's argument, below; `input.op`, `input.collection` and `input.app.blockId` must match `op`, `collection`, `appId` |
 
-`input` (every key present; `null` where there is nothing). A `tally` that is not exactly the
-op's own operator (`$inc` naming one counter, `$mark`, `$unmark`), or one on a document write,
-is a 400 `bad_request`:
+`input` (every key present but `parent`, which only a viewer-keyed collection sends; `null` where
+there is nothing). A `tally` that is not exactly the op's own operator (`$inc` naming one counter,
+`$mark`, `$unmark`), or one on a document write, is a 400 `bad_request`:
 
 ```ts
 {
@@ -44,6 +44,7 @@ is a 400 `bad_request`:
   viewer: { userId: number },
   app: { blockId: string },
   from: string | null,               // importing app's blockId on an imported write
+  parent?: string | null,            // viewer-keyed collections only: the @me write's parent key
 }
 ```
 

@@ -14,7 +14,18 @@ import { FeaturePageFrameMessage as Msg } from '~/shared/constants/feature-pages
 export const FEATURE_PAGE_SANDBOX = [...MINIMAL_SANDBOX, 'allow-same-origin'].join(' ');
 const OPAQUE = effectiveSandboxIsOpaque(FEATURE_PAGE_SANDBOX);
 
+/** The answer each frame request gets. */
+const RESULT_OF: Record<string, string> = {
+  [Msg.Vote]: Msg.VoteResult,
+  [Msg.Mine]: Msg.MineResult,
+  [Msg.Comment]: Msg.CommentResult,
+  [Msg.CommentEdit]: Msg.CommentResult,
+  [Msg.CommentRetract]: Msg.CommentResult,
+  [Msg.CommentReport]: Msg.CommentResult,
+};
+
 type MineVotes = Record<string, 0 | 1>;
+type CommentReply = { comment: unknown };
 
 export type FeaturePageHostDeps = {
   embedOrigin: string;
@@ -23,8 +34,29 @@ export type FeaturePageHostDeps = {
   theme: 'light' | 'dark';
   signedIn: boolean;
   openLogin: () => void;
+  /** Whether the viewer sees profanity masked (their blur setting), sent in fp-init. */
+  maskProfanity: boolean;
+  /** The viewer's featurePagesDiscussion flag: the frame offers comments only when it is on. */
+  discussion: boolean;
   vote: (input: { request: unknown; value: unknown }) => Promise<{ votes: number }>;
   mine: (input: { requests: unknown }) => Promise<{ votes: MineVotes }>;
+  comment: (input: {
+    requestId: string;
+    subject: unknown;
+    parent: unknown;
+    text: unknown;
+  }) => Promise<CommentReply>;
+  editComment: (input: {
+    requestId: string;
+    comment: unknown;
+    text: unknown;
+  }) => Promise<CommentReply>;
+  retractComment: (input: { requestId: string; comment: unknown }) => Promise<unknown>;
+  reportComment: (input: {
+    comment: unknown;
+    reason: unknown;
+    details: unknown;
+  }) => Promise<unknown>;
   navigate: (req: NavigateRequest) => void;
 };
 
@@ -32,6 +64,8 @@ export function frameErrorFor(error: unknown): FeaturePageFrameError {
   switch (extractTrpcErrorCode(error)) {
     case 'UNAUTHORIZED':
       return 'sign_in';
+    case 'UNPROCESSABLE_CONTENT':
+      return 'blocked';
     case 'FORBIDDEN':
     case 'BAD_REQUEST':
     case 'NOT_FOUND':
@@ -52,7 +86,19 @@ export function createFeaturePageHost(deps: FeaturePageHostDeps) {
     if (frame && targetOrigin) frame.postMessage({ type, payload }, targetOrigin);
   };
 
-  const sendInit = () => post(Msg.Init, { theme: deps.theme, feature: deps.feature });
+  // No fp-* request is answered before the frame has had fp-init, which tells it what it may ask.
+  let initialised = false;
+  const sendInit = () => {
+    const frame = deps.frameWindow();
+    if (!frame || !targetOrigin) return;
+    post(Msg.Init, {
+      theme: deps.theme,
+      feature: deps.feature,
+      capabilities: { comments: deps.discussion, edit: deps.discussion },
+      maskProfanity: deps.maskProfanity,
+    });
+    initialised = true;
+  };
 
   const answer = <T>(type: string, requestId: string, work: () => Promise<T>) => {
     work().then(
@@ -85,6 +131,14 @@ export function createFeaturePageHost(deps: FeaturePageHostDeps) {
     const payload = (data.payload ?? {}) as Record<string, unknown>;
     const requestId = payload.requestId;
     if (typeof requestId !== 'string' || !requestId || requestId.length > 128) return;
+    if (!initialised) {
+      const resultType =
+        typeof data.type === 'string' && Object.hasOwn(RESULT_OF, data.type)
+          ? RESULT_OF[data.type]
+          : undefined;
+      if (resultType) post(resultType, { requestId, ok: false, error: 'try_again' });
+      return;
+    }
 
     if (data.type === Msg.Vote) {
       if (!deps.signedIn) {
@@ -104,7 +158,38 @@ export function createFeaturePageHost(deps: FeaturePageHostDeps) {
         return;
       }
       answer(Msg.MineResult, requestId, () => deps.mine({ requests: payload.requests }));
+      return;
     }
+
+    const commentWork: Record<string, (() => Promise<unknown>) | undefined> = {
+      [Msg.Comment]: () =>
+        deps.comment({
+          requestId,
+          subject: payload.subject,
+          parent: payload.parent,
+          text: payload.text,
+        }),
+      [Msg.CommentEdit]: () =>
+        deps.editComment({ requestId, comment: payload.comment, text: payload.text }),
+      [Msg.CommentRetract]: () => deps.retractComment({ requestId, comment: payload.comment }),
+      [Msg.CommentReport]: () =>
+        deps.reportComment({
+          comment: payload.comment,
+          reason: payload.reason,
+          details: payload.details,
+        }),
+    };
+    const work =
+      typeof data.type === 'string' && Object.hasOwn(commentWork, data.type)
+        ? commentWork[data.type]
+        : undefined;
+    if (!work) return;
+    if (!deps.signedIn) {
+      deps.openLogin();
+      post(Msg.CommentResult, { requestId, ok: false, error: 'sign_in' });
+      return;
+    }
+    answer(Msg.CommentResult, requestId, work as () => Promise<Record<string, unknown>>);
   };
 
   return { onMessage, sendInit };
