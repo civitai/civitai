@@ -435,7 +435,7 @@
       {@render userHeader(item)}
       <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
         <div class="flex items-center justify-between gap-2">
-          <span class="font-semibold text-amber-400">{item.report.reason}</span>
+          {#if !item.restricted}<span class="font-semibold text-amber-400">{item.report.reason}</span>{/if}
           {#if item.removed}
             <Badge
               class="bg-muted"
@@ -460,12 +460,14 @@
           {#if item.report.agentFiled}<AgentBadge />{/if}
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
-        {#each reportDetailEntries(item.report.details) as [k, v] (k)}
-          <p class="mt-1 text-muted-foreground/90">
-            <span class="font-semibold">{formatEnum(k)}:</span>
-            {v}
-          </p>
-        {/each}
+        {#if !item.restricted}
+          {#each reportDetailEntries(item.report.details) as [k, v] (k)}
+            <p class="mt-1 text-muted-foreground/90">
+              <span class="font-semibold">{formatEnum(k)}:</span>
+              {v}
+            </p>
+          {/each}
+        {/if}
       </div>
       {@const placementId = reportedPlacementId(item.report.details, item.report.reason)}
       {#if canAct}
@@ -554,7 +556,9 @@
   >
     {#snippet card(item)}
       {@render userHeader(item)}
-      {#if data.view === 'poi'}
+      {#if item.restricted}
+        <!-- Withheld: nothing that says why. -->
+      {:else if data.view === 'poi'}
         <div class="flex flex-wrap gap-1">
           <Badge class="bg-orange-500/15 text-orange-400">POI</Badge>
           {#each item.reviewTags as reviewTag (reviewTag.id)}

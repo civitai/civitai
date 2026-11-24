@@ -35,7 +35,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     .executeTakeFirst();
 
   // A ToS-deleted image has no Postgres row but still has a lifecycle log, and that log is the record of
-  // the deletion — so the events still load for a csamReview holder. Reaction clustering does not: without `createdAt` there is
+  // the deletion — so the events still load. Reaction clustering does not: without `createdAt` there is
   // no lower bound, and an unbounded scan of the 825M-row reactions table is not worth it for an image
   // that no longer exists.
   const [events, reactions, flaggedRemixes] = await Promise.all([

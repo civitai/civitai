@@ -1081,6 +1081,15 @@ describe('the reported and review queues, without the grant', () => {
     });
   });
 
+  it('sends no report reason or details on a withheld reported card, and both to a grant holder', async () => {
+    expect((await reported(WITHOUT_GRANT)).get(KEPT)).toMatchObject({
+      report: { reason: '', details: null },
+    });
+    expect((await reported(WITH_GRANT)).get(KEPT)).toMatchObject({
+      report: { reason: 'TOSViolation', details: {} },
+    });
+  });
+
   // The grid leaves a restricted card out of the selection, so a bulk accept posts the rest.
   it('bulk accepts the rest of the page', async () => {
     await queuePage.actions.bulkAccept(event(WITHOUT_GRANT, { imageIds: String(CLEAN) }));

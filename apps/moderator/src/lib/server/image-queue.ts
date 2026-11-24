@@ -111,17 +111,26 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
   }));
 }
 
-/** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule or 3D model parent. */
+/** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule, review tags, report
+ *  reason or 3D model parent. */
 async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
   const withheld = await restrictedImageIds(
     items.map((i) => i.id),
     { csamReview: holdsCsamReview(user) }
   );
-  return items.map((item) =>
-    withheld.has(item.id)
-      ? { ...withheldRow(item), model3d: null, promptHighlight: null, ruleDefinition: null }
-      : { ...item, restricted: false }
-  );
+  return items.map((item) => {
+    if (!withheld.has(item.id)) return { ...item, restricted: false };
+    const { report } = item as { report?: object };
+    return {
+      ...withheldRow(item),
+      model3d: null,
+      promptHighlight: null,
+      ruleDefinition: null,
+      ruleReason: null,
+      reviewTags: [] as never[],
+      ...(report ? { report: { ...report, reason: '', details: null } } : {}),
+    };
+  });
 }
 
 /**
