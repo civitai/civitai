@@ -118,7 +118,7 @@ describe('/api/training-studio/studio/[route]', () => {
     expect(res.headers['set-cookie']).toBeUndefined();
   });
 
-  // The Studio's own log may not be readable in production; this app's row is the one support can find.
+  // The Studio's own log of a refusal is not shipped anywhere readable; this row is.
   it("logs the Studio's refusal with the user and the reason", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({ message: 'still processing', code: 'filesProcessing' }, { status: 400 })

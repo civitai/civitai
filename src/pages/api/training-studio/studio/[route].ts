@@ -48,7 +48,7 @@ export default AuthedEndpoint(
       body: req.method === 'POST' ? req.body : undefined,
       sessionCookies,
     });
-    // Otherwise a refusal's reason reaches only the browser; the Studio's own log may not be readable.
+    // The Studio's own log of a refusal is not shipped anywhere readable.
     if (status >= 400 && status < 500 && status !== 401) {
       const { message, code } = (body ?? {}) as { message?: unknown; code?: unknown };
       logToAxiom({
