@@ -64,7 +64,9 @@ describe('POST /api/train', () => {
   ])('logs %s with the user, status and reason', async (_, refusal, status, code) => {
     logToAxiom.mockClear();
     submitTrainingBatch.mockRejectedValueOnce(refusal);
-    const thrown = await post({ runs: [{}] }).catch((e: unknown) => e);
+    const thrown = await Promise.resolve()
+      .then(() => post({ runs: [{}] }))
+      .catch((e: unknown) => e);
     expect(thrown).toMatchObject({ status });
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -80,9 +82,7 @@ describe('POST /api/train', () => {
   it('logs a continuation refused before the submit', async () => {
     logToAxiom.mockClear();
     await expect(post({ runs: [{ continueFrom: 'wf' }] })).rejects.toMatchObject({ status: 400 });
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 1, status: 400 })
-    );
+    expect(logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ userId: 1, status: 400 }));
   });
 
   it('does not log a batch that started', async () => {
