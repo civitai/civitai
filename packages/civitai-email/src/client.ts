@@ -37,7 +37,7 @@ function getClient(): Transporter | null {
   return _client;
 }
 
-/** `transactional`: mail a user needs or asked for. `lifecycle`: engagement mail (the digest). */
+/** `transactional`: mail a user needs or asked for. `lifecycle`: engagement mail. */
 export const MAIL_CLASSES = ['transactional', 'lifecycle'] as const;
 export type MailClass = (typeof MAIL_CLASSES)[number];
 
@@ -93,7 +93,6 @@ export function setEmailSendRecorder(recorder: EmailSendRecorder | null) {
   _recorder = recorder;
 }
 
-/** The recorder set by setEmailSendRecorder, or null. */
 export function getEmailSendRecorder(): EmailSendRecorder | null {
   return _recorder;
 }

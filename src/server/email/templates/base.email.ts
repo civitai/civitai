@@ -28,7 +28,6 @@ export function createEmail<T, T2>(email: {
   const getText = (data: T, html?: string) =>
     email.text ? email.text(data) : htmlToPlainText(html ?? getHtml(data));
 
-  // `tags` adds what the caller knows about this one send: the user id, a campaign, a variant.
   const send = async (data: T, tags?: EmailSendTags) => {
     const html = getHtml(data);
     await sendEmail({

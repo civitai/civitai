@@ -7,11 +7,8 @@
 -- lands (the client inserts asynchronously, so the error may not reach the app's log) and every
 -- send still goes out: the transport never fails a send on its recorder and never waits on it.
 --
--- One row per event. Written today:
---   send          one per message the transport accepted (never a skipped or failed send), from
---                 the main app. The digest also keeps its own notificationDigestEvents rows.
--- Room is left, in `event`, for (none written yet): delivery, bounce, complaint, reject, delay,
--- open (the relay's events, joined to their send by `sendId`), and our own click, unsubscribe.
+-- One row per event. A `send` row is one message the transport accepted (never a skipped or
+-- failed send), from the main app. The digest also keeps its own notificationDigestEvents rows.
 --
 -- `sendId` is our own UUID per message, also sent as the message's `X-Civitai-Send-Id` header: the
 -- relay replaces the Message-ID, so that header is the only key a later delivery event can join on.
@@ -28,7 +25,7 @@ CREATE TABLE IF NOT EXISTS default.emailEvents
 (
   -- when the event happened (send rows: when the transport accepted the message)
   time DateTime64(3),
-  -- send (now); delivery | bounce | complaint | reject | delay | open | click | unsubscribe later
+  -- the event kind, e.g. send
   event LowCardinality(String),
   -- our per-message id, the X-Civitai-Send-Id header
   sendId UUID,
@@ -38,7 +35,6 @@ CREATE TABLE IF NOT EXISTS default.emailEvents
   mailClass LowCardinality(String),
   -- the send's campaign ('' when none); the digest: its pass, as an ISO timestamp
   campaign LowCardinality(String),
-  -- the experiment arm ('' when none)
   variant LowCardinality(String),
   -- the recipient's user id when the sender knows it, else 0
   userId UInt32
