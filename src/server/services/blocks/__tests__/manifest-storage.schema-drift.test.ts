@@ -176,9 +176,10 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ],
   ['exportable false', priv({ exportable: false }), true],
   ['exportable true on shared', shared({ exportable: true }), true],
-  // Viewer-keyed documents (docs/app-storage-generic-core.md): shared `own` only, phased.
-  ['keyedBy viewer on shared own', shared({ keyedBy: 'viewer' }), true, true],
-  ['keyedBy parent+viewer on shared own', shared({ keyedBy: 'parent+viewer' }), true, true],
+  // Viewer-keyed documents (docs/app-storage-generic-core.md): shared `own` only. Not phased:
+  // `viewerKeyedDocs` is on in production.
+  ['keyedBy viewer on shared own', shared({ keyedBy: 'viewer' }), true],
+  ['keyedBy parent+viewer on shared own', shared({ keyedBy: 'parent+viewer' }), true],
   ['keyedBy unknown mode', shared({ keyedBy: 'parent' }), false],
   ['keyedBy not a string', shared({ keyedBy: true }), false],
   ['keyedBy on private', priv({ keyedBy: 'viewer' }), false],

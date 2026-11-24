@@ -130,6 +130,25 @@ describe('manifest storage — accepted declarations', () => {
         { scopeJustifications: JUSTIFIED }
       ),
     ],
+    // Viewer-keyed documents are available (`viewerKeyedDocs` on): submit accepts `keyedBy`.
+    [
+      'votes: keyedBy "parent+viewer" on a shared write "own" collection',
+      manifest(
+        {
+          collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' } },
+        },
+        [STORAGE, PUBLISH],
+        { scopeJustifications: JUSTIFIED }
+      ),
+    ],
+    [
+      'likes: keyedBy "viewer" on a shared write "own" collection',
+      manifest(
+        { collections: { likes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' } } },
+        [STORAGE, PUBLISH],
+        { scopeJustifications: JUSTIFIED }
+      ),
+    ],
     ['kind "docs" stated explicitly', withPrefs({ kind: 'docs' })],
     ['a 3-segment index path', withPrefs({ indexes: { 'meta.round.n': 'number' } })],
     [
