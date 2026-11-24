@@ -797,6 +797,41 @@ describe('"more like this" never rates above its anchor', () => {
     expect(gate).toEqual([1, 2, 4, 8, 16]);
   });
 });
+describe('"more like this" refuses a minor- or POI-flagged anchor at every level', () => {
+  const run = (anchor: Record<string, unknown>, user: SessionUser, browsingLevel = PG) => {
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = async (args) => ({
+      items: args.ids.map((id) => (id === ANCHOR ? { id, nsfwLevel: PG, ...anchor } : { id })),
+      nextCursor: undefined,
+    });
+    const result = searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: ANCHOR, browsingLevel }),
+      user,
+      candidateSource: source,
+    });
+    return { result, calls };
+  };
+  const MOD = { id: 501, isModerator: true } as SessionUser;
+
+  it.each([
+    ['a minor-flagged anchor for a PG viewer', { minor: true }, VIEWER],
+    ['a POI-flagged anchor for a PG viewer', { poi: true }, VIEWER],
+    ['a minor-flagged anchor for a moderator', { minor: true }, MOD],
+    ['a blocked anchor for a PG viewer', { blockedFor: 'Moderated' }, VIEWER],
+  ])('refuses %s, before any search', async (_name, anchor, user) => {
+    const { result, calls } = run(anchor, user);
+    await expect(result).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('still searches from an unflagged, scanned anchor', async () => {
+    const { result, calls } = run({ minor: false, poi: false, ingestion: 'Scanned' }, VIEWER);
+    const { items } = await result;
+    expect(items.map((x) => x.id)).toEqual([101]);
+    expect(calls.length).toBeGreaterThan(0);
+  });
+});
 
 describe('the query audit and the browsing level', () => {
   const MOD = { id: 501, isModerator: true } as SessionUser;
