@@ -1,5 +1,10 @@
 import { ilikeContains } from '~/server/utils/ilike';
 import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import {
+  postUnpublishContextOf,
+  PUBLISHED_POST_CONTEXT,
+  type PostUnpublishContext,
+} from '~/server/utils/post-unpublish-context';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -794,12 +799,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   // Pass the same `db` client used above so the stash JOIN shares
   // `getDbWithoutLag`'s primary-routing right after an unpublish/republish.
   const unpublishContext: PostUnpublishContext = post.publishedAt
-    ? {
-        wasPublished: false,
-        unpublishedAt: null,
-        unpublishedBy: null,
-        parentModelId: null,
-      }
+    ? PUBLISHED_POST_CONTEXT
     : await getPostUnpublishContext({ id, db });
 
   return {
@@ -907,22 +907,6 @@ async function getPostModel({
   return version?.model ?? null;
 }
 
-export type PostUnpublishContext = {
-  // True when the post carries a `prevPublishedAt` stash — i.e. it was
-  // previously public, then unpublished via the parent model/version flow.
-  // Drives the restore-only UI in PostEditSidebar: when set, the post
-  // cannot be rescheduled, only republished at its original date.
-  wasPublished: boolean;
-  unpublishedAt: Date | null;
-  unpublishedBy: number | null;
-  // Surfaced via JOIN so the UI can build a link back to the parent model
-  // edit page (where the actual unpublish reason + custom message live).
-  // We deliberately don't surface the reason directly on the post —
-  // model-level reasons like "insufficient-description" don't always map
-  // onto the post itself, so showing them in the post alert is misleading.
-  parentModelId: number | null;
-};
-
 async function getPostUnpublishContext({
   id,
   db = dbRead,
@@ -945,17 +929,10 @@ async function getPostUnpublishContext({
   `;
 
   const row = rows[0];
-  const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
-  const prevPublishedAt = metadata.prevPublishedAt;
-  const rawUnpublishedAt = metadata.unpublishedAt;
-  const rawUnpublishedBy = metadata.unpublishedBy;
-
-  return {
-    wasPublished: !!prevPublishedAt,
-    unpublishedAt: typeof rawUnpublishedAt === 'string' ? new Date(rawUnpublishedAt) : null,
-    unpublishedBy: typeof rawUnpublishedBy === 'number' ? rawUnpublishedBy : null,
-    parentModelId: row?.modelId ?? null,
-  };
+  return postUnpublishContextOf(
+    (row?.metadata ?? {}) as Record<string, unknown>,
+    row?.modelId ?? null
+  );
 }
 
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
@@ -1154,9 +1131,7 @@ export const createPost = async ({
     // A fresh post has never been unpublished — supply the
     // PostUnpublishContext defaults so the type matches getPostEditDetail
     // (which carries these via the getPostDetail spread).
-    wasPublished: false,
-    unpublishedAt: null,
-    unpublishedBy: null,
+    ...PUBLISHED_POST_CONTEXT,
     parentModelId: model?.id ?? null,
     parentModelName: model?.name ?? null,
     ownModelId: model?.userId === userId ? model.id : null,

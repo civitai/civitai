@@ -21,6 +21,7 @@ import {
 import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { postUnpublishContextOf } from '~/server/utils/post-unpublish-context';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -780,6 +781,14 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
       unpublishedBy: OWNER,
       prevPublishedAt: expect.stringContaining('2026-11-01'),
     });
+    // Its owner is told only that it isn't available: not that its parent was unpublished.
+    expect(postUnpublishContextOf(rows[0].metadata, 7)).toEqual({
+      wasPublished: false,
+      unavailable: true,
+      unpublishedAt: null,
+      unpublishedBy: null,
+      parentModelId: null,
+    });
     // Out of what a public read lists (`p."publishedAt" <= NOW()`).
     const visible = await pg.query(
       `SELECT id FROM "Post" WHERE "publishedAt" <= now() ORDER BY id`
@@ -807,6 +816,15 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
       { id: 50, reason: 'pending-delete', prev: null },
       { id: 51, reason: 'tos', prev: '2026-01-01' },
     ]);
+    // The moderator's unpublish keeps telling its owner to republish the parent.
+    const { rows: meta } = await pg.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM "Post" WHERE id = 51`
+    );
+    expect(postUnpublishContextOf(meta[0].metadata, 7)).toMatchObject({
+      wasPublished: true,
+      unavailable: false,
+      parentModelId: 7,
+    });
   });
 
   // The publish path undoes an unpublish by stripping its stamp keys (`scheduledPostsGoLiveSql`), so
