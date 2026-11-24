@@ -119,6 +119,14 @@ func TestComputeModelGetAllHidePaidFallsBack(t *testing.T) {
 			t.Errorf("%s: prepare %v (%q), want prepared", input, err, fallback.Reason(err))
 		}
 	}
+	// With the port on (FEED_GO_GETALL_SERVE_HIDE_PAID, Config.Ports), Hide Paid is prepared.
+	on := &Server{Models: &modelfeed.Deps{Config: modelfeed.Config{Ports: modelfeed.Ports{HidePaid: true}}}}
+	for _, input := range []string{`{"json":{"hidePaid":true}}`, `{"json":{"hidePaid":"true"}}`} {
+		mreq, _, err := on.prepareModelGetAllViewer(ctx, req(input))
+		if err != nil || !mreq.Input.HidePaid {
+			t.Errorf("port on, %s: prepare %v (%q), want prepared with Hide Paid", input, err, fallback.Reason(err))
+		}
+	}
 }
 
 // computeModelGetAll's own refusals, before any store is read: the method, the envelope, the

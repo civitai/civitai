@@ -203,6 +203,30 @@ func TestLoadServeModelGetAllDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadGetAllServeHidePaidDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_HIDE_PAID", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeHidePaid != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_HIDE_PAID=%q -> %v, want %v", in, c.GetAllServeHidePaid, want)
+		}
+	}
+	// Its own switch: the route's and the other ports' switches do not turn it on.
+	t.Setenv("FEED_GO_GETALL_SERVE_HIDE_PAID", "")
+	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	if c, err := Load(); err != nil || c.GetAllServeHidePaid {
+		t.Fatalf("the other switches on: GetAllServeHidePaid=%v err=%v, want false", c.GetAllServeHidePaid, err)
+	}
+}
+
 func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)

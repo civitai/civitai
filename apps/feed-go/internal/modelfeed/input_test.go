@@ -8,13 +8,17 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
-func parseJSON(t *testing.T, raw string) (*Input, error) {
+func parseJSON(t *testing.T, raw string, ports ...Ports) (*Input, error) {
 	t.Helper()
 	m, err := trpc.DecodeEnvelope([]byte(raw))
 	if err != nil {
 		t.Fatalf("decode %s: %v", raw, err)
 	}
-	return ParseWith(m, Ports{})
+	var p Ports
+	if len(ports) > 0 {
+		p = ports[0]
+	}
+	return ParseWith(m, p)
 }
 
 // The shape the browse page sends most (the access-log sample's top shapes): every key read, the
@@ -26,7 +30,7 @@ func TestParseBrowseShape(t *testing.T) {
 		"cursor":"12|34|5001","tagname":"Anime","earlyAccess":false,"followed":false,"hidden":false,
 		"newCreators":false,"pending":false,"direction":"forward","authed":true,
 		"allowCommercialUse":"Sell","allowDerivatives":false,"fileFormats":["SafeTensor"],
-		"excludedUserIds":[7],"hidePaid":true}}`)
+		"excludedUserIds":[7],"hidePaid":true}}`, Ports{HidePaid: true})
 	if err != nil {
 		t.Fatalf("Parse: %v (reason %q)", err, fallback.Reason(err))
 	}
