@@ -193,7 +193,7 @@ export function flushImpressions(viaBeacon = false): void {
   clearTimer();
   // Nothing pending means nothing to deliver, and no request. This is what keeps
   // an idle or abandoned tab free: the timer is only ever armed by recording an
-  // impression or a seen id, so a session that stops scrolling stops costing anything, and a
+  // impression, so a session that stops scrolling stops costing anything, and a
   // tab switched away from with an empty buffer sends no beacon at all.
   if (pendingCount === 0 && pendingSeenCount === 0) return;
 
