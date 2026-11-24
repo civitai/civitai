@@ -39,6 +39,73 @@ function claimedValue(p: ReviewSourceProvenance): string {
   return `${sha7} · tree state not sent`;
 }
 
+/**
+ * The manifest's `repository`, as the review header shows it.
+ *
+ * 🔴 AUTHOR-DECLARED AND UNCHECKED. Nothing ties this URL to the bundle under review, so it is
+ * labelled as the developer's claim and never as "verified" (that word belongs to the
+ * GitHub-signed Actions run alone). The commit beside it is the client's claim, labelled so.
+ *
+ * 🔴 A LINK ONLY FOR `https:` ON A KNOWN CODE HOST. `javascript:`, `data:`, `http:`, a bare
+ * `github.com/a/b`, credentials in the URL or any other host stay PLAIN TEXT. The host list is
+ * the three public forges developers actually declare; a one-click link from a moderator's
+ * session to an arbitrary author-chosen host is the affordance a hostile submission wants, and
+ * any other host is still readable as text. The link text is the PARSED URL (`URL.href`), the
+ * same string as the `href`, so what the moderator reads is where the click goes.
+ */
+export const DECLARED_REPOSITORY_LABEL = 'Repository (declared by the developer, not checked)';
+export const DECLARED_REPOSITORY_HOSTS: ReadonlySet<string> = new Set([
+  'github.com',
+  'gitlab.com',
+  'codeberg.org',
+]);
+
+export type DeclaredRepository = {
+  /** What to show: the parsed URL when it links, else the value as the developer wrote it. */
+  text: string;
+  /** Only set for an `https:` URL on a host in `DECLARED_REPOSITORY_HOSTS`. */
+  href: string | null;
+  /** The client-claimed commit, shortened; `null` when none was sent. */
+  claimedCommit: string | null;
+  /** `<repo>/commit/<sha>`, only for a github.com `owner/repo` URL and a full 40-hex claim. */
+  claimedCommitHref: string | null;
+};
+
+export function declaredRepository(
+  repository: unknown,
+  claimedCommit?: string | null
+): DeclaredRepository | null {
+  if (typeof repository !== 'string' || repository.trim() === '') return null;
+  const raw = repository.trim();
+  const sha =
+    typeof claimedCommit === 'string' && SHA_RE.test(claimedCommit) ? claimedCommit : null;
+  const out: DeclaredRepository = {
+    text: raw,
+    href: null,
+    claimedCommit: sha ? sha.slice(0, 7) : null,
+    claimedCommitHref: null,
+  };
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return out;
+  }
+  if (url.protocol !== 'https:') return out;
+  if (url.username || url.password) return out;
+  const host = url.hostname.toLowerCase();
+  if (!DECLARED_REPOSITORY_HOSTS.has(host)) return out;
+  out.text = url.href;
+  out.href = url.href;
+  if (sha && host === 'github.com') {
+    const ownerRepo = url.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/, '');
+    if (REPOSITORY_RE.test(ownerRepo)) {
+      out.claimedCommitHref = `https://github.com/${ownerRepo}/commit/${sha}`;
+    }
+  }
+  return out;
+}
+
 /** The two lines, claim first. Empty when the request carries no provenance block at all. */
 export function reviewProvenanceLines(
   p: ReviewSourceProvenance | null | undefined

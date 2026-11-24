@@ -80,6 +80,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       {
         'blocks.approveRequest': { useMutation: mutation('approve') },
         'blocks.rejectRequest': { useMutation: mutation('reject') },
+        'blocks.placePublishRequestHold': { useMutation: mutation('placeHold') },
+        'blocks.clearPublishRequestHold': { useMutation: mutation('clearHold') },
         'blocks.getAgentReview': {
           useQuery: () => ({ data: m.agentReview, isLoading: false, error: null }),
         },
@@ -117,6 +119,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 const { ReviewDetailView, AllCaughtUp } = await import('./ReviewDetailView');
 const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
 const { useNextPendingReview } = await import('./useNextPendingReview');
+const { reviewSkipList } = await import('./reviewSkipList');
 // eslint-disable-next-line react-hooks/rules-of-hooks -- the scaffold's mock router is a plain singleton
 const router = useRouter();
 
@@ -186,6 +189,8 @@ beforeEach(async () => {
   // The moderator is on a review page (a failed commit only re-opens the request from here).
   (router as unknown as { asPath: string }).asPath = '/apps/review/pubreq_flow_current';
   vi.mocked(router.push).mockClear();
+  window.sessionStorage.clear();
+  reviewSkipList.resetForTests();
   await page.viewport(1124, 1305);
 });
 
@@ -257,6 +262,50 @@ describe('"Approve & next" — the delayed commit, wired to the page', () => {
     // Retry sends again — the failed id was released.
     await page.getByTestId('apps-review-approve-retry').click();
     await vi.waitFor(() => expect(m.clientApprove).toHaveBeenCalledTimes(2));
+  });
+
+  test('🔴 three "Approve & next" in a row: ONE toast at the top, its count updating in place', async () => {
+    const reqs = [pendingRequest(), pendingRequest(), pendingRequest()];
+    for (const req of reqs) {
+      // Each click moves on to the next submission, which mounts a fresh page.
+      const view = await renderWithProviders(
+        <>
+          <Notifications />
+          <ReviewDetailView
+            selection={{ request: req as never, mode: 'pending' }}
+            onClose={vi.fn()}
+          />
+        </>
+      );
+      await page.getByTestId('apps-review-approve-next').click();
+      await view.unmount();
+    }
+    renderPage(pendingRequest());
+    const summary = page.getByTestId('apps-review-decisions-summary');
+    await expect.element(summary).toHaveTextContent('3 approvals pending');
+    await reviewApprovalQueue.commitNow(reqs[0].id);
+    // req 2 and 3 are still pending, so the toast cannot leave while this is read.
+    await expect.element(summary).toHaveTextContent('2 approvals pending · 1 approved');
+    // ONE notification on screen — not a countdown toast per approval plus a "Build started"
+    // toast per commit — and it sits at the top, away from the bar's Approve buttons.
+    expect(document.querySelectorAll('.mantine-Notification-root')).toHaveLength(1);
+    expect(
+      summary.element().closest('.mantine-Notifications-root')?.getAttribute('data-position')
+    ).toBe('top-center');
+    expect(page.getByTestId('apps-review-approve-countdown').elements()).toHaveLength(2);
+    expect(document.body.textContent ?? '').not.toContain('Build started');
+  });
+
+  test('🔴 the sticky bar reserves the viewport bottom for itself: bottom toasts sit above it', async () => {
+    renderPage(pendingRequest());
+    const bar = page.getByTestId('apps-review-action-bar');
+    await expect.element(bar).toBeInTheDocument();
+    const reserve = () =>
+      document.documentElement.style.getPropertyValue('--review-action-bar-reserve');
+    await vi.waitFor(() => expect(reserve()).toMatch(/^\d+px$/));
+    const expected = Math.round(window.innerHeight - bar.element().getBoundingClientRect().top);
+    expect(parseInt(reserve(), 10)).toBe(expected);
+    expect(expected).toBeGreaterThan(0);
   });
 });
 
@@ -460,6 +509,52 @@ describe('the header names what is under review', () => {
     await expect.element(header).toHaveTextContent('first version');
     await expect.element(page.getByTestId('apps-review-submitted-age')).toBeInTheDocument();
   });
+
+  test('🔴 an https GitHub repository is a labelled, no-referrer link; the commit is "claimed"', async () => {
+    const sha = 'c0ffee'.padEnd(40, '0');
+    renderPage(
+      pendingRequest({
+        manifest: { name: 'Gen Matrix', repository: 'https://github.com/dev-user/gen-matrix' },
+        sourceProvenance: { claimedCommit: sha, claimedDirty: false, actionsRun: null },
+      })
+    );
+    const line = page.getByTestId('apps-review-declared-repo');
+    await expect
+      .element(line)
+      .toHaveTextContent(
+        'Repository (declared by the developer, not checked): https://github.com/dev-user/gen-matrix · commit c0ffee0 (claimed)'
+      );
+    const link = page.getByTestId('apps-review-declared-repo-link').element();
+    expect(link.getAttribute('href')).toBe('https://github.com/dev-user/gen-matrix');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer nofollow');
+    expect(link.getAttribute('target')).toBe('_blank');
+    const commit = page
+      .getByTestId('apps-review-declared-repo-commit')
+      .element()
+      .querySelector('a');
+    expect(commit?.getAttribute('href')).toBe(
+      `https://github.com/dev-user/gen-matrix/commit/${sha}`
+    );
+    expect(commit?.getAttribute('rel')).toBe('noopener noreferrer nofollow');
+    // "Verified" belongs to the signed Actions run alone.
+    expect(line.element().textContent ?? '').not.toMatch(/verified/i);
+  });
+
+  test.each([
+    ['javascript:alert(document.cookie)'],
+    ['http://github.com/dev-user/gen-matrix'],
+    ['github.com/dev-user/gen-matrix'],
+    ['https://evil.example/dev-user/gen-matrix'],
+    ['https://user:pw@github.com/dev-user/gen-matrix'],
+  ])('🔴 %s is shown as text, never as a link', async (repository) => {
+    renderPage(pendingRequest({ manifest: { name: 'Gen Matrix', repository } }));
+    const line = page.getByTestId('apps-review-declared-repo');
+    await expect.element(line).toBeInTheDocument();
+    expect(line.element().querySelectorAll('a')).toHaveLength(0);
+    await expect
+      .element(page.getByTestId('apps-review-declared-repo-text'))
+      .toHaveTextContent(repository);
+  });
 });
 
 describe('the Overview renders every AI-review state', () => {
@@ -528,11 +623,138 @@ describe('the Overview renders every AI-review state', () => {
     expect(detail.element().textContent ?? '').not.toMatch(/weak/i);
   });
 
+  test('🔴 the AI card LISTS every finding above low, names the flagged scopes, and counts the rest', async () => {
+    m.flags = { appBlocks: true, appReviewPage: true, appBlocksAgenticReview: true };
+    m.agentReview = {
+      status: 'complete',
+      codeReview: {
+        findings: [
+          {
+            severity: 'low',
+            title: 'Unused import',
+            file: 'src/a.ts',
+            line: 1,
+            detail: 'Tidy-up only.',
+          },
+          {
+            severity: 'medium',
+            title: 'Unbounded retry loop',
+            file: 'src/net.ts',
+            line: 42,
+            detail: 'Retries forever on a 500.',
+            suggestion: 'Cap the retries.',
+          },
+          { severity: 'info', title: 'Style note' },
+        ],
+        priorFindingsReconciled: [],
+      },
+      securityAudit: {
+        findings: [
+          {
+            severity: 'high',
+            title: 'Token sent to a third-party host',
+            file: 'src/api.ts',
+            line: 7,
+            detail: 'The session token is posted to an external analytics endpoint.',
+          },
+        ],
+        manifestUnexpectedKeys: [],
+        iframeSandboxGrants: ['allow-scripts', 'allow-same-origin'],
+        promptInjectionAttempts: [{ file: 'src/prompt.txt', excerpt: 'ignore previous' }],
+      },
+      scopeVerdicts: {
+        scopes: [],
+        overBroad: ['ai:write:budgeted'],
+        underDeclared: ['user:read'],
+      },
+    };
+    renderPage(pendingRequest());
+    const list = page.getByTestId('apps-review-overview-ai-findings');
+    await expect.element(list).toBeInTheDocument();
+    const cards = list.getByTestId('finding-card').elements();
+    // High first, then medium; the low and info findings are not cards here.
+    expect(cards.map((c) => c.textContent)).toEqual([
+      'highToken sent to a third-party hostsrc/api.ts:7The session token is posted to an external analytics endpoint.',
+      'mediumUnbounded retry loopsrc/net.ts:42Retries forever on a 500.',
+    ]);
+    await expect
+      .element(page.getByTestId('apps-review-overview-ai-collapsed'))
+      .toHaveTextContent('2 low/info findings — in the full report.');
+    await expect
+      .element(page.getByTestId('apps-review-overview-ai-scopes'))
+      .toHaveTextContent('Over-broad:ai:write:budgetedUnder-declared:user:read');
+    await expect
+      .element(page.getByTestId('apps-review-overview-ai-injection'))
+      .toHaveTextContent('1 prompt-injection attempt flagged (src/prompt.txt)');
+    await expect
+      .element(page.getByTestId('apps-review-overview-ai-sandbox'))
+      .toHaveTextContent(
+        'Sandbox grants:allow-scriptsallow-same-originallow-scripts + allow-same-origin together let the frame remove its own sandbox.'
+      );
+    // Still advisory, still no verdict; the full report keeps the evidence and the fixes.
+    const card = page.getByTestId('apps-review-overview-ai');
+    expect(card.element().textContent ?? '').toContain('Advisory');
+    expect(card.element().textContent ?? '').not.toContain('Cap the retries.');
+    expect(card.element().textContent ?? '').not.toMatch(/\bpass\b/i);
+  });
+
+  test('a section that did not run is named, so an empty list is not read as clean', async () => {
+    m.flags = { appBlocks: true, appReviewPage: true, appBlocksAgenticReview: true };
+    m.agentReview = {
+      status: 'complete',
+      codeReview: null,
+      securityAudit: { findings: [], manifestUnexpectedKeys: [], iframeSandboxGrants: [] },
+      scopeVerdicts: { scopes: [], overBroad: [], underDeclared: [] },
+    };
+    renderPage(pendingRequest());
+    await expect
+      .element(page.getByTestId('apps-review-overview-ai-incomplete'))
+      .toHaveTextContent('Did not complete: Code review. The full report has the details.');
+  });
+
   test('without the agentic flag the Overview shows no AI card at all (the gate is shared)', async () => {
     m.agentReview = report('complete', [{ severity: 'high' }]);
     renderPage(pendingRequest());
     await expect.element(page.getByTestId('apps-review-overview')).toBeInTheDocument();
     expect(page.getByTestId('apps-review-overview-ai').elements()).toHaveLength(0);
+  });
+});
+
+describe('the Overview leads with what the app says it is', () => {
+  test('🔴 the tagline and the full description, as text', async () => {
+    renderPage(
+      pendingRequest({
+        manifest: {
+          name: 'Gen Matrix',
+          tagline: 'Compare prompts side by side',
+          description: 'Runs one prompt across several models.\n<b>Not HTML.</b>',
+          scopes: [],
+        },
+      })
+    );
+    const box = page.getByTestId('apps-review-overview-description');
+    await expect.element(box).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-review-overview-tagline'))
+      .toHaveTextContent('Compare prompts side by side');
+    expect(page.getByTestId('apps-review-overview-description-text').element().textContent).toBe(
+      'Runs one prompt across several models.\n<b>Not HTML.</b>'
+    );
+    // Above the AI and permission cards, not after them.
+    const overview = page.getByTestId('apps-review-overview').element();
+    const order = [...overview.querySelectorAll('[data-testid]')].map((e) =>
+      e.getAttribute('data-testid')
+    );
+    expect(order.indexOf('apps-review-overview-description')).toBeLessThan(
+      order.indexOf('apps-review-overview-permissions')
+    );
+  });
+
+  test('a manifest with neither says so', async () => {
+    renderPage(pendingRequest());
+    await expect
+      .element(page.getByTestId('apps-review-overview-description'))
+      .toHaveTextContent('No tagline or description in the manifest.');
   });
 });
 
@@ -646,6 +868,103 @@ describe('what opens next', () => {
     expect(others.element().querySelector('a')?.getAttribute('href')).toBe(
       '/apps/review?tab=pending'
     );
+  });
+
+  /** The page's wiring: the bar's Skip and its decisions both go through the hook. */
+  function SkipHarness({ request }: { request: Record<string, unknown> }) {
+    const { openNext, skip, caughtUp, skippedPending, reviewSkipped } = useNextPendingReview(
+      request.id as string
+    );
+    return caughtUp ? (
+      <AllCaughtUp skippedPending={skippedPending} onReviewSkipped={reviewSkipped} />
+    ) : (
+      <ReviewDetailView
+        selection={{ request: request as never, mode: 'pending' }}
+        onClose={openNext}
+        onSkip={skip}
+      />
+    );
+  }
+
+  test('🔴 Skip opens the next one, sends NOTHING, and the skipped one is not offered again', async () => {
+    const a = pendingRequest();
+    const b = pendingRequest();
+    const c = pendingRequest();
+    m.pendingItems = {
+      items: [
+        { id: c.id, submittedAt: new Date('2026-01-03T00:00:00Z') },
+        { id: a.id, submittedAt: new Date('2026-01-01T00:00:00Z') },
+        { id: b.id, submittedAt: new Date('2026-01-02T00:00:00Z') },
+      ],
+      nextCursor: null,
+    };
+    const first = await renderWithProviders(<SkipHarness request={a} />);
+    await page.getByTestId('apps-review-skip').click();
+    expect(router.push).toHaveBeenLastCalledWith(`/apps/review/${b.id}`);
+    // No approve, reject or hold — not even a delayed approval.
+    expect(m.mutate).not.toHaveBeenCalled();
+    expect(m.clientApprove).not.toHaveBeenCalled();
+    expect(reviewApprovalQueue.get(a.id)).toBeUndefined();
+    await first.unmount();
+
+    // On B, a decision opens the next OLDEST that was not skipped: C, not A.
+    vi.mocked(router.push).mockClear();
+    const second = await renderWithProviders(<SkipHarness request={b} />);
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await page.getByTestId('apps-review-reject-chip-duplicate').click();
+    await page.getByTestId('apps-review-reject-confirm').click();
+    await vi.waitFor(() => expect(router.push).toHaveBeenLastCalledWith(`/apps/review/${c.id}`));
+    expect(router.push).not.toHaveBeenCalledWith(`/apps/review/${a.id}`);
+    await second.unmount();
+  });
+
+  test('🔴 the skip list survives a reload of the page (session storage), and only that', async () => {
+    const a = pendingRequest();
+    const b = pendingRequest();
+    m.pendingItems = {
+      items: [
+        { id: a.id, submittedAt: new Date('2026-01-01T00:00:00Z') },
+        { id: b.id, submittedAt: new Date('2026-01-02T00:00:00Z') },
+      ],
+      nextCursor: null,
+    };
+    const first = await renderWithProviders(<SkipHarness request={a} />);
+    await page.getByTestId('apps-review-skip').click();
+    await first.unmount();
+    expect(JSON.parse(window.sessionStorage.getItem('apps-review-skipped') ?? '[]')).toEqual([
+      a.id,
+    ]);
+    // A fresh module state (a reload) reads it back from storage.
+    reviewSkipList.resetForTests();
+    expect(reviewSkipList.get()).toEqual([a.id]);
+  });
+
+  test('🔴 when only skipped ones are left: "Review skipped" clears the list and opens the oldest', async () => {
+    const a = pendingRequest();
+    const b = pendingRequest();
+    m.pendingItems = {
+      items: [
+        { id: a.id, submittedAt: new Date('2026-01-01T00:00:00Z') },
+        { id: b.id, submittedAt: new Date('2026-01-02T00:00:00Z') },
+      ],
+      nextCursor: null,
+    };
+    const first = await renderWithProviders(<SkipHarness request={a} />);
+    await page.getByTestId('apps-review-skip').click();
+    await first.unmount();
+    vi.mocked(router.push).mockClear();
+    await renderWithProviders(<SkipHarness request={b} />);
+    await page.getByTestId('apps-review-skip').click();
+    // Both skipped: nothing to push, the end-of-queue card counts them.
+    expect(router.push).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByTestId('apps-review-skipped-pending'))
+      .toHaveTextContent('You skipped 2 submissions that are still waiting.');
+    await page.getByTestId('apps-review-skipped-review').click();
+    expect(router.push).toHaveBeenCalledWith(`/apps/review/${a.id}`);
+    expect(reviewSkipList.get()).toEqual([]);
+    expect(window.sessionStorage.getItem('apps-review-skipped')).toBeNull();
+    expect(m.mutate).not.toHaveBeenCalled();
   });
 
   test('the queue not loaded → back to the queue page, never a guessed "caught up"', async () => {

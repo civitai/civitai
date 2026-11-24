@@ -31,6 +31,7 @@ import {
   findingAnchorId,
   findingBody,
   formatCostUsd,
+  isSandboxEscapeCombo,
   parseAgentReport,
   parseReportHash,
   sectionErrorMessage,
@@ -324,15 +325,20 @@ function CopyFindingLink({ anchorId }: { anchorId: string }) {
  * When `anchorId` is set the card carries that DOM id (the deep-link target) and
  * a subtle copy-link affordance; `highlighted` draws a transient, animation-free
  * outline (reduced-motion-safe) after a deep-link scroll.
+ *
+ * `compact` (the review Overview): severity, title, `file:line` and the detail clamped to one
+ * line — no category chips, evidence or suggested fix, which stay in the full report.
  */
 export function FindingCard({
   finding,
   anchorId,
   highlighted,
+  compact = false,
 }: {
   finding: AgentFinding;
   anchorId?: string;
   highlighted?: boolean;
+  compact?: boolean;
 }) {
   const loc = fileLineLabel(finding.file, finding.line);
   const body = findingBody(finding);
@@ -355,17 +361,17 @@ export function FindingCard({
             <Badge size="sm" variant="light" color={severityColor(finding.severity)}>
               {finding.severity ?? 'info'}
             </Badge>
-            {finding.category && (
+            {!compact && finding.category && (
               <Badge size="sm" variant="outline" color="gray">
                 {finding.category}
               </Badge>
             )}
-            {finding.diffStatus && (
+            {!compact && finding.diffStatus && (
               <Badge size="sm" variant="dot" color="blue">
                 {finding.diffStatus}
               </Badge>
             )}
-            {finding.confidence && (
+            {!compact && finding.confidence && (
               <Text size="xs" c="dimmed">
                 confidence: {finding.confidence}
               </Text>
@@ -379,19 +385,24 @@ export function FindingCard({
           {anchorId && <CopyFindingLink anchorId={anchorId} />}
         </Group>
         {loc && <MonoLine>{loc}</MonoLine>}
-        {finding.evidence.length > 0 && (
+        {compact && body && (
+          <Text size="xs" lineClamp={1} style={{ wordBreak: 'break-word' }}>
+            {body}
+          </Text>
+        )}
+        {!compact && finding.evidence.length > 0 && (
           <Stack gap={0}>
             {finding.evidence.map((e, j) => (
               <MonoLine key={j}>{e}</MonoLine>
             ))}
           </Stack>
         )}
-        {body && (
+        {!compact && body && (
           <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {body}
           </Text>
         )}
-        {finding.suggestion && (
+        {!compact && finding.suggestion && (
           <Alert color="blue" variant="light" p={6} radius="sm">
             <Text size="xs" fw={600}>
               Suggested fix
@@ -678,12 +689,11 @@ export function SecurityAuditTab({
             ))}
           </Group>
           {/* Flag the classic sandbox-escape combo. */}
-          {securityAudit.iframeSandboxGrants.some((g) => /allow-scripts/i.test(g)) &&
-            securityAudit.iframeSandboxGrants.some((g) => /allow-same-origin/i.test(g)) && (
-              <Text size="xs" c="red" fw={600} mt={4}>
-                ⚠️ allow-scripts + allow-same-origin together let the frame remove its own sandbox.
-              </Text>
-            )}
+          {isSandboxEscapeCombo(securityAudit.iframeSandboxGrants) && (
+            <Text size="xs" c="red" fw={600} mt={4}>
+              ⚠️ allow-scripts + allow-same-origin together let the frame remove its own sandbox.
+            </Text>
+          )}
         </Alert>
       )}
       {securityAudit.promptInjectionAttempts.length > 0 && (

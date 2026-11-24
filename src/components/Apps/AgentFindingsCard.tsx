@@ -1,16 +1,28 @@
 import { Badge, Button, Card, Group, Loader, Stack, Text } from '@mantine/core';
-import { IconArrowRight, IconRobot } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowRight, IconRobot } from '@tabler/icons-react';
 import { computeAgentReviewPollInterval } from '~/components/Apps/AgentReviewPanel';
-import { parseAgentReport } from '~/components/Apps/agentReviewReport';
+import {
+  AGENT_REPORT_SECTION_LABELS,
+  agentReportSectionStatuses,
+  isCollapsedSeverity,
+  isSandboxEscapeCombo,
+  parseAgentReport,
+  sortFindingsBySeverity,
+  type AgentReportView,
+} from '~/components/Apps/agentReviewReport';
+import { FindingCard } from '~/components/Apps/ReportTabs';
 import { agentReviewDisplay, type AgentReviewSummary } from '~/shared/utils/agent-review-findings';
 import { trpc } from '~/utils/trpc';
 
 /**
- * The agentic review's FINDING COUNTS, as the review page's Overview leads with it: one badge
- * ("1 high · 2 medium", "no findings", or not run / running / run failed) coloured by the worst
- * severity, the scope-trace detail, and the way into the full report. 🔴 NO VERDICT: the agent
- * emits findings, not a judgement, so this never says "pass" — see `agent-review-findings`. The full report — findings, scope trace, re-run controls, chat — stays on
- * the AI report tab; this card is the summary a routine approve needs.
+ * The agentic review as the review page's Overview leads with it: one badge ("1 high · 2
+ * medium", "no findings", or not run / running / run failed) coloured by the worst severity;
+ * then, once a report exists, EVERY finding rated above low (severity, title, `file:line`, a
+ * one-line detail — `FindingCard compact`, the full report's own card), the over-broad and
+ * under-declared scopes by name, any prompt-injection attempts and sandbox grants, and low/info
+ * findings as a count. 🔴 NO VERDICT: the agent emits findings, not a judgement, so this never
+ * says "pass" — see `agent-review-findings`. Evidence, suggested fixes, the scope trace, re-run
+ * controls and chat stay on the AI report tab ("Full report").
  *
  * 🔴 MOUNTED ONLY THROUGH `ReviewAgentSection variant="summary"`, which owns the gate (pending,
  * on-site, the mod-only agentic flag). It reads the SAME `blocks.getAgentReview` query as the
@@ -61,6 +73,7 @@ export function AgentFindingsCard({
   const report = query.data ?? null;
   const summary = report ? agentReportSummary(report) : null;
   const display = agentReviewDisplay(summary);
+  const view = report && display.state === 'reported' ? parseAgentReport(report) : null;
 
   return (
     <Card
@@ -118,8 +131,112 @@ export function AgentFindingsCard({
               : ''}
           </Text>
         )}
+        {view && report && <ReportedFindings view={view} report={report} />}
       </Stack>
     </Card>
+  );
+}
+
+/** What a finished report found, listed — the body of the card once `display.state` is `reported`. */
+function ReportedFindings({
+  view,
+  report,
+}: {
+  view: AgentReportView;
+  report: { codeReview?: unknown; securityAudit?: unknown; scopeVerdicts?: unknown };
+}) {
+  const findings = sortFindingsBySeverity([
+    ...view.codeReview.findings,
+    ...view.securityAudit.findings,
+  ]);
+  const listed = findings.filter((f) => !isCollapsedSeverity(f.severity));
+  const collapsed = findings.length - listed.length;
+  const { overBroad, underDeclared } = view.scopeVerdicts;
+  const injections = view.securityAudit.promptInjectionAttempts;
+  const grants = view.securityAudit.iframeSandboxGrants;
+  // An analysis that failed or never ran is not "found nothing": say which, so an empty list
+  // here is not read as a clean section.
+  const statuses = agentReportSectionStatuses(report);
+  const incomplete = (Object.keys(statuses) as (keyof typeof statuses)[]).filter(
+    (s) => statuses[s] !== 'complete'
+  );
+  return (
+    <Stack gap={6} data-testid="apps-review-overview-ai-findings">
+      {incomplete.length > 0 && (
+        <Text size="xs" c="orange" data-testid="apps-review-overview-ai-incomplete">
+          Did not complete: {incomplete.map((s) => AGENT_REPORT_SECTION_LABELS[s]).join(', ')}. The
+          full report has the details.
+        </Text>
+      )}
+      {listed.map((f, i) => (
+        <FindingCard key={i} finding={f} compact />
+      ))}
+      {collapsed > 0 && (
+        <Text size="xs" c="dimmed" data-testid="apps-review-overview-ai-collapsed">
+          {collapsed} low/info finding{collapsed === 1 ? '' : 's'} — in the full report.
+        </Text>
+      )}
+      {(overBroad.length > 0 || underDeclared.length > 0) && (
+        <Stack gap={2} data-testid="apps-review-overview-ai-scopes">
+          {overBroad.length > 0 && <ScopeNames label="Over-broad" scopes={overBroad} />}
+          {underDeclared.length > 0 && <ScopeNames label="Under-declared" scopes={underDeclared} />}
+        </Stack>
+      )}
+      {injections.length > 0 && (
+        <Group gap={6} wrap="nowrap" data-testid="apps-review-overview-ai-injection">
+          <IconAlertTriangle size={14} color="var(--mantine-color-red-6)" />
+          <Text size="xs" c="red" fw={600}>
+            {injections.length} prompt-injection attempt{injections.length === 1 ? '' : 's'} flagged
+            {injections.some((p) => p.file)
+              ? ` (${injections
+                  .map((p) => p.file)
+                  .filter(Boolean)
+                  .join(', ')})`
+              : ''}
+          </Text>
+        </Group>
+      )}
+      {grants.length > 0 && (
+        <Stack gap={2} data-testid="apps-review-overview-ai-sandbox">
+          <Group gap={4}>
+            <Text size="xs" c="orange" fw={600}>
+              Sandbox grants:
+            </Text>
+            {grants.map((g, i) => (
+              <Badge key={i} size="xs" variant="outline" color="orange" ff="monospace">
+                {g}
+              </Badge>
+            ))}
+          </Group>
+          {isSandboxEscapeCombo(grants) && (
+            <Text size="xs" c="red" fw={600}>
+              allow-scripts + allow-same-origin together let the frame remove its own sandbox.
+            </Text>
+          )}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+function ScopeNames({ label, scopes }: { label: string; scopes: string[] }) {
+  return (
+    <Group gap={4}>
+      <Text size="xs" fw={600}>
+        {label}:
+      </Text>
+      {scopes.map((s, i) => (
+        <Badge
+          key={i}
+          size="xs"
+          variant="light"
+          color="orange"
+          style={{ fontFamily: 'ui-monospace, monospace', textTransform: 'none' }}
+        >
+          {s}
+        </Badge>
+      ))}
+    </Group>
   );
 }
 

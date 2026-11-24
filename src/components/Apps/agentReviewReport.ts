@@ -180,6 +180,27 @@ export function formatCostUsd(costUsd: unknown): string | null {
   return `$${n.toFixed(4)}`;
 }
 
+/**
+ * Do these iframe sandbox grants include the classic escape pair? `allow-scripts` together with
+ * `allow-same-origin` lets a framed document remove its own sandbox. One predicate for the full
+ * report's callout and the Overview's summary.
+ */
+export function isSandboxEscapeCombo(grants: readonly string[]): boolean {
+  return (
+    grants.some((g) => /allow-scripts/i.test(g)) && grants.some((g) => /allow-same-origin/i.test(g))
+  );
+}
+
+/**
+ * Severities the Overview lists finding by finding; everything else (`low`, `info`) collapses
+ * to a count. A finding with an unknown or missing severity is LISTED, not collapsed: the agent
+ * did not say it was minor.
+ */
+const COLLAPSED_SEVERITIES = new Set(['low', 'info']);
+export function isCollapsedSeverity(severity?: string): boolean {
+  return COLLAPSED_SEVERITIES.has((severity ?? '').toLowerCase());
+}
+
 /** A `file:line` display string from a finding — tolerant of missing parts. */
 export function fileLineLabel(file?: string, line?: number | string): string | null {
   if (!file) return null;

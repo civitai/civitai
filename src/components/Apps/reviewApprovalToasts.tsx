@@ -1,6 +1,11 @@
 import { Button, Group, Progress, Stack, Text } from '@mantine/core';
-import { hideNotification, showNotification } from '@mantine/notifications';
-import { IconAlertTriangle, IconCheck, IconClock } from '@tabler/icons-react';
+import {
+  hideNotification,
+  notificationsStore,
+  showNotification,
+  type NotificationPosition,
+} from '@mantine/notifications';
+import { IconAlertTriangle, IconClock } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useEffect, useMemo, useSyncExternalStore, useState } from 'react';
 import {
@@ -13,14 +18,35 @@ import {
 } from '~/components/Apps/pendingApprovalQueue';
 
 /**
- * The UI half of the delayed "Approve & next": the countdown toast with Undo, the success /
- * persistent-failure toasts, and the one-time binding of the queue to the ways a moderator can
- * leave (see `bindPendingApprovalLifecycle`). The engine itself is `pendingApprovalQueue.ts`.
+ * The UI half of the delayed "Approve & next": ONE decisions toast that counts pending
+ * approvals down with Undo and tallies what was decided, the persistent-failure toasts, and the
+ * one-time binding of the queue to the ways a moderator can leave (see
+ * `bindPendingApprovalLifecycle`). The engine itself is `pendingApprovalQueue.ts`.
  *
  * 🔴 TOASTS, NOT PAGE STATE, because the page that enqueued the approval is gone by the time
  * it commits — the same click navigated to the next submission. Mantine's notifications live
  * at the app root, so the countdown keeps ticking across review pages.
+ *
+ * 🔴 ONE TOAST, AT THE TOP. Each approval used to raise its own countdown toast and then a
+ * second "Approved … Build started." toast, all bottom-right — the corner the sticky review
+ * bar's Approve buttons sit in. Approving a few in a row stacked them over the buttons until
+ * they timed out. Now every review decision feeds one toast (`REVIEW_DECISIONS_TOAST_ID`) at
+ * `REVIEW_TOAST_POSITION`, which reads "2 approvals pending · 1 approved" and lists each
+ * pending approval with its own Undo. Its body is a live component subscribed to the queue and
+ * the tally, so it updates in place without `updateNotification` — which silently does nothing
+ * once a toast has closed (see `buildReviewConsentNotification` in `pageBlockHostLogic.ts`).
+ * It never auto-closes on Mantine's timer; it is hidden by `settle` a few seconds after the
+ * last pending approval resolves, and every new decision re-shows it by id when it is gone.
+ *
+ * Failures (and a late hold that re-suspended an approve) stay SEPARATE and PERSISTENT, at the
+ * same position: the moderator has to act on them.
  */
+
+/** Where every review-decision toast goes. Per notification, so other pages keep theirs. */
+export const REVIEW_TOAST_POSITION: NotificationPosition = 'top-center';
+export const REVIEW_DECISIONS_TOAST_ID = 'review-decisions';
+/** How long the decisions toast stays once nothing is pending any more. */
+export const REVIEW_DECISIONS_LINGER_MS = 4000;
 
 let lifecycleBound = false;
 
@@ -38,13 +64,114 @@ function ensureLifecycleBound(queue: PendingApprovalQueue) {
   }
 }
 
-const toastId = (id: string) => `review-approve-${id}`;
+export type ReviewDecisionTally = { approved: number; rejected: number; undone: number };
+
+/**
+ * The decisions toast's headline: "2 approvals pending · 1 approved · 1 undone". `pending`
+ * counts approvals still in their undo window or being sent.
+ */
+export function reviewDecisionsSummary(t: { pending: number } & ReviewDecisionTally): string {
+  const parts: string[] = [];
+  if (t.pending > 0) parts.push(`${t.pending} approval${t.pending === 1 ? '' : 's'} pending`);
+  if (t.approved > 0) parts.push(`${t.approved} approved`);
+  if (t.rejected > 0) parts.push(`${t.rejected} rejected`);
+  if (t.undone > 0) parts.push(`${t.undone} undone`);
+  return parts.join(' · ');
+}
+
+const isActive = (e: PendingApprovalEntry) => e.status === 'pending' || e.status === 'committing';
+
+/** The tally and the show/hide timing of ONE queue's decisions toast. */
+function createDecisionsToast(queue: PendingApprovalQueue) {
+  const zero: ReviewDecisionTally = { approved: 0, rejected: 0, undone: 0 };
+  let tally = zero;
+  let hideTimer: ReturnType<typeof setTimeout> | null = null;
+  const listeners = new Set<() => void>();
+  const emit = () => listeners.forEach((l) => l());
+  const clearHide = () => {
+    if (hideTimer != null) clearTimeout(hideTimer);
+    hideTimer = null;
+  };
+  const isShown = () => {
+    const state = notificationsStore.getState();
+    return [...state.notifications, ...state.queue].some((n) => n.id === REVIEW_DECISIONS_TOAST_ID);
+  };
+
+  const toast = {
+    subscribe(l: () => void) {
+      listeners.add(l);
+      return () => {
+        listeners.delete(l);
+      };
+    },
+    getTally: () => tally,
+    /**
+     * Show the toast if it is not up. A toast that is gone (hidden, or cleared by anything)
+     * starts a fresh tally: the count is "since this toast appeared", never the whole session.
+     */
+    ensureShown() {
+      clearHide();
+      if (isShown()) return;
+      tally = zero;
+      emit();
+      showNotification({
+        id: REVIEW_DECISIONS_TOAST_ID,
+        position: REVIEW_TOAST_POSITION,
+        icon: <IconClock size={18} />,
+        color: 'blue',
+        // Hidden by `settle`, never by a Mantine timer racing the countdown.
+        autoClose: false,
+        withCloseButton: false,
+        message: <ReviewDecisionsToastBody queue={queue} toast={toast} />,
+      });
+    },
+    count(kind: keyof ReviewDecisionTally) {
+      tally = { ...tally, [kind]: tally[kind] + 1 };
+      emit();
+    },
+    /** Hide the toast once nothing is pending, after a short linger; keep it while anything is. */
+    settle() {
+      clearHide();
+      if (queue.getSnapshot().some(isActive)) return;
+      hideTimer = setTimeout(() => {
+        hideTimer = null;
+        hideNotification(REVIEW_DECISIONS_TOAST_ID);
+      }, REVIEW_DECISIONS_LINGER_MS);
+    },
+  };
+  return toast;
+}
+
+type DecisionsToast = ReturnType<typeof createDecisionsToast>;
+const decisionsToasts = new WeakMap<PendingApprovalQueue, DecisionsToast>();
+function decisionsToastFor(queue: PendingApprovalQueue): DecisionsToast {
+  let t = decisionsToasts.get(queue);
+  if (!t) {
+    t = createDecisionsToast(queue);
+    decisionsToasts.set(queue, t);
+  }
+  return t;
+}
+
+/**
+ * An IMMEDIATE approve or reject from the review bar: counted in the same decisions toast
+ * instead of raising a toast of its own.
+ */
+export function noteReviewDecision(
+  kind: 'approved' | 'rejected',
+  queue: PendingApprovalQueue = reviewApprovalQueue
+) {
+  const toast = decisionsToastFor(queue);
+  toast.ensureShown();
+  toast.count(kind);
+  toast.settle();
+}
 
 /**
  * The Undo of every approval still in its window, by request id — so the review page's own
- * action bar (Back to a request inside its window) offers the SAME undo as the toast, with the
- * same toast cleanup, rather than a second, drifting copy. Removed once the entry leaves the
- * window (committed, undone or failed).
+ * action bar (Back to a request inside its window) offers the SAME undo as the toast, rather
+ * than a second, drifting copy. Removed once the entry leaves the window (committed, undone or
+ * failed).
  */
 const undoHandlers = new Map<string, (opts?: { navigate?: boolean }) => boolean>();
 
@@ -71,33 +198,54 @@ function currentPath(): string | null {
   }
 }
 
-/** The countdown body of the pending-approval toast. Re-renders on its own 250ms tick. */
-function PendingApprovalCountdown({
-  id,
-  label,
+/** The decisions toast's body: the headline, then one countdown row per pending approval. */
+function ReviewDecisionsToastBody({
   queue,
-  onUndo,
+  toast,
 }: {
-  id: string;
-  label: string;
   queue: PendingApprovalQueue;
-  onUndo: () => void;
+  toast: DecisionsToast;
 }) {
   const entries = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
-  const entry = entries.find((e) => e.id === id);
+  const tally = useSyncExternalStore(toast.subscribe, toast.getTally, toast.getTally);
+  const active = entries.filter(isActive);
+  return (
+    <Stack gap={8} data-testid="apps-review-decisions-toast">
+      <Text size="sm" fw={600} data-testid="apps-review-decisions-summary">
+        {reviewDecisionsSummary({ pending: active.length, ...tally })}
+      </Text>
+      {active.map((e) => (
+        <PendingApprovalCountdown
+          key={e.id}
+          entry={e}
+          onUndo={() => undoReviewApproval(e.id, undefined, queue)}
+        />
+      ))}
+    </Stack>
+  );
+}
+
+/** One pending approval's countdown row. Re-renders on its own 250ms tick. */
+function PendingApprovalCountdown({
+  entry,
+  onUndo,
+}: {
+  entry: PendingApprovalEntry;
+  onUndo: () => void;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, []);
-  const remainingMs = entry ? Math.max(0, entry.dueAt - now) : 0;
+  const remainingMs = Math.max(0, entry.dueAt - now);
   const seconds = Math.ceil(remainingMs / 1000);
-  const committing = entry?.status === 'committing';
+  const committing = entry.status === 'committing';
   return (
-    <Stack gap={6} data-testid="apps-review-approve-countdown">
+    <Stack gap={4} data-testid="apps-review-approve-countdown">
       <Group justify="space-between" wrap="nowrap" gap="sm">
         <Text size="sm">
-          {committing ? `Approving ${label}…` : `Approving ${label} in ${seconds}s`}
+          {committing ? `Approving ${entry.label}…` : `Approving ${entry.label} in ${seconds}s`}
         </Text>
         {/* Undo only. The toast offers no "approve now": the immediate approve is the bar's
             own "Approve" button, and a third approve path here was not asked for. */}
@@ -130,7 +278,7 @@ export type EnqueueReviewApprovalArgs = {
   commit: () => Promise<unknown>;
   /** After a successful commit (refresh the queue lists). */
   onCommitted?: () => void | Promise<void>;
-  /** A notice that replaces "Approved … Build started." when the commit did not take effect. */
+  /** A notice that replaces counting the approval when the commit did not take effect. */
   committedNotice?: () => { title: string; message: string } | null;
   /** Where Undo / a failure sends the moderator back to. Defaults to the request's page. */
   reviewHref?: string;
@@ -138,9 +286,9 @@ export type EnqueueReviewApprovalArgs = {
 };
 
 /**
- * Record a delayed approval and raise its countdown toast. Returns `false` when this request
- * already has an approval pending / in flight / committed (the double-click guard) — the caller
- * then does nothing.
+ * Record a delayed approval and show it in the decisions toast. Returns `false` when this
+ * request already has an approval pending / in flight / committed (the double-click guard) —
+ * the caller then does nothing.
  */
 export function enqueueReviewApproval({
   id,
@@ -154,15 +302,10 @@ export function enqueueReviewApproval({
   ensureLifecycleBound(queue);
   const accepted = queue.enqueue({ id, label, commit });
   if (!accepted) return false;
+  const toast = decisionsToastFor(queue);
 
   const undo = ({ navigate = true }: { navigate?: boolean } = {}) => {
     if (!queue.undo(id)) return false;
-    hideNotification(toastId(id));
-    showNotification({
-      message: `Undone — ${label} was not approved.`,
-      color: 'gray',
-      autoClose: 3000,
-    });
     // Back to the submission the moderator just un-approved. (The review page also drops its
     // "No more app submissions waiting" state on this undo — `useNextPendingReview` — since
     // after the LAST submission this push is to the URL it is already on.)
@@ -171,15 +314,7 @@ export function enqueueReviewApproval({
   };
   undoHandlers.set(id, undo);
 
-  showNotification({
-    id: toastId(id),
-    icon: <IconClock size={18} />,
-    color: 'blue',
-    // Closed by the queue's own events, never by a timer racing the countdown.
-    autoClose: false,
-    withCloseButton: false,
-    message: <PendingApprovalCountdown id={id} label={label} queue={queue} onUndo={() => undo()} />,
-  });
+  toast.ensureShown();
 
   const unsubscribe = queue.subscribe((event) => {
     if (event.entry.id !== id) return;
@@ -188,24 +323,29 @@ export function enqueueReviewApproval({
     }
     if (event.type === 'committed') {
       unsubscribe();
-      hideNotification(toastId(id));
       const notice = committedNotice?.();
-      showNotification(
-        notice
-          ? { color: 'red', title: notice.title, message: notice.message, autoClose: false }
-          : {
-              icon: <IconCheck size={18} />,
-              color: 'green',
-              message: `Approved ${label}. Build started.`,
-              autoClose: 3000,
-            }
-      );
+      if (notice) {
+        // Not an approval that took: a persistent notice of its own, never "approved".
+        showNotification({
+          id: `review-approve-notice-${id}`,
+          position: REVIEW_TOAST_POSITION,
+          color: 'red',
+          title: notice.title,
+          message: notice.message,
+          autoClose: false,
+        });
+      } else {
+        toast.count('approved');
+      }
+      toast.settle();
       void onCommitted?.();
     } else if (event.type === 'undone') {
       unsubscribe();
+      toast.count('undone');
+      toast.settle();
     } else if (event.type === 'failed') {
       unsubscribe();
-      hideNotification(toastId(id));
+      toast.settle();
       const errorId = `review-approve-failed-${id}`;
       const message =
         event.entry.error instanceof Error ? event.entry.error.message : 'The approval failed.';
@@ -213,6 +353,7 @@ export function enqueueReviewApproval({
       // pending and the moderator has to act on it.
       showNotification({
         id: errorId,
+        position: REVIEW_TOAST_POSITION,
         icon: <IconAlertTriangle size={18} />,
         color: 'red',
         title: `Could not approve ${label}`,
@@ -285,11 +426,5 @@ export function usePendingApprovalEntry(
 export function usePendingApprovalIds(queue: PendingApprovalQueue = reviewApprovalQueue) {
   const entries = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
   // Memoised on the snapshot, which only changes identity when the queue changes.
-  return useMemo(
-    () =>
-      new Set(
-        entries.filter((e) => e.status === 'pending' || e.status === 'committing').map((e) => e.id)
-      ),
-    [entries]
-  );
+  return useMemo(() => new Set(entries.filter(isActive).map((e) => e.id)), [entries]);
 }

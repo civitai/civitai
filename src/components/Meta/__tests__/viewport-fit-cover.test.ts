@@ -757,7 +757,7 @@ describe('the chokepoints that pay for whole populations', () => {
     [
       'each notification container pays only the edge its own data-position names (bottom block)',
       ".mantine-Notifications-root[data-position^='bottom-'] { " +
-        'margin-block-end: var(--safe-area-inset-bottom); }',
+        'margin-block-end: max(var(--safe-area-inset-bottom), var(--review-action-bar-reserve, 0px)); }',
     ],
     [
       'each notification container pays only the edge its own data-position names (inline start)',
