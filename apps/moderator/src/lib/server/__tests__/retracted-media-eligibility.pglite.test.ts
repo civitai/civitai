@@ -626,6 +626,12 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
     }
   );
 
+  it('withholds it from a list exactly as it withholds the same image of a clear account', async () => {
+    scanner.verdict = 'hit';
+    const { kept } = await restrictedImageAccess([IMAGE, TWIN], { csamReview: false });
+    expect(kept.has(IMAGE)).toBe(kept.has(TWIN));
+  });
+
   it('keeps it to cleared moderators while the scanner marks it', async () => {
     scanner.verdict = 'hit';
     expect(await getModeratorMedia(IMAGE, { csamReview: false })).toBeNull();
