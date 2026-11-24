@@ -32,3 +32,10 @@ export function cardRemovals(
 /** The link a cover's card carries back to its song. */
 export const coverOfSongLabel = (song: { songId: number; title: string | null }) =>
   `Cover of song ${song.title || `#${song.songId}`}`;
+
+/** A song card's cover, or null for the placeholder once a moderator removed that cover on this page
+ *  (`removedCovers`): the card's details were read before the removal and are not read again. */
+export const shownCover = <C extends { id: number }>(
+  cover: C | null,
+  removed: ReadonlySet<number>
+): C | null => (cover && !removed.has(cover.id) ? cover : null);

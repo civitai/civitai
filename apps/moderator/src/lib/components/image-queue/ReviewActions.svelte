@@ -8,6 +8,7 @@
   import VerdictBadge from './VerdictBadge.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cardRemovals } from '$lib/music/song-tos';
+  import { removedCovers } from '$lib/music/removed-covers';
 
   let {
     item,
@@ -58,12 +59,15 @@
 
   // "Remove cover" marks this card, not the card the page's `submit` would key by the cover's id
   // (on Image reports that is a report id, which could be another card's). A held removal is not a
-  // removal: the page shows the hold, and the button stays.
+  // removal: the page shows the hold, and the button stays. A removed cover drops to the placeholder
+  // on every song card showing it (`removedCovers`).
   let coverRemoved = $state(false);
-  const coverSubmit: SubmitFunction = () => {
+  const coverSubmit: SubmitFunction = ({ formData }) => {
     coverRemoved = true;
+    const coverId = Number(formData.get('imageId'));
     return async ({ result, update }) => {
       coverRemoved = result.type === 'success' && !result.data?.held;
+      if (coverRemoved) removedCovers.add(coverId);
       await update({ invalidateAll: false });
     };
   };

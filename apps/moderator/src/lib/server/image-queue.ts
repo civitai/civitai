@@ -46,7 +46,8 @@ import { approvedAppealOf } from '$lib/server/removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
-import { getSongLinks, NO_SONG_LINKS } from '$lib/server/song-links.service';
+import { getSongLinks, NO_SONG_LINKS, type SongLinks } from '$lib/server/song-links.service';
+import { logAxiomError } from '$lib/server/axiom';
 import { ReportStatus } from '$lib/reports';
 import {
   FLAG_KEPT_THROUGH_BLOCK,
@@ -100,12 +101,15 @@ function parseViolation(
 
 /** Each card's Model3D parent, the image's latest approved appeal, so a moderator sees it before
  *  removing the image again, and its song links (a song's cover to remove, a cover's song). */
-async function withModel3d<T extends { id: number }>(items: T[]) {
+async function withModel3d<T extends { id: number }>(
+  items: T[],
+  user: App.Locals['user'] | undefined
+) {
   const ids = items.map((i) => i.id);
   const [model3ds, appeals, songLinks] = await Promise.all([
     getModel3DsByThumbnailImageIds(ids),
     getLatestApprovedImageAppeals(dbRead, ids),
-    getSongLinks(ids),
+    visibleSongLinks(ids, user),
   ]);
   return items.map((i) => ({
     ...i,
@@ -115,8 +119,33 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
   }));
 }
 
-/** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule, review tags, report
- *  reason or 3D model parent. */
+/**
+ * `getSongLinks`, without a link to an image withheld from `user`: a link names another image than
+ * the card's own, so the card's own check does not cover it. A withheld cover is not offered for
+ * removal (the removal would be refused) and a withheld song is not named. A failed read leaves the
+ * cards without song links rather than failing the queue.
+ */
+async function visibleSongLinks(ids: number[], user?: App.Locals['user']) {
+  try {
+    const links = await getSongLinks(ids);
+    const linked = [...links.values()].flatMap((l) => [
+      ...(l.songCoverId != null ? [l.songCoverId] : []),
+      ...(l.coverOf ? [l.coverOf.songId] : []),
+    ]);
+    if (!linked.length) return links;
+    const withheld = await restrictedImageIds(linked, { csamReview: holdsCsamReview(user) });
+    for (const [id, l] of links)
+      links.set(id, {
+        songCoverId: l.songCoverId != null && withheld.has(l.songCoverId) ? null : l.songCoverId,
+        coverOf: l.coverOf && withheld.has(l.coverOf.songId) ? null : l.coverOf,
+      });
+    return links;
+  } catch (error) {
+    logAxiomError(error, { name: 'image-queue-song-links' });
+    return new Map<number, SongLinks>();
+  }
+}
+
 async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
   const withheld = await restrictedImageIds(
     items.map((i) => i.id),
@@ -173,7 +202,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       ...base,
       view,
       kind: 'reported' as const,
-      items: await withheldCards(await withModel3d(items), user),
+      items: await withheldCards(await withModel3d(items, user), user),
       nextCursor: reportId ? undefined : nextCursor,
       singleReport: reportId ?? null,
       // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
@@ -189,7 +218,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       csamReview: holdsCsamReview(user),
     });
     // model3d would draw a withheld image's media, and a song link would name it; drop both.
-    const cards = (await withModel3d(items)).map((item) =>
+    const cards = (await withModel3d(items, user)).map((item) =>
       item.restricted
         ? {
             ...item,
@@ -225,7 +254,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
             promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
               categories,
             }),
-          }))
+          })),
+          user
         ),
         user
       ),
@@ -263,7 +293,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
         stripped.map((item) => ({
           ...item,
           ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
-        }))
+        })),
+        user
       ),
       user
     ),
