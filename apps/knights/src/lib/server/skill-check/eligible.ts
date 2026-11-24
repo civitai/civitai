@@ -34,9 +34,9 @@ export const SKILL_CHECK_EXCLUSIONS: {
   clause: (eb: Builder, options?: ClauseOptions) => Expression<SqlBool>;
 }[] = [
   { name: 'tos-violation', clause: (eb) => eb('img.tosViolation', '=', false) },
-  // The shared held-media predicate: the image flagged for CSAM, or its owner named on a CSAM report. Its legs compare nullable columns, so NULL reads as not held, as its own callers read it.
+  // NULL-safe: its legs compare nullable columns, so NULL reads as not held, as its own callers read it.
   {
-    name: 'legal-hold',
+    name: 'held-media',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
   },
   // The shared CSAM-signal predicate (a CSAM blocklist hash, a scan flag, a moderator vote or a CSAM hold on its label

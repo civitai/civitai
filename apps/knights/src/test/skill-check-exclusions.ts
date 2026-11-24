@@ -7,7 +7,7 @@ import type { PGlite } from '@electric-sql/pglite';
 export const exclusionCases = (pg: () => PGlite): [string, (id: number) => Promise<unknown>][] => [
   ['tos-violation', (id) => pg().query(`UPDATE "Image" SET "tosViolation"=true WHERE id=$1`, [id])],
   [
-    'legal-hold',
+    'held-media',
     async (id) => {
       await pg().query(`UPDATE "Image" SET "userId"=40 WHERE id=$1`, [id]);
       await pg().query(`INSERT INTO "CsamReport" ("userId") VALUES (40)`);
@@ -129,7 +129,7 @@ export const extraExclusionCases = (
   pg: () => PGlite
 ): [string, (id: number) => Promise<unknown>][] => [
   [
-    'legal-hold, image leg (flagged for CSAM review)',
+    'held-media, image leg (flagged for CSAM review)',
     (id) => pg().query(`UPDATE "Image" SET "needsReview"='csam' WHERE id=$1`, [id]),
   ],
   [
