@@ -39,6 +39,7 @@ export const storylineTextScanAdapter = createTextScanAdapter('Storyline', {
 export const retiredModelRulesAdapter: ModerationAdapter = {
   ...createTextScanAdapter('ModelRules', {}),
   isEnabled: async () => false,
+  isDarkForAll: async () => true,
 };
 
 export const imageCaptionTextScanAdapter = createTextScanAdapter('ImageCaption', {
