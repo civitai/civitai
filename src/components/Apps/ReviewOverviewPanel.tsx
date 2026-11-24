@@ -19,7 +19,7 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
  * the agentic review's findings, the requested permissions (sensitive ones with the developer's
  * justification), the running app, and the store art.
  *
- * 🔴 EVERY PIECE IS THE SHARED ONE. The AI finding counts are `ReviewAgentSection variant="summary"` (its
+ * 🔴 EVERY PIECE IS THE SHARED ONE. The AI findings are `ReviewAgentSection variant="summary"` (its
  * gate included), the sensitive rows are `ManifestScopeRow`, the preview is
  * `ReviewPreviewSection`, the art is `ReviewListingMedia`. The other tabs are the evidence
  * behind each signal; nothing here is a second implementation of them.

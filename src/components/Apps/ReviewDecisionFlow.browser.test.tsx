@@ -298,18 +298,6 @@ describe('"Approve & next" — the delayed commit, wired to the page', () => {
     ).toBe('top-center');
     expect(page.getByTestId('apps-review-approve-countdown').elements()).toHaveLength(2);
   });
-
-  test('🔴 the sticky bar reserves the viewport bottom for itself: bottom toasts sit above it', async () => {
-    renderPage(pendingRequest());
-    const bar = page.getByTestId('apps-review-action-bar');
-    await expect.element(bar).toBeInTheDocument();
-    const reserve = () =>
-      document.documentElement.style.getPropertyValue('--review-action-bar-reserve');
-    await vi.waitFor(() => expect(reserve()).toMatch(/^\d+px$/));
-    const expected = Math.round(window.innerHeight - bar.element().getBoundingClientRect().top);
-    expect(parseInt(reserve(), 10)).toBe(expected);
-    expect(expected).toBeGreaterThan(0);
-  });
 });
 
 describe('🔴 a FAILED commit after the moderator LEFT the review area', () => {

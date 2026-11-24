@@ -176,7 +176,7 @@ export function ReviewActionBar({
     onSuccess: async (result) => {
       const lateHold = lateHoldNotice(request, result);
       if (lateHold) {
-        // Persistent, like the delayed path's notice: the request stays suspended.
+        // Stays up: the request is left suspended and needs action.
         showErrorNotification({
           title: lateHold.title,
           error: new Error(lateHold.message),
@@ -184,7 +184,6 @@ export function ReviewActionBar({
           autoClose: false,
         });
       } else {
-        // Counted in the one decisions toast (`reviewApprovalToasts`), not a toast of its own.
         noteReviewDecision('approved', `${request.slug} v${request.version}`);
       }
       // A late hold leaves the request pending: the approve did not take.

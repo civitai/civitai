@@ -2,9 +2,9 @@
  * The submissions a moderator SKIPPED on the review page in this browser session — so "next"
  * stops offering them.
  *
- * 🔴 WHY IT EXISTS AT ALL. "Next" is the OLDEST pending submission (`nextPendingRequestId`), and
- * a skipped submission is still pending and still the oldest. Without this list, Skip on the
- * oldest one opened the second, and the next decision there went straight back to the first.
+ * 🔴 WHY IT EXISTS AT ALL. "Next" is the OLDEST pending submission (`nextPendingRequestId`), and a
+ * skipped submission is still pending, so it stays the oldest: every skipped id must be excluded
+ * from "next", or the next decision opens it again.
  *
  * 🔴 CLIENT-SIDE ONLY. Nothing here is sent anywhere: a skip is not a decision, so no server
  * state records it. The list lives in `sessionStorage` (one tab's session) with an in-memory
