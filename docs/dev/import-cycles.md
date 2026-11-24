@@ -84,6 +84,12 @@ which handed every one of those writers that service's imports. The getter's onl
 `home-block.service`, so it now passes its two builders in (`getHomeBlockCached(…, source)`), and
 the cache imports the service for types only.
 
+Example of the second: `utils/notifications.tsx` (which the tRPC client imports) rendered the
+"Report this" button, which queries tRPC. `_app` registers the button with
+`registerReportProblemButton`. Registration fits here because a missing registration costs only an
+optional button (and its longer toast timeout); it fits badly where skipping the registered work
+would lose data.
+
 An uncut example that neither fix covers yet: `text-scan/submit.ts` reaches `moderation-adapters.ts`
 through a call-site `await import()`, to apply a cleared verdict when text shrinks below the scan
 minimum. The main callers of `scanEntity` (the post, bounty, collection and model services, and
