@@ -3,8 +3,9 @@
 -- 🔴 MANUAL. Apply this by hand, BEFORE the release carrying the digest click tracking is deployed
 -- (or at least before its next weekly pass). We do not auto-run DDL. Rows are inserted app-side
 -- (src/server/notifications/digest-tracking.ts, a direct insert), not through the tracker service,
--- so no tracker restart is needed. While the table is missing every insert fails and is logged
--- ("digest events could not be recorded"); sends, click redirects and unsubscribes still work.
+-- so no tracker restart is needed. While the table is missing no row lands (the client inserts
+-- asynchronously, so the error may not reach the app's log); sends, click redirects and
+-- unsubscribes still work.
 --
 -- One row per event:
 --   send         one per digest actually sent (never a start floor, a skip or a failed send)
@@ -14,7 +15,11 @@
 --                that turned it off)
 -- `cycleStartedAt` is the pass (DigestCursor.cycleStartedAt); a pass's click-through is
 -- uniqExact clickers / uniqExact senders over the rows sharing it. Ids and counts only, plus the
--- click's user agent (so link scanners can be told apart at read time).
+-- click's user agent.
+--
+-- Mail security scanners that GET every link are recorded as clicks. Some announce themselves in
+-- the user agent; many send a browser-like one, so the other tells are a click within seconds of
+-- the pass's send rows, or every position of one email clicked at once. Filter at read time.
 
 CREATE TABLE IF NOT EXISTS default.notificationDigestEvents
 (
@@ -52,5 +57,5 @@ SETTINGS ttl_only_drop_parts = 1;
 --   FROM default.notificationDigestEvents
 --   GROUP BY cycleStartedAt, event ORDER BY cycleStartedAt DESC, event;
 --     -- a pass that sent must show a non-zero `send` count. Zero sends after a pass whose Axiom
---     -- "digest run finished" line reports emailed > 0 means the inserts are failing: search Axiom
---     -- for "digest events could not be recorded".
+--     -- "digest run finished" line reports emailed > 0 means the inserts are not landing. Axiom's
+--     -- "digest events could not be recorded" may show why, but can be empty even then.

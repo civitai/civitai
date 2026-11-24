@@ -71,7 +71,14 @@ const { DIGEST_CURSOR_KEY, DIGEST_ITEM_LIMIT, runMissedNotificationDigest } = aw
 );
 const { getEmailUnsubscribeUrl } = await import('~/server/services/notification-email.service');
 const { MISSED_DIGEST_EMAIL_TYPE } = await import('~/server/notifications/missed-digest.constants');
-const { verifyDigestClick } = await import('~/server/notifications/digest-tracking');
+const { DIGEST_EVENTS_TABLE, getDigestClickUrl, verifyDigestClick } = await import(
+  '~/server/notifications/digest-tracking'
+);
+const { signEmailLink } = await import('~/server/services/notification-email.service');
+const digestClick = (await import('~/pages/api/notifications/digest-click')).default as unknown as (
+  req: NextApiRequest,
+  res: NextApiResponse
+) => Promise<void>;
 const { decode: decodeHtml } = await import('he');
 const unsubscribe = (await import('~/pages/api/notifications/email-unsubscribe'))
   .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
@@ -712,5 +719,122 @@ describe('the measurement rows', () => {
     expect(digestEvents().filter((r) => r.event === 'unsubscribe')).toEqual([
       expect.objectContaining({ userId: 1, cycleStartedAt: '2026-11-16 12:00:00.000' }),
     ]);
+  });
+});
+
+describe('the digest click endpoint', () => {
+  const CYCLE = NOW;
+  const click = {
+    userId: 42,
+    cycleStartedAt: CYCLE,
+    position: 3,
+    notificationType: 'new-comment',
+    to: '/images/7?tab=comments#c9',
+  };
+  const queryOf = (url: string) => Object.fromEntries(new URL(url).searchParams);
+  async function call(query: Record<string, string>, method = 'GET') {
+    let location: string | undefined;
+    let status = 0;
+    let insertsAtRedirect = -1;
+    const res = {
+      setHeader: () => res,
+      redirect(code: number, to: string) {
+        status = code;
+        location = to;
+        insertsAtRedirect = h.insert.mock.calls.length;
+        return res;
+      },
+    } as unknown as NextApiResponse;
+    await digestClick(
+      // No session or cookie: the user comes from the link.
+      { method, query, headers: { 'user-agent': 'TestMail/1.0' } } as unknown as NextApiRequest,
+      res
+    );
+    return { status, location, insertsAtRedirect };
+  }
+
+  const insertedRows = () =>
+    h.insert.mock.calls.flatMap(([arg]) => (arg as { values: Record<string, unknown>[] }).values);
+
+  it('records the click for the user and pass in the link, then redirects to the item', async () => {
+    const result = await call(queryOf(getDigestClickUrl(click)));
+    expect(result).toEqual({
+      status: 302,
+      location: '/images/7?tab=comments#c9',
+      insertsAtRedirect: 1,
+    });
+    expect(h.insert.mock.calls[0]![0]).toMatchObject({ table: DIGEST_EVENTS_TABLE });
+    expect(insertedRows()).toEqual([
+      expect.objectContaining({
+        event: 'click',
+        userId: 42,
+        cycleStartedAt: '2026-11-16 12:00:00.000',
+        position: 3,
+        notificationType: 'new-comment',
+        userAgent: 'TestMail/1.0',
+        itemCount: 0,
+      }),
+    ]);
+  });
+
+  it('a HEAD (a link checker) redirects but records nothing', async () => {
+    const result = await call(queryOf(getDigestClickUrl(click)), 'HEAD');
+    expect(result.location).toBe('/images/7?tab=comments#c9');
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another user', { u: '43' }],
+    ['another pass', { c: String(CYCLE.getTime() + 1) }],
+    ['another position', { p: '1' }],
+    ['another type', { n: 'new-mention' }],
+    ['another destination', { to: '/images/8' }],
+    ['a forged signature', { s: '0'.repeat(32) }],
+    ['no signature', { s: '' }],
+  ])(
+    'a link edited to name %s records nothing and lands on the notifications page',
+    async (_, edit) => {
+      const result = await call({ ...queryOf(getDigestClickUrl(click)), ...edit });
+      expect(result).toMatchObject({ status: 302, location: '/user/notifications' });
+      expect(h.insert).not.toHaveBeenCalled();
+    }
+  );
+
+  it('a link with nothing in it lands on the notifications page', async () => {
+    expect(await call({})).toMatchObject({ status: 302, location: '/user/notifications' });
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+
+  // Signed with the real key, so only the destination check stands between the link and an
+  // off-site redirect.
+  it.each([
+    'https://evil.example/x',
+    '//evil.example/x',
+    '/\\evil.example/x',
+    '\\\\evil.example',
+    '/.//evil.example/x',
+    '/a/..//evil.example',
+    '/\t/evil.example',
+    'javascript:alert(1)',
+    'evil.example',
+  ])('never redirects off the site, even for a validly signed %j', async (to) => {
+    const fields = [42, CYCLE.getTime(), 3, 'new-comment', to];
+    const s = signEmailLink(`notification-digest-click:${JSON.stringify(fields)}`);
+    const result = await call({
+      u: '42',
+      c: String(CYCLE.getTime()),
+      p: '3',
+      n: 'new-comment',
+      to,
+      s,
+    });
+    expect(result).toMatchObject({ status: 302, location: '/user/notifications' });
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+
+  it('a failed insert still redirects to the item', async () => {
+    h.insert.mockRejectedValueOnce(new Error('table missing'));
+    const result = await call(queryOf(getDigestClickUrl(click)));
+    expect(result).toMatchObject({ status: 302, location: '/images/7?tab=comments#c9' });
   });
 });

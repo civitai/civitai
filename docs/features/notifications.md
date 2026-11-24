@@ -235,8 +235,9 @@ so the digest never repeats one. Users with nothing unseen get nothing.
   type; it records the click (GET only) and redirects to a same-site path, and a link that fails a
   check redirects to the notifications page and records nothing. Off-site links are left untracked.
   The unsubscribe link carries the pass as `c`. The table's DDL is applied by hand
-  (`src/server/clickhouse/migrations/2026-11-24-notification-digest-events.sql`); without it the
-  inserts fail and are logged, and nothing else changes.
+  (`src/server/clickhouse/migrations/2026-11-24-notification-digest-events.sql`); without it no row
+  lands and nothing else changes. Each insert waits at most 2s. Mail security scanners that follow
+  every link are counted as clicks; filter them at read time (see the DDL's header).
 
 ## Debugging
 

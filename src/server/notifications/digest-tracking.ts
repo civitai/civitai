@@ -1,6 +1,7 @@
 import { safeReturnPath } from '@civitai/auth/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import {
   signEmailLink,
   verifyEmailLinkSignature,
@@ -154,9 +155,14 @@ export function digestEventRow(e: DigestEvent, at: Date) {
   };
 }
 
+/** How long a click's redirect, an unsubscribe or a page of sends waits on the insert. */
+export const DIGEST_EVENTS_INSERT_TIMEOUT_MS = 2000;
+
 /**
- * Writes the events. Never throws: a measurement failure must not fail a send, a click's redirect
- * or an unsubscribe. While the table is missing the insert fails and is logged.
+ * Writes the events. Never throws, and waits at most `DIGEST_EVENTS_INSERT_TIMEOUT_MS`: a
+ * measurement failure must not fail or stall a send, a click's redirect or an unsubscribe. An
+ * insert error is logged; with the client's async inserts some failures (the table missing, for
+ * one) may never reach the app, so a zero is checked against the table, not the log.
  */
 export async function recordDigestEvents(events: DigestEvent[]): Promise<void> {
   if (events.length === 0) return;
@@ -168,6 +174,7 @@ export async function recordDigestEvents(events: DigestEvent[]): Promise<void> {
       table: DIGEST_EVENTS_TABLE,
       values: events.map((e) => digestEventRow(e, at)),
       format: 'JSONEachRow',
+      abort_signal: fetchTimeoutSignal(DIGEST_EVENTS_INSERT_TIMEOUT_MS),
     });
   } catch (err) {
     logToAxiom({
