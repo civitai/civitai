@@ -856,6 +856,28 @@ describe('an owner deleting their own content in a child-safety case', () => {
     }
   );
 
+  it('deletes a drained post whose own report was actioned before the account was restored', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "PostReport" VALUES (${postOf(PLAIN)}, 1);
+    `);
+    await deletePost({ id: postOf(PLAIN), actor: { system: ACCOUNT_DELETION_DRAIN } });
+    await holder.db.exec(`UPDATE "Report" SET status = 'Actioned' WHERE id = 1`);
+
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    expect((await pending()).find(({ entityType }) => entityType === 'Post')?.data).toEqual({
+      deletedBy: ACCOUNT_DELETION_DRAIN,
+      releasedOnRestore: true,
+    });
+
+    await runJob();
+    await runJob();
+    expect(await pending()).toEqual([]);
+    expect(
+      (await holder.db.query(`SELECT id FROM "Post" WHERE id = ${postOf(PLAIN)}`)).rows
+    ).toEqual([]);
+  });
+
   it("carries out a moderator's later delete of a post a restore marked, though its case finds nothing", async () => {
     await holder.db.exec(`
       INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
