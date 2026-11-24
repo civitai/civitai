@@ -78,6 +78,25 @@ describe('trackEmailLinks', () => {
     ]);
   });
 
+  it('reads an href as a browser does: `&amp;not` is `&not`, never the ¬ sign', () => {
+    const out = hrefs(trackEmailLinks('<a href="/a?x=1&amp;notify=2&amp;region=3">x</a>', ctx));
+    expect(verifyEmailClick(queryOf(out[0]!))?.to).toBe('/a?x=1&notify=2&region=3');
+  });
+
+  it('leaves every link as it is when the send tags would not verify (an overlong campaign)', () => {
+    const html = '<a href="/a">x</a>';
+    expect(trackEmailLinks(html, { ...ctx, campaign: 'c'.repeat(201) })).toBe(html);
+    expect(trackEmailLinks(html, { ...ctx, userId: -1 })).toBe(html);
+    expect(trackEmailLinks(html, { ...ctx, sendId: 'not-a-uuid' })).toBe(html);
+    // Positive control: the same link with valid tags is rewritten.
+    expect(trackEmailLinks(html, ctx)).not.toBe(html);
+  });
+
+  it('counts from the position a template reserves', () => {
+    const out = hrefs(trackEmailLinks('<a href="/a">x</a><a href="/b">y</a>', ctx, 101));
+    expect(out.map((h) => verifyEmailClick(queryOf(h))?.position)).toEqual([101, 102]);
+  });
+
   it('escapes the rewritten href, so the attribute stays one attribute', () => {
     const out = trackEmailLinks('<a href="/a">x</a>', ctx);
     expect(out).toMatch(/^<a href="https:\/\/civitai\.com\/api\/email\/click\?e=[^"]*&amp;k=/);

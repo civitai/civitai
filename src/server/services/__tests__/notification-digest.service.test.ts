@@ -691,6 +691,15 @@ describe('the digest email', () => {
   });
 });
 
+describe('the digest link positions', () => {
+  it("every item position stays below the rewritten links' first position", async () => {
+    const { DIGEST_REWRITTEN_LINKS_FROM } = await import(
+      '~/server/email/templates/missedNotificationsDigest.email'
+    );
+    expect(DIGEST_ITEM_LIMIT).toBeLessThan(DIGEST_REWRITTEN_LINKS_FROM);
+  });
+});
+
 describe('the measurement rows', () => {
   const unsubscribeVia = async (url: string) => {
     const res = {

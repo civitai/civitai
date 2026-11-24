@@ -8,6 +8,9 @@ import {
 } from '~/server/notifications/missed-digest.constants';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
+/** Where the digest's rewritten (non-item) links start counting: above any item position. */
+export const DIGEST_REWRITTEN_LINKS_FROM = 101;
+
 export type MissedNotificationsDigestItem = { message: string; url?: string };
 
 export type MissedNotificationsDigestData = {

@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import type { EmailSendTags, MailClass } from '@civitai/email';
+import { resolveSendId, type EmailSendTags, type MailClass } from '@civitai/email';
 import { sendEmail } from '~/server/email/client';
 import { trackEmailLinks } from '~/server/email/link-tracking';
 import { htmlToPlainText } from '~/server/email/plain-text';
@@ -37,6 +36,12 @@ export function createEmail<T, T2>(email: {
    * a redirect never spends one. Pinned by the template ledger test.
    */
   oneTimeTokenLinks?: true;
+  /**
+   * The position the rewritten links start counting from, when the template tracks some links
+   * itself with positions of its own below it (the digest's items), so no two links of one email
+   * share a position in emailEvents. Default 1.
+   */
+  trackedLinksFrom?: number;
   header: (data: T) => {
     subject: string;
     from?: string;
@@ -81,14 +86,18 @@ export function createEmail<T, T2>(email: {
     const plainHtml = getHtml(data, ctx);
     const html = email.oneTimeTokenLinks
       ? plainHtml
-      : trackEmailLinks(plainHtml, {
-          sendId: input.sendId,
-          template: email.template,
-          mailClass: email.mailClass,
-          campaign: input.campaign ?? '',
-          variant: input.variant ?? '',
-          userId: input.userId ?? 0,
-        });
+      : trackEmailLinks(
+          plainHtml,
+          {
+            sendId: input.sendId,
+            template: email.template,
+            mailClass: email.mailClass,
+            campaign: input.campaign ?? '',
+            variant: input.variant ?? '',
+            userId: input.userId ?? 0,
+          },
+          email.trackedLinksFrom ?? 1
+        );
     return {
       html,
       text: getText(data, plainHtml, ctx),
@@ -105,7 +114,9 @@ export function createEmail<T, T2>(email: {
   };
 
   const send = async (data: T, tags?: EmailSendTags, options?: { sendId?: string }) => {
-    const sendId = options?.sendId ?? randomUUID();
+    // A caller's id that is not a UUID is replaced, as the transport would, so links and the send
+    // row always carry the same one.
+    const sendId = resolveSendId(options?.sendId);
     const { html, text, headers } = render(data, { ...tags, sendId });
     await sendEmail({
       ...email.header(data),
@@ -122,6 +133,7 @@ export function createEmail<T, T2>(email: {
     mailClass: email.mailClass,
     optOutType: email.optOut?.type,
     oneTimeTokenLinks: email.oneTimeTokenLinks === true,
+    trackedLinksFrom: email.trackedLinksFrom ?? 1,
     send,
     render,
     getHtml,

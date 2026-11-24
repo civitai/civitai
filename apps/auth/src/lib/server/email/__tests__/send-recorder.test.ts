@@ -28,10 +28,10 @@ afterEach(() => {
 });
 
 describe('the hub email send recorder', () => {
-  it('POSTs each send row to the main app (AUTH_DEFAULT_RETURN_URL) with AUTH_INTERNAL_TOKEN', async () => {
+  it('POSTs each send row to CIVITAI_APP_URL with AUTH_INTERNAL_TOKEN', async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetch);
-    process.env.AUTH_DEFAULT_RETURN_URL = 'https://main.test';
+    process.env.CIVITAI_APP_URL = 'https://main.test';
     process.env.AUTH_INTERNAL_TOKEN = 'svc';
     expect(registerEmailSendRecorder()).toBe(true);
     await getEmailSendRecorder()!(record);
@@ -40,24 +40,18 @@ describe('the hub email send recorder', () => {
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer svc');
   });
 
-  it('prefers CIVITAI_APP_URL when it is set', async () => {
-    const fetch = vi.fn(async () => new Response(null, { status: 204 }));
-    vi.stubGlobal('fetch', fetch);
-    process.env.CIVITAI_APP_URL = 'https://api.main.test';
+  it('never sends the token to AUTH_DEFAULT_RETURN_URL, a user-redirect setting', () => {
     process.env.AUTH_DEFAULT_RETURN_URL = 'https://main.test';
     process.env.AUTH_INTERNAL_TOKEN = 'svc';
-    registerEmailSendRecorder();
-    await getEmailSendRecorder()!(record);
-    expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe(
-      'https://api.main.test/api/internal/email-events'
-    );
+    expect(registerEmailSendRecorder()).toBe(false);
+    expect(getEmailSendRecorder()).toBeNull();
   });
 
   it('registers nothing without the token or a main-app URL', () => {
-    process.env.AUTH_DEFAULT_RETURN_URL = 'https://main.test';
+    process.env.CIVITAI_APP_URL = 'https://main.test';
     expect(registerEmailSendRecorder()).toBe(false);
     expect(getEmailSendRecorder()).toBeNull();
-    delete process.env.AUTH_DEFAULT_RETURN_URL;
+    delete process.env.CIVITAI_APP_URL;
     process.env.AUTH_INTERNAL_TOKEN = 'svc';
     expect(registerEmailSendRecorder()).toBe(false);
     expect(getEmailSendRecorder()).toBeNull();

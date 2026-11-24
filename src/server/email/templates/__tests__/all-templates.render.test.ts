@@ -14,6 +14,7 @@ type Template = {
   mailClass?: unknown;
   optOutType?: unknown;
   oneTimeTokenLinks?: unknown;
+  trackedLinksFrom?: number;
   getHtml: (data: unknown) => string;
   getText: (data: unknown) => string;
   render: (
@@ -267,7 +268,9 @@ const SEND = {
   variant: 'arm-b',
 };
 const hrefs = (html: string) =>
-  [...html.matchAll(/<a\b[^>]*?\shref="([^"]*)"/gi)].map((m) => decode(m[1]!));
+  [...html.matchAll(/<a\b[^>]*?\shref="([^"]*)"/gi)].map((m) =>
+    decode(m[1]!, { isAttributeValue: true })
+  );
 const isSameSite = (href: string) => {
   try {
     const url = new URL(href, ORIGIN);
@@ -327,7 +330,7 @@ describe('every email template tracks its links', () => {
       const before = hrefs(plain);
       const after = hrefs(sent.html);
       expect(after).toHaveLength(before.length);
-      let position = 0;
+      let position = (template.trackedLinksFrom ?? 1) - 1;
       before.forEach((href, i) => {
         if (!isSameSite(href) || ownSigned(href)) {
           expect(after[i]).toBe(href);
@@ -347,6 +350,18 @@ describe('every email template tracks its links', () => {
       });
     }
   );
+
+  it('the digest numbers its rewritten links above its own item positions (0 to 100)', () => {
+    const digest = sends.find((s) => s.name === 'missedNotificationsDigestEmail')!;
+    expect(digest.template.trackedLinksFrom).toBe(101);
+    const positions = hrefs(digest.sent.html)
+      .filter((h) => h.includes('/api/email/click?'))
+      .map((h) => verifyEmailClick(Object.fromEntries(new URL(h).searchParams))?.position);
+    expect(positions.length).toBeGreaterThan(0);
+    expect(positions[0]).toBe(101);
+    for (const s of sends.filter((s) => s.name !== 'missedNotificationsDigestEmail'))
+      expect(s.template.trackedLinksFrom, s.name).toBe(1);
+  });
 
   it('positive controls: the notification button is tracked, the verification button is not', () => {
     const notification = sends.find((s) => s.name === 'notificationEmail')!;

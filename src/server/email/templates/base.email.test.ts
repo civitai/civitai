@@ -138,7 +138,8 @@ describe('createEmail lifecycle mail', () => {
       html: () => '<p><a href="/models/1">x</a></p>',
     });
     const sendId = '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b';
-    await template.send({ to: 'a@example.com' }, { userId: 3 }, { sendId });
+    // Given uppercase, sent (and signed) lowercase, as the transport records it.
+    await template.send({ to: 'a@example.com' }, { userId: 3 }, { sendId: sendId.toUpperCase() });
     const mail = vi.mocked(sendEmail).mock.calls[0]![0];
     expect(mail.sendId).toBe(sendId);
     // The tracked link carries the same id.

@@ -174,15 +174,33 @@ const isNeverWrapped = (path: string) => {
 // template ledger test fails on any <a> this pattern would not see.
 const ANCHOR_HREF = /(<a\b[^>]*?\shref=")([^"]*)(")/gi;
 
+/** Whether every field of `ctx` is one verifyEmailClick accepts, so a link signed with it works. */
+function verifiable(ctx: EmailLinkContext) {
+  return (
+    UUID.test(ctx.sendId) &&
+    ctx.template.length > 0 &&
+    ctx.template.length <= MAX_TAG_LENGTH &&
+    ctx.campaign.length <= MAX_TAG_LENGTH &&
+    ctx.variant.length <= MAX_TAG_LENGTH &&
+    Number.isInteger(ctx.userId) &&
+    ctx.userId >= 0 &&
+    ctx.userId <= MAX_USER_ID
+  );
+}
+
 /**
- * `html` with every trackable link rewritten to its tracked link, numbered from 1 in document
- * order. A link that cannot be tracked (off the site, `mailto:`, one of NEVER_WRAPPED_PATHS, or too
- * long to sign) is left exactly as it was.
+ * `html` with every trackable link rewritten to its tracked link, numbered in document order from
+ * `firstPosition` (1 unless the template reserves lower positions for links it tracks itself). A
+ * link that cannot be tracked (off the site, `mailto:`, one of NEVER_WRAPPED_PATHS, or too long to
+ * sign) is left exactly as it was, and so is every link when the send's own tags would not verify
+ * (an overlong campaign, say): an untracked link still works, a tracked one that fails lands on `/`.
  */
-export function trackEmailLinks(html: string, ctx: EmailLinkContext): string {
-  let position = 0;
+export function trackEmailLinks(html: string, ctx: EmailLinkContext, firstPosition = 1): string {
+  if (!verifiable(ctx)) return html;
+  let position = firstPosition - 1;
   return html.replace(ANCHOR_HREF, (whole, open: string, href: string, close: string) => {
-    const to = sitePathOf(decodeHtml(href));
+    // As a browser reads an attribute: a legacy entity with no `;` (`&not`, `&reg`) stays literal.
+    const to = sitePathOf(decodeHtml(href, { isAttributeValue: true }));
     if (!to || isNeverWrapped(to) || position >= MAX_POSITION) return whole;
     position++;
     return `${open}${escapeHtml(getEmailClickUrl({ ...ctx, position, to }))}${close}`;

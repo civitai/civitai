@@ -43,6 +43,8 @@ export function createRemoteSendRecorder({
         body: JSON.stringify({ sends: [record] }),
         signal: AbortSignal.timeout(timeoutMs),
       });
+      // Drained either way, so a run of refusals never holds sockets open.
+      await res.body?.cancel().catch(() => undefined);
       if (!res.ok) onError?.(`status ${res.status}`);
     } catch (err) {
       onError?.((err as Error)?.name ?? 'error');

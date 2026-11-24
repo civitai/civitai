@@ -22,8 +22,9 @@
 -- the send row, or every position of one email clicked at once. Filter at read time.
 
 ALTER TABLE default.emailEvents
-  -- click rows: the link's 1-based place among the email's tracked links (the digest: its item
-  -- position, 0 for its "See all notifications" button); 0 on every other row
+  -- click rows: the link's 1-based place among the email's tracked links. The digest: its item
+  -- position (0 for its "See all notifications" button) through digest-click, and 101 upward for
+  -- its settings and footer links; 0 on every other row
   ADD COLUMN IF NOT EXISTS position UInt16 DEFAULT 0 AFTER userId,
   -- click rows: the request's User-Agent, at most 512 characters; '' on every other row
   ADD COLUMN IF NOT EXISTS userAgent String DEFAULT '' AFTER position;
