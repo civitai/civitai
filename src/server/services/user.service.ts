@@ -1002,21 +1002,16 @@ export async function getUserDownloadedModelVersions({
   return downloads.map((d) => ({ modelVersionId: d.modelVersionId }));
 }
 
-// The bust window while `user-downloads-dedicated-clickhouse` is on, in seconds. The dedicated
-// downloads replica can write a download row up to about two minutes after the download, and
-// `userDownloadsCache` is stale-while-revalidate: a bust of a user with cached downloads keeps
-// serving that entry for the window and revalidates it on the first read after, and a bust of a
-// "none" marker reads the table uncached for the window. Either way the entry is re-cached from
-// what the table holds once the window is over, so the window must outlast the row's arrival.
-// The cost: a user who already has downloads sees a new one up to this long after it, and since
-// every bust restarts the window, a run of downloads stays hidden until this long after the LAST
-// one. With the flag off the bust is the cache's own (a 10-second window), as before.
+// With `user-downloads-dedicated-clickhouse` on, a bust holds the user back for this many seconds,
+// including a user with no cache entry yet (`markAbsent`). It must outlast the replica's write lag;
+// every bust restarts the window. Flag off: the cache's own bust, as before.
 const USER_DOWNLOADS_DEDICATED_BUST_WINDOW_SECONDS = 180;
 
 export async function bustUserDownloadsCache(userId: number) {
   if (readsDedicatedDownloadsClickhouse('user-downloads', clickhouseDownloads !== undefined)) {
     await userDownloadsCache.bust([userId], {
       debounceTime: USER_DOWNLOADS_DEDICATED_BUST_WINDOW_SECONDS,
+      markAbsent: true,
     });
     return;
   }

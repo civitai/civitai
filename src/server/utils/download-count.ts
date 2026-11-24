@@ -105,15 +105,8 @@ export function downloadIpHash(key: string, ip: string): bigint {
  * value used for the lookup is the one the trusted derivation produced, so a
  * future change to either side has something to trip over.
  *
- * ── THE DEDICATED REPLICA BRANCH ───────────────────────────────────────────
- *
- * With `download-count-dedicated-clickhouse` on, the count is read from a
- * dedicated replica instead (see the flag's comment). Its address table holds
- * `downloadIpHash` of the address the tracker wrote, so the asymmetry above
- * carries over unchanged: a hash matches exactly where the plain text would.
- * The replica's rows can lag the shared table by a couple of minutes, so a
- * reseed there can miss the most recent downloads; the direction is the same
- * permissive one.
+ * The dedicated replica's address table holds `downloadIpHash` of the address
+ * the tracker wrote, so the asymmetry above carries over unchanged.
  *
  * Keep the validation adjacent to the interpolation. If this function ever
  * grows a second query or a third key shape, validate the new one here too

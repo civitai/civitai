@@ -1,16 +1,5 @@
-// A dedicated analytics replica for download reads. Read ONLY by the user-downloads cache lookup
-// (`userDownloadsCache` in ~/server/redis/caches) and the download limiter's count
-// (`fetchDownloadCount` in ~/server/utils/download-count), each only while its own flag is on
-// (~/server/services/downloads-clickhouse).
-//
-// Built by the dedicated metrics client's factory (./metrics-client), so it carries the shared
-// client's transport settings plus the one-shot re-send of a read that fails at the connection
-// level. Its request timeout is 2s: both reads are small, and on a failure the caller re-runs the
-// read once on the shared client, so a hung replica must give up well inside a request's budget.
 // Every connection field is passed, the password included when unset, so none of the shared
 // client's credentials can reach this server through the factory's env defaults.
-//
-// Its own module, for the reason ./metrics-client gives.
 import type { CustomClickHouseClient } from '@civitai/clickhouse/client';
 import { registerCounterWithLabels } from '@civitai/telemetry/client';
 import { env } from '~/env/server';

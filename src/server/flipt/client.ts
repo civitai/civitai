@@ -784,29 +784,15 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_METRICS_DEDICATED_CLICKHOUSE = 'image-metrics-dedicated-clickhouse',
 
   // On, with CLICKHOUSE_DOWNLOADS_HOST and CLICKHOUSE_DOWNLOADS_USERNAME set: the user-downloads
-  // cache lookup (`userDownloadsCache` in ~/server/redis/caches) runs its unchanged query on the
-  // dedicated downloads replica instead of the shared ClickHouse. A failed or timed-out read there
-  // is re-run once on the shared client and counted (`downloads_clickhouse_fallback_total`), and
-  // `bustUserDownloadsCache` holds a busted user back for 180 s instead of the cache's 10 s, to
-  // outlast the replica's lag. Off (and unknown, a client that has not initialised, or the env
-  // unset): the shared ClickHouse and the 10 s bust, as before. Kill: disable.
-  //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
-  // (`createCachedFlagGate`, `~/server/services/downloads-clickhouse`). The key must exist in flag
-  // state (enabled: false) before this code serves traffic.
+  // cache lookup reads the dedicated downloads replica (`~/server/services/downloads-clickhouse`).
+  // Kill: disable.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before deploy.
   USER_DOWNLOADS_DEDICATED_CLICKHOUSE = 'user-downloads-dedicated-clickhouse',
 
   // On, with CLICKHOUSE_DOWNLOADS_HOST and CLICKHOUSE_DOWNLOADS_USERNAME set: the download
-  // limiter's 24h count (`fetchDownloadCount` in ~/server/utils/download-count) reads the dedicated
-  // downloads replica. A user-id key counts the replica's per-user downloads table; an address key
-  // counts its 48h hashed-address table, and only when CLICKHOUSE_DOWNLOADS_IP_HASH_KEY is also
-  // set (otherwise that branch stays on the shared ClickHouse). A failed or timed-out read is
-  // re-run once on the shared client and counted, as above. Off (and unknown, or the env unset):
-  // the shared ClickHouse, as before. Kill: disable.
-  //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
-  // (`createCachedFlagGate`, `~/server/services/downloads-clickhouse`). The key must exist in flag
-  // state (enabled: false) before this code serves traffic.
+  // limiter's count reads the dedicated downloads replica; its address branch also needs
+  // CLICKHOUSE_DOWNLOADS_IP_HASH_KEY. Kill: disable.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before deploy.
   DOWNLOAD_COUNT_DEDICATED_CLICKHOUSE = 'download-count-dedicated-clickhouse',
 
   // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed

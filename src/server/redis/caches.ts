@@ -2087,16 +2087,9 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
   ttl: CacheTTL.day,
-  // A user with no downloads is cached as "none" too, so a repeat lookup for them does not re-run
-  // the query. Both download-recording paths (the model download route and the download command)
-  // call bustUserDownloadsCache, which turns the marker into a window of uncached reads long enough
-  // to outlast the row's arrival, so a first download shows up on a lookup inside it. The marker
-  // lives only 10 minutes because the download row reaches the table asynchronously: a lookup that
-  // lands after that window but before the row does pins "none" for at most this long.
-  //
-  // The `user-downloads-dedicated-clickhouse` flag runs the same query on the dedicated downloads
-  // replica (whose default database holds the table under the same name); a failed read there is
-  // re-run once on the shared client.
+  // A user with no downloads is cached as "none" too. The marker lives only 10 minutes because the
+  // download row reaches the table asynchronously: a lookup that lands after bustUserDownloadsCache's
+  // window but before the row does pins "none" for at most this long.
   cacheNotFound: true,
   notFoundTtl: CacheTTL.md,
   lookupFn: async (userIds) => {

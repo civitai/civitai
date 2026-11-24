@@ -208,6 +208,32 @@ describe('userDownloadsCache: the bust window follows user-downloads-dedicated-c
     expect(lookupsFor(NO_DOWNLOADS)).toBe(2);
   });
 
+  // No fetch before the bust, so the user has no cache entry at all.
+  it('flag on, no cache entry yet: a lookup before the row lands is not cached, and the row is seen after', async () => {
+    await bustUserDownloadsCache(NO_DOWNLOADS);
+    vi.setSystemTime(T0 + 30_000);
+    expect(await userDownloadsCache.fetch([NO_DOWNLOADS])).toEqual({});
+
+    table.set(NO_DOWNLOADS, [lateRow]);
+    vi.setSystemTime(T0 + 90_000);
+    expect((await userDownloadsCache.fetch([NO_DOWNLOADS]))[NO_DOWNLOADS]?.downloads).toEqual([
+      { modelVersionId: 9_103, fileId: 7_732, lastDownloaded: Date.parse('2026-11-20T12:01:00Z') },
+    ]);
+  });
+
+  // Control: with the flag off a bust leaves an absent key alone, as before, so a lookup 5 s after
+  // it caches "none" and a row landing at 20 s is not seen at 30 s.
+  it('flag off, no cache entry yet: the bust writes nothing, as before', async () => {
+    dedicated.flags['user-downloads-dedicated-clickhouse'] = false;
+    await bustUserDownloadsCache(NO_DOWNLOADS);
+    vi.setSystemTime(T0 + 5_000);
+    expect(await userDownloadsCache.fetch([NO_DOWNLOADS])).toEqual({});
+
+    table.set(NO_DOWNLOADS, [lateRow]);
+    vi.setSystemTime(T0 + 30_000);
+    expect(await userDownloadsCache.fetch([NO_DOWNLOADS])).toEqual({});
+  });
+
   it('flag on: every bust restarts the window, so a run of downloads shows 180 s after the last', async () => {
     const earlier = { ...lateRow, modelVersionId: 9_100, lastDownloaded: '2026-11-19 08:00:00' };
     const second = { ...lateRow, modelVersionId: 9_105, lastDownloaded: '2026-11-20 12:02:00' };
