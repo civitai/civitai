@@ -50,6 +50,21 @@ Event and activity records (downloads, views, accesses, clicks: anything appende
 
 - The Comment v3 tables (`CommentV3`, `CommentTopic` and their reaction, report and mute tables) are declared in `schema.full.prisma` for type generation only. prisma-kysely drops `Unsupported` columns, so read them through `kyselyV3Read` (`src/server/db/kyselyDb.ts`), which adds `path` and makes `rootId`/`depth` select-only; `kyselyV3Write` has the same typing for backfill and tooling. Write comments through `commentv3/write.service.ts`, raw SQL that runs inside the caller's Prisma transaction. Their partial and GiST indexes live only in the migration.
 
+## Replicated tables: the subscriber takes a new column first
+
+Some tables on the main database are in a logical publication that another database subscribes to (the feed's database reads `CommentV3` this way). A subscriber may have extra columns but not missing ones. Add a column on the main database first, and the subscription's apply worker fails on every change to that table, so the other side goes stale until someone adds the column there too. This hit on 2026-11-23: a `CommentV3` column added on the main database stopped the feed's replication for about 50 minutes.
+
+**When a migration adds a column**, include this check for the applier, run on the main database:
+
+```sql
+SELECT pubname FROM pg_publication_tables WHERE schemaname = 'public' AND tablename = '<Table>';
+```
+
+- No rows: nothing subscribes to it; apply as usual.
+- A row: the column goes on the subscriber first (same type, nullable or the same default), then on the main database. Say so in the migration's PR. Infra applies the subscriber side.
+- Dropping a column is the reverse: the main database first, then the subscriber. Renaming or retyping a published column needs both sides planned together.
+- Positive control: `CommentV3` returns a row. If your query returns nothing for it, the query is wrong.
+
 ## Adding an enum value: deploy first, then migrate, then write
 
 `ALTER TYPE ... ADD VALUE` is harmless alone; writing rows that use the new label is not. Treat an additive enum as expand/contract:
