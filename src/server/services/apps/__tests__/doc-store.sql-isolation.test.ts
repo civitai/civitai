@@ -178,7 +178,7 @@ describe('doc-store.ts SQL', () => {
   it('finds the statements (positive control: the extractor sees the module SQL)', () => {
     const refs = literals.flatMap((l) => [
       ...l.text.matchAll(
-        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|usage_app|usage_user)\b/g
+        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|maint_run|usage_app|usage_user)\b/g
       ),
     ]);
     expect(literals.length).toBeGreaterThanOrEqual(25);
@@ -234,8 +234,9 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     });
     expect(maint.map((n) => owner(n, 'variable')).sort()).toEqual([
       'SQL_REVIEW_APP_IDS',
-      // One delete per appdata table (the mark sequence's `mark_head` included).
-      ...Array(8).fill('SQL_REVIEW_PURGE'),
+      // One delete per appdata table (the mark sequence's `mark_head` and the maintenance runs'
+      // `maint_run` included).
+      ...Array(9).fill('SQL_REVIEW_PURGE'),
     ]);
   });
 
@@ -280,6 +281,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
       // The mark sequence's table gets the same review-maintenance read and delete policies.
       'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
+      // So does the maintenance-run table.
+      'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     ]);
   });
 
@@ -290,6 +293,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     });
     expect(wipe.map((n) => owner(n, 'variable'))).toEqual([
       'SQL_ACCOUNT_NAMESPACES',
+      // The maintenance runs that name the user (a report-only user's purged report).
+      'SQL_ACCOUNT_DUMP_NAMESPACES',
       'SQL_VIEWER_PROD_USAGE',
     ]);
   });
@@ -310,7 +315,12 @@ describe('review maintenance and account-wipe enumeration are confined to their 
         ts.isIdentifier(n.expression) &&
         n.expression.text === 'accountWipeTx'
     );
-    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces', 'listViewerUsage']);
+    // The enumeration opens two: the documents and marks, then the maintenance runs.
+    expect(calls.map(nearestFn)).toEqual([
+      'listAccountNamespaces',
+      'listAccountNamespaces',
+      'listViewerUsage',
+    ]);
   });
 
   it('every app-purge-shaped statement is SQL_APP_NAMESPACES', () => {
@@ -410,6 +420,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
       'server/services/apps/doc-store.ts',
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+      // The maintenance runs' wipe read: the runs that name the user.
+      'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     ]);
   });
 });
@@ -424,6 +436,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/routers/__tests__/app-listings.router.doc-store-usage.test.ts',
     // The user-storage router suite resets the tables and reads back what an empty removed.
     'server/routers/__tests__/app-storage.router.test.ts',
+    // The maintenance router suite reads back the copies a mark migration wrote.
+    'server/routers/__tests__/apps-mod-doc-store-maintenance.router.test.ts',
     // The moderator router suite resets the tables and pins report times between cases.
     'server/routers/__tests__/apps-mod-doc-store.router.test.ts',
     // The account-wipe seam: reads the wiped account's and a bystander's rows back.
@@ -451,6 +465,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.functional.ts',
     // Sets documents' rating columns directly (no rater yet) and reads back what a write stored.
     'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
+    // Seeds mark times, reads back the copies, usage, tombstones and run records a mark migration
+    // and a purge wrote, and removes or adds a copy to make the verify see a mismatch.
+    'server/services/apps/__tests__/doc-store.mark-migration.pglite.test.ts',
     // Reads back the mark sequence each mark, unmark and increment stamped, and the order of the
     // statements that took it.
     'server/services/apps/__tests__/doc-store.mark-seq.pglite.test.ts',
@@ -502,11 +519,14 @@ describe('only the doc-store module touches the appdata tables', () => {
     // (DDL and policies only).
     'server/services/apps/migrations/20261122120000_appdata_mark_head.down.sql',
     'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
+    // The maintenance-run table and its rollback (DDL and policies only).
+    'server/services/apps/migrations/20261123120000_appdata_maint_run.down.sql',
+    'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     // Sets an item's rating columns directly (no rater yet) for the card-path cases.
     'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
   const PATTERN =
-    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
+    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|maint_run|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
 
   function walk(dir: string, out: string[]) {
     for (const name of readdirSync(dir)) {

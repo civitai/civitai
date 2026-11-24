@@ -310,6 +310,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   version_conflict: 409,
   index_building: 409,
   cursor_expired: 410,
+  removed: 410,
   too_large: 413,
   quota_exceeded: 413,
   content_rejected: 422,
