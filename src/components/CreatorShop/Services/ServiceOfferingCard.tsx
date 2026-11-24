@@ -267,7 +267,7 @@ export function ServiceOfferingCard({
                   onClick={() =>
                     dialogStore.trigger({
                       component: ServiceRequestModal,
-                      props: { offering, sellerUsername },
+                      props: { offering, sellerUsername, seller, sellerId },
                     })
                   }
                 >

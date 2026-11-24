@@ -67,7 +67,6 @@ const CASES: [string, number, number][] = [
   ['a blockedFor signal pattern', 92, 93],
   ['an image listed on a CsamReport about another user', 100, 101],
   ['an image listed by bare id on a CsamReport', 102, 101],
-  ['an evidence hold on the image', 110, 101],
   ['a held row sharing its url', 120, 101],
   ['a row with a block-reason signal sharing its url', 130, 101],
 ];
@@ -107,7 +106,7 @@ beforeAll(async () => {
       (90, NULL, FALSE, 1, NULL, 'Blocked', 'never seen'), (91, NULL, FALSE, 1, NULL, 'Blocked', 'benign'),
       (92, NULL, FALSE, 1, NULL, 'Blocked', 'signal word'), (93, NULL, FALSE, 1, NULL, 'Blocked', 'tos'),
       (100, NULL, FALSE, 1, NULL, 'Scanned', NULL), (101, NULL, FALSE, 1, NULL, 'Scanned', NULL),
-      (102, NULL, FALSE, 1, NULL, 'Scanned', NULL), (110, NULL, FALSE, 1, NULL, 'Scanned', NULL),
+      (102, NULL, FALSE, 1, NULL, 'Scanned', NULL),
       (120, NULL, FALSE, 1, NULL, 'Scanned', NULL), (121, 'csam', FALSE, 1, NULL, 'Scanned', NULL),
       (130, NULL, FALSE, 1, NULL, 'Scanned', NULL), (131, NULL, FALSE, 1, NULL, 'Blocked', 'signal word');
     -- Each image its own bytes, so no row is another's url sibling.
@@ -115,7 +114,6 @@ beforeAll(async () => {
     -- Except these, each a copy of the row before it.
     UPDATE "Image" SET url = 'key-120' WHERE id = 121;
     UPDATE "Image" SET url = 'key-130' WHERE id = 131;
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (110);
     -- The report names user 999, not the images' owner (1), so only the listing can hold them.
     INSERT INTO "CsamReport" ("userId", "details", "images") VALUES
       (999, '{}', '[{"id": 100}, {"id": 7}]'), (999, '{}', '[102]');
@@ -171,12 +169,12 @@ describe('review batch routing', () => {
   // each serve is a held view.
   it('an image of a held account routes held', async () => {
     await db.exec(`INSERT INTO "Image" (id, "userId", ingestion) VALUES (140, 990100140, 'Scanned');
-      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (990100140)`);
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100140, '{}', '[]')`);
     try {
       expect(await routesHeld(140)).toBe(true);
     } finally {
       await db.exec(
-        `DELETE FROM "Image" WHERE id = 140; DELETE FROM "EvidenceHeldUser" WHERE "userId" = 990100140`
+        `DELETE FROM "Image" WHERE id = 140; DELETE FROM "CsamReport" WHERE "userId" = 990100140`
       );
     }
   });

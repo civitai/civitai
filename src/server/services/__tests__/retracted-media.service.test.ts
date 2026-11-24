@@ -72,8 +72,6 @@ const rows: Row[] = [
   { id: 15, needsReview: 'minor', nsfwLevel: 2 },
   { id: 16, minor: true, nsfwLevel: 8 },
   { id: 17, minor: true, nsfwLevel: 1 },
-  { id: 18 },
-  { id: 19, blockedFor: 'AiNotVerified' },
   { id: 20 },
   { id: 21, blockedFor: 'AiNotVerified' },
   { id: 22, blockedFor: 'AiNotVerified' },
@@ -117,8 +115,6 @@ beforeAll(async () => {
     CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
     CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
-    CREATE TABLE "EvidenceHeldUser" ("userId" int);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
   `);
   for (const r of rows)
@@ -140,7 +136,6 @@ beforeAll(async () => {
       ]
     );
   await pg.exec(`
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (18);
     INSERT INTO "ImageCdnAccess" (url, state) VALUES ('key-12', 'Retracted');
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (26, ${childBrowsingTagIds[0]});
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", disabled) VALUES (1, ${childBrowsingTagIds[0]}, true);
@@ -150,7 +145,6 @@ beforeAll(async () => {
     INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES
       (2, '{"csam": "true"}'), (3, '{"minorDetected": "true"}'), (6, '{"csam": "false"}');
     INSERT INTO "ScanLabelVote" ("itemId", reason) VALUES (4, 'csam-realistic'), (5, 'minor-other'), (6, 'other');
-    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (519);
     INSERT INTO "CsamReport" ("userId", details, images) VALUES
       (520, '{}', '[]'),
       (NULL, '{"secondaryUserId": "522"}', '[]'),
@@ -320,10 +314,6 @@ describe('getRetractedMedia', () => {
     await expectTiers('none', [999]);
   });
 
-  it('keeps an image under an evidence hold to cleared moderators', async () => {
-    await expectTiers('cleared', [18]);
-  });
-
   it('serves a minor review flag to any moderator, PG included', async () => {
     await expectTiers('anyMod', [14, 15]);
   });
@@ -354,9 +344,9 @@ describe('getRetractedMedia', () => {
   });
 
   // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
-  it('serves an AiNotVerified image of a held or reported owner to any moderator', async () => {
-    // Evidence-held owner, report subject, report secondary user.
-    await expectTiers('anyMod', [19, 21, 22]);
+  it('serves an AiNotVerified image of a reported owner to any moderator', async () => {
+    // Report subject, report secondary user.
+    await expectTiers('anyMod', [21, 22]);
   });
 
   it('keeps an image listed on a report, in either list shape, to cleared moderators', async () => {
@@ -444,9 +434,7 @@ describe('copies sharing bytes with a restricted image', () => {
   afterEach(async () => {
     await pg.exec(`
       DELETE FROM "CsamReport" WHERE "userId" = 990100199;
-      DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000105);
       DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
-      DELETE FROM "EvidenceHeldUser" WHERE "userId" = 990100102;
       UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
     `);
   });
@@ -460,7 +448,7 @@ describe('copies sharing bytes with a restricted image', () => {
       `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (990000105, 'key-990000101', 990100105, false)`
     );
 
-  it('serves both images to any moderator while no copy is reported or held', async () => {
+  it('serves both images to any moderator while no copy is reported', async () => {
     await expectTiers('anyMod', [990000101, 990000103]);
   });
 
@@ -487,11 +475,6 @@ describe('copies sharing bytes with a restricted image', () => {
         pg.query(
           `INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES (990100199, '{}', '[990000101]', now())`
         ),
-    ],
-    [
-      'a held row on the same url',
-      990000101,
-      () => pg.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (990000102)`),
     ],
   ])('keeps an image with %s to cleared moderators', async (_label, id, mark) => {
     await mark();
@@ -812,7 +795,6 @@ describe("a held account's image outside the moderator routes", () => {
       'the secondary user of a CSAM report',
       `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100301, '{"secondaryUserId": "${OWNER}"}', '[]')`,
     ],
-    ['under an evidence hold', `INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`],
   ])('stays held everywhere outside the moderator routes when its owner is %s', async (_, mark) => {
     await pg.exec(mark);
     try {
@@ -823,8 +805,7 @@ describe("a held account's image outside the moderator routes", () => {
       expect(rows).toEqual([{ held: true, semantic: true, owner: true, cdn: true }]);
       expect(await getRetractedMedia(IMAGE, { csamReview: false })).toMatchObject({ held: true });
     } finally {
-      await pg.exec(`DELETE FROM "CsamReport" WHERE "userId" IN (${OWNER}, 990100301);
-        DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);
+      await pg.exec(`DELETE FROM "CsamReport" WHERE "userId" IN (${OWNER}, 990100301)`);
     }
   });
 });

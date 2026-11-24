@@ -552,24 +552,6 @@ describe('dismissUserFromCsamQueue', () => {
     expect(await loggedIds()).toEqual([]);
   });
 
-  // A dismissal writes nothing a hold protects: the flag stays, the image stays removed, and its log
-  // entry is not a takedown. So a hold does not stand in its way.
-  it('dismisses a held user’s images like anyone else’s, and leaves them flagged and removed', async () => {
-    await db.exec(`
-      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
-      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
-      INSERT INTO "EvidenceHold" ("userId") VALUES (8);
-    `);
-    try {
-      expect(await dismissUser(2)).toEqual({ ok: true, dismissed: 2, remaining: 1 });
-    } finally {
-      await db.exec(`DROP VIEW "EvidenceHeldUser"; DROP TABLE "EvidenceHold";`);
-    }
-    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
-    expect(await imageRow(55)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
-    expect(await dismissedIds()).toEqual([FLAGGED_REMOVED, 55, 57]);
-  });
-
   it('dismisses nothing for a role that may not write set-asides', async () => {
     await withoutSetAsideInsert(async () => {
       expect(await dismissUser(2)).toEqual({ ok: false, reason: 'unavailable' });

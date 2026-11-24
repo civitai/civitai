@@ -22,7 +22,6 @@ import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { modelRowHeldSql } from '~/server/services/legal-hold.service';
 import { modelDetectionHeldSql } from '~/server/services/lock-review.service';
 import { pendingMinorHashMatchIdsSql } from '~/server/services/minor-hash.service';
 import { bustPublicModelResponseCache } from '~/server/services/public-model-response-cache';
@@ -86,15 +85,10 @@ export const exclusions = {
     SELECT 1 FROM ${everyOwnerSql} ow
     JOIN "CsamReport" r ON r.details->>'secondaryUserId' = ow."ownerId"::text
   ))`,
-  ownerEvidenceHold: Prisma.sql`EXISTS (
-    SELECT 1 FROM ${everyOwnerSql} ow JOIN "EvidenceHold" h ON h."userId" = ow."ownerId"
-  )`,
   ownerSexualMinorBan: Prisma.sql`EXISTS (
     SELECT 1 FROM ${everyOwnerSql} ow JOIN "User" u ON u.id = ow."ownerId"
     WHERE u.meta->'banDetails'->>'reasonCode' LIKE 'SexualMinor%'
   )`,
-  // The shared model-data hold: every owner's account hold, and the placeholder owner.
-  ownerAccountHold: modelRowHeldSql(),
 } as const;
 export type Exclusion = keyof typeof exclusions;
 

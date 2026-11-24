@@ -1,13 +1,12 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { readFileSync } from 'fs';
-import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
 /**
- * An owner or moderator delete of a held owner's image or post keeps the image row and its stored
- * file, whichever hold applies, and takes the image off the site. Driven through the real
+ * Owner and moderator deletes of images and posts whose owner a CSAM report names or that sit in a
+ * child-safety case: what is kept and queued, what goes, and how pending-deletes carries it out.
+ * Driven through the real
  * `deleteImages` (which /api/admin/delete-images and the creator-deal cleanup call) and
  * `deletePost`, whose SQL runs against the real migrations on PGlite. A deleted image's stored file
  * leaves through the `ImageStorageDelete` queue, written by the DELETE statement itself.
@@ -55,29 +54,12 @@ import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
-const MIGRATIONS = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations'
-);
-const migration = (name: string) => readFileSync(`${MIGRATIONS}/${name}/migration.sql`, 'utf8');
 
-// One owner per hold, none of them with a hold marker.
+// One owner per way a report not yet sent names them.
 const HOLDS = {
   'an unsent report': 2,
   'the secondary user of an unsent report': 3,
-  'a report sent over a year ago, unarchived': 4,
-  'an image awaiting review': 5,
-  'a blocked image no sent report lists': 6,
-  'an image listed in an unsent report': 7,
-  'the placeholder owner': -1,
-  'a hold marker': 1,
 };
-/**
- * The holds a report not yet sent makes on the deleted image; an owner's own delete waits on them
- * instead. Not 'an image listed in an unsent report': it lists another image of that owner, whom it
- * does not name, so only that one waits and this one's delete runs.
- */
-const UNSENT_HOLDS = new Set(['an unsent report', 'the secondary user of an unsent report']);
 const PLAIN = 9;
 const MODERATOR = 99;
 
@@ -150,15 +132,12 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(BASE_SCHEMA);
   await holder.db.exec(imageUseTablesSql);
-  await holder.db.exec(migration('20261019220000_evidence_hold'));
-  await holder.db.exec(migration('20261204120000_evidence_hold_image_prior_state'));
-  await holder.db.exec(migration('20261227150000_evidence_hold_owner_held'));
 });
 
 const reset = () =>
   holder.db.exec(`
     SET session_replication_role = replica;
-    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue", "EvidenceHold", "EvidenceHoldImage", "EvidenceHoldPost";
+    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue";
     SET session_replication_role = DEFAULT;
   `);
 
@@ -184,7 +163,7 @@ beforeEach(async () => {
     if (/FROM "PostText"/.test(sql.text))
       return sql.values.filter((v) => heldTextPosts.has(v as number)).map((postId) => ({ postId }));
     if (
-      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"EvidenceHoldImage"|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
+      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
         sql.text
       )
     )
@@ -212,17 +191,9 @@ beforeEach(async () => {
     INSERT INTO "Post" (id, "userId") SELECT 2000 + u, u FROM unnest(ARRAY[${OWNERS.join(',')}]) u;
     INSERT INTO "Image" (id, "userId", "postId", url, "nsfwLevel")
       SELECT 1000 + u, u, 2000 + u, 'key-' || u, 4 FROM unnest(ARRAY[${OWNERS.join(',')}]) u;
-    INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${
-      HOLDS['a hold marker']
-    }, 'manual', 'test');
-    INSERT INTO "Image" (id, "userId", "needsReview") VALUES (3005, 5, 'csam');
-    INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES
-      (3006, 6, 'Blocked', 'CSAM'), (3007, 7, 'Blocked', 'moderated');
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images, details) VALUES
       (2, NULL, NULL, '[]', '{}'),
-      (NULL, NULL, NULL, '[]', '{"secondaryUserId": "3"}'),
-      (4, now() - interval '2 years', NULL, '[]', '{}'),
-      (NULL, NULL, NULL, '[{"id": 3007}]', '{}');
+      (NULL, NULL, NULL, '[]', '{"secondaryUserId": "3"}');
   `);
 });
 
@@ -246,8 +217,6 @@ async function queuedFiles() {
   );
   return rows;
 }
-
-const KEPT_ROW = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32, postId: null };
 
 // The third column is the unheld image's queued file: an owner's plain delete may keep an object
 // shop artwork uses, and only a moderator's delete purges every version, a moderator actor being
@@ -286,11 +255,11 @@ describe.each([
     { allVersions: true },
   ],
 ])('%s', (name, remove, queued) => {
-  // An owner's own delete waits for a report not yet sent (`ownImageDeleteBlocked`) before any
-  // DELETE runs, so the trigger below never sees it: the row is blocked in place until the send.
-  const deferred = (hold: string) => name.startsWith('an owner') && UNSENT_HOLDS.has(hold);
+  // An owner's own delete waits for a report not yet sent (`ownImageDeleteBlocked`): the row is
+  // blocked in place until the send. Anyone else's delete runs.
+  const deferred = name.startsWith('an owner');
 
-  it.each(Object.entries(HOLDS).filter(([hold]) => deferred(hold)))(
+  it.each(Object.entries(HOLDS).filter(() => deferred))(
     'held by %s: queued, blocked in place and no file queued',
     async (__, uid) => {
       const before = await imageRow(imageOf(uid));
@@ -310,17 +279,14 @@ describe.each([
     }
   );
 
-  it.each(Object.entries(HOLDS).filter(([hold]) => !deferred(hold)))(
-    'held by %s: the row and the file stay, off the site',
+  it.each(Object.entries(HOLDS).filter(() => !deferred))(
+    'named by %s: the row and the file go',
     async (__, uid) => {
       await remove(uid);
-      expect(await queuedFiles()).toEqual([]);
-      expect(await imageRow(imageOf(uid))).toEqual(KEPT_ROW);
-      const kept = await holder.db.query(
-        `SELECT "postId" FROM "EvidenceHoldImage" WHERE "imageId" = $1`,
-        [imageOf(uid)]
-      );
-      expect(kept.rows).toEqual([{ postId: postOf(uid) }]);
+      expect(await queuedFiles()).toEqual([
+        { entityId: imageOf(uid), data: { url: urlOf(uid), ...queued } },
+      ]);
+      expect(await imageRow(imageOf(uid))).toBeUndefined();
     }
   );
 
@@ -507,8 +473,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
     });
   });
 
-  // Once sent, the DELETE runs and the sent report's evidence hold takes over, as for any owner
-  // delete under a sent report.
+  // `ownerReportHold` covers only an unsent report, so once it is sent the owner's delete runs.
   it('is carried out by pending-deletes once a CSAM report about the owner is sent, and not before', async () => {
     await holder.db.exec(
       `INSERT INTO "CsamReport" ("userId", "reportSentAt", images, details) VALUES (${PLAIN}, NULL, '[]', '{}')`
@@ -533,8 +498,8 @@ describe('an owner deleting their own content in a child-safety case', () => {
     await runJob();
 
     expect(await pending()).toEqual([]);
-    expect(await imageRow(imageOf(PLAIN))).toEqual(KEPT_ROW);
-    expect(await queuedFiles()).toEqual([]);
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+    expect(await queuedFiles()).toHaveLength(1);
   });
 
   // Its second statement drops the purge's queue row, so both run in one transaction.
@@ -624,34 +589,27 @@ describe('an owner deleting their own content in a child-safety case', () => {
     ["the owner's", { id: PLAIN, isModerator: false }],
     ['a system', { system: 'remove-deleted-user-images' }],
     ["a moderator's own", { id: PLAIN, isModerator: true }],
-  ])(
-    'blocks an image %s delete keeps for its case until a hold placed later keeps it',
-    async (_, actor) => {
-      await holder.db.exec(`
+  ])('blocks an image %s delete keeps for its case until the case closes', async (_, actor) => {
+    await holder.db.exec(`
       INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
       INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
     `);
 
-      expect(await deleteImages([imageOf(PLAIN)], { actor })).toEqual([]);
-      expect(await imageRow(imageOf(PLAIN))).toMatchObject({
-        ingestion: 'Blocked',
-        blockedFor: 'moderated',
-        nsfwLevel: 32,
-      });
-      expect(await pending()).toHaveLength(1);
+    expect(await deleteImages([imageOf(PLAIN)], { actor })).toEqual([]);
+    expect(await imageRow(imageOf(PLAIN))).toMatchObject({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      nsfwLevel: 32,
+    });
+    expect(await pending()).toHaveLength(1);
 
-      // The case closes, but a hold placed after the delete was queued (a sent report naming the
-      // owner) keeps the image.
-      await holder.db.exec(`UPDATE "Report" SET status = 'Actioned' WHERE id = 1;
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", images, details)
-      VALUES (${PLAIN}, now(), '[]', '{}')`);
-      await runJob();
+    await holder.db.exec(`UPDATE "Report" SET status = 'Actioned' WHERE id = 1`);
+    await runJob();
 
-      expect(await imageRow(imageOf(PLAIN))).toEqual(KEPT_ROW);
-      expect(await pending()).toEqual([]);
-      expect(await queuedFiles()).toEqual([]);
-    }
-  );
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+    expect(await pending()).toEqual([]);
+    expect(await queuedFiles()).toHaveLength(1);
+  });
 
   it('is carried out by pending-deletes once the report is ruled on, and not before', async () => {
     await holder.db.exec(`
@@ -1239,20 +1197,6 @@ describe('an owner deleting their own content in a child-safety case', () => {
       expect(await queuedFiles()).toEqual([
         { entityId: ORPHAN, data: { url: 'key-orphan', allVersions: true } },
       ]);
-    });
-
-    it('waits while its owner is held, though nothing else keeps it', async () => {
-      const held = HOLDS['a hold marker'];
-      await holder.db.exec(
-        `INSERT INTO "Image" (id, "userId", url) VALUES (4001, ${held}, 'key-held-orphan')`
-      );
-      await queueImageDeletes(kyselyOver(dbMock.dbWrite as never), [4001], { ownerId: held });
-      await runJob();
-
-      expect(await imageRow(4001)).toBeDefined();
-      expect((await pending()).find((row) => row.entityId === 4001)?.data).toEqual({
-        cleanup: true,
-      });
     });
 
     it("is replaced by the owner's own delete, which then waits only on the case", async () => {

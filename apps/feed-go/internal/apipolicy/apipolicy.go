@@ -1,6 +1,7 @@
 // Package apipolicy holds the facts of the app's API request policy (applyApiRequestPolicy,
 // src/server/middleware/api-request-policy.ts) the public route reads: the default region block list,
-// the user agents a verified crawler must carry, and the default API Cache-Control.
+// the user agents a verified crawler must carry, the default API Cache-Control, and the 451 the app
+// answers a blocked region with.
 //
 // apipolicy.json is generated from the Node modules by scripts/feed-go-api-policy.ts, and
 // scripts/__tests__/feed-go-api-policy.schema-drift.test.ts fails when the two differ, so no list here is a
@@ -28,10 +29,19 @@ type botPattern struct {
 	IgnoreCase bool   `json:"ignoreCase"`
 }
 
+// RegionBlockAnswer is API_REGION_BLOCK (api-request-policy.ts): the status, Content-Type and body
+// every API path of the app answers a request from a blocked region with.
+type RegionBlockAnswer struct {
+	Status      int    `json:"status"`
+	ContentType string `json:"contentType"`
+	Body        string `json:"body"`
+}
+
 var policy struct {
-	RegionBlockDefault   []RegionBlock `json:"regionBlockDefault"`
-	BotUserAgentPatterns []botPattern  `json:"botUserAgentPatterns"`
-	PrivateCacheControl  string        `json:"privateCacheControl"`
+	RegionBlockDefault   []RegionBlock     `json:"regionBlockDefault"`
+	BotUserAgentPatterns []botPattern      `json:"botUserAgentPatterns"`
+	PrivateCacheControl  string            `json:"privateCacheControl"`
+	RegionBlockResponse  RegionBlockAnswer `json:"regionBlockResponse"`
 }
 
 var botPatterns []*regexp.Regexp
@@ -40,7 +50,9 @@ func init() {
 	if err := json.Unmarshal(policyJSON, &policy); err != nil {
 		panic("apipolicy: apipolicy.json: " + err.Error())
 	}
-	if len(policy.BotUserAgentPatterns) == 0 || policy.PrivateCacheControl == "" {
+	rb := policy.RegionBlockResponse
+	if len(policy.BotUserAgentPatterns) == 0 || policy.PrivateCacheControl == "" ||
+		rb.Status < 400 || rb.Status > 599 || rb.ContentType == "" || rb.Body == "" {
 		panic("apipolicy: apipolicy.json is incomplete")
 	}
 	for _, p := range policy.BotUserAgentPatterns {
@@ -56,6 +68,9 @@ func init() {
 func RegionBlockDefault() []RegionBlock {
 	return append([]RegionBlock(nil), policy.RegionBlockDefault...)
 }
+
+// RegionBlockResponse is API_REGION_BLOCK: the app's answer to a request from a blocked region.
+func RegionBlockResponse() RegionBlockAnswer { return policy.RegionBlockResponse }
 
 // PrivateCacheControl is PRIVATE_CACHE_CONTROL (src/server/middleware/middleware-utils.ts).
 func PrivateCacheControl() string { return policy.PrivateCacheControl }

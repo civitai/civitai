@@ -576,7 +576,7 @@ describe('retraction load on the image-cache service', () => {
 
 describe('an image whose key shop artwork uses', () => {
   const OWNER = 7;
-  // `null` stores no row, as when a hold marker's trigger keeps it; `reports` answers the open-report
+  // `null` stores no row, as when a child-safety case keeps it; `reports` answers the open-report
   // read before the delete.
   const deleted = (
     over: Record<string, unknown> | null = {},
@@ -660,8 +660,8 @@ describe('an image whose key shop artwork uses', () => {
     await expectQueued({ url: KEY });
   });
 
-  // A hold marker keeps the row, so nothing reaches storage, whoever deletes it.
-  it('leaves a held image to its hold', async () => {
+  // A kept row means nothing reaches storage, whoever deletes it.
+  it('leaves a kept image in storage', async () => {
     await deleted(null);
 
     await deleteImages([4242], { actor: { id: OWNER, isModerator: false } });
@@ -713,7 +713,7 @@ describe('imagesWithOpenReports', () => {
 describe('a moderator delete', () => {
   const OWNER = 7;
   const MOD = 99;
-  // `kept`: a hold marker's trigger kept the row, so the DELETE finds nothing.
+  // `kept`: the DELETE kept the row, so it finds nothing.
   const deleted = ({ kept = false, over = {} as Record<string, unknown> } = {}) =>
     storeImage(kept ? null : { id: 4242, url: KEY, userId: OWNER, ...over });
   // `allVersions` is what makes `image-storage-deletes` purge every version, not only the current one.

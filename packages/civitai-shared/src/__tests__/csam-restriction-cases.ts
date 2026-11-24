@@ -406,19 +406,6 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
         FROM "Image" WHERE id = ${t.id};`,
   },
   {
-    label: 'its owner under an evidence hold',
-    restricts: false,
-    held: true,
-    mark: (t) =>
-      `INSERT INTO "EvidenceHeldUser" ("userId") SELECT "userId" FROM "Image" WHERE id = ${t.id};`,
-  },
-  {
-    label: 'a row on its url whose owner is under an evidence hold',
-    restricts: false,
-    mark: (t) =>
-      `${sibling(t)} INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${SIBLING_OWNER});`,
-  },
-  {
     label: 'a row on its url whose owner is named on a CSAM report',
     restricts: false,
     mark: (t) =>
@@ -485,8 +472,6 @@ export const csamCaseCleanupSql = (t: Target) => `
   DELETE FROM "ScanLabelItem" WHERE id = ${ITEM};
   DELETE FROM "BlockedImage" WHERE hash = ${HASH};
   DELETE FROM "CsamReport" WHERE details ->> 'case' = 'csam-restriction';
-  DELETE FROM "EvidenceHeldUser"
-    WHERE "userId" = ${SIBLING_OWNER} OR "userId" = (SELECT "userId" FROM "Image" WHERE id = ${t.id});
   DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = ${OTHER_IMAGE};
   DELETE FROM "ImageCdnShopTakedown" WHERE "shopItemId" = ${OFFERING};
 `;
