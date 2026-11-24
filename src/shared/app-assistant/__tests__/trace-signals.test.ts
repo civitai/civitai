@@ -13,6 +13,7 @@ import {
   type TranscriptLike,
 } from '~/shared/app-assistant/trace-signals';
 import {
+  cssWithoutComments,
   styleBlocksIn,
   themeAdvisoriesFrom,
   THEME_SCAN_MAX_CHARS,
@@ -247,8 +248,87 @@ describe('comments are not the app’s styling', () => {
     expect(
       scan('src/a.css', '.x { /* /* */ --civitai-color-primary: red; */ }').tokenOverrides
     ).toEqual(['--civitai-color-primary']);
-    expect(withoutComments('a/* /* */b*/c', ['/*', '*/'])).toBe('a b*/c');
+    expect(cssWithoutComments('a/* /* */b*/c', false)).toBe('a b*/c');
     expect(withoutComments('a<!--x-->b<!--y', ['<!--', '-->'])).toBe('a b ');
+  });
+
+  it('an opener does not close itself: `/*/` and `<!-->` are still open', () => {
+    expect(scan('src/a.css', '.x { /*/ --civitai-color-primary: red; */ }').tokenOverrides).toEqual(
+      []
+    );
+    expect(cssWithoutComments('a/*/b*/c', false)).toBe('a c');
+    expect(withoutComments('a<!-->b-->c', ['<!--', '-->'])).toBe('a c');
+  });
+
+  const OVERRIDE = '\n[data-block-root] { --civitai-color-primary: #7b2ff7; }';
+  it.each([
+    ['a string', '.x::before { content: "/*"; }'],
+    ['a single-quoted string', ".x::before { content: '/*'; }"],
+    ['a string with an escaped quote', '.x::before { content: "a\\"/*"; }'],
+    ['Tailwind v4 @source', '@import "tailwindcss";\n@source "../src/*.ts";'],
+    ['an unquoted url()', '.x { background: url(https://x.test/a/*b.png); }'],
+    ['an unquoted URL() with space', '.x { background: URL( a/*b.png ); }'],
+  ])('a `/*` inside %s opens no comment: the override after it counts', (_what, css) => {
+    for (const path of ['src/a.css', 'src/a.scss'])
+      expect(scan(path, css + OVERRIDE).tokenOverrides).toEqual(['--civitai-color-primary']);
+    expect(scan('index.html', `<style>${css}${OVERRIDE}</style>`).tokenOverrides).toEqual([
+      '--civitai-color-primary',
+    ]);
+  });
+
+  it('an unterminated string ends at its newline, as in CSS', () => {
+    expect(scan('src/a.css', `.x { content: "/*;${OVERRIDE}`).tokenOverrides).toEqual([
+      '--civitai-color-primary',
+    ]);
+  });
+
+  it('a comment inside a quoted url() is still a string, not a comment', () => {
+    expect(
+      scan('src/a.css', `.x { background: url("a/*b.png"); }${OVERRIDE}`).tokenOverrides
+    ).toEqual(['--civitai-color-primary']);
+  });
+
+  it('SCSS/Sass/Less `//` comments out the rest of its line', () => {
+    for (const path of ['src/a.scss', 'src/a.sass', 'src/a.less']) {
+      expect(
+        scan(path, '// [data-block-root] { --civitai-color-primary: #7b2ff7; }').tokenOverrides
+      ).toEqual([]);
+      expect(scan(path, `// old: /* removed${OVERRIDE}`).tokenOverrides).toEqual([
+        '--civitai-color-primary',
+      ]);
+      expect(
+        scan(path, `.x { background: url(https://x.test/a.png); }${OVERRIDE}`).tokenOverrides
+      ).toEqual(['--civitai-color-primary']);
+      expect(scan(path, `$cdn: "https://x.test";${OVERRIDE}`).tokenOverrides).toEqual([
+        '--civitai-color-primary',
+      ]);
+      // Unquoted, outside url(): only the `:` before `//` keeps it (Sass keeps a custom property's
+      // value literal).
+      expect(
+        scan(path, '.x { --cdn: https://x.test/a.png; --civitai-color-primary: #7b2ff7; }')
+          .tokenOverrides
+      ).toEqual(['--civitai-color-primary']);
+    }
+  });
+
+  it('plain CSS has no `//` comments: a `//` line there still counts', () => {
+    expect(
+      scan('src/a.css', '// [data-block-root] { --civitai-color-primary: #7b2ff7; }').tokenOverrides
+    ).toEqual(['--civitai-color-primary']);
+    expect(cssWithoutComments('a // b\nc', false)).toBe('a // b\nc');
+    expect(cssWithoutComments('a // b\nc', true)).toBe('a  \nc');
+  });
+
+  it('a commented-out @civitai/theme import is not a use of the theme package', () => {
+    const imports = "@import '@civitai/theme/styles.css';";
+    expect(scan('src/a.css', `/* ${imports} */`).usesThemePackage).toBe(false);
+    expect(scan('src/a.scss', `// ${imports}`).usesThemePackage).toBe(false);
+    expect(
+      scan('index.html', `<!-- <script type="module">import '@civitai/theme';</script> -->`)
+        .usesThemePackage
+    ).toBe(false);
+    // CONTROL: the same import, live.
+    expect(scan('src/a.css', imports).usesThemePackage).toBe(true);
   });
 
   it('a script file keeps its comments (a JS tokenizer would be needed to strip them)', () => {
@@ -563,19 +643,33 @@ describe('the theme scan is linear time', () => {
     }
   );
 
-  it.each([
+  type Scrub = (text: string, meter: ScanMeter) => string;
+  const css: Scrub = (text, meter) => cssWithoutComments(text, false, meter);
+  const scss: Scrub = (text, meter) => cssWithoutComments(text, true, meter);
+  const html: Scrub = (text, meter) => withoutComments(text, ['<!--', '-->'], meter);
+  it.each<[string, string, Scrub, boolean]>([
     // `/* ` and not `/*`: `/*/*/` holds a close (`*/`), so `/*`-runs are not unterminated.
-    ['src/opens.css', fill('/* '), ['/*', '*/'] as const],
-    ['index.html', fill('<!--'), ['<!--', '-->'] as const],
-    ['src/closes.css', fill('/**/'), ['/*', '*/'] as const],
-    ['index.html', fill('<!-- -->'), ['<!--', '-->'] as const],
-  ])('a run of comment delimiters (%s, 512 KiB) #%#', (path, text, delimiters) => {
+    ['src/opens.css', fill('/* '), css, true],
+    ['index.html', fill('<!--'), html, true],
+    ['src/closes.css', fill('/**/'), css, true],
+    ['index.html', fill('<!-- -->'), html, true],
+    ['src/lines.scss', fill('//'), scss, true],
+    ['src/quotes.css', fill('"'), css, false],
+    ['src/escapes.css', fill('"\\'), css, false],
+    ['src/urls.css', fill('url('), css, false],
+    ['src/url-spaces.css', fill('url( '), css, false],
+    ['src/plain.css', fill('a'), css, false],
+  ])('a run of comment or string delimiters (%s, 512 KiB) #%#', (path, text, scrub, empties) => {
     const { out, ms } = timed(new Map([[path, text]]));
     expect(out.theme.filesScanned).toBe(1);
     expect(out.theme.tokenOverrides).toEqual([]);
     expect(ms).toBeLessThan(2_000);
     const meter: ScanMeter = { steps: 0 };
-    expect(withoutComments(text, delimiters, meter).trim()).toBe('');
+    const scrubbed = scrub(text, meter);
+    if (empties) expect(scrubbed.trim()).toBe('');
+    else expect(scrubbed).toBe(text);
+    // Every character examined, and none twice.
+    expect(meter.steps).toBeGreaterThanOrEqual(text.length);
     expect(meter.steps).toBeLessThanOrEqual(text.length);
   });
 

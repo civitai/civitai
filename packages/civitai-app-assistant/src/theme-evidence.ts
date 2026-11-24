@@ -11,8 +11,12 @@
  * sets `color: var(--civitai-color-text)` and nothing else colour-wise (its "make it yours" accent
  * block ships COMMENTED OUT), and `index.html`'s boot skeleton paints fixed literals
  * (`TEMPLATE_COLOR_LITERALS`). The evidence counts, over the app's source (tests, dev harness and
- * build output excluded; CSS comments in style files and `<style>`/`style="…"`, and HTML comments
- * in markup, ignored — a script's comments are not):
+ * build output excluded; CSS comments in style files and `<style>`/`style="…"`, SCSS/Sass/Less `//`
+ * line comments, and HTML comments in markup, ignored — a script's comments are not). Comments are
+ * ignored from 2026-11-24 on (the signals version did not change): from then, a token or colour
+ * that appears only inside a comment no longer counts, for v1's `themeCustomized` and v2's
+ * `accentCustomized` alike. Rows written before it (a fresh v0.1.152 scaffold's read
+ * `accentCustomized: true`) keep what they stored; there is no backfill:
  *   1. the `--civitai-*` tokens it SETS (`--civitai-color-primary: …` in CSS, or
  *      `setProperty('--civitai-…')`): `tokenOverrides`;
  *   2. the colours it declares of its own: a colour-valued declaration whose value holds a colour
@@ -28,9 +32,10 @@
  *   - a token override to the token's own default value still counts as an override;
  *   - layout, typography and component choice are not "theme" here;
  *   - minified or vendored code inside the source tree is scanned like authored code;
- *   - comments are found by their delimiters, not by tokenizing: a `/*` inside a CSS string, or a
- *     `<!--` inside a markup file's `<style>`/`<script>`, opens a comment here; and a commented-out
- *     colour in a SCRIPT file still counts.
+ *   - HTML comments are found by their delimiters, not by tokenizing, so a `<!--` inside a markup
+ *     file's `<style>`/`<script>` or an attribute value opens a comment here (CSS comments are
+ *     string- and `url()`-aware: `cssWithoutComments`); and a commented-out colour in a SCRIPT file
+ *     still counts.
  */
 
 /** The literals the template's own `index.html` boot skeleton paints (dark base, light theme). */
@@ -133,6 +138,8 @@ export const THEME_SOURCE_FILE = new RegExp(
 const SOURCE_FILE = extensionsRegExp(THEME_SOURCE_EXTENSIONS);
 const STYLE_FILE = extensionsRegExp(STYLE_EXTENSIONS);
 const MARKUP_FILE = extensionsRegExp(MARKUP_EXTENSIONS);
+/** The style sheets whose syntax has `//` line comments (SCSS, Sass, Less; never plain CSS). */
+const LINE_COMMENT_STYLE_FILE = extensionsRegExp(['scss', 'sass', 'less']);
 /** Not the app's own styling: the directories above, test and spec files, type declarations. */
 export const EXCLUDED_PATH = new RegExp(
   `(?:^|\\/)(?:${alternation(THEME_EXCLUDED_DIRS)})\\/` +
@@ -219,8 +226,6 @@ export function styleBlocksIn(text: string, meter?: ScanMeter): string[] {
   return blocks;
 }
 
-/** A CSS comment's delimiters (style files, `<style>` blocks, `style="…"` values). */
-const CSS_COMMENT = ['/*', '*/'] as const;
 /** An HTML comment's delimiters (markup files). */
 const HTML_COMMENT = ['<!--', '-->'] as const;
 
@@ -230,7 +235,8 @@ const HTML_COMMENT = ['<!--', '-->'] as const;
  * do not nest (`/* /* *\/ x *\/` leaves ` x *\/`), and a comment with no `close` runs to the end of
  * the text. LINEAR TIME: one `indexOf` for the next `open`, one for its `close`, and the search
  * resumes past that `close`, so every character is examined once; no regex spans the comment.
- * Not a tokenizer: an `open` inside a string (`content: "/*"`) opens a comment here.
+ * Not a tokenizer: an `open` inside a quoted value opens a comment here. Used for HTML comments;
+ * CSS has its own, string-aware scan (`cssWithoutComments`).
  */
 export function withoutComments(
   text: string,
@@ -255,6 +261,82 @@ export function withoutComments(
   return out;
 }
 
+const SLASH = 47;
+const STAR = 42;
+const NEWLINE = 10;
+const BACKSLASH = 92;
+const DOUBLE_QUOTE = 34;
+const SINGLE_QUOTE = 39;
+const COLON = 58;
+const OPEN_PAREN = 40;
+
+/** Whether the `(` at `paren` opens a `url(` function (`url` not the tail of a longer name). */
+function opensUrl(text: string, paren: number): boolean {
+  if (paren < 3 || text.slice(paren - 3, paren).toLowerCase() !== 'url') return false;
+  return paren === 3 || !isNameChar(text.charCodeAt(paren - 4));
+}
+
+/**
+ * `css` with its comments replaced by one space each, in ONE left-to-right pass that reads CSS's
+ * strings and urls as CSS does, so a comment opener inside them opens nothing:
+ *   - a `"…"` or `'…'` string is copied as is (a backslash escapes the next character; an
+ *     unterminated string ends at its newline): `content: "/*"`, Tailwind's `@source "../src/*.ts"`;
+ *   - an unquoted `url(…)` is copied as is up to its `)`: `url(https://x.test/a/*b.png)`;
+ *   - `/*` opens a comment that the first `*\/` after it closes (`/*\/` does not close itself, and
+ *     comments do not nest), or that runs to the end of the text;
+ *   - with `lineComments` (SCSS, Sass, Less), `//` not preceded by `:` (so `https://` survives)
+ *     comments out the rest of its line.
+ * LINEAR TIME: the cursor only moves forward, and each jump (`indexOf` for a closer, a string's
+ * end) lands past every character it examined; `meter` counts the characters passed.
+ */
+export function cssWithoutComments(css: string, lineComments: boolean, meter?: ScanMeter): string {
+  const n = css.length;
+  let out = '';
+  let from = 0; // the first character not yet copied to `out`
+  let i = 0;
+  while (i < n) {
+    const at = i;
+    const code = css.charCodeAt(i);
+    if (code === DOUBLE_QUOTE || code === SINGLE_QUOTE) {
+      i++;
+      while (i < n) {
+        const c = css.charCodeAt(i);
+        if (c === BACKSLASH) i += 2;
+        else if (c === NEWLINE) break;
+        else if (c === code) {
+          i++;
+          break;
+        } else i++;
+      }
+      i = Math.min(i, n);
+    } else if (code === SLASH && css.charCodeAt(i + 1) === STAR) {
+      const end = css.indexOf('*/', i + 2);
+      out += css.slice(from, i) + ' ';
+      i = from = end < 0 ? n : end + 2;
+    } else if (
+      lineComments &&
+      code === SLASH &&
+      css.charCodeAt(i + 1) === SLASH &&
+      (i === 0 || css.charCodeAt(i - 1) !== COLON)
+    ) {
+      const end = css.indexOf('\n', i + 2);
+      out += css.slice(from, i) + ' ';
+      i = from = end < 0 ? n : end; // the newline itself is kept
+    } else if (code === OPEN_PAREN && opensUrl(css, i)) {
+      i++;
+      while (i < n && WHITESPACE.test(css[i]!)) i++;
+      const c = css.charCodeAt(i);
+      // A quoted url is a string: the next turn copies it.
+      if (i < n && c !== DOUBLE_QUOTE && c !== SINGLE_QUOTE) {
+        const close = css.indexOf(')', i);
+        i = close < 0 ? n : close + 1;
+      }
+    } else i++;
+    if (meter) meter.steps += i - at;
+  }
+  return out + css.slice(from);
+}
+
 /**
  * The CSS a markup file carries (`text` already without its HTML comments): its `<style>` blocks and
  * `style="…"` attributes, without their CSS comments.
@@ -263,7 +345,7 @@ function cssInMarkup(text: string): string {
   const blocks = styleBlocksIn(text);
   // Linear: `[^"]*` cannot run past the quote that ends it, so no attempt rescans another's value.
   const inline = [...text.matchAll(/\sstyle\s*=\s*"([^"]*)"/gi)].map((m) => m[1]!);
-  return [...blocks, ...inline].map((css) => withoutComments(css, CSS_COMMENT)).join('\n');
+  return [...blocks, ...inline].map((css) => cssWithoutComments(css, false)).join('\n');
 }
 
 function countCssColors(css: string): number {
@@ -304,7 +386,7 @@ export function themeSignals(files: ReadonlyMap<string, string>): {
     // Commented-out code is not the app's styling (the template ships its accent block commented
     // out). A script keeps its comments: `/*` and `//` also occur inside its strings, template
     // literals and regexes, which only a JS tokenizer tells apart.
-    if (isStyle) text = withoutComments(text, CSS_COMMENT);
+    if (isStyle) text = cssWithoutComments(text, LINE_COMMENT_STYLE_FILE.test(path));
     else if (isMarkup) text = withoutComments(text, HTML_COMMENT);
     if (USES_THEME.test(text)) usesThemePackage = true;
     const css = isStyle ? text : isMarkup ? cssInMarkup(text) : '';
