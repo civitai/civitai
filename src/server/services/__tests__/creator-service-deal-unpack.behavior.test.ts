@@ -2194,6 +2194,15 @@ describe('the finals malware scan', () => {
         'Failed',
       ],
       [
+        'a video the virus scan called clean without reading a file',
+        { video: true },
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'clean', infected: false } },
+          pickleParseError,
+        ]),
+        'Retry',
+      ],
+      [
         'a video the virus scan errored on',
         { video: true },
         workflow('succeeded', [CLAM_ERROR, pickleParseError]),
