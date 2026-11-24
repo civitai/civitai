@@ -431,7 +431,7 @@ describe('manifest storage — features not available yet', () => {
         { collections: { plays: { visibility: 'shared', write: 'owner', counters: ['plays'] } } },
         [STORAGE]
       ),
-      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own" or "none" for now',
+      'storage.collections.plays.write "owner" is not available yet — owner-written documents arrive in a later phase of App Storage; use "own" for now',
     ],
     [
       'documents any viewer may edit',
@@ -440,7 +440,7 @@ describe('manifest storage — features not available yet', () => {
         [STORAGE, PUBLISH],
         { scopeJustifications: JUSTIFIED }
       ),
-      'storage.collections.notes.write "anyone" is not available yet — documents any viewer may edit arrive in a later phase of App Storage; use "own" or "none" for now',
+      'storage.collections.notes.write "anyone" is not available yet — documents any viewer may edit arrive in a later phase of App Storage; use "own" for now',
     ],
   ])('refuses %s', (_label, m, message) => {
     expect(validate(isolated(m as Record<string, unknown>))).toEqual(refused(message));
