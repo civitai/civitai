@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createPlayIntent, createSongPlayer, uniqueCardKey, type SongMedia } from '../song-player';
+import {
+  createPlayIntent,
+  createSongPlayer,
+  isSeek,
+  uniqueCardKey,
+  type SongMedia,
+} from '../song-player';
 
 /**
  * The moderator song player (Music T10, docs/features/music.md "Moderating songs"): nothing plays
@@ -140,5 +146,19 @@ describe('createPlayIntent', () => {
     intent.requested();
     intent.paused();
     expect(intent.resumeAfterSwap()).toBe(false);
+  });
+});
+
+describe('isSeek, between the seek bar and the playing song', () => {
+  // The bar's value follows the playhead; echoing it back as a seek restarts buffering at every
+  // tick, so the song never advances.
+  it('ignores the bar echoing the playhead back', () => {
+    expect(isSeek(12.3, 12.25)).toBe(false);
+    expect(isSeek(12.25, 12.3)).toBe(false);
+  });
+
+  it('takes a move of the bar as a seek', () => {
+    expect(isSeek(30, 12.3)).toBe(true);
+    expect(isSeek(0, 12.3)).toBe(true);
   });
 });

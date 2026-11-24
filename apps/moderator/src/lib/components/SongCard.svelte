@@ -19,6 +19,7 @@
   import { songCardUrl, type SongCard } from '$lib/music/song-card';
   import {
     createPlayIntent,
+    isSeek,
     playSongAt,
     songPlayer,
     uniqueCardKey,
@@ -101,7 +102,7 @@
   }
 
   function seek(seconds: number) {
-    if (audio) audio.currentTime = seconds;
+    if (audio && isSeek(seconds, audio.currentTime)) audio.currentTime = seconds;
   }
 
   function setVolume(value: number) {
@@ -218,7 +219,7 @@
       preload={mode === 'cdn' ? 'metadata' : 'none'}
       bind:this={audio}
       bind:paused
-      bind:currentTime={time}
+      ontimeupdate={(e) => (time = e.currentTarget.currentTime)}
       bind:duration
       onplay={(e) => songPlayer.played(e.currentTarget)}
       onpause={(e) => {

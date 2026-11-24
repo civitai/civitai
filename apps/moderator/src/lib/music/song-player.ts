@@ -23,6 +23,13 @@ export type SongCardKey = string | number;
 
 type Entry = { media: SongMedia; cardKey?: SongCardKey };
 
+// Closer than this to the playhead, a seek-bar value is the bar echoing the playhead back.
+const SEEK_TOLERANCE_SEC = 0.5;
+
+/** Whether the seek bar's value is a move by the moderator rather than the bar following the song. */
+export const isSeek = (target: number, current: number) =>
+  Math.abs(target - current) >= SEEK_TOLERANCE_SEC;
+
 let keySeq = 0;
 /** A key of its own for a card no caller named, so its controls drive that card and no other
  *  showing the same song. */
