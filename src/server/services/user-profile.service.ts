@@ -528,6 +528,7 @@ export const updateUserProfile = async ({
   sfwCoverImage,
   backgroundImage,
   sfwBackgroundImage,
+  pageTheme,
   // leaderboardShowcase,
   // profilePicture,
   creatorCardStatsPreferences,
@@ -577,10 +578,7 @@ export const updateUserProfile = async ({
     profileRedesign,
     backgroundImage,
     sfwBackgroundImage,
-    cardColor: profile.cardColor,
-    cardOpacity: profile.cardOpacity,
-    cardColorLight: profile.cardColorLight,
-    cardOpacityLight: profile.cardOpacityLight,
+    pageTheme,
     about: profile.about,
   });
 
@@ -773,6 +771,8 @@ export const updateUserProfile = async ({
         where: { userId },
         data: {
           ...profile,
+          // A Json column is cleared with DbNull; a plain null is not a JSON value to Prisma.
+          pageTheme: pageTheme === null ? Prisma.DbNull : pageTheme,
           messageAddedAt:
             profile.message === undefined || profile.message === current?.profile?.defaultMessage
               ? undefined

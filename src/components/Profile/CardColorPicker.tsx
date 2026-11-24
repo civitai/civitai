@@ -19,22 +19,11 @@ import {
   profileCardInk,
   suggestedCardColor,
 } from '~/components/Profile/profile-card-color';
+import type { ProfilePageTheme, ProfileThemeMode } from '~/server/schema/user-profile.schema';
 import { profileCardOpacityDefault } from '~/server/schema/user-profile.schema';
 
-type Mode = 'dark' | 'light';
+type Mode = ProfileThemeMode;
 type HashedImage = { hash?: string | null } | null | undefined;
-
-export type CardColorValues = {
-  cardColor?: string | null;
-  cardOpacity?: number | null;
-  cardColorLight?: string | null;
-  cardOpacityLight?: number | null;
-};
-
-const fields = {
-  dark: { color: 'cardColor', opacity: 'cardOpacity' },
-  light: { color: 'cardColorLight', opacity: 'cardOpacityLight' },
-} as const;
 
 // A few tried colours beside the ones taken from the member's own images.
 const presets = ['#1b2a4a', '#2b3a2e', '#3d2c5c', '#f3ead7', '#d9e8f5', '#f6dfe5'];
@@ -50,25 +39,32 @@ const hexPattern = /^#[0-9a-f]{6}$/i;
  * light-mode pair falls back to the dark-mode one when it is not set.
  */
 export function CardColorPicker({
-  values,
+  value,
   cover,
   background,
   onChange,
 }: {
-  values: CardColorValues;
+  value: ProfilePageTheme | null;
   cover: HashedImage;
   background: HashedImage;
-  onChange: (field: keyof CardColorValues, value: string | number | null) => void;
+  onChange: (next: ProfilePageTheme | null) => void;
 }) {
   const [mode, setMode] = useState<Mode>('dark');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const field = fields[mode];
-  const ownColor = values[field.color] ?? null;
-  const ownOpacity = values[field.opacity] ?? null;
-  // What visitors in this theme see: light mode inherits the dark pair until it has its own.
-  const inherits = mode === 'light' && ownColor == null;
-  const color = inherits ? values.cardColor ?? null : ownColor;
-  const opacity = (inherits ? values.cardOpacity : ownOpacity) ?? profileCardOpacityDefault;
+  const own = value?.[mode];
+  const ownColor = own?.color ?? null;
+  // What visitors in this theme see: light mode inherits the dark colours until it has its own.
+  const inherits = mode === 'light' && !own;
+  const shown = inherits ? value?.dark : own;
+  const color = shown?.color ?? null;
+  const opacity = shown?.opacity ?? profileCardOpacityDefault;
+
+  // Writes this theme's colours; clearing the last one stores nothing at all.
+  const setTheme = (next: ProfilePageTheme[Mode] | undefined) => {
+    const theme = { ...value, [mode]: next };
+    if (!theme[mode]) delete theme[mode];
+    onChange(theme.dark || theme.light ? theme : null);
+  };
 
   const suggestions = [
     { label: 'From your banner', color: suggestedCardColor(cover?.hash) },
@@ -80,7 +76,8 @@ export function CardColorPicker({
   ].filter((swatch, i, all) => all.findIndex((other) => other.color === swatch.color) === i);
   const isCustom = !!ownColor && !swatches.some((swatch) => swatch.color === ownColor);
 
-  const setColor = (value: string | null) => onChange(field.color, value);
+  const setColor = (next: string | null) =>
+    setTheme(next ? { color: next, opacity: own?.opacity } : undefined);
   // Without a colour the preview is the theme's own card, with the theme's own text.
   const ink = profileCardInk(color, opacity, mode) ?? (mode === 'dark' ? 'light' : 'dark');
 
@@ -198,7 +195,7 @@ export function CardColorPicker({
                 </Popover.Dropdown>
               </Popover>
             </Group>
-            {inherits && values.cardColor && (
+            {inherits && value?.dark && (
               <Text size="xs" c="dimmed">
                 Light mode uses your dark-mode colour until you pick one here.
               </Text>
@@ -225,10 +222,9 @@ export function CardColorPicker({
             step={5}
             value={opacity}
             disabled={color == null}
-            onChange={(value) => {
-              // Changing the opacity in light mode gives it its own pair.
-              if (inherits && values.cardColor) onChange('cardColorLight', values.cardColor);
-              onChange(field.opacity, value);
+            onChange={(next) => {
+              // In light mode this gives light its own colours, starting from the dark ones.
+              if (color) setTheme({ color, opacity: next });
             }}
             marks={[{ value: 60 }, { value: 80 }, { value: 100 }]}
             label={null}

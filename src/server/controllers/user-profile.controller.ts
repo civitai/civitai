@@ -292,10 +292,7 @@ export const getProfileCustomizationHandler = async ({
     if (await blockedViewer(ctx, input.userId))
       return {
         background: null,
-        cardColor: null,
-        cardOpacity: null,
-        cardColorLight: null,
-        cardOpacityLight: null,
+        pageTheme: null,
         stored: null,
       };
     return await getProfileCustomization({

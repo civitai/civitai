@@ -6187,10 +6187,7 @@ export interface UserProfile {
   backgroundImage?: Image | null;
   sfwBackgroundImageId: number | null;
   sfwBackgroundImage?: Image | null;
-  cardColor: string | null;
-  cardOpacity: number | null;
-  cardColorLight: string | null;
-  cardOpacityLight: number | null;
+  pageTheme: JsonValue | null;
   about: string | null;
 }
 

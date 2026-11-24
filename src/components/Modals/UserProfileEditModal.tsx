@@ -467,10 +467,7 @@ export default function UserProfileEditModal() {
             null) as unknown as FormDataSchema['backgroundImage'],
           sfwBackgroundImage: (customization?.stored?.sfwBackgroundImage ??
             null) as unknown as FormDataSchema['sfwBackgroundImage'],
-          cardColor: customization?.stored?.cardColor ?? null,
-          cardOpacity: customization?.stored?.cardOpacity ?? null,
-          cardColorLight: customization?.stored?.cardColorLight ?? null,
-          cardOpacityLight: customization?.stored?.cardOpacityLight ?? null,
+          pageTheme: customization?.stored?.pageTheme ?? null,
           about: aboutData?.about ?? null,
         }),
       };
@@ -1034,18 +1031,7 @@ export default function UserProfileEditModal() {
     {
       value: 'page',
       label: 'Profile page',
-      fields: [
-        'bio',
-        'coverImage',
-        'location',
-        'message',
-        'about',
-        'backgroundImage',
-        'cardColor',
-        'cardOpacity',
-        'cardColorLight',
-        'cardOpacityLight',
-      ],
+      fields: ['bio', 'coverImage', 'location', 'message', 'about', 'backgroundImage', 'pageTheme'],
       content: profilePageGroup,
     },
     {
@@ -1199,14 +1185,7 @@ export function ProfilePreview({
 function PageCustomizationFields() {
   const currentUser = useCurrentUser();
   const form = useFormContext<FormDataSchema>();
-  const [cover, background, cardColor, cardOpacity, cardColorLight, cardOpacityLight] = form.watch([
-    'coverImage',
-    'backgroundImage',
-    'cardColor',
-    'cardOpacity',
-    'cardColorLight',
-    'cardOpacityLight',
-  ]);
+  const [cover, background, pageTheme] = form.watch(['coverImage', 'backgroundImage', 'pageTheme']);
 
   if (!currentUser?.isPaidMember)
     return (
@@ -1233,10 +1212,10 @@ function PageCustomizationFields() {
         previewWidth={constants.profile.coverImageWidth}
       />
       <CardColorPicker
-        values={{ cardColor, cardOpacity, cardColorLight, cardOpacityLight }}
+        value={pageTheme ?? null}
         cover={cover as { hash?: string | null } | null}
         background={background as { hash?: string | null } | null}
-        onChange={(field, value) => form.setValue(field, value as never, { shouldDirty: true })}
+        onChange={(next) => form.setValue('pageTheme', next, { shouldDirty: true })}
       />
     </Stack>
   );

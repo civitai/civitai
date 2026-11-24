@@ -144,6 +144,18 @@ export const showcaseItemSchema = z.object({
 });
 
 export const profileAboutMaxLength = 5000;
+
+const profileThemeColorSchema = z.object({
+  color: z.string().regex(/^#[0-9a-f]{6}$/i),
+  opacity: z.number().int().min(60).max(100).optional(),
+});
+/** A member's card colours, per theme. Light mode falls back to dark when it has none. */
+export const profilePageThemeSchema = z.object({
+  dark: profileThemeColorSchema.optional(),
+  light: profileThemeColorSchema.optional(),
+});
+export type ProfilePageTheme = z.infer<typeof profilePageThemeSchema>;
+export type ProfileThemeMode = keyof ProfilePageTheme;
 const profileAboutAllowedTags = [
   'p',
   'br',
@@ -218,17 +230,7 @@ export const userProfileUpdateSchema = z.object({
   // Profile redesign. Background, card colour and opacity are members only; `null` clears.
   backgroundImage: imageReferenceInputSchema.nullish(),
   sfwBackgroundImage: imageReferenceInputSchema.nullish(),
-  cardColor: z
-    .string()
-    .regex(/^#[0-9a-f]{6}$/i)
-    .nullish(),
-  cardOpacity: z.number().int().min(60).max(100).nullish(),
-  // For visitors in light mode; unset falls back to the two above.
-  cardColorLight: z
-    .string()
-    .regex(/^#[0-9a-f]{6}$/i)
-    .nullish(),
-  cardOpacityLight: z.number().int().min(60).max(100).nullish(),
+  pageTheme: profilePageThemeSchema.nullish(),
   // Text only: media here would never be scanned or rated, and shows on every domain.
   about: getSanitizedStringSchema({ allowedTags: profileAboutAllowedTags })
     .refine((html) => html.length <= profileAboutMaxLength, 'Your About text is too long')

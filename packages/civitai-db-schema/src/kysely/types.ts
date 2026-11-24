@@ -6824,10 +6824,11 @@ export type UserProfile = {
   showcaseSections: Generated<unknown>;
   backgroundImageId: number | null;
   sfwBackgroundImageId: number | null;
-  cardColor: string | null;
-  cardOpacity: number | null;
-  cardColorLight: string | null;
-  cardOpacityLight: number | null;
+  /**
+   * Members-only card colours: { dark?: { color, opacity? }, light?: { color, opacity? } }.
+   * Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
+   */
+  pageTheme: unknown | null;
   about: string | null;
 };
 export type UserPurchasedRewards = {

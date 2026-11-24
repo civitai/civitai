@@ -9863,11 +9863,9 @@ model UserProfile {
   backgroundImage         Image?    @relation("UserProfileBackgroundImage", fields: [backgroundImageId], references: [id], onDelete: SetNull)
   sfwBackgroundImageId    Int?
   sfwBackgroundImage      Image?    @relation("UserProfileSfwBackgroundImage", fields: [sfwBackgroundImageId], references: [id], onDelete: SetNull)
-  cardColor               String?
-  cardOpacity             Int?
-  // For visitors in light mode; unset, they get cardColor/cardOpacity like everyone else.
-  cardColorLight          String?
-  cardOpacityLight        Int?
+  /// Members-only card colours: { dark?: { color, opacity? }, light?: { color, opacity? } }.
+  /// Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
+  pageTheme               Json?
   about                   String?
 
   @@id([userId])

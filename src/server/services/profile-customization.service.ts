@@ -1,6 +1,10 @@
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { UserProfileUpdateSchema } from '~/server/schema/user-profile.schema';
+import type {
+  ProfilePageTheme,
+  UserProfileUpdateSchema,
+} from '~/server/schema/user-profile.schema';
+import { profilePageThemeSchema } from '~/server/schema/user-profile.schema';
 import { isMemberTier, isMemberTierCached } from '~/server/services/subscriptions.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -37,30 +41,18 @@ export async function assertPageCustomizationAllowed({
   profileRedesign,
   backgroundImage,
   sfwBackgroundImage,
-  cardColor,
-  cardOpacity,
-  cardColorLight,
-  cardOpacityLight,
+  pageTheme,
   about,
 }: Pick<
   UserProfileUpdateSchema,
-  | 'backgroundImage'
-  | 'sfwBackgroundImage'
-  | 'cardColor'
-  | 'cardOpacity'
-  | 'cardColorLight'
-  | 'cardOpacityLight'
-  | 'about'
-> & { userId: number; profileRedesign: boolean }) {
-  const touched = [
-    backgroundImage,
-    sfwBackgroundImage,
-    cardColor,
-    cardOpacity,
-    cardColorLight,
-    cardOpacityLight,
-    about,
-  ].some((value) => value !== undefined);
+  'backgroundImage' | 'sfwBackgroundImage' | 'pageTheme' | 'about'
+> & {
+  userId: number;
+  profileRedesign: boolean;
+}) {
+  const touched = [backgroundImage, sfwBackgroundImage, pageTheme, about].some(
+    (value) => value !== undefined
+  );
   if (!touched) return;
   if (!profileRedesign) throw throwAuthorizationError('Profile customization is not available');
 
@@ -70,26 +62,25 @@ export async function assertPageCustomizationAllowed({
     select: {
       backgroundImageId: true,
       sfwBackgroundImageId: true,
-      cardColor: true,
-      cardOpacity: true,
-      cardColorLight: true,
-      cardOpacityLight: true,
+      pageTheme: true,
     },
   });
   const setsImage = (
     image: UserProfileUpdateSchema['backgroundImage'],
     storedId: number | null | undefined
   ) => !!image && image.id !== storedId;
-  const setsValue = <T>(value: T | null | undefined, storedValue: T | null | undefined) =>
-    value != null && value !== storedValue;
+  // A theme colour counts as set only where it differs from what is stored for that theme.
+  const storedTheme = parsePageTheme(stored?.pageTheme);
+  const setsTheme = (['dark', 'light'] as const).some((mode) => {
+    const next = pageTheme?.[mode];
+    const prev = storedTheme?.[mode];
+    return !!next && (next.color !== prev?.color || next.opacity !== prev?.opacity);
+  });
 
   const raises =
     setsImage(backgroundImage, stored?.backgroundImageId) ||
     setsImage(sfwBackgroundImage, stored?.sfwBackgroundImageId) ||
-    setsValue(cardColor, stored?.cardColor) ||
-    setsValue(cardOpacity, stored?.cardOpacity) ||
-    setsValue(cardColorLight, stored?.cardColorLight) ||
-    setsValue(cardOpacityLight, stored?.cardOpacityLight);
+    setsTheme;
   if (raises && !(await isMemberTier(userId))) throw throwAuthorizationError(MEMBERS_ONLY);
 }
 
@@ -146,32 +137,25 @@ export async function getProfileCustomization({
     select: {
       backgroundImageId: true,
       sfwBackgroundImageId: true,
-      cardColor: true,
-      cardOpacity: true,
-      cardColorLight: true,
-      cardOpacityLight: true,
+      pageTheme: true,
       backgroundImage: { select: backgroundImageSelect },
       sfwBackgroundImage: { select: backgroundImageSelect },
     },
   });
   const empty = {
     background: null,
-    cardColor: null,
-    cardOpacity: null,
-    cardColorLight: null,
-    cardOpacityLight: null,
+    pageTheme: null as ProfilePageTheme | null,
     // The customizer's own values; only for someone who can edit the profile.
     stored: null,
   };
   if (!profile) return empty;
+  const pageTheme = parsePageTheme(profile.pageTheme);
 
   const isSet =
     profile.backgroundImageId != null ||
     profile.sfwBackgroundImageId != null ||
-    profile.cardColor != null ||
-    profile.cardOpacity != null ||
-    profile.cardColorLight != null ||
-    profile.cardOpacityLight != null;
+    !!pageTheme?.dark ||
+    !!pageTheme?.light;
   if (!isSet) return empty;
 
   const canEdit = sameUser || !!isModerator;
@@ -183,10 +167,7 @@ export async function getProfileCustomization({
     ? {
         backgroundImage: editable(profile.backgroundImage),
         sfwBackgroundImage: editable(profile.sfwBackgroundImage),
-        cardColor: profile.cardColor,
-        cardOpacity: profile.cardOpacity,
-        cardColorLight: profile.cardColorLight,
-        cardOpacityLight: profile.cardOpacityLight,
+        pageTheme,
       }
     : null;
 
@@ -211,10 +192,7 @@ export async function getProfileCustomization({
 
   return {
     background: visible,
-    cardColor: profile.cardColor,
-    cardOpacity: profile.cardOpacity,
-    cardColorLight: profile.cardColorLight,
-    cardOpacityLight: profile.cardOpacityLight,
+    pageTheme,
     stored,
   };
 }
@@ -254,4 +232,10 @@ export async function imagesHiddenFromModerator(userId: number) {
     backgroundImage: hidden(profile?.backgroundImage ?? null),
     sfwBackgroundImage: hidden(profile?.sfwBackgroundImage ?? null),
   };
+}
+
+/** A stored theme, or null when it is missing or not the shape the schema allows. */
+function parsePageTheme(value: unknown): ProfilePageTheme | null {
+  const parsed = profilePageThemeSchema.safeParse(value);
+  return parsed.success && (parsed.data.dark || parsed.data.light) ? parsed.data : null;
 }

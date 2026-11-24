@@ -29,10 +29,10 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
     data.background && Flags.intersects(browsingLevel, data.background.nsfwLevel)
       ? data.background
       : null;
-  // Light-mode visitors get the light pair when the member set one.
-  const lightPair = scheme === 'light' && data.cardColorLight != null;
-  const cardColor = lightPair ? data.cardColorLight : data.cardColor;
-  const cardOpacity = lightPair ? data.cardOpacityLight : data.cardOpacity;
+  // Light-mode visitors get the light colours when the member set them, else the dark ones.
+  const theme = (scheme === 'light' && data.pageTheme?.light) || data.pageTheme?.dark;
+  const cardColor = theme?.color ?? null;
+  const cardOpacity = theme?.opacity ?? null;
   const card = profileCardBackground(cardColor, cardOpacity);
   const bar = profileBarBackground(cardColor);
   const cardInk = profileCardInk(cardColor, cardOpacity, scheme);
