@@ -53,8 +53,9 @@ export async function updateImageNsfwLevel({
   if (!image) throw new Error('Image not found');
   // A locked level counts as a review in the main app's `imageReviewedSql`, which has no exception for
   // songs, and only a song's own scans may review it: so a song is rated only once they have
-  // (`ingestion` Scanned). From then on its lock would also stand in for a review, so nothing may
-  // return a rated song to Pending, Error or Rescan without clearing `nsfwLevelLocked` first.
+  // (`ingestion` Scanned). From then on its lock also stands in for a review: a rated song that a
+  // failed re-scan moves to Error (`markImageScanError`) keeps counting as reviewed. A path that
+  // changes a song's audio or lyrics must clear `nsfwLevelLocked`.
   if (image.type === 'audio' && image.ingestion !== 'Scanned')
     throw new SongRatingRefusedError(
       id,
