@@ -57,6 +57,20 @@ describe('datasetRating', () => {
 });
 
 describe('extractionRating', () => {
+  it('counts a blocked entry as unrated, even with an SFW level', async () => {
+    const rating = await extractionRating(
+      {
+        entries: [
+          { mediaType: 'image', blob: { nsfwLevel: 'pg' } },
+          { mediaType: 'image', blob: { nsfwLevel: 'pg', blockedReason: 'tos' } },
+        ],
+      },
+      'wf-1'
+    );
+    expect(rating).toEqual({ nsfwLevel: NsfwLevel.PG, fullyRated: false });
+    expect(mockHeadBlob).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     mockHeadBlob.mockReset();

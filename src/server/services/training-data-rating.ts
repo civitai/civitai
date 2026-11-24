@@ -31,7 +31,11 @@ export function datasetRating(entries: RatedEntry[]): {
 }
 
 type ExtractionOutput = {
-  entries?: { air?: string; mediaType?: string; blob?: { nsfwLevel?: string | null } | null }[];
+  entries?: {
+    air?: string;
+    mediaType?: string;
+    blob?: { nsfwLevel?: string | null; blockedReason?: string | null } | null;
+  }[];
   rejected?: unknown[];
 };
 
@@ -105,7 +109,8 @@ export async function extractionRating(output: ExtractionOutput, workflowId: str
         batch.map(async (entry) => ({
           mediaType: entry.mediaType,
           nsfwLevel:
-            entry.mediaType === 'text'
+            // A blocked entry never counts as rated, whatever level it carries.
+            entry.mediaType === 'text' || entry.blob?.blockedReason
               ? null
               : entry.blob?.nsfwLevel ?? (await blobHeaderLevel(entry.air, workflowId, deadline)),
         }))
