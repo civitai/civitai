@@ -181,7 +181,8 @@ function loads(
  * The index just past a string, template literal or comment opening at `i`, or `i` itself.
  * Regex literals and template `${}` nesting are not tracked, so a quote inside one desyncs the scan:
  * `mockCallTexts` reparses what it finds, and `mayReadImport` also reads line-leading imports from
- * the raw text, for that reason.
+ * the raw text, for that reason. Known gap: a desynced scan can still hide an import that neither
+ * starts its line nor reaches its `from` without a `;` (one inside a comment in its braces).
  */
 function skipLiteral(source: string, i: number): number {
   const c = source[i];
@@ -202,9 +203,10 @@ function skipLiteral(source: string, i: number): number {
 }
 
 /**
- * The bindings text of each `import` statement: from the keyword to the next `;`, with strings and
- * comments dropped, so a module path or a comment cannot match a name. Vitest's own imports are left
- * out: `vi` and friends are bound before any factory runs. A superset is fine; a missed name is not.
+ * The bindings text of each `import` statement, from the keyword to its module path (or the next
+ * `;`), with strings and comments dropped so that a module path or a comment cannot match a name.
+ * Vitest's own imports are left out: `vi` and friends are bound before any factory runs. A superset
+ * is fine; a missed name is not.
  */
 function importTexts(source: string): string[] {
   const out: string[] = [];
@@ -228,8 +230,11 @@ function importTexts(source: string): string[] {
       } else {
         const literal = source.slice(j, next);
         if (/^['"](?:vitest(?:\/[^'"]*)?|@vitest\/[^'"]*)['"]$/.test(literal)) vitest = true;
+        const isSpecifier = /(?:^import|\bfrom)\s*$/.test(text) && /^['"]/.test(literal);
         text += ' ';
         j = next;
+        // The module specifier ends the statement, with or without a `;`.
+        if (isSpecifier) break;
       }
     }
     if (!vitest) out.push(text);
@@ -238,13 +243,15 @@ function importTexts(source: string): string[] {
   return out;
 }
 
-const gap = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*`;
+// Each alternative matches in one way only, so a run of comments cannot backtrack exponentially.
+const gap = String.raw`(?:\s|\/\*(?:[^*]|\*(?!\/))*\*\/|\/\/[^\n]*\n)*`;
 const mockStart = new RegExp(String.raw`\bvi${gap}(?:\?\.|\.)${gap}mock\b`, 'g');
 
 /**
  * The text of each `vi.mock(...)` call, found by matching brackets past strings, template literals
- * and comments, or null for a generic `vi.mock<…>(` call. A regex literal holding a bracket
- * can end a call early or late; the caller parses the text and falls back on any doubt.
+ * and comments, or null when a call is followed by anything else a call could start with (a
+ * generic, a comment, `?.`). A regex literal holding a bracket can end a call early or late; the
+ * caller parses the text and falls back on any doubt.
  */
 function mockCallTexts(source: string): string[] | null {
   const out: string[] = [];
@@ -303,7 +310,13 @@ function mayReadImport(source: string): boolean {
       statement && ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
         ? statement.expression
         : null;
-    if (diagnostics.length || sf.statements.length !== 1 || !call) return true;
+    // A text that ran late can still parse, as a longer expression: `vi.mock(…)\n(x)` is a call of
+    // the mock call's result.
+    const isMockCall =
+      !!call &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === 'mock';
+    if (diagnostics.length || !call || !isMockCall) return true;
     const factory = call.arguments[1];
     if (!factory || !(ts.isArrowFunction(factory) || ts.isFunctionExpression(factory)))
       return false;
@@ -570,6 +583,8 @@ describe('vi.mock factories read no import that is still unbound', () => {
     ['a generic call', V + ".mock<typeof import('./y')>('./y', () => ({ w: a }));"],
     // The regex closes the call's brackets early, so the text read misses `w: a`.
     ['a regex ending the call early', V + ".mock('./y', () => ({ r: /)))/, w: a }));"],
+    // The regex runs the text late, and the next line makes it one longer call.
+    ['a regex running the call late', V + ".mock('./y', () => ({ r: /\\(/, w: a }))\n(x)"],
   ])('parses a file with %s', (_, call) => {
     const source = "import { vi } from 'vitest';\nimport { a } from './x';\n" + call;
     expect(mayReadImport(source)).toBe(true);
@@ -583,7 +598,7 @@ describe('vi.mock factories read no import that is still unbound', () => {
     // A comment first, so only the statement scan (not the line-leading check) can see these two.
     [
       'no semicolons after vitest',
-      "import { vi } from 'vitest'\n/* c */ import { a } from './x'",
+      "/* c */ import { vi } from 'vitest'\n/* c */ import { a } from './x'\n",
       'a',
     ],
     ['a vitest-named package', "/* c */ import { a } from 'vitest-browser-react';", 'a'],
@@ -611,6 +626,14 @@ describe('vi.mock factories read no import that is still unbound', () => {
       "import { vi } from 'vitest';\nimport { a } from './x';\nconst mocks = vi.hoisted(() => ({ w: 1 }));\n" +
       call;
     expect(mayReadImport(source)).toBe(false);
+  });
+
+  // An ambiguous comment pattern took 0.7 s at 24 comments and doubled with each one more.
+  it('reads a run of comments after vi in linear time', () => {
+    const source = '// vi\n' + '/* c */\n'.repeat(26) + 'x';
+    const start = performance.now();
+    mayReadImport(source);
+    expect(performance.now() - start).toBeLessThan(500);
   });
 
   // A parser that stopped seeing factories, or a graph with no edges, would pass everything.
