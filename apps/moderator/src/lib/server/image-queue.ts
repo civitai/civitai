@@ -72,6 +72,12 @@ const querySchema = z.object({
     .transform(() => true)
     .optional()
     .catch(undefined),
+  /** The reported queue's "Songs only" filter. */
+  songs: z
+    .literal('1')
+    .transform(() => true)
+    .optional()
+    .catch(undefined),
 });
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
@@ -139,7 +145,7 @@ async function withheldCards<T extends { id: number }>(items: T[], user?: App.Lo
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
  */
 export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.Locals['user']) {
-  const { cursor, limit, level, userId, captures } = parseQuery(url, querySchema);
+  const { cursor, limit, level, userId, captures, songs } = parseQuery(url, querySchema);
   const capturesOnly = captures ?? false;
   const tagIds = parseIds(url.searchParams.get('tags'));
   const excludedTagIds = parseIds(url.searchParams.get('notags'));
@@ -164,6 +170,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       limit,
       reportId,
       agents: reportId ? undefined : agentReportWhere(agentFilter),
+      songsOnly: !reportId && (songs ?? false),
     });
     return {
       ...base,
@@ -174,6 +181,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       singleReport: reportId ?? null,
       // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
       agentFilter: reportId ? null : agentFilter,
+      // `null` hides the "Songs only" control on a `?report=` view, for the same reason.
+      songsOnly: reportId ? null : songs ?? false,
     };
   }
 

@@ -248,6 +248,7 @@
   {itemKeys}
   {selected}
   agentFilter={data.kind === 'reported' ? data.agentFilter : null}
+  songsOnly={data.kind === 'reported' ? data.songsOnly : null}
 >
   {#snippet meta()}
     {#if reported}<LastWorked entity={ReportEntity.Image} />{/if}

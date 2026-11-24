@@ -18,6 +18,7 @@
     itemKeys,
     selected,
     agentFilter = null,
+    songsOnly = null,
     meta,
   }: {
     title: string;
@@ -30,6 +31,8 @@
     selected: SvelteSet<string | number>;
     /** The reported queue's `?agents=` filter; `null` hides the control. */
     agentFilter?: AgentFilter | null;
+    /** The reported queue's "Songs only" filter (`?songs=1`); `null` hides the control. */
+    songsOnly?: boolean | null;
     /** A line under the title. */
     meta?: Snippet;
   } = $props();
@@ -46,6 +49,13 @@
   function setAgents(filter: AgentFilter) {
     const url = new URL(page.url);
     setAgentReportParam(url.searchParams, filter);
+    go(url);
+  }
+
+  function toggleSongs() {
+    const url = new URL(page.url);
+    if (songsOnly) url.searchParams.delete('songs');
+    else url.searchParams.set('songs', '1');
     go(url);
   }
 
@@ -95,6 +105,15 @@
     {/if}
     {#if agentFilter}
       <AgentReportFilter value={agentFilter} onselect={setAgents} />
+    {/if}
+    {#if songsOnly != null}
+      <button
+        class="{chip} {songsOnly ? 'border-primary bg-primary text-primary-foreground' : off}"
+        aria-pressed={songsOnly}
+        onclick={toggleSongs}
+      >
+        Songs only
+      </button>
     {/if}
     {#each filterLevels as bit (bit)}
       <button

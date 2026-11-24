@@ -195,3 +195,28 @@ describe('the reported image queue under ?agents=', () => {
     expect(items.filter((i) => i.report.agentFiled).map((i) => i.report.id)).toEqual([11, 13, 15]);
   });
 });
+
+describe('the reported image queue, songs only', () => {
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "type") VALUES (106, 'audio'), (107, 'video');
+      INSERT INTO "Report" ("id", "userId") VALUES (16, ${HUMAN}), (17, ${HUMAN});
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (106, 16), (107, 17);
+    `);
+  });
+
+  it('lists only the reports on songs, and the cursor ends where they end', async () => {
+    const { items, nextCursor } = await getReportedImageQueue({
+      browsingLevel: 31,
+      limit: 10,
+      songsOnly: true,
+    });
+    expect(items.map((i) => [i.id, i.type])).toEqual([[106, 'audio']]);
+    expect(nextCursor).toBeUndefined();
+  });
+
+  it('lists every report without it, images and videos included', async () => {
+    const { items } = await getReportedImageQueue({ browsingLevel: 31, limit: 10 });
+    expect(items.map((i) => i.id)).toEqual([100, 101, 102, 103, 104, 105, 106, 107]);
+  });
+});
