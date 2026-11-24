@@ -93,6 +93,8 @@ export type PendingDelete = DeleteReplay & {
   ownerId?: number;
   deletedBy?: string;
   cleanup?: true;
+  /** The account-deletion drain's ask, released by an account restore while a case held the row. */
+  releasedOnRestore?: true;
 };
 
 const unsent: CsamReportFilter = (report) => `${report}."reportSentAt" IS NULL`;

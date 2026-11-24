@@ -79,7 +79,7 @@ type DeleteOptions = {
 };
 
 /** A moderator's delete that queues what it keeps: a moderator decided the image goes. */
-const moderatorDecides = (options: DeleteOptions) =>
+export const moderatorDecides = (options: Pick<DeleteOptions, 'replay' | 'queueKept'>) =>
   !!options.replay?.moderatorDelete && options.queueKept !== false;
 
 function conditions({ actor, where }: DeleteOptions) {
@@ -145,8 +145,9 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
         ${skipBlocked ? sql`AND ingestion IS DISTINCT FROM 'Blocked'` : sql``}
       RETURNING id, "userId", "postId"
     )`);
-  // A post its delete keeps leaves the site as a moderator's unpublish takes it off
-  // (`unpublishPostAsModerator`), with its own reason, so it stays visible to its owner and moderators.
+  // A post its delete keeps is unpublished with a copy of `unpublishPostAsModerator`'s stamp (this
+  // package can't import the service: change both together), with its own reason, so it stays visible
+  // to its owner and moderators.
   const hidesPost = table === 'Post';
   if (hidesPost)
     ctes.push(sql`hidden AS (
@@ -178,7 +179,7 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   };
 }
 
-/** Why a post its delete keeps is unpublished; publishing it again is refused while it is set. */
+/** Why a post its delete keeps is unpublished; trg_post_pending_delete_keep_unpublished refuses a publish while its PendingDelete row exists. */
 export const POST_PENDING_DELETE_REASON = 'pending-delete';
 
 /** A kept image a moderator's delete blocked, and the post it is still in. */

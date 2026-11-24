@@ -364,6 +364,7 @@ import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
   deleteImageRows,
+  moderatorDecides,
   moderatorPurge,
   queueImageStorageDelete as queueStorageDelete,
   queuePostNsfwLevelUpdates,
@@ -1092,28 +1093,33 @@ export async function deleteImagesWithOutcome(
       kept: caseKept,
       hidden,
       gone,
-    } = await withDeleteTransaction(!(moderatorDelete && queueKept !== false), (db) =>
-      deleteImageRows(db, {
-        ids,
-        actor,
-        where: callerWhere,
+    } = await withDeleteTransaction(
+      !moderatorDecides({
+        replay: moderatorDelete ? { moderatorDelete: true } : undefined,
         queueKept,
-        replay: {
-          ...(moderatorDelete && { moderatorDelete: true }),
-          ...(keepStoredFiles && { keepStoredFiles: true }),
-        },
-        files: keepStoredFiles
-          ? undefined
-          : {
-              allVersions: moderatorDelete ? moderatorPurge : undefined,
-              keepShopArtwork:
-                deletedById === undefined
-                  ? undefined
-                  : plainOwnerDeleteSql(deletedById, [...reported]),
-            },
-        recountPosts: updatePosts,
-        cdnTakedown: moderatorDelete,
-      })
+      }),
+      (db) =>
+        deleteImageRows(db, {
+          ids,
+          actor,
+          where: callerWhere,
+          queueKept,
+          replay: {
+            ...(moderatorDelete && { moderatorDelete: true }),
+            ...(keepStoredFiles && { keepStoredFiles: true }),
+          },
+          files: keepStoredFiles
+            ? undefined
+            : {
+                allVersions: moderatorDelete ? moderatorPurge : undefined,
+                keepShopArtwork:
+                  deletedById === undefined
+                    ? undefined
+                    : plainOwnerDeleteSql(deletedById, [...reported]),
+              },
+          recountPosts: updatePosts,
+          cdnTakedown: moderatorDelete,
+        })
     );
 
     keptForCase.push(...caseKept);

@@ -179,7 +179,7 @@ beforeEach(async () => {
     if (/FROM "PostText"/.test(sql.text))
       return sql.values.filter((v) => heldTextPosts.has(v as number)).map((postId) => ({ postId }));
     if (
-      !/DELETE FROM "(Image|Post)"|AS deletable|"EvidenceHoldImage"|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
+      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|"EvidenceHoldImage"|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
         sql.text
       )
     )
@@ -542,6 +542,53 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
     expect(vi.mocked(dbMock.dbWrite.$transaction)).toHaveBeenCalledTimes(txs);
   });
+
+  // An account restore marks what a case still keeps (releaseAccountDeletionPendingDeletes).
+  // A restore releases it only once the case finds nothing (Legal, #10235); any finding deletes it.
+  const dismissed = `UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`;
+  it.each([
+    ['releases, not deletes,', true, 'dismissed', dismissed, true],
+    ['deletes', true, 'actioned', `UPDATE "Report" SET status = 'Actioned' WHERE id = 1`, false],
+    [
+      'deletes',
+      true,
+      'dismissed, the image blocked and reported as CSAM',
+      `${dismissed};
+      UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${imageOf(PLAIN)};
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", images, details)
+      VALUES (${PLAIN}, now(), '[${imageOf(
+        PLAIN
+      )}]', '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')`,
+      false,
+    ],
+    ['deletes', false, 'dismissed', dismissed, false],
+  ])(
+    '%s a drain delete (restored: %s) once its case closes %s',
+    async (_, restored, _closedAs, close, kept) => {
+      await holder.db.exec(`
+        INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+        INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+        INSERT INTO "JobQueue" ("entityId", "entityType", type, data) VALUES (${imageOf(
+          PLAIN
+        )}, 'Image',
+          'PendingDelete', '{"deletedBy": "remove-deleted-user-images"${
+            restored ? ', "releasedOnRestore": true' : ''
+          }}');
+      `);
+      const before = await imageRow(imageOf(PLAIN));
+      await runJob();
+      expect(await pending()).toHaveLength(1);
+
+      await holder.db.exec(close);
+      const closed = await imageRow(imageOf(PLAIN));
+      await runJob();
+
+      expect(await pending()).toEqual([]);
+      const after = await imageRow(imageOf(PLAIN));
+      if (kept) expect(after).toEqual(before);
+      else expect(after).not.toEqual(closed);
+    }
+  );
 
   // A case-kept delete hides the image whoever deletes it.
   it.each<[string, { id: number; isModerator: boolean } | { system: string }]>([

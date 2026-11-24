@@ -769,12 +769,14 @@ describe('releaseAccountDeletionPendingDeletes', () => {
 
     await releaseAccountDeletionPendingDeletes(7);
 
-    const { rows } = await db.query<{ entityType: string; entityId: number }>(
-      `SELECT "entityType"::text AS "entityType", "entityId" FROM "JobQueue" ORDER BY 1, 2`
+    const { rows } = await db.query<{ entityType: string; entityId: number; released: boolean }>(
+      `SELECT "entityType"::text AS "entityType", "entityId", data ? 'releasedOnRestore' AS released
+       FROM "JobQueue" ORDER BY 1, 2`
     );
+    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes.
     expect(rows).toEqual([
-      { entityType: 'Image', entityId: 1 },
-      { entityType: 'Post', entityId: 10 },
+      { entityType: 'Image', entityId: 1, released: true },
+      { entityType: 'Post', entityId: 10, released: true },
     ]);
     await db.close();
   });

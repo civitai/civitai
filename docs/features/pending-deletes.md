@@ -53,7 +53,10 @@ whatever path tries to publish it, while its `PendingDelete` row exists. A kept 
 post a moderator already unpublished keeps its own reason. Once that row is gone without
 the post, a publish goes through and drops the stamp. An account restore
 (`releaseAccountDeletionPendingDeletes`) leaves the drain's delete of an image or post whose case is
-still open, so it cannot make that content publishable.
+still open, marked `releasedOnRestore`, so it cannot make that content publishable: the content stays
+hidden until the case closes. Then `pending-deletes` releases it (drops the row and keeps the content)
+only if the case found nothing; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
+child-safety report on the image, its post or its review) it carries out the delete as queued.
 `deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
 `deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
 post can't be published right now.

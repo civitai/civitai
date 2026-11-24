@@ -53,35 +53,42 @@ export function disarmAccountDeletionImagePurge(userId: number) {
 /**
  * Takes the drain's ask off this account's pending deletes, which `pending-deletes` carries out
  * without looking at the account: a row only it asked for goes, and one someone else also asked for
- * keeps theirs. One whose case is still open stays, so the restore cannot make it publishable. A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
+ * keeps theirs. One whose case is still open stays, marked `releasedOnRestore`, so the restore cannot
+ * make it publishable and `pending-deletes` releases rather than deletes it once the case closes. A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
  */
 export function releaseAccountDeletionPendingDeletes(userId: number) {
   return dbWrite.$executeRaw`
     WITH drained AS (
-      SELECT q."entityType", q."entityId", q.data ?| array['ownerId', 'cleanup'] AS "askedElse"
+      SELECT q."entityType", q."entityId", q.data ?| array['ownerId', 'cleanup'] AS "askedElse",
+        CASE WHEN q."entityType" = 'Image'
+          THEN EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = q."entityId" AND ${toPrismaSql(
+            childSafetyImageCase()
+          )})
+          ELSE EXISTS (SELECT 1 FROM "Post" WHERE "Post".id = q."entityId" AND ${toPrismaSql(
+            childSafetyPostCase()
+          )})
+        END AS "inCase"
       FROM "JobQueue" q
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q.data->>'deletedBy' = ${ACCOUNT_DELETION_DRAIN}
         AND (
-          (q."entityType" = 'Image' AND q."entityId" IN (
-            SELECT id FROM "Image" WHERE "userId" = ${userId} AND NOT ${toPrismaSql(
-    childSafetyImageCase()
-  )}
-          ))
-          OR (q."entityType" = 'Post' AND q."entityId" IN (
-            SELECT id FROM "Post" WHERE "userId" = ${userId} AND NOT ${toPrismaSql(
-    childSafetyPostCase()
-  )}
-          ))
+          (q."entityType" = 'Image' AND q."entityId" IN (SELECT id FROM "Image" WHERE "userId" = ${userId}))
+          OR (q."entityType" = 'Post' AND q."entityId" IN (SELECT id FROM "Post" WHERE "userId" = ${userId}))
         )
     ),
     stripped AS (
       UPDATE "JobQueue" q SET data = q.data - 'deletedBy' FROM drained d
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
         AND q."entityId" = d."entityId" AND d."askedElse"
+    ),
+    -- Its case keeps it hidden; once the case closes, pending-deletes drops the row instead of deleting.
+    marked AS (
+      UPDATE "JobQueue" q SET data = q.data || '{"releasedOnRestore": true}'::jsonb FROM drained d
+      WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
+        AND q."entityId" = d."entityId" AND NOT d."askedElse" AND d."inCase"
     )
     DELETE FROM "JobQueue" q USING drained d
     WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
-      AND q."entityId" = d."entityId" AND NOT d."askedElse"
+      AND q."entityId" = d."entityId" AND NOT d."askedElse" AND NOT d."inCase"
   `;
 }
 

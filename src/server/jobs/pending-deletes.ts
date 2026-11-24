@@ -1,3 +1,7 @@
+import {
+  childSafetyImageFinding,
+  childSafetyPostFinding,
+} from '@civitai/db-queries/child-safety-case';
 import { imageNotUsed } from '@civitai/db-queries/content-deletion';
 import {
   cleanupBlocked,
@@ -112,6 +116,17 @@ async function standing(kind: Kind, ids: number[]) {
   return new Map(rows.map(({ id, ...row }) => [id, row]));
 }
 
+/** Of `ids`, those whose closed case found nothing: only these may be kept rather than deleted. */
+async function clearedByCase(kind: Kind, ids: number[]) {
+  if (!ids.length) return new Set<number>();
+  const finding = kind === 'Image' ? childSafetyImageFinding(kind) : childSafetyPostFinding(kind);
+  const { rows } = await sql<{ cleared: number }>`
+    SELECT ${sql.table(kind)}.id AS cleared FROM ${sql.table(kind)}
+    WHERE ${sql.table(kind)}.id = ANY(${ids}::int[]) AND (${finding}) IS FALSE
+  `.execute(db());
+  return new Set(rows.map(({ cleared }) => cleared));
+}
+
 /**
  * Carries out each pending delete as its kind says: a cleanup while `cleanupStillApplies`, anyone
  * else's as the system with the flags it was queued with (no caller condition), an owner's as the
@@ -174,7 +189,20 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       (row) => before.get(row.id)?.present && !before.get(row.id)?.blocked && !textHeld.has(row.id)
     );
     const dueIds = new Set(due.map((row) => row.id));
-    const threw = new Set(await carryOut(kind, due));
+    // Only the drain asked and the account came back: a case that found nothing keeps the item, and
+    // only the row goes. Any finding, or an outcome not read as none, deletes it as queued.
+    const releasedIds = await clearedByCase(
+      kind,
+      due
+        .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
+        .map((row) => row.id)
+    );
+    const threw = new Set(
+      await carryOut(
+        kind,
+        due.filter((row) => !releasedIds.has(row.id))
+      )
+    );
 
     // A row carried out is done once gone or no longer applicable (in use again, given away, kept by
     // a hold marker); blocked again it waits, and a delete that threw is retried.
