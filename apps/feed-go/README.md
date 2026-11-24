@@ -33,6 +33,10 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 |                                   | `POST /internal/shadow/api/v1/models`, `…/models/id`   | shadow comparison of the REST model endpoints, body and response headers (DESIGN.md §16)                                                        |
 |                                   | `GET /debug/pprof/…`                                   | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2)                                                                 |
 
+A request from a blocked region (`REGION_BLOCK_CONFIG`) is handed to the Node app, which answers its
+451, unless `FEED_GO_ANSWER_REGION_BLOCKED=true` (default off): then every public route writes that
+same 451 here (outcome `region_blocked`; DESIGN.md §6.2).
+
 Every answer on the public routes carries `X-Feed-Go-Served`: `go` when this service computed it
 (or answered the error itself), `node` when it was proxied to the Node app, including the proxy's own 502. The browser's shadow compare (`src/utils/faro/shadowCompare.ts`) reads it, so a proxied answer,
 which is Node's own bytes, is never counted as Go matching Node. Same-origin, so no CORS

@@ -76,6 +76,10 @@ type Config struct {
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
+	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
+	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
+	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
+	AnswerRegionBlocked bool
 	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch, read as the app reads it (exactly
 	// "true" is on; default off): write a public tRPC answer as devalue where the app would
 	// (server.Server.WriteDevalue). Off, every answer is superjson.
@@ -246,6 +250,7 @@ func Load() (*Config, error) {
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
 		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
 		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
+		AnswerRegionBlocked:  boolEnv("FEED_GO_ANSWER_REGION_BLOCKED", false),
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
