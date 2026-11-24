@@ -50,7 +50,7 @@ const SCHEMA = `
     "tosViolation" boolean NOT NULL DEFAULT false,
     meta jsonb
   );
-  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, meta jsonb);
   CREATE TABLE "ModelFile" (
     id int PRIMARY KEY,
     "modelVersionId" int NOT NULL,

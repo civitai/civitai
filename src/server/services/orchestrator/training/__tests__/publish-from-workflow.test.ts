@@ -49,6 +49,8 @@ import type { SessionUser } from '~/types/session';
 import {
   assertTrainingSourcePublishable,
   createDraftModelFromWorkflow,
+  createDraftVersionFromWorkflow,
+  getPublishRefusalReason,
   isTrainingNotApprovedRefusal,
   mapTrainingBaseModelToBaseModel,
   mapWorkflowToTrainingResultsV2,
@@ -347,6 +349,7 @@ describe('createDraftModelFromWorkflow', () => {
     expect(result).toEqual({
       modelId: 77,
       modelVersionId: 88,
+      target: 'new-model',
       selectedEpoch: expect.objectContaining({
         epochNumber: 3,
         modelUrl: 'https://blobs/epoch-3',
@@ -426,7 +429,12 @@ describe('createDraftModelFromWorkflow', () => {
       workflow: wf,
       selectedEpochNumber: 3,
     });
-    expect(result).toEqual({ modelId: 77, modelVersionId: 88, selectedEpoch: null });
+    expect(result).toEqual({
+      modelId: 77,
+      modelVersionId: 88,
+      target: 'new-model',
+      selectedEpoch: null,
+    });
   });
 
   it('refuses a run with no downloadable checkpoint before any write', async () => {
@@ -455,6 +463,7 @@ describe('createDraftModelFromWorkflow', () => {
     expect(result).toEqual({
       modelId: 100,
       modelVersionId: 200,
+      target: 'new-model',
       selectedEpoch: expect.objectContaining({
         epochNumber: 1,
         modelUrl: 'https://blobs/epoch-1',
@@ -941,7 +950,12 @@ describe('training moderation gate — runs whose blobs have expired', () => {
         workflow: expiredRun('approved'),
         selectedEpochNumber: 2,
       })
-    ).resolves.toEqual({ modelId: 77, modelVersionId: 88, selectedEpoch: null });
+    ).resolves.toEqual({
+      modelId: 77,
+      modelVersionId: 88,
+      target: 'new-model',
+      selectedEpoch: null,
+    });
   });
 
   it('a first entry on an approved expired run is refused for having no checkpoint, not by the gate', async () => {
@@ -1145,7 +1159,10 @@ describe('publishing Kohya Studio runs', () => {
   it.each(['Pony', 'Illustrious', 'NoobAI', 'SDXL 1.0', 'SDXL Lightning'])(
     'preserves custom checkpoint classification %s when its AIR uses sdxl',
     async (baseModel) => {
-      dbMock.dbWrite.modelVersion.findFirst.mockResolvedValueOnce({ baseModel } as never);
+      // The custom checkpoint's lookup; the run-destination lookup finds no draft.
+      dbMock.dbWrite.modelVersion.findFirst.mockImplementation((async (args: {
+        where: { id?: number };
+      }) => (args.where.id === 456 ? { baseModel } : null)) as never);
       const model = 'urn:air:sdxl:checkpoint:civitai:123@456';
       await createDraftModelFromWorkflow({
         user: USER,
@@ -1161,4 +1178,147 @@ describe('publishing Kohya Studio runs', () => {
       });
     }
   );
+});
+
+describe('the run named on each version', () => {
+  it("links a Studio-born v1 to the run in the version's own meta, as well as the model's", async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModelVersion.mock.calls[0]![0].meta).toEqual({
+      trainingStudioWorkflowId: 'wf-studio-1',
+      trainingStudioModerationApproved: true,
+    });
+  });
+
+  it('resumes a run that was added to an existing model as that version, not a new model', async () => {
+    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({
+      id: 61,
+      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+      model: { id: 60, meta: null },
+    } as never);
+    const result = await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+    });
+    expect(result).toMatchObject({ modelId: 60, modelVersionId: 61, target: 'existing-model' });
+    expect(mockUpsertModel).not.toHaveBeenCalled();
+    expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+  });
+});
+
+describe('createDraftVersionFromWorkflow', () => {
+  const TARGET_ID = 60;
+  const addVersion = (modelId = TARGET_ID) =>
+    createDraftVersionFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+      modelId,
+    });
+  // The run-destination lookup finds no model naming the run; the target lookup finds `target`.
+  const withTarget = (target: { id: number; meta: unknown } | null) =>
+    mockFindFirst.mockImplementation((async (args: { where: { id?: number } }) =>
+      args.where.id === undefined ? null : target) as never);
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { name: 'v1' },
+      { name: 'v3' },
+      { name: 'Final' },
+    ] as never);
+    withTarget({ id: TARGET_ID, meta: null });
+  });
+
+  it('adds a Draft Trained version linked to the run, named past the highest vN', async () => {
+    const result = await addVersion();
+    expect(result).toMatchObject({
+      modelId: TARGET_ID,
+      modelVersionId: 200,
+      target: 'existing-model',
+    });
+    expect(mockUpsertModel).not.toHaveBeenCalled();
+    const version = mockUpsertModelVersion.mock.calls[0]![0];
+    expect(version).toMatchObject({
+      modelId: TARGET_ID,
+      name: 'v4',
+      uploadType: 'Trained',
+      status: 'Draft',
+      trainedWords: ['mychar'],
+      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+    });
+    expect(trainingDetailsObj.safeParse(version.trainingDetails).success).toBe(true);
+    // The same Training Data placeholder a v1 gets, carrying the run for the epoch picker.
+    expect(mockCreateFile.mock.calls[0]![0]).toMatchObject({
+      type: 'Training Data',
+      modelVersionId: 200,
+      metadata: { trainingResults: { workflowId: 'wf-studio-1' } },
+    });
+  });
+
+  it("looks the target up on the caller's own LoRA models, with no moderator bypass", async () => {
+    await createDraftVersionFromWorkflow({
+      user: { id: USER.id, isModerator: true } as SessionUser,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+      modelId: TARGET_ID,
+    });
+    expect(mockFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: TARGET_ID, userId: USER.id, type: 'LORA' }),
+      })
+    );
+  });
+
+  it.each([
+    ['not one of the caller’s eligible models', null],
+    ['removed with its owner', { id: TARGET_ID, meta: { removedWithOwner: true } }],
+    ['marked cannot-publish', { id: TARGET_ID, meta: { cannotPublish: true } }],
+  ])('refuses a target that is %s, before any write', async (_, target) => {
+    withTarget(target);
+    const error = await addVersion().catch((e) => e);
+    expect(getPublishRefusalReason(error)).toBe('model-not-eligible');
+    expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+    expect(mockCreateFile).not.toHaveBeenCalled();
+  });
+
+  it('resumes the version the run was already added as on the same model', async () => {
+    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({
+      id: 61,
+      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+      model: { id: TARGET_ID, meta: null },
+    } as never);
+    await expect(addVersion()).resolves.toMatchObject({
+      modelId: TARGET_ID,
+      modelVersionId: 61,
+      target: 'existing-model',
+    });
+    expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+  });
+
+  it('refuses a run whose draft is on another model', async () => {
+    mockFindFirst.mockResolvedValue({ id: 77, meta: null, modelVersions: [{ id: 88 }] } as never);
+    const error = await addVersion().catch((e) => e);
+    expect(getPublishRefusalReason(error)).toBe('already-published-elsewhere');
+    expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unapproved run before looking anything up', async () => {
+    const wf = studioWorkflow();
+    (wf.steps![0] as unknown as { output: { moderationStatus: string } }).output.moderationStatus =
+      'underReview';
+    await expect(
+      createDraftVersionFromWorkflow({
+        user: USER,
+        workflow: wf,
+        selectedEpochNumber: 1,
+        modelId: TARGET_ID,
+      })
+    ).rejects.toSatisfy(isTrainingNotApprovedRefusal);
+    expect(mockFindFirst).not.toHaveBeenCalled();
+  });
 });

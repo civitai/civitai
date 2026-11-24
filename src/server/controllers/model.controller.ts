@@ -50,7 +50,7 @@ import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-read
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
-  stampWorkflowPublished,
+  stampPublishedTrainingRuns,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
@@ -1016,6 +1016,7 @@ export const publishModelHandler = async ({
       meta: modelMeta,
       ownerId: model.userId,
       callerId: ctx.user.id,
+      versionIds: input.versionIds,
     });
     await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
@@ -1065,13 +1066,20 @@ export const publishModelHandler = async ({
 
     // A scheduled publish skips this (status isn't Published yet) and the scheduled-publishing job
     // doesn't stamp either — the studio then just keeps offering its idempotent publish entry.
-    if (modelMeta?.trainingStudioWorkflowId && updatedModel.status === ModelStatus.Published) {
-      await stampWorkflowPublished({
+    if (updatedModel.status === ModelStatus.Published) {
+      const versionIds = input.versionIds ?? [];
+      // primary: the versions this publish just wrote.
+      const publishedVersions = await dbWrite.modelVersion.findMany({
+        where: { id: { in: versionIds }, modelId: input.id },
+        select: { id: true, meta: true },
+      });
+      await stampPublishedTrainingRuns({
         ownerId: updatedModel.userId,
         callerId: ctx.user.id,
-        workflowId: modelMeta.trainingStudioWorkflowId,
         modelId: updatedModel.id,
-        modelVersionId: updatedModel.modelVersions[0]?.id,
+        modelMeta,
+        versions: publishedVersions,
+        fallbackVersionId: updatedModel.modelVersions[0]?.id,
       });
     }
 
@@ -2749,7 +2757,7 @@ export const privateModelFromTrainingHandler = async ({
     // Publishes the model (privately), so the training-source check applies like any publish.
     const stored = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { userId: true, meta: true },
+      select: { userId: true, meta: true, modelVersions: { select: { id: true } } },
     });
     if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
       await assertTrainingSourcePublishable({
@@ -2757,6 +2765,8 @@ export const privateModelFromTrainingHandler = async ({
         meta: stored.meta as ModelMeta | null,
         ownerId: stored.userId,
         callerId: ctx.user.id,
+        // privateModelFromTraining publishes these, or every version when none are named.
+        versionIds: input.modelVersionIds ?? stored.modelVersions.map((version) => version.id),
       });
 
     const model = await privateModelFromTraining({
@@ -2821,11 +2831,17 @@ export const publishPrivateModelHandler = async ({
       throw throwAuthorizationError();
     }
 
+    // primary: guards the publish below, which makes the model's Published versions public.
+    const publishedVersions = await dbWrite.modelVersion.findMany({
+      where: { modelId: model.id, status: ModelStatus.Published },
+      select: { id: true },
+    });
     await assertTrainingSourcePublishable({
       modelId: model.id,
       meta: model.meta as ModelMeta | null,
       ownerId: model.userId,
       callerId: userId,
+      versionIds: publishedVersions.map((version) => version.id),
     });
     await assertNotCrossOwnerDuplicate({
       modelId: model.id,

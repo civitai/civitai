@@ -36,9 +36,11 @@ export interface PublishRequest {
   shareDataset?: boolean;
 }
 
-/** What "view this run's model" hands the host: the Civitai model stamped onto the workflow. */
+/** What "view this run's model" hands the host: the Civitai model and version stamped onto the
+ *  workflow. */
 export interface ModelPageRequest {
   modelId: number;
+  modelVersionId?: number;
 }
 
 /** What the Custom-base "Browse models" affordance hands the host: the run's orchestrator
@@ -106,6 +108,9 @@ export interface HostContext {
    *  workflowId + epoch. Absent when the host has no publish surface — the affordance hides. Same
    *  URL semantics as `generateUrl`: relative = in-host same-tab, absolute = new tab. */
   publishUrl?: (req: PublishRequest) => string;
+  /** The host's URL for the same entry with the run added as a new version of one of the owner's
+   *  existing models (the main app asks which). Absent => only `publishUrl`'s new-model CTA shows. */
+  publishVersionUrl?: (req: PublishRequest) => string;
   /** The host's URL for the run's model page on Civitai — draft or published (a run carries its
    *  modelId from the moment a draft exists; see TrainingStudioMeta). Absent => the "view model"
    *  affordance hides. Same URL semantics as `generateUrl`. */
@@ -164,6 +169,7 @@ export const refresh = (key: string) => host().refresh(key);
 export const generate = () => host().generate;
 export const generateUrl = () => host().generateUrl;
 export const publishUrl = () => host().publishUrl;
+export const publishVersionUrl = () => host().publishVersionUrl;
 export const modelPageUrl = () => host().modelPageUrl;
 export const pickModel = () => host().pickModel;
 export function portalProps(): { to?: Element; disabled?: boolean } {

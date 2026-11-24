@@ -193,6 +193,78 @@ describe('publishModelHandler — training moderation gate', () => {
   });
 });
 
+describe('publishModelHandler — versions that name their own run', () => {
+  const publishVersion = () =>
+    publishModelHandler({
+      input: { id: MODEL_ID, versionIds: [43] },
+      ctx: {
+        user: { id: OWNER_ID, isModerator: false },
+        track: { modelEvent: vi.fn().mockResolvedValue(undefined) },
+      },
+    } as never);
+
+  it.each(['evaluating', 'underReview', 'rejected', undefined])(
+    'refuses a version added from a %s run to a model that never came from the Studio',
+    async (status) => {
+      dbMock.dbRead.model.findUnique.mockResolvedValue({
+        status: 'Draft',
+        meta: null,
+        nsfw: false,
+        userId: OWNER_ID,
+      } as never);
+      dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+        { id: 43, meta: { trainingStudioWorkflowId: 'wf-added' } },
+      ] as never);
+      mockGetWorkflow.mockResolvedValue(trainingRun(status));
+      await expect(publishVersion()).rejects.toThrow(NOT_APPROVED);
+      expect(mockGetWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ path: { workflowId: 'wf-added' } })
+      );
+      expect(mockPublishModelById).not.toHaveBeenCalled();
+    }
+  );
+
+  it('publishes the version when its run is approved and back-links it once', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: null,
+      nsfw: false,
+      userId: OWNER_ID,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 43, meta: { trainingStudioWorkflowId: 'wf-added' } },
+    ] as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await expect(publishVersion()).resolves.toMatchObject({ id: MODEL_ID });
+    expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: 'wf-added',
+        metadata: expect.objectContaining({
+          published: true,
+          modelId: MODEL_ID,
+          modelVersionId: 43,
+        }),
+      })
+    );
+  });
+
+  it('back-links a Studio-born model once when the model and its v1 name the same run', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: UNSTAMPED_META,
+      nsfw: false,
+      userId: OWNER_ID,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 43, meta: UNSTAMPED_META },
+    ] as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await expect(publishVersion()).resolves.toMatchObject({ id: MODEL_ID });
+    expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('privateModelFromTrainingHandler — training moderation gate', () => {
   const run = () =>
     privateModelFromTrainingHandler({
@@ -204,6 +276,7 @@ describe('privateModelFromTrainingHandler — training moderation gate', () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({
       userId: OWNER_ID,
       meta: UNSTAMPED_META,
+      modelVersions: [],
     } as never);
     mockPrivateModelFromTraining.mockResolvedValue({ id: MODEL_ID, modelVersions: [] });
   });

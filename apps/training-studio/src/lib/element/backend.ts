@@ -103,6 +103,9 @@ export interface StudioElementHost {
   /** URL for the main app's publish-from-workflow entry (draft model + wizard) for a run's
    *  checkpoint; omit to hide the Publish affordance. Relative = same-tab, absolute = new tab. */
   publishUrl?(req: PublishRequest): string;
+  /** The same entry, adding the run as a new version of one of the owner's models; omit to offer
+   *  only the new-model Publish. */
+  publishVersionUrl?(req: PublishRequest): string;
   /** URL for the run's model page — draft or published (runs carry a modelId once a draft
    *  exists); omit to hide the "view model" affordance. Relative = same-tab, absolute = new tab. */
   modelPageUrl?(req: ModelPageRequest): string;
