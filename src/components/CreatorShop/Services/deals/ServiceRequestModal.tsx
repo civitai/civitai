@@ -49,6 +49,7 @@ import {
   BUYER_DISCLOSURE_INTRO,
   BUYER_DISCLOSURE_VERSION,
   buyerDisclosureItems,
+  type BuyerDisclosureItemId,
   buyerHoldButtonLabel,
 } from '~/shared/constants/creator-service-terms.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -218,7 +219,15 @@ export function ServiceRequestModal({
 type RequestOffering = Parameters<typeof ServiceRequestModal>[0]['offering'];
 type RequestSeller = ComponentProps<typeof UserAvatar>['user'];
 
-const DISCLOSURE_ICONS = [IconLock, IconPackage, IconCircleCheck, IconScale, IconShieldCheck];
+// By item, not position: the list varies with the rollout and a line must keep its own icon.
+const DISCLOSURE_ICONS: Record<BuyerDisclosureItemId, typeof IconLock> = {
+  hold: IconLock,
+  delivery: IconPackage,
+  accept: IconCircleCheck,
+  cancel: IconScale,
+  dispute: IconShieldCheck,
+  party: IconInfoCircle,
+};
 
 /** Who it's from, its terms and its full description: what a buyer reads before requesting. */
 export function ServiceOfferingTerms({
@@ -320,10 +329,10 @@ export function ServiceBuyerDisclosure({ offering }: { offering: RequestOffering
         </Group>
         {reviewEnabled ? (
           <Stack gap="sm">
-            {items.map(({ lead, text }, i) => {
-              const Icon = DISCLOSURE_ICONS[i] ?? IconInfoCircle;
+            {items.map(({ id, lead, text }) => {
+              const Icon = DISCLOSURE_ICONS[id];
               return (
-                <Group key={lead} gap="sm" wrap="nowrap" align="flex-start">
+                <Group key={id} gap="sm" wrap="nowrap" align="flex-start">
                   <ThemeIcon variant="light" color="gray" radius="xl" size={30}>
                     <Icon size={18} aria-hidden />
                   </ThemeIcon>
