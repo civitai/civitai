@@ -106,9 +106,20 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     ),
   ]);
 
-/** The post is not Private. Unsearchable and EarlyAccess posts stay served, as the site serves them. */
-export const postNotPrivate = (eb: ExpressionBuilder<Joined, 'p'>) =>
-  eb('p.availability', '!=', 'Private');
+/**
+ * Post availabilities whose images Knights shows, as the site serves them. An allow-list: a new Availability value stays
+ * hidden until it is added here.
+ */
+export const KNIGHTS_SHOWN_POST_AVAILABILITIES = ['Public', 'Unsearchable', 'EarlyAccess'] as const;
+
+/** The opposite of `postShownToKnights`, for a row already read: the same list, and a missing value is hidden. */
+export const postHiddenFromKnights = (availability: string | null | undefined): boolean =>
+  availability == null ||
+  !(KNIGHTS_SHOWN_POST_AVAILABILITIES as readonly string[]).includes(availability);
+
+/** The post's availability is one Knights shows. */
+export const postShownToKnights = (eb: ExpressionBuilder<Joined, 'p'>) =>
+  eb('p.availability', 'in', KNIGHTS_SHOWN_POST_AVAILABILITIES);
 
 /**
  * Hides an image whose uploader is banned or muted, or whose post's model or version is not Published or is Private. Each
@@ -146,7 +157,7 @@ export const imageSourceVisible = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =
   ]);
 
 /**
- * `servableImageContent` on a published post, without the rules that must only hide an image (`postNotPrivate`): for
+ * `servableImageContent` on a published post, without the rules that must only hide an image (`postShownToKnights`): for
  * sweeps that would otherwise retire a reference or close a question over them. Expects `Image as img` joined to
  * `Post as p`.
  */
@@ -242,11 +253,11 @@ export async function readWithoutJit<T>(
 }
 
 /**
- * Images Knights may show players: `servableImageForSweeps` on a post that is not Private, with `imageSourceVisible`.
+ * Images Knights may show players: `servableImageForSweeps` on a post whose availability Knights shows (`postShownToKnights`), with `imageSourceVisible`.
  * Expects `Image as img` joined to `Post as p`.
  */
 export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
-  eb.and([servableImageForSweeps(eb), postNotPrivate(eb), imageSourceVisible(eb)]);
+  eb.and([servableImageForSweeps(eb), postShownToKnights(eb), imageSourceVisible(eb)]);
 
 /**
  * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).

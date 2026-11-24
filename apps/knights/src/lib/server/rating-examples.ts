@@ -54,16 +54,19 @@ export function groupExamples(rows: ExampleRow[]): RatingExamples {
 
 const TTL_MS = 10 * 60_000;
 const FAILURE_BACKOFF_MS = 60_000;
+/** Past this since the last good read, failed reads show no examples rather than ones that may have stopped being servable. */
+const STALE_AFTER_MS = 30 * 60_000;
 let held: { at: number; examples: RatingExamples } | undefined;
 let failedAt: number | undefined;
 
 /**
  * Example images for each rating level. Held in this process for ten minutes and never throws: on a failed read the guide
- * shows the last examples read (or none), and the read is not retried for a minute.
+ * shows the last examples read while they are fresher than STALE_AFTER_MS (none after), and the read is not retried for
+ * FAILURE_BACKOFF_MS.
  */
 export async function ratingExamples(db: Kysely<DB>, now = Date.now()): Promise<RatingExamples> {
   if (held && now - held.at < TTL_MS) return held.examples;
-  if (failedAt !== undefined && now - failedAt < FAILURE_BACKOFF_MS) return held?.examples ?? {};
+  if (failedAt !== undefined && now - failedAt < FAILURE_BACKOFF_MS) return lastGood(now);
   try {
     const rows = await readWithoutJit(db, (trx) =>
       trx
@@ -86,9 +89,12 @@ export async function ratingExamples(db: Kysely<DB>, now = Date.now()): Promise<
   } catch (error) {
     console.error('knights: could not read the rating guide examples', { error });
     failedAt = now;
-    return held?.examples ?? {};
+    return lastGood(now);
   }
 }
+
+const lastGood = (now: number): RatingExamples =>
+  held && now - held.at < STALE_AFTER_MS ? held.examples : {};
 
 /** The rating guide with each level's examples attached (an empty list where there are none). */
 export function withExamples<T extends { level: number }>(guide: T[], examples: RatingExamples) {

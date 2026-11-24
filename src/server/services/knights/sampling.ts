@@ -2,7 +2,7 @@ import { sql, type Kysely } from 'kysely';
 import {
   countOpenServableKnightItems,
   imageSourceVisible,
-  postNotPrivate,
+  postShownToKnights,
   readWithoutJit,
   servableImageContent,
 } from '@civitai/db/knights';
@@ -234,7 +234,7 @@ export async function sampleImagesForKnights(
         .select(['img.id', 'img.nsfwLevel'])
         .where(filter.column, 'in', ids)
         .where(servableImageContent)
-        .where(postNotPrivate)
+        .where(postShownToKnights)
         .where(imageSourceVisible)
         .where('img.ingestion', '=', 'Scanned')
         .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)

@@ -222,7 +222,7 @@ describe('addCoreImage', () => {
     await seedImage(1, { availability: 'Private' });
     expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
       ok: false,
-      error: 'Image 1 is on a Private post, so Knights does not show it.',
+      error: 'Image 1 is on a post whose availability Knights does not show.',
     });
   });
 
