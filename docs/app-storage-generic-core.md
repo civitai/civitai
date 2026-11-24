@@ -514,6 +514,16 @@ purged in rollout step 4, and the purge, not this file, deletes them. `doc_mark`
 stay, as the report store. Its rollback re-creates the dropped tables empty; it cannot
 restore rows without that dump, which is why it runs last.
 
+**The step 4 tooling goes with step 5.** The writing maintenance ops (`migrateMarks`,
+`rollbackMarks`, `purgeCollection`, and the store's freeze, copy, verify and per-collection purge
+behind them) are removed: they read `doc_mark` vote rows, `doc_tally` and counter documents, which
+the final cleanup deletes or drops, so they must be gone before it runs. The run records they wrote
+stay readable (`apps.mod.docStore.maintenance.status`, `purgeDump`), and what protects user data in
+them stays: the 30-day dump expiry (`expire-storage-maintenance-dumps`) and the account wipe's
+enumeration and scrub of the runs (`scrubMaintRuns`). `appdata.maint_run` is kept until the last
+dump has expired. Removing the tooling assumes step 4 is finished: no counter document is left to
+purge and no migration target still waits for its copy.
+
 ## Manifest, schema majors and the SDK
 
 - **Majors.** A major is minted only by a non-additive change of a collection's `schema`
