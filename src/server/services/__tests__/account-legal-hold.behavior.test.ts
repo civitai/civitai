@@ -620,6 +620,15 @@ describe('deleteUser under a legal hold', () => {
     expect(await userRow(CLEAN)).toEqual(before);
   });
 
+  it('refuses a memorialized account before any write', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValueOnce({ id: CLEAN, meta: {}, flags: 4 } as never);
+    const before = await userRow(CLEAN);
+
+    await expect(run(CLEAN)).rejects.toBeInstanceOf(MemorializedAccountError);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(await userRow(CLEAN)).toEqual(before);
+  });
+
   it('stops the scrub when the account is memorialized after the check', async () => {
     const before = await userRow(CLEAN);
     beforeScrub = () => holder.db.exec(`UPDATE "User" SET flags = 4 WHERE id = ${CLEAN}`);
