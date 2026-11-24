@@ -131,12 +131,12 @@ describe('mini/[id], flagged model', () => {
     currentUser.value = user;
     const { status, body } = await request([versionRow]);
     expect(status).toBe(200);
-    expect(body.fileName).toBe(FILE.name);
+    expect(body.hashes.SHA256).toBe(FILE.hashes.SHA256);
   });
 
   it('control: an unflagged version is served anonymously', async () => {
     const { status, body } = await request([{ ...versionRow, poi: false }]);
     expect(status).toBe(200);
-    expect(body.fileName).toBe(FILE.name);
+    expect(body.hashes.SHA256).toBe(FILE.hashes.SHA256);
   });
 });
