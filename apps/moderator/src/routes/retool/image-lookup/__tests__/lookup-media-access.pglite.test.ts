@@ -193,9 +193,10 @@ describe("a post report's recent images of the owner", () => {
   const recent = (userId: number, postId: number, csamReview: boolean) =>
     getRecentImagesOutsidePost(userId, postId, { csamReview });
 
-  it("withholds a held owner's other image without the grant", async () => {
+  // civitai/civitai#10202: an account-level hold alone withholds nothing from any moderator.
+  it("serves a held owner's other image without the grant", async () => {
     const [image] = await recent(HELD_OWNER, 51, false);
-    expect(image).toMatchObject({ id: HELD_OWNER_OTHER, url: '', type: null, restricted: true });
+    expect(image).toMatchObject({ id: HELD_OWNER_OTHER, url: 'held-other-key', restricted: false });
   });
 
   it('serves it to a grant holder', async () => {

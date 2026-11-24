@@ -29,8 +29,8 @@ export type RetractedMedia = {
   mimeType: string | null;
 };
 
-/** Held media is `heldImageSql`'s, read here only with `orHeld`; see `moderatorMediaWhereSql` for who
- *  is served it. */
+/** `held` marks held media (`heldImageSql`), so its serve is recorded as a held view; who is served
+ *  it is `moderatorMediaWhereSql`'s call. */
 export type ModeratorMedia = RetractedMedia & { kind: 'retracted' | 'held' };
 
 type ScannerRow = { id: number; ingestion: string };
@@ -87,10 +87,7 @@ export async function readRetractedMedia(
     for (const row of rows) viewable.set(row.id, media(row));
     return { eligible, viewable };
   }
-  const open = await viewableToNonGrant(
-    rows.filter((row) => row.retracted),
-    readVerdicts
-  );
+  const open = await viewableToNonGrant(rows, readVerdicts);
   for (const row of rows) if (open.has(row.id)) viewable.set(row.id, media(row));
   return { eligible, viewable };
 }

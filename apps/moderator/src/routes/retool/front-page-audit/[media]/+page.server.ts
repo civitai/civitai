@@ -5,6 +5,7 @@ import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { validNsfwLevels } from '@civitai/shared';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { withheldRefusal } from '$lib/server/retracted-media';
 import {
   getSweep,
   voteOnTag,
@@ -112,6 +113,8 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return actionFail(input);
     if (!validNsfwLevels.has(input.nsfwLevel)) return actionFail('Not a rating a sweep can set.');
+    const withheld = await withheldRefusal(locals.user, [input.imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     // BEFORE the update: this is the level being swept, and it is half of the audit row below.
     const originalRating = await getImageRating(input.imageId);

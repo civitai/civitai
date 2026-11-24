@@ -3,6 +3,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { applyGrants } from '../access';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
 
 /**
@@ -83,6 +84,10 @@ const bulkPage = await import('../../../routes/retool/bulk-image-manager/+page.s
 const lookupPage = await import('../../../routes/retool/image-lookup/+page.server');
 const queuePage = await import('../../../routes/images/[slug]/+page.server');
 const { collectionImages, loadEntityItem } = await import('../entity-queue-load');
+const comicsPage = await import('../../../routes/comics-review/+page.server');
+const ratingsPage = await import('../../../routes/images/ratings/+page.server');
+const downleveledPage = await import('../../../routes/images/downleveled/+page.server');
+const sweepPage = await import('../../../routes/retool/front-page-audit/[media]/+page.server');
 
 // A routine block reason, kept by the other row on its url, which has not finished its scan.
 const WITHHELD = 501;
@@ -481,5 +486,122 @@ describe('an article report', () => {
 
   it('sends a grant holder the withheld image key', async () => {
     expect(await page(WITH_GRANT)).toContain('shared-key');
+  });
+});
+
+// civitai/civitai#10170: each action that writes to one image refuses a withheld one without the
+// grant, writes nothing, and still acts on an image nothing withholds.
+describe('the single-image write actions on other pages', () => {
+  type Action = (e: never) => Promise<unknown>;
+  const cases: [string, Action, (id: number) => Record<string, string>, () => unknown][] = [
+    [
+      'comics review approve',
+      comicsPage.actions.approve as Action,
+      (id) => ({ imageId: String(id) }),
+      () => acceptImage,
+    ],
+    [
+      'comics review block',
+      comicsPage.actions.block as Action,
+      (id) => ({ imageId: String(id) }),
+      () => blockImage,
+    ],
+    [
+      'rating review',
+      ratingsPage.actions.setLevel as Action,
+      (id) => ({ id: String(id), nsfwLevel: '1' }),
+      () => updateImageNsfwLevel,
+    ],
+    [
+      'downleveled review',
+      downleveledPage.actions.setLevel as Action,
+      (id) => ({ id: String(id), nsfwLevel: '1' }),
+      () => updateImageNsfwLevel,
+    ],
+  ];
+
+  it.each(cases)(
+    '%s refuses a withheld image without the grant',
+    async (_, action, fields, write) => {
+      const result = (await action(event(WITHOUT_GRANT, fields(WITHHELD)))) as Result;
+      expect(result.status).toBe(403);
+      expect(write()).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(cases)(
+    '%s acts on an image nothing withholds, without the grant',
+    async (_, action, fields, write) => {
+      await action(event(WITHOUT_GRANT, fields(CONTROL)));
+      expect(write()).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(cases)(
+    '%s acts on the withheld image for a grant holder',
+    async (_, action, fields, write) => {
+      await action(event(WITH_GRANT, fields(WITHHELD)));
+      expect(write()).toHaveBeenCalledOnce();
+    }
+  );
+
+  describe("the front page sweep's rating", () => {
+    // A role that may open the sweep, and not the held-media page.
+    const SWEEPER = { id: 4, roles: ['moderator:sweeper'] };
+    beforeEach(() => applyGrants({ '/retool/front-page-audit': ['moderator:sweeper'] }));
+    afterEach(() => applyGrants({}));
+    const rate = (user: { id: number; roles: string[] }, imageId: number) =>
+      (sweepPage.actions.setRating as Action)(
+        event(user, { imageId: String(imageId), nsfwLevel: '1' })
+      ).catch(() => undefined) as Promise<Result | undefined>;
+
+    it('refuses a withheld image without the grant', async () => {
+      expect((await rate(SWEEPER, WITHHELD))?.status).toBe(403);
+      expect(updateImageNsfwLevel).not.toHaveBeenCalled();
+    });
+
+    it('rates an image nothing withholds, without the grant', async () => {
+      await rate(SWEEPER, CONTROL);
+      expect(updateImageNsfwLevel).toHaveBeenCalledOnce();
+    });
+
+    it('rates the withheld image for a grant holder', async () => {
+      await rate(WITH_GRANT, WITHHELD);
+      expect(updateImageNsfwLevel).toHaveBeenCalledOnce();
+    });
+  });
+});
+
+// A gate that refused everyone would pass the refusals above.
+describe("the image queues' gated actions, on an image nothing withholds, without the grant", () => {
+  const csam = (fields: Record<string, string>) =>
+    ({ ...(event(WITHOUT_GRANT, fields) as object), params: { slug: 'csam' } } as never);
+
+  it('flag, rate, accept and remove it', async () => {
+    await queuePage.actions.setFlag(
+      event(WITHOUT_GRANT, { imageIds: String(CONTROL), flagValue: 'minor:false' })
+    );
+    await queuePage.actions.setRating(
+      event(WITHOUT_GRANT, { imageIds: String(CONTROL), nsfwLevel: '1' })
+    );
+    await queuePage.actions.accept(event(WITHOUT_GRANT, { imageId: String(CONTROL) }));
+    await queuePage.actions.bulkAccept(event(WITHOUT_GRANT, { imageIds: String(CONTROL) }));
+    await queuePage.actions.block(event(WITHOUT_GRANT, { imageId: String(CONTROL) }));
+    await queuePage.actions.bulkBlock(event(WITHOUT_GRANT, { imageIds: String(CONTROL) }));
+    expect({
+      flag: writes.setImageFlag.mock.calls.length,
+      rate: updateImageNsfwLevel.mock.calls.length,
+      accept: acceptImage.mock.calls.length,
+      block: blockImage.mock.calls.length,
+    }).toEqual({ flag: 1, rate: 1, accept: 2, block: 2 });
+  });
+
+  it('dismiss it, and a clean account', async () => {
+    await queuePage.actions.dismissFlag(csam({ imageId: String(CONTROL), version: 'v' }));
+    await queuePage.actions.dismissUserFlags(
+      csam({ userId: '9', expectedCount: '1', version: 'v' })
+    );
+    expect(dismissFromCsamQueue).toHaveBeenCalledOnce();
+    expect(dismissUserFromCsamQueue).toHaveBeenCalledOnce();
   });
 });
