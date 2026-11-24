@@ -19,8 +19,8 @@ export type VideoPayload = ImagePayload & {
 };
 
 /**
- * The image rules (eligibility.ts). Clips
- * past the worker's limits get no document, so they are never sent and never retried.
+ * The image rules (eligibility.ts). Clips past the worker's limits get no document, so they are
+ * never sent and never retried.
  */
 export async function getVideoDocs(
   pg: Pick<Pool, 'query'>,
