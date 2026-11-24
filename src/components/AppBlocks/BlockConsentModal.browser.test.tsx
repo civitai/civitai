@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+import type * as TrpcMod from '~/utils/trpc';
 import {
   blockScopePermissions,
   groupListingPermissions,
@@ -25,8 +27,16 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 // half of this component is entirely about WHAT IS SENT, and a render-only assertion
 // cannot see the difference between "omit the key" and "send null", which is the one
 // distinction the server acts on.
-const { mutate, importsQuery } = vi.hoisted(() => ({
+const { mutate, importsQuery, storedBudget } = vi.hoisted(() => ({
   mutate: vi.fn(),
+  // What `getMyStoredConsentBudget.useQuery` returns: no stored limit unless a test sets one.
+  storedBudget: {
+    current: {
+      data: { buzzBudgetPerDay: null as number | null },
+      isLoading: false,
+      isError: false,
+    },
+  },
   // What `getStorageImports.useQuery` returns; a test may set it (reset after each test).
   importsQuery: { current: null as null | { data: unknown; isLoading: boolean } },
 }));
@@ -43,18 +53,17 @@ const storageImports = {
   ],
 };
 
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    blocks: {
-      grantScopes: {
-        useMutation: () => ({ mutate, isPending: false }),
-      },
-      // Read only when `apps:storage:import` is being consented to.
-      getStorageImports: {
-        useQuery: () => importsQuery.current ?? { data: storageImports, isLoading: false },
-      },
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  setTrpcBatchingEnabled: vi.fn(),
+  trpc: makeTrpcProxy({
+    'blocks.grantScopes': { useMutation: () => ({ mutate, isPending: false }) },
+    // Read only when `apps:storage:import` is being consented to.
+    'blocks.getStorageImports': {
+      useQuery: () => importsQuery.current ?? { data: storageImports, isLoading: false },
     },
-  },
+    'blocks.getMyStoredConsentBudget': { useQuery: () => storedBudget.current },
+  }),
 }));
 
 const { default: BlockConsentModal } = await import('./BlockConsentModal');
@@ -140,8 +149,8 @@ describe('BlockConsentModal — per-app spend limit', () => {
       />
     );
     await expect.element(page.getByTestId('block-consent-budget-toggle')).toBeInTheDocument();
-    // OFF by default, so the input is not yet shown.
-    expect(page.getByTestId('block-consent-budget-input').elements()).toHaveLength(0);
+    // ON by default, pre-filled with the suggested daily limit.
+    await expect.element(page.getByTestId('block-consent-budget-input')).toHaveValue('1000');
   });
 
   // INVARIANT GUARD — green at both, and vacuously at base for the same reason: the base
@@ -158,6 +167,7 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
+    await page.getByTestId('block-consent-budget-toggle').click();
     await page.getByRole('button', { name: 'Allow' }).click();
     expect(mutate).toHaveBeenCalledTimes(1);
     const payload = mutate.mock.calls[0][0];
@@ -167,7 +177,7 @@ describe('BlockConsentModal — per-app spend limit', () => {
     expect(Object.hasOwn(payload, 'buzzBudgetPerDay')).toBe(false);
   });
 
-  test('with the limit ON, Allow sends the entered budget', async () => {
+  test('with the limit left ON (the default), Allow sends the pre-filled budget', async () => {
     mutate.mockClear();
     renderWithProviders(
       <BlockConsentModal
@@ -177,7 +187,6 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
-    await page.getByTestId('block-consent-budget-toggle').click();
     await expect.element(page.getByTestId('block-consent-budget-input')).toBeInTheDocument();
     await page.getByRole('button', { name: 'Allow' }).click();
     expect(mutate).toHaveBeenCalledTimes(1);
@@ -188,6 +197,48 @@ describe('BlockConsentModal — per-app spend limit', () => {
       scopes: [SPEND],
       buzzBudgetPerDay: 1000,
     });
+  });
+
+  test('a re-consent keeps the limit the viewer already set (250), not the default', async () => {
+    mutate.mockClear();
+    storedBudget.current = { data: { buzzBudgetPerDay: 250 }, isLoading: false, isError: false };
+    try {
+      renderWithProviders(
+        <BlockConsentModal
+          appBlockId="app-6b"
+          blockName="Generator"
+          missingScopes={[SPEND]}
+          onGranted={vi.fn()}
+        />
+      );
+      await expect.element(page.getByTestId('block-consent-budget-input')).toHaveValue('250');
+      await page.getByRole('button', { name: 'Allow' }).click();
+      expect(mutate.mock.calls[0][0]).toEqual({
+        appBlockId: 'app-6b',
+        scopes: [SPEND],
+        buzzBudgetPerDay: 250,
+      });
+    } finally {
+      storedBudget.current = { data: { buzzBudgetPerDay: null }, isLoading: false, isError: false };
+    }
+  });
+
+  test('Allow waits for the stored-limit read, so it can never send the default over it', async () => {
+    mutate.mockClear();
+    storedBudget.current = { data: undefined as never, isLoading: true, isError: false };
+    try {
+      renderWithProviders(
+        <BlockConsentModal
+          appBlockId="app-6c"
+          blockName="Generator"
+          missingScopes={[SPEND]}
+          onGranted={vi.fn()}
+        />
+      );
+      await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
+    } finally {
+      storedBudget.current = { data: { buzzBudgetPerDay: null }, isLoading: false, isError: false };
+    }
   });
 
   // ── OFF-STATE COPY. 🔴 PINNED AS A WHOLE NORMALISED STRING, not by keyword, because
@@ -206,6 +257,7 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
+    await page.getByTestId('block-consent-budget-toggle').click();
     const el = page.getByTestId('block-consent-budget-off');
     await expect.element(el).toBeInTheDocument();
     const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
@@ -229,7 +281,6 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
-    await page.getByTestId('block-consent-budget-toggle').click();
     const input = page.getByTestId('block-consent-budget-input');
     // 1000 (the default) is comfortably fundable → no warning.
     expect(page.getByTestId('block-consent-budget-low-warning').elements()).toHaveLength(0);
@@ -268,7 +319,6 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
-    await page.getByTestId('block-consent-budget-toggle').click();
     const input = page.getByTestId('block-consent-budget-input');
     await input.clear();
     await input.fill('999999');
