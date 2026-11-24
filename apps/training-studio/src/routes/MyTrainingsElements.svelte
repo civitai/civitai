@@ -16,6 +16,7 @@
   import type { CivitaiSelect } from '@civitai/components/civitai-select';
   import { backend, browser, hrefFor } from '$lib/host';
   import { locationHref } from '$lib/actions/locationHref';
+  import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
   import { remixFromRun } from '$lib/reuse';
   import { submitNotice } from '$lib/submit-notice.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
@@ -401,6 +402,17 @@
             <div class="break-words text-xs text-white/80 [text-shadow:1px_1px_1px_rgb(0_0_0/0.8)]">
               <span class="font-semibold text-white">{r.base}</span>{r.sub ? ` · ${r.sub}` : ''}
             </div>
+            {#if r.state === 'failed'}
+              <div class="text-xs text-red-300">This run didn't complete.</div>
+            {:else if r.state === 'review' || r.state === 'rejected' || r.state === 'unreviewed'}
+              <div class="text-xs text-white/80">
+                {r.state === 'review'
+                  ? TRAINING_REVIEW_COPY.pendingTitle
+                  : r.state === 'rejected'
+                    ? TRAINING_REVIEW_COPY.notApprovedTitle
+                    : TRAINING_REVIEW_COPY.unreviewedTitle}. Open the run for details.
+              </div>
+            {/if}
             {#if r.state === 'training'}
               <civitai-progress
                 class="mt-1"
