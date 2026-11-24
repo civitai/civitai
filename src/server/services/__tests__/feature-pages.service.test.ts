@@ -66,20 +66,66 @@ describe('resolveFeaturePageEmbed', () => {
     'http://features.example.com/feature.html',
     'not a url',
   ])('refuses %s', (url) => {
-    expect(service.resolveFeaturePageEmbed(url, feature)).toBeNull();
+    expect(service.resolveFeaturePageEmbed(url, feature, 'civitai.com')).toBeNull();
   });
 
-  it('frames a page on another registrable domain, naming the feature', () => {
+  it('frames a page on another registrable domain, naming the feature and the serving host', () => {
     expect(
-      service.resolveFeaturePageEmbed('https://features.example.com/feature.html', feature)
+      service.resolveFeaturePageEmbed(
+        'https://features.example.com/feature.html',
+        feature,
+        'civitai.com'
+      )
     ).toEqual({
-      src: `https://features.example.com/feature.html?feature=${encodeURIComponent(feature)}`,
+      src: `https://features.example.com/feature.html?feature=${encodeURIComponent(
+        feature
+      )}&host=${encodeURIComponent('https://civitai.com')}`,
       origin: 'https://features.example.com',
     });
     expect(
-      service.resolveFeaturePageEmbed('http://127.0.0.1:7560/feature.html', feature)?.origin
+      service.resolveFeaturePageEmbed('http://127.0.0.1:7560/feature.html', feature, 'civitai.com')
+        ?.origin
     ).toBe('http://127.0.0.1:7560');
   });
+
+  it('outside production a local dev origin is the host; in production it is refused', () => {
+    const url = 'https://features.example.com/feature.html';
+    envMock.set({ NODE_ENV: 'test' });
+    expect(
+      new URL(
+        service.resolveFeaturePageEmbed(url, feature, 'localhost:3000')!.src
+      ).searchParams.get('host')
+    ).toBe('http://localhost:3000');
+    envMock.set({ NODE_ENV: 'production' });
+    expect(service.resolveFeaturePageEmbed(url, feature, 'localhost:3000')).toBeNull();
+    expect(service.resolveFeaturePageEmbed(url, feature, 'civitai.com')).not.toBeNull();
+  });
+
+  it.each([
+    ['civitai.com', 'https://civitai.com'],
+    ['civitai.red', 'https://civitai.red'],
+    ['CIVITAI.RED', 'https://civitai.red'],
+  ])('on %s, the host is that origin, whatever the configured URL names', (served, host) => {
+    const embed = service.resolveFeaturePageEmbed(
+      'https://features.example.com/feature.html?host=https://evil.example',
+      feature,
+      served
+    );
+    expect(new URL(embed!.src).searchParams.getAll('host')).toEqual([host]);
+  });
+
+  it.each([['civitai.green'], ['www.civitai.com'], ['civitai.com.evil.example'], [undefined]])(
+    'on an unlisted origin (%s) no frame is offered',
+    (served) => {
+      expect(
+        service.resolveFeaturePageEmbed(
+          'https://features.example.com/feature.html',
+          feature,
+          served
+        )
+      ).toBeNull();
+    }
+  );
 });
 
 describe('castFeaturePageVote', () => {
