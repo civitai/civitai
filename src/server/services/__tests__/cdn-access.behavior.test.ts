@@ -652,19 +652,29 @@ describe('post takedowns', () => {
 
   // The stamp content-deletion's kept-post delete writes (-1: a system actor such as the account
   // deletion drain). Kept for an open case, nothing is decided yet: deny, reversible, never retract.
-  it.each([
-    ['a system', -1],
-    ["a moderator's own", MOD],
-  ])('%s delete a case keeps denies its post without retracting', async (_, by) => {
-    await sql`UPDATE "Post"
+  const pendingDeleteStamp = (postId: number, by: number) =>
+    sql`UPDATE "Post"
       SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
             'unpublishedAt', now()::text, 'unpublishedBy', ${by}::int,
             'unpublishedReason', ${POST_PENDING_DELETE_REASON}::text, 'prevPublishedAt', "publishedAt"),
           "publishedAt" = NULL
-      WHERE id = 5`;
+      WHERE id = ${postId}`;
+
+  it.each([
+    ['a system', -1],
+    ["a moderator's own", MOD],
+  ])('%s delete a case keeps denies its post without retracting', async (_, by) => {
+    await pendingDeleteStamp(5, by);
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
     expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
+  it("a kept post's stamp does not soften a moderator's violation takedown of its version", async () => {
+    await sql`UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 1`;
+    await pendingDeleteStamp(5, -1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['retract']);
   });
 
   it('a moderator post unpublish retracts', async () => {

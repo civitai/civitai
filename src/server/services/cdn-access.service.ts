@@ -110,8 +110,8 @@ function desiredPostAccess(post: PostAccessFacts | null): CdnAccess {
   // The owner unpublishing their own post or model is not a takedown, even if a moderator later
   // marks the model as a violation or an earlier moderator unpublish left its reason behind.
   if (post.unpublishedBy === null || post.unpublishedBy === String(post.ownerId)) return 'allow';
-  if (post.pendingDelete) return 'deny';
-  if (post.moderatorReason) return 'retract';
+  // The pending-delete stamp is not a takedown, but it leaves a version or model takedown to decide.
+  if (post.moderatorReason && !post.pendingDelete) return 'retract';
   // Only a moderator can set this status: the unpublish services refuse a reason from anyone else.
   if (
     post.versionStatus === ModelStatus.UnpublishedViolation ||
