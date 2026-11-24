@@ -162,7 +162,6 @@ import {
   toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
-  removedWithOwnerEditError,
   updateModelById,
   purgeHeldShowcase,
   queueModelEarlyAccessReindex,
@@ -250,8 +249,6 @@ import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidd
 import { notifyNewlyPinnedPosts } from '~/server/services/model-gallery-pin-notify.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
-import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
-import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import {
   trainingDataOwnerView,
   withoutEpochUrls,
@@ -987,11 +984,7 @@ export const publishModelHandler = async ({
       throw throwBadRequestError('Model is already published');
 
     const { isModerator } = ctx.user;
-    // A model a content wipe kept is publishable by a moderator only, whatever its status.
-    if (
-      !isModerator &&
-      (constants.modPublishOnlyStatuses.includes(model.status) || isRemovedWithOwner(model.meta))
-    )
+    if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
     // The model's status says nothing about its versions: one a moderator took down while the
     // model stayed public must not come back because its id was in this list. Refused here, before
@@ -1031,12 +1024,10 @@ export const publishModelHandler = async ({
           customMessage,
           ...rest
         } = stored || {};
-        // A moderator publishing a model a content wipe hid ends that removal: its record goes too.
-        return withModelRulesClearance(withoutRemovedWithOwner(rest), stored, isModerator);
+        return withModelRulesClearance(rest, stored, isModerator);
       },
       republishing,
       enforceModelRules: !isModerator,
-      refuseRemovedWithOwner: !isModerator,
     });
     // Held for review: not published, so no publish side effects below.
     if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
@@ -1856,7 +1847,6 @@ export const requestReviewHandler = async ({
       data: {},
       meta: (stored, row) => {
         assertReviewable(row?.status);
-        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
         return { ...stored, needsReview: true };
       },
     });
@@ -1955,7 +1945,6 @@ export const changeModelModifierHandler = async ({
       data: { mode },
       meta: (stored, row) => {
         assertModeChange(row?.mode);
-        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
         const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } = stored || {};
         if (mode === ModelModifier.Archived)
           return { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };

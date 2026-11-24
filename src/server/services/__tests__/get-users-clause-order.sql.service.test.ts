@@ -97,4 +97,12 @@ describe('getUsers clause order', () => {
 
     expect(sql).not.toContain('ORDER BY');
   });
+
+  // Policy: docs/features/memorialized-profiles.md (the memorial record is for user.memorialize holders).
+  it('reads the contest-ban list without the memorial record', async () => {
+    const sql = await sqlFor({ contestBanned: true, limit: 20 });
+
+    expect(sql).toContain(`u."meta" - 'memorial'`);
+    expect(sql).not.toMatch(/u\."meta"\s*(,|FROM\b)/);
+  });
 });

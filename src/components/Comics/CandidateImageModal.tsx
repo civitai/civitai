@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
+import { blockedReasonMessage, isCappedBlock } from '~/shared/orchestrator/workflow-data';
 
 // One candidate slot, in stable orchestrator order. Either:
 //  - clean (downloaded to S3, picker may select it), or
@@ -28,7 +28,7 @@ export type CandidateSlot =
 
 /** A capped slot stays hidden whatever is paid: the unlock never lifts the workflow's rating cap. */
 export function isUnlockableSlot(slot: CandidateSlot): boolean {
-  return !!slot.requiresUnlock && slot.blockedReason !== NSFW_CAPPED;
+  return !!slot.requiresUnlock && !isCappedBlock(slot.blockedReason);
 }
 
 function isCandidateMature(slot: CandidateSlot): boolean {
@@ -220,7 +220,7 @@ export function CandidateImageModal({
                       <Text size="xs" c="white" ta="center">
                         {isUnlockableSlot(slot)
                           ? 'Use the unlock button above to reveal.'
-                          : NSFW_CAPPED_MESSAGE}
+                          : blockedReasonMessage(slot.blockedReason)}
                       </Text>
                     </div>
                   </div>

@@ -45,7 +45,6 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
@@ -79,8 +78,8 @@ CREATE TABLE "CommentV3" (
 );
 `;
 
-const HELD = 7;
-const UNHELD = 8;
+const AUTHOR = 8;
+const REPLIER = 7;
 
 let db: PGlite;
 
@@ -89,7 +88,6 @@ beforeEach(async () => {
   await db.exec(SCHEMA);
   await db.exec(imageUseTablesSql);
   await db.exec(`
-    INSERT INTO "EvidenceHeldUser" VALUES (${HELD});
     INSERT INTO "Article" VALUES (50, NULL, 1);
     INSERT INTO "CommentTopic" VALUES ('article', 50);
     INSERT INTO "Thread" (id, "articleId") VALUES (300, 50);
@@ -106,10 +104,10 @@ const rows = async (query: string) => (await db.query(query)).rows;
 const deleteArticle = () => moderateArticle({ action: 'delete', articleId: 50, userId: 99 });
 
 describe("a moderator's article delete", () => {
-  it('deletes the article with its comments when no author is held', async () => {
+  it('deletes the article with its comments', async () => {
     await db.exec(`
-      INSERT INTO "CommentV2" VALUES (1, ${UNHELD}, 300);
-      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${UNHELD}, NULL), (2, 'article', 50, ${UNHELD}, NULL);
+      INSERT INTO "CommentV2" VALUES (1, ${AUTHOR}, 300);
+      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${AUTHOR}, NULL), (2, 'article', 50, ${AUTHOR}, NULL);
     `);
 
     expect(await deleteArticle()).toEqual({ ok: true });
@@ -120,12 +118,12 @@ describe("a moderator's article delete", () => {
     expect(await rows(`SELECT id FROM "CommentV3"`)).toEqual([]);
   });
 
-  it('deletes a held author’s comments with it too, in both tables', async () => {
+  it('deletes reply threads’ comments with it too, in both tables', async () => {
     await db.exec(`
-      INSERT INTO "CommentV2" VALUES (1, ${UNHELD}, 300);
+      INSERT INTO "CommentV2" VALUES (1, ${AUTHOR}, 300);
       INSERT INTO "Thread" (id, "parentThreadId", "rootThreadId", "commentId") VALUES (301, 300, 300, 1);
-      INSERT INTO "CommentV2" VALUES (2, ${HELD}, 301);
-      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${UNHELD}, NULL), (5, 'article', 50, ${HELD}, NULL);
+      INSERT INTO "CommentV2" VALUES (2, ${REPLIER}, 301);
+      INSERT INTO "CommentV3" VALUES (1, 'article', 50, ${AUTHOR}, NULL), (5, 'article', 50, ${REPLIER}, NULL);
     `);
 
     expect(await deleteArticle()).toEqual({ ok: true });

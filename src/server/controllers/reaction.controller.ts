@@ -45,7 +45,7 @@ import { loadEvents } from '~/server/events/load-events';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
-
+import { getJudgingCrucibleIdsForImage } from '~/server/services/crucible.service';
 /**
  * The exact payload `Tracker.reaction` accepts.
  *
@@ -245,14 +245,27 @@ export const toggleReactionHandler = async ({
     }
 
     if (input.entityType === 'image') {
-      // A reaction the user already holds stays removable on an image hidden from them since.
-      await assertImageVisibleToViewer({
+      const viewer = {
         id: input.entityId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
-      }).catch(async (error: unknown) => {
+      };
+      await assertImageVisibleToViewer(viewer).catch(async (error: unknown) => {
         const hidden = error instanceof TRPCError && error.code === 'NOT_FOUND';
-        if (!hidden || !(await holdsReaction({ ...input, userId: ctx.user.id }))) throw error;
+        if (!hidden) throw error;
+        // A reaction the user already holds stays removable on an image hidden from them since.
+        if (await holdsReaction({ ...input, userId: ctx.user.id })) return;
+        // A crucible entry from a draft post publishes when the crucible ends; its judges react
+        // to it before then.
+        if (!ctx.features?.crucible) throw error;
+        const judgingCrucibleIds = await getJudgingCrucibleIdsForImage({
+          imageId: input.entityId,
+          viewerId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+          isGreen: !!ctx.features?.isGreen,
+        });
+        if (!judgingCrucibleIds.length) throw error;
+        await assertImageVisibleToViewer({ ...viewer, judgingCrucibleIds });
       });
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.

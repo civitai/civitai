@@ -107,7 +107,6 @@ beforeAll(async () => {
     await db.pg.exec(migration(name));
   await db.pg.exec(`
     INSERT INTO "User" (id) VALUES (1), (2), (3);
-    -- What the real hold check reads (see storyline-delete-hold.sql.behavior.test.ts); empty here.
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3), details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
@@ -118,9 +117,6 @@ beforeAll(async () => {
       "storylineId" int NOT NULL REFERENCES "Storyline"(id) ON DELETE CASCADE,
       "imageId" int NOT NULL REFERENCES "Image"(id) ON DELETE CASCADE,
       PRIMARY KEY ("storylineId", "imageId"));
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-    CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     -- As production: a reply thread goes with its parent and root threads; a comment's delete
     -- only unlinks its reply thread.
     CREATE TABLE "Thread" ("id" serial PRIMARY KEY,

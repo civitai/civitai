@@ -12,6 +12,7 @@ export type CreatorScoreUnlockSurface =
   | 'announcements'
   | 'placements'
   | 'creatorProgram'
+  | 'creatorShop'
   | 'creatorServices'
   | 'events';
 

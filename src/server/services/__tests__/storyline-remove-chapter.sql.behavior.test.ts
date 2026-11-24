@@ -109,13 +109,9 @@ beforeAll(async () => {
     await db.pg.exec(migration(name));
   await db.pg.exec(`
     INSERT INTO "User" (id) VALUES (1), (2), (3);
-    -- What the real hold check reads (see storyline-delete-hold.sql.behavior.test.ts); empty here.
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3), details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-    CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     -- As production: a reply thread goes with its parent and root threads; a comment's delete
     -- only unlinks its reply thread.
     CREATE TABLE "Thread" ("id" serial PRIMARY KEY,
@@ -149,7 +145,6 @@ const cleanTables = () =>
     DELETE FROM "HeldStorylineCreateClick";
     DELETE FROM "StorylineBranchChoice";
     DELETE FROM "StorylineCreateClick";
-    DELETE FROM "EvidenceHold";
     DELETE FROM "Appeal";
     DELETE FROM "CommentV3";
     DELETE FROM "CommentTopic";
@@ -329,202 +324,18 @@ describe('removeStorylineChapter', () => {
     expect((await placement900()).status).toBe('approved');
   });
 
-  describe('when its owner or author must be kept for records', () => {
-    const READER = 3;
-    const keep = (userId: number) =>
-      db.pg.exec(`INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${userId}, NULL)`);
-    // A reader's choice into chapter 2 and their ask for a tool after it, which its delete cascades.
-    const seedReaders = () =>
-      db.pg.exec(`
-        UPDATE "Placement" SET amount = 0 WHERE id = 900;
-        INSERT INTO "StorylineBranchChoice" ("userId", "parentChapterId", "chapterId")
-          VALUES (${READER}, 10, 11);
-        INSERT INTO "StorylineCreateClick" ("userId", "parentChapterId") VALUES (${READER}, 11);
-      `);
-    const copies = async () => ({
-      chapters: await rows(
-        `SELECT id, "storylineId", "postId", "userId", depth, "placementId", "removedAt",
-          "ownerId", "authorId", "holdReasons", "heldAt" IS NOT NULL AS "hasHeldAt"
-         FROM "HeldStorylineChapter"`
-      ),
-      edges: await rows(
-        `SELECT "storylineId", "chapterId", "parentChapterId", canon, "ownerId", "authorId"
-         FROM "HeldStorylineChapterEdge"`
-      ),
-      choices: await rows(
-        `SELECT "userId", "parentChapterId", "chapterId", "ownerId", "authorId"
-         FROM "HeldStorylineBranchChoice"`
-      ),
-      clicks: await rows(
-        `SELECT "userId", "parentChapterId", "ownerId", "authorId" FROM "HeldStorylineCreateClick"`
-      ),
-    });
-    const noCopies = { chapters: [], edges: [], choices: [], clicks: [] };
-    const copiesOfChapter2 = {
-      chapters: [
-        {
-          id: 11,
-          storylineId: 1,
-          postId: 502,
-          userId: CONTRIBUTOR,
-          depth: 1,
-          placementId: 900,
-          removedAt: null,
-          ownerId: OWNER,
-          authorId: CONTRIBUTOR,
-          holdReasons: null,
-          hasHeldAt: true,
-        },
-      ],
-      edges: [
-        {
-          storylineId: 1,
-          chapterId: 11,
-          parentChapterId: 10,
-          canon: true,
-          ownerId: OWNER,
-          authorId: CONTRIBUTOR,
-        },
-      ],
-      choices: [
-        {
-          userId: READER,
-          parentChapterId: 10,
-          chapterId: 11,
-          ownerId: OWNER,
-          authorId: CONTRIBUTOR,
-        },
-      ],
-      clicks: [{ userId: READER, parentChapterId: 11, ownerId: OWNER, authorId: CONTRIBUTOR }],
-    };
-    // Everything the remover, a reader or a timing could tell apart.
-    const removeAndObserve = async (remover: number) => {
-      bustFetchThroughCache.mockClear();
-      w.$queryRaw.mockClear();
-      w.$executeRaw.mockClear();
-      const response = await remove(remover);
-      return {
-        response,
-        chapters: await rows(`SELECT id, "removedAt" FROM "StorylineChapter" ORDER BY id`),
-        edges: await rows(`SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge"`),
-        choices: await rows(`SELECT "userId" FROM "StorylineBranchChoice"`),
-        clicks: await rows(`SELECT "userId" FROM "StorylineCreateClick"`),
-        placement: await placement900(),
-        cacheBusts: bustFetchThroughCache.mock.calls.map((c) => String(c[0])),
-        statements: w.$queryRaw.mock.calls.length + w.$executeRaw.mock.calls.length,
-        modActivity: trackModActivity.mock.calls.length,
-      };
-    };
-
-    for (const [whose, keptUser, remover] of [
-      ['its owner', OWNER, OWNER],
-      ['its author', CONTRIBUTOR, CONTRIBUTOR],
-      ['its author, removed by the owner', CONTRIBUTOR, OWNER],
-      ['its owner, removed by the author', OWNER, CONTRIBUTOR],
-    ] as const)
-      it(`for ${whose}: the same hard delete as anyone's, with copies kept`, async () => {
-        await seedReaders();
-        const unkept = await removeAndObserve(remover);
-        expect(await copies()).toEqual(noCopies);
-
-        await resetFixture();
-        await seedReaders();
-        await keep(keptUser);
-        const kept = await removeAndObserve(remover);
-
-        expect(kept).toEqual(unkept);
-        expect(kept.chapters).toEqual([{ id: 10, removedAt: null }]);
-        expect(kept.cacheBusts).toEqual([expect.stringMatching(/:10$/)]);
-        expect(await copies()).toEqual(copiesOfChapter2);
-      });
-
-    it('copies nothing once nobody needs it kept', async () => {
-      await seedReaders();
-      await db.pg.exec(
-        `INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${CONTRIBUTOR}, now())`
-      );
-      await remove(CONTRIBUTOR);
-      expect(await chapterIds()).toEqual([10]);
-      expect(await copies()).toEqual(noCopies);
-    });
-
-    // Decided after the removal's reads, so a change made while it runs still counts.
-    it('copies it when that changes after the removal has read the chapter', async () => {
-      await seedReaders();
-      try {
-        await db.pg.exec(`
-          CREATE FUNCTION keep_contributor() RETURNS trigger AS $$
-          BEGIN
-            INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${CONTRIBUTOR}, NULL);
-            RETURN NEW;
-          END $$ LANGUAGE plpgsql;
-          CREATE TRIGGER keep_contributor BEFORE UPDATE ON "Placement"
-            FOR EACH ROW EXECUTE FUNCTION keep_contributor();
-        `);
-        await remove(CONTRIBUTOR);
-      } finally {
-        await db.pg.exec(`
-          DROP TRIGGER IF EXISTS keep_contributor ON "Placement";
-          DROP FUNCTION IF EXISTS keep_contributor();
-        `);
-      }
-      expect(await chapterIds()).toEqual([10]);
-      expect(await copies()).toEqual(copiesOfChapter2);
-    });
-
-    // Ruling: the copy is written by the DELETE statement itself, never a statement before it, so
-    // no change between the two can delete a chapter without keeping its copy. Don't split it out.
-    it('writes the copies in the DELETE statement itself', async () => {
-      await seedReaders();
-      await keep(CONTRIBUTOR);
-      w.$executeRaw.mockClear();
-      await remove(CONTRIBUTOR);
-      // A tagged template or a Prisma.sql object, whichever the call was made with.
-      const statements = w.$executeRaw.mock.calls.map(([first]) =>
-        Array.isArray(first) ? first.join('?') : (first as { sql: string }).sql
-      );
-      const touchingCopies = statements.filter((sql) => /"Held/.test(sql));
-      expect(touchingCopies).toHaveLength(1);
-      for (const part of [
-        'INSERT INTO "HeldStorylineChapter"',
-        'INSERT INTO "HeldStorylineChapterEdge"',
-        'INSERT INTO "HeldStorylineBranchChoice"',
-        'INSERT INTO "HeldStorylineCreateClick"',
-      ])
-        expect(touchingCopies[0]).toContain(part);
-      expect(touchingCopies[0]).toMatch(/\)\s*DELETE FROM "StorylineChapter" WHERE id = \?\s*$/);
-    });
-
-    it("leaves a moderator's removal a tombstone, with no copies", async () => {
-      await seedReaders();
-      await keep(CONTRIBUTOR);
-      await keep(OWNER);
-      await remove(MODERATOR, true);
-      expect(
-        await rows(
-          `SELECT id, "removedAt" IS NOT NULL AS removed FROM "StorylineChapter" ORDER BY id`
-        )
-      ).toEqual([
-        { id: 10, removed: false },
-        { id: 11, removed: true },
-      ]);
-      expect(await copies()).toEqual(noCopies);
-    });
-
-    it('records the removal for moderators while a report is open, as it would otherwise', async () => {
-      await seedReaders();
-      await keep(CONTRIBUTOR);
-      await db.pg.exec(`
-        INSERT INTO "Report" (id, status) VALUES (76, 'Pending');
-        INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 76);
-      `);
-      await remove(CONTRIBUTOR);
-      expect(await chapterIds()).toEqual([10]);
-      expect(await copies()).toEqual(copiesOfChapter2);
-      expect(
-        await rows(`SELECT "removedByRole", "reportIds" FROM "StorylineChapterRemovalHold"`)
-      ).toEqual([{ removedByRole: 'author', reportIds: [76] }]);
-    });
+  it('records the removal for moderators while a report is open, and keeps no copy', async () => {
+    await db.pg.exec(`
+      UPDATE "Placement" SET amount = 0 WHERE id = 900;
+      INSERT INTO "Report" (id, status) VALUES (76, 'Pending');
+      INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 76);
+    `);
+    await remove(CONTRIBUTOR);
+    expect(await chapterIds()).toEqual([10]);
+    expect(await rows(`SELECT id FROM "HeldStorylineChapter"`)).toEqual([]);
+    expect(
+      await rows(`SELECT "removedByRole", "reportIds" FROM "StorylineChapterRemovalHold"`)
+    ).toEqual([{ removedByRole: 'author', reportIds: [76] }]);
   });
 
   it('refuses anyone else', async () => {

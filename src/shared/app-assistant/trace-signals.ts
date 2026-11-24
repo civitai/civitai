@@ -20,6 +20,10 @@
  *
  * VERSIONS: 1 had no `accentCustomized`; a reader of a v1 row derives it from the row's own
  * `theme` with `accentCustomizedOf` (the same rule, over the same evidence).
+ * The scan ignores comments from 2026-11-24 on, with no version bump (the shape did not change): a
+ * token or colour that appears only inside a comment no longer counts, for `themeCustomized` and
+ * `accentCustomized` alike. Rows written before that (a fresh v0.1.152 `page-elements` scaffold's
+ * read `accentCustomized: true` off its commented-out accent block) keep it; there is no backfill.
  */
 
 import {

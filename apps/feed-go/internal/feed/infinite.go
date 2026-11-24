@@ -20,6 +20,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
 // The port of `image.getInfinite` (image.router.ts: heavyProcedure → getInfiniteImagesHandler in
@@ -1161,7 +1162,11 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 	if err != nil {
 		return nil, nil, err
 	}
-	return BuildInfiniteImages(rows, hy, viewer, now), next, nil
+	_, phase := tracing.StartPhase(ctx, tracing.PhaseBuild)
+	phase.SetInt(tracing.AttrItems, len(rows))
+	images := BuildInfiniteImages(rows, hy, viewer, now)
+	phase.End()
+	return images, next, nil
 }
 
 // BuildInfiniteImages is getAllImagesUncaptured's per-image transform under stripImageForInfiniteWire

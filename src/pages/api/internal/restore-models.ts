@@ -5,7 +5,6 @@ import { dbWrite } from '~/server/db/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { publishModelById } from '~/server/services/model.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -27,8 +26,6 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
     WHERE mv."modelId" IN (${modelIds.join(',')})
     AND jsonb_typeof(mv.meta->'unpublishedAt') != 'undefined'
     AND (mv.meta->>'unpublishedReason') = 'duplicate'
-    -- A model a content wipe kept is a moderator's to restore.
-    AND ${notRemovedWithOwnerSql('m.meta').sql}
     -- Both encodings: take-downs before the single-statement rewrite left the version at
     -- 'Unpublished' with a reason in meta; after it, a reasoned take-down writes
     -- 'UnpublishedViolation'. Matching only the first silently restores an arbitrary subset —
@@ -40,12 +37,10 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
   const tasks = versions.map(({ id, versionIds }, i) => async () => {
     const consoleKey = `Republishing ${i + 1} of ${versions.length}`;
     console.time(consoleKey);
-    // A content wipe may have kept the model since the select: the publish refuses it under its lock.
     await publishModelById({
       id,
       versionIds,
       republishing: true,
-      refuseRemovedWithOwner: true,
       meta: (stored) => {
         const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
           stored || {};

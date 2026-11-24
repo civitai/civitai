@@ -78,10 +78,8 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    -- The scan write re-checks the owner's ban and holds (empty here, so nothing is kept).
+    -- The scan write re-checks the owner's ban.
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -153,7 +151,7 @@ beforeEach(async () => {
     // The grid's fresh read of the row and its ban/hold check run on the real row.
     if (
       holder.verdict &&
-      (text.includes('FROM "Image" i WHERE i.id') || text.includes(' AS held '))
+      (text.includes('FROM "Image" i WHERE i.id') || text.includes(' AS kept '))
     ) {
       const flat = Prisma.sql(strings, ...(values as never[]));
       return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
@@ -171,7 +169,7 @@ beforeEach(async () => {
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Appeal", "EvidenceHoldImage", "CsamReport";
+    TRUNCATE "Image", "Appeal", "CsamReport", "User";
     INSERT INTO "Image" (id, ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 'Rescan', NULL, 4, 'minor'),
@@ -409,15 +407,15 @@ type Stored = {
   /** The review the scan loaded, when it changed after the load. Default: the stored one. */
   loadedReview?: string | null;
   /** A hold blocked the image after the scan loaded it unblocked. */
-  heldAfterLoad?: boolean;
+  bannedAfterLoad?: boolean;
   /**
    * The image is held by a CSAM block: one the scan loaded, or one set after it loaded the image; or
    * the scan loaded one that a moderator lifted before its write.
    */
   csamBlocked?: 'loaded' | 'afterLoad' | 'liftedAfterLoad';
   /**
-   * The CSAM report listing the image was sent and archived over a year ago, so it no longer holds
-   * the owner. Otherwise the block holds the owner, and a held owner's block is kept from the scan.
+   * The CSAM report listing the image was sent and archived over a year ago. The CSAM block is kept
+   * from the scan either way.
    */
   reportReleased?: boolean;
   /** The pending appeal was filed after the scan read the image's appeals. */
@@ -450,13 +448,13 @@ const rescan = async (verdict: Verdict, stored: Stored = {}) => {
     await holder.db.query(`INSERT INTO "Appeal" ("entityType", "entityId") VALUES ('Image', $1)`, [
       GRID_ID,
     ]);
-  if (stored.heldAfterLoad)
+  if (stored.bannedAfterLoad)
     await holder.db.query(
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', "nsfwLevel" = 32 WHERE id = $1;`,
       [GRID_ID]
     );
-  if (stored.heldAfterLoad)
-    await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [GRID_ID]);
+  if (stored.bannedAfterLoad)
+    await holder.db.query(`INSERT INTO "User" (id, "bannedAt") VALUES (2, now())`);
   // A lifted block leaves the stored row as inserted: unblocked.
   if (stored.csamBlocked && stored.csamBlocked !== 'liftedAfterLoad')
     await holder.db.query(
@@ -587,23 +585,23 @@ describe('the review a scan verdict leaves', () => {
     expect(row).toMatchObject({ needsReview: expected, minor: true });
   });
 
-  // A hold that blocks the row after the scan loaded it leaves it blocked: the same settle applies,
+  // A ban that blocks the row after the scan loaded it leaves it blocked: the same settle applies,
   // whatever the verdict found.
   it.each([
     [null, 'minor'],
     ['tag', 'minor'],
     ['minor', 'clean'],
-  ])('a row a hold kept blocked, stored %s, %s verdict: no review', async (stored, verdict) => {
+  ])('a row a ban kept blocked, stored %s, %s verdict: no review', async (stored, verdict) => {
     const row = await rescan(verdict as Verdict, {
       needsReview: stored,
-      heldAfterLoad: true,
+      bannedAfterLoad: true,
     });
     const { ingestion } = (
       await holder.db.query<{ ingestion: string }>(`SELECT ingestion FROM "Image" WHERE id = $1`, [
         GRID_ID,
       ])
     ).rows[0];
-    // Control: the hold kept the row blocked.
+    // Control: the ban kept the row blocked.
     expect(ingestion).toBe('Blocked');
     expect(row.needsReview).toBeNull();
   });

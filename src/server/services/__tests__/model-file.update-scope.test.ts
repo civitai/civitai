@@ -167,8 +167,6 @@ beforeEach(() => {
   tx.modelFile.create.mockResolvedValue({ id: NEW_ID });
   tx.$queryRaw.mockImplementation(async (...call: unknown[]) => {
     if (sqlOf(call).includes('FOR UPDATE')) return [locked];
-    // The owner's hold, read only when the delete removed nothing. Not held.
-    if (sqlOf(call).includes('AS held')) return [{ held: false }];
     return linkedRows;
   });
 });
@@ -1059,7 +1057,7 @@ describe('an owner editing a Training Studio dataset directly', () => {
 
   beforeEach(() => {
     // The share's restriction check: nothing restricted.
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: false }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ restricted: false }]);
   });
 
   it('can share a complete, fully rated zip', async () => {
@@ -1080,7 +1078,7 @@ describe('an owner editing a Training Studio dataset directly', () => {
 
   it('cannot share a zip whose owner or content is restricted', async () => {
     studio({ complete: true });
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: true }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ restricted: true }]);
     await updateFile({ id: 1, visibility: 'Public', userId: 7 });
     expect(writtenData().visibility).toBe('Private');
   });

@@ -29,25 +29,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   env.isProd = true;
   env.DATABASE_IS_PROD = true;
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (sql: { sql: string }) =>
-    sql.sql.includes('AS "evidenceHold"')
-      ? [
-          {
-            id: 9,
-            review: true,
-            blocked: false,
-            minor: false,
-            reported: false,
-            evidenceHold: false,
-          },
-        ]
-      : [{ id: 1 }, { id: 2 }]) as never);
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ id: 1 }, { id: 2 }] as never);
   deleteImages.mockResolvedValue([{ id: 1 }]);
 });
 
 describe('purge-feedback-captures', () => {
   it('deletes the expired captures through the guard, and counts what the guard skipped', async () => {
-    expect(await run()).toMatchObject({ deleted: 1, skippedByGuard: 1, kept: 1, keptReview: 1 });
+    expect(await run()).toMatchObject({ deleted: 1, skippedByGuard: 1 });
     expect(deleteImages).toHaveBeenCalledTimes(1);
     const [ids, opts] = deleteImages.mock.calls[0];
     expect(ids).toEqual([1, 2]);

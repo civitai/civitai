@@ -93,8 +93,6 @@ const holder = vi.hoisted(() => ({
   csamLandsAfterRead: null as number | null,
   /** Set to an image id: its owner is banned, with the media block, right after the fresh read. */
   banLandsAfterRead: null as number | null,
-  /** Set to an image id: a hold keeps it, blocked, right after the fresh read. */
-  holdLandsAfterRead: null as number | null,
 }));
 
 const OWNER = 8;
@@ -135,8 +133,6 @@ beforeAll(async () => {
       "entityId" int NOT NULL,
       status "AppealStatus" NOT NULL DEFAULT 'Pending'
     );
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -173,7 +169,7 @@ beforeEach(async () => {
         { id: 10, name: 'tag', type: 'Label', nsfwLevel: holder.tagNsfwLevel, confidence: 90 },
       ];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
-    if (text.includes(' AS held ')) return (await runOnPglite(strings, values)).rows;
+    if (text.includes(' AS kept ')) return (await runOnPglite(strings, values)).rows;
     if (text.includes('FROM "Image" i WHERE i.id')) {
       const { rows } = await runOnPglite(strings, values);
       if (holder.csamLandsAfterRead != null)
@@ -192,14 +188,6 @@ beforeEach(async () => {
           [id]
         );
       }
-      if (holder.holdLandsAfterRead != null) {
-        const id = holder.holdLandsAfterRead;
-        await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [id]);
-        await holder.db.query(
-          `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated', "nsfwLevel" = 32 WHERE id = $1`,
-          [id]
-        );
-      }
       return rows;
     }
     if (
@@ -213,15 +201,13 @@ beforeEach(async () => {
   holder.tagNsfwLevel = 1;
   holder.csamLandsAfterRead = null;
   holder.banLandsAfterRead = null;
-  holder.holdLandsAfterRead = null;
   await holder.db.exec(`
-    TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
+    TRUNCATE "Image", "User", "CsamReport";
     INSERT INTO "User" (id, "bannedAt") VALUES (${OWNER}, NULL), (${OTHER_OWNER}, NULL);
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
       (${CSAM}, ${OWNER}, 'Blocked', 'CSAM', 32),
       (${OTHER}, ${OTHER_OWNER}, 'Blocked', 'moderated', 32);
-    -- Reported over a year ago and archived: no account hold is left to keep the block, only its
-    -- CSAM reason.
+    -- Reported over a year ago and archived, owner not banned: only the CSAM reason keeps the block.
     INSERT INTO "CsamReport" ("userId", images, "reportSentAt", "archivedAt")
       VALUES (${OWNER}, '[{"id": ${CSAM}}]', now() - interval '2 years', now() - interval '2 years');
   `);
@@ -385,21 +371,6 @@ describe('a ban that lands after the scan read the row', () => {
     expect(await imageRow(OTHER)).toEqual(BANNED);
     // A Scanned outcome would queue the image for Knights review and signal its owner.
     expect(outcome).toMatchObject(BANNED);
-  });
-});
-
-describe('a hold that lands after the scan read the row', () => {
-  it('keeps the block when the audit comes back clean', async () => {
-    await holder.db.exec(
-      `UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = NULL, "nsfwLevel" = 0 WHERE id = ${OTHER}`
-    );
-    holder.holdLandsAfterRead = OTHER;
-
-    const outcome = await scan(OTHER);
-
-    const HELD = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
-    expect(await imageRow(OTHER)).toEqual(HELD);
-    expect(outcome).toMatchObject(HELD);
   });
 });
 
@@ -931,7 +902,7 @@ describe('scan result writes', () => {
   // One owner per row (100 + its id), so no row's state reaches another through its owner.
   const W_CSAM = 1;
   const W_MODERATED = 2;
-  const W_HELD_OWNER = 3;
+  const W_BANNED_OWNER = 3;
   const W_AI_UNVERIFIED = 4;
   const W_FLAGGED = 5;
   const W_LEVEL_ONLY = 6;
@@ -955,11 +926,11 @@ describe('scan result writes', () => {
     await holder.db.exec(`
       TRUNCATE "ModActivity";
       INSERT INTO "User" (id) SELECT 100 + g FROM generate_series(1, 9) g;
-      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (100 + ${W_HELD_OWNER});
+      UPDATE "User" SET "bannedAt" = now() WHERE id = 100 + ${W_BANNED_OWNER};
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", minor) VALUES
         (${W_CSAM}, 100 + ${W_CSAM}, 'Blocked', 'CSAM', 32, NULL, false),
         (${W_MODERATED}, 100 + ${W_MODERATED}, 'Blocked', 'moderated', 32, NULL, false),
-        (${W_HELD_OWNER}, 100 + ${W_HELD_OWNER}, 'Blocked', 'moderated', 32, NULL, false),
+        (${W_BANNED_OWNER}, 100 + ${W_BANNED_OWNER}, 'Blocked', 'moderated', 32, NULL, false),
         (${W_AI_UNVERIFIED}, 100 + ${W_AI_UNVERIFIED}, 'Blocked', 'AiNotVerified', 32, NULL, false),
         (${W_FLAGGED}, 100 + ${W_FLAGGED}, 'Error', NULL, 32, 'minor', false),
         (${W_TAKEN_DOWN}, 100 + ${W_TAKEN_DOWN}, 'Error', NULL, 32, NULL, false),
@@ -1023,7 +994,7 @@ describe('scan result writes', () => {
     it.each([
       ['1', W_CSAM],
       ['2', W_MODERATED],
-      ['3', W_HELD_OWNER],
+      ['3', W_BANNED_OWNER],
       ['4', W_AI_UNVERIFIED],
     ])('keeps the stored ingestion and counts the attempt (%s)', async (_label, id) => {
       const before = await imageRow(id);
@@ -1072,9 +1043,9 @@ describe('scan result writes', () => {
     });
 
     it('matches the existing write (2)', async () => {
-      await toError(W_HELD_OWNER);
-      await scan(W_HELD_OWNER);
-      expect(await imageRow(W_HELD_OWNER)).toMatchObject({
+      await toError(W_BANNED_OWNER);
+      await scan(W_BANNED_OWNER);
+      expect(await imageRow(W_BANNED_OWNER)).toMatchObject({
         ingestion: 'Blocked',
         blockedFor: 'moderated',
       });
@@ -1151,7 +1122,7 @@ describe('scan result writes', () => {
 
   describe('the shared definition', () => {
     it('matches exactly the rows the write keeps', async () => {
-      await toError(W_CSAM, W_MODERATED, W_HELD_OWNER, W_AI_UNVERIFIED);
+      await toError(W_CSAM, W_MODERATED, W_BANNED_OWNER, W_AI_UNVERIFIED);
       await holder.db.exec(`
         INSERT INTO "User" (id) VALUES (120), (121), (122), (123);
         INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "needsReview", "nsfwLevelLocked") VALUES
@@ -1169,7 +1140,7 @@ describe('scan result writes', () => {
       expect(rows.map((r) => r.id)).toEqual([
         W_CSAM,
         W_MODERATED,
-        W_HELD_OWNER,
+        W_BANNED_OWNER,
         W_FLAGGED,
         W_TAKEN_DOWN,
         W_AI_FLAGGED,
@@ -1236,22 +1207,23 @@ describe('scan result writes', () => {
           return (await runOnPglite(strings, values)).rows;
         if (text.includes('TagsOnImageDetails')) return [];
         const rows = await (outer as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
-        if (holdAfterRead.id != null && text.includes('FROM "Image" i WHERE i.id')) {
-          await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [
-            holdAfterRead.id,
-          ]);
+        if (banAfterRead.id != null && text.includes('FROM "Image" i WHERE i.id')) {
+          await holder.db.query(
+            `UPDATE "User" SET "bannedAt" = now() WHERE id = (SELECT "userId" FROM "Image" WHERE id = $1)`,
+            [banAfterRead.id]
+          );
           await holder.db.query(
             `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified', "nsfwLevel" = 32 WHERE id = $1`,
-            [holdAfterRead.id]
+            [banAfterRead.id]
           );
-          holdAfterRead.id = null;
+          banAfterRead.id = null;
         }
         return rows;
       }) as never);
     });
 
     /** Set to an image id: that row changes right after the fresh read. */
-    const holdAfterRead = { id: null as number | null };
+    const banAfterRead = { id: null as number | null };
     const MOD = { id: 1, isModerator: true } as never;
     const addTools = (imageId: number) =>
       addImageTools({ data: [{ imageId, toolId: 1 }] as never, user: MOD });
@@ -1439,7 +1411,7 @@ describe('scan result writes', () => {
       });
 
       it('case 5', async () => {
-        holdAfterRead.id = W_PENDING;
+        banAfterRead.id = W_PENDING;
         sx.minor = true;
         await scan(W_PENDING);
         expect(await imageRow(W_PENDING)).toMatchObject({
@@ -1478,7 +1450,7 @@ describe('scan result writes', () => {
 
       it.each([
         ['1', W_CSAM, ''],
-        ['2', W_HELD_OWNER, ''],
+        ['2', W_BANNED_OWNER, ''],
         ['3', W_AI_UNVERIFIED, ''],
         ['4', W_MODERATED, 'minor = true'],
         ['5', W_MODERATED, `"needsReview" = 'appeal'`],

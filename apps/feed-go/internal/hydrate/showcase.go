@@ -119,7 +119,7 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, s
 		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
 			return true, nil, false, false
 		}
-		e, st := entryState(cmd, ShowcaseTTL, now, false)
+		e, st := entryState(cmd, ShowcaseTTL, now, decodeOpts{})
 		if st == stateHeld {
 			held = true
 		}

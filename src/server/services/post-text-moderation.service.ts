@@ -12,7 +12,7 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
 /**
  * Whether text `t` may be restored: no csam flag, no csam hold Pending or Confirmed on it, and nothing
- * `post_text_held` holds it for (a CSAM report naming its author or quoting its post, an evidence hold).
+ * `post_text_held` holds it for (its csam hold, until a CSAM report captures the post's text).
  */
 const restorableText = sql<boolean>`NOT ${sql.raw(postTextCsamHeldText('t'))}
   AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")`;

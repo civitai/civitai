@@ -57,6 +57,12 @@ type PageQuery struct {
 	// feed's official-checkpoint pin (Serve). Neither relaxes the private-model filter.
 	OnlyModelIDs    []int
 	ExcludeModelIDs []int
+	// IDs is the `ids` input (Input.IDs): a non-empty list filters the page to those models.
+	IDs []int
+	// Followed is `followed` with a signed-in viewer: the page is held to FollowedUserIDs, the creators
+	// the viewer follows, or to nothing (`1 = 0`) when they follow no one.
+	Followed        bool
+	FollowedUserIDs []int
 }
 
 // SQL is one statement and its arguments.
@@ -362,6 +368,14 @@ func (q *PageQuery) Build() (SQL, error) {
 	if len(q.Types) > 0 {
 		and = append(and, `m.type = ANY(`+b.arg(q.Types)+`::text[]::"ModelType"[])`)
 	}
+	// `followed && sessionUser?.id`: the viewer's follows (`IN (…)`), or no row at all.
+	if q.Followed {
+		if len(q.FollowedUserIDs) == 0 {
+			and = append(and, `1 = 0`)
+		} else {
+			and = append(and, `mm."userId" = ANY(`+b.arg(q.FollowedUserIDs)+`::int[])`)
+		}
+	}
 	switch {
 	case useBM && len(q.BaseModels) == 1:
 		and = append(and, `mbm."baseModel" = `+b.arg(q.BaseModels[0]))
@@ -389,7 +403,11 @@ func (q *PageQuery) Build() (SQL, error) {
 	if q.AllowNoCredit != nil {
 		and = append(and, `m."allowNoCredit" = `+b.arg(*q.AllowNoCredit))
 	}
-	// `ids` falls back; then onlyModelIds and excludeModelIds, as `IN (…)` / `NOT IN (…)`.
+	// `!!ids?.length` (`IN (…)`), then onlyModelIds and excludeModelIds, as `IN (…)` / `NOT IN (…)`.
+	// The ids clause casts to `integer[]` (the same type as `int[]`) so its text is not the pin's.
+	if len(q.IDs) > 0 {
+		and = append(and, `mm."modelId" = ANY(`+b.arg(q.IDs)+`::integer[])`)
+	}
 	if len(q.OnlyModelIDs) > 0 {
 		and = append(and, `mm."modelId" = ANY(`+b.arg(q.OnlyModelIDs)+`::int[])`)
 	}
@@ -454,7 +472,7 @@ func (q *PageQuery) Build() (SQL, error) {
 		and = append(and, p+`."availability" != 'Private'::"Availability"`)
 	}
 	if q.CollectionID != 0 {
-		// The semi-join of every sort but Recently Added (Parse refuses that one), with
+		// The semi-join of every sort but Recently Added (ParseWith refuses that one), with
 		// getAvailableCollectionItemsFilterForUser's item filter built without `statuses`: accepted
 		// items, and for a signed-in viewer also the items they added that are still in review.
 		clause := `EXISTS (
@@ -490,7 +508,7 @@ func (q *PageQuery) Build() (SQL, error) {
 	if len(q.FileFormats) > 0 {
 		ors := make([]string, len(q.FileFormats))
 		for i, f := range q.FileFormats {
-			// Interpolated as Node does; Parse admits only the constants.modelFileFormats values.
+			// Interpolated as Node does; ParseWith admits only the constants.modelFileFormats values.
 			ors[i] = `mf."metadata" @> '{"format": "` + f + `"}'`
 		}
 		and = append(and, `EXISTS (

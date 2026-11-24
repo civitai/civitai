@@ -94,7 +94,6 @@ describe('servableImage', () => {
       CREATE TABLE "CsamReport" (
         id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB NOT NULL DEFAULT '{}', images JSONB NOT NULL DEFAULT '[]'
       );
-      CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL);
       INSERT INTO "User" (id) VALUES (1);
       INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
       INSERT INTO "Image" (id, "postId", minor, "acceptableMinor", "needsReview") VALUES
@@ -190,7 +189,7 @@ describe('servableImage', () => {
           (5, NULL, NULL, false), (6, now(), NULL, false), (7, NULL, now(), false), (8, NULL, NULL, true),
           (9, NULL, NULL, false);
         INSERT INTO "CsamReport" ("userId", images) VALUES (NULL, '["990000303"]'), (5, '[]');
-        INSERT INTO "EvidenceHeldUser" ("userId") VALUES (9);
+        INSERT INTO "CsamReport" ("userId", images, details) VALUES (NULL, '[]', '{"secondaryUserId": "9"}');
         INSERT INTO "Model" (id, status, availability, "deletedAt") VALUES
           (201, 'Published', 'Public', NULL), (202, 'Deleted', 'Public', NULL), (203, 'Published', 'Public', now()),
           (204, 'Published', 'Public', NULL), (205, 'Published', 'Public', NULL), (206, 'Draft', 'Public', NULL),
@@ -234,7 +233,7 @@ describe('servableImage', () => {
       ['a ToS violation', 990000302],
       ['a listing on a CSAM report', 990000303],
       ['an uploader named on a CSAM report', 990000304],
-      ['an uploader under an evidence hold', 990000316],
+      ['an uploader named as the secondary user on a CSAM report', 990000316],
       ['a deleted uploader', 990000305],
       ['a deleted model version', 990000306],
       ['a deleted model', 990000307],
