@@ -185,7 +185,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         );
         if (res.status === 401) throw new UnauthorizedError(`Dataset image unavailable (401)`);
         if (!res.ok) throw new Error(`Dataset image unavailable (${res.status})`);
-        return res.blob();
+        // The orchestrator's CORS exposes X-NSFW-Level.
+        return { blob: await res.blob(), nsfwLevel: res.headers.get('x-nsfw-level') ?? undefined };
       }),
 
     listGenerations: (media) => call((client) => orch.listGenerations(client, media)),

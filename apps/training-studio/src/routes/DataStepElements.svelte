@@ -33,9 +33,9 @@
   import type { StudioPopover } from '$lib/elements/studio-popover';
   import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
   import { autoLabelAvailable, browser, hostConfig, hostLink } from '$lib/host';
-  import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
+  import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/nsfw-rating';
   import StickySummary from '$lib/components/StickySummary.svelte';
-  import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { blobPreview, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
@@ -76,6 +76,9 @@
     startLabelPass,
     tagsHaveTrigger,
     withFilterTags,
+    asDatasetFilter,
+    matchesRatingFilter,
+    ratingChoices,
     type DatasetFilter,
     type Img,
     type LabelPosition,
@@ -266,6 +269,7 @@
   // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
   const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
   const matureTotal = $derived(images.filter(isMature).length);
+  const ratingFilters = $derived(ratingChoices(images, filter));
   // With/without tag filter (and Manage tags' "Show images"): the images that matched when the filter
   // last changed — a snapshot, so adding a missing tag to one while reviewing doesn't hide it.
   let tagFilter = $state<(TagFilter & { ids: number[] }) | null>(null);
@@ -315,7 +319,9 @@
           ? images.filter(isMature)
           : filter === 'failed'
             ? images.filter(isFailed)
-            : images
+            : filter.startsWith('rating:')
+              ? images.filter((i) => matchesRatingFilter(i, filter))
+              : images
   );
   // Per-image repeats: tucked into the label editor, a bulk setter while a tag filter is on, and a
   // ×N badge only on images that repeat.
@@ -481,7 +487,7 @@
     if (targets.length === 0) return;
     await pool(targets, 4, async (t) => {
       const direct = directDatasetUrl(t.air);
-      const url = direct ?? (await blobPreviewUrl(t.air, t.workflowId));
+      const { url, nsfwLevel } = direct ? { url: direct } : await blobPreview(t.air, t.workflowId);
       if (!url) return;
       // Tile removed mid-fetch — or the whole flow unmounted (its cleanup empties `images`, so
       // this same guard catches a late resolve after teardown and the URL never leaks).
@@ -489,7 +495,7 @@
         if (!direct) URL.revokeObjectURL(url);
         return;
       }
-      patch(t.id, { previewUrl: url, blobUrl: url });
+      patch(t.id, { previewUrl: url, blobUrl: url, ...(nsfwLevel ? { nsfwLevel } : {}) });
     });
     // A directly fetchable (https) item only becomes labelable once `blobUrl` exists — the add-time
     // drain saw nothing to do, so run it again now.
@@ -1475,9 +1481,8 @@
                 { value: 'all', label: `All ${images.length}` },
                 { value: 'labeled', label: `Labeled ${labeledTotal}` },
                 { value: 'unlabeled', label: `Unlabeled ${unlabeledTotal}` },
-                ...(matureTotal > 0 || filter === 'mature'
-                  ? [{ value: 'mature', label: `Mature ${matureTotal}` }]
-                  : []),
+                ...(filter === 'mature' ? [{ value: 'mature', label: `Mature ${matureTotal}` }] : []),
+                ...ratingFilters.map((r) => ({ value: `rating:${r.rating}`, label: `${r.label} ${r.count}` })),
                 ...(failedTotal > 0 || filter === 'failed'
                   ? [{ value: 'failed', label: `Failed ${failedTotal}` }]
                   : []),
@@ -1485,8 +1490,8 @@
               value={filter}
               onchange={(e: Event) => {
                 const v = (e.currentTarget as StudioChipGroup).value;
-                if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
-                  showFilter(v);
+                const next = asDatasetFilter(v);
+                if (next) showFilter(next);
               }}
             ></studio-chip-group>
             <civitai-segmented-control
@@ -1581,10 +1586,10 @@
           {/if}
         </div>
 
-        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !i.nsfwLevel)}
+        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !!i.previewUrl && !i.nsfwLevel)}
           <p class="mb-3 text-xs text-dark-2">
-            Images reused from an earlier training have no rating badge. Retraining is charged the same
-            way the original run was.
+            Some images have no rating badge. Every image is checked again when you start training; if
+            that finds mature content, nothing is charged until you check the price and start again.
           </p>
         {/if}
 
@@ -1602,7 +1607,9 @@
                     ? 'No images rated mature.'
                     : filter === 'failed'
                       ? 'No failed uploads.'
-                      : 'No images.'}
+                      : filter.startsWith('rating:')
+                        ? `No images rated ${nsfwLevelLabel(filter.slice('rating:'.length))}.`
+                        : 'No images.'}
           </div>
         {/if}
 

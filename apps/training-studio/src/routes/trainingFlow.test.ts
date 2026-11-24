@@ -17,6 +17,9 @@ import {
 import {
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
+  asDatasetFilter,
+  matchesRatingFilter,
+  ratingChoices,
   buildTrainingRuns,
   stampMature,
   captionTriggerHit,
@@ -1226,5 +1229,50 @@ describe('Krea 2 label modes', () => {
     expect(sweepLabelMode([flux, krea], krea, 'tag', false)).toBe('caption');
     // a labeled dataset keeps its format across the swap
     expect(sweepLabelMode([anima, krea], krea, 'caption', true)).toBe('caption');
+  });
+});
+
+describe('asDatasetFilter', () => {
+  it('takes the status filters and one per site rating, and nothing else', () => {
+    expect(asDatasetFilter('mature')).toBe('mature');
+    expect(asDatasetFilter('rating:pg13')).toBe('rating:pg13');
+    expect(asDatasetFilter('rating:na')).toBeUndefined();
+    expect(asDatasetFilter('rating:')).toBeUndefined();
+    expect(asDatasetFilter('grid')).toBeUndefined();
+  });
+});
+
+describe('rating filters', () => {
+  const img = (nsfwLevel: string | undefined, status: Img['status'] = 'uploaded') =>
+    ({
+      id: nextImgId(),
+      name: 'a.png',
+      previewUrl: '',
+      mediaType: 'image',
+      status,
+      progress: 1,
+      blobId: 'b',
+      nsfwLevel,
+      tags: [],
+      caption: '',
+    } as unknown as Img);
+
+  it('offers each rating among trainable images, and keeps the selected one at 0', () => {
+    const images = [img('pg'), img('X'), img('x'), img('r', 'blocked')];
+    expect(ratingChoices(images, 'all').map((r) => `${r.label} ${r.count}`)).toEqual([
+      'PG 1',
+      'X 2',
+    ]);
+    expect(ratingChoices(images, 'rating:r').map((r) => `${r.label} ${r.count}`)).toEqual([
+      'PG 1',
+      'X 2',
+      'R 0',
+    ]);
+  });
+
+  it('matches only trainable images of that rating, in any case', () => {
+    expect(matchesRatingFilter(img('X'), 'rating:x')).toBe(true);
+    expect(matchesRatingFilter(img('x', 'blocked'), 'rating:x')).toBe(false);
+    expect(matchesRatingFilter(img('pg'), 'all')).toBeUndefined();
   });
 });

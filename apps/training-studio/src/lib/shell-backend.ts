@@ -93,7 +93,7 @@ export const shellBackend: StudioBackend = {
       )}`
     );
     if (!res.ok) throw new Error(await messageOf(res, `Dataset image unavailable (${res.status})`));
-    return res.blob();
+    return { blob: await res.blob(), nsfwLevel: res.headers.get('x-nsfw-level') ?? undefined };
   },
 
   listGenerations: async (media) => {
