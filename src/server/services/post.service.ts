@@ -1,5 +1,10 @@
 import { ilikeContains } from '~/server/utils/ilike';
-import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import {
+  deletePostRows,
+  isCoverOfSong,
+  isSongsOwnImage,
+  type DeleteActor,
+} from '@civitai/db-queries/content-deletion';
 import { postsWithDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import {
   postUnpublishContextOf,
@@ -2352,27 +2357,6 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
 };
 
 /** A song's cover is its owner's own image, outside any post: only such a linked row is shown. */
-function isSongsOwnImage(
-  row: { userId: number; postId: number | null } | null | undefined,
-  song: { userId: number }
-) {
-  return !!row && row.userId === song.userId && row.postId == null;
-}
-
-/**
- * A cover row made for this song: its own image naming the song as its parent. Only such a row is
- * reused by a retried save or deleted when it is replaced.
- */
-function isCoverOfSong(
-  row: { userId: number; postId: number | null; metadata: unknown } | null | undefined,
-  song: { id: number; userId: number }
-) {
-  return (
-    isSongsOwnImage(row, song) &&
-    (row?.metadata as { parentId?: unknown } | null)?.parentId === song.id
-  );
-}
-
 export async function setSongCover({
   id,
   cover,

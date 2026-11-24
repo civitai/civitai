@@ -334,6 +334,67 @@ export async function deletePostRows(
   return splitOutcome(rows);
 }
 
+/** An image of the song's owner that is in no post. */
+export function isSongsOwnImage(
+  row: { userId: number; postId: number | null } | null | undefined,
+  song: { userId: number }
+) {
+  return !!row && row.userId === song.userId && row.postId == null;
+}
+
+/**
+ * A cover row made for this song: its own image naming the song as its parent. Only such a row is
+ * reused by a retried save, or deleted when it is replaced or its song is deleted.
+ */
+export function isCoverOfSong(
+  row: { userId: number; postId: number | null; metadata: unknown } | null | undefined,
+  song: { id: number; userId: number }
+) {
+  return (
+    isSongsOwnImage(row, song) &&
+    (row?.metadata as { parentId?: unknown } | null)?.parentId === song.id
+  );
+}
+
+/**
+ * Of `ids`, each song's cover (`isCoverOfSong`) by song id. Read before the song's delete: it cascades
+ * the song's `Track` row, which is the only link to the cover.
+ */
+export async function readSongCovers(db: Kysely<DB>, ids: number[]): Promise<Map<number, number>> {
+  if (!ids.length) return new Map();
+  const { rows } = await sql<{
+    songId: number;
+    songUserId: number;
+    id: number;
+    userId: number;
+    postId: number | null;
+    metadata: unknown;
+  }>`
+    SELECT t."imageId" AS "songId", s."userId" AS "songUserId", c.id, c."userId", c."postId", c.metadata
+    FROM "Track" t
+    JOIN "Image" s ON s.id = t."imageId"
+    JOIN "Image" c ON c.id = t."coverImageId"
+    WHERE t."imageId" = ANY(${[...new Set(ids)]}::int[])
+  `.execute(db);
+  return new Map(
+    rows
+      .filter((row) => isCoverOfSong(row, { id: row.songId, userId: row.songUserId }))
+      .map((row) => [row.songId, row.id])
+  );
+}
+
+/** The covers (`readSongCovers`) of the songs a delete removed, less the ids it already listed. */
+export function coversOfDeletedSongs(
+  covers: Map<number, number>,
+  deleted: { id: number }[],
+  listed: number[]
+) {
+  const skip = new Set(listed);
+  return [...new Set(deleted.flatMap(({ id }) => covers.get(id) ?? []))].filter(
+    (id) => !skip.has(id)
+  );
+}
+
 /** Queues a deleted image's stored file again, as when a delete made outside the queue fails. */
 export async function queueImageStorageDelete(
   db: Kysely<DB>,
