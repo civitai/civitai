@@ -3,6 +3,8 @@ import {
   assistantRules,
   assistantSystemPrompt,
   checkKindOf,
+  docsUrlOf,
+  THEME_RULE,
 } from '@civitai/app-assistant';
 import {
   APP_ASSISTANT_RULES,
@@ -165,6 +167,7 @@ describe('buildAssistantSystemPrompt', () => {
         "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'. The price is a bare number of Buzz: write the word Buzz once beside it (`${price} Buzz`), never also inside a helper that formats it, or the app shows \"104 Buzz Buzz\".",
         "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site/reference.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.",
         BUZZ_TRANSACTIONS_RULE_TEXT,
+        THEME_RULE_TEXT,
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
         SUBMIT_RULE_TEXT,
         FEEDBACK_RULE_TEXT,
@@ -178,6 +181,21 @@ describe('buildAssistantSystemPrompt', () => {
 // The whole sentence: a run told a user Civitai's app API has no transaction history.
 const BUZZ_TRANSACTIONS_RULE_TEXT =
   "- The viewer's own Buzz transactions (a spending history, a daily spending chart) are available: import { getTransport } from '@civitai/sdk' and call getTransport().request('GET_BUZZ_TRANSACTIONS', { params: { accountType, type, start, end, cursor, limit } }), which resolves to { transactions, cursor } (each transaction has date, a Date or an ISO string, so read it with new Date(date); type; amount, always positive, spent or received as its fromAccountId and toAccountId say; and description. limit is 1-200, 50 by default; pass the returned cursor to get the next page). It needs the buzz:read:self scope in block.manifest.json. Each call reads one Buzz pool: accountType is 'yellow' unless you pass another ('blue', 'green'), so request every pool the app shows and combine them. BREAKING.md's \"No v1 route\" for GET_BUZZ_TRANSACTIONS means only that app.site has no route for it; this host request works.";
+
+// The whole sentence: the look is advice (a scoped accent on the app root, light and dark, the
+// theming guide), never a requirement; many submitted apps shipped Civitai's stock look.
+const THEME_RULE_TEXT =
+  "- Unless the user wants Civitai's own look, give the app an accent of its own: override --civitai-color-primary (and its -hover and -fg partners) on the app's root element, never on :root, and check it in both light and dark. The theming guide shows how: https://developer.civitai.com/apps/guide/theming.md. This is advice, not a requirement.";
+
+describe('the theme rule', () => {
+  it('names a theming guide address read_docs reads, on both runners', () => {
+    const url = /https:\/\/\S+\.md/.exec(THEME_RULE)![0];
+    expect(url).toBe('https://developer.civitai.com/apps/guide/theming.md');
+    expect(docsUrlOf(url)?.href).toBe(url);
+    for (const runner of ['browser', 'remote'] as const)
+      expect(assistantRules(runner)).toContain(THEME_RULE);
+  });
+});
 
 // The whole sentence: on the tester launch the assistant, with no way to submit, told a user who has
 // neither to sign in with the Civitai CLI or upload the zip at /apps/submit.

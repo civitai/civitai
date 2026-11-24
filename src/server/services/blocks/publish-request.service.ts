@@ -86,6 +86,7 @@ import {
   type FloorAsset,
 } from '~/shared/utils/listing-publish-floor';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
+import type { Advisory } from '~/server/services/blocks/submit-advisories';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -259,6 +260,12 @@ export type SubmitVersionResult = {
    * (the manual-apply columns are not there yet). Absent when no token was verified.
    */
   actionsRunSourceRecorded?: boolean;
+  /**
+   * Notes that never refuse or delay the submit (`submitAdvisories`): today only `default-theme`,
+   * when the bundle reads as Civitai's stock look. Empty when there is nothing to say, or when they
+   * could not be worked out in time. Part of the submit API's response (both routes).
+   */
+  advisories: Advisory[];
 };
 
 /**
@@ -1633,12 +1640,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
   }
 
-  const listing = await submitListingReadiness({
-    slug,
-    submittedByUserId,
-    existingAppBlockId: existingApp?.id ?? null,
-    manifest,
-  });
+  // WARN, NEVER BLOCK: never throws, bounded in time; run beside the listing read.
+  const [listing, advisories] = await Promise.all([
+    submitListingReadiness({
+      slug,
+      submittedByUserId,
+      existingAppBlockId: existingApp?.id ?? null,
+      manifest,
+    }),
+    import('./submit-advisories')
+      .then(({ submitAdvisories }) => submitAdvisories(bundleBuffer))
+      .catch(() => []),
+  ]);
 
   announceNewPendingRequest({
     publishRequestId,
@@ -1659,6 +1672,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
     ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
+    advisories,
   };
 }
 

@@ -122,6 +122,53 @@ describe('ReviewAssistantSessionsPanel', () => {
     ]);
   });
 
+  test('judges the look by accentCustomized: a v1 row from its own evidence, a v2 row as stored', async () => {
+    // v1: one colour of its own reads "customised" by v1's signal, and is still the stock look.
+    answer({
+      ...TRACE,
+      trace: {
+        ...TRACE.trace,
+        signals: {
+          ...TRACE.trace.signals,
+          themeCustomized: true,
+          theme: {
+            ...TRACE.trace.signals.theme,
+            customColorCount: 25,
+            customColorFiles: ['a.css'],
+          },
+        },
+      },
+    });
+    const { unmount } = await renderWithProviders(
+      <ReviewAssistantSessionsPanel publishRequestId={REQUEST} />
+    );
+    await expect
+      .element(page.getByTestId('apps-review-sessions-theme'))
+      .toHaveTextContent('Default theme');
+    await expect
+      .element(page.getByTestId('apps-review-sessions-theme-v1'))
+      .toHaveTextContent('Any colour or token of its own (v1 signal, not the look): yes');
+    unmount();
+    // v2 stores the verdict: it is shown as stored.
+    answer({
+      ...TRACE,
+      trace: {
+        ...TRACE.trace,
+        signals: {
+          ...TRACE.trace.signals,
+          signalsVersion: 2,
+          themeCustomized: true,
+          accentCustomized: true,
+          theme: { ...TRACE.trace.signals.theme, tokenOverrides: ['--civitai-color-primary'] },
+        },
+      },
+    });
+    await renderWithProviders(<ReviewAssistantSessionsPanel publishRequestId={REQUEST} />);
+    await expect
+      .element(page.getByTestId('apps-review-sessions-theme'))
+      .toHaveTextContent('Own look');
+  });
+
   test('opens a frozen transcript with each tool’s output collapsed until opened', async () => {
     await renderWithProviders(<ReviewAssistantSessionsPanel publishRequestId={REQUEST} />);
     await page.getByRole('button', { name: 'Show transcript' }).click();

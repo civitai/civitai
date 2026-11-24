@@ -3,6 +3,8 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  accentCustomizedFrom,
+  accentCustomizedOf,
   computeTraceSignals,
   docsTopicOf,
   themeSignals,
@@ -247,8 +249,159 @@ describe('computeTraceSignals', () => {
       defaultModel: 'model-default-z',
     });
     expect(signals.signalsVersion).toBe(TRACE_SIGNALS_VERSION);
+    expect(TRACE_SIGNALS_VERSION).toBe(2);
     expect(signals.themeCustomized).toBe(false);
+    expect(signals.accentCustomized).toBe(false);
     expect(signals.sessionCount).toBe(1);
     expect(signals.editedFiles).toEqual(['scratch/notes.md', 'src/block.ts']);
+  });
+});
+
+/** `n` gray tokens, as the calibration apps that set the whole gray ramp have them. */
+const grays = (n: number) => Array.from({ length: n }, (_, i) => `--civitai-color-gray-${i}`);
+const ev = (customColorCount: number, tokenOverrides: string[] = []) => ({
+  tokenOverrides,
+  customColorCount,
+  filesScanned: 12,
+});
+
+/**
+ * The rule's calibration: 12 approved apps an operator labelled by eye from screenshots
+ * ("distinct" own look vs Civitai's "default" look), as v1's `themeSignals` measured them
+ * (customColorCount, tokenOverrides). The rule agrees on 10. The 2 KNOWN MISSES are pinned as
+ * misses, so a better rule flips them on purpose, here, rather than by accident.
+ */
+describe('accentCustomizedFrom: the 12-app calibration', () => {
+  const MATCHES: Array<[slug: string, evidence: ReturnType<typeof ev>, expected: boolean]> = [
+    [
+      'character-sheet-studio',
+      ev(61, [
+        '--civitai-color-body',
+        '--civitai-color-border',
+        '--civitai-color-error',
+        ...grays(10),
+      ]),
+      true,
+    ],
+    [
+      'custom-generators',
+      ev(29, [
+        '--civitai-color-body',
+        '--civitai-color-border',
+        '--civitai-color-media-placeholder',
+        ...grays(10),
+      ]),
+      true,
+    ],
+    [
+      'custom-generators-fork-13be',
+      ev(29, [
+        '--civitai-color-body',
+        '--civitai-color-border',
+        '--civitai-color-media-placeholder',
+        ...grays(10),
+      ]),
+      true,
+    ],
+    ['tag2caption', ev(71), true],
+    ['tagbench', ev(149), true],
+    ['turnaround', ev(129), true],
+    ['app-storage-demo-fork-2754', ev(1), false],
+    ['model-benchmarking', ev(17), false],
+    ['poc-prompt-polisher', ev(19), false],
+    ['yt-thumbnail', ev(25), false],
+  ];
+  it.each(MATCHES)('%s: agrees with the label', (_slug, evidence, expected) => {
+    expect(accentCustomizedFrom(evidence)).toBe(expected);
+  });
+
+  const KNOWN_MISSES: Array<[slug: string, evidence: ReturnType<typeof ev>, labelled: boolean]> = [
+    // Overrides --civitai-color-primary and 7 more colour tokens, and still looks stock.
+    [
+      'dataset-commons',
+      ev(32, [
+        '--civitai-color-border',
+        '--civitai-color-primary',
+        '--civitai-color-primary-hover',
+        '--civitai-color-surface',
+        '--civitai-color-surface-2',
+        '--civitai-color-text',
+        '--civitai-color-text-dimmed',
+        '--civitai-color-warning',
+      ]),
+      false,
+    ],
+    // 90 colour literals of its own, still Civitai's blue.
+    ['grembed-preview', ev(90), false],
+  ];
+  it.each(KNOWN_MISSES)(
+    'KNOWN MISS %s: labelled default, reads as its own look',
+    (_slug, evidence, labelled) => {
+      expect(accentCustomizedFrom(evidence)).toBe(true);
+      expect(labelled).toBe(false);
+    }
+  );
+
+  it('the palette boundary: 59 colours of its own is the stock look, 60 is its own', () => {
+    expect(accentCustomizedFrom(ev(59))).toBe(false);
+    expect(accentCustomizedFrom(ev(60))).toBe(true);
+  });
+
+  it('a token that is not a colour (--civitai-radius, --civitai-font) never counts', () => {
+    expect(accentCustomizedFrom(ev(0, ['--civitai-radius', '--civitai-font']))).toBe(false);
+    expect(accentCustomizedFrom(ev(0, ['--civitai-color-primary']))).toBe(true);
+  });
+
+  it('nothing to judge is null: no source scanned, or no evidence', () => {
+    expect(accentCustomizedFrom({ tokenOverrides: [], customColorCount: 0, filesScanned: 0 })).toBe(
+      null
+    );
+    expect(accentCustomizedFrom(null)).toBe(null);
+    expect(accentCustomizedFrom(undefined)).toBe(null);
+  });
+});
+
+describe('accentCustomized from the source, beside v1’s themeCustomized', () => {
+  it('a scoped --civitai-color-primary on the app root is a look of its own', () => {
+    const signals = computeTraceSignals({
+      files: appended('src/index.css', '.app { --civitai-color-primary: #7c3aed; }'),
+      transcripts: [],
+      defaultModel: 'm',
+    });
+    expect(signals.themeCustomized).toBe(true);
+    expect(signals.accentCustomized).toBe(true);
+  });
+
+  it('a single colour literal reads customised by v1 and still the stock look by v2', () => {
+    const signals = computeTraceSignals({
+      files: appended('src/index.css', '.card { border-color: #333333; --civitai-radius: 4px; }'),
+      transcripts: [],
+      defaultModel: 'm',
+    });
+    expect(signals.themeCustomized).toBe(true);
+    expect(signals.accentCustomized).toBe(false);
+  });
+
+  it('a bundle with no source has nothing to judge', () => {
+    const signals = computeTraceSignals({
+      files: new Map([['README.md', '# app']]),
+      transcripts: [],
+      defaultModel: 'm',
+    });
+    expect(signals.accentCustomized).toBeNull();
+  });
+});
+
+describe('accentCustomizedOf: a stored row of either version', () => {
+  it('a v1 row (no accentCustomized) is judged from its own theme evidence', () => {
+    const v1 = { signalsVersion: 1, themeCustomized: true, theme: ev(25) };
+    expect(accentCustomizedOf(v1)).toBe(false);
+    expect(accentCustomizedOf({ ...v1, theme: ev(5, ['--civitai-color-primary']) })).toBe(true);
+    expect(accentCustomizedOf({ signalsVersion: 1, themeCustomized: null })).toBeNull();
+  });
+
+  it('a v2 row answers what it stored', () => {
+    expect(accentCustomizedOf({ accentCustomized: true, theme: ev(0) })).toBe(true);
+    expect(accentCustomizedOf({ accentCustomized: null, theme: ev(100) })).toBeNull();
   });
 });

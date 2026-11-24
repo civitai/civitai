@@ -127,6 +127,82 @@ describe('the shared gate and subagents’ calls', () => {
 });
 
 /**
+ * report_ready's advice about the look (`themeEvidence`): an app that reads as Civitai's stock look
+ * gets the `default-theme` advisory, and `ready` is the same either way. WARN, NEVER BLOCK.
+ */
+describe('report_ready and the app’s look', () => {
+  const ctx = { conversationId: 'c-1', reply: 1 };
+  const toolCtx = { signal: new AbortController().signal, conversationId: 'c-1', files: [] };
+  const run = (command: string): shared.ToolResult => ({
+    name: 'sandbox__run_command',
+    input: { command },
+    output: 'exit_code: 0\n---\nout',
+    isError: false,
+  });
+  const STOCK = { tokenOverrides: [], customColorCount: 3, filesScanned: 6 } as never;
+  const OWN = { tokenOverrides: ['--civitai-color-primary'], customColorCount: 3, filesScanned: 6 };
+  const DEFAULT_THEME = {
+    code: 'default-theme',
+    message:
+      "This app uses Civitai's default theme. A distinct accent helps it stand out in the store: https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look",
+    docsUrl: 'https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look',
+  };
+
+  async function ready(options: Parameters<typeof shared.createGateCore>[0]) {
+    const core = shared.createGateCore(options);
+    core.beforeToolCall('sandbox__list_dir', {}, ctx);
+    await core.tools.set_checklist.execute({ items: [{ label: 'Tips', done: true }] }, toolCtx);
+    core.onToolResult({
+      name: 'sandbox__preview_check',
+      input: {},
+      output: 'render: ok',
+      isError: false,
+    });
+    core.onToolResult(run('cd a && npm test'));
+    core.onToolResult(run('cd a && npx tsc --noEmit'));
+    expect(core.beforeToolCall(shared.REPORT_READY, { data: 'civitai' }, ctx)).toEqual({
+      allow: true,
+    });
+    return (await core.tools.report_ready.execute({ data: 'civitai' }, toolCtx)) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it('the stock look: ready, with the default-theme advisory', async () => {
+    const result = await ready({ themeEvidence: async () => STOCK });
+    expect(result).toMatchObject({ ready: true, data: 'civitai', advisories: [DEFAULT_THEME] });
+  });
+
+  it('an accent of its own: ready, with no advisory', async () => {
+    const result = await ready({ themeEvidence: async () => OWN });
+    expect(result.ready).toBe(true);
+    expect(result).not.toHaveProperty('advisories');
+  });
+
+  it('evidence that cannot be read, throws, or is absent: ready, with no advisory', async () => {
+    for (const themeEvidence of [
+      async () => null,
+      async () => {
+        throw new Error('sandbox went away');
+      },
+      undefined,
+    ]) {
+      const result = await ready(themeEvidence ? { themeEvidence } : {});
+      expect(result.ready).toBe(true);
+      expect(result).not.toHaveProperty('advisories');
+    }
+  });
+
+  it('the advisory changes nothing else report_ready answers', async () => {
+    const { advisories, advisoryNote, ...rest } = await ready({ themeEvidence: async () => STOCK });
+    expect(advisories).toEqual([DEFAULT_THEME]);
+    expect(advisoryNote).toEqual(expect.any(String));
+    expect(rest).toEqual(await ready({}));
+  });
+});
+
+/**
  * The checklist is the plan the user watches being built, not a question: no list waits for the user,
  * the first one included, so the reply goes on building. The one exception is a list that newly says
  * the app will show sample data: the user must agree to that, so it ends the reply for their answer.
