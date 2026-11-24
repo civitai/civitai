@@ -143,7 +143,9 @@ samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 `FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
 are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). Its `ids` and `followed` input shapes are
 computed only behind `FEED_GO_GETALL_SERVE_INPUT_IDS` / `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both
-default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). The `feed_endpoint`
+default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). An owner's user-cosmetics miss on a
+`model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
+`user-cosmetics-miss` fallback; DESIGN.md §15.2.5). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 

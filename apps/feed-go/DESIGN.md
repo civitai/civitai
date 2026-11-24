@@ -2129,7 +2129,7 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Covers | the owner's image on the shown version, or located on another of the model's versions (§15.1 step 4); a chosen cover neither finds and that has no featured community showcase row for the model (Node's `withCommunityCovers` finds nothing either) | a chosen cover neither finds that has a Community, not-removed `ModelVersionShowcaseItem` row on a version of the model (`model-community-cover`: Node may serve that community image as the cover, §16.9) |
-| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics and memberships (`user-cosmetics-miss`, `membership-miss`), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics (`user-cosmetics-miss`; with its switch on, computed: §15.2.5) and memberships (`membership-miss`), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
 
 ### 15.2.1 Collections
 
@@ -2251,6 +2251,20 @@ changes anything while `FEED_GO_SERVE_MODEL_GETALL` is off, except what the shad
   it (§15.2.3).
 - **Cache policy.** Unchanged: a signed-in `followed` sets Node's `isPrivate`, which no header reads
   on this procedure (§15.2.1); a signed-in answer is never edge-cached either way.
+
+### 15.2.5 User-cosmetics misses (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off). Off, an owner whose `user-cosmetics`
+entry is absent (or undecodable) falls back (`user-cosmetics-miss`), as it always has here. On, the
+model page computes it as the image pages do (`hydrate.Sources.ModelPage` with
+`ComputeUserCosmetics`, `fillUserCosmetics`): `userCosmeticCache`'s lookup on the replica, one query
+for every owner the page misses, the creator-made cosmetics no holder may show dropped, each answer
+packed as Node's fetch packs it (`{userId, cosmetics, cachedAt}`, or a notFound marker for an owner
+with none equipped), single-flighted across concurrent requests and, when not written back, kept in
+process for 10 s (§3.1), and written back (SET NX, a day) only when `FEED_GO_CACHE_WRITEBACK` lists `user-cosmetics` and only for a miss Node
+would write too. It needs the miss computation (`FEED_GO_COMPUTE_MISSES`, default on); without it the
+miss still falls back. Under the Go-first probe the miss is recorded as one Go computes, as for the
+other computed caches. The switch decides the public route and the shadow alike.
 
 ### 15.3 Flags
 

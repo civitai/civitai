@@ -229,6 +229,23 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS defaults off.
+func TestLoadGetAllUserCosmeticsMissDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeUserCosmeticsMiss != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS=%q -> %v, want %v", in, c.GetAllServeUserCosmeticsMiss, want)
+		}
+	}
+}
+
 // The model.getAll input ports' switches default off, and each turns on only its own port.
 func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {

@@ -502,6 +502,7 @@ class Trace {
       collections: new Map(),
       userFollows: new Map(),
       followsRead: 0,
+      userCosmetics: [],
     };
   }
 }
@@ -529,6 +530,30 @@ function coldLookup(prefix, id) {
         tags: [],
         versions: structuredClone(byIndex(m.versions)),
       };
+      T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
+      return result;
+    }
+    case K.userCosmetics: {
+      // userCosmeticCache's lookupFn: the user's equipped cosmetics not equipped to an entity (none
+      // here is a creator-made cosmetic, so none is withheld); none is a day's notFound marker.
+      const equipped = USER_COSMETICS[id] ?? [];
+      for (const c of equipped)
+        T.db.userCosmetics.push({
+          userId: id,
+          cosmeticId: c.cosmeticId,
+          data: c.data === null ? null : JSON.stringify(c.data),
+          equippedAt: true,
+          equippedToId: null,
+          equippedToType: null,
+        });
+      if (!equipped.length) {
+        T.writes.set(`${prefix}:${id}`, {
+          value: { userId: id, notFound: true, cachedAt: NOW },
+          ex: DAY,
+        });
+        return undefined;
+      }
+      const result = { userId: id, cosmetics: structuredClone(equipped) };
       T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
       return result;
     }
@@ -1746,6 +1771,30 @@ const SPECS = [
     input: { followed: true, browsingLevel: 1 },
     fallback: 'input-followed',
   },
+  // An owner's user-cosmetics miss: computed only behind FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS
+  // (default off: the user-cosmetics-miss fallback).
+  {
+    name: 'cold-user-cosmetics',
+    description:
+      'User cosmetics entries absent: computed with userCosmeticCache’s lookup (the owner’s equipped badge; an owner with none gets a day’s notFound marker) and written back.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveUserCosmeticsMiss: true },
+    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5009] }],
+    cold: [`${K.userCosmetics}:1001`, `${K.userCosmetics}:1002`],
+  },
+  {
+    name: 'fallback-user-cosmetics-miss',
+    description:
+      'The same user cosmetics entries absent with the switch off (the default): not served.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5009] }],
+    cold: [`${K.userCosmetics}:1001`, `${K.userCosmetics}:1002`],
+    fallback: 'user-cosmetics-miss',
+  },
   // The minor content rule on the shared version-showcase cache (imagesForModelVersionsCache's
   // appendFn): viewer-independent, so 8150 is left out for every viewer, its owner and moderators
   // included; the cover is then looked up on the replica, found on the same version, and left out
@@ -1810,6 +1859,9 @@ function dbTables() {
     ).flat();
     tables.followsRead = T.db.followsRead;
   }
+  // Only a fixture with a cold user-cosmetics key lists the UserCosmetic rows its lookup read.
+  if ([...T.cold].some((k) => k.startsWith(`${K.userCosmetics}:`)))
+    tables.userCosmetics = T.db.userCosmetics;
   // Only a fixture that reads a collection lists the table (a missing collection is no row).
   if (T.db.collections.size)
     tables.collections = m2o(T.db.collections, ([, c]) => c)

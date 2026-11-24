@@ -67,6 +67,10 @@ type Config struct {
 	VisibleDecorationEvents map[string]bool
 	// Ports are the input shapes served behind their own switch (ParseWith), all off by default.
 	Ports Ports
+	// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): compute an
+	// owner's user-cosmetics miss (hydrate.ModelPageRequest.ComputeUserCosmetics) instead of the
+	// `user-cosmetics-miss` fallback.
+	ServeUserCosmeticsMiss bool
 }
 
 // Deps are model.getAll's collaborators.
@@ -386,6 +390,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		phase.SetInt(tracing.AttrItems, len(modelIDs))
 		hy, err = d.Sources.ModelPage(pctx, hydrate.ModelPageRequest{
 			OwnerIDs: ownerIDs, ModelIDs: modelIDs, VisibleEvents: d.Config.VisibleDecorationEvents,
+			ComputeUserCosmetics: d.Config.ServeUserCosmeticsMiss,
 		})
 		return
 	}))

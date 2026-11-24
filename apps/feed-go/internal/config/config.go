@@ -78,6 +78,11 @@ type Config struct {
 	// before; they change nothing while ServeModelGetAll is off, except in the shadow.
 	GetAllServeInputIDs      bool
 	GetAllServeInputFollowed bool
+	// GetAllServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): on, a
+	// model.getAll page computes its owners' user-cosmetics misses (the image pages' lookup) instead
+	// of falling back (`user-cosmetics-miss`); written back only as FEED_GO_CACHE_WRITEBACK lists
+	// `user-cosmetics`. It needs the miss computation (FEED_GO_COMPUTE_MISSES, default on).
+	GetAllServeUserCosmeticsMiss bool
 	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
@@ -260,8 +265,9 @@ func Load() (*Config, error) {
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
-		GetAllServeInputIDs:      boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
-		GetAllServeInputFollowed: boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
+		GetAllServeInputIDs:          boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
+		GetAllServeInputFollowed:     boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
+		GetAllServeUserCosmeticsMiss: boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
