@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * Guard coverage for `fetchDownloadCount`.
@@ -10,7 +11,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * text contains only what this query's own literals need.
  */
 
-const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
+const { mockQuery, mockDedicatedQuery, dedicatedState, isFliptSyncMock } = vi.hoisted(() => ({
+  mockQuery: vi.fn(),
+  // The dedicated downloads replica: (statement, query params) per read.
+  mockDedicatedQuery: vi.fn(),
+  dedicatedState: { configured: false, flags: {} as Record<string, boolean | null> },
+  isFliptSyncMock: vi.fn(),
+}));
 
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: {
@@ -24,7 +31,25 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-import { fetchDownloadCount } from '../download-count';
+vi.mock('~/server/clickhouse/downloads-client', () => ({
+  get clickhouseDownloads() {
+    return dedicatedState.configured ? {} : undefined;
+  },
+  queryDownloadsClickhouse: (query: string, params?: Record<string, unknown>) =>
+    mockDedicatedQuery(query, params),
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFliptSync: isFliptSyncMock,
+  // An initialised client, so a null read does not try to start one.
+  getFliptClientSync: () => ({}),
+}));
+
+import promClient from 'prom-client';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
+import { resetDownloadsClickhouseGatesForTests } from '~/server/services/downloads-clickhouse';
+import { downloadIpHash, fetchDownloadCount } from '../download-count';
 
 /** The full query text ClickHouse was asked to run on the last call. */
 function lastQuery(): string {
@@ -35,6 +60,11 @@ function lastQuery(): string {
 beforeEach(() => {
   vi.clearAllMocks();
   mockQuery.mockResolvedValue([{ count: 7 }]);
+  dedicatedState.configured = false;
+  dedicatedState.flags = {};
+  isFliptSyncMock.mockImplementation((key: string) => dedicatedState.flags[key] ?? null);
+  resetDownloadsClickhouseGatesForTests();
+  resetEnv();
 });
 
 describe('fetchDownloadCount — accepted key shapes', () => {
@@ -161,5 +191,132 @@ describe('fetchDownloadCount — no ClickHouse configured', () => {
     const { fetchDownloadCount: fn } = await import('../download-count');
     await expect(fn('203.0.113.7')).resolves.toBe(0);
     vi.doUnmock('~/server/clickhouse/client');
+  });
+});
+
+describe('downloadIpHash', () => {
+  // Computed by ClickHouse itself for the same key and address (the first 8 bytes of
+  // SHA256(key || address) are 9C50B8D493DE8476, read as a little-endian UInt64). A hash that
+  // differs from the replica's by one bit matches no row, and the anonymous count silently reads 0.
+  it('matches the replica-side hash for a known key and address', () => {
+    expect(downloadIpHash('0123456789abcdef0123456789abcdef', '203.0.113.7')).toBe(
+      8540195519911710876n
+    );
+  });
+});
+
+// The "flag off", "without the dedicated client" and malformed-key cases are INVARIANT guards: they
+// hold on the code before the dedicated replica existed too, and pin that adding it changed nothing
+// while it is not selected and that the key validation still runs first.
+describe('fetchDownloadCount — the dedicated downloads replica', () => {
+  const FLAG = 'download-count-dedicated-clickhouse';
+  const HASH_KEY = '0123456789abcdef0123456789abcdef';
+
+  const fallbacks = async (reason: string) => {
+    const metric = promClient.register.getSingleMetric(
+      'civitai_app_downloads_clickhouse_fallback_total'
+    );
+    if (!metric) throw new Error('fallback counter is not registered');
+    const { values } = await metric.get();
+    return (
+      values.find((v) => v.labels.site === 'download-count' && v.labels.reason === reason)?.value ??
+      0
+    );
+  };
+
+  beforeEach(() => {
+    dedicatedState.configured = true;
+    // Distinct from the shared client's 7, so the returned count names the client that answered.
+    mockDedicatedQuery.mockResolvedValue([{ count: 3 }]);
+    setEnv({ CLICKHOUSE_DOWNLOADS_IP_HASH_KEY: HASH_KEY });
+  });
+
+  it('flag off: both branches read the shared client only', async () => {
+    dedicatedState.flags[FLAG] = false;
+
+    await expect(fetchDownloadCount('4242')).resolves.toBe(7);
+    await expect(fetchDownloadCount('203.0.113.7')).resolves.toBe(7);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockDedicatedQuery).not.toHaveBeenCalled();
+  });
+
+  it('flag on, user id: counts the per-user table on the replica, the id as a parameter', async () => {
+    dedicatedState.flags[FLAG] = true;
+
+    await expect(fetchDownloadCount('4242')).resolves.toBe(3);
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockDedicatedQuery).toHaveBeenCalledTimes(1);
+    const [query, params] = mockDedicatedQuery.mock.calls[0];
+    expect(query.replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT COUNT(DISTINCT modelVersionId) AS count FROM userModelDownloads WHERE userId = {userId:UInt64} AND lastDownloaded > now() - INTERVAL 24 HOUR'
+    );
+    expect(params).toEqual({ userId: '4242' });
+  });
+
+  it('flag on, address: counts the hashed table, and neither the address nor the key reaches the replica', async () => {
+    dedicatedState.flags[FLAG] = true;
+
+    await expect(fetchDownloadCount('203.0.113.7')).resolves.toBe(3);
+    expect(mockQuery).not.toHaveBeenCalled();
+    const [query, params] = mockDedicatedQuery.mock.calls[0];
+    expect(query.replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT COUNT(DISTINCT modelVersionId) AS count FROM modelVersionDownloads_48h WHERE ipHash = {h:UInt64} AND time > now() - INTERVAL 24 HOUR'
+    );
+    expect(params).toEqual({ h: 8540195519911710876n });
+    const sent = JSON.stringify([query, String(params.h)]);
+    expect(sent).not.toContain('203.0.113.7');
+    expect(sent).not.toContain(HASH_KEY);
+  });
+
+  it('flag on without the hash key: the address branch stays on the shared client, the user branch moves', async () => {
+    dedicatedState.flags[FLAG] = true;
+    setEnv({ CLICKHOUSE_DOWNLOADS_IP_HASH_KEY: undefined });
+
+    await expect(fetchDownloadCount('203.0.113.7')).resolves.toBe(7);
+    expect(lastQuery()).toContain("AND ip = '203.0.113.7'");
+    expect(mockDedicatedQuery).not.toHaveBeenCalled();
+
+    await expect(fetchDownloadCount('4242')).resolves.toBe(3);
+    expect(mockDedicatedQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('flag on without the dedicated client: the shared client, as before', async () => {
+    dedicatedState.configured = false;
+    dedicatedState.flags[FLAG] = true;
+
+    await expect(fetchDownloadCount('4242')).resolves.toBe(7);
+    expect(mockDedicatedQuery).not.toHaveBeenCalled();
+  });
+
+  it('a failed replica read is re-run once on the shared client and counted', async () => {
+    dedicatedState.flags[FLAG] = true;
+    mockDedicatedQuery.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+    const before = await fallbacks('error');
+
+    await expect(fetchDownloadCount('4242')).resolves.toBe(7);
+    expect(mockDedicatedQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(lastQuery()).toContain('AND userId = 4242');
+    expect((await fallbacks('error')) - before).toBe(1);
+  });
+
+  it('a timed-out replica read is counted as a timeout', async () => {
+    dedicatedState.flags[FLAG] = true;
+    mockDedicatedQuery.mockRejectedValueOnce(new Error('Timeout error.'));
+    const before = await fallbacks('timeout');
+
+    await expect(fetchDownloadCount('203.0.113.7')).resolves.toBe(7);
+    expect(lastQuery()).toContain("AND ip = '203.0.113.7'");
+    expect((await fallbacks('timeout')) - before).toBe(1);
+  });
+
+  it('refuses a malformed key before either client is asked', async () => {
+    dedicatedState.flags[FLAG] = true;
+
+    await expect(fetchDownloadCount("203.0.113.7' OR '1'='1")).rejects.toThrow(
+      /rate-limit key is neither a user id nor an IP address/
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockDedicatedQuery).not.toHaveBeenCalled();
   });
 });
