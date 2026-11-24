@@ -41,11 +41,9 @@ const { CRUCIBLE_JUDGING_DEFAULTS } = await import('~/server/services/crucible-j
 
 const CONFIG_KEY = 'system:crucible-judging';
 const MIN_VIEW_SECONDS = 6;
-const IDLE_SECONDS = CRUCIBLE_JUDGING_DEFAULTS.sessionIdleSeconds;
-const SESSION = 'session-aaaaaaaa';
+const DAY_SECONDS = 24 * 60 * 60;
 
-// Hashes with TTLs on the fake clock, so the session's idle expiry is the real mechanism under test
-// rather than a stubbed answer.
+// Hashes with TTLs on the fake clock, so a judge's per-entry vote counts expire as they do in Redis.
 const hashes = new Map<string, { fields: Map<string, string>; expiresAt: number | null }>();
 let config: Record<string, string> = {};
 
@@ -72,33 +70,19 @@ const installRedisFake = () => {
     hashes.set(key, hash);
     return 1;
   });
+  sysRedis.hIncrBy.mockImplementation(async (key: string, field: string, by: number) => {
+    const hash = live(key) ?? { fields: new Map(), expiresAt: null };
+    const next = Number(hash.fields.get(field) ?? 0) + by;
+    hash.fields.set(field, String(next));
+    hashes.set(key, hash);
+    return next;
+  });
   sysRedis.del.mockImplementation(async (key: string) => (hashes.delete(key) ? 1 : 0));
   sysRedis.expire.mockImplementation(async (key: string, seconds: number) => {
     const hash = live(key);
     if (!hash) return false;
     hash.expiresAt = Date.now() + seconds * 1000;
     return true;
-  });
-  // Queued commands run in order through the fakes above when `exec` is called.
-  sysRedis.multi.mockImplementation(() => {
-    const queued: (() => Promise<unknown>)[] = [];
-    const chain = {
-      hmGet: (key: string, fields: string[]) => (
-        queued.push(() => sysRedis.hmGet(key, fields)), chain
-      ),
-      hSet: (key: string, value: Record<string, string>) => (
-        queued.push(() => sysRedis.hSet(key, value)), chain
-      ),
-      expire: (key: string, seconds: number) => (
-        queued.push(() => sysRedis.expire(key, seconds)), chain
-      ),
-      exec: async () => {
-        const results: unknown[] = [];
-        for (const run of queued) results.push(await run());
-        return results;
-      },
-    };
-    return chain;
   });
   // Every pair counts as served, so the served-pair claim never decides these tests.
   sysRedis.eval.mockResolvedValue(1);
@@ -111,8 +95,7 @@ const vote = (
   winnerEntryId: number,
   loserEntryId: number,
   winnerWatchedMs: number,
-  loserWatchedMs: number,
-  judgingSessionId: string | null = SESSION
+  loserWatchedMs: number
 ) =>
   submitVote({
     crucibleId: 1,
@@ -120,7 +103,6 @@ const vote = (
     loserEntryId,
     winnerWatchedMs,
     loserWatchedMs,
-    judgingSessionId: judgingSessionId ?? undefined,
     userId: 42,
   });
 
@@ -166,13 +148,22 @@ afterEach(() => {
 
 const advanceSeconds = (seconds: number) => vi.setSystemTime(Date.now() + seconds * 1000);
 
-describe('submitVote — repeat clips within a judging session', () => {
-  it('requires the full minimum for a clip the judge has not voted on this session', async () => {
+// A returning judge does not re-watch a clip in full. This replaced a per-visit session on purpose:
+// do not bring back "leaving and coming back means watching in full again".
+describe('submitVote — repeat clips across visits', () => {
+  it('needs only the repeat watch for a clip voted on in an earlier visit', async () => {
+    await vote(10, 20, FULL, FULL);
+    advanceSeconds(DAY_SECONDS);
+
+    await expect(vote(10, 30, REPEAT, FULL)).resolves.toMatchObject({ winnerElo: 1532 });
+  });
+
+  it('requires the full minimum for a clip the judge has never voted on', async () => {
     await expect(vote(10, 20, REPEAT, REPEAT)).rejects.toThrow(/Watch at least 6s/);
     expect(processVote).not.toHaveBeenCalled();
   });
 
-  it('requires only the configured seconds for a clip voted on earlier in the session', async () => {
+  it('requires only the configured seconds for a clip voted on earlier', async () => {
     await vote(10, 20, FULL, FULL);
 
     // 10 is a repeat, 30 is new: only the repeat side gets the short watch.
@@ -206,50 +197,11 @@ describe('submitVote — repeat clips within a judging session', () => {
     await expect(vote(10, 20 + 10, REPEAT - 1, FULL)).rejects.toThrow(/Watch at least/);
   });
 
-  it('applies the full minimum again once the session has idled out', async () => {
+  it("requires the full minimum while the judge's vote counts cannot be read", async () => {
     await vote(10, 20, FULL, FULL);
-    advanceSeconds(IDLE_SECONDS + 1);
+    redisMock.sysRedis.hmGet.mockRejectedValueOnce(new Error('sysRedis down'));
 
     await expect(vote(10, 30, REPEAT, FULL)).rejects.toThrow(/Watch at least 6s/);
-  });
-
-  it('keeps the session alive while the judge keeps voting inside the idle window', async () => {
-    await vote(10, 20, FULL, FULL);
-    advanceSeconds(IDLE_SECONDS - 5);
-    await vote(30, 40, FULL, FULL);
-    advanceSeconds(IDLE_SECONDS - 5);
-
-    // 10 was last touched more than one idle window ago, but the session never went idle.
-    await expect(vote(10, 50, REPEAT, FULL)).resolves.toMatchObject({ winnerElo: 1532 });
-  });
-
-  it('treats a new judging session (re-entering the page) as unseen', async () => {
-    await vote(10, 20, FULL, FULL);
-
-    await expect(vote(10, 30, REPEAT, FULL, 'session-bbbbbbbb')).rejects.toThrow(/6s/);
-  });
-
-  it("does not carry the previous session's clips into a new one once it votes", async () => {
-    await vote(10, 20, FULL, FULL);
-    await vote(30, 40, FULL, FULL, 'session-bbbbbbbb');
-
-    await expect(vote(10, 50, REPEAT, FULL, 'session-bbbbbbbb')).rejects.toThrow(/6s/);
-  });
-
-  it('idles out an abandoned session even while another tab keeps judging', async () => {
-    await vote(10, 20, FULL, FULL);
-    advanceSeconds(IDLE_SECONDS - 5);
-    await vote(30, 40, FULL, FULL, 'session-bbbbbbbb');
-    advanceSeconds(IDLE_SECONDS - 5);
-    await vote(50, 60, FULL, FULL, 'session-bbbbbbbb');
-
-    await expect(vote(10, 70, REPEAT, FULL)).rejects.toThrow(/Watch at least 6s/);
-  });
-
-  it('gives no shortening to a client that sends no session id', async () => {
-    await vote(10, 20, FULL, FULL, null);
-
-    await expect(vote(10, 30, REPEAT, FULL, null)).rejects.toThrow(/6s/);
   });
 
   it('never shortens past the crucible minimum when the configured repeat is longer', async () => {
@@ -257,27 +209,6 @@ describe('submitVote — repeat clips within a judging session', () => {
     await vote(10, 20, FULL, FULL);
 
     await expect(vote(10, 30, FULL, FULL)).resolves.toMatchObject({ winnerElo: 1532 });
-  });
-});
-
-describe('judgingSessionId input', () => {
-  it('accepts a uuid and refuses characters that would reshape the Redis key', async () => {
-    const { submitVoteSchema } = await import('~/server/schema/crucible.schema');
-    const input = (judgingSessionId: string) => ({
-      crucibleId: 1,
-      winnerEntryId: 10,
-      loserEntryId: 20,
-      judgingSessionId,
-    });
-
-    expect(submitVoteSchema.safeParse(input('0b6f7a3e-5c1d-4e2a-9f10-2b7c8d9e0a11')).success).toBe(
-      true
-    );
-    expect(submitVoteSchema.safeParse(input('aaaaaaaa:999')).success).toBe(false);
-    expect(submitVoteSchema.safeParse(input('aaaaaaaa*')).success).toBe(false);
-    expect(submitVoteSchema.safeParse(input('a'.repeat(7))).success).toBe(false);
-    expect(submitVoteSchema.safeParse(input('a'.repeat(65))).success).toBe(false);
-    expect(submitVoteSchema.safeParse(input('a'.repeat(64))).success).toBe(true);
   });
 });
 
@@ -310,14 +241,6 @@ describe('submitVote — config change without a deploy', () => {
     redisMock.sysRedis.hGetAll.mockImplementation(realHGetAll);
     await expect(vote(10, 30, REPEAT, FULL)).resolves.toBeDefined();
   });
-
-  it('picks up a new idle timeout from Redis', async () => {
-    config = { sessionIdleSeconds: '60' };
-    await vote(10, 20, FULL, FULL);
-    advanceSeconds(61);
-
-    await expect(vote(10, 30, REPEAT, FULL)).rejects.toThrow(/Watch at least 6s/);
-  });
 });
 
 describe('getJudgingPair — tells the client the same requirement the vote enforces', () => {
@@ -337,15 +260,14 @@ describe('getJudgingPair — tells the client the same requirement the vote enfo
     user_image: null,
   });
 
-  const fetchPair = (judgingSessionId: string | undefined = SESSION) =>
-    getJudgingPair({ crucibleId: 1, userId: 42, judgingSessionId });
+  const fetchPair = () => getJudgingPair({ crucibleId: 1, userId: 42 });
 
   const watchByEntry = (pair: Awaited<ReturnType<typeof fetchPair>>) => ({
     [pair!.left.id]: pair!.watchSeconds.left,
     [pair!.right.id]: pair!.watchSeconds.right,
   });
 
-  it('marks a clip voted on this session as needing only the repeat watch', async () => {
+  it('marks a clip voted on before as needing only the repeat watch', async () => {
     await vote(10, 20, FULL, FULL);
     dbMock.dbRead.$queryRaw.mockResolvedValue([rawEntry(10), rawEntry(30)]);
 
@@ -353,31 +275,6 @@ describe('getJudgingPair — tells the client the same requirement the vote enfo
       10: CRUCIBLE_JUDGING_DEFAULTS.repeatViewSeconds,
       30: MIN_VIEW_SECONDS,
     });
-  });
-
-  it('asks for the full minimum on both sides for another session or after idle', async () => {
-    await vote(10, 20, FULL, FULL);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([rawEntry(10), rawEntry(20)]);
-    expect(watchByEntry(await fetchPair('session-bbbbbbbb'))).toEqual({
-      10: MIN_VIEW_SECONDS,
-      20: MIN_VIEW_SECONDS,
-    });
-
-    advanceSeconds(IDLE_SECONDS + 1);
-    expect(watchByEntry(await fetchPair())).toEqual({
-      10: MIN_VIEW_SECONDS,
-      20: MIN_VIEW_SECONDS,
-    });
-  });
-
-  it('counts fetching a pair as activity, so a judge mid-watch does not idle out', async () => {
-    await vote(10, 20, FULL, FULL);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([rawEntry(10), rawEntry(30)]);
-    advanceSeconds(IDLE_SECONDS - 5);
-    await fetchPair();
-    advanceSeconds(IDLE_SECONDS - 5);
-
-    await expect(vote(10, 30, REPEAT, FULL)).resolves.toBeDefined();
   });
 
   it('does not count a clip that was only served, never voted on, as seen', async () => {
