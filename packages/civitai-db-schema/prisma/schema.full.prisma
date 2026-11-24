@@ -10523,6 +10523,7 @@ model ComicPanel {
   @@index([projectId, chapterPosition, position])
   @@index([imageId])
   @@index([status])
+  @@index([workflowId])
 }
 
 model ComicProjectEngagement {
