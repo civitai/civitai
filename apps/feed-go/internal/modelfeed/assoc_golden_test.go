@@ -35,7 +35,7 @@ import (
 const assocGoldenDir = "../../testdata/golden/model-assoc"
 
 // assocGoldenMin is the fixture count: a generator run that wrote fewer fails here.
-const assocGoldenMin = 26
+const assocGoldenMin = 33
 
 type assocFixture struct {
 	Name    string `json:"name"`

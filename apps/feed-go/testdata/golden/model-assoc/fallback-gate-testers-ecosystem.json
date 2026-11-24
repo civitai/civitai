@@ -1,5 +1,5 @@
 {
-  "name": "fallback-gate-ecosystem",
+  "name": "fallback-gate-testers-ecosystem",
   "request": {
     "input": "{\"json\":{\"fromId\":9001,\"type\":\"Suggested\",\"browsingLevel\":31}}",
     "viewer": {
@@ -66,7 +66,7 @@
     "gateRules": {
       "migrated": true,
       "entries": [
-        "{\"id\":\"e\",\"availableTo\":\"nobody\",\"presentation\":\"hidden\",\"ecosystems\":[\"SDXL\"]}"
+        "{\"id\":\"t\",\"availableTo\":\"testers\",\"presentation\":\"hidden\",\"ecosystems\":[\"SDXL\"]}"
       ]
     },
     "users": {
@@ -507,6 +507,6 @@
     ]
   },
   "expect": {
-    "fallback": "gate-rules-ecosystem"
+    "fallback": "gate-rules-testers"
   }
 }
