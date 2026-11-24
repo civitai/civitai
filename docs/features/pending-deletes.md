@@ -28,12 +28,31 @@ passes, runs one statement that:
 1. locks the listed rows the actor may delete and the caller's condition allows;
 2. leaves each locked row in an open case, or the actor's own row under `ownerReportHold`, and
    queues it as a `PendingDelete`;
-3. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
+3. for a moderator's delete that queues what it keeps (`replay.moderatorDelete`: a moderator's
+   session; a system caller deleting for one, such as the mod and admin delete endpoints and
+   `removeAllContent`; or the job replaying such a delete), blocks each kept image (in a moderator's
+   session, all but their own) as `writeModeratorBlock` does (`ingestion = 'Blocked'`, `nsfwLevel`
+   Blocked, `blockedFor = 'moderated'` unless it is `CSAM`, every review flag but `csam` cleared, and `appeal` kept while an appeal is pending), and
+   drops its account-deletion grace markers, so it leaves feeds, search and the review queues while
+   its case keeps it, and neither a queue's accept nor an account restore can lift it. The blocked-image purge (`removeBlockedImages`, `queueKept: false`) blocks nothing;
+4. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
    `files` is absent), post recounts (`recountPosts`) and CDN takedowns (`cdnTakedown`);
-4. returns `{ deleted, kept, gone }`: the deleted rows, the kept ids, and the listed ids that were
-   already gone.
+5. returns `{ deleted, kept, hidden, gone }`: the deleted rows, the kept ids, the kept images it
+   blocked (with their owner and post), and the listed ids that were already gone.
 
-A row the caller's condition or the actor's ownership excludes is in none of the three, and is
+Each app takes a blocked image out of search and busts its caches, as for one a hold marker's
+trigger blocked, and drops it from the comics and home blocks showing it. A kept post is left as it is; a moderator's `deletePost` deletes its images first,
+so those a case keeps are blocked (except the moderator's own). Other system deletes (the
+deleted-account drain, a parent's cleanup without `moderatorDelete`) block nothing.
+
+Lifting a block (a moderator's unblock, an approved appeal, an account restore's lift of a grace
+block) releases any moderator's pending delete on that image: both apps'
+`dropBlockedImageDeleteQueue` also call `releaseModeratorPendingDeletes`, which drops a queued delete
+only a moderator asked for, strips the moderator's ask from one the owner also asked for, and leaves a
+moderator's cleanup to go only while the image is unused. A plain cleanup the moderator's delete
+outranked in the merge is already gone, so the lift drops it too. A review queue's Accept posts the flag its card showed and is refused (`ImageChangedError`) when it has changed, so a page loaded before a moderator's delete cannot lift the image.
+
+A row the caller's condition or the actor's ownership excludes is in none of the lists, and is
 neither deleted nor queued: the condition is checked once, here, and never replayed later.
 
 Some callers do not queue what they keep (`queueKept: false`), because a queued delete is carried
@@ -98,7 +117,7 @@ reaches through a post it carries out, and finds in a case of its own, is queued
 - **A moderator** deleting through the main app's image or post delete (`deleteImageHandler`,
   `deletePost`) is told when the delete was kept; bulk and account-wide deletes (`removeAllContent`,
   the mod and admin delete endpoints) do not report it. The moderator app returns such an image as
-  refused `review` and leaves it in search.
+  refused `review`.
 
 ## Holds
 

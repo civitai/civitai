@@ -1,7 +1,7 @@
 // The notif-DB read/mark/bulk/exists/cleanup operations — ported from the monolith's
-// notification.service.ts (getUserNotifications base query, getUserNotificationCount, markNotificationsRead
-// with its per-user serialization queue + transient-error retry) and the send-notifications job (bulk
-// UPSERT). Now that this app owns the notif pools + cache + lag window, these live here; the monolith
+// notification.service.ts (getUserNotificationCount, markNotificationsRead with its per-user
+// serialization queue + transient-error retry), the base query of notification-feed.service.ts's
+// getUserNotifications, and the send-notifications job (bulk UPSERT). Now that this app owns the notif pools + cache + lag window, these live here; the monolith
 // calls them over HTTP via @civitai/notifications and keeps only the main-DB `details` enrichment.
 
 import format from 'pg-format';

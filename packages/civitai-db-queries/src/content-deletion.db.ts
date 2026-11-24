@@ -1,7 +1,13 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import {
+  GRACE_PRIOR_BLOCKED_FOR_KEY,
+  GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_NEEDS_REVIEW_KEY,
+} from '@civitai/shared/account-deletion-grace';
 import { childSafetyImageCase, childSafetyPostCase } from './child-safety-case.db';
 import {
+  NSFW_LEVEL_BLOCKED,
   PENDING_DELETE_UPSERT,
   PENDING_DELETES_ACTOR,
   ownerReportHold,
@@ -112,6 +118,30 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           : PENDING_DELETE_UPSERT
       }
     )`);
+  // A moderator's delete blocks each image its case keeps and queues (in a moderator's session, all but
+  // their own), so it leaves feeds and search until the queued delete runs. It writes what
+  // `writeModeratorBlock` writes and also drops the grace markers, so an account restore cannot lift it.
+  // A caller that does not queue what it keeps (the blocked-image purge) blocks nothing.
+  const hides =
+    table === 'Image' && !!options.replay?.moderatorDelete && options.queueKept !== false;
+  if (hides)
+    ctes.push(sql`hidden AS (
+      UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
+        "blockedFor" = CASE WHEN "blockedFor" = 'CSAM' THEN "blockedFor" ELSE 'moderated' END,
+        -- Out of every review queue but the CSAM one, so no queue's accept lifts the block; a pending
+        -- appeal keeps its flag unless the image is CSAM-blocked (as keepPendingAppealFlags does).
+        "needsReview" = CASE WHEN "needsReview" = 'csam' THEN "needsReview"
+          WHEN "blockedFor" IS DISTINCT FROM 'CSAM' AND EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
+            AND a."entityId" = "Image".id AND a.status = 'Pending') THEN 'appeal' END,
+        metadata = CASE WHEN jsonb_typeof(metadata) = 'object'
+          THEN metadata - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text
+            - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'
+          ELSE metadata END,
+        "updatedAt" = now()
+      WHERE id IN (SELECT id FROM doomed WHERE blocked)
+        ${'id' in actor ? sql`AND "userId" <> ${actor.id}` : sql``}
+      RETURNING id, "userId", "postId"
+    )`);
   return {
     ctes,
     remove: sql`DELETE FROM ${t} WHERE id IN (SELECT id FROM doomed WHERE NOT blocked) ${on}`,
@@ -122,28 +152,42 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
       UNION ALL
       SELECT id, ${padding}, 'gone' FROM listed
       WHERE NOT EXISTS (SELECT 1 FROM ${t} WHERE ${t}.id = listed.id)`,
+    hides,
   };
 }
 
+/** A kept image a moderator's delete blocked, and the post it is still in. */
+export type HiddenImage = { id: number; userId: number; postId: number | null };
+
 /**
  * What a delete did with each listed id it did not delete: kept for its child-safety case, or already
- * gone. A row the caller's condition or ownership skipped is in neither.
+ * gone. A row the caller's condition or ownership skipped is in neither. `hidden` is the kept images
+ * a moderator's delete blocked.
  */
-export type DeleteOutcome<Row> = { deleted: Row[]; kept: number[]; gone: number[] };
+export type DeleteOutcome<Row> = {
+  deleted: Row[];
+  kept: number[];
+  hidden: HiddenImage[];
+  gone: number[];
+};
 
-/** A deleted row carries no `outcome`; a kept or gone one says which. */
-type OutcomeRow = { id: number; outcome?: 'kept' | 'gone' };
+/** A deleted row carries no `outcome`; a kept, hidden or gone one says which. */
+type OutcomeRow = { id: number; outcome?: 'kept' | 'hidden' | 'gone' };
 
 function splitOutcome<Row>(rows: (Row & OutcomeRow)[]): DeleteOutcome<Row> {
   const deleted: Row[] = [];
   const kept: number[] = [];
+  const hidden: HiddenImage[] = [];
   const gone: number[] = [];
   for (const { outcome, ...row } of rows) {
     if (outcome === 'kept') kept.push(row.id);
-    else if (outcome === 'gone') gone.push(row.id);
+    else if (outcome === 'hidden') {
+      const { userId, postId } = row as unknown as HiddenImage;
+      hidden.push({ id: row.id, userId, postId });
+    } else if (outcome === 'gone') gone.push(row.id);
     else deleted.push(row as unknown as Row);
   }
-  return { deleted, kept, gone };
+  return { deleted, kept, hidden, gone };
 }
 
 const withCtes = (ctes: RawBuilder<unknown>[], more: boolean) =>
@@ -172,8 +216,8 @@ export async function deleteImageRows(
   options: DeleteOptions & { files?: ImageFiles; recountPosts?: boolean; cdnTakedown?: boolean }
 ): Promise<DeleteOutcome<DeletedImage>> {
   const ids = [...new Set(options.ids)];
-  if (!ids.length) return { deleted: [], kept: [], gone: [] };
-  const { ctes, remove, others } = deleteStatement('Image', options, ids);
+  if (!ids.length) return { deleted: [], kept: [], hidden: [], gone: [] };
+  const { ctes, remove, others, hides } = deleteStatement('Image', options, ids);
   const { files, recountPosts = false, cdnTakedown = false } = options;
   const { rows } = await sql<DeletedImage & OutcomeRow>`
     ${withCtes(ctes, true)}
@@ -225,7 +269,13 @@ export async function deleteImageRows(
       "blockedFor", "parentId", "allVersions", NULL AS outcome
     FROM deleted
     UNION ALL
-    ${others(sql.raw('NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL'))}`.execute(db);
+    ${others(sql.raw('NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL'))}
+    ${
+      hides
+        ? sql`UNION ALL
+      SELECT id, NULL, "userId", "postId", NULL, NULL, NULL, NULL, NULL, NULL, 'hidden' FROM hidden`
+        : sql``
+    }`.execute(db);
   return splitOutcome(rows);
 }
 
@@ -235,7 +285,7 @@ export async function deletePostRows(
   options: DeleteOptions
 ): Promise<DeleteOutcome<DeletedPostRow>> {
   const ids = [...new Set(options.ids)];
-  if (!ids.length) return { deleted: [], kept: [], gone: [] };
+  if (!ids.length) return { deleted: [], kept: [], hidden: [], gone: [] };
   const { ctes, remove, others } = deleteStatement('Post', options, ids);
   const { rows } = await sql<DeletedPostRow & OutcomeRow>`
     ${withCtes(ctes, true)}

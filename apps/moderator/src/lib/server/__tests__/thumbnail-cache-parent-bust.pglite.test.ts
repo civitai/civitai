@@ -56,6 +56,7 @@ vi.mock('../image-moderation-effects', () => ({
   notifyAppealResolved: vi.fn(async () => undefined),
   emailAppealResolution: vi.fn(async () => undefined),
   bustPostGalleryCaches: vi.fn(async () => undefined),
+  queueComicsForImages: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({
