@@ -102,6 +102,10 @@ feature-flag stages and back-compat shims are allowed only for a named release c
 Before any critic reads the plan:
 - Every number the plan relies on was measured, with count, window and a positive control.
 - Your user's and teammates' words are quoted verbatim with where they said it, not paraphrased.
+- Each claim about existing behavior that the design leans on cites the line that decides it, opened
+  for this plan. A claim you were only told is marked as told.
+- The area owner's existing comments on this task and the ones it links are read, and each one that
+  bears on the design is answered in the plan.
 - The plan lives at a path critics can read: `<INTENT_DIR>/plans/<feature>.md` (the absolute path,
   even from a worktree; see `.claude/agents/civitai-intent-review.md` for `INTENT_DIR`), or a page.
 - Nothing private goes into a public file. Plans stay out of the repo; see the root CLAUDE.md
@@ -144,6 +148,30 @@ Plan reviews can add scope nobody asked for. These rules hold that line:
 - **A redesign** gets fresh critics. **Still thumbs down after round 4:** stop, and put the split to
   your user as a decision.
 - Critics give the verdict inside SendMessage; read it there. Each writes its report file too.
+- A critic's finding is a claim too: check it in the code before you fold it in.
+
+## After a change (tier 2, including after every lane said thumbs up)
+
+A thumbs up covers the version it read. A material change after it (what gets built, who it applies
+to, the order, a guard or failure path, or any rewrite), whoever asked for it, gets a re-read before
+that version goes to a teammate, to your user or to build:
+
+1. Keep a copy of each reviewed version. Write the change into the body as one plan, replacing the old
+   text; never add a section that "supersedes" what is left below it.
+2. Before you take an instruction, find what the part it changes was protecting. If taking it costs
+   something, tell the person who gave it, with the evidence and a narrower option, and record the
+   answer. Their decision stands; silence is the failure.
+3. Run one fresh critic: `briefs/_common.md` with lanes 1 and 2 in the same prompt, `{{PREVIOUS}}` =
+   the last reviewed copy plus the instructions verbatim, `{{MAX_FIXES}}` = 8. Add lane 3, 4 or 5
+   only when the change is in its angle.
+   Resume that critic to check fixes to its own findings: those fixes don't start another re-read.
+   The re-read and each check count on from the plan's earlier rounds toward the same stop: a thumbs
+   down at round 4 or later stops, and the split goes to your user.
+4. The plan's tier 2 review line (tier 1 keeps `plan-review: R thumbs up on vN`) names both:
+   `plan-review: lanes thumbs up on vN, re-read thumbs up on vM`.
+   It covers no later version. If your user has said go, build what the change doesn't touch meanwhile.
+
+A wording or formatting fix needs no re-read.
 
 ## What reaches your user, and where it shows up later
 
