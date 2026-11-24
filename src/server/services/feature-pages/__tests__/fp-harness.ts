@@ -501,10 +501,6 @@ export const runMirror = async (mirror: typeof MirrorService) => {
 };
 
 let seeded = 0;
-/**
- * A Feature Pages comment as the post path leaves it: topic, comment and mirror row, then the one
- * inline push. For the mirror's own tests, which must not depend on the post path.
- */
 /** A finished scan of the comment's current text that found nothing. */
 export async function scanClean(id: number) {
   const { currentScanContentHashes } = await import('~/server/services/text-scan/submit');
@@ -518,6 +514,11 @@ export async function scanClean(id: number) {
   );
 }
 
+/**
+ * A Feature Pages comment as the post path leaves it: topic, comment and mirror row, then the one
+ * inline push. A clean scan of its text is recorded first unless `scanned: false`. For the
+ * mirror's own tests, which must not depend on the post path.
+ */
 export async function seedFpComment(
   mirror: typeof MirrorService,
   text: string,

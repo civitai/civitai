@@ -406,8 +406,10 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
   if (state === 'visible') {
     if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
       return wait(SCAN_INACTIVE_WAIT_MINUTES, 'text scan not active');
-    if (!(await scannedCleanNow(row.commentId)))
-      return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned clean');
+    const scan = await currentTextScan(row.commentId);
+    if (scan === 'not clean')
+      return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
+    if (scan !== 'clean') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
     if (!authorInStanding(row)) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
   }
 
@@ -595,12 +597,25 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
   return 'pushed';
 }
 
-/** Whether a finished scan of the comment's current text found nothing. */
-async function scannedCleanNow(commentId: number) {
+/** A scan verdict that finished for exactly this text. */
+const finishedFor = (
+  status: string | null | undefined,
+  contentHash: string | null | undefined,
+  hash: string
+) => status === 'Succeeded' && contentHash === hash;
+
+/**
+ * The scan of the comment's current text: clean, finished and not clean (flagged, or failed), or
+ * not yet in (none, in flight, or for older text).
+ */
+async function currentTextScan(commentId: number) {
   const hash = (await currentScanContentHashes('CommentV3', [commentId])).get(commentId);
-  if (!hash) return false;
+  if (!hash) return 'pending' as const;
   const verdict = await readFpScanVerdict(kyselyWrite, commentId);
-  return verdict?.status === 'Succeeded' && verdict.contentHash === hash && !verdict.flagged;
+  if (finishedFor(verdict?.status, verdict?.contentHash, hash))
+    return verdict!.flagged ? ('not clean' as const) : ('clean' as const);
+  if (verdict?.status === 'Failed' && verdict.contentHash === hash) return 'not clean' as const;
+  return 'pending' as const;
 }
 
 /** What the frame shows: shown on civitai, and pushed to the platform as shown. */
@@ -710,7 +725,7 @@ export async function runFpSweep() {
       if (c.overdue) unscanned += 1;
       continue;
     }
-    if (c.scanStatus === 'Succeeded' && c.scanContentHash === hash) continue;
+    if (finishedFor(c.scanStatus, c.scanContentHash, hash)) continue;
     if (c.overdue) unscanned += 1;
     const attempts = c.scanHash === hash ? c.scanAttempts : 0;
     if (attempts >= FP_MAX_SCAN_ATTEMPTS) {

@@ -1066,6 +1066,19 @@ describe('the platform ends on what civitai decided', () => {
     expect(posts().map((p) => p.text)).toEqual(['first words', 'second words']);
   });
 
+  it('a failed scan of the current text is not clean: nothing is sent, retried on the hourly wait', async () => {
+    const id = (await seed('scan failed', { scanned: false })).comment.sourceId;
+    await scanClean(id);
+    await q(
+      `UPDATE "EntityModeration" SET status = 'Failed' WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
+      [id]
+    );
+    await runMirror(mirror);
+    expect(posts()).toEqual([]);
+    const next = (await mirrorRow(id)).nextPushAt as Date;
+    expect(+new Date(next) - Date.now()).toBeGreaterThan(55 * 60_000);
+  });
+
   it('a scan still in flight for the current text is not a verdict: nothing is sent', async () => {
     const id = (await seed('being scanned', { scanned: false })).comment.sourceId;
     await scanClean(id);
@@ -1086,6 +1099,9 @@ describe('the platform ends on what civitai decided', () => {
     );
     await runMirror(mirror);
     expect(posts()).toEqual([]);
+    // Finished, so not polled every minute: retried on the hourly wait.
+    const next = (await mirrorRow(id)).nextPushAt as Date;
+    expect(+new Date(next) - Date.now()).toBeGreaterThan(55 * 60_000);
   });
 
   it('a post the platform answers stale is not recorded as pushed, so its text goes again', async () => {
