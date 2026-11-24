@@ -70,6 +70,14 @@ const LEDGER = {
     wipeAccount: 'exempt',
     purgeApp: 'exempt',
     migrateDocuments: 'exempt',
+    // The mark migration and the per-collection purge: moderator-run platform operations.
+    checkMarkMigration: 'read',
+    freezeMarks: 'exempt',
+    copyMarksToDocs: 'exempt',
+    verifyMarkMigration: 'exempt',
+    listMaintRuns: 'read',
+    purgeDump: 'read',
+    purgeCollection: 'exempt',
   },
   rater: {
     ready: 'read',

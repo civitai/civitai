@@ -367,6 +367,15 @@ Every step is per app, runs in one (app, namespace) at a time through the store'
 manual-apply SQL file under `src/server/services/apps/migrations/`, applied by hand to each environment
 with its rollback file beside it; nothing applies one automatically.
 
+**Tooling (built, moderator-only).** `apps.mod.docStore.maintenance.*` (`storage-mark-migration.service.ts`):
+`migrateMarks` (a dry run by default: the key check and the counts; otherwise key check, freeze, copy and
+verify in one call, idempotent), `rollbackMarks`, `purgeCollection`, `purgeDump` and `status`. Each run is
+recorded in `appdata.maint_run` (manual migration `20261123120000_appdata_maint_run.sql`), which is also
+where a mark's freeze lives and where a purge's dump is written, in the transaction that deletes. Each op
+that writes is audited first as an `AppListingModerationEvent` (`storage-mark-migration`,
+`storage-collection-purge`; their CHECK widen is a manual main-database migration). A purge handles at
+most 1,000 documents per call.
+
 ### `doc_mark` votes to viewer-keyed documents
 
 For each (source collection `c`, mark name `m`) the inventory lists, the app ships a manifest version

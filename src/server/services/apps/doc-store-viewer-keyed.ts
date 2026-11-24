@@ -20,16 +20,12 @@ import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { PUBLISHED_NS, refuseViewerKeyed } from '~/server/services/apps/doc-store';
 import type { DocCollection, DocStoreContext } from '~/server/services/apps/doc-store.types';
-import { DocStoreError } from '~/server/services/apps/doc-store.types';
+import { DocStoreError, isViewerKeyParent } from '~/server/services/apps/doc-store.types';
 import { base32Encode } from '~/server/utils/base32';
 import type { AppStorageKeyedBy } from '~/shared/constants/block-storage.constants';
 
 /** The path segment, after a collection, that names the viewer's own document. Not a key: `@`. */
 export const VIEWER_KEYED_SEGMENT = '@me';
-
-/** A parent key: the store's key grammar without `:`, at most 96 characters, not only dots. */
-export const VIEWER_KEY_PARENT_RE = /^[A-Za-z0-9._-]{1,96}$/;
-const DOT_ONLY = /^\.+$/;
 
 /** Why a viewer-keyed request was refused, in `details.reason` of a `400 invalid_request`. */
 export type ViewerKeyedRefusal =
@@ -89,6 +85,31 @@ function derivationSecret(): string {
     });
   }
   return secret;
+}
+
+/**
+ * The key deriver of one viewer-keyed collection, for the MARK MIGRATION
+ * (`migrateMarksToDocs` in `storage-mark-migration.service.ts`): each copied vote lands at exactly
+ * the key its voter's own `@me` call derives, so the voter reaches it after the switch opens.
+ * Throws the `503` (`viewer_keys_unconfigured`) while the derivation secret is unset, as every
+ * `@me` op does: a copy must never land at a key no viewer can reach.
+ */
+export function viewerKeyDeriver(args: {
+  appId: string;
+  ns: string;
+  collection: string;
+  mode: AppStorageKeyedBy;
+}): (parent: string | null, viewerUid: number) => string {
+  const secret = derivationSecret();
+  return (parent, viewerUid) =>
+    deriveViewerKey(secret, {
+      appId: args.appId,
+      ns: args.ns,
+      collection: args.collection,
+      mode: args.mode,
+      parent: args.mode === 'parent+viewer' ? parent : null,
+      viewerUid,
+    });
 }
 
 /**
@@ -155,7 +176,7 @@ export async function viewerKeyedDocKey(args: {
         coll.name
       );
     }
-    if (!VIEWER_KEY_PARENT_RE.test(parent) || DOT_ONLY.test(parent)) {
+    if (!isViewerKeyParent(parent)) {
       throw refuse(
         'invalid_parent',
         'parent must be 1–96 characters of [A-Za-z0-9._-], not only dots',

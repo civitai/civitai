@@ -195,6 +195,11 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           `INSERT INTO appdata.mark_head (app_id, ns, last_mark_seq) VALUES ($1, $2, 3)`,
           [app, ns]
         );
+        await h.raw(
+          `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+           VALUES ($1, $2, 'c', 'mark_migration', 'vote', 'frozen')`,
+          [app, ns]
+        );
       }
     });
 
@@ -204,6 +209,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
       'doc_mark',
       'doc_tomb',
       'mark_head',
+      'maint_run',
       'usage_user',
     ];
 
@@ -352,7 +358,15 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
         .map(([a, n, u]) => `${a}|${n}|${u}`)
         .sort();
     const PER_USER = ['usage_user', 'doc_mark'];
-    const OTHERS = ['doc', 'doc_index', 'doc_tally', 'doc_tomb', 'mark_head', 'usage_app'];
+    const OTHERS = [
+      'doc',
+      'doc_index',
+      'doc_tally',
+      'doc_tomb',
+      'mark_head',
+      'maint_run',
+      'usage_app',
+    ];
     const count = async (t: string) =>
       Number(
         (
@@ -398,6 +412,11 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
         for (const ns of NAMESPACES) {
           await h.raw(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ($1, $2)`, [app, ns]);
           await h.raw(`INSERT INTO appdata.mark_head (app_id, ns) VALUES ($1, $2)`, [app, ns]);
+          await h.raw(
+            `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+             VALUES ($1, $2, 'c', 'mark_migration', 'vote', 'frozen')`,
+            [app, ns]
+          );
         }
       }
     });
@@ -420,7 +439,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
       for (const t of OTHERS)
         expect({ t, n: await count(t) }).toEqual({
           t,
-          n: t === 'usage_app' || t === 'mark_head' ? 8 : 16,
+          n: t === 'usage_app' || t === 'mark_head' || t === 'maint_run' ? 8 : 16,
         });
     });
 
