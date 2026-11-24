@@ -122,8 +122,9 @@ describe('ReviewAssistantSessionsPanel', () => {
     ]);
   });
 
-  test('judges the look by accentCustomized: a v1 row from its own evidence, a v2 row as stored', async () => {
-    // v1: one colour of its own reads "customised" by v1's signal, and is still the stock look.
+  // Two tests, never a manual unmount between renders: the render helper's `unmount` is async, and
+  // one left un-awaited leaves React's act scope open, so every later test in the file renders nothing.
+  test('a v1 row is judged from its own evidence: one colour of its own is still the stock look', async () => {
     answer({
       ...TRACE,
       trace: {
@@ -139,14 +140,13 @@ describe('ReviewAssistantSessionsPanel', () => {
         },
       },
     });
-    const { unmount } = await renderWithProviders(
-      <ReviewAssistantSessionsPanel publishRequestId={REQUEST} />
-    );
+    await renderWithProviders(<ReviewAssistantSessionsPanel publishRequestId={REQUEST} />);
     await expect
       .element(page.getByTestId('apps-review-sessions-theme'))
       .toHaveTextContent('Default theme');
-    unmount();
-    // v2 stores the verdict: it is shown as stored.
+  });
+
+  test('a v2 row shows its stored accentCustomized', async () => {
     answer({
       ...TRACE,
       trace: {

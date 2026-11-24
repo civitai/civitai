@@ -137,7 +137,7 @@ export const DATA_RULE =
  * is explained. Runner-neutral: the page fetches the guide itself, the runner with `read_docs`.
  */
 export const THEME_RULE =
-  "- A distinct look is recommended, not required: an accent of the app's own (a scoped --civitai-color-primary override on the app's root element, never at :root, checked in light and dark) helps it stand out in the store; see read_docs https://developer.civitai.com/apps/guide/theming.md.";
+  "- A distinct look is recommended, not required: an accent of the app's own (a scoped --civitai-color-primary override on the app's root element, never at :root, checked in light and dark) helps it stand out in the store; see https://developer.civitai.com/apps/guide/theming.md.";
 
 /**
  * The viewer's own Buzz history. @civitai/sdk's BREAKING.md lists it under "No v1 route", which an

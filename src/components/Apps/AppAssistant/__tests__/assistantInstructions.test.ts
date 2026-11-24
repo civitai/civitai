@@ -185,7 +185,7 @@ const BUZZ_TRANSACTIONS_RULE_TEXT =
 // The whole sentence: the look is a recommendation, not a requirement (operator decision on
 // #10274: advisory only, no explicit expectation): a scoped accent, never at :root, and the guide.
 const THEME_RULE_TEXT =
-  "- A distinct look is recommended, not required: an accent of the app's own (a scoped --civitai-color-primary override on the app's root element, never at :root, checked in light and dark) helps it stand out in the store; see read_docs https://developer.civitai.com/apps/guide/theming.md.";
+  "- A distinct look is recommended, not required: an accent of the app's own (a scoped --civitai-color-primary override on the app's root element, never at :root, checked in light and dark) helps it stand out in the store; see https://developer.civitai.com/apps/guide/theming.md.";
 
 describe('the theme rule', () => {
   it('names a theming guide address read_docs reads, on both runners', () => {
@@ -194,6 +194,8 @@ describe('the theme rule', () => {
     expect(docsUrlOf(url)?.href).toBe(url);
     for (const runner of ['browser', 'remote'] as const)
       expect(assistantRules(runner)).toContain(THEME_RULE);
+    // The page's assistant has no read_docs: a rule both runners get must not name it.
+    expect(THEME_RULE).not.toContain('read_docs');
   });
 });
 
