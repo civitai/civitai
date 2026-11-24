@@ -1,5 +1,7 @@
 import type { NextApiRequest } from 'next';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
+import { bearerScopeMode } from '~/server/auth/bearer-scope-tighten';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
 import {
@@ -63,6 +65,12 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
 
   const credential: DownloadLinkCredential = { kind: 'apikey', id: String(session.apiKeyId) };
   if (!isAllowlistedMinter(credential)) return { ok: false, status: 403 };
+  if (
+    !MODEL_VIEW_SCOPES.some((bit) => hasScope(session.tokenScope, bit)) &&
+    (await bearerScopeMode('download-link-mint', session, 'ModelsRead|AIServicesRead')) ===
+      'enforce'
+  )
+    return { ok: false, status: 403 };
   return { ok: true, credential };
 }
 

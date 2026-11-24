@@ -8,6 +8,7 @@ import { childSafetyImageCase, childSafetyPostCase } from '@civitai/db-queries/c
 import {
   imageDeleteBlocked,
   imagesPendingDeletion,
+  releaseModeratorPendingDeletes,
   PENDING_DELETES_ACTOR,
 } from '@civitai/db-queries/pending-deletes';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
@@ -45,7 +46,7 @@ beforeAll(async () => {
   `);
   await pg.exec(imageUseTablesSql);
   // Returned by the deletes.
-  await pg.exec(`ALTER TABLE "Image" ADD COLUMN metadata jsonb`);
+  await pg.exec(`ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS metadata jsonb`);
   await pg.exec(
     `CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 0)`
   );
@@ -55,7 +56,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(`TRUNCATE "JobQueue", "Image", "Post", "Report", "ImageReport", "PostReport",
     "CsamReport", "CsamQueueSetAside", "ImageConnection", "ServiceDealReviewImage",
-    "ServiceDealReviewReport"`);
+    "ServiceDealReviewReport", "Appeal"`);
   await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (${PLAIN}, ${OWNER})`);
 });
 
@@ -356,6 +357,138 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect(gone).toEqual([404]);
   });
 
+  it("blocks what a moderator's delete of someone else's keeps, and only that", async () => {
+    const OWN = 3;
+    const CSAM_BLOCKED = 4;
+    await addImage({
+      needsReview: 'csam',
+      postId: 50,
+      metadata: JSON.stringify({
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: 'csam',
+        ruleId: 3,
+        ruleReason: 'r',
+        width: 1,
+      }),
+    });
+    await pg.exec(`INSERT INTO "Image" (id, "userId", "needsReview") VALUES
+      (${OWN}, ${SOMEONE_ELSE}, 'csam');
+      INSERT INTO "Image" (id, "userId", "blockedFor", ingestion) VALUES
+      (${CSAM_BLOCKED}, ${OWNER}, 'CSAM', 'Blocked')`);
+
+    const { deleted, kept, hidden } = await deleteImageRows(db, {
+      ids: [PLAIN, IMAGE, OWN, CSAM_BLOCKED],
+      actor: { id: SOMEONE_ELSE, isModerator: true },
+      replay: { moderatorDelete: true },
+    });
+
+    expect(deleted.map((row) => row.id)).toEqual([PLAIN]);
+    expect(kept).toEqual([IMAGE, OWN, CSAM_BLOCKED]);
+    expect(hidden).toEqual([
+      { id: IMAGE, userId: OWNER, postId: 50 },
+      { id: CSAM_BLOCKED, userId: OWNER, postId: null },
+    ]);
+    const { rows } = await pg.query(
+      `SELECT id, ingestion, "nsfwLevel", "blockedFor", metadata FROM "Image"
+       ORDER BY id`
+    );
+    expect(rows).toEqual([
+      // The account-deletion grace marker goes, so an account restore cannot lift the block.
+      {
+        id: IMAGE,
+        ingestion: 'Blocked',
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        metadata: { width: 1 },
+      },
+      { id: OWN, ingestion: 'Scanned', nsfwLevel: 1, blockedFor: null, metadata: null },
+      { id: CSAM_BLOCKED, ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'CSAM', metadata: null },
+    ]);
+    // The CSAM review flag stays, so the image stays in the CSAM queue.
+    const flag = await pg.query(`SELECT "needsReview" FROM "Image" WHERE id = ${IMAGE}`);
+    expect(flag.rows).toEqual([{ needsReview: 'csam' }]);
+  });
+
+  it('blocks what a system delete made for a moderator keeps, out of every review queue', async () => {
+    await addImage({ needsReview: 'minor' });
+    await report(70);
+    await pg.exec(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${IMAGE}, 70)`);
+
+    const { hidden } = await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'mod-delete-user-images' },
+      replay: { moderatorDelete: true },
+    });
+
+    expect(hidden).toEqual([{ id: IMAGE, userId: OWNER, postId: null }]);
+    const { rows } = await pg.query(`SELECT "needsReview" FROM "Image" WHERE id = ${IMAGE}`);
+    expect(rows).toEqual([{ needsReview: null }]);
+  });
+
+  it('keeps the appeal flag of a hidden image whose appeal is still pending', async () => {
+    await addImage({ needsReview: 'minor' });
+    await report(70);
+    await pg.exec(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${IMAGE}, 70);
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${IMAGE}, 'Pending')`);
+
+    await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'mod-delete-user-images' },
+      replay: { moderatorDelete: true },
+    });
+
+    const { rows } = await pg.query(`SELECT "needsReview" FROM "Image" WHERE id = ${IMAGE}`);
+    expect(rows).toEqual([{ needsReview: 'appeal' }]);
+  });
+
+  it('gives a CSAM-blocked image no appeal flag, so it stays out of the appeals queue', async () => {
+    await addImage({ blockedFor: 'CSAM', ingestion: 'Blocked' });
+    await pg.exec(
+      `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${IMAGE}, 'Pending')`
+    );
+
+    const { hidden } = await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'mod-delete-user-images' },
+      replay: { moderatorDelete: true },
+    });
+
+    expect(hidden).toEqual([{ id: IMAGE, userId: OWNER, postId: null }]);
+    const { rows } = await pg.query(`SELECT "needsReview" FROM "Image" WHERE id = ${IMAGE}`);
+    expect(rows).toEqual([{ needsReview: null }]);
+  });
+
+  it('blocks nothing for a moderator purge that does not queue what it keeps', async () => {
+    await addImage({ needsReview: 'csam', blockedFor: 'tos', ingestion: 'Blocked' });
+
+    const { kept, hidden } = await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'image-ingestion' },
+      replay: { moderatorDelete: true },
+      queueKept: false,
+    });
+
+    expect(kept).toEqual([IMAGE]);
+    expect(hidden).toEqual([]);
+    const { rows } = await pg.query(`SELECT "blockedFor" FROM "Image" WHERE id = ${IMAGE}`);
+    expect(rows).toEqual([{ blockedFor: 'tos' }]);
+  });
+
+  it.each([
+    ['a system delete', { system: 'remove-deleted-user-images' }],
+    ["the owner's delete", owner],
+  ])('leaves what %s keeps as it is', async (_, actor) => {
+    await addImage({ needsReview: 'csam' });
+
+    const { kept, hidden } = await deleteImageRows(db, { ids: [IMAGE], actor });
+
+    expect(kept).toEqual([IMAGE]);
+    expect(hidden).toEqual([]);
+    const { rows } = await pg.query(`SELECT ingestion FROM "Image" WHERE id = ${IMAGE}`);
+    expect(rows).toEqual([{ ingestion: 'Scanned' }]);
+  });
+
   it('keeps without queueing for a caller that retries from its own queue', async () => {
     await addImage({ needsReview: 'csam' });
 
@@ -473,6 +606,45 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
     expect(deleted.map((row) => row.id)).toEqual([51]);
     expect(await pending()).toEqual([
       { entityId: 50, entityType: 'Post', data: { deletedBy: 'remove-deleted-user-images' } },
+    ]);
+  });
+});
+
+describe('releaseModeratorPendingDeletes', () => {
+  it("takes a moderator's delete off a lifted image, and leaves every other ask", async () => {
+    const queue = (rows: [number, object][]) =>
+      pg.query(
+        `INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+         SELECT (r->>0)::int, 'Image', 'PendingDelete', r->1 FROM jsonb_array_elements($1::jsonb) r`,
+        [JSON.stringify(rows)]
+      );
+    await queue([
+      [1, { deletedBy: 'moderator:8', moderatorDelete: true }],
+      [
+        2,
+        { deletedBy: 'moderator:8', moderatorDelete: true, keepStoredFiles: true, ownerId: OWNER },
+      ],
+      [3, { cleanup: true, moderatorDelete: true, deletedBy: 'moderator:8' }],
+      [4, { deletedBy: 'remove-deleted-user-images' }],
+      [5, { deletedBy: 'moderator:8', moderatorDelete: true }],
+    ]);
+
+    await releaseModeratorPendingDeletes(db, [1, 2, 3, 4]);
+
+    expect(await pending()).toEqual([
+      { entityId: 2, entityType: 'Image', data: { ownerId: OWNER } },
+      {
+        entityId: 3,
+        entityType: 'Image',
+        data: { cleanup: true, moderatorDelete: true },
+      },
+      { entityId: 4, entityType: 'Image', data: { deletedBy: 'remove-deleted-user-images' } },
+      // Not lifted.
+      {
+        entityId: 5,
+        entityType: 'Image',
+        data: { deletedBy: 'moderator:8', moderatorDelete: true },
+      },
     ]);
   });
 });

@@ -5,7 +5,6 @@ import type { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { notifications } from '~/server/notifications/client';
-import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
 import {
   imageReactionMilestoneKey,
@@ -20,7 +19,6 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   notificationSingleRowFull,
   type DeletePushSubscriptionInput,
-  type GetUserNotificationsSchema,
   type MarkImageMilestonesReadInput,
   type MarkReadNotificationInput,
   type ToggleNotificationSettingInput,
@@ -28,7 +26,6 @@ import {
   type TogglePushSettingInput,
   type UpsertPushSubscriptionInput,
 } from '~/server/schema/notification.schema';
-import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const createNotificationPendingRow = notificationSingleRowFull
   .omit({ userId: true })
@@ -49,8 +46,8 @@ export type CreateNotificationPendingRow = z.infer<typeof createNotificationPend
 // Create/read/mark all go through the notifications app (apps/notifications) via
 // @civitai/notifications — the monolith no longer touches the notification DB. The settings opt-out
 // filter (create), the fan-out worker, the read/count/mark queries, and the per-user unread cache all
-// live in that app now; the monolith keeps only the main-DB `details` enrichment + the
-// UserNotificationSettings writes below.
+// live in that app now. This file wraps those calls and writes the main-DB settings and
+// subscriptions; the main-DB `details` enrichment is `notifications/detail-fetchers`.
 
 /** `throwOnError` rethrows a failed send, after the usual logging, for a caller that must know it failed. */
 export const createNotification = async (
@@ -81,28 +78,6 @@ export const createNotification = async (
     if (throwOnError) throw e;
   }
 };
-
-export async function getUserNotifications({
-  limit = DEFAULT_PAGE_SIZE,
-  cursor,
-  userId,
-  category,
-  count = false,
-  unread = false,
-  showSfwFace,
-}: Partial<GetUserNotificationsSchema> & {
-  userId: number;
-  count?: boolean;
-  showSfwFace: boolean;
-}) {
-  // Base rows come from the app (notif DB); enrichment reads the MAIN db, so it stays here.
-  const items = await notifications.queryNotifications({ userId, limit, cursor, category, unread });
-  await populateNotificationDetails(items, { showSfwFace });
-
-  if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
-
-  return { items };
-}
 
 export async function getUserNotificationCount({
   userId,

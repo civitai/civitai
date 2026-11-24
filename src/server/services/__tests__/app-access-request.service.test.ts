@@ -75,7 +75,8 @@ const PRELUDE = `CREATE TABLE "User" (
   "emailVerified" TIMESTAMP(3),
   "bannedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false,
-  "deletedAt" TIMESTAMP(3)
+  "deletedAt" TIMESTAMP(3),
+  "meta" JSONB DEFAULT '{}'
 );`;
 
 const MIRA_IDEA =
@@ -257,12 +258,15 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
   });
 
   // The operator's "basic account checks": approve instantly only if the account is not banned or
-  // muted and has a verified email (plus not deleted, which the operator agreed to keep); anyone
-  // failing a check still lands pending for a moderator.
+  // muted and does not still owe the site's email check (plus not deleted, which the operator
+  // agreed to keep); anyone failing a check still lands pending for a moderator.
   it.each([
     ['banned', `UPDATE "User" SET "bannedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`],
     ['muted', `UPDATE "User" SET "muted" = true WHERE "id" = $1`],
-    ['without a verified email', `UPDATE "User" SET "emailVerified" = NULL WHERE "id" = $1`],
+    [
+      'a new signup that has not proven its email yet',
+      `UPDATE "User" SET "emailVerified" = NULL, "meta" = '{"emailVerificationRequired": true}' WHERE "id" = $1`,
+    ],
     ['deleted', `UPDATE "User" SET "deletedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`],
   ])(
     '🔴 flag ON but the account is %s: the request lands PENDING for a moderator',
@@ -281,6 +285,56 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
       await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
     }
   );
+
+  // The email check is the site's shared gate (`requiresEmailVerification`), not
+  // "emailVerified IS NOT NULL": an older account was never asked to verify, so an empty
+  // `emailVerified` on it means nothing. Only the onboarding stamp, still unproven, holds a
+  // request for a moderator.
+  it.each([
+    ['meta is empty', `UPDATE "User" SET "emailVerified" = NULL, "meta" = '{}' WHERE "id" = $1`],
+    ['meta is NULL', `UPDATE "User" SET "emailVerified" = NULL, "meta" = NULL WHERE "id" = $1`],
+    [
+      'the marker is false',
+      `UPDATE "User" SET "emailVerified" = NULL, "meta" = '{"emailVerificationRequired": false}' WHERE "id" = $1`,
+    ],
+  ])(
+    '🔴 flag ON, an OLDER account with no verified email (%s): approved, like the rest of the site lets it',
+    async (_label, oldAccount) => {
+      flag.on.add(String(mira));
+      await pg.query(oldAccount, [mira]);
+
+      const row = await submit(mira, MIRA_IDEA);
+      expect(row).toMatchObject({ status: 'approved', whatToBuild: MIRA_IDEA });
+      expect(await isApproved(mira)).toBe(true);
+      expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'profile' });
+    }
+  );
+
+  it('🔴 flag ON, a new signup that HAS proven its email (marker set, emailVerified set): approved', async () => {
+    flag.on.add(String(mira));
+    await pg.query(
+      `UPDATE "User" SET "meta" = '{"emailVerificationRequired": true}' WHERE "id" = $1`,
+      [mira]
+    );
+
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'approved', whatToBuild: MIRA_IDEA });
+    expect(await isApproved(mira)).toBe(true);
+  });
+
+  it('🔴 the email check reads the PRIMARY at submit time: a verification since the session was built counts', async () => {
+    flag.on.add(String(mira));
+    await pg.query(
+      `UPDATE "User" SET "emailVerified" = NULL, "meta" = '{"emailVerificationRequired": true}' WHERE "id" = $1`,
+      [mira]
+    );
+    await expect(submit(mira, MIRA_IDEA)).resolves.toMatchObject({ status: 'pending' });
+    await decide((await rowsFor(mira))[0].id, 'declined');
+
+    // The same session (nothing about it changed) once the address is proven.
+    await pg.query(`UPDATE "User" SET "emailVerified" = CURRENT_TIMESTAMP WHERE "id" = $1`, [mira]);
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).resolves.toMatchObject({ status: 'approved' });
+  });
 
   it('🔴 flag OFF: an eligible account still lands pending, exactly as before', async () => {
     flag.on.add(String(tomasz));

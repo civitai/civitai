@@ -223,6 +223,24 @@ func TestSessionUserFrom(t *testing.T) {
 	}
 }
 
+// The Flipt targeting properties: tier as given (nil when absent, null or not a string), the two
+// grants only when the boolean true, onboarding as an integer (0 when absent or not one).
+func TestSessionUserFromFliptProperties(t *testing.T) {
+	u, err := SessionUserFrom(42, map[string]any{"id": int64(42), "tier": "gold", "isEarlyAdopter": true,
+		"appBuilderApproved": true, "onboarding": int64(83)})
+	if err != nil || u.Tier == nil || *u.Tier != "gold" || !u.IsEarlyAdopter || !u.AppBuilderApproved || u.Onboarding != 83 {
+		t.Fatalf("set: %+v %v", u, err)
+	}
+	u, err = SessionUserFrom(42, map[string]any{"id": int64(42), "tier": nil, "isEarlyAdopter": "true",
+		"appBuilderApproved": 1, "onboarding": "16"})
+	if err != nil || u.Tier != nil || u.IsEarlyAdopter || u.AppBuilderApproved || u.Onboarding != 0 {
+		t.Fatalf("not the expected types: %+v %v", u, err)
+	}
+	if u, _ := SessionUserFrom(42, map[string]any{"id": int64(42)}); u.Tier != nil || u.Onboarding != 0 {
+		t.Fatalf("absent: %+v", u)
+	}
+}
+
 func TestTokenFromCookieHeader(t *testing.T) {
 	h := `a=1; __Secure-civ-token=abc%2Edef; civ-token=zzz`
 	if got := TokenFromCookieHeader(h, "__Secure-civ-token"); got != "abc.def" {
