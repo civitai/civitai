@@ -583,6 +583,39 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
 });
 
 describe('the migration’s own guards', () => {
+  it('🔴 the reviewSource backfill labels rows decided before the column, and a re-run changes nothing', async () => {
+    const legacy = async (sql: string) => (await pg.query<{ id: number }>(sql)).rows[0].id;
+    // Written as the code before the column did: an auto-approval sets reviewedAt in the INSERT.
+    const auto = await legacy(
+      `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt")
+       VALUES (${mira}, '', 'approved', CURRENT_TIMESTAMP) RETURNING "id"`
+    );
+    const byModerator = await legacy(
+      `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt", "reviewedById", "createdAt")
+       VALUES (${tomasz}, '', 'approved', CURRENT_TIMESTAMP, ${moderator}, CURRENT_TIMESTAMP - interval '1 hour') RETURNING "id"`
+    );
+    // A moderator's approval whose account was deleted since: no reviewer, decided later.
+    const deletedModerator = await legacy(
+      `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt", "createdAt")
+       VALUES (${moderator}, '', 'approved', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP - interval '1 hour') RETURNING "id"`
+    );
+    const sources = async () =>
+      (
+        await pg.query<{ id: number; reviewSource: string | null }>(
+          'SELECT "id", "reviewSource" FROM "AppAccessRequest" ORDER BY "id"'
+        )
+      ).rows;
+
+    for (let run = 0; run < 2; run++) {
+      await pg.exec(readFileSync(MIGRATIONS[1], 'utf8'));
+      expect(await sources()).toEqual([
+        { id: auto, reviewSource: 'system' },
+        { id: byModerator, reviewSource: 'moderator' },
+        { id: deletedModerator, reviewSource: null },
+      ]);
+    }
+  });
+
   it('🔴 the database refuses a second pending row for one user, whatever the service does', async () => {
     await submit(mira, MIRA_IDEA);
     await expect(

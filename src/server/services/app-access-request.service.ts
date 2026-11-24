@@ -60,7 +60,7 @@ export type AppAccessRequestQueueItem = AppAccessRequestView & {
   username: string | null;
   reviewedById: number | null;
   reviewedByUsername: string | null;
-  /** NULL on pending rows, and on rows decided before the column existed. */
+  /** NULL on pending rows, and on a since-deleted moderator's decision from before the column. */
   reviewSource: AppAccessReviewSource | null;
 };
 
