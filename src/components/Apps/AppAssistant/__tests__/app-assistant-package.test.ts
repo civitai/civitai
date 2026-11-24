@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as shared from '@civitai/app-assistant';
+import type { ThemeEvidence } from '@civitai/app-assistant/theme-evidence';
 import * as appKey from '~/components/Apps/AppAssistant/appKey';
 import * as appTools from '~/components/Apps/AppAssistant/appTools';
 import * as coverArt from '~/components/Apps/AppAssistant/coverArt';
@@ -132,15 +133,22 @@ describe('the shared gate and subagents’ calls', () => {
  */
 describe('report_ready and the app’s look', () => {
   const ctx = { conversationId: 'c-1', reply: 1 };
-  const toolCtx = { signal: new AbortController().signal, conversationId: 'c-1', files: [] };
   const run = (command: string): shared.ToolResult => ({
     name: 'sandbox__run_command',
     input: { command },
     output: 'exit_code: 0\n---\nout',
     isError: false,
   });
-  const STOCK = { tokenOverrides: [], customColorCount: 3, filesScanned: 6 } as never;
-  const OWN = { tokenOverrides: ['--civitai-color-primary'], customColorCount: 3, filesScanned: 6 };
+  const evidence = (tokenOverrides: string[]): ThemeEvidence => ({
+    tokenOverrides,
+    customColorCount: 3,
+    customColorFiles: ['src/index.css'],
+    usesThemePackage: true,
+    stylingDependencies: [],
+    filesScanned: 6,
+  });
+  const STOCK = evidence([]);
+  const OWN = evidence(['--civitai-color-primary']);
   const DEFAULT_THEME = {
     code: 'default-theme',
     message:
@@ -151,7 +159,7 @@ describe('report_ready and the app’s look', () => {
   async function ready(options: Parameters<typeof shared.createGateCore>[0]) {
     const core = shared.createGateCore(options);
     core.beforeToolCall('sandbox__list_dir', {}, ctx);
-    await core.tools.set_checklist.execute({ items: [{ label: 'Tips', done: true }] }, toolCtx);
+    await core.tools.set_checklist.execute({ items: [{ label: 'Tips', done: true }] });
     core.onToolResult({
       name: 'sandbox__preview_check',
       input: {},
@@ -163,10 +171,7 @@ describe('report_ready and the app’s look', () => {
     expect(core.beforeToolCall(shared.REPORT_READY, { data: 'civitai' }, ctx)).toEqual({
       allow: true,
     });
-    return (await core.tools.report_ready.execute({ data: 'civitai' }, toolCtx)) as Record<
-      string,
-      unknown
-    >;
+    return (await core.tools.report_ready.execute({ data: 'civitai' })) as Record<string, unknown>;
   }
 
   it('the stock look: ready, with the default-theme advisory', async () => {

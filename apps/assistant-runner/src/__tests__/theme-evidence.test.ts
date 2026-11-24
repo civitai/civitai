@@ -94,6 +94,19 @@ describe('openAppThemeEvidence', () => {
     expect(await openAppThemeEvidence(shellSandbox('my-app'))).toBeNull();
   });
 
+  it('tests and the dev harness count against neither the file cap nor the scan', async () => {
+    const files: Record<string, string> = { 'my-app/src/index.css': '.a { color: #111111; }' };
+    for (let i = 0; i <= THEME_EVIDENCE_MAX_FILES; i++) {
+      files[`my-app/src/__tests__/t${i}.ts`] = "const s = { color: '#abcdef' };";
+      files[`my-app/tests/e${i}.ts`] = 'export {};';
+    }
+    files['my-app/test/x.css'] = '.t { color: #222222; }';
+    files['my-app/src/dev/harness.css'] = '.d { color: #333333; }';
+    write(files);
+    const evidence = await openAppThemeEvidence(shellSandbox('my-app'));
+    expect(evidence).toMatchObject({ filesScanned: 1, customColorCount: 1 });
+  });
+
   it('no open app, or a key that is not an app key, runs nothing', async () => {
     const none = shellSandbox(null);
     expect(await openAppThemeEvidence(none)).toBeNull();

@@ -33,10 +33,24 @@ const NAMES = [
   .map((ext) => `-name '*.${ext}'`)
   .concat(`-name package.json`)
   .join(' -o ');
-/** Directories that are never the app's own styling (`EXCLUDED_PATH` drops the rest). */
-const PRUNED = ['node_modules', 'dist', 'build', '.git', 'coverage', 'scratch']
-  .map((dir) => `-name ${dir}`)
-  .join(' -o ');
+/**
+ * Directories `EXCLUDED_PATH` never scans, pruned so they count against neither the file cap nor
+ * the output: dependencies, build output, tests, scratch, and the template's `src/dev` harness.
+ */
+const PRUNED = [
+  ...[
+    'node_modules',
+    'dist',
+    'build',
+    '.git',
+    'coverage',
+    'scratch',
+    'test',
+    'tests',
+    '__tests__',
+  ].map((dir) => `-name ${dir}`),
+  "-path '*/src/dev'",
+].join(' -o ');
 
 /**
  * One shell command printing every source file of the app under `dir`, each after a line

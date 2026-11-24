@@ -12,6 +12,12 @@ import {
   TRACE_SIGNALS_VERSION,
   type TranscriptLike,
 } from '~/shared/app-assistant/trace-signals';
+import {
+  styleBlocksIn,
+  THEME_SCAN_MAX_CHARS,
+  tokensSetIn,
+  type ScanMeter,
+} from '@civitai/app-assistant/theme-evidence';
 
 /**
  * The fixtures under `fixtures/page-elements` are the `page-elements` template's own files, copied
@@ -397,11 +403,89 @@ describe('accentCustomizedOf: a stored row of either version', () => {
     const v1 = { signalsVersion: 1, themeCustomized: true, theme: ev(25) };
     expect(accentCustomizedOf(v1)).toBe(false);
     expect(accentCustomizedOf({ ...v1, theme: ev(5, ['--civitai-color-primary']) })).toBe(true);
-    expect(accentCustomizedOf({ signalsVersion: 1, themeCustomized: null })).toBeNull();
+    const v1NoTheme = { signalsVersion: 1, themeCustomized: null };
+    expect(accentCustomizedOf(v1NoTheme)).toBeNull();
   });
 
   it('a v2 row answers what it stored', () => {
     expect(accentCustomizedOf({ accentCustomized: true, theme: ev(0) })).toBe(true);
     expect(accentCustomizedOf({ accentCustomized: null, theme: ev(100) })).toBeNull();
+  });
+});
+
+/**
+ * The scan's cost is linear in its input. Before this was pinned, `--civitai-a--civitai-a…` with no
+ * `:` took ~14 s per 512 KiB (every `--civitai-` retried to the end of the run), and a run of
+ * unclosed `<style>` tags ~4 s. Each case pins a deterministic step count AND a generous wall-time
+ * bound, so it cannot flake on a slow machine yet still fails loudly on a quadratic scan.
+ */
+describe('the theme scan is linear time', () => {
+  const KIB_512 = 512 * 1024;
+  const fill = (unit: string) => unit.repeat(Math.ceil(KIB_512 / unit.length)).slice(0, KIB_512);
+  const timed = (files: Map<string, string>) => {
+    const started = performance.now();
+    const out = themeSignals(files);
+    return { out, ms: performance.now() - started };
+  };
+
+  it.each([
+    ['src/chain.js', fill('--civitai-a')],
+    ['src/chain.css', fill('--civitai-a')],
+    ['src/dashes.js', fill('--civitai-')],
+  ])('an unbroken --civitai- chain with no colon (%s, 512 KiB)', (path, text) => {
+    const { out, ms } = timed(new Map([[path, text]]));
+    expect(out.theme.tokenOverrides).toEqual([]);
+    expect(ms).toBeLessThan(250);
+    const meter: ScanMeter = { steps: 0 };
+    const found = new Set<string>();
+    tokensSetIn(text, found, meter);
+    expect(found.size).toBe(0);
+    expect(meter.steps).toBeLessThanOrEqual(2 * text.length);
+  });
+
+  it.each([fill('<style>'), fill('<style ')])(
+    'a run of unclosed <style> tags (index.html, 512 KiB) #%#',
+    (text) => {
+      const { out, ms } = timed(new Map([['index.html', text]]));
+      expect(out.theme.filesScanned).toBe(1);
+      expect(ms).toBeLessThan(250);
+      const meter: ScanMeter = { steps: 0 };
+      expect(styleBlocksIn(text, meter)).toEqual([]);
+      expect(meter.steps).toBe(0);
+    }
+  );
+
+  it('the linear scanners find what the regexes they replace found', () => {
+    const found = new Set<string>();
+    tokensSetIn(
+      ':root{--civitai-color-primary : #f0f; --CIVITAI-Radius:2px} a { color: var(--civitai-color-text) } x--civitai-a--civitai-b:1 --civitai-:0',
+      found
+    );
+    expect([...found].sort()).toEqual([
+      '--civitai-a--civitai-b',
+      '--civitai-color-primary',
+      '--civitai-radius',
+    ]);
+    expect(
+      styleBlocksIn('<STYLE media="x">a{}</style> <style>b{}</STYLE><style>never closed')
+    ).toEqual(['a{}', 'b{}']);
+    expect(styleBlocksIn('<style>a{}</style><style no-close-angle')).toEqual(['a{}']);
+  });
+
+  it('a scan past its character budget stops and judges nothing (deterministic, no clock)', () => {
+    const half = Math.ceil(THEME_SCAN_MAX_CHARS / 2);
+    const big = `.a { --civitai-color-primary: #7c3aed; }${' '.repeat(half)}`;
+    const within = themeSignals(new Map([['src/a.css', big]]));
+    expect(within.theme.budgetExceeded).toBeUndefined();
+    expect(accentCustomizedFrom(within.theme)).toBe(true);
+    const past = themeSignals(
+      new Map([
+        ['src/a.css', big],
+        ['src/b.css', big],
+      ])
+    );
+    expect(past.theme.budgetExceeded).toBe(true);
+    expect(past.themeCustomized).toBeNull();
+    expect(accentCustomizedFrom(past.theme)).toBeNull();
   });
 });

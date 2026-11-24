@@ -176,9 +176,9 @@ export function computeTraceSignals({
  * A stored row's `accentCustomized`, whatever version wrote it: the stored value from v2 on, else
  * the rule over the row's own `theme` (a v1 row). `null` when neither can be read.
  */
-export function accentCustomizedOf(
-  signals: { accentCustomized?: unknown; theme?: unknown } | null | undefined
-): boolean | null {
+export function accentCustomizedOf(stored: object | null | undefined): boolean | null {
+  // Any stored row, whatever its version and other fields: only these two are read.
+  const signals = stored as { accentCustomized?: unknown; theme?: unknown } | null | undefined;
   if (typeof signals?.accentCustomized === 'boolean') return signals.accentCustomized;
   if (signals?.accentCustomized === null) return null;
   return accentCustomizedFrom(signals?.theme as ThemeEvidence | undefined);

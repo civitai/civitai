@@ -59,6 +59,23 @@ export interface ThemeEvidence {
   stylingDependencies: string[];
   /** Source files scanned. */
   filesScanned: number;
+  /**
+   * Set (only) when the scan stopped at `THEME_SCAN_MAX_CHARS`: the evidence is partial, so nothing
+   * is judged from it (`themeCustomized` and `accentCustomizedFrom` answer `null`).
+   */
+  budgetExceeded?: true;
+}
+
+/**
+ * The most source text one scan reads, summed over its files (characters). Every pass below is
+ * linear in its input, so this bounds the scan's work deterministically, whatever the files hold:
+ * past it the scan stops and judges nothing.
+ */
+export const THEME_SCAN_MAX_CHARS = 8 * 1024 * 1024;
+
+/** Counts the characters the hand-written scanners below examine (tests read it). */
+export interface ScanMeter {
+  steps: number;
 }
 
 /** The files the evidence reads (a source file, or a `package.json`), before `EXCLUDED_PATH`. */
@@ -71,7 +88,9 @@ const MARKUP_FILE = /\.(?:html?|vue|svelte)$/i;
 export const EXCLUDED_PATH =
   /(?:^|\/)(?:node_modules|dist|build|\.git|coverage|test|tests|__tests__|scratch)\/|(?:^|\/)src\/dev\/|\.(?:test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/i;
 
-const TOKEN_IN_CSS = /(--civitai-[a-z0-9-]+)\s*:/gi;
+/** The literal start of a token; the name after it is read by hand (`tokensSetIn`). */
+const TOKEN_PREFIX = /--civitai-/gi;
+const TOKEN_PREFIX_LENGTH = '--civitai-'.length;
 const TOKEN_IN_SCRIPT = /setProperty\(\s*['"`](--civitai-[a-z0-9-]+)['"`]/gi;
 const USES_THEME = /['"]@civitai\/theme(?:\/[^'"]*)?['"]/;
 
@@ -92,9 +111,65 @@ function ownColorsIn(value: string): number {
     .length;
 }
 
+const isNameChar = (code: number) =>
+  (code >= 48 && code <= 57) || // 0-9
+  (code >= 65 && code <= 90) || // A-Z
+  (code >= 97 && code <= 122) || // a-z
+  code === 45; // -
+const WHITESPACE = /\s/;
+
+/**
+ * Every `--civitai-*` token `text` SETS (`--civitai-<name> :`), lowercased, into `out`. LINEAR TIME:
+ * what `/(--civitai-[a-z0-9-]+)\s*:/gi` matches, without its quadratic retries. A name runs to the
+ * first character outside `[a-z0-9-]` (no shorter name can be followed by `:` or whitespace, since
+ * both are outside it), and a run whose end has no `:` cannot hold a later match either (every
+ * `--civitai-` inside it ends at the same place), so the search resumes past the run, never inside it.
+ */
+export function tokensSetIn(text: string, out: Set<string>, meter?: ScanMeter): void {
+  TOKEN_PREFIX.lastIndex = 0;
+  for (let hit = TOKEN_PREFIX.exec(text); hit; hit = TOKEN_PREFIX.exec(text)) {
+    const start = hit.index;
+    let end = start + TOKEN_PREFIX_LENGTH;
+    while (end < text.length && isNameChar(text.charCodeAt(end))) end++;
+    let next = end;
+    while (next < text.length && WHITESPACE.test(text[next]!)) next++;
+    if (meter) meter.steps += next - start + 1;
+    if (end > start + TOKEN_PREFIX_LENGTH && text[next] === ':') {
+      out.add(text.slice(start, end).toLowerCase());
+      TOKEN_PREFIX.lastIndex = next + 1;
+    } else TOKEN_PREFIX.lastIndex = end;
+  }
+}
+
+const STYLE_OPEN = /<style/gi;
+const STYLE_CLOSE = /<\/style>/gi;
+
+/**
+ * The contents of a markup file's `<style>` blocks. LINEAR TIME: what
+ * `/<style[^>]*>([\s\S]*?)<\/style>/gi` matches, by searching for `<style`, then the next `>`, then
+ * the next `</style>`. With no `>` or no `</style>` left, no later block can close either, so it
+ * stops (the regex retried from every later `<style` and rescanned to the end each time).
+ */
+export function styleBlocksIn(text: string, meter?: ScanMeter): string[] {
+  const blocks: string[] = [];
+  STYLE_OPEN.lastIndex = 0;
+  for (let open = STYLE_OPEN.exec(text); open; open = STYLE_OPEN.exec(text)) {
+    const tagEnd = text.indexOf('>', open.index + open[0].length);
+    if (tagEnd < 0) break;
+    STYLE_CLOSE.lastIndex = tagEnd + 1;
+    const close = STYLE_CLOSE.exec(text);
+    if (!close) break;
+    if (meter) meter.steps += close.index + close[0].length - open.index;
+    blocks.push(text.slice(tagEnd + 1, close.index));
+    STYLE_OPEN.lastIndex = close.index + close[0].length;
+  }
+  return blocks;
+}
+
 /** The CSS a markup file carries: its `<style>` blocks and `style="…"` attributes. */
 function cssInMarkup(text: string): string {
-  const blocks = [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]);
+  const blocks = styleBlocksIn(text);
+  // Linear: `[^"]*` cannot run past the quote that ends it, so no attempt rescans another's value.
   const inline = [...text.matchAll(/\sstyle\s*=\s*"([^"]*)"/gi)].map((m) => m[1]);
   return [...blocks, ...inline].join('\n');
 }
@@ -121,18 +196,25 @@ export function themeSignals(files: ReadonlyMap<string, string>): {
   let customColorCount = 0;
   let usesThemePackage = false;
   let filesScanned = 0;
+  let charsScanned = 0;
+  let budgetExceeded = false;
   for (const [path, text] of files) {
     if (!SOURCE_FILE.test(path) || EXCLUDED_PATH.test(path)) continue;
+    charsScanned += text.length;
+    if (charsScanned > THEME_SCAN_MAX_CHARS) {
+      budgetExceeded = true;
+      break;
+    }
     filesScanned++;
     if (USES_THEME.test(text)) usesThemePackage = true;
     const isStyle = STYLE_FILE.test(path);
     const isMarkup = MARKUP_FILE.test(path);
     const css = isStyle ? text : isMarkup ? cssInMarkup(text) : '';
-    for (const m of css.matchAll(TOKEN_IN_CSS)) tokens.add(m[1]!.toLowerCase());
+    tokensSetIn(css, tokens);
     // A script can carry CSS too (a `css\`…\`` template, an injected <style> string).
     if (!isStyle) {
       for (const m of text.matchAll(TOKEN_IN_SCRIPT)) tokens.add(m[1]!.toLowerCase());
-      if (!isMarkup) for (const m of text.matchAll(TOKEN_IN_CSS)) tokens.add(m[1]!.toLowerCase());
+      if (!isMarkup) tokensSetIn(text, tokens);
     }
     let colors = countCssColors(css);
     if (!isStyle) {
@@ -165,9 +247,11 @@ export function themeSignals(files: ReadonlyMap<string, string>): {
     usesThemePackage,
     stylingDependencies: [...stylingDependencies].sort(),
     filesScanned,
+    ...(budgetExceeded ? { budgetExceeded: true as const } : {}),
   };
   return {
-    themeCustomized: filesScanned === 0 ? null : tokens.size > 0 || customColorCount > 0,
+    themeCustomized:
+      filesScanned === 0 || budgetExceeded ? null : tokens.size > 0 || customColorCount > 0,
     theme,
   };
 }
@@ -183,7 +267,8 @@ export const OWN_PALETTE_MIN_COLORS = 60;
 /**
  * Whether an app has a look of its own rather than Civitai's stock look: it sets at least one
  * `--civitai-color-*` token, OR it declares at least `OWN_PALETTE_MIN_COLORS` colours of its own.
- * `null` when there is nothing to judge (no evidence, or no source file scanned). THE ONLY
+ * `null` when there is nothing to judge (no evidence, no source file scanned, or a scan that stopped
+ * at its budget). THE ONLY
  * implementation of this rule: the trace signal (`accentCustomized`), the submit advisory and
  * `report_ready`'s advisory all call it.
  *
@@ -198,11 +283,11 @@ export const OWN_PALETTE_MIN_COLORS = 60;
  */
 export function accentCustomizedFrom(
   evidence:
-    | Pick<ThemeEvidence, 'tokenOverrides' | 'customColorCount' | 'filesScanned'>
+    | Pick<ThemeEvidence, 'tokenOverrides' | 'customColorCount' | 'filesScanned' | 'budgetExceeded'>
     | null
     | undefined
 ): boolean | null {
-  if (!evidence || !(evidence.filesScanned > 0)) return null;
+  if (!evidence || !(evidence.filesScanned > 0) || evidence.budgetExceeded === true) return null;
   const tokens = Array.isArray(evidence.tokenOverrides) ? evidence.tokenOverrides : [];
   return (
     tokens.some(
