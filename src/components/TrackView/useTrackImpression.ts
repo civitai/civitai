@@ -6,6 +6,7 @@ import {
   impressionTelemetryOn,
   recordImpression,
 } from '~/components/TrackView/impressionBuffer';
+import { recordFeedItemClick, recordFeedItemSeen } from '~/utils/feed-events';
 import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
@@ -60,9 +61,11 @@ function armDwell(registry: Registry, element: Element, state: ElementState) {
   state.timer = setTimeout(() => {
     state.timer = null;
     if (state.onSeen) state.onSeen();
-    else
+    else {
       for (const target of state.targets)
         recordImpression(target.entityType, target.entityId, surface);
+      recordFeedItemSeen(state.targets);
+    }
     // Recorded — stop watching. The session-level dedupe in the buffer would drop
     // a repeat anyway; this just avoids re-arming the timer on every scroll.
     registry.observer.unobserve(element);
@@ -215,7 +218,21 @@ function useImpressionObserver<T extends HTMLElement>(
     registry.elements.set(element, state);
     registry.observer.observe(element);
 
+    const onClick = (event: MouseEvent) => {
+      if (event.type === 'auxclick' && event.button !== 1) return;
+      if (isLinkClick(event.target)) recordFeedItemClick(state.targets);
+    };
+    const tracksClicks = state.targets.length > 0;
+    if (tracksClicks) {
+      element.addEventListener('click', onClick);
+      element.addEventListener('auxclick', onClick);
+    }
+
     return () => {
+      if (tracksClicks) {
+        element.removeEventListener('click', onClick);
+        element.removeEventListener('auxclick', onClick);
+      }
       disarmDwell(state);
       registry.observer.unobserve(element);
       registry.elements.delete(element);
@@ -238,6 +255,13 @@ function useImpressionObserver<T extends HTMLElement>(
   }, [enabled, key, root]);
 
   return ref;
+}
+
+// A button inside a link (e.g. a card menu) is not a click through, so the nearest control must be the link.
+const CONTROLS =
+  'a[href], button, [role="button"], [role="menuitem"], input, select, textarea, label';
+export function isLinkClick(target: EventTarget | null) {
+  return target instanceof Element && target.closest(CONTROLS)?.tagName === 'A';
 }
 
 // Test-only, mirroring impressionBuffer's hooks. Not part of the runtime contract.

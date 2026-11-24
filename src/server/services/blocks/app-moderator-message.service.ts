@@ -19,6 +19,8 @@ import {
   checkModMessageModeratorQuota,
 } from '~/server/utils/app-moderator-message-rate-limit';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
+import { appRateLimitMeta } from '~/server/utils/app-rate-limit';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 
 /**
  * MODERATOR → APP-DEVELOPER MESSAGING.
@@ -88,10 +90,17 @@ export type AppModeratorMessageErrorCode =
 
 export class AppModeratorMessageError extends Error {
   readonly code: AppModeratorMessageErrorCode;
-  constructor(code: AppModeratorMessageErrorCode, message: string, options?: ErrorOptions) {
+  /** On `RATE_LIMITED`: the refusal's meta, which the router answers with. */
+  readonly rateLimit?: RateLimitMeta;
+  constructor(
+    code: AppModeratorMessageErrorCode,
+    message: string,
+    options?: ErrorOptions & { rateLimit?: RateLimitMeta }
+  ) {
     super(message, options);
     this.name = 'AppModeratorMessageError';
     this.code = code;
+    this.rateLimit = options?.rateLimit;
   }
 }
 
@@ -257,14 +266,16 @@ export async function messageAppOwner(opts: {
   if (!actorQuota.allowed) {
     throw new AppModeratorMessageError(
       'RATE_LIMITED',
-      `Too many moderator messages — try again in ${actorQuota.retryAfterSeconds}s.`
+      `Too many moderator messages — try again in ${actorQuota.retryAfterSeconds}s.`,
+      { rateLimit: appRateLimitMeta('apps.moderator-messages', actorQuota.retryAfterSeconds) }
     );
   }
   const listingQuota = await checkModMessageListingQuota(appListingId);
   if (!listingQuota.allowed) {
     throw new AppModeratorMessageError(
       'RATE_LIMITED',
-      `Too many moderator messages — try again in ${listingQuota.retryAfterSeconds}s.`
+      `Too many moderator messages — try again in ${listingQuota.retryAfterSeconds}s.`,
+      { rateLimit: appRateLimitMeta('apps.moderator-messages', listingQuota.retryAfterSeconds) }
     );
   }
 

@@ -51,6 +51,7 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
 import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -143,6 +144,7 @@ import { moderatorApp } from '~/server/services/moderator-app.service';
 import { ModeratorClientError } from '@civitai/moderation';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { visibleReviewWhere } from '~/server/services/resourceReview.visibility';
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
 
 export const moderateImageHandler = async ({
   input,
@@ -512,7 +514,15 @@ export const getInfiniteImagesHandler = async ({
   // same thing either way. The `hubId` conflict in `getInfiniteImagesSchema` still
   // reads the un-narrowed input and so stays the stricter of the two — it refuses
   // a combination this would have served, which is the safe direction.
-  const { hatSort, hatTeams, hatTurfMine, hideTurfHats, hideWornHats, ...unhatted } = input;
+  const {
+    hatSort,
+    hatTeams,
+    hatTurfMine,
+    hatTurfExpired,
+    hideTurfHats,
+    hideWornHats,
+    ...unhatted
+  } = input;
   let scopedInput =
     unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
       ? { ...unhatted, publishedOnly: undefined }
@@ -521,17 +531,19 @@ export const getInfiniteImagesHandler = async ({
   // unasked. Not on a scoped feed (profile, model, post...): the hydrate drops a model or hub scope, and
   // the Show filters live in the shared images filter store, so a gallery would silently lose images.
   const turfEvent =
-    (hatSort || hatTurfMine || hideTurfHats || hideWornHats) &&
+    (hatSort || hatTurfMine || hatTurfExpired || hideTurfHats || hideWornHats) &&
     features.hatTurfFeedCard &&
     features.hatTurfFeedSorts &&
     !isScopedImageFeed(scopedInput)
       ? await getHatTurfFeedEvent(user?.id)
       : null;
   const hatFeedSort = turfEvent ? hatSort : undefined;
-  // The images the viewer has a live Turf hat on. A player is always signed in.
-  const hatsOf = turfEvent && hatTurfMine ? user?.id : undefined;
-  // Under a Hat Turf sort or the viewer's own hats every image has Turf hats, so hiding them would
-  // empty the feed: only the worn-hat filter applies there.
+  // The images the viewer has a live Turf hat on, or one that expired. A player is always signed in.
+  const hatsOf = turfEvent && (hatTurfMine || hatTurfExpired) ? user?.id : undefined;
+  // The chips are exclusive in the filters menu; sent together, the live hats win.
+  const expiredHats = !hatTurfMine && !!hatTurfExpired;
+  // A Hat Turf sort or the viewer's own hats (live or expired) already picks images by Turf hats, so
+  // hiding them does not apply: only the worn-hat filter does.
   const hide = { turf: hatFeedSort || hatsOf ? undefined : hideTurfHats, worn: hideWornHats };
   const hideHats = turfEvent && (hide.turf || hide.worn) ? turfEvent : null;
   const withoutHidden = async <T extends { id: number }>(items: T[]) => {
@@ -597,12 +609,17 @@ export const getInfiniteImagesHandler = async ({
         async (at) => {
           const read = { event: turfEvent, teams: hatTeams, cursor: at, limit: input.limit };
           const mine = hatsOf
-            ? await readMyTurfPage({ ...read, userId: hatsOf, sort: hatFeedSort })
+            ? await readMyTurfPage({
+                ...read,
+                userId: hatsOf,
+                sort: hatFeedSort,
+                expired: expiredHats,
+              })
             : undefined;
           const page = mine ?? (await readTurfRankPage({ ...read, sort: hatFeedSort! }));
           if (!page.ids.length) return { items: [], nextCursor: page.nextCursor };
-          // Only in the viewer's own hats: the card shows that hat's time left.
-          const placedAt = mine?.placedAt;
+          // Only in the viewer's own live hats: the card shows that hat's time left.
+          const placedAt = expiredHats ? undefined : mine?.placedAt;
           const rows = await hydrateWithReadRescue(
             { ...feedHydrateQuery(input, page.ids), ...dbInput },
             async (query) => (await getAllImages(query)).items
@@ -1177,6 +1194,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.
@@ -1306,6 +1324,7 @@ export const getEntitiesCoverImageHandler = async ({
       ...input,
       include: ['tags'],
       viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
+      seesReportListed: seesReportListed(ctx),
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: eventViewerOf(ctx),

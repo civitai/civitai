@@ -80,6 +80,10 @@ import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageDetailPostCard } from '~/components/Image/DetailV2/ImageDetailPostCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import {
+  ReviewWorkImageDetail,
+  type ReviewWork,
+} from '~/components/Image/DetailV2/ReviewWorkImageDetail';
 import { isImageDetailPoiHidden } from '~/components/Image/DetailV2/image-detail-main-media';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
@@ -274,6 +278,29 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
   if (isImageDetailPoiHidden(image, currentUser)) return <NotFound />;
+  // Only `image.get` carries it; a feed item never does.
+  const reviewWork = 'reviewWork' in image ? (image.reviewWork as ReviewWork | null) : null;
+  if (reviewWork)
+    return (
+      <ReviewWorkImageDetail
+        image={image}
+        reviewWork={reviewWork}
+        close={close}
+        shareUrl={imageShareUrl}
+        stage={
+          <ImageDetailCarousel
+            images={images}
+            items={items}
+            textUserId={image.user.id}
+            videoRef={videoRef}
+            connect={connect}
+            onSettle={handleSettle}
+            loop={false}
+            {...navigation}
+          />
+        }
+      />
+    );
 
   const actualCollection = collection || collectionItems[0]?.collection;
   const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;

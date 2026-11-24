@@ -19,11 +19,13 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Model rule matches queue (moderator app) | [docs/features/text-scan.md](text-scan.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
+| Knights in-game inquisitor queue (moderators confirm skill checks) | [docs/features/knights-inquisitor.md](knights-inquisitor.md) |
 | Edit LoRA training (Training Studio before/after pairs) | [docs/features/edit-lora-training.md](edit-lora-training.md) |
 | Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
 | Model gift links (free claims of gated versions) | [docs/features/model-gift-links.md](model-gift-links.md) |
+| Usage limits: adding a new limit (registry, 429, /me/limits) | [docs/features/usage-limits.md](usage-limits.md) |
 | Comped membership gifts (moderator, no charge) | [docs/features/membership-gift-comps.md](membership-gift-comps.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
 | Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |

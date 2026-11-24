@@ -10,6 +10,7 @@ import { semanticImageHeldText } from '~/server/services/semantic-held-content.s
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
+import { isMoreLikeThisRefused } from '~/shared/utils/more-like-this';
 import { ImageSort } from '~/server/common/enums';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
@@ -40,6 +41,7 @@ import {
   resolveTags,
   resolveUserIds,
   searchServiceSource,
+  withPreferredTagFirst,
   withTagMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
@@ -226,7 +228,9 @@ export async function searchSemanticImages({
     const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
       excludedTagIds: viewerExcludedTagIds,
     });
-    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+    // Refused the same way as an image the viewer cannot see, whatever their level.
+    if (!anchor || isMoreLikeThisRefused(anchor))
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
@@ -311,7 +315,18 @@ export async function searchSemanticImages({
           (t) => !blockedTags.some((b) => b.id === t.id)
         )
       : undefined;
-  const ranked = queryTag ? withTagMatchesFirst(cachedSource, queryTag.id) : cachedSource;
+  // A blocked or viewer-hidden tag is not boosted: hydration would drop every image it ranks first.
+  const preferTagId =
+    'similarTo' in query && collection === 'images'
+      ? input.preferTagIds?.find(
+          (id) => !blockedTags.some((b) => b.id === id) && !viewerExcludedTagIds.includes(id)
+        )
+      : undefined;
+  const ranked = queryTag
+    ? withTagMatchesFirst(cachedSource, queryTag.id)
+    : preferTagId
+    ? withPreferredTagFirst(cachedSource, preferTagId)
+    : cachedSource;
 
   let correctedQuery: string | undefined;
   // Every correction is audited, not only the first: rounds of one page can come from cached blocks

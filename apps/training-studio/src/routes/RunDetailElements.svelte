@@ -10,6 +10,7 @@
     modelPageUrl,
     navigate,
     publishUrl,
+    publishVersionUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
   import { publishShareChoice } from '$lib/publish-url-core';
@@ -38,12 +39,14 @@
     IconBoltFilled,
     IconSparkles,
     IconUpload,
+    IconVersions,
     IconExternalLink,
   } from '@tabler/icons-svelte';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
-  import LossGraph from '$lib/components/LossGraph.svelte';
-  import RunLog from '$lib/components/RunLog.svelte';
+  import LossGraph from '$lib/components/LossGraphElements.svelte';
+  import RunLog from '$lib/components/RunLogElements.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
@@ -268,6 +271,7 @@
   // revoked on unmount. A failed fetch clears its slot so the next poll retries it.
   const datasetObjectUrls = new Map<string, string>();
   let datasetSrcs = $state<Record<string, string>>({});
+  let datasetRatings = $state<Record<string, string>>({});
   let destroyed = false;
   $effect(() => {
     if (!browser) return;
@@ -278,11 +282,12 @@
       datasetObjectUrls.set(air, '');
       backend()
         .datasetBlob(air, workflowId)
-        .then((blob) => {
+        .then(({ blob, nsfwLevel }) => {
           if (destroyed) return;
           const url = URL.createObjectURL(blob);
           datasetObjectUrls.set(air, url);
           datasetSrcs = { ...datasetSrcs, [air]: url };
+          if (nsfwLevel) datasetRatings = { ...datasetRatings, [air]: nsfwLevel };
         })
         .catch(() => {
           datasetObjectUrls.delete(air);
@@ -306,7 +311,7 @@
   }
   async function fetchDatasetBlob(air: string): Promise<Blob> {
     const direct = directDatasetUrl(air);
-    if (!direct) return backend().datasetBlob(air, d.workflowId);
+    if (!direct) return (await backend().datasetBlob(air, d.workflowId)).blob;
     const res = await fetch(direct);
     if (!res.ok) throw new Error(String(res.status));
     return res.blob();
@@ -551,16 +556,23 @@
   let ownRights = $state(false);
   let shareDataset = $state(false);
   let shareTouched = $state(false);
+  const publishRequest = $derived(
+    publishEpoch
+      ? {
+          workflowId: d.workflowId,
+          epoch: publishEpoch.number,
+          ...publishShareChoice(shareTouched, ownRights, shareDataset),
+        }
+      : null
+  );
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
-    if (!toUrl || !publishEpoch) return null;
-    return hostLink(
-      toUrl({
-        workflowId: d.workflowId,
-        epoch: publishEpoch.number,
-        ...publishShareChoice(shareTouched, ownRights, shareDataset),
-      })
-    );
+    return toUrl && publishRequest ? hostLink(toUrl(publishRequest)) : null;
+  });
+  // The main app asks which of the owner's models the run goes on.
+  const publishVersionLink = $derived.by(() => {
+    const toUrl = publishVersionUrl();
+    return toUrl && publishRequest ? hostLink(toUrl(publishRequest)) : null;
   });
   const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
   function setOwnRights(next: boolean) {
@@ -577,17 +589,18 @@
   const modelLink = $derived.by(() => {
     const toUrl = modelPageUrl();
     if (!toUrl || d.modelId == null) return null;
-    return hostLink(toUrl({ modelId: d.modelId }));
+    return hostLink(toUrl({ modelId: d.modelId, modelVersionId: d.modelVersionId }));
   });
   // The run keeps its modelId after the owner deletes the model, so ask once per id (a primitive,
   // so the training poll's fresh `d` doesn't re-ask), and only when there's a link to drop. Never
   // settles on the server: SSR and hydration both render the pending branch.
   const runModelId = $derived(modelLink ? d.modelId : undefined);
+  const runModelVersionId = $derived(modelLink ? d.modelVersionId : undefined);
   const modelLive = $derived(
     runModelId == null
       ? null
       : browser
-        ? backend().modelLive(runModelId)
+        ? backend().modelLive(runModelId, runModelVersionId)
         : new Promise<boolean>(() => {})
   );
 
@@ -1229,7 +1242,7 @@
 
     {#if publishTarget && runComplete}
       <civitai-card id="train-further" padding="lg" with-border>
-        <div class="flex flex-wrap items-center gap-3">
+        <div class="grid items-center gap-x-6 gap-y-3 md:grid-cols-[minmax(0,1fr)_auto]">
           <div class="min-w-0">
             <h3 class="m-0 flex items-center gap-1.5 text-base font-semibold text-white">
               <IconRepeat size={16} stroke={2} class="text-dark-2" />Train further
@@ -1241,12 +1254,11 @@
               save point along the way, not one pass over your images.
             </p>
           </div>
-          <div class="ml-auto flex flex-col items-end gap-1.5">
-            <div class="flex items-end gap-2">
+          <div class="flex flex-col gap-1.5 md:items-end">
+            <div class="flex flex-wrap items-center gap-2">
               <civitai-number-input
-                class="w-32"
-                size="sm"
-                label="+ checkpoints"
+                class="flex-row items-center gap-2 [&::part(control)]:w-16 [&::part(label)]:whitespace-nowrap [&::part(label)]:font-normal [&::part(label)]:text-dark-1"
+                label="Add checkpoints"
                 min="1"
                 max="20"
                 value={String(furtherEpochs)}
@@ -1256,7 +1268,6 @@
               ></civitai-number-input>
               {#if confirming}
                 <civitai-button
-                  class="self-end"
                   loading={continuing}
                   onclick={doTrainFurther}
                   disabled={continuing || quote?.cost == null}
@@ -1266,11 +1277,11 @@
                         >— <IconBoltFilled size={13} stroke={2} class="mx-0.5 inline" />{quote.cost.toLocaleString()}</span
                       >{/if}{/if}
                 </civitai-button>
-                <civitai-button class="self-end" variant="outline" onclick={() => (confirming = false)} disabled={continuing}>
+                <civitai-button variant="outline" onclick={() => (confirming = false)} disabled={continuing}>
                   Cancel
                 </civitai-button>
               {:else}
-                <civitai-button class="self-end" onclick={() => (confirming = true)}>Train further</civitai-button>
+                <civitai-button onclick={() => (confirming = true)}>Train further</civitai-button>
               {/if}
             </div>
             <BlueFirstNote />
@@ -1352,6 +1363,11 @@
             <a {...publishLink} class={LINK_FILLED}>
               <IconUpload size={14} stroke={2} />Publish a model page
             </a>
+            {#if publishVersionLink && !link}
+              <a {...publishVersionLink} class={LINK_OUTLINE}>
+                <IconVersions size={14} stroke={2} />Add as a new version
+              </a>
+            {/if}
             {#if link}
               <a {...link} class={LINK_OUTLINE}>
                 <IconExternalLink size={14} stroke={2} />View draft
@@ -1365,6 +1381,8 @@
                 Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
                 recommended
                   ? ' (recommended)'
+                  : ''}{publishVersionLink
+                  ? ', or a draft version on one of your existing models'
                   : ''} — you review, finish, and publish it there. Nothing goes public until you do.
               </p>
             {/if}
@@ -1452,15 +1470,18 @@
         {#each d.dataset as item, i (item.air + i)}
           {@const src = datasetSrc(item.air)}
           <figure class="m-0 flex flex-col gap-1">
-            {#if src}
-              <img
-                src={src}
-                alt={item.caption || `dataset image ${i + 1}`}
-                class="aspect-square w-full rounded bg-dark-7 object-cover ring-1 ring-inset ring-dark-4/60"
-              />
-            {:else}
-              <div class="aspect-square w-full rounded bg-dark-7 ring-1 ring-inset ring-dark-4/60"></div>
-            {/if}
+            <div class="relative">
+              {#if src}
+                <img
+                  src={src}
+                  alt={item.caption || `dataset image ${i + 1}`}
+                  class="aspect-square w-full rounded bg-dark-7 object-cover ring-1 ring-inset ring-dark-4/60"
+                />
+              {:else}
+                <div class="aspect-square w-full rounded bg-dark-7 ring-1 ring-inset ring-dark-4/60"></div>
+              {/if}
+              <RatingBadge level={datasetRatings[item.air]} class="absolute bottom-1.5 left-1.5" />
+            </div>
             {#if item.caption}
               <figcaption
                 class="line-clamp-2 font-mono text-xs leading-snug text-dark-2"

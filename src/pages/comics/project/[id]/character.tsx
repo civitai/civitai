@@ -16,7 +16,6 @@ import {
   Title,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowLeft,
@@ -33,13 +32,12 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -48,10 +46,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
 import { fetchBlob } from '~/utils/file-utils';
-
-const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
-  ssr: false,
-});
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -613,9 +608,9 @@ function ReferenceUpload() {
                                   disabled={deletingImageId != null}
                                   onClick={(e: React.MouseEvent) => {
                                     e.stopPropagation();
-                                    openConfirmModal({
+                                    openConfirm({
                                       title: 'Delete Reference Image',
-                                      children:
+                                      message:
                                         'Are you sure you want to delete this reference image?',
                                       labels: { confirm: 'Delete', cancel: 'Cancel' },
                                       confirmProps: { color: 'red' },
@@ -707,38 +702,35 @@ function ReferenceUpload() {
                         leftSection={<IconWand size={14} />}
                         disabled={uploadedImages.length >= 10}
                         onClick={() => {
-                          dialogStore.trigger({
-                            component: ImageSelectModal,
-                            props: {
-                              title: 'Pick from Generator',
-                              selectSource: 'generation' as const,
-                              videoAllowed: false,
-                              importedUrls: [],
-                              onSelect: async (
-                                selected: { url: string; meta?: Record<string, unknown> }[]
-                              ) => {
-                                if (selected.length === 0) return;
-                                for (const img of selected) {
-                                  if (uploadedImages.length >= 10) break;
-                                  const width = (img.meta?.width as number) ?? 512;
-                                  const height = (img.meta?.height as number) ?? 512;
-                                  try {
-                                    const cfId = await fetchAndUploadGeneratorImage(
-                                      img.url,
-                                      'ref_add',
-                                      uploadToCF
-                                    );
-                                    const previewUrl =
-                                      getEdgeUrl(cfId, { width: 200, optimized: true }) ?? img.url;
-                                    setUploadedImages((prev) => [
-                                      ...prev,
-                                      { url: cfId, previewUrl, width, height },
-                                    ]);
-                                  } catch (err) {
-                                    console.error('Failed to pick generator image:', err);
-                                  }
+                          openDialog(() => import('~/components/Training/Form/ImageSelectModal'), {
+                            title: 'Pick from Generator',
+                            selectSource: 'generation' as const,
+                            videoAllowed: false,
+                            importedUrls: [],
+                            onSelect: async (
+                              selected: { url: string; meta?: Record<string, unknown> }[]
+                            ) => {
+                              if (selected.length === 0) return;
+                              for (const img of selected) {
+                                if (uploadedImages.length >= 10) break;
+                                const width = (img.meta?.width as number) ?? 512;
+                                const height = (img.meta?.height as number) ?? 512;
+                                try {
+                                  const cfId = await fetchAndUploadGeneratorImage(
+                                    img.url,
+                                    'ref_add',
+                                    uploadToCF
+                                  );
+                                  const previewUrl =
+                                    getEdgeUrl(cfId, { width: 200, optimized: true }) ?? img.url;
+                                  setUploadedImages((prev) => [
+                                    ...prev,
+                                    { url: cfId, previewUrl, width, height },
+                                  ]);
+                                } catch (err) {
+                                  console.error('Failed to pick generator image:', err);
                                 }
-                              },
+                              }
                             },
                           });
                         }}
@@ -866,45 +858,39 @@ function ReferenceUpload() {
                     leftSection={<IconWand size={14} />}
                     disabled={images.length >= 10 || isUploading}
                     onClick={() => {
-                      dialogStore.trigger({
-                        component: ImageSelectModal,
-                        props: {
-                          title: 'Pick from Generator',
-                          selectSource: 'generation' as const,
-                          videoAllowed: false,
-                          importedUrls: [],
-                          onSelect: async (
-                            selected: { url: string; meta?: Record<string, unknown> }[]
-                          ) => {
-                            if (selected.length === 0) return;
-                            for (const img of selected) {
-                              if (images.length >= 10) break;
-                              const width = (img.meta?.width as number) ?? 512;
-                              const height = (img.meta?.height as number) ?? 512;
-                              try {
-                                const cfId = await fetchAndUploadGeneratorImage(
-                                  img.url,
-                                  'ref_create',
-                                  uploadImageToCF
-                                );
-                                const previewUrl =
-                                  getEdgeUrl(cfId, { width: 200, optimized: true }) ?? img.url;
-                                // Create a synthetic File-like blob for state consistency
-                                const blob = await fetch(previewUrl).then((r) => r.blob());
-                                const file = new File([blob], 'generator-image.jpg', {
-                                  type: 'image/jpeg',
-                                });
-                                setImages((prev) =>
-                                  [...prev, { file, preview: previewUrl, width, height }].slice(
-                                    0,
-                                    10
-                                  )
-                                );
-                              } catch (err) {
-                                console.error('Failed to pick generator image:', err);
-                              }
+                      openDialog(() => import('~/components/Training/Form/ImageSelectModal'), {
+                        title: 'Pick from Generator',
+                        selectSource: 'generation' as const,
+                        videoAllowed: false,
+                        importedUrls: [],
+                        onSelect: async (
+                          selected: { url: string; meta?: Record<string, unknown> }[]
+                        ) => {
+                          if (selected.length === 0) return;
+                          for (const img of selected) {
+                            if (images.length >= 10) break;
+                            const width = (img.meta?.width as number) ?? 512;
+                            const height = (img.meta?.height as number) ?? 512;
+                            try {
+                              const cfId = await fetchAndUploadGeneratorImage(
+                                img.url,
+                                'ref_create',
+                                uploadImageToCF
+                              );
+                              const previewUrl =
+                                getEdgeUrl(cfId, { width: 200, optimized: true }) ?? img.url;
+                              // Create a synthetic File-like blob for state consistency
+                              const blob = await fetch(previewUrl).then((r) => r.blob());
+                              const file = new File([blob], 'generator-image.jpg', {
+                                type: 'image/jpeg',
+                              });
+                              setImages((prev) =>
+                                [...prev, { file, preview: previewUrl, width, height }].slice(0, 10)
+                              );
+                            } catch (err) {
+                              console.error('Failed to pick generator image:', err);
                             }
-                          },
+                          }
                         },
                       });
                     }}

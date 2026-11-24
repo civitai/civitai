@@ -95,6 +95,9 @@ var infiniteUnsupported = func() []string {
 	return out
 }()
 
+// InfiniteUnsupportedInputKeys are the keys ParseInfinite falls back on as `input-<key>` (a copy).
+func InfiniteUnsupportedInputKeys() []string { return append([]string(nil), infiniteUnsupported...) }
+
 // strippedURLKeys are keys of imagesQueryParamSchema (src/components/Image/image-query-params.ts,
 // the images feeds' URL query) that getInfiniteImagesSchema lacks. The site passes that query into
 // image.getInfinite's input (useImageFilters → ImagesInfinite → useQueryImages): `view` from an
@@ -133,7 +136,7 @@ var infiniteAbsentKeys = func() map[string]bool {
 // pages from the turf rank or drops images by turfHiddenIds; none of that is read here, so a request
 // carrying one falls back whatever the flags say. `hatTeams` only narrows a hat sort, so it is
 // ignored alone.
-var hatKeys = []string{"hatSort", "hatTurfMine", "hideTurfHats", "hideWornHats"}
+var hatKeys = []string{"hatSort", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats"}
 
 // ParseInfinite validates image.getInfinite's decoded input. A shape outside the supported subset is
 // a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST).

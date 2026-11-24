@@ -1,6 +1,6 @@
 import { Text } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconCrown, IconDotsVertical, IconUserX } from '@tabler/icons-react';
 import produce from 'immer';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -50,23 +50,21 @@ export function ChatMemberMenu({
   });
 
   const promoteModal = () =>
-    openConfirmModal({
+    openConfirm({
       title: `Make ${member.user.username} the group admin?`,
-      children: (
+      message: (
         <Text size="sm">
           They will be able to add and remove members. You will no longer be the admin.
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Make admin', cancel: 'Cancel' },
       onConfirm: () => mutate({ chatMemberId: member.id, isOwner: true }),
     });
 
   const removeModal = () =>
-    openConfirmModal({
+    openConfirm({
       title: `Remove ${member.user.username} from this group?`,
-      children: <Text size="sm">They will no longer be able to post in this conversation.</Text>,
-      centered: true,
+      message: <Text size="sm">They will no longer be able to post in this conversation.</Text>,
       labels: { confirm: 'Remove', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => mutate({ chatMemberId: member.id, status: ChatMemberStatus.Kicked }),

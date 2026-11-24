@@ -1,7 +1,7 @@
 import type { ActionIconProps } from '@mantine/core';
 import { ActionIcon, Loader } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconBan,
@@ -13,7 +13,6 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import dynamic from 'next/dynamic';
 
 import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -36,15 +35,10 @@ import type { ArticleGetById } from '~/types/router';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { moderatorArticleLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-
-const ArticleUnpublishModal = dynamic(() => import('~/components/Modals/ArticleUnpublishModal'), {
-  ssr: false,
-});
-const openArticleUnpublishModal = createDialogTrigger(ArticleUnpublishModal);
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -61,9 +55,9 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
   const handleDeleteArticle = () => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete article',
-      children:
+      message:
         'Are you sure you want to delete this article? This action is destructive and cannot be reverted.',
       labels: { cancel: "No, don't delete it", confirm: 'Delete article' },
       confirmProps: { color: 'red' },
@@ -244,7 +238,9 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                     onClick={(e: React.MouseEvent) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      openArticleUnpublishModal({ props: { articleId: article.id } });
+                      openDialog(() => import('~/components/Modals/ArticleUnpublishModal'), {
+                        articleId: article.id,
+                      });
                     }}
                   >
                     Unpublish as Violation

@@ -69,7 +69,7 @@ describe('restoreScamCase', () => {
       ],
     });
     dbMock.dbWrite.$executeRaw.mockResolvedValue(2);
-    expect(await restoreScamCase(5)).toEqual({ restored: 2 });
+    expect(await restoreScamCase(5)).toEqual({ restored: 2, skipped: 0 });
 
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const sql = sqlOf(call);
@@ -89,13 +89,13 @@ describe('restoreScamCase', () => {
         { cleanup: { kind: 'comments', at, count: 0, ids: [], truncated: false } },
       ],
     });
-    expect(await restoreScamCase(5)).toEqual({ restored: 0 });
+    expect(await restoreScamCase(5)).toEqual({ restored: 0, skipped: 0 });
     dbMock.dbWrite.userRestriction.findUnique.mockResolvedValue({
       userId: 42,
       type: 'generation',
       triggers: [{ cleanup: { kind: 'comments', at, count: 2, ids: [3, 4], truncated: false } }],
     });
-    expect(await restoreScamCase(6)).toEqual({ restored: 0 });
+    expect(await restoreScamCase(6)).toEqual({ restored: 0, skipped: 0 });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

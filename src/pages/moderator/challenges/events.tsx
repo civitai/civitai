@@ -22,8 +22,7 @@ import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { challengeEventTitleColors } from '~/server/schema/challenge.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -272,19 +271,16 @@ export default function ModeratorChallengeEventsPage() {
   };
 
   const handleDelete = (eventId: number) => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete Event',
-        message: (
-          <Text>
-            Are you sure? Challenges assigned to this event will be unlinked but not deleted.
-          </Text>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Delete' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => deleteMutation.mutateAsync({ id: eventId }),
-      },
+    openConfirm({
+      title: 'Delete Event',
+      message: (
+        <Text>
+          Are you sure? Challenges assigned to this event will be unlinked but not deleted.
+        </Text>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Delete' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => deleteMutation.mutateAsync({ id: eventId }),
     });
   };
 

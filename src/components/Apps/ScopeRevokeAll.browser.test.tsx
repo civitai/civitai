@@ -1,5 +1,6 @@
-import { ModalsProvider } from '@mantine/modals';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as NotificationsMod from '~/utils/notifications';
@@ -94,9 +95,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 function mount(grant = GRANT) {
   renderWithProviders(
-    <ModalsProvider>
+    <>
       <ScopeConsentList grant={grant} emptyLabel="none" />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
 }
 
@@ -110,6 +112,9 @@ beforeEach(() => {
 });
 
 const sent = () => m.calls.map((c) => [...c.scopes].sort());
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('Remove all', () => {
   test('🔴 one call carries exactly the removable scopes, never an exempt one', async () => {

@@ -184,6 +184,9 @@ export type AppBlockEndpoint =
   | 'storage_read'
   | 'storage_write'
   | 'storage_tally'
+  // The report moderation API (`POST /api/v1/blocks/moderation/reports`,
+  // `doc-store-report-api.ts`): a dedup insert behind a daily budget, its own workload.
+  | 'storage_report'
   // The per-viewer checkpoint override write — the REST twin of the
   // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
   // into a settings-shaped bucket: it is the only REST route that writes
@@ -1332,7 +1335,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const docStoreErrorsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_doc_store_errors_total',
-    'Document-store error responses by logical endpoint (storage_info|storage_read|storage_write|storage_tally) and the envelope code (the StorageApiCode set in apps/doc-store-api.ts). The server-fault (5xx) codes are published at 0 from the first scrape; a 4xx code appears at its first occurrence, so read those with max_over_time or a > 0 test rather than increase()',
+    'Document-store error responses by logical endpoint (storage_info|storage_read|storage_write|storage_tally|storage_report) and the envelope code (the StorageApiCode set in apps/doc-store-api.ts). The server-fault (5xx) codes are published at 0 from the first scrape; a 4xx code appears at its first occurrence, so read those with max_over_time or a > 0 test rather than increase()',
     ['endpoint', 'code']
   );
 
@@ -2158,12 +2161,16 @@ export function recordReviewStorageSweep(outcome: ReviewStorageSweepOutcome): vo
   }
 }
 
-/** The four document-store endpoint labels (`storageEndpointLabel` in apps/doc-store-api.ts). */
+/**
+ * The document-store endpoint labels: the storage catch-all's four (`storageEndpointLabel` in
+ * apps/doc-store-api.ts) and the report API's (`doc-store-report-api.ts`).
+ */
 export const DOC_STORE_ENDPOINTS = [
   'storage_info',
   'storage_read',
   'storage_write',
   'storage_tally',
+  'storage_report',
 ] as const satisfies readonly AppBlockEndpoint[];
 export type DocStoreEndpoint = (typeof DOC_STORE_ENDPOINTS)[number];
 

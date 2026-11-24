@@ -1,5 +1,6 @@
 import type { ComponentProps, ComponentType } from 'react';
 import React, { useEffect, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import Router, { useRouter } from 'next/router';
 import type { DialogKey } from './routed-dialog/registry';
@@ -13,6 +14,28 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { getRoutedDialogState } from '~/components/Dialog/routedDialogState';
 import { handleHistoryPop } from '~/utils/history-layers';
+
+/** The only place a routed dialog's name meets its component; links import just the URL rules. */
+const routedDialogComponents: Record<DialogKey, ComponentType<any>> = {
+  imageDetail: dynamic(() => import('~/components/Image/Detail/ImageDetailModal'), { ssr: false }),
+  collectionEdit: dynamic(() => import('~/components/Collections/CollectionEditModal'), {
+    ssr: false,
+  }),
+  hiddenComments: dynamic(() => import('~/components/Model/ModelDiscussion/HiddenCommentsModal'), {
+    ssr: false,
+  }),
+  resourceReview: dynamic(() => import('~/components/ResourceReview/ResourceReviewModal'), {
+    ssr: false,
+  }),
+  filesEdit: dynamic(() => import('~/components/Resource/FilesEditModal'), { ssr: false }),
+  commentEdit: dynamic(() => import('~/components/Model/ModelDiscussion/CommentEditModal'), {
+    ssr: false,
+  }),
+  commentThread: dynamic(() => import('~/components/Model/Discussion/CommentThreadModal'), {
+    ssr: false,
+  }),
+  support: dynamic(() => import('~/components/Support/SupportModal'), { ssr: false }),
+};
 
 export function RoutedDialogProvider() {
   const router = useRouter();
@@ -84,22 +107,23 @@ export function RoutedDialogProvider() {
 
     for (const { key, name } of toOpen) {
       const dialog = dialogs[name];
-      if (!dialog) continue;
-      if ((dialog as any).requireAuth && !currentUser) continue;
+      const component = routedDialogComponents[name];
+      if (!dialog || !component) continue;
+      if (dialog.requireAuth && !currentUser) continue;
       // Safari/iOS can deliver a null `history.state` on back/forward + bfcache
       // restores (same crash class fixed in BrowserRouterProvider). This effect
       // runs on that nav (deps include browserRouter.query), and on a `?dialog=…`
       // URL `toOpen` is non-empty — an unguarded `history.state.state` threw
       // `TypeError: null is not an object`. Degrade to `{}` (no extra props).
       const state = getRoutedDialogState(history.state);
-      const Dialog = createBrowserRouterSync(dialog.component);
+      const Dialog = createBrowserRouterSync(component);
       dialogStore.trigger({
         id: key,
         component: Dialog,
         props: { ...browserRouter.query, ...state },
         options: { onClose: () => handleCloseRoutedDialog(name) },
         type: 'routed-dialog',
-        target: (dialog as any).target,
+        target: dialog.target,
       });
     }
 

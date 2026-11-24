@@ -797,6 +797,93 @@ describe('"more like this" never rates above its anchor', () => {
     expect(gate).toEqual([1, 2, 4, 8, 16]);
   });
 });
+// Pins the anchor rule shared with the card button (isMoreLikeThisRefused, #10245).
+describe('"more like this" refuses a minor- or POI-flagged anchor at every level', () => {
+  const run = (anchor: Record<string, unknown>, user: SessionUser, browsingLevel = PG) => {
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = async (args) => ({
+      items: args.ids.map((id) => (id === ANCHOR ? { id, nsfwLevel: PG, ...anchor } : { id })),
+      nextCursor: undefined,
+    });
+    const result = searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: ANCHOR, browsingLevel }),
+      user,
+      candidateSource: source,
+    });
+    return { result, calls };
+  };
+  const MOD = { id: 501, isModerator: true } as SessionUser;
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
+
+  it.each([
+    ['a minor-flagged anchor for a PG viewer', { minor: true }, VIEWER, PG],
+    ['a POI-flagged anchor for a PG viewer', { poi: true }, VIEWER, PG],
+    ['a minor-flagged anchor for a moderator', { minor: true }, MOD, PG],
+    [
+      'a minor-flagged anchor for a viewer browsing every level',
+      { minor: true },
+      VIEWER,
+      ALL_LEVELS,
+    ],
+    ['a POI-flagged anchor for a moderator browsing every level', { poi: true }, MOD, ALL_LEVELS],
+    ['a blocked anchor for a PG viewer', { blockedFor: 'Moderated' }, VIEWER, PG],
+    ['an anchor still pending its scan for a PG viewer', { ingestion: 'Pending' }, VIEWER, PG],
+    ['an anchor whose ingestion is blocked for a PG viewer', { ingestion: 'Blocked' }, VIEWER, PG],
+  ])('refuses %s, before any search', async (_name, anchor, user, browsingLevel) => {
+    const { result, calls } = run(anchor, user, browsingLevel);
+    await expect(result).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('still searches from an unflagged, scanned anchor', async () => {
+    const { result, calls } = run({ minor: false, poi: false, ingestion: 'Scanned' }, VIEWER);
+    const { items } = await result;
+    expect(items.map((x) => x.id)).toEqual([101]);
+    expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('"more like this" with a preferred tag', () => {
+  const run = (
+    preferTagIds: number[],
+    over: Partial<SemanticImageSearchInput> = {},
+    collection: 'images' | 'videos' = 'images'
+  ) => {
+    const { source, calls } = rankedSource([101, 102, 103]);
+    h.fakeGetAllImages = visibleOnly(new Set([101, 102, 103]));
+    return searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ preferTagIds, ...over }),
+      user: VIEWER,
+      collection,
+      candidateSource: source,
+    }).then(() => calls.filter((call) => call.filter.ids?.length));
+  };
+
+  it('asks for the tag within the closest matches', async () => {
+    const matches = await run([555]);
+    expect(matches).toHaveLength(1);
+    expect(matches[0].filter.tagIds).toContain(555);
+    expect(matches[0].filter.ids).toEqual([101, 102, 103]);
+  });
+
+  it.each([
+    ['a blocked tag', 601],
+    ['a tag the viewer hides', 801],
+    ['a tag a browsing add-on excludes', 701],
+  ])('does not boost %s', async (_name, tagId) => {
+    expect(await run([tagId])).toHaveLength(0);
+  });
+
+  it('does not boost a video search', async () => {
+    expect(await run([555], {}, 'videos')).toHaveLength(0);
+  });
+
+  it('does not boost a text search', async () => {
+    expect(await run([555], { imageId: undefined, query: 'otters' })).toHaveLength(0);
+  });
+});
 
 describe('the query audit and the browsing level', () => {
   const MOD = { id: 501, isModerator: true } as SessionUser;

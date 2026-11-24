@@ -287,6 +287,12 @@ export const getPublishRequestScreenshotsSchema = z.object({
 
 export type GetPublishRequestScreenshotsInput = z.infer<typeof getPublishRequestScreenshotsSchema>;
 
+/** MOD: preview or re-run the version rating sync for one approved app's on-site listing. */
+export const listingRatingResyncSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type ListingRatingResyncInput = z.infer<typeof listingRatingResyncSchema>;
+
 /** Input for the MOD-ONLY `blocks.getPublishRequestDiff` (line-level code diff). */
 export const getPublishRequestDiffSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

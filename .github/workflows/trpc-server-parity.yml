@@ -397,10 +397,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # The gate job saw this image in the registry, so there is nothing to wait for. Its build
       # ran the Dockerfile's boot-graph gate, which also loads the standalone server's requires.

@@ -109,6 +109,8 @@ func PublicEndpoint(path string) string {
 		return EndpointV1Models
 	case strings.HasPrefix(path, V1ModelsPath+"/"):
 		return EndpointV1ModelsID
+	case path == V1ImagesPath:
+		return EndpointV1Images
 	}
 	switch strings.TrimPrefix(path, "/api/trpc/") {
 	case Procedure:

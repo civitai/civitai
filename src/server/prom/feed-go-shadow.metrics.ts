@@ -134,14 +134,15 @@ const feedGoProbeCounter = registerInstrumentationMetric(
       name: PROBE_NAME,
       help:
         'Go-first probes posted to feed-go at the start of a sampled request, by outcome and ' +
-        'endpoint (flag feed-go-gofirst-probe, FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0).',
+        'endpoint (flag feed-go-gofirst-probe, FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0; v1-images: ' +
+        'FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
     })
 );
 
 try {
-  for (const endpoint of ['as-posts', 'infinite', 'model-getall'] as const) {
+  for (const endpoint of ['as-posts', 'infinite', 'model-getall', 'v1-images'] as const) {
     for (const outcome of FEED_GO_PROBE_OUTCOMES) {
       feedGoProbeCounter.inc({ outcome, feed_endpoint: endpoint }, 0);
     }

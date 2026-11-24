@@ -14,7 +14,8 @@ import {
   Container,
   Title,
 } from '@mantine/core';
-import { closeModal, openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { CsamReportType } from '~/shared/utils/prisma/enums';
 import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
@@ -72,11 +73,11 @@ export function CsamDetailsForm({
 
   const { mutate: createReport, isPending: isLoading } = trpc.csam.createReport.useMutation({
     onSuccess: () => {
-      closeModal('csam-confirm');
+      dialogStore.closeById('csam-confirm');
       onSuccess?.();
     },
     onError: (error) => {
-      closeModal('csam-confirm');
+      dialogStore.closeById('csam-confirm');
       showErrorNotification({ error, title: 'Filing the report failed', autoClose: false });
       // Views recorded at submit can change what a supplemental report may attach.
       if (supplementalOf) supplemental.refetch();
@@ -84,11 +85,10 @@ export function CsamDetailsForm({
   });
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    openConfirmModal({
-      modalId: 'csam-confirm',
-      centered: true,
+    openConfirm({
+      id: 'csam-confirm',
       title: 'Confirm CSAM report',
-      children: 'Are you sure you want to report this content as CSAM?',
+      message: 'Are you sure you want to report this content as CSAM?',
       labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
       confirmProps: { loading: isLoading },
       onConfirm: async () => {

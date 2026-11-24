@@ -1,18 +1,11 @@
 import { Button, CloseButton, Text } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
-
-const SubNavSettingsModal = dynamic(
-  () => import('~/components/HomeContentToggle/SubNavSettingsModal'),
-  { ssr: false }
-);
-const openSubNavSettings = createDialogTrigger(SubNavSettingsModal);
+import { openDialog } from '~/components/Dialog/openDialog';
 
 /**
  * Floating popover under the sub nav announcing that the nav is now customizable.
@@ -99,7 +92,9 @@ export function NavCustomizeNotice() {
           </Text>
 
           <Button
-            onClick={() => openSubNavSettings()}
+            onClick={() =>
+              openDialog(() => import('~/components/HomeContentToggle/SubNavSettingsModal'))
+            }
             variant="light"
             color="yellow"
             size="compact-xs"

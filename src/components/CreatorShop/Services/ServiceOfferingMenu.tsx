@@ -1,9 +1,9 @@
 import { ActionIcon, Button, Group, Select, Stack, Text, Textarea } from '@mantine/core';
-import { closeAllModals, openModal } from '@mantine/modals';
 import { IconCopy, IconDots, IconDotsVertical, IconFlag, IconTrash } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useState } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
+import { openDialog } from '~/components/Dialog/openDialog';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { confirmRemoveService } from '~/components/CreatorShop/Services/service-remove-confirm';
 import { Menu } from '~/components/MantineOverlays';
@@ -15,20 +15,15 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const ServiceOfferingFormModal = dynamic(() =>
-  import('~/components/CreatorShop/Services/ServiceOfferingFormModal').then(
-    (m) => m.ServiceOfferingFormModal
-  )
-);
-
 function TakedownForm({ id, title }: { id: number; title: string }) {
+  const { onClose } = useDialogContext();
   const utils = trpc.useUtils();
   const [reason, setReason] = useState<string | null>(null);
   const [details, setDetails] = useState('');
   const takedown = trpc.creatorService.takedown.useMutation({
     onSuccess: async () => {
       await utils.creatorService.invalidate();
-      closeAllModals();
+      onClose();
     },
     onError: (error) => showErrorNotification({ title: 'Could not take the service down', error }),
   });
@@ -62,7 +57,7 @@ function TakedownForm({ id, title }: { id: number; title: string }) {
           : 'Kept with the takedown for moderators; the seller sees only the reason.'}
       </Text>
       <Group justify="flex-end">
-        <Button variant="default" onClick={() => closeAllModals()}>
+        <Button variant="default" onClick={() => onClose()}>
           Cancel
         </Button>
         <Button
@@ -107,7 +102,11 @@ export function ServiceOfferingMenu({
         throw new Error('You can list new services once you meet the requirements to sell.');
       const copyOf = items.find((item) => item.id === offering.id);
       if (!copyOf) throw new Error('This service is no longer in your list.');
-      dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });
+      openDialog(
+        () => import('~/components/CreatorShop/Services/ServiceOfferingFormModal'),
+        'ServiceOfferingFormModal',
+        { copyOf }
+      );
     } catch (error) {
       showErrorNotification({ title: 'Could not duplicate the service', error: error as Error });
     }
@@ -172,7 +171,7 @@ export function ServiceOfferingMenu({
             color="red"
             leftSection={<IconTrash size={14} />}
             onClick={() =>
-              openModal({
+              openContentDialog({
                 title: 'Take down service',
                 children: <TakedownForm id={offering.id} title={offering.title} />,
               })

@@ -54,22 +54,25 @@ const pendingRank = (column: string) => {
 
 // A stronger kind replaces a queued one (a moderator's delete or cleanup, anyone's outright delete, an
 // owner's cleanup, strongest first) and the row keeps its earlier due time. An outright ask (`ownerId`,
-// `deletedBy`) survives either way. Anything else changes nothing.
+// `deletedBy`) survives either way. A row a restore marked holds only the drain's ask, which the restore
+// withdrew, so another ask on it replaces it whole and alone decides the kind. Anything else changes
+// nothing.
 export const PENDING_DELETE_UPSERT = sql`
   ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
-    SET "data" = CASE
+    SET "data" = CASE WHEN "JobQueue"."data" ? 'releasedOnRestore' THEN EXCLUDED."data" ELSE (CASE
         WHEN ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
         THEN EXCLUDED."data" ELSE "JobQueue"."data" END
       || jsonb_strip_nulls(jsonb_build_object(
         'ownerId', COALESCE(EXCLUDED."data"->'ownerId', "JobQueue"."data"->'ownerId'),
-        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy'))),
+        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy')))) END,
       "createdAt" = LEAST("JobQueue"."createdAt", EXCLUDED."createdAt")
     WHERE ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
       OR (EXCLUDED."data" ? 'ownerId' AND NOT "JobQueue"."data" ? 'ownerId')
-      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')`;
+      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')
+      OR "JobQueue"."data" ? 'releasedOnRestore'`;
 
 /** `NsfwLevel.Blocked`. */
-const NSFW_LEVEL_BLOCKED = 32;
+export const NSFW_LEVEL_BLOCKED = 32;
 
 /** Moderation still open on an image: a review other than CSAM, any block, or an open report. */
 const moderationOpen = sql<boolean>`(
@@ -93,6 +96,8 @@ export type PendingDelete = DeleteReplay & {
   ownerId?: number;
   deletedBy?: string;
   cleanup?: true;
+  /** The account-deletion drain's ask, released by an account restore while a case held the row. */
+  releasedOnRestore?: true;
 };
 
 const unsent: CsamReportFilter = (report) => `${report}."reportSentAt" IS NULL`;
@@ -155,7 +160,7 @@ export const pendingDeleteQueued = (
   { ownerAsked = false } = {}
 ) => sql<boolean>`EXISTS (
   SELECT 1 FROM "JobQueue" pdq
-  WHERE pdq.type = 'PendingDelete' AND pdq."entityType" = ${entityType}
+  WHERE pdq.type = 'PendingDelete' AND pdq."entityType" = ${entityType}::"EntityType"
     AND pdq."entityId" = ${id}${ownerAsked ? sql` AND pdq.data ? 'ownerId'` : sql``}
 )`;
 
@@ -211,6 +216,17 @@ export async function imagesPendingDeletion(db: Kysely<DB>, imageIds: number[]) 
   return new Set(rows.map((row) => row.id));
 }
 
+/** Of `postIds`, those with a pending delete still queued. */
+export async function postsWithDeleteQueued(db: Kysely<DB>, postIds: number[]) {
+  const ids = [...new Set(postIds)];
+  if (!ids.length) return new Set<number>();
+  const { rows } = await sql<{ id: number }>`
+    SELECT id FROM "Post"
+    WHERE id = ANY(${ids}::int[]) AND ${pendingDeleteQueued('Post', sql.ref('Post.id'))}
+  `.execute(db);
+  return new Set(rows.map((row) => row.id));
+}
+
 /**
  * Up to `limit` pending deletes of `entityType` due now, first attempts before retries, earliest due
  * first. A row is due from its `createdAt`, which a waiting row has moved to when it is next due.
@@ -262,4 +278,27 @@ export async function settleDeletes(
     await sql`
       UPDATE "JobQueue" SET data = data || '{"attempted": true}'::jsonb WHERE ${of(failed)}
     `.execute(db);
+}
+
+/**
+ * Takes a moderator's delete off these images' pending deletes, for a lift that reverses it (an
+ * unblock or an approved appeal). A row only a moderator asked for goes; one the owner also asked for
+ * keeps the owner's ask, and a moderator's cleanup stays queued as a cleanup (the job deletes it only
+ * while the image is unused). A plain cleanup the moderator's delete outranked in the merge is gone,
+ * and goes with the row.
+ */
+export async function releaseModeratorPendingDeletes(db: Kysely<DB>, imageIds: number[]) {
+  if (!imageIds.length) return;
+  const queued = sql`q.type = 'PendingDelete' AND q."entityType" = 'Image'
+    AND q."entityId" = ANY(${imageIds}::int[]) AND q.data ? 'moderatorDelete' AND q.data ? 'deletedBy'`;
+  const keeps = sql`q.data ?| array['ownerId', 'cleanup']`;
+  await sql`
+    WITH stripped AS (
+      UPDATE "JobQueue" q SET data = CASE WHEN q.data ? 'cleanup'
+          THEN q.data - 'deletedBy' - 'keepStoredFiles'
+          ELSE q.data - 'deletedBy' - 'moderatorDelete' - 'keepStoredFiles' END
+      WHERE ${queued} AND ${keeps}
+    )
+    DELETE FROM "JobQueue" q WHERE ${queued} AND NOT ${keeps}
+  `.execute(db);
 }

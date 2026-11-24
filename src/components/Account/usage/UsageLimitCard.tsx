@@ -1,5 +1,6 @@
 import { Paper, Progress, Text } from '@mantine/core';
 import clsx from 'clsx';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   describeUsageLimit,
   usageAreaName,
@@ -21,11 +22,14 @@ export function UsageLimitCard({
   rows,
   now,
   timeZone,
+  notes,
 }: {
   area: string;
   rows: UsageLimitRow[];
   now: number;
   timeZone?: string;
+  /** Per row id, what membership raises it to; shown under the label. */
+  notes?: Record<string, string>;
 }) {
   const caption = windowCaption(rows);
   return (
@@ -41,7 +45,13 @@ export function UsageLimitCard({
         )}
       </div>
       {rows.map((row) => (
-        <UsageLimitRowView key={row.id} row={row} now={now} timeZone={timeZone} />
+        <UsageLimitRowView
+          key={row.id}
+          row={row}
+          now={now}
+          timeZone={timeZone}
+          note={notes?.[row.id]}
+        />
       ))}
     </Paper>
   );
@@ -51,10 +61,12 @@ function UsageLimitRowView({
   row,
   now,
   timeZone,
+  note,
 }: {
   row: UsageLimitRow;
   now: number;
   timeZone?: string;
+  note?: string;
 }) {
   const view = describeUsageLimit(row, { now, timeZone });
   return (
@@ -65,9 +77,18 @@ function UsageLimitRowView({
         'sm:grid-cols-[1.3fr_1.6fr_0.9fr] sm:[grid-template-areas:"name_bar_when"]'
       )}
     >
-      <Text size="sm" fw={600} className="[grid-area:name]">
-        {row.label}
-      </Text>
+      <div className="[grid-area:name]">
+        <Text size="sm" fw={600}>
+          {row.label}
+        </Text>
+        {note && (
+          <Text size="xs" c="dimmed">
+            <Link href="/pricing" className="hover:underline">
+              {note}
+            </Link>
+          </Text>
+        )}
+      </div>
       <div className="[grid-area:bar]">
         {view.percent !== null && (
           <Progress

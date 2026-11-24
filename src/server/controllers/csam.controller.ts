@@ -23,7 +23,10 @@ import type { CsamContextText } from '~/server/services/csam-context-text';
 import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/csam-context-text';
 import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
-import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
+import {
+  releaseReviewFlagsToReportHold,
+  releaseSettledAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import {
   bulkAddBlockedImages,
   HeldMediaCopyError,
@@ -247,6 +250,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     await dbWrite.$executeRaw`
       DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${imageIds}::int[])
     `;
+    // The appeals closed above leave their flag on an image this report does not block.
+    await releaseSettledAppealFlags(imageIds);
     // Last, so the images are already blocked and the report row committed when the flag comes off.
     await releaseReviewFlagsToReportHold(imageIds);
   }

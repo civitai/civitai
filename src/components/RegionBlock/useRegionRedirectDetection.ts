@@ -1,13 +1,7 @@
 import { useEffect, useMemo } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import dynamic from 'next/dynamic';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 import { useServerDomains } from '~/providers/AppProvider';
-
-const RegionRedirectModal = dynamic(
-  () => import('~/components/RegionRedirect/RegionRedirectModal'),
-  { ssr: false }
-);
 
 /**
  * Hook to detect if the user was redirected due to region restrictions
@@ -36,11 +30,11 @@ export function useRegionRedirectDetection() {
     const isFromOtherServer = otherDomains.some((domain) => document.referrer.includes(domain));
 
     if (redirectParam === 'true' || isFromOtherServer) {
-      dialogStore.trigger({
-        id: 'region-redirect',
-        component: RegionRedirectModal,
-        props: { storageKey },
-      });
+      openDialog(
+        () => import('~/components/RegionRedirect/RegionRedirectModal'),
+        { storageKey },
+        { id: 'region-redirect' }
+      );
     }
   }, [isRestricted, otherDomains]);
 }

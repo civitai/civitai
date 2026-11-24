@@ -2,6 +2,7 @@ import { decodeProtectedHeader, jwtVerify } from 'jose';
 import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import type { BearerCredential } from '~/server/auth/full-user-credential';
 import {
   blockClaimsAppLabel,
   blockRequestResult,
@@ -1425,8 +1426,9 @@ async function resolveDevTunnelHubClaims(args: {
   userId: number;
   clientId: string;
   apiKeyId: number;
+  credential: BearerCredential & { apiKeyId: number };
 }): Promise<BlockTokenClaims | null> {
-  const { userId, clientId, apiKeyId } = args;
+  const { userId, clientId, apiKeyId, credential } = args;
   const [{ parseDevTunnelClientId, scopesCoveredByConsent }, { getActiveDevTunnel }, { dbRead }] =
     await Promise.all([
       import('~/server/services/blocks/dev-tunnel-oauth.service'),
@@ -1464,7 +1466,12 @@ async function resolveDevTunnelHubClaims(args: {
   const source = dev
     ? tunnel.grantedScopes ?? []
     : clampTunnelDeclaredScopes(owned!.approvedScopes ?? []);
-  const scopes = scopesCoveredByConsent(source, consent.scope);
+  const { narrowBlockScopesToCredential } = await import('~/server/auth/bearer-scope-tighten');
+  const scopes = await narrowBlockScopesToCredential(
+    'dev-tunnel-hub-token',
+    credential,
+    scopesCoveredByConsent(source, consent.scope)
+  );
   const manifestBudget = owned
     ? parseManifestBuzzBudget((owned.manifest as { page?: unknown } | null)?.page)
     : undefined;
@@ -1523,6 +1530,7 @@ async function resolveHubTokenClaims(
       userId,
       clientId,
       apiKeyId: session.apiKeyId,
+      credential: session,
     });
     if (devClaims) return devClaims;
     // A suspended app's token is refused here rather than handed on as an ordinary OAuth session.
@@ -1546,7 +1554,14 @@ async function resolveHubTokenClaims(
   // per-source grant on every import call and refuses without one (`resolveImportAccess`). The
   // per-source grant ledger is never read or pruned here; there is no prompt to withhold it for.
   const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
-  const scopes = partitionByConsent(declared, granted).signable;
+  // The token's own bits were fixed when it was minted from the viewer's consent; a grant made
+  // since reaches it when the host re-mints (`onConsentGranted`).
+  const { narrowBlockScopesToCredential } = await import('~/server/auth/bearer-scope-tighten');
+  const scopes = await narrowBlockScopesToCredential(
+    'hub-token',
+    session,
+    partitionByConsent(declared, granted).signable
+  );
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
   const { viewerEffectiveBrowsingLevel } = await import(
@@ -2351,6 +2366,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   // `/api/v1/blocks/sub-listings/mine` — the caller's own store items.
   'mine',
   'models',
+  // `/api/v1/blocks/moderation/reports` — the report moderation API
+  // (`doc-store-report-api.ts`). Both segments static: the collection, key and import
+  // source ride the POST body.
+  'moderation',
   'poll',
   // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
   // the prompt and every parameter ride the POST body, so there is no `:seg`
@@ -2364,6 +2383,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'query',
   'quota',
   'report',
+  'reports',
   'set',
   'shared-storage',
   // `/api/v1/blocks/storage/…` — the document store, one optional catch-all route. Only

@@ -5646,6 +5646,63 @@ enum CommentEntityType {
   crucible
   storyline
   postText
+  featurePage
+}
+
+// A data.civitai.com Feature Pages subject (a feature or a feature request) with a comment thread.
+// The integer id is what CommentV3.entityId addresses; the urn is the platform's name for it.
+model FeaturePageTopic {
+  id        Int      @id @default(autoincrement())
+  urn       String   @unique
+  kind      String // feature | request (DB CHECK)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+// One row per Feature Pages comment: what the mirror last pushed to the platform, and when it pushes
+// next. No relation to CommentV3, so the row outlives a hard-deleted comment.
+model FeaturePageCommentMirror {
+  commentId      Int       @id
+  userId         Int
+  requestId      String
+  urn            String?
+  goneCause      String? // author | moderator | refused (DB CHECK)
+  version        Int       @default(1)
+  pushedState    String?
+  pushedDigest   String?
+  platformDigest String?
+  // The state and post digest the next push is for, so the dirty pass schedules each change once
+  // and leaves a row in backoff alone until what it should hold changes again.
+  pendingDigest  String?
+  pushAttempts   Int       @default(0)
+  scanAttempts   Int       @default(0)
+  // The scan content hash scanAttempts counts against; a new hash starts the count again.
+  scanHash       String?
+  // The frame requestIds of the last 20 edits applied, so a resent edit changes nothing.
+  editRequestIds String[]  @default([])
+  // Set before the first post is sent: a lost reply leaves it set with no urn.
+  postAttemptedAt DateTime? @db.Timestamptz(6)
+  // Counts text sends after the first post, so each changed body gets its own idempotency key.
+  postSeq        Int       @default(0)
+  // When goneCause was set: the retraction's event time, the same on every retry.
+  goneAt            DateTime? @db.Timestamptz(6)
+  // Since when its feature subject is one the platform does not hold yet: the post waits, uncapped.
+  subjectMissingAt  DateTime? @db.Timestamptz(6)
+  // The text's own event time (post or edit), sent as `at`; flag changes do not move it.
+  contentAt         DateTime  @default(now()) @db.Timestamptz(6)
+  // Set when the platform holds, or is about to be sent, a removal: never cleared.
+  removeWantedAt    DateTime? @db.Timestamptz(6)
+  // Since when a restriction (hide, removal, retraction) is owed to the platform: lease priority and
+  // the alert clock.
+  restrictedAt      DateTime? @db.Timestamptz(6)
+  nextPushAt     DateTime? @db.Timestamptz(6)
+  leaseUntil     DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, requestId])
+  @@index([nextPushAt])
+  // Partial indexes, in the migration only: unique urn WHERE urn IS NOT NULL, and nextPushAt WHERE
+  // restrictedAt IS NOT NULL.
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -5686,6 +5743,8 @@ model CommentV3 {
   deletedAt     DateTime? @db.Timestamptz(6)
   tosViolation  Boolean   @default(false)
   hidden        Boolean   @default(false)
+  // When `hidden` last became true; a restore undoes only the hide that wrote this stamp.
+  hiddenAt      DateTime? @db.Timestamptz(6)
   locked        Boolean   @default(false)
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
@@ -8868,9 +8927,9 @@ model KnightsReferenceImage {
   id            Int      @id @default(autoincrement())
   imageId       Int      @unique
   questionKey   String   @default("knights.image.nsfwLevel")
-  pool          String // trials | hiddenCheck
+  pool          String // trials | hiddenCheck | skillCheck
   answer        String
-  source        String // core | harvested | agreement
+  source        String // core | harvested | agreement | inquisitor
   explanation   String? // required for core
   status        String   @default("active") // active | retired
   modActivityId Int? // the moderator ruling a harvested item came from
@@ -8882,6 +8941,37 @@ model KnightsReferenceImage {
 
   @@index([pool, status, source])
   @@index([modActivityId])
+}
+
+/// A settled rating item moderators review in game. Two agreeing votes confirm it as a skill check; a split or an excluded review ends there. The queueItemId foreign key (cascade) lives in the migration only, like the other Knights tables.
+model KnightsInquisitorReview {
+  id             Int       @id @default(autoincrement())
+  queueItemId    Int       @unique
+  imageId        Int
+  questionKey    String
+  consensusValue String // the players' settled answer (the item's resolvedValue)
+  status         String    @default("open") // open | confirmed | split | excluded | expired
+  confirmedValue String? // the level both moderators gave, on a confirmed review
+  claimedBy      Int? // the moderator whose closing vote is writing the image level
+  claimExpiresAt DateTime? // that claim's lease
+  createdAt      DateTime  @default(now())
+  closedAt       DateTime?
+  checkedAt      DateTime? // when the tick last checked its image against the safety exclusions
+
+  @@index([status, createdAt])
+  @@index([status, checkedAt])
+  @@index([imageId])
+}
+
+/// One moderator's vote on an inquisitor review. The reviewId foreign key (cascade) lives in the migration only.
+model KnightsInquisitorVote {
+  reviewId    Int
+  moderatorId Int
+  answer      String
+  createdAt   DateTime @default(now())
+
+  @@id([reviewId, moderatorId])
+  @@index([moderatorId, createdAt])
 }
 
 /// An image with a known yes/no answer to one yes/no question (kind `bool`), curated by moderators for grading Acolytes. Never touches Knight+ consensus. The imageId foreign key (cascade) lives in the migration only, like the other Knights tables.

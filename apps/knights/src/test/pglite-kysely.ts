@@ -1,3 +1,4 @@
+import { afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
@@ -13,11 +14,13 @@ import {
   type QueryResult,
 } from 'kysely';
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
+import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATIONS = [
   '20261209120000_knights_new_order_player_and_link_review',
   '20261210120000_knights_v2_tables',
+  '20271120160000_knights_inquisitor_review',
   '20271125120000_knights_legacy_player_days',
 ].map((name) =>
   fileURLToPath(
@@ -49,12 +52,107 @@ CREATE TABLE "Image" (
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "poi" BOOLEAN NOT NULL DEFAULT false,
   "minor" BOOLEAN NOT NULL DEFAULT false,
+  "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "postId" INTEGER
+);
+CREATE TABLE "CsamReport" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER,
+  "reportSentAt" TIMESTAMP(3),
+  "archivedAt" TIMESTAMP(3),
+  "details" JSONB NOT NULL DEFAULT '{}',
+  "images" JSONB NOT NULL DEFAULT '[]'
+);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
+CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
+CREATE TABLE "Model" (
+  "id" INTEGER PRIMARY KEY,
+  "minor" BOOLEAN NOT NULL DEFAULT false,
+  "poi" BOOLEAN NOT NULL DEFAULT false,
+  "status" TEXT NOT NULL DEFAULT 'Published',
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "deletedAt" TIMESTAMP(3)
+);
+CREATE TABLE "ModelVersion" (
+  "id" INTEGER PRIMARY KEY,
+  "modelId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Published',
+  "availability" TEXT NOT NULL DEFAULT 'Public'
+);
+CREATE TABLE "ImageResourceNew" ("imageId" INTEGER NOT NULL, "modelVersionId" INTEGER NOT NULL, PRIMARY KEY ("imageId", "modelVersionId"));
+CREATE TABLE "ScanLabelItem" (
+  "id" serial PRIMARY KEY,
+  -- No foreign key to "Image": suites that TRUNCATE "Image" without CASCADE must not trip over it.
+  "imageId" integer NOT NULL,
+  "copyState" text,
+  "copyKey" text,
+  "copiedAt" timestamptz(3),
+  "voidReason" text
+);
+CREATE TABLE "ScanLabelFlag" (
+  "id" serial PRIMARY KEY,
+  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
+  "source" text NOT NULL,
+  "flaggerVersion" text NOT NULL,
+  "reason" text,
+  "workflowId" text NOT NULL UNIQUE,
+  "flaggedAt" timestamptz(3) NOT NULL,
+  "snapshot" jsonb,
+  "createdAt" timestamptz(3) NOT NULL DEFAULT now()
+);
+CREATE TABLE "ScanLabelVote" (
+  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
+  "userId" integer NOT NULL,
+  "block" boolean NOT NULL,
+  "reason" text,
+  "reasonComment" text,
+  "msOnItem" integer,
+  "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
+  PRIMARY KEY ("itemId", "userId")
+);
+CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+CREATE TABLE "EvidenceHoldPost" ("postId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
+CREATE TABLE "ImageReport" ("reportId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL, PRIMARY KEY ("reportId", "imageId"));
+CREATE TABLE "PostReport" ("reportId" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL);
+CREATE TABLE "ModelReport" ("reportId" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
+CREATE TABLE "UserReport" ("reportId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+CREATE TABLE "TagsOnImageDetails" (
+  "imageId" INTEGER NOT NULL,
+  "tagId" INTEGER NOT NULL,
+  "disabled" BOOLEAN NOT NULL DEFAULT false,
+  "confidence" INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE "Tag" (
+  "id" INTEGER PRIMARY KEY,
+  "name" TEXT NOT NULL,
+  "type" TEXT NOT NULL DEFAULT 'Moderation',
+  "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE "BlockedImage" ("hash" BIGINT PRIMARY KEY, "reason" TEXT NOT NULL);
+CREATE TABLE "ImageFlag" (
+  "imageId" INTEGER PRIMARY KEY,
+  "promptNsfw" BOOLEAN NOT NULL DEFAULT false,
+  "resourcesNsfw" BOOLEAN NOT NULL DEFAULT false
+);
+CREATE TABLE "Appeal" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL DEFAULT 0,
+  "entityType" TEXT,
+  "entityId" INTEGER,
+  "status" TEXT NOT NULL DEFAULT 'Pending'
+);
+CREATE TABLE "TextScanHold" (
+  "id" SERIAL PRIMARY KEY,
+  "entityType" TEXT NOT NULL,
+  "entityId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Pending'
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
   "publishedAt" TIMESTAMP(3),
-  "availability" TEXT NOT NULL DEFAULT 'Public'
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "modelVersionId" INTEGER
 );
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
@@ -147,36 +245,6 @@ const LABEL_STORE_MIGRATION = fileURLToPath(
 
 /** The site tables the label store's migration hooks into; `Image` is already a stand-in above. */
 const LABEL_STORE_SOURCES = `
-CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
-CREATE TABLE "Appeal" ("id" serial PRIMARY KEY, "userId" integer NOT NULL);
-CREATE TABLE "ScanLabelItem" (
-  "id" serial PRIMARY KEY,
-  "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
-  "copyState" text,
-  "copyKey" text,
-  "copiedAt" timestamptz(3)
-);
-CREATE TABLE "ScanLabelFlag" (
-  "id" serial PRIMARY KEY,
-  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
-  "source" text NOT NULL,
-  "flaggerVersion" text NOT NULL,
-  "reason" text,
-  "workflowId" text NOT NULL UNIQUE,
-  "flaggedAt" timestamptz(3) NOT NULL,
-  "snapshot" jsonb,
-  "createdAt" timestamptz(3) NOT NULL DEFAULT now()
-);
-CREATE TABLE "ScanLabelVote" (
-  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
-  "userId" integer NOT NULL,
-  "block" boolean NOT NULL,
-  "reason" text,
-  "reasonComment" text,
-  "msOnItem" integer,
-  "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
-  PRIMARY KEY ("itemId", "userId")
-);
 CREATE TABLE "ScanLabelCopyObject" (
   "key" text PRIMARY KEY,
   "itemId" integer NOT NULL,
@@ -224,18 +292,20 @@ const TAG_REVIEW_MIGRATIONS = [
 );
 
 /** The site tables the moderator tag review source reads: tags, and what makes an image staff-only. */
+// The base schema already stands in for these tables; its "TagsOnImageDetails" table gives way to the real view.
 const TAG_REVIEW_SOURCES = `
 CREATE TYPE "TagSource" AS ENUM ('User', 'Rekognition', 'WD14', 'Computed', 'ImageHash', 'MinorDetection');
-CREATE TABLE "Tag" (
+DROP TABLE IF EXISTS "TagsOnImageDetails";
+CREATE TABLE IF NOT EXISTS "Tag" (
   "id" INTEGER PRIMARY KEY,
   "name" TEXT NOT NULL,
   "type" TEXT NOT NULL DEFAULT 'Moderation',
   "nsfwLevel" INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
-CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
-CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 `;
 
 /** Installs what the moderator tag review source reads, for the tests that create, serve or vote on its items. */
@@ -261,9 +331,40 @@ function asNodePgParameter(value: unknown): unknown {
   );
 }
 
+/**
+ * Reads that broke the JIT rule below. Recorded as well as thrown, since a caller that catches the error (a sweep counting
+ * failures, a read that falls back) would otherwise hide it: every test using this harness fails if any were recorded.
+ * Known limit: it checks that some transaction is open with JIT off, not that it is this statement's own, so an
+ * interleaved pool read could pass here; prod callers pass their trx to `readWithoutJit` explicitly.
+ */
+const jitViolations: string[] = [];
+afterEach(() => {
+  const found = jitViolations.splice(0);
+  if (found.length)
+    throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
+});
+
 function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean): Dialect {
+  // A read carrying the CSAM subplans (`servableImageContent`) must run with JIT off in its transaction
+  // (`readWithoutJit`): its inflated estimate would make a server with JIT on compile it for longer than it runs.
+  let jitOff = false;
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+      const text = compiled.sql.trim().toLowerCase();
+      if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
+      else if (text === 'set local jit = off') jitOff = transactions.open > 0;
+      else if (
+        compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
+        !(jitOff && transactions.open > 0)
+      ) {
+        jitViolations.push(compiled.sql.slice(0, 160));
+        throw new Error(
+          `A servableImageContent read ran with JIT on (wrap it in readWithoutJit): ${compiled.sql.slice(
+            0,
+            120
+          )}`
+        );
+      }
       const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
       return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },

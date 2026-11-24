@@ -16,7 +16,6 @@ import {
   Paper,
   Badge,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { indexOf, isEqual } from 'lodash-es';
@@ -38,6 +37,7 @@ import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
@@ -99,9 +99,9 @@ export default function CosmeticStoreSections() {
       showSuccessNotification({ message: 'Your ' });
     };
 
-    openConfirmModal({
+    openConfirm({
       title: 'Delete Shop Section',
-      children: (
+      message: (
         <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop Section?</Text>
           <Text size="xs" c="dimmed">
@@ -109,8 +109,8 @@ export default function CosmeticStoreSections() {
           </Text>
         </Stack>
       ),
-      groupProps: { justify: 'center' },
       labels: { confirm: 'Delete Shop Section', cancel: "No, don't delete it" },
+      groupProps: { justify: 'center' },
       confirmProps: { color: 'red' },
       onConfirm: () => onDelete(),
     });

@@ -131,7 +131,7 @@ describe('buildSubmissionTrace', () => {
       slug: SLUG,
       userId: SUBMITTER,
       conversationIds: ['conv-one', 'conv-two'],
-      signalsVersion: 1,
+      signalsVersion: 2,
       snapshotError: null,
     });
     expect(

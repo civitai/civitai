@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import '~/__tests__/setup';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-const { isFliptMock, isRevokedMock, sessionMock } = vi.hoisted(() => ({
+const { isFliptMock, fliptVariantMock, isRevokedMock, sessionMock } = vi.hoisted(() => ({
   isFliptMock: vi.fn(async (flag: string) => flag === 'app-blocks-runtime-enabled'),
+  fliptVariantMock: vi.fn(async (): Promise<string | undefined> => undefined),
   isRevokedMock: vi.fn(async () => false),
   sessionMock: vi.fn(),
 }));
-vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten' },
+  isFlipt: isFliptMock,
+  getFliptVariant: fliptVariantMock,
+}));
 const { viewerLevelMock, userOwnLevelMock } = vi.hoisted(() => ({
   viewerLevelMock: vi.fn(() => 3),
   // An author whose own level covers every level: the forced-SFW ceiling alone decides.
@@ -33,6 +39,7 @@ import { withBlockScope, type BlockScopedNextApiRequest } from '../block-scope.m
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { FORCED_SFW_CEILING } from '~/server/services/blocks/dev-scoped-mint.service';
+import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 
 const USER_ID = 42;
 const CLIENT_ID = 'app_hub';
@@ -603,5 +610,144 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     expect(res.statusCode).toBe(200);
     expect(claims).toMatchObject({ sub: `user:${USER_ID}`, blockInstanceId: 'bki_hub' });
     expect(sessionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('hub-token block claims under bearer-scope-tighten', () => {
+  const SPEND_AND_BUZZ = [SCOPE, 'apps:storage:read', 'buzz:read:self', 'ai:write:budgeted'];
+  beforeEach(() => {
+    fliptVariantMock.mockResolvedValue(undefined);
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+      id: APP_BLOCK_ID,
+      blockId: BLOCK_ID,
+      manifest: { scopes: SPEND_AND_BUZZ, page: { buzzBudgetPerGen: 75 } },
+      approvedScopes: SPEND_AND_BUZZ,
+    });
+    dbMock.dbRead.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: [SCOPE, 'buzz:read:self', 'ai:write:budgeted'],
+      revokedAt: null,
+    });
+  });
+
+  function tokenWith(tokenScope: bigint, apiKeyId = 99) {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId,
+      apiKeyType: 'Access',
+      subject: { type: 'oauth', id: CLIENT_ID },
+      tokenScope,
+    });
+  }
+
+  it('enforce: drops the scopes whose bit the token lacks, and with the spend scope its budget', async () => {
+    fliptVariantMock.mockResolvedValue('enforce');
+    tokenWith(TokenScope.UserRead);
+
+    const { res, claims } = await drive('civ_oauth_access_token');
+
+    expect(res.statusCode).toBe(200);
+    // apps:storage:read carries no OAuth bit, so it stays.
+    expect([...(claims?.scopes ?? [])].sort()).toEqual(['apps:storage:read', SCOPE]);
+    expect(claims?.buzzBudget).toBeUndefined();
+  });
+
+  it('log: keeps every scope and logs the ones the token lacks', async () => {
+    fliptVariantMock.mockResolvedValue('log');
+    tokenWith(TokenScope.UserRead);
+
+    const { claims } = await drive('civ_oauth_access_token');
+
+    expect(claims?.scopes).toContain('buzz:read:self');
+    expect(claims?.buzzBudget).toBe(75);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({
+          route: 'hub-token',
+          scope: ['buzz:read:self', 'ai:write:budgeted'],
+          clientId: CLIENT_ID,
+          credentialKind: 'oauth',
+        }),
+      })
+    );
+  });
+
+  it('enforce: a token minted from the viewer’s consent loses nothing', async () => {
+    fliptVariantMock.mockResolvedValue('enforce');
+    tokenWith(oauthScopeBitsFor([SCOPE, 'buzz:read:self', 'ai:write:budgeted']));
+
+    const { claims } = await drive('civ_oauth_access_token');
+
+    expect([...(claims?.scopes ?? [])].sort()).toEqual(
+      ['ai:write:budgeted', 'apps:storage:read', 'buzz:read:self', SCOPE].sort()
+    );
+    expect(claims?.buzzBudget).toBe(75);
+    expect(fliptVariantMock).not.toHaveBeenCalled();
+  });
+
+  it('enforce: a grant made after the mint reaches the block once the host re-mints', async () => {
+    fliptVariantMock.mockResolvedValue('enforce');
+    // Minted while the viewer had granted only user:read:self.
+    tokenWith(oauthScopeBitsFor([SCOPE]), 99);
+    const before = await drive('civ_oauth_access_token');
+    expect(before.claims?.scopes).not.toContain('buzz:read:self');
+
+    // The host's onConsentGranted re-fetches /api/v1/block-tokens, which mints from the new grant.
+    tokenWith(oauthScopeBitsFor([SCOPE, 'buzz:read:self', 'ai:write:budgeted']), 100);
+    const after = await drive('civ_oauth_access_token_2');
+    expect(after.claims?.scopes).toContain('buzz:read:self');
+    expect(after.claims?.buzzBudget).toBe(75);
+  });
+
+  it('enforce: narrows a dev tunnel token the same way, before its budget is set', async () => {
+    fliptVariantMock.mockResolvedValue('enforce');
+    tokenWith(TokenScope.UserRead, 7);
+    dbMock.dbRead.appBlock.findFirst.mockReset();
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: APP_BLOCK_ID,
+      blockId: BLOCK_ID,
+      manifest: { page: { buzzBudgetPerGen: 75 } },
+      approvedScopes: ['ai:write:budgeted', SCOPE],
+    });
+    tunnelMock.mockResolvedValue({ grantedScopes: [] });
+    dbMock.dbRead.oauthConsent.findUnique.mockResolvedValue({
+      scope: TokenScope.UserRead | TokenScope.AIServicesWrite,
+    });
+
+    const { claims } = await drive('civ_dev_oauth');
+
+    expect(claims?.dev).toBe(true);
+    expect(claims?.scopes).toEqual([SCOPE]);
+    expect(claims?.buzzBudget).toBeUndefined();
+  });
+
+  it('log: a dev tunnel token keeps its spend scope and budget', async () => {
+    fliptVariantMock.mockResolvedValue('log');
+    tokenWith(TokenScope.UserRead, 7);
+    dbMock.dbRead.appBlock.findFirst.mockReset();
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: APP_BLOCK_ID,
+      blockId: BLOCK_ID,
+      manifest: { page: { buzzBudgetPerGen: 75 } },
+      approvedScopes: ['ai:write:budgeted', SCOPE],
+    });
+    tunnelMock.mockResolvedValue({ grantedScopes: [] });
+    dbMock.dbRead.oauthConsent.findUnique.mockResolvedValue({
+      scope: TokenScope.UserRead | TokenScope.AIServicesWrite,
+    });
+
+    const { claims } = await drive('civ_dev_oauth');
+
+    expect(claims?.scopes).toContain('ai:write:budgeted');
+    expect(claims?.buzzBudget).toBe(75);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({
+          route: 'dev-tunnel-hub-token',
+          scope: ['ai:write:budgeted'],
+        }),
+      })
+    );
   });
 });

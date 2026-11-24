@@ -6,7 +6,7 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * REST 429s on the shared-storage write routes carry the refusal's retry metadata as
  * `Retry-After` + `body.rateLimit` + `body.code` (civitai/civitai-app-starters#597), through
  * the REAL `handleEndpointError` (six routes) and increment's own catch. The router is
- * mocked to throw the refusal shape `throwSharedRateLimited` produces (the seam test pins that
+ * mocked to throw the refusal shape `throwRateLimited` produces (the seam test pins that
  * shape end to end).
  */
 

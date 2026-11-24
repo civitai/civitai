@@ -54,7 +54,10 @@
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
     publishUrl: (req) => `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams(req)}`,
-    modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
+    publishVersionUrl: (req) =>
+      `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams({ ...req, asVersion: true })}`,
+    modelPageUrl: ({ modelId, modelVersionId }) =>
+      `${data.civitaiUrl}/models/${modelId}${modelVersionId ? `?modelVersionId=${modelVersionId}` : ''}`,
   });
 
   setElementsUi(() => data.elementsUi);

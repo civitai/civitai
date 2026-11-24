@@ -3,6 +3,7 @@ import {
   appDeveloperTermsRefusalMessage,
 } from '~/shared/constants/app-developer-terms.constants';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Minimal NextApiRequest/Response stand-in (avoids node-mocks-http), mirroring
 // the moderator-endpoint test harness.
@@ -141,9 +142,16 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
 }));
 // The GitHub Actions OIDC verifier module is loaded by the route only when a token is sent; its
 // flag read and segment context are the two seams it needs here.
+const { mockFliptVariant } = vi.hoisted(() => ({
+  mockFliptVariant: vi.fn(),
+}));
 vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: { APP_BLOCKS_OIDC_VERIFIED_SUBMIT: 'app-blocks-oidc-verified-submit' },
+  FLIPT_FEATURE_FLAGS: {
+    APP_BLOCKS_OIDC_VERIFIED_SUBMIT: 'app-blocks-oidc-verified-submit',
+    BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten',
+  },
   isFlipt: mockIsFlipt,
+  getFliptVariant: mockFliptVariant,
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   buildFliptContext: () => ({}),
@@ -363,6 +371,27 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    // The fields this route always sent, plus the house envelope and the product meta: the
+    // window's count (this refused submit included) against its 10 a minute.
+    expect(res._getJSONData()).toEqual({
+      retryAfterSeconds: 60,
+      limit: 10,
+      windowSeconds: 60,
+      error: 'Rate limit exceeded',
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: {
+        retryAfterSeconds: 60,
+        retryAt: expect.any(String),
+        id: 'apps.version-submits',
+        kind: 'product',
+        limit: 10,
+        used: 11,
+        remaining: 0,
+        windowSeconds: 60,
+        resetAt: expect.any(String),
+      },
+    });
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
@@ -484,6 +513,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       status: 'pending',
       listing: null,
       storageMigrationWarnings: [],
+      advisories: [],
     });
   });
 
@@ -529,6 +559,44 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       status: 'pending',
       listing,
       storageMigrationWarnings: [],
+      advisories: [],
+    });
+  });
+
+  it('the CLI contract carries the submit’s advisories (warn, never block): `civitai app submit` prints advisories[].message', async () => {
+    const advisories = [
+      {
+        code: 'default-theme',
+        message:
+          "This app uses Civitai's default theme. A distinct accent helps it stand out in the store: https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look",
+        docsUrl: 'https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look',
+      },
+    ];
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockResolvedValueOnce({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      bundleSha256: 'deadbeef',
+      fileSummary: {},
+      manifestDiffSummary: {},
+      listing: null,
+      advisories,
+    });
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      status: 'pending',
+      listing: null,
+      storageMigrationWarnings: [],
+      advisories,
     });
   });
 
@@ -761,5 +829,104 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       reason: 'repository-mismatch',
     });
     expect(JSON.stringify(res._getJSONData())).not.toContain(OIDC_TOKEN);
+  });
+});
+
+describe('/api/v1/blocks/submit-version under bearer-scope-tighten', () => {
+  beforeEach(() => {
+    mockFliptVariant.mockReset();
+  });
+
+  // A personal key narrower than Full.
+  const NARROW_KEY_SESSION = {
+    ...MOD_SESSION,
+    apiKeyType: 'User',
+    tokenScope: TokenScope.UserRead | TokenScope.ModelsRead,
+  };
+  const FULL_KEY_SESSION = { ...MOD_SESSION, apiKeyType: 'User' };
+
+  it('enforce: 403s a narrow personal key before any other work', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer personal-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect((res._getJSONData() as { message: string }).message).toContain('Full Access');
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expect(mockFliptVariant).toHaveBeenCalledWith('bearer-scope-tighten');
+  });
+
+  it('log: lets a narrow personal key through and logs it', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer personal-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({
+          mode: 'log',
+          route: '/api/v1/blocks/submit-version',
+          credentialKind: 'apiKey',
+          apiKeyId: NARROW_KEY_SESSION.apiKeyId,
+        }),
+      })
+    );
+  });
+
+  it('off (any unknown variant): lets a narrow personal key through without logging', async () => {
+    mockFliptVariant.mockResolvedValue('bogus');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer personal-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'bearer-scope-refused' })
+    );
+  });
+
+  it('off when the flag read fails', async () => {
+    mockFliptVariant.mockRejectedValue(new Error('flipt down'));
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer personal-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+  });
+
+  it('enforce: a Full Access personal key passes without reading the flag', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(FULL_KEY_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer personal-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockFliptVariant).not.toHaveBeenCalled();
+  });
+
+  it('enforce: an OAuth token carrying AppBlocksSubmit passes', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(OAUTH_MOD_SCOPED_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer personal-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
   });
 });

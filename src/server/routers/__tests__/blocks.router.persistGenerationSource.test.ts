@@ -199,7 +199,8 @@ describe('blocks.persistGenerationSource', () => {
   it('🔴 applies the per-user 60-per-hour rateLimit to THIS procedure, and charges no bridge bucket', async () => {
     await call();
     expect(rateLimitApplied).toHaveLength(1);
-    expect(rateLimitApplied[0]).toMatchObject({ limit: 60, period: 3600 });
+    // The registry entry (60 an hour by default, pinned in app-usage-limits.registry.test.ts).
+    expect(rateLimitApplied[0]).toEqual({ usageLimitIds: ['apps.generation-source-saves'] });
     // The per-install publish bucket is shared by every viewer of a page app.
     expect(mockCheckPublishRate).not.toHaveBeenCalled();
     expect(mockCheckCatalogRate).not.toHaveBeenCalled();

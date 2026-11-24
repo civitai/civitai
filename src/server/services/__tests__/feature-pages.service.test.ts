@@ -47,6 +47,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  envMock.reset();
 });
 
 const signerCalls = () =>
@@ -66,20 +67,66 @@ describe('resolveFeaturePageEmbed', () => {
     'http://features.example.com/feature.html',
     'not a url',
   ])('refuses %s', (url) => {
-    expect(service.resolveFeaturePageEmbed(url, feature)).toBeNull();
+    expect(service.resolveFeaturePageEmbed(url, feature, 'civitai.com')).toBeNull();
   });
 
-  it('frames a page on another registrable domain, naming the feature', () => {
+  it('frames a page on another registrable domain, naming the feature and the serving host', () => {
     expect(
-      service.resolveFeaturePageEmbed('https://features.example.com/feature.html', feature)
+      service.resolveFeaturePageEmbed(
+        'https://features.example.com/feature.html',
+        feature,
+        'civitai.com'
+      )
     ).toEqual({
-      src: `https://features.example.com/feature.html?feature=${encodeURIComponent(feature)}`,
+      src: `https://features.example.com/feature.html?feature=${encodeURIComponent(
+        feature
+      )}&host=${encodeURIComponent('https://civitai.com')}`,
       origin: 'https://features.example.com',
     });
     expect(
-      service.resolveFeaturePageEmbed('http://127.0.0.1:7560/feature.html', feature)?.origin
+      service.resolveFeaturePageEmbed('http://127.0.0.1:7560/feature.html', feature, 'civitai.com')
+        ?.origin
     ).toBe('http://127.0.0.1:7560');
   });
+
+  it('outside production a local dev origin is the host; in production it is refused', () => {
+    const url = 'https://features.example.com/feature.html';
+    envMock.set({ NODE_ENV: 'test' });
+    expect(
+      new URL(
+        service.resolveFeaturePageEmbed(url, feature, 'localhost:3000')!.src
+      ).searchParams.get('host')
+    ).toBe('http://localhost:3000');
+    envMock.set({ NODE_ENV: 'production' });
+    expect(service.resolveFeaturePageEmbed(url, feature, 'localhost:3000')).toBeNull();
+    expect(service.resolveFeaturePageEmbed(url, feature, 'civitai.com')).not.toBeNull();
+  });
+
+  it.each([
+    ['civitai.com', 'https://civitai.com'],
+    ['civitai.red', 'https://civitai.red'],
+    ['CIVITAI.RED', 'https://civitai.red'],
+  ])('on %s, the host is that origin, whatever the configured URL names', (served, host) => {
+    const embed = service.resolveFeaturePageEmbed(
+      'https://features.example.com/feature.html?host=https://evil.example',
+      feature,
+      served
+    );
+    expect(new URL(embed!.src).searchParams.getAll('host')).toEqual([host]);
+  });
+
+  it.each([['civitai.green'], ['www.civitai.com'], ['civitai.com.evil.example'], [undefined]])(
+    'on an unlisted origin (%s) no frame is offered',
+    (served) => {
+      expect(
+        service.resolveFeaturePageEmbed(
+          'https://features.example.com/feature.html',
+          feature,
+          served
+        )
+      ).toBeNull();
+    }
+  );
 });
 
 describe('castFeaturePageVote', () => {
@@ -146,6 +193,10 @@ describe('castFeaturePageVote', () => {
     ['a reply without a tally', 'INTERNAL_SERVER_ERROR', () => json(200, { votes: 'x' })],
     ['429', 'TOO_MANY_REQUESTS', () => json(429, { code: 'rate_limited' })],
     ['403', 'FORBIDDEN', () => json(403, { code: 'no_grant' })],
+    // A route the platform does not have is a deploy gap, retried; a record it does not know is final.
+    ['404 for a missing route', 'INTERNAL_SERVER_ERROR', () => json(404, { code: 'not_found' })],
+    ['404 with no body', 'INTERNAL_SERVER_ERROR', () => new Response('', { status: 404 })],
+    ['404 unknown_subject', 'FORBIDDEN', () => json(404, { code: 'unknown_subject' })],
   ])('maps a signer answering %s to %s', async (_, code, reply) => {
     signerReplies.push(reply as () => Response);
     await expect(
@@ -175,5 +226,72 @@ describe('getMyFeaturePageVotes', () => {
     const [[url, init]] = signerCalls();
     expect(url).toBe(`${SIGNER}/internal/mine`);
     expect(JSON.parse(String(init.body))).toEqual({ uid: 42, requests: [REQUEST] });
+  });
+});
+
+describe('getFeaturePageViewerHandle', () => {
+  const author = `h1:${'b'.repeat(64)}`;
+
+  it('asks the platform for the uid once, then serves the handle from cache', async () => {
+    signerReplies.push(() => json(200, { author }));
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+
+    const calls = signerCalls();
+    expect(calls.map(([url]) => url)).toEqual([`${SIGNER}/internal/handle?uid=42`]);
+  });
+
+  it.each([
+    ['a refusal', () => json(400, { code: 'bad_request' })],
+    ['a reply that is not a handle', () => json(200, { author: 'u42' })],
+  ])('gives no handle on %s, asks nothing for a minute, then asks again', async (_, reply) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      signerReplies.push(reply, () => json(200, { author }));
+
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      expect(signerCalls()).toHaveLength(1);
+
+      vi.setSystemTime(Date.now() + 61_000);
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on a platform that does not answer well before the signer timeout', async () => {
+    fetchMock.mockImplementation(async (input: string, init: RequestInit) => {
+      if (input === `${HUB}/api/auth/oauth/token`)
+        return json(200, { access_token: 'token-1', expires_in: 900 });
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      );
+    });
+    const started = Date.now();
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+});
+
+describe('getFeaturePageProps', () => {
+  it('serves the page private and never stored, so no shared cache can hand it to another viewer', async () => {
+    envMock.set({ FEATURE_PAGES_EMBED_URL: 'https://features.example.com/feature.html' });
+    const setHeader = vi.fn();
+
+    const result = await service.getFeaturePageProps({
+      ctx: {
+        query: { slug: 'dark-mode' },
+        req: { headers: { host: 'civitai.com' } },
+        res: { setHeader },
+      },
+      features: { featurePages: true },
+      session: null,
+    });
+
+    expect(result).toMatchObject({ props: { viewerAuthor: null } });
+    expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store');
   });
 });

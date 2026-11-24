@@ -1,6 +1,7 @@
 import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { TRPCError } from '@trpc/server';
 import type { Context, ProtectedContext } from '../createContext';
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
 import type { GetByIdInput } from '../schema/base.schema';
 import {
   addBenefactorUnitAmount,
@@ -143,6 +144,8 @@ export const getInfiniteBountiesHandler = async ({
         bountyIds: bountIds,
         userId: user?.id,
         isModerator: user?.isModerator,
+        seesReportListed: seesReportListed(ctx),
+        ownerSeesReportListed: isSessionOrFullUserKey(ctx),
       }),
       getTextRatedBountyLevels(items.filter(mayBeTextRated).map((bounty) => bounty.id)),
       getRequestImageFilter(ctx),
@@ -244,6 +247,8 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         id: bounty.id,
         userId: user?.id,
         isModerator: user?.isModerator,
+        seesReportListed: seesReportListed(ctx),
+        ownerSeesReportListed: isSessionOrFullUserKey(ctx),
       }),
       mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
       getRequestImageFilter(ctx),

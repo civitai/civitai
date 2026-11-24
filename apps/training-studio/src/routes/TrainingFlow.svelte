@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
-  import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
+  import { isMatureNsfwLevel, ratingBreakdown } from '$lib/nsfw-rating';
   import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
@@ -12,6 +12,7 @@
   import DataStep from './DataStep.svelte';
   import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
+  import EditDataStepElements from './EditDataStepElements.svelte';
   import ReviewStep from './ReviewStep.svelte';
   import ReviewStepElements from './ReviewStepElements.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
@@ -61,6 +62,7 @@
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
   const Data = $derived(elementsUi ? DataStepElements : DataStep);
   const Review = $derived(elementsUi ? ReviewStepElements : ReviewStep);
+  const EditData = $derived(elementsUi ? EditDataStepElements : EditDataStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -152,6 +154,12 @@
           (p) => isMatureNsfwLevel(p.before.nsfwLevel) || isMatureNsfwLevel(p.after?.nsfwLevel)
         ).length
       : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
+  );
+  // A pair counts once whatever its two sides were rated, so pairs get no breakdown.
+  const matureRatings = $derived(
+    trainsPairs
+      ? []
+      : ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel)).filter((r) => r.mature)
   );
 
   // The blobs the submit sends (buildTrainingRuns / pairItems), keyed order-free.
@@ -459,7 +467,7 @@
       }}
     />
   {:else if step === 2 && selection && trainsPairs}
-    <EditDataStep
+    <EditData
       bind:pairs
       bind:reuseItems={reusePairItems}
       onContinue={enterReview}
@@ -503,6 +511,7 @@
       {repeated}
       {trainsPairs}
       matureCount={reviewMatureCount}
+      {matureRatings}
       readiness={readinessView}
       {readinessUnusableCount}
       onCheckReadinessAgain={() => readinessRound++}

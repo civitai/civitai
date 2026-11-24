@@ -1,8 +1,6 @@
-import dynamic from 'next/dynamic';
-import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type { trpc } from '~/utils/trpc';
-
-const DailyLimitRaiseDialog = dynamic(() => import('./DailyLimitRaiseDialog'), { ssr: false });
 
 type TrpcUtils = ReturnType<typeof trpc.useUtils>;
 
@@ -54,10 +52,9 @@ export async function openDailyLimitRaise(opts: {
   opts.onOpened?.();
   return new Promise((resolve) => {
     let raised = false;
-    dialogStore.trigger({
-      id,
-      component: DailyLimitRaiseDialog,
-      props: {
+    openDialog(
+      () => import('./DailyLimitRaiseDialog'),
+      {
         appBlockId,
         appName,
         limit: data.limit,
@@ -67,13 +64,14 @@ export async function openDailyLimitRaise(opts: {
           raised = true;
         },
       },
-      options: {
+      {
+        id,
         onClose: () => {
           if (!raised) dismissedAt.set(appBlockId, Date.now());
           resolve(raised ? 'raised' : 'not-raised');
         },
-      },
-    });
+      }
+    );
   });
 }
 

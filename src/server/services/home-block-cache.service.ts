@@ -16,6 +16,7 @@ import {
   countHomeBlockL1Miss,
 } from '~/server/prom/home-block-l1.metrics';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import type * as HomeBlockService from '~/server/services/home-block.service';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { isCollectionReadShared } from '~/server/services/collection-item-access';
 import { coverIndexExists } from '~/server/services/collection-cover-index';
@@ -23,9 +24,6 @@ import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
-
-// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
-const homeBlockService = () => import('~/server/services/home-block.service');
 
 const CACHE_EXPIRY = {
   [HomeBlockType.Collection]: 60 * 3, // 3 min
@@ -184,13 +182,22 @@ export function resetHomeBlockL1ForTests(read: () => boolean | null = readHomeBl
   isHomeBlockL1On = createCachedFlagGate(read);
 }
 
+/**
+ * Passed in by the caller: the cache is imported by every writer that busts it, and a value import
+ * of `home-block.service` here would pull that service's imports into all of them.
+ */
+export type HomeBlockSource = Pick<
+  typeof HomeBlockService,
+  'resolveHomeBlockMetadata' | 'getHomeBlockData'
+>;
+
 export async function getHomeBlockCached(
   homeBlock: HomeBlockForCache,
-  domain?: DomainColor,
-  resolvedMetadata?: HomeBlockMetaSchema
+  domain: DomainColor | undefined,
+  resolvedMetadata: HomeBlockMetaSchema | undefined,
+  source: HomeBlockSource
 ) {
-  const metadata =
-    resolvedMetadata ?? (await (await homeBlockService()).resolveHomeBlockMetadata(homeBlock));
+  const metadata = resolvedMetadata ?? (await source.resolveHomeBlockMetadata(homeBlock));
   const identifier = getHomeBlockIdentifier(homeBlock, metadata);
 
   if (!identifier) return null;
@@ -218,9 +225,7 @@ export async function getHomeBlockCached(
 
   log(`getHomeBlockCached :: getting home block with identifier ${identifier}`);
 
-  const homeBlockWithData = await (
-    await homeBlockService()
-  ).getHomeBlockData({
+  const homeBlockWithData = await source.getHomeBlockData({
     homeBlock,
     input: { limit: 14 * 4, domain },
   });

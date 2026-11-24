@@ -10,7 +10,6 @@ import {
   Title,
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
@@ -86,7 +85,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Gated } from '~/components/Gated/Gated';
 import { formatDate } from '~/utils/date-helpers';
 import type { RouterOutput } from '~/types/router';
-import { openCrucibleSubmitEntryModal } from '~/components/Dialog/triggers/crucible-submit-entry';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageSort } from '~/server/common/enums';
@@ -96,6 +95,8 @@ import { showSuccessNotification, showErrorNotification } from '~/utils/notifica
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { generationFormStore } from '~/store/generation-form.store';
 import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -117,6 +118,8 @@ export const getServerSideProps = createServerSideProps({
     return { props: removeEmpty(result.data) };
   },
 });
+
+const CANCEL_CRUCIBLE_DIALOG_ID = 'cancel-crucible';
 
 function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
@@ -175,7 +178,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       currentUser.id !== crucible.userId &&
       !areCrucibleEntriesClosed(crucible) &&
       crucible.viewerEntryCount < getMaxUserEntries(crucible);
-    if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType));
+    if (canSubmit)
+      openDialog(
+        () => import('~/components/Crucible/CrucibleSubmitEntryModal'),
+        getSubmitEntryProps(crucible, entryBuzzType)
+      );
   }, [crucible, router, currentUser, entryBuzzType]);
 
   const cancelMutation = trpc.crucible.cancel.useMutation({
@@ -361,16 +368,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       });
       return;
     }
-    openConfirmModal({
+    openConfirm({
       title: 'Remove entry',
-      children: (
+      message: (
         <Text size="sm">
           Remove {entry.user.username ? `${entry.user.username}'s` : 'this'} entry? Any entry fee
           they paid is refunded, and they&apos;re told a moderator removed it. This can&apos;t be
           undone.
         </Text>
       ),
-      centered: true,
       labels: { cancel: 'Keep it', confirm: 'Remove entry' },
       confirmProps: { color: 'red' },
       onConfirm: () => removeEntryMutation.mutate({ entryId: entry.id }),
@@ -378,9 +384,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   };
 
   const handleWithdrawEntry = (entry: CrucibleEntryData) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Remove your entry',
-      children: (
+      message: (
         <Stack gap="sm">
           <Text size="sm">
             Remove this entry from the crucible? It leaves judging and its slot opens up again.
@@ -392,7 +398,6 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
           </Text>
         </Stack>
       ),
-      centered: true,
       labels: { cancel: 'Keep it', confirm: 'Remove entry' },
       confirmProps: { color: 'red' },
       onConfirm: () => withdrawEntryMutation.mutate({ entryId: entry.id }),
@@ -401,9 +406,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   // Handle cancel action with confirmation dialog
   const handleCancelCrucible = () => {
-    openConfirmModal({
+    openConfirm({
+      id: CANCEL_CRUCIBLE_DIALOG_ID,
       title: 'Cancel Crucible',
-      children: (
+      message: (
         <Stack gap="sm">
           <Text size="sm">
             Are you sure you want to cancel this crucible? This action cannot be undone.
@@ -421,14 +427,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
           )}
         </Stack>
       ),
-      centered: true,
       closeOnConfirm: false,
       labels: { cancel: 'Keep it', confirm: 'Cancel Crucible' },
       confirmProps: { color: 'red', loading: cancelMutation.isPending },
       onConfirm: async () => {
         try {
           await cancelMutation.mutateAsync({ id });
-          closeAllModals();
+          dialogStore.closeById(CANCEL_CRUCIBLE_DIALOG_ID);
         } catch {
           // Error handled by mutation onError callback
         }
@@ -571,7 +576,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                         fullWidth
                         leftSection={<IconUpload size={16} />}
                         onClick={() =>
-                          openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType))
+                          openDialog(
+                            () => import('~/components/Crucible/CrucibleSubmitEntryModal'),
+                            getSubmitEntryProps(crucible, entryBuzzType)
+                          )
                         }
                         disabled={!currentUser}
                       >
@@ -842,8 +850,8 @@ function CrucibleReviewNotice({
   if (crucible.coverRestricted && canManage)
     return (
       <Alert color="yellow" radius="md" className="mb-6">
-        The cover isn&apos;t shown to visitors because {RESTRICTED_IMAGE_REASON}, and this crucible is
-        left out of feeds. Change the cover to list it.
+        The cover isn&apos;t shown to visitors because {RESTRICTED_IMAGE_REASON}, and this crucible
+        is left out of feeds. Change the cover to list it.
       </Alert>
     );
   if (crucible.ingestion === CrucibleIngestionStatus.Scanned && !crucible.image) {

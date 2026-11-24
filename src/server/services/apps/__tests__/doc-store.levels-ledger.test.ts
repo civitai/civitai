@@ -68,6 +68,8 @@ const EXEMPT: Record<string, string> = {
     "server-side publish: the content hash of the caller's own copies, locked, never a body",
   SQL_VIEWER_RECORDS:
     "the record export: only the CALLER'S OWN documents (private, and visible shared ones they created), returned to that caller",
+  SQL_PURGE_LOCK_DOCS:
+    "the per-collection purge's dump: moderator maintenance, stored beside the delete, never returned to an app",
   SQL_PRIVATE_FEED_DOCS:
     "the registry private stream: one user's OWN private documents (never a shared one), streamed only to that user's token",
 };

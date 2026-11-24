@@ -1,5 +1,6 @@
 import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import { findTrigger, withTrigger } from '$lib/training-trigger';
+import { asNsfwRating, ratingBreakdown, type NsfwRating, type RatingCount } from '$lib/nsfw-rating';
 export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
 import {
   KOHYA_PARAM_FIELDS,
@@ -24,6 +25,7 @@ import {
   cardsForMedia,
   findByAir,
   isCardVisible,
+  mediaCount,
   visibleVersions,
   versionPriceKey,
   ecosystemTakesSampleImages,
@@ -276,7 +278,36 @@ export function kohyaSeedCard(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+const STATUS_FILTERS = ['all', 'labeled', 'unlabeled', 'mature', 'failed'] as const;
+/** `rating:<level>` shows the images the upload scan gave that one rating. */
+export type DatasetFilter = (typeof STATUS_FILTERS)[number] | `rating:${NsfwRating}`;
+
+export function asDatasetFilter(value: string): DatasetFilter | undefined {
+  if ((STATUS_FILTERS as readonly string[]).includes(value)) return value as DatasetFilter;
+  const rating = value.startsWith('rating:')
+    ? asNsfwRating(value.slice('rating:'.length))
+    : undefined;
+  return rating && `rating:${rating}`;
+}
+
+const ratingOfFilter = (filter: DatasetFilter) =>
+  filter.startsWith('rating:') ? asNsfwRating(filter.slice('rating:'.length)) : undefined;
+
+/** Under a `rating:` filter, whether a trainable image has that rating; undefined for any other filter. */
+export function matchesRatingFilter(img: Img, filter: DatasetFilter): boolean | undefined {
+  const rating = ratingOfFilter(filter);
+  if (!rating) return undefined;
+  return isTrainable(img) && asNsfwRating(img.nsfwLevel) === rating;
+}
+
+/** The rating filters to offer: each rating among the trainable images, plus the selected one at 0
+ *  once the dataset no longer has it, so the selection stays visible. */
+export function ratingChoices(images: Img[], filter: DatasetFilter): RatingCount[] {
+  const totals = ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel));
+  const selected = ratingOfFilter(filter);
+  if (!selected || totals.some((r) => r.rating === selected)) return totals;
+  return [...totals, ...ratingBreakdown([selected]).map((r) => ({ ...r, count: 0 }))];
+}
 
 /** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
  *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
@@ -333,7 +364,71 @@ export interface Img {
   caption: string;
   /** Per-image repeats: how many times this image goes into the dataset. Absent means once. */
   repeats?: number;
+  /** The add this image came in with, so Manage tags can scope an edit to it. */
+  batch?: ImgBatch;
 }
+
+export type BatchSource = 'upload' | 'zip' | 'reuse' | 'generations';
+
+/** One add to the dataset: a drop or pick, one zip, one reused dataset, one generations pick. */
+export interface ImgBatch {
+  /** Unique and increasing, also across page loads: seeded from the clock rather than a counter, so
+   *  a batch kept in a saved draft can't share an id with one added later. */
+  id: number;
+  source: BatchSource;
+  addedAt: number;
+}
+
+let lastBatchId = 0;
+export function newBatch(source: BatchSource, now = Date.now()): ImgBatch {
+  lastBatchId = Math.max(now, lastBatchId + 1);
+  return { id: lastBatchId, source, addedAt: now };
+}
+
+const BATCH_SOURCE_NAMES: Record<BatchSource, string> = {
+  upload: 'Upload',
+  zip: 'Zip import',
+  reuse: 'Reused dataset',
+  generations: 'Generations',
+};
+
+export interface BatchOption {
+  id: number;
+  label: string;
+}
+
+/** The batches still in the dataset, oldest first, each named "Upload 2 · 14 images · 3:41 PM": the
+ *  number counts that source's batches, and the time tells same-source batches apart. */
+export function datasetBatches(images: Pick<Img, 'batch'>[], media: Media): BatchOption[] {
+  const byId = new Map<number, { batch: ImgBatch; count: number }>();
+  for (const img of images) {
+    if (!img.batch) continue;
+    const entry = byId.get(img.batch.id);
+    if (entry) entry.count++;
+    else byId.set(img.batch.id, { batch: img.batch, count: 1 });
+  }
+  const perSource = new Map<BatchSource, number>();
+  return [...byId.values()]
+    .sort((a, b) => a.batch.id - b.batch.id)
+    .map(({ batch, count }) => {
+      const n = (perSource.get(batch.source) ?? 0) + 1;
+      perSource.set(batch.source, n);
+      const time = new Date(batch.addedAt).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      return {
+        id: batch.id,
+        label: `${BATCH_SOURCE_NAMES[batch.source]} ${n} · ${mediaCount(count, media)} · ${time}`,
+      };
+    });
+}
+
+/** The images a Manage-tags edit applies to: one batch's, or the whole dataset's when `batchId` is null. */
+export const imagesInScope = <T extends Pick<Img, 'batch'>>(
+  images: T[],
+  batchId: number | null
+): T[] => (batchId === null ? images : images.filter((i) => i.batch?.id === batchId));
 
 /** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
  *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be

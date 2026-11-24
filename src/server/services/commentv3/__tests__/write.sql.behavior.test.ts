@@ -3,6 +3,7 @@ import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { SqlRunner } from '~/server/services/commentv3/write.service';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
+import { liveV3Since } from '~/server/notifications/comment.notifications';
 import {
   deleteComments,
   getStoredComment,
@@ -29,6 +30,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   await pg.exec(migration('20270102120000_comment_v3_teardown'));
+  await pg.exec(migration('20271125130000_comment_v3_hidden_at'));
   db = {
     query: async <R extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
       (await pg.query<R>(sql, params)) as { rows: R[] },
@@ -199,6 +201,25 @@ describe('comment v3 writes', () => {
     const edited = await updateCommentContent(db, { id: c.id, content: 'after' });
     expect(edited).toMatchObject({ content: 'after' });
     expect(edited?.updatedAt.getTime()).toBeGreaterThan(new Date('2021-01-01').getTime());
+  });
+
+  it('a hide stamps hiddenAt once, other flag changes keep it, and a show clears it', async () => {
+    const c = await post(1, 7);
+    const stampOf = async () =>
+      (
+        await one<{ hiddenAt: Date | null }>(
+          `SELECT "hiddenAt" FROM "CommentV3" WHERE id = ${c.id}`
+        )
+      )?.hiddenAt ?? null;
+    const at = new Date('2026-11-01T00:00:00.000Z');
+    await setCommentFlags(db, [c.id], { hidden: true }, { hiddenAt: at });
+    expect(await stampOf()).toEqual(at);
+    await setCommentFlags(db, [c.id], { hidden: true, tosViolation: true });
+    expect(await stampOf()).toEqual(at);
+    await setCommentFlags(db, [c.id], { hidden: false });
+    expect(await stampOf()).toBeNull();
+    await setCommentFlags(db, [c.id], { hidden: true });
+    expect(await stampOf()).not.toBeNull();
   });
 
   it('flags report only the rows they changed, and a repeated pin keeps its first time', async () => {
@@ -443,5 +464,27 @@ describe('20270102120000_comment_v3_teardown', () => {
     expect(
       (await old.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0].lock_timeout
     ).toBe('0');
+  });
+});
+
+describe('before the featurePage label exists', () => {
+  it('deletes a comment of another type without touching the Feature Pages mirror table', async () => {
+    // This database has neither the label nor the mirror table, as production before the migration.
+    await expect(
+      db.query(`SELECT 1 FROM "CommentV3" WHERE "entityType" = 'featurePage'`)
+    ).rejects.toThrow();
+    const row = await post(3, 1);
+    expect(await deleteComments(db, [row.id], 'author')).toEqual([
+      expect.objectContaining({ id: row.id }),
+    ]);
+  });
+
+  it('runs a cross-type read that leaves Feature Pages out by comparing as text', async () => {
+    const row = await post(3, 2);
+    const { rows } = await db.query<{ id: number }>(
+      `SELECT id FROM "CommentV3" c WHERE ${liveV3Since('2000-01-01')} AND c.id = $1`,
+      [row.id]
+    );
+    expect(rows).toEqual([{ id: row.id }]);
   });
 });

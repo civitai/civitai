@@ -355,6 +355,25 @@ func TestLoadServingLimits(t *testing.T) {
 	}
 }
 
+// FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS is off unless set to a true value, and is its own switch:
+// FEED_GO_COMPUTE_MISSES on does not turn it on.
+func TestLoadComputeImageResourcesMiss(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "0": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ComputeImageResourcesMiss != want || !c.ComputeMisses {
+			t.Errorf("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS=%q -> %v (compute misses %v), want %v", in, c.ComputeImageResourcesMiss, c.ComputeMisses, want)
+		}
+	}
+}
+
 // The miss computation is on by default, write-back (no cache) and the frame negative-cache mirror
 // off; a write-back of a cache whose lookup reads the primary needs DATABASE_URL, which is read only
 // then.
@@ -536,13 +555,13 @@ func TestLoadClickHouse(t *testing.T) {
 // The dedicated entity-metrics reader is configured from CLICKHOUSE_METRICS_* only (the Node app's
 // names): the miss computation on and both its host and username set. Its password is its own: unset
 // stays empty, never feed-go's or the app's. Its request timeout defaults to 10 s. FLIPT_* are read
-// only alongside it (FLIPT_ENVIRONMENT defaulting to civitai-app).
+// with or without it (FLIPT_ENVIRONMENT defaulting to civitai-app): model.getAll reads a flag too.
 func TestLoadMetricsClickHouse(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
 	}
 	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "CLICKHOUSE_METRICS_HOST", "CLICKHOUSE_METRICS_USERNAME", "CLICKHOUSE_METRICS_PASSWORD",
-		"CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", "FLIPT_URL", "FLIPT_FETCHER_SECRET", "FLIPT_ENVIRONMENT"} {
+		"CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", "FLIPT_URL", "FLIPT_FETCHER_SECRET", "FLIPT_ENVIRONMENT", "FLIPT_DEPLOYMENT_ID"} {
 		t.Setenv(k, "")
 	}
 	// Every other login set, so a fall-through to any of them shows.
@@ -562,10 +581,15 @@ func TestLoadMetricsClickHouse(t *testing.T) {
 		}
 		return c
 	}
-	if c := load(); c.MetricsClickHouseURL != "" || c.MetricsClickHouseUsername != "" || c.FliptURL != "" ||
+	if c := load(); c.MetricsClickHouseURL != "" || c.MetricsClickHouseUsername != "" || c.FliptURL != "http://flipt.example.test" ||
+		c.FliptClientToken != "flipt-tok" || c.FliptEnvironment != "civitai-app" || c.FliptDeploymentID != "" ||
 		c.MetricsClickHouseRequestTimeout != 10*time.Second {
-		t.Fatalf("unset: %q %q flipt %q timeout %v; want no reader, no flag read, 10s", c.MetricsClickHouseURL,
-			c.MetricsClickHouseUsername, c.FliptURL, c.MetricsClickHouseRequestTimeout)
+		t.Fatalf("unset: %q %q flipt %q %q %q %q timeout %v; want no reader, Flipt still read, 10s", c.MetricsClickHouseURL,
+			c.MetricsClickHouseUsername, c.FliptURL, c.FliptClientToken, c.FliptEnvironment, c.FliptDeploymentID, c.MetricsClickHouseRequestTimeout)
+	}
+	t.Setenv("FLIPT_DEPLOYMENT_ID", "deploy-7")
+	if c := load(); c.FliptDeploymentID != "deploy-7" {
+		t.Fatalf("FLIPT_DEPLOYMENT_ID = %q, want deploy-7", c.FliptDeploymentID)
 	}
 	t.Setenv("CLICKHOUSE_METRICS_HOST", "https://metrics-ch.example.test:8443")
 	if c := load(); c.MetricsClickHouseURL != "" {
@@ -594,8 +618,8 @@ func TestLoadMetricsClickHouse(t *testing.T) {
 		t.Fatalf("zero timeout: %v, want the 10s default", c.MetricsClickHouseRequestTimeout)
 	}
 	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
-	if c := load(); c.MetricsClickHouseURL != "" || c.FliptURL != "" {
-		t.Fatalf("compute off: %q flipt %q, want unset", c.MetricsClickHouseURL, c.FliptURL)
+	if c := load(); c.MetricsClickHouseURL != "" || c.FliptURL != "http://flipt.example.test" {
+		t.Fatalf("compute off: %q flipt %q, want no reader and Flipt still read", c.MetricsClickHouseURL, c.FliptURL)
 	}
 }
 

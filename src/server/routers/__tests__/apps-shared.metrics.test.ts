@@ -421,7 +421,7 @@ const CASES: Case[] = [
     {
       op,
       outcome: 'rate_limited',
-      path: 'throwSharedRateLimited',
+      path: 'throwAppRateLimited',
       arrange: RATE_LIMIT[op],
       act: ACT[op],
     },

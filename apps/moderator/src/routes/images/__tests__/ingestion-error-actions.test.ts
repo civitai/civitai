@@ -17,6 +17,8 @@ vi.mock('$lib/server/ingestion.service', () => ({
   resolveIngestionError,
   getIngestionErrorImages,
 }));
+// The withheld-image gate is pinned in image-action-access.pglite.test.ts.
+vi.mock('$lib/server/retracted-media', () => ({ withheldRefusal: async () => null }));
 
 const { actions: errorActions } = await import('../ingestion-errors/+page.server');
 

@@ -514,6 +514,8 @@ const featureFlags = createFeatureFlags({
   // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
   // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
   moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // "More like this" steering: Prefer a tag within the closest matches. Checked on top of `moreLikeThis`.
+  moreLikeThisSteer: { availability: ['mod'], fliptKey: 'more-like-this-steer' },
   // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
   // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
   imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
@@ -1104,6 +1106,13 @@ const featureFlags = createFeatureFlags({
   // Keep the Flipt flag's `enabled` false until public launch, so removing the tester rollout
   // turns the page off rather than on for everyone.
   featurePages: { availability: [], fliptKey: 'feature-pages', fliptKeyRequired: true },
+  // Feature Pages comments and reports (posting, editing, reading a thread through commentv3). Same
+  // launch rule as featurePages: `enabled` stays false, testers come in through a rollout.
+  featurePagesDiscussion: {
+    availability: [],
+    fliptKey: 'feature-pages-discussion',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

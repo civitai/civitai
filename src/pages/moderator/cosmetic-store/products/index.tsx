@@ -16,7 +16,6 @@ import {
   Anchor,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
@@ -44,6 +43,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
@@ -70,9 +70,9 @@ export default function CosmeticStoreProducts() {
       showSuccessNotification({ message: 'Shop item has been deleted.' });
     };
 
-    openConfirmModal({
+    openConfirm({
       title: 'Delete Item',
-      children: (
+      message: (
         <Stack gap={0}>
           <Text size="sm">Are you sure you want to delete this Shop item?</Text>
           <Text size="xs" c="dimmed">
@@ -80,8 +80,8 @@ export default function CosmeticStoreProducts() {
           </Text>
         </Stack>
       ),
-      groupProps: { justify: 'center' },
       labels: { confirm: 'Delete Shop Item', cancel: "No, don't delete it" },
+      groupProps: { justify: 'center' },
       confirmProps: { color: 'red' },
       onConfirm: () => onDelete(),
     });

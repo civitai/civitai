@@ -32,6 +32,7 @@ vi.mock('$lib/server/retracted-media-rate', () => ({ retractedMediaRetryAfter })
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
+  holdsCsamReview: (_user: unknown) => grants.paths.has('/images/csam'),
   recordHeldView,
   recordHeldServe: () => undefined,
 }));
@@ -194,6 +195,40 @@ describe('/api/retracted-media', () => {
     );
     expect((await call()).status).toBe(413);
     expect(recordRetractedView).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/retracted-media, held media for a moderator without the CSAM grant', () => {
+  beforeEach(() => {
+    getModeratorMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, kind: 'held' });
+  });
+
+  // civitai/civitai#10202: the answer must not tell held media apart from retracted media.
+  it('answers as for retracted media, audited as a held view', async () => {
+    expect((await call()).status).toBe(200);
+    expect(recordHeldView).toHaveBeenCalledWith(42, 7, 'web');
+    fetchMock.mockResolvedValue(
+      new Response('x', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': String(300 * 1024 * 1024) },
+      })
+    );
+    expect((await call()).status).toBe(413);
+  });
+});
+
+describe('/api/retracted-media, held media for a moderator with the CSAM grant', () => {
+  it('serves a held file over the cap, audited as a held view', async () => {
+    grants.paths = new Set(['/images/csam']);
+    getModeratorMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, kind: 'held' });
+    fetchMock.mockResolvedValue(
+      new Response('x', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': String(300 * 1024 * 1024) },
+      })
+    );
+    expect((await call()).status).toBe(200);
+    expect(recordHeldView).toHaveBeenCalledWith(42, 7, 'web');
   });
 });
 

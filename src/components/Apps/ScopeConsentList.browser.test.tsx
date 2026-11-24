@@ -1,5 +1,6 @@
-import { ModalsProvider } from '@mantine/modals';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as NotificationsMod from '~/utils/notifications';
@@ -74,9 +75,10 @@ const titleOf = (scope: string) => EXPECTED.find(([s]) => s === scope)?.[1] ?? '
 
 const render = async (grant: ScopeConsentGrant = GRANT) => {
   renderWithProviders(
-    <ModalsProvider>
+    <>
       <ScopeConsentList grant={grant} emptyLabel="Nothing granted." />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
   await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
 };
@@ -90,6 +92,9 @@ beforeEach(() => {
   m.revokeCalls = [];
   m.success.mockClear();
 });
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('ScopeConsentList — plain-language rows', () => {
   test('every scope shows its plain title in the shared order, with no scope id', async () => {

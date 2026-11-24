@@ -1,6 +1,6 @@
 {
   "name": "@civitai/knights-app",
-  "version": "0.0.26",
+  "version": "0.0.28",
   "private": true,
   "type": "module",
   "scripts": {

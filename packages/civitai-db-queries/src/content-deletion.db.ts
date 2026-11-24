@@ -1,7 +1,9 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { GRACE_PRIOR_KEYS } from '@civitai/shared/account-deletion-grace';
 import { childSafetyImageCase, childSafetyPostCase } from './child-safety-case.db';
 import {
+  NSFW_LEVEL_BLOCKED,
   PENDING_DELETE_UPSERT,
   PENDING_DELETES_ACTOR,
   ownerReportHold,
@@ -72,6 +74,10 @@ type DeleteOptions = {
   queueKept?: boolean;
 };
 
+/** A moderator's delete that queues what it keeps: a moderator decided the image goes. */
+export const moderatorDecides = (options: Pick<DeleteOptions, 'replay' | 'queueKept'>) =>
+  !!options.replay?.moderatorDelete && options.queueKept !== false;
+
 function conditions({ actor, where }: DeleteOptions) {
   const own = 'id' in actor && !actor.isModerator ? sql`AND "userId" = ${actor.id}` : sql``;
   return sql`${own} ${where ? sql`AND (${where})` : sql``}`;
@@ -112,6 +118,50 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           : PENDING_DELETE_UPSERT
       }
     )`);
+  const hides = table === 'Image';
+  // Only a moderator's delete that queues what it keeps rewrites an already-blocked image, so a
+  // takedown keeps its reason and a grace block stays restorable.
+  const skipBlocked = !moderatorDecides(options);
+  // Grace markers are dropped so a restore cannot lift this block.
+  if (hides)
+    ctes.push(sql`hidden AS (
+      UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
+        "blockedFor" = CASE WHEN "blockedFor" = 'CSAM' THEN "blockedFor" ELSE 'moderated' END,
+        -- Out of every review queue but the CSAM one, so no queue's accept lifts the block; a pending
+        -- appeal keeps its flag unless the image is CSAM-blocked (as keepPendingAppealFlags does).
+        "needsReview" = CASE WHEN "needsReview" = 'csam' THEN "needsReview"
+          WHEN "blockedFor" IS DISTINCT FROM 'CSAM' AND EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
+            AND a."entityId" = "Image".id AND a.status = 'Pending') THEN 'appeal' END,
+        metadata = CASE WHEN jsonb_typeof(metadata) = 'object'
+          THEN metadata - ${sql.join(
+            GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
+            sql` - `
+          )} - 'ruleId' - 'ruleReason'
+          ELSE metadata END,
+        "updatedAt" = now()
+      WHERE id IN (SELECT id FROM doomed WHERE blocked)
+        ${skipBlocked ? sql`AND ingestion IS DISTINCT FROM 'Blocked'` : sql``}
+      RETURNING id, "userId", "postId"
+    )`);
+  // A post its delete keeps is unpublished with a copy of `unpublishPostAsModerator`'s stamp (this
+  // package can't import the service: change both together), with its own reason, so it stays visible
+  // to its owner and moderators.
+  const hidesPost = table === 'Post';
+  if (hidesPost)
+    ctes.push(sql`hidden AS (
+      UPDATE "Post" SET
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+          'unpublishedAt', ${new Date().toISOString()}::text,
+          'unpublishedBy', ${'id' in actor ? actor.id : -1}::int,
+          'unpublishedReason', ${POST_PENDING_DELETE_REASON}::text,
+          'prevPublishedAt', COALESCE(metadata -> 'prevPublishedAt', to_jsonb("publishedAt"))
+        ),
+        "publishedAt" = NULL
+      -- A post a moderator already unpublished keeps its own reason.
+      WHERE id IN (SELECT id FROM doomed WHERE blocked)
+        AND ("publishedAt" IS NOT NULL OR metadata ->> 'unpublishedReason' IS NULL)
+      RETURNING id, "userId"
+    )`);
   return {
     ctes,
     remove: sql`DELETE FROM ${t} WHERE id IN (SELECT id FROM doomed WHERE NOT blocked) ${on}`,
@@ -122,28 +172,46 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
       UNION ALL
       SELECT id, ${padding}, 'gone' FROM listed
       WHERE NOT EXISTS (SELECT 1 FROM ${t} WHERE ${t}.id = listed.id)`,
+    hides,
+    hidesPost,
   };
 }
 
+/** `unpublishedReason` of a post unpublished because an open case keeps its delete. */
+export const POST_PENDING_DELETE_REASON = 'pending-delete';
+
+/** A kept image a moderator's delete blocked, and the post it is still in. */
+export type HiddenImage = { id: number; userId: number; postId: number | null };
+
 /**
  * What a delete did with each listed id it did not delete: kept for its child-safety case, or already
- * gone. A row the caller's condition or ownership skipped is in neither.
+ * gone. A row the caller's condition or ownership skipped is in neither. `hidden` is the kept images
+ * a moderator's delete blocked.
  */
-export type DeleteOutcome<Row> = { deleted: Row[]; kept: number[]; gone: number[] };
+export type DeleteOutcome<Row> = {
+  deleted: Row[];
+  kept: number[];
+  hidden: HiddenImage[];
+  gone: number[];
+};
 
-/** A deleted row carries no `outcome`; a kept or gone one says which. */
-type OutcomeRow = { id: number; outcome?: 'kept' | 'gone' };
+/** A deleted row carries no `outcome`; a kept, hidden or gone one says which. */
+type OutcomeRow = { id: number; outcome?: 'kept' | 'hidden' | 'gone' };
 
 function splitOutcome<Row>(rows: (Row & OutcomeRow)[]): DeleteOutcome<Row> {
   const deleted: Row[] = [];
   const kept: number[] = [];
+  const hidden: HiddenImage[] = [];
   const gone: number[] = [];
   for (const { outcome, ...row } of rows) {
     if (outcome === 'kept') kept.push(row.id);
-    else if (outcome === 'gone') gone.push(row.id);
+    else if (outcome === 'hidden') {
+      const { userId, postId } = row as unknown as HiddenImage;
+      hidden.push({ id: row.id, userId, postId });
+    } else if (outcome === 'gone') gone.push(row.id);
     else deleted.push(row as unknown as Row);
   }
-  return { deleted, kept, gone };
+  return { deleted, kept, hidden, gone };
 }
 
 const withCtes = (ctes: RawBuilder<unknown>[], more: boolean) =>
@@ -165,15 +233,16 @@ const POST_RECOUNT_UPSERT = sql`
  * app's `image-storage-deletes` job (unless `files` is absent, when the files stay); with
  * `recountPosts`, each post's rating recount for `update-nsfw-levels`; and with `cdnTakedown`, a
  * moderator's takedown of each url for `cdn-access-sync`. So a deleted row always leaves its
- * follow-ups queued, with no transaction around it. Returns what became of each listed id.
+ * follow-ups queued by the same statement. A delete that hides an image no moderator decided on runs a
+ * second statement, so run that one in a transaction. Returns what became of each listed id.
  */
 export async function deleteImageRows(
   db: Kysely<DB>,
   options: DeleteOptions & { files?: ImageFiles; recountPosts?: boolean; cdnTakedown?: boolean }
 ): Promise<DeleteOutcome<DeletedImage>> {
   const ids = [...new Set(options.ids)];
-  if (!ids.length) return { deleted: [], kept: [], gone: [] };
-  const { ctes, remove, others } = deleteStatement('Image', options, ids);
+  if (!ids.length) return { deleted: [], kept: [], hidden: [], gone: [] };
+  const { ctes, remove, others, hides } = deleteStatement('Image', options, ids);
   const { files, recountPosts = false, cdnTakedown = false } = options;
   const { rows } = await sql<DeletedImage & OutcomeRow>`
     ${withCtes(ctes, true)}
@@ -225,8 +294,24 @@ export async function deleteImageRows(
       "blockedFor", "parentId", "allVersions", NULL AS outcome
     FROM deleted
     UNION ALL
-    ${others(sql.raw('NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL'))}`.execute(db);
-  return splitOutcome(rows);
+    ${others(sql.raw('NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL'))}
+    ${
+      hides
+        ? sql`UNION ALL
+      SELECT id, NULL, "userId", "postId", NULL, NULL, NULL, NULL, NULL, NULL, 'hidden' FROM hidden`
+        : sql``
+    }`.execute(db);
+  const outcome = splitOutcome(rows);
+  // Blocking an image queues it for `remove-blocked-images` (trg_blocked_image_delete_queue), which
+  // would delete it on a retention clock with no one having decided so. Unless a moderator did, the
+  // queued delete owns it. A second statement: the trigger's row is not visible inside the first.
+  if (outcome.hidden.length && !moderatorDecides(options))
+    await sql`
+      DELETE FROM "JobQueue"
+      WHERE type = 'BlockedImageDelete' AND "entityType" = 'Image'
+        AND "entityId" = ANY(${outcome.hidden.map(({ id }) => id)}::int[])
+    `.execute(db);
+  return outcome;
 }
 
 /** Deletes post rows; returns what became of each listed id. */
@@ -235,14 +320,17 @@ export async function deletePostRows(
   options: DeleteOptions
 ): Promise<DeleteOutcome<DeletedPostRow>> {
   const ids = [...new Set(options.ids)];
-  if (!ids.length) return { deleted: [], kept: [], gone: [] };
-  const { ctes, remove, others } = deleteStatement('Post', options, ids);
+  if (!ids.length) return { deleted: [], kept: [], hidden: [], gone: [] };
+  const { ctes, remove, others, hidesPost } = deleteStatement('Post', options, ids);
   const { rows } = await sql<DeletedPostRow & OutcomeRow>`
     ${withCtes(ctes, true)}
     gone_rows AS (${remove} RETURNING id, "userId", "nsfwLevel")
     SELECT id, "userId", "nsfwLevel", NULL AS outcome FROM gone_rows
     UNION ALL
-    ${others(sql.raw('NULL, NULL'))}`.execute(db);
+    ${others(sql.raw('NULL, NULL'))}
+    ${hidesPost ? sql`UNION ALL SELECT id, "userId", NULL, 'hidden' FROM hidden` : sql``}`.execute(
+    db
+  );
   return splitOutcome(rows);
 }
 

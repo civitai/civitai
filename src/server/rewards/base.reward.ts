@@ -641,7 +641,9 @@ export function createBuzzEvent<T>({
               event.awardAmount = config.awardAmount;
             }
           }
-          await updateBuzzEvents(chunk);
+          // Only the rows put back to pending: an unqualified row was already written above, and
+          // writing it again raises its version past the one its reward chose for it.
+          await updateBuzzEvents(chunk.filter((event) => event.status === 'pending'));
         }
 
         // Then throw the error

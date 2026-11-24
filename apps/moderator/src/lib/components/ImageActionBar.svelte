@@ -16,6 +16,7 @@
   import { VIOLATION_TYPES, VIOLATION_LABELS } from '$lib/violations';
   import { IMAGE_FLAG_VALUES } from '$lib/image-flags';
   import { TOS_REASONS, type CannedReason } from '$lib/moderation-reasons';
+  import { strikeOwnersOffered } from '$lib/strike-offer';
 
   let {
     selected,
@@ -25,6 +26,7 @@
     owners = [],
     notify = true,
     strike = true,
+    reviewImageIds,
     flags = true,
     blockedIds,
     maxSelection,
@@ -43,6 +45,8 @@
     /** Offer "strike the owners" with a removal. False without `user.strike`, which the server checks
      *  again. */
     strike?: boolean;
+    /** Selected ids that are service review images: with any of them selected, no strike is offered. */
+    reviewImageIds?: Set<string | number>;
     flags?: boolean;
     /** Which selected ids are known to be blocked, so Restore can warn about the rest. */
     blockedIds?: Set<string | number>;
@@ -88,7 +92,8 @@
   // A strike's description is what the account is shown, so it cannot be the empty string. Blocking the
   // submit rather than disabling the checkbox: a disabled checkbox does not post, so emptying the reason
   // under a ticked box would drop the strike silently and still remove the images.
-  const strikeNeedsReason = $derived(strikeOwners && reason.trim() === '');
+  const strikeOffered = $derived(strikeOwnersOffered({ strike, selected, reviewImageIds }));
+  const strikeNeedsReason = $derived(strikeOffered && strikeOwners && reason.trim() === '');
 
   const applyTosReason = (r: CannedReason) => {
     tosReason = r.label;
@@ -120,6 +125,10 @@
       pendingFlag = undefined;
       strikeOwners = false;
     }
+  });
+  // Selecting a review image withdraws the offer, and a box ticked before must not post unseen.
+  $effect(() => {
+    if (!strikeOffered) untrack(() => (strikeOwners = false));
   });
 
   // `n = 0`, not `n?: number` — an optional-parameter `?` survives Svelte 5's TS stripping and reaches
@@ -300,7 +309,7 @@
              gap — 4px onto the bottom edge of the reason Input above, which stretches to fill its
              row. `mt-1.5` (6px) puts the edge exactly flush with the gap. Tied to that `mb-2`: change
              the spacing above and this has to move with it. -->
-        {#if strike}
+        {#if strikeOffered}
           <div class="mb-2 flex items-start gap-2 text-sm text-white" data-touch-target>
             <Checkbox
               id="strike-owners-{uid}"

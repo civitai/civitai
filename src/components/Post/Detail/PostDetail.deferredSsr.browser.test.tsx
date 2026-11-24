@@ -37,6 +37,7 @@ const post = {
   modelVersionId: null,
   publishedAt: null,
   wasPublished: false,
+  unavailable: false,
   publishedWithApp: null,
   tags: [],
   texts: [],

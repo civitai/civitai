@@ -25,4 +25,19 @@ describe('showErrorNotification', () => {
     showErrorNotification({ error: new Error('Nope.') });
     expect(showNotification.mock.calls[0][0].message).toBe('Nope.');
   });
+
+  it('links a plan-limit refusal to the Usage limits pane', () => {
+    showErrorNotification({
+      error: Object.assign(new Error('Daily limit.'), {
+        data: { rateLimit: { ...rateLimit, kind: 'product' } },
+      }),
+    });
+    const message = showNotification.mock.calls[0][0].message as {
+      props: { children: unknown[] };
+    };
+    const hrefs = message.props.children.map(
+      (child) => (child as { props?: { href?: string } })?.props?.href
+    );
+    expect(hrefs).toContain('/user/account/usage');
+  });
 });

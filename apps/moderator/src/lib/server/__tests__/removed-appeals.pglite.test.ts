@@ -172,6 +172,34 @@ describe('getRemovedAppeals', () => {
     expect(items.map((i) => i.id)).toEqual([12, 11, 26, 28]);
     expect(await countRemovedAppeals()).toBe(4);
   });
+
+  it("leaves out an appeal on a restricted image itself, and serves no row's media", async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "blockedFor") VALUES (910, 29, 'CSAM');
+      INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId", "entityRemovedAt") VALUES
+        (29, 29, 'Image', 910, '2026-09-21');
+    `);
+
+    const { items } = await getRemovedAppeals({ limit: 20 });
+
+    expect(items.map((i) => i.id)).toEqual([12, 11]);
+    // The page draws text only: no field a tile or a link could load the image from.
+    for (const item of items)
+      expect(Object.keys(item).sort()).toEqual(
+        [
+          'appealMessage',
+          'createdAt',
+          'entityId',
+          'entityRemovedAt',
+          'entityType',
+          'hasFee',
+          'history',
+          'id',
+          'userId',
+          'username',
+        ].sort()
+      );
+  });
 });
 
 describe('resolveRemovedAppeal', () => {

@@ -348,47 +348,6 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
           <SeedInput value={value} onChange={onChange} label={labels.textureSeed} max={meta?.max} />
         )}
       />
-      <Controller
-        graph={model3dHub}
-        name="steps"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label={<ControllerLabel label={labels.steps} info={meta?.info} />}
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 10}
-            max={meta?.max ?? 50}
-            step={meta?.step ?? 1}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="cfgScale"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label={<ControllerLabel label={labels.cfgScale} info={meta?.info} />}
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 0}
-            max={meta?.max ?? 20}
-            step={meta?.step ?? 0.5}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="octreeResolution"
-        render={({ value, meta, onChange }) => (
-          <OptionButtons
-            label={labels.octreeResolution}
-            info={meta?.info}
-            value={String(value)}
-            options={meta?.options?.map((o) => ({ label: o.label, value: String(o.value) }))}
-            onChange={(v) => onChange(Number(v) as typeof value)}
-          />
-        )}
-      />
       <AccordionLayout label="Advanced" storeKey="form-graph-model3d-advanced">
         <Controller
           graph={model3dHub}

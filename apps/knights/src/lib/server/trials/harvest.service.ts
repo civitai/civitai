@@ -7,6 +7,7 @@ import {
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '@civitai/shared/new-order';
 import {
+  readWithoutJit,
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
@@ -101,35 +102,37 @@ export async function harvestRulings(
 
     scanned += activities.length;
     const ids = activities.map((a) => a.id);
-    const holding = await db
-      .selectFrom('ModActivity as a')
-      .innerJoin('Image as img', 'img.id', 'a.entityId')
-      .innerJoin('Post as p', 'p.id', 'img.postId')
-      .select(['a.id as activityId', 'img.id as imageId', 'img.nsfwLevel as level'])
-      .where('a.id', 'in', ids)
-      .where(servableImage)
-      .where('img.nsfwLevel', 'in', [...validNsfwLevels])
-      .where('img.nsfwLevelLocked', '=', true)
-      .where(
-        sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}`
-      )
-      .where(
-        sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${MODERATOR_QUEUE_RATING_REASON}`
-      )
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('ModActivity as later')
-              .select(sql<number>`1`.as('one'))
-              .whereRef('later.entityId', '=', 'a.entityId')
-              .whereRef('later.id', '>', 'a.id')
-              .where('later.entityType', '=', 'image')
-              .where('later.activity', 'in', RERATING_ACTIVITIES)
+    const holding = await readWithoutJit(db, (trx) =>
+      trx
+        .selectFrom('ModActivity as a')
+        .innerJoin('Image as img', 'img.id', 'a.entityId')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select(['a.id as activityId', 'img.id as imageId', 'img.nsfwLevel as level'])
+        .where('a.id', 'in', ids)
+        .where(servableImage)
+        .where('img.nsfwLevel', 'in', [...validNsfwLevels])
+        .where('img.nsfwLevelLocked', '=', true)
+        .where(
+          sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}`
+        )
+        .where(
+          sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${MODERATOR_QUEUE_RATING_REASON}`
+        )
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('ModActivity as later')
+                .select(sql<number>`1`.as('one'))
+                .whereRef('later.entityId', '=', 'a.entityId')
+                .whereRef('later.id', '>', 'a.id')
+                .where('later.entityType', '=', 'image')
+                .where('later.activity', 'in', RERATING_ACTIVITIES)
+            )
           )
         )
-      )
-      .execute();
+        .execute()
+    );
 
     if (holding.length > 0) {
       const inserted = await db
@@ -207,32 +210,38 @@ async function staleSinceCursor(db: Kysely<DB>, lastActivityId: number, cutoff: 
 
 async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Promise<number> {
   const agedOut = new Date(now.getTime() - config.freshMaxAgeDays * DAY_MS);
-  const result = await db
-    .updateTable('KnightsReferenceImage as r')
-    .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
-    .where('r.status', 'in', [
-      REFERENCE_STATUS.active,
-      REFERENCE_STATUS.pending,
-      REFERENCE_STATUS.probation,
-    ])
-    .where('r.source', '!=', REFERENCE_SOURCE.core)
-    .where((eb) =>
-      eb.or([
-        eb('r.harvestedAt', '<', utc(agedOut)),
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom('Image as img')
-              .innerJoin('Post as p', 'p.id', 'img.postId')
-              .select(sql<number>`1`.as('one'))
-              .whereRef('img.id', '=', 'r.imageId')
-              .whereRef(sql`"img"."nsfwLevel"::text`, '=', 'r.answer')
-              .where('img.nsfwLevelLocked', '=', true)
-              .where(servableImageForSweeps)
-          )
-        ),
+  const result = await readWithoutJit(db, (trx) =>
+    trx
+      .updateTable('KnightsReferenceImage as r')
+      .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
+      .where('r.status', 'in', [
+        REFERENCE_STATUS.active,
+        REFERENCE_STATUS.pending,
+        REFERENCE_STATUS.probation,
       ])
-    )
-    .executeTakeFirst();
+      .where('r.source', '!=', REFERENCE_SOURCE.core)
+      .where((eb) =>
+        eb.or([
+          // A mod-confirmed check has no TTL: it leaves by the pool cap, Knights' failures, or its image moving off its level.
+          eb.and([
+            eb('r.harvestedAt', '<', utc(agedOut)),
+            eb('r.source', '!=', REFERENCE_SOURCE.inquisitor),
+          ]),
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('Image as img')
+                .innerJoin('Post as p', 'p.id', 'img.postId')
+                .select(sql<number>`1`.as('one'))
+                .whereRef('img.id', '=', 'r.imageId')
+                .whereRef(sql`"img"."nsfwLevel"::text`, '=', 'r.answer')
+                .where('img.nsfwLevelLocked', '=', true)
+                .where(servableImageForSweeps)
+            )
+          ),
+        ])
+      )
+      .executeTakeFirst()
+  );
   return Number(result.numUpdatedRows);
 }

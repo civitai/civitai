@@ -245,6 +245,8 @@ export const EXCLUDED: Record<string, string> = {
     'status history of withdrawal requests, keyed by the staff member who changed it; the requests themselves are exported',
   ModelPermissionSnapshot: 'internal audit snapshot',
   ModActivity: 'staff audit log; the user id there is the moderator',
+  FeaturePageCommentMirror:
+    'push bookkeeping for Feature Pages comments (ids and states only); the comments themselves are exported as CommentV3',
   HeldResourceReview:
     'content held for an automated check (detection internals); the published content is exported',
   HeldAnswer:
