@@ -61,7 +61,8 @@ type RefreshQueue = {
 
 /**
  * Every `everyMs`, walks the domain's whole table `batch` ids a read into its lane, with the
- * collection's points in the same id range, flushing the
+ * collection's points in the same id range (or, with `pointsOnly`, only the collection's points,
+ * looked up in the table by primary key), flushing the
  * queue whenever it fills. A failed read or flush stops the pass, and the next tick resumes it from
  * the same cursor; a tick is skipped while the previous pass runs. With `startupDelayMs`, one more
  * tick runs that long after start: the cursor lives in memory, so a process restarting more often

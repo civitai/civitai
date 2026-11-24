@@ -1,4 +1,4 @@
-import { config } from '@/config';
+import { config, domainEmbedEnabled } from '@/config';
 import { videoEmbedUrl } from '../embedder';
 import type { Domain, DomainRef } from '../domain/sync';
 import { videoVectorStore } from './collection';
@@ -45,7 +45,7 @@ export const videoDomain: Domain<VideoPayload> = {
     batch: 500,
     startupDelayMs: 10 * 60_000,
     // With embedding off, a row with no point cannot gain one, so only the points need a walk.
-    pointsOnly: config.vectorSync.videoRefreshPointsOnly,
+    pointsOnly: config.vectorSync.videoRefreshPointsOnly && !domainEmbedEnabled('video'),
   },
   embedInput: (id, payload) => ({ id: String(id), videoUrl: videoEmbedUrl(payload.url) }),
   rejected: redisRejectedMemo,

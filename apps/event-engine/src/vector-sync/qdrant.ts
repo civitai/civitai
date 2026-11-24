@@ -293,20 +293,12 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     const ids: number[] = [];
     let offset: number | undefined = lo;
     while (offset !== undefined && offset < hi) {
-      const page = await idempotent(() =>
-        this.client.scroll(this.collection, {
-          offset,
-          limit: pageSize,
-          with_payload: false,
-          with_vector: false,
-        })
-      );
-      for (const point of page.points) {
-        const id = Number(point.id);
+      const page = await this.idsFrom(offset, pageSize);
+      for (const id of page.ids) {
         if (id >= hi) return ids;
         ids.push(id);
       }
-      offset = page.next_page_offset == null ? undefined : Number(page.next_page_offset);
+      offset = page.next || undefined;
     }
     return ids;
   }
