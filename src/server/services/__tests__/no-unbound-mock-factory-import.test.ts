@@ -179,8 +179,9 @@ function loads(
 
 /**
  * The index just past a string, template literal or comment opening at `i`, or `i` itself.
- * Template `${}` nesting is not tracked; a mistake there only lengthens or shortens a text the
- * callers treat as a superset or reparse.
+ * Regex literals and template `${}` nesting are not tracked, so a quote inside one desyncs the scan:
+ * `mockCallTexts` reparses what it finds, and `mayReadImport` also reads line-leading imports from
+ * the raw text, for that reason.
  */
 function skipLiteral(source: string, i: number): number {
   const c = source[i];
@@ -225,7 +226,8 @@ function importTexts(source: string): string[] {
         text += source[j];
         j++;
       } else {
-        if (/^['"](?:vitest|@vitest\/)/.test(source.slice(j, next))) vitest = true;
+        const literal = source.slice(j, next);
+        if (/^['"](?:vitest(?:\/[^'"]*)?|@vitest\/[^'"]*)['"]$/.test(literal)) vitest = true;
         text += ' ';
         j = next;
       }
@@ -236,7 +238,8 @@ function importTexts(source: string): string[] {
   return out;
 }
 
-const mockStart = /\bvi\s*(?:\?\.|\.)\s*(?:\/\*[\s\S]*?\*\/\s*)?mock\b/g;
+const gap = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*`;
+const mockStart = new RegExp(String.raw`\bvi${gap}(?:\?\.|\.)${gap}mock\b`, 'g');
 
 /**
  * The text of each `vi.mock(...)` call, found by matching brackets past strings, template literals
@@ -248,8 +251,9 @@ function mockCallTexts(source: string): string[] | null {
   for (const match of source.matchAll(mockStart)) {
     let i = match.index + match[0].length;
     while (/\s/.test(source[i] ?? '')) i++;
-    // A generic call is rare enough to send to the whole-file parse; no bracket at all is prose.
-    if (source[i] === '<') return null;
+    // Prose (`vi.mock` in a comment) is followed by a word or punctuation; anything a call could
+    // start with but `(` (a generic, a comment, `?.`) sends the file to the whole-file parse.
+    if (/[<\/?]/.test(source[i] ?? '')) return null;
     if (source[i] !== '(') continue;
     let depth = 0;
     let end = source.length;
@@ -285,7 +289,6 @@ function mayReadImport(source: string): boolean {
   if (calls === null) return true;
   if (!calls.length) return false;
   const imports = importTexts(source);
-  if (!imports.length) return false;
   return calls.some((text) => {
     const sf = ts.createSourceFile(
       'call.ts',
@@ -300,20 +303,25 @@ function mayReadImport(source: string): boolean {
       statement && ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
         ? statement.expression
         : null;
-    if (
-      diagnostics.length ||
-      sf.statements.length !== 1 ||
-      !call ||
-      call.end !== text.trimEnd().length
-    )
-      return true;
+    if (diagnostics.length || sf.statements.length !== 1 || !call) return true;
     const factory = call.arguments[1];
     if (!factory || !(ts.isArrowFunction(factory) || ts.isFunctionExpression(factory)))
       return false;
     return [...eagerReads(factory)].some((n) => {
       if (!n) return false;
       const word = new RegExp(String.raw`(^|[^\w$])${escapeName(n)}([^\w$]|$)`, 'u');
-      return imports.some((text) => word.test(text));
+      // Also each line-leading import in the raw text, which no literal can desync: a stray quote in
+      // a regex literal can swallow an import from the scan above, but not from this.
+      const raw = new RegExp(
+        String.raw`^[ \t]*import(?![\w$])[^;]*?(?<![\w$])${escapeName(
+          n
+        )}(?![\w$])[^;]*?\bfrom\s*['"]([^'"]*)['"]`,
+        'gmu'
+      );
+      return (
+        imports.some((text) => word.test(text)) ||
+        [...source.matchAll(raw)].some((m) => !isVitest(m[1]!))
+      );
     });
   });
 }
@@ -556,8 +564,12 @@ describe('vi.mock factories read no import that is still unbound', () => {
   it.each([
     ['a space before the call', V + ".mock ('./y', () => ({ w: a }));"],
     ['a line break in the call', V + "\n  .mock('./y', () => ({ w: a }));"],
+    ['a comment inside the callee', V + " /* c */ . // c\n mock('./y', () => ({ w: a }));"],
+    ['a comment before the paren', V + ".mock /* c */ ('./y', () => ({ w: a }));"],
+    ['an optional call', V + ".mock?.('./y', () => ({ w: a }));"],
     ['a generic call', V + ".mock<typeof import('./y')>('./y', () => ({ w: a }));"],
-    ['a regex holding a bracket', V + ".mock('./y', () => ({ r: /\\)/, w: a }));"],
+    // The regex closes the call's brackets early, so the text read misses `w: a`.
+    ['a regex ending the call early', V + ".mock('./y', () => ({ r: /)))/, w: a }));"],
   ])('parses a file with %s', (_, call) => {
     const source = "import { vi } from 'vitest';\nimport { a } from './x';\n" + call;
     expect(mayReadImport(source)).toBe(true);
@@ -568,16 +580,37 @@ describe('vi.mock factories read no import that is still unbound', () => {
     ['a comment first', "/* c */ import a from './x';", 'a'],
     ['a binding named type', "import { type } from './x';", 'type'],
     ['a non-ASCII name', "import { é } from './x';", 'é'],
+    // A comment first, so only the statement scan (not the line-leading check) can see these two.
+    [
+      'no semicolons after vitest',
+      "import { vi } from 'vitest'\n/* c */ import { a } from './x'",
+      'a',
+    ],
+    ['a vitest-named package', "/* c */ import { a } from 'vitest-browser-react';", 'a'],
+    ['a quote in a regex above it', "const r = /'/;\nimport { a } from './x';", 'a'],
   ])('parses a file importing with %s', (_, line, name) => {
     const source =
       "import { vi } from 'vitest';\n" +
       line +
       '\n' +
-      'vi' +
+      V +
       ".mock('./y', () => ({ w: " +
       name +
       ' }));';
     expect(mayReadImport(source)).toBe(true);
+  });
+
+  // The other direction, or the prefilter could answer true for everything and only cost time.
+  it.each([
+    ['reads only a hoisted name', V + ".mock('./y', () => ({ w: mocks.w }));"],
+    ['reads only vi', V + ".mock('./y', () => ({ w: vi.fn() }));"],
+    ['reads its import only later', V + ".mock('./y', () => ({ w: () => a }));"],
+    ['mentions vi.mock in prose', '// ' + V + '.mock is hoisted'],
+  ])('skips a file whose factory %s', (_, call) => {
+    const source =
+      "import { vi } from 'vitest';\nimport { a } from './x';\nconst mocks = vi.hoisted(() => ({ w: 1 }));\n" +
+      call;
+    expect(mayReadImport(source)).toBe(false);
   });
 
   // A parser that stopped seeing factories, or a graph with no edges, would pass everything.
