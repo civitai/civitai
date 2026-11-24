@@ -102,7 +102,7 @@ func TestQueue(t *testing.T) {
 	close(release)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := cl.Close(ctx); err != nil {
+	if _, err := cl.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if cl.Enqueue(w) {
@@ -115,26 +115,30 @@ func TestQueue(t *testing.T) {
 	}
 }
 
-// blockingTracker answers nothing until the test ends; entered receives once per request.
-func blockingTracker(t *testing.T) (*httptest.Server, chan struct{}) {
+// blockingTracker answers nothing until release is called (or the test ends); entered receives once
+// per request.
+func blockingTracker(t *testing.T) (srv *httptest.Server, entered chan struct{}, release func()) {
 	t.Helper()
-	entered, release := make(chan struct{}, 16), make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	entered, gate := make(chan struct{}, 16), make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		entered <- struct{}{}
-		<-release
+		<-gate
 		w.WriteHeader(200)
 	}))
 	t.Cleanup(func() {
-		close(release)
+		release()
 		srv.Close()
 	})
-	return srv, entered
+	return srv, entered, release
 }
 
-// A row still queued when Close's grace period ends is counted as dropped (it is never sent); the
-// row inside the running POST is not counted by Close.
+// When Close's grace period ends, a row still queued (never sent) and the row inside the running
+// POST are each counted as dropped and reported per table; when that POST ends later, its row is
+// not counted a second time.
 func TestCloseCountsTheRowsItAbandonsAsDropped(t *testing.T) {
-	srv, entered := blockingTracker(t)
+	srv, entered, release := blockingTracker(t)
 	var mu sync.Mutex
 	results := map[string]int{}
 	cl := &Client{BaseURL: srv.URL, HTTP: srv.Client(), Sleep: noSleep, Record: func(table, result string) {
@@ -157,16 +161,53 @@ func TestCloseCountsTheRowsItAbandonsAsDropped(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := cl.Close(ctx); err == nil {
+	a, err := cl.Close(ctx)
+	if err == nil {
 		t.Fatal("Close returned nil with a POST still running")
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if results["pageViews:dropped"] != 4 || len(results) != 1 {
-		t.Fatalf("results %v, want exactly the 4 waiting rows dropped", results)
+	if a.InFlight != 1 || a.Dropped["pageViews"] != 4 || a.Dropped["views"] != 1 || len(a.Dropped) != 2 || a.Total() != 5 {
+		t.Fatalf("abandoned %+v (total %d), want pageViews 4 + views 1 of which 1 in flight", a, a.Total())
 	}
 	if d := cl.Depth(); d != 0 {
 		t.Fatalf("Depth %d after Close gave up, want 0", d)
+	}
+	// The running POST now ends with a 200: its row was already counted as dropped, so no ok.
+	release()
+	cl.wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if results["pageViews:dropped"] != 4 || results["views:dropped"] != 1 || len(results) != 2 {
+		t.Fatalf("results %v, want the 4 waiting rows and the 1 in-flight row dropped, nothing else", results)
+	}
+}
+
+// A worker that takes a row after Close has given up sends nothing and counts the row as dropped.
+func TestAWorkerSendsNothingOnceCloseHasGivenUp(t *testing.T) {
+	var posts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		posts.Add(1)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	var mu sync.Mutex
+	results := map[string]int{}
+	cl := &Client{BaseURL: srv.URL, HTTP: srv.Client(), Sleep: noSleep, Record: func(table, result string) {
+		mu.Lock()
+		results[table+":"+result]++
+		mu.Unlock()
+	}}
+	cl.abandoned.Store(true)
+	cl.Start(1, 4)
+	cl.Enqueue(beacon.Write{Table: "views", Body: []byte("{}")})
+	cl.mu.Lock()
+	cl.closed = true
+	close(cl.queue)
+	cl.mu.Unlock()
+	cl.wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if posts.Load() != 0 || results["views:dropped"] != 1 || len(results) != 1 {
+		t.Fatalf("posts %d, results %v; want no POST and the row dropped", posts.Load(), results)
 	}
 }
 
@@ -195,7 +236,7 @@ func TestObserveTimesEachSentRow(t *testing.T) {
 	cl.Enqueue(beacon.Write{Table: "views", Body: []byte("{}")})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := cl.Close(ctx); err != nil {
+	if _, err := cl.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -216,17 +257,11 @@ func TestObserveSkipsDroppedRows(t *testing.T) {
 	cl.Start(1, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := cl.Close(ctx); err != nil {
+	if _, err := cl.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cl.Enqueue(beacon.Write{Table: "views"})
 	if observed.Load() != 0 {
 		t.Fatalf("observed %d rows, want 0", observed.Load())
-	}
-}
-
-func TestDepthOfAnUnstartedClientIsZero(t *testing.T) {
-	if (&Client{}).Depth() != 0 {
-		t.Fatal("Depth of an unstarted client")
 	}
 }

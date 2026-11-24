@@ -185,8 +185,13 @@ fallback is proxied to `BEACON_GO_FALLBACK_URL` with the original Host and the w
 
 Every queued row ends in exactly one `beacon_go_tracker_writes_total{table, result}` count: `ok`,
 `rejected` (a 4xx), `failed` (attempts spent) or `dropped` (the queue was full, the client was
-closed, or the row was still waiting when the shutdown grace period ended). The one row a worker is
-sending when the process exits is the exception (at most one per worker). Beside it,
+closed, or the row was still waiting, or inside a POST still running, when the shutdown grace period
+ended; that POST's own outcome is then never recorded, so the row is not counted twice, and an
+in-flight row counted as dropped may in fact have landed). The
+shutdown order keeps those counts scrapeable: the public listener drains first, then the shadow
+samples, then the tracker queue, and the internal listener (`/metrics`) closes last. A scrape can
+still miss the final counts (the process exits right after), so the shutdown warning logs the rows
+given up on per table (`dropped`), their total and how many were in flight. Beside it,
 `beacon_go_tracker_send_seconds{table}` times each sent row (every attempt and retry wait) and
 `beacon_go_tracker_queue_depth` is the queue's backlog.
 

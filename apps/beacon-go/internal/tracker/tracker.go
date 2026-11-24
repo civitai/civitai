@@ -5,9 +5,9 @@
 //
 // Like the Node path it is fire-and-forget: the beacon's response never waits for the tracker. Unlike
 // it, the backlog is bounded (a queue of Queue rows, drained by Workers goroutines): a full queue
-// drops the row and counts it, where Node would keep piling up promises. A row still queued when
-// Close gives up is counted as dropped too, so every queued row ends in exactly one result except
-// one inside a POST that is still running when the process exits (at most one per worker).
+// drops the row and counts it, where Node would keep piling up promises. When Close gives up, every
+// row still queued and every row inside a POST that is still running is counted as dropped too (and
+// reported back, per table), so every queued row ends in exactly one result.
 package tracker
 
 import (
@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/civitai/civitai/apps/beacon-go/internal/beacon"
@@ -28,7 +29,7 @@ const (
 	ResultOK       = "ok"
 	ResultRejected = "rejected" // a 4xx: not retried, as in Node
 	ResultFailed   = "failed"   // 5xx or network, all attempts spent
-	ResultDropped  = "dropped"  // the queue was full, or the client is closed
+	ResultDropped  = "dropped"  // the queue was full, the client is closed, or Close gave up on it
 )
 
 // Results lists every result, for seeding the counter.
@@ -59,24 +60,70 @@ type Client struct {
 	wg     sync.WaitGroup
 	mu     sync.RWMutex
 	closed bool
+	// flights holds, per worker, the row it is sending (nil when idle); abandoned is set once Close
+	// has given up, after which a worker sends nothing more.
+	flights   []atomic.Pointer[flight]
+	abandoned atomic.Bool
+}
+
+// flight is one row a worker took off the queue. settled is won by whoever records the row's one
+// result: the worker when its send ends, or Close when it gives up while the send is still running.
+type flight struct {
+	table   string
+	settled atomic.Bool
+}
+
+// Abandoned is what Close gave up on when its grace period ended. Every row in it was counted as
+// dropped.
+type Abandoned struct {
+	// Dropped is per table: the rows still queued (never sent) plus the rows inside a POST that was
+	// still running (whatever that POST returns is never recorded).
+	Dropped map[string]int
+	// InFlight is how many of those were inside a running POST.
+	InFlight int
+}
+
+// Total is the number of rows Close gave up on.
+func (a Abandoned) Total() int {
+	n := 0
+	for _, v := range a.Dropped {
+		n += v
+	}
+	return n
 }
 
 // Start starts workers draining a queue of the given size.
 func (c *Client) Start(workers, queue int) {
 	c.queue = make(chan beacon.Write, max(queue, 1))
-	for range max(workers, 1) {
+	c.flights = make([]atomic.Pointer[flight], max(workers, 1))
+	for i := range c.flights {
 		c.wg.Add(1)
-		go func() {
+		go func(slot *atomic.Pointer[flight]) {
 			defer c.wg.Done()
 			for w := range c.queue {
+				f := &flight{table: w.Table}
+				slot.Store(f)
+				// Close stores abandoned before it reads the slots and this reads it after the Store,
+				// so a row taken in the instant Close gives up is seen by Close, by this check, or by
+				// both; settled keeps it to one count.
+				if c.abandoned.Load() {
+					if f.settled.CompareAndSwap(false, true) {
+						c.record(w.Table, ResultDropped)
+					}
+					slot.Store(nil)
+					continue
+				}
 				start := time.Now()
 				result := c.Send(context.Background(), w)
-				if c.Observe != nil {
-					c.Observe(w.Table, time.Since(start))
+				if f.settled.CompareAndSwap(false, true) {
+					if c.Observe != nil {
+						c.Observe(w.Table, time.Since(start))
+					}
+					c.record(w.Table, result)
 				}
-				c.record(w.Table, result)
+				slot.Store(nil)
 			}
-		}()
+		}(&c.flights[i])
 	}
 }
 
@@ -108,9 +155,10 @@ func (c *Client) Enqueue(w beacon.Write) bool {
 func (c *Client) Depth() int { return len(c.queue) }
 
 // Close stops accepting rows and waits (until ctx ends) for the queued ones to be sent. When ctx
-// ends first, every row still waiting is taken off the queue and counted as dropped: it will never
-// be sent, and uncounted it would be a silent loss.
-func (c *Client) Close(ctx context.Context) error {
+// ends first, every row still waiting is taken off the queue and every row inside a POST that is
+// still running is given up on; each is counted as dropped (uncounted it would be a silent loss: the
+// process exits before that POST ends) and returned per table, with ctx's error.
+func (c *Client) Close(ctx context.Context) (Abandoned, error) {
 	c.mu.Lock()
 	if !c.closed {
 		c.closed = true
@@ -124,14 +172,24 @@ func (c *Client) Close(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		return nil
+		return Abandoned{}, nil
 	case <-ctx.Done():
+		a := Abandoned{Dropped: map[string]int{}}
+		c.abandoned.Store(true)
 		// The queue is closed, so this ends once it is empty; a worker finishing its POST takes the
 		// next row in the meantime, and each row is received exactly once either way.
 		for w := range c.queue {
 			c.record(w.Table, ResultDropped)
+			a.Dropped[w.Table]++
 		}
-		return ctx.Err()
+		for i := range c.flights {
+			if f := c.flights[i].Load(); f != nil && f.settled.CompareAndSwap(false, true) {
+				c.record(f.table, ResultDropped)
+				a.Dropped[f.table]++
+				a.InFlight++
+			}
+		}
+		return a, ctx.Err()
 	}
 }
 
