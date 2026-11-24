@@ -1,3 +1,4 @@
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import {
@@ -33,10 +34,7 @@ export function resolveCatalogViewerBrowsingLevel(
 ): number {
   const cap = onlySelectableLevels(resolveCatalogBrowsingLevel(claims, opts).browsingLevel);
   const viewer = claims.viewerBrowsingLevel;
-  const requested =
-    typeof viewer === 'number' && Number.isInteger(viewer) && viewer >= 0
-      ? viewer
-      : publicBrowsingLevelsFlag;
+  const requested = isBrowsingLevelClaim(viewer) ? viewer : publicBrowsingLevelsFlag;
   return onlySelectableLevels(requested & cap) || cap;
 }
 

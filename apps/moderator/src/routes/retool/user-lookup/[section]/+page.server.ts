@@ -52,6 +52,7 @@ import {
   updateUserIdentity,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import { withheldAccountRefusal } from '$lib/server/retracted-media';
 import {
   boxGrantFields,
   BoxGrantRefused,
@@ -862,6 +863,8 @@ export const actions: Actions = {
     if (!user) return accountFail('User not found.');
     if (input.confirm !== (user.username ?? String(input.userId)))
       return accountFail('Type the username exactly to confirm the purge.');
+    const withheld = await withheldAccountRefusal(locals.user, input.userId);
+    if (withheld) return fail(403, { scope: 'account' as const, error: withheld });
 
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
@@ -869,7 +872,7 @@ export const actions: Actions = {
   }),
 
   // No confirmation check here: the endpoint owns it, and a second copy would drift from it.
-  deleteAccount: requiresGrant('user.deleteAccount', async ({ request }) => {
+  deleteAccount: requiresGrant('user.deleteAccount', async ({ request, locals }) => {
     const input = parseForm(
       userIdSchema.extend({
         username: z.string().optional(),
@@ -883,6 +886,10 @@ export const actions: Actions = {
     const hold = await deleteAccountHold(input.userId);
     if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
     if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
+    if (input.removeImages === 'true') {
+      const withheld = await withheldAccountRefusal(locals.user, input.userId);
+      if (withheld) return fail(403, { scope: 'account' as const, error: withheld });
+    }
 
     const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
     const result = await deleteAccount({

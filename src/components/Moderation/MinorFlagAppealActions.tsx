@@ -1,8 +1,8 @@
 import { Button, Group, Text } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import { appealRowState } from '~/components/Moderation/appeal-row-state';
 import type { AppealLabelDecision, MinorFlagAppealRow } from '~/server/services/minor-hash.service';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export type MinorFlagAppealActionRow = Pick<
   MinorFlagAppealRow,
@@ -31,11 +31,10 @@ export function MinorFlagAppealActions({
   const { anyFlagged, bothFlagged } = appealRowState(row);
 
   const confirmSplit = (labels: SplitLabels) =>
-    openConfirmModal({
+    openConfirm({
       title: 'Rule on each flag',
-      centered: true,
       labels: { confirm: 'Apply', cancel: 'Cancel' },
-      children: (
+      message: (
         <Text size="sm">
           {labels.minor === 'uphold' ? 'Keep' : 'Lift'} the minor flag and{' '}
           {labels.poi === 'uphold' ? 'keep' : 'lift'} the real-person flag on{' '}
@@ -64,11 +63,10 @@ export function MinorFlagAppealActions({
             disabled={!anyFlagged}
             loading={pending === 'uphold'}
             onClick={() =>
-              openConfirmModal({
+              openConfirm({
                 title: 'Deny review request',
-                centered: true,
                 labels: { confirm: 'Keep flagged', cancel: 'Cancel' },
-                children: (
+                message: (
                   <Text size="sm">
                     Keep <strong>{row.modelName}</strong> flagged and tell the uploader their
                     request was denied. This also records your sign-off, so a bulk rollback can no
@@ -106,12 +104,11 @@ export function MinorFlagAppealActions({
         color="red"
         loading={pending === 'overturn'}
         onClick={() =>
-          openConfirmModal({
+          openConfirm({
             title: 'Grant review request',
-            centered: true,
             labels: { confirm: 'Unflag', cancel: 'Cancel' },
             confirmProps: { color: 'red' },
-            children: (
+            message: (
               <Text size="sm">
                 Unflag <strong>{row.modelName}</strong>, restore the settings it had before it was
                 flagged

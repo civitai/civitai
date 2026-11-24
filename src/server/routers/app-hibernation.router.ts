@@ -3,6 +3,7 @@ import { rateLimit } from '~/server/middleware.trpc';
 import { deleteSleepingAppSchema, sleepingAppSchema } from '~/server/schema/app-hibernation.schema';
 import { isAppHibernateEnabled } from '~/server/services/app-blocks-flag';
 import { protectedProcedure, router } from '~/server/trpc';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * The signed-in user's OWN sleeping apps (app hibernate): list them, get the seed a wake restores
@@ -39,7 +40,7 @@ export const appHibernationRouter = router({
   getWakeSeed: sleepingAppsProcedure
     .meta({ blockApiKeys: true })
     .input(sleepingAppSchema)
-    .use(rateLimit({ limit: 60, period: 60 * 60 }))
+    .use(rateLimit(usageLimits('apps.sleeping-reads')))
     .mutation(async ({ ctx, input }) => {
       const { svc, deps } = await service();
       const result = await svc.getWakeSeed(ctx.user.id, input.app, deps);
@@ -69,7 +70,7 @@ export const appHibernationRouter = router({
   deleteMine: sleepingAppsProcedure
     .meta({ blockApiKeys: true })
     .input(deleteSleepingAppSchema)
-    .use(rateLimit({ limit: 60, period: 60 * 60 }))
+    .use(rateLimit(usageLimits('apps.sleeping-deletes')))
     .mutation(async ({ ctx, input }) => {
       const { svc, deps } = await service();
       const result = await svc.deleteSleepingApp(

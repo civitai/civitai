@@ -23,13 +23,10 @@ import {
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useEffect, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
 import classes from './CollectionsLayout.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-
-const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
 const MyCollectionsDrawer = ({ autoOpen = false }: { autoOpen?: boolean }) => {
   const [drawerOpen, { open, close, toggle }] = useDisclosure();
@@ -156,9 +153,7 @@ const CollectionsLayout = ({
                     <CollectionInvitesButton />
                     <Button
                       onClick={() => {
-                        dialogStore.trigger({
-                          component: CollectionEditModal,
-                        });
+                        openDialog(() => import('~/components/Collections/CollectionEditModal'));
                       }}
                       variant="subtle"
                       size="compact-sm"

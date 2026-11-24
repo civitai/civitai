@@ -117,8 +117,9 @@ type OwnHat = { id: number; key: number };
 /**
  * One page of the images `userId` has a hat drawn on (ownDrawnStickers), with when each hat was
  * placed. Soonest to expire first; under a Hat Turf sort, ranked as readTurfRankPage ranks them,
- * leaving out an image with no counted hat as it does. The cursor is `key|id` of the last id served;
- * a cursor of another shape starts from the top.
+ * leaving out an image with no counted hat as it does. With `expired`, the images whose hat has
+ * expired instead, most recently placed first and ignoring `sort`; placing again takes the image
+ * off. The cursor is `key|id` of the last id served; a cursor of another shape starts from the top.
  */
 export async function readMyTurfPage({
   event,
@@ -127,6 +128,7 @@ export async function readMyTurfPage({
   teams,
   cursor,
   limit,
+  expired = false,
   now = new Date(),
 }: {
   event: TurfEvent;
@@ -135,11 +137,12 @@ export async function readMyTurfPage({
   teams?: string[];
   cursor?: string;
   limit: number;
+  expired?: boolean;
   now?: Date;
 }) {
   const match = cursor ? CURSOR.exec(cursor) : null;
   const at = match ? { key: Number(match[1]), id: Number(match[2]) } : null;
-  const own = ownDrawnStickers(event, userId, now);
+  const own = ownDrawnStickers(event, userId, now, expired);
   const page = (listed: OwnHat[], more: boolean, rows: { imageId: number; createdAt: Date }[]) => {
     const last = listed[listed.length - 1];
     return {
@@ -149,13 +152,15 @@ export async function readMyTurfPage({
     };
   };
 
-  if (!sort) {
+  if (!sort || expired) {
+    const cmp = expired ? Prisma.raw('<') : Prisma.raw('>');
+    const dir = expired ? Prisma.raw('DESC') : Prisma.raw('ASC');
     const after = at
-      ? Prisma.sql`AND (s."createdAt", s."imageId") > (${new Date(at.key)}, ${at.id})`
+      ? Prisma.sql`AND (s."createdAt", s."imageId") ${cmp} (${new Date(at.key)}, ${at.id})`
       : Prisma.empty;
     const rows = await dbRead.$queryRaw<{ imageId: number; createdAt: Date }[]>`
       SELECT s."imageId", s."createdAt" ${own} ${after}
-      ORDER BY s."createdAt", s."imageId"
+      ORDER BY s."createdAt" ${dir}, s."imageId" ${dir}
       LIMIT ${limit + 1}
     `;
     const listed = rows

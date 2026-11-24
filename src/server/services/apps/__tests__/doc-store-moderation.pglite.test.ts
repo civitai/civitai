@@ -164,7 +164,7 @@ function defineModerationSuite(rls: boolean) {
   });
 
   describe('get', () => {
-    it('returns a shared doc with its data, every tally including reports, hidden or not', async () => {
+    it('returns a shared doc with its data, every tally but the report one, its report counts, hidden or not', async () => {
       const app = freshApp('modget');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, POSTS, 'g', { status: 'open', score: 5 });
@@ -179,13 +179,15 @@ function defineModerationSuite(rls: boolean) {
         data: { status: 'open', score: 5 },
         reports: 2,
         counters: { views: 7 },
-        marks: { star: 1, report: 2 },
+        marks: { star: 1 },
+        reportsTotal: 2,
         authorKind: 'user',
         authorUid: VIEWER_1,
         hiddenBy: MOD,
         sizeBytes: OPEN5_BYTES,
         version: 1,
       });
+      expect(doc?.marks).toEqual({ star: 1 });
       expect(doc?.dataMd5).toMatch(/^[0-9a-f]{32}$/);
     });
 
@@ -267,7 +269,8 @@ function defineModerationSuite(rls: boolean) {
       expect(doc).toMatchObject({
         version: 1,
         counters: { views: 3 },
-        marks: { star: 1, report: 1 },
+        marks: { star: 1 },
+        reportsTotal: 1,
       });
     });
 
@@ -350,7 +353,7 @@ function defineModerationSuite(rls: boolean) {
       await tick();
       expect(await queue(app)).not.toContain('posts/p1:3');
       const doc = (await mod.get(app, NS_PROD, 'posts', 'p1'))!;
-      expect({ open: doc.reports, total: doc.marks.report }).toEqual({ open: 0, total: 3 });
+      expect({ open: doc.reports, total: doc.reportsTotal }).toEqual({ open: 0, total: 3 });
       expect(doc.reportsDismissedAt).toBeInstanceOf(Date);
       // A reporter still sees their own report; they cannot withdraw it, and re-reporting is
       // not a new report — so they cannot re-open what was dismissed.

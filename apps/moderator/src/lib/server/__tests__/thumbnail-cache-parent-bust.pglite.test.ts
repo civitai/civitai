@@ -56,6 +56,7 @@ vi.mock('../image-moderation-effects', () => ({
   notifyAppealResolved: vi.fn(async () => undefined),
   emailAppealResolution: vi.fn(async () => undefined),
   bustPostGalleryCaches: vi.fn(async () => undefined),
+  queueComicsForImages: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({
@@ -63,7 +64,6 @@ vi.mock('../mod-activity', () => ({
   recordModActivity: vi.fn(async () => undefined),
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 
 const { invalidateThumbnails } = await import('../thumbnail-cache');
 const { acceptImage, blockImage } = await import('../image-moderation.service');

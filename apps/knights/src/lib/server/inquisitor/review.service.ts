@@ -1,17 +1,12 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
-import { ESCALATED_FROM_LEVEL_META_KEY } from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, readWithoutJit } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { metrics, type ReviewOutcome } from '../metrics';
 import { readImageState } from '../queue/image-state';
 import { hasBlockMarker, moderatorRuling, type ImageState } from '../queue/resolution';
-import {
-  failClosed,
-  skillCheckEligible,
-  skillCheckLasting,
-  withoutJit,
-} from '../skill-check/eligible';
+import { failClosed, skillCheckEligible, skillCheckLasting } from '../skill-check/eligible';
 import type { SkillCheckReadSite } from '../metrics';
 import { addSkillCheck } from '../skill-check/pool';
 import { OverrideWriteError } from './override-error';
@@ -175,15 +170,17 @@ const heldOrUnreadable = (
     db,
     site,
     async (): Promise<Exclusion> => {
-      const row = await db
-        .selectFrom('Image as img')
-        .innerJoin('Post as p', 'p.id', 'img.postId')
-        .select((eb) => [
-          skillCheckEligible(eb, { level }).as('eligible'),
-          skillCheckLasting(eb, { level }).as('lasting'),
-        ])
-        .where('img.id', '=', imageId)
-        .executeTakeFirst();
+      const row = await readWithoutJit(db, (q) =>
+        q
+          .selectFrom('Image as img')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select((eb) => [
+            skillCheckEligible(eb, { level }).as('eligible'),
+            skillCheckLasting(eb, { level }).as('lasting'),
+          ])
+          .where('img.id', '=', imageId)
+          .executeTakeFirst()
+      );
       if (!row || !row.lasting) return { permanent: 'ineligible' };
       return row.eligible ? null : 'held';
     },
@@ -318,7 +315,7 @@ export async function closeIneligibleReviews(
     db,
     'review-sweep',
     () =>
-      db.transaction().execute(async (trx) => {
+      readWithoutJit(db, async (trx) => {
         await sql.raw(`SET LOCAL statement_timeout = ${SWEEP_STATEMENT_TIMEOUT_MS}`).execute(trx);
         const candidates = await ineligibleSweepCandidates(trx, { now, batch }).execute();
         if (candidates.length === 0) return 0;
@@ -442,7 +439,7 @@ export async function nextReview(
     'review-serve',
     async () => {
       for (const voted of [true, false]) {
-        const batch = await withoutJit(db, (q) =>
+        const batch = await readWithoutJit(db, (q) =>
           servableReviews(q, moderatorId, now)
             .$call(hasVote(voted))
             .select([

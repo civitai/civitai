@@ -145,6 +145,12 @@ export type HookInput = {
   viewer: { userId: number };
   app: { blockId: string };
   from: string | null;
+  /**
+   * On a viewer-keyed collection only (`keyedBy`): the parent key the viewer's `@me` write names,
+   * or null under `keyedBy: "viewer"`, so a hook can check it without parsing the derived key.
+   * Absent on every other collection, so their hooks are called exactly as before.
+   */
+  parent?: string | null;
 };
 
 export type HookRunnerCall = {
@@ -428,6 +434,8 @@ export type HookGateArgs = {
   ifVersion?: number;
   /** An increment that creates the document when it is absent (`write: 'none'`). */
   createsWhenAbsent?: boolean;
+  /** A viewer-keyed `@me` write: its parent, or null (`HookInput.parent`). Absent otherwise. */
+  parent?: string | null;
 };
 
 /** What the write runs with: the pass, and the key (pre-generated for a create). */
@@ -568,6 +576,7 @@ export async function gateHook(args: HookGateArgs): Promise<HookGrant | null> {
       viewer: { userId: ctx.viewerUid },
       app: { blockId: access.blockId },
       from: access.importer ?? null,
+      ...(args.parent !== undefined ? { parent: args.parent } : {}),
     },
   });
   const seconds = (performance.now() - started) / 1000;

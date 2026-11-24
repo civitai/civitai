@@ -11,7 +11,10 @@ export type RateLimitMeta = {
   /** Stable id of the refusing limit, e.g. `posts.daily`. */
   id?: string;
   kind?: RateLimitKind;
-  /** The fields below are sent for product limits only, never for abuse limits. */
+  /**
+   * The fields below are sent for product limits, and for an abuse limit the registry marks
+   * `reportsCounts` (the App Platform's tip and goods daily caps); never for other abuse limits.
+   */
   limit?: number;
   /** Attempts in the window; can exceed `limit`. */
   used?: number;
@@ -21,7 +24,10 @@ export type RateLimitMeta = {
   resetAt?: string;
 };
 
-/** `product`: an allowance the user may see and buy more of. `abuse`: numbers never published. */
+/**
+ * `product`: an allowance the user may see and buy more of. `abuse`: an anti-flood or money/safety
+ * bound no override may disable; its numbers are not published unless it `reportsCounts`.
+ */
 export type RateLimitKind = 'product' | 'abuse';
 
 const COUNT_FIELDS = ['limit', 'used', 'remaining', 'windowSeconds'] as const;

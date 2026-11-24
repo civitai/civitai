@@ -13,6 +13,7 @@ import {
   type ReviewPreviewState,
   type StoredReviewPreviewState,
 } from '~/shared/constants/app-review-preview.constants';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import type {
   NewPendingSubmission,
   ReviewPreviewActor,
@@ -85,6 +86,7 @@ import {
   type FloorAsset,
 } from '~/shared/utils/listing-publish-floor';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
+import type { Advisory } from '~/server/services/blocks/submit-advisories';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -258,6 +260,12 @@ export type SubmitVersionResult = {
    * (the manual-apply columns are not there yet). Absent when no token was verified.
    */
   actionsRunSourceRecorded?: boolean;
+  /**
+   * Notes that never refuse or delay the submit (`submitAdvisories`): today only `default-theme`,
+   * when the bundle reads as Civitai's stock look. Empty when there is nothing to say, or when they
+   * could not be worked out in time. Part of the submit API's response (both routes).
+   */
+  advisories: Advisory[];
 };
 
 /**
@@ -1401,8 +1409,13 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   ]);
   const baseline = existingApp
     ? await loadStorageMigrationBaseline({ slug })
-    : { prev: null, history: [] };
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+    : { prev: null, history: [], approved: [] };
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // 🔴 APP STORAGE PERMISSION HOOKS — refused HERE too, before the upload and the review-repo push:
@@ -1627,12 +1640,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
   }
 
-  const listing = await submitListingReadiness({
-    slug,
-    submittedByUserId,
-    existingAppBlockId: existingApp?.id ?? null,
-    manifest,
-  });
+  // WARN, NEVER BLOCK: never throws; its bundle read is time-bounded (not its scan: `submitAdvisories`).
+  const [listing, advisories] = await Promise.all([
+    submitListingReadiness({
+      slug,
+      submittedByUserId,
+      existingAppBlockId: existingApp?.id ?? null,
+      manifest,
+    }),
+    import('./submit-advisories')
+      .then(({ submitAdvisories }) => submitAdvisories(bundleBuffer))
+      .catch(() => []),
+  ]);
 
   announceNewPendingRequest({
     publishRequestId,
@@ -1653,6 +1672,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
     ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
+    advisories,
   };
 }
 
@@ -2692,6 +2712,179 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
   return listing.userId === req.submittedBy?.id;
 }
 
+/**
+ * What approving this pending version does to the rating of its app's existing on-site listing
+ * ((3b-sync)), for the approve bar: the listing's rating now (`from`) and after the approve
+ * (`to`), from the same `resolveVersionListingRating` the approve writes with. `null` when the
+ * approve re-rates no listing this way (no app yet, no on-site listing keyed to it, or a request
+ * that is not pending). The app's rating is read as it is now, which is the previous version's
+ * declaration until the approve runs.
+ *
+ * Asked once per opened request, not in `listingFactsForRequests`: the floor reads the
+ * listing's media, which is a query per listing, and the queue pages must stay a fixed count.
+ */
+export async function previewVersionListingRating(
+  publishRequestId: string
+): Promise<{ listingId: string; from: string | null; to: string | null } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const request = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { status: true, appBlockId: true, manifest: true },
+  });
+  if (!request || request.status !== 'pending' || !request.appBlockId) return null;
+  const listing = await dbRead.appListing.findFirst({
+    where: { appBlockId: request.appBlockId, kind: 'onsite' },
+    select: { id: true, contentRating: true },
+  });
+  const block = await dbRead.appBlock.findUnique({
+    where: { id: request.appBlockId },
+    select: { contentRating: true },
+  });
+  if (!listing || !block) return null;
+  const { resolveVersionListingRating } = await import(
+    '~/server/services/blocks/app-listing-assets.service'
+  );
+  const to = await resolveVersionListingRating(dbRead, {
+    appListingId: listing.id,
+    current: listing.contentRating,
+    earlierDeclared: [
+      block.contentRating,
+      ...(await approvedVersionRatings(dbRead, request.appBlockId)),
+    ],
+    nextDeclared: manifestRatingOrDefault(request.manifest),
+  });
+  return { listingId: listing.id, from: listing.contentRating, to };
+}
+
+/**
+ * The ratings an app's APPROVED versions declared, newest first — the "earlier" declarations
+ * `resolveVersionListingRating` tells an approve's rating from a moderator's raise by. Bounded:
+ * the newest 200 versions.
+ */
+async function approvedVersionRatings(
+  db: Prisma.TransactionClient,
+  appBlockId: string
+): Promise<string[]> {
+  const rows = await db.appBlockPublishRequest.findMany({
+    where: { appBlockId, status: 'approved' },
+    orderBy: [{ reviewedAt: 'desc' }, { id: 'desc' }],
+    take: 200,
+    select: { manifest: true },
+  });
+  return rows.map((r) => manifestRatingOrDefault(r.manifest));
+}
+
+export type ListingRatingResync = { listingId: string; from: string | null; to: string | null };
+
+/** Typed failure from {@link resyncListingRating}; `code` drives the tRPC mapping. */
+export class ListingRatingResyncError extends Error {
+  constructor(public code: 'NOT_FOUND' | 'CONFLICT', message: string) {
+    super(message);
+    this.name = 'ListingRatingResyncError';
+  }
+}
+
+/**
+ * The (3b-sync) rating an APPROVED app's approved on-site listing would get if its current
+ * version were approved now: `resolveVersionListingRating` with the current version's declared
+ * rating as the new one and every approved version's as the earlier ones. `null` when the app is
+ * not approved or has no approved on-site listing.
+ */
+async function resolveListingRatingResync(
+  db: Prisma.TransactionClient,
+  appBlockId: string
+): Promise<(ListingRatingResync & { slug: string }) | null> {
+  const block = await db.appBlock.findUnique({
+    where: { id: appBlockId },
+    select: { status: true, contentRating: true },
+  });
+  if (!block || block.status !== 'approved') return null;
+  const listing = await db.appListing.findFirst({
+    where: { appBlockId, kind: 'onsite', status: 'approved' },
+    select: { id: true, slug: true, contentRating: true },
+  });
+  if (!listing) return null;
+  const { resolveVersionListingRating } = await import(
+    '~/server/services/blocks/app-listing-assets.service'
+  );
+  const to = await resolveVersionListingRating(db, {
+    appListingId: listing.id,
+    current: listing.contentRating,
+    earlierDeclared: [block.contentRating, ...(await approvedVersionRatings(db, appBlockId))],
+    nextDeclared: block.contentRating,
+  });
+  return { listingId: listing.id, slug: listing.slug, from: listing.contentRating, to };
+}
+
+/** MOD: what {@link resyncListingRating} would do to this app's listing (read on the replica). */
+export async function previewListingRatingResync(
+  appBlockId: string
+): Promise<ListingRatingResync | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const target = await resolveListingRatingResync(dbRead, appBlockId);
+  return target ? { listingId: target.listingId, from: target.from, to: target.to } : null;
+}
+
+/**
+ * MOD: re-run the subsequent-version rating sync for one approved app's on-site listing, without
+ * approving anything — for a listing approved before the sync existed. Same rule and helper as
+ * the approve ({@link resolveListingRatingResync}). The write is guarded on the rating it was
+ * computed from, so a rating that moved in between refuses (CONFLICT) instead of being
+ * overwritten. A change is recorded as a `rating-change` event by the acting moderator, and
+ * the catalog cache is busted.
+ */
+export async function resyncListingRating(args: {
+  appBlockId: string;
+  actorUserId: number;
+}): Promise<ListingRatingResync & { changed: boolean }> {
+  const { dbWrite } = await import('~/server/db/client');
+  const target = await resolveListingRatingResync(dbWrite, args.appBlockId);
+  if (!target)
+    throw new ListingRatingResyncError(
+      'NOT_FOUND',
+      'No approved app with an approved on-site listing for that id.'
+    );
+  const result = { listingId: target.listingId, from: target.from, to: target.to };
+  if (target.to === target.from) return { ...result, changed: false };
+  const written = await dbWrite.appListing.updateMany({
+    where: {
+      id: target.listingId,
+      appBlockId: args.appBlockId,
+      kind: 'onsite',
+      status: 'approved',
+      contentRating: target.from,
+    },
+    data: { contentRating: target.to },
+  });
+  if (written.count === 0)
+    throw new ListingRatingResyncError(
+      'CONFLICT',
+      'The listing changed while it was being re-rated. Check the preview again.'
+    );
+  await recordListingRatingChangeAfterCommit({
+    appListingId: target.listingId,
+    slug: target.slug,
+    before: target.from,
+    after: target.to,
+    actorUserId: args.actorUserId,
+  });
+  try {
+    const { bustAppListingCatalogCache } = await import(
+      '~/server/services/blocks/app-listing.service'
+    );
+    await bustAppListingCatalogCache();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[resyncListingRating] catalog cache bust failed (listing=${target.listingId}); ` +
+        `the store grid self-corrects within CacheTTL.sm: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
+  return { ...result, changed: true };
+}
+
 /** The rating a manifest declares; an app that declares none is approved as `g`. */
 function manifestRatingOrDefault(manifest: unknown): string {
   const rating = (manifest as { contentRating?: unknown } | null)?.contentRating;
@@ -2866,10 +3059,9 @@ async function listingFactsForRequests(
     );
     const target = pickPublishTarget<Candidate>(draft, reset);
     if (!target) return null;
-    // A draft is rated from the request's manifest; a reset listing keeps the rating it has.
-    const declared = target.firstGoLive
-      ? manifestRatingOrDefault(req.manifest)
-      : target.listing.contentRating ?? null;
+    // Both are rated from the request's manifest: a draft by (3b-transition), a reset
+    // listing by (3b-sync), which writes it before (3b-reset) floors it again at the media.
+    const declared = manifestRatingOrDefault(req.manifest);
     return { ...target, declared };
   };
   const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
@@ -3620,13 +3812,18 @@ async function approveRequestUnderClaim(
     import('~/server/services/apps/storage-migration-run.service'),
   ]);
   const baseline = isFirstVersion
-    ? { prev: null, history: [] }
+    ? { prev: null, history: [], approved: [] }
     : await loadStorageMigrationBaseline({
         slug: request.slug,
         excludePublishRequestId: request.id,
         selfManifest: manifest,
       });
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // APP STORAGE PERMISSION HOOKS — the submit pin, again, against the bytes this approve will
@@ -4275,8 +4472,9 @@ async function approveRequestUnderClaim(
       // changes without re-review.
       //
       // WHAT WE DO NOT TOUCH (curated / mod-owned): assets (icon / cover /
-      // screenshots), `featured` / `featuredOrder`, `contentRating` (mod override,
-      // floored at the derived rating), `status`, `slug`, `externalUrl`.
+      // screenshots), `featured` / `featuredOrder`, `status`, `slug`, `externalUrl`.
+      // `contentRating` IS written, by `resolveVersionListingRating` (see 🔴 RATING SYNC
+      // below).
       //
       // `category` comes from `AppBlock.category` — NOT the manifest — because
       // step (3a) writes the manifest category onto that column ONLY when it is
@@ -4304,18 +4502,59 @@ async function approveRequestUnderClaim(
       } else {
         const ab = await dbWrite.appBlock.findUnique({
           where: { id: appBlockId },
-          select: { blockId: true, manifest: true, category: true },
+          select: { blockId: true, manifest: true, category: true, contentRating: true },
         });
         if (ab) {
+          // 🔴 RATING SYNC (`resolveVersionListingRating`): the approved manifest's declared
+          // rating (`AppBlock.contentRating`, written from it above), raised to the store
+          // media's rating when that is more mature, so it LOWERS as well as raises (an app
+          // that drops `x` → `pg13` is re-rated `pg13`). The approve bar shows the moderator
+          // the change first (`previewVersionListingRating`). A rating above what every
+          // earlier approved version's declaration gives is a moderator's raise and is kept;
+          // the last one is `priorVersion`, read before the update above.
+          //
+          // A missing row leaves the column out of the write.
+          // primary: the rating written below must be computed from the row as it is now.
+          const ratingListing = await dbWrite.appListing.findFirst({
+            where: { appBlockId, kind: 'onsite' },
+            select: { id: true, contentRating: true },
+          });
+          let syncedRating: string | null = null;
+          if (ratingListing) {
+            const { resolveVersionListingRating } = await import(
+              '~/server/services/blocks/app-listing-assets.service'
+            );
+            syncedRating = await resolveVersionListingRating(dbWrite, {
+              appListingId: ratingListing.id,
+              current: ratingListing.contentRating,
+              earlierDeclared: [
+                priorVersion?.block.contentRating ?? null,
+                ...(await approvedVersionRatings(dbWrite, appBlockId)),
+              ],
+              nextDeclared: ab.contentRating,
+            });
+          }
           const synced = await dbWrite.appListing.updateMany({
             where: { appBlockId, kind: 'onsite' },
-            data: buildListingScalarSync({
-              manifest: ab.manifest,
-              blockId: ab.blockId,
-              category: ab.category,
-              sourceRepoAvailable,
-            }),
+            data: {
+              ...buildListingScalarSync({
+                manifest: ab.manifest,
+                blockId: ab.blockId,
+                category: ab.category,
+                sourceRepoAvailable,
+              }),
+              ...(ratingListing ? { contentRating: syncedRating } : {}),
+            },
           });
+          if (ratingListing && synced.count > 0 && syncedRating !== ratingListing.contentRating) {
+            await recordListingRatingChangeAfterCommit({
+              appListingId: ratingListing.id,
+              slug: request.slug,
+              before: ratingListing.contentRating,
+              after: syncedRating,
+              actorUserId: params.reviewerUserId,
+            });
+          }
           // Re-synced from the manifest on every approved version, like `repository`: removing
           // `bugs` clears the link.
           const tracker = buildListingIssueTrackerSync({
@@ -4392,8 +4631,10 @@ async function approveRequestUnderClaim(
   // count 0) does NOT touch the block, and a delisted-then-resubmitted app is never
   // auto-un-suspended here (its listing is `removed`, not `pending`, so count 0 too).
   // Both flips are status-guarded (never clobber a drifted/curated state) — the listing
-  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip; the
-  // floor is raise-only, so it can never lower a curated rating). Same log-and-continue
+  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip). The
+  // floor here is raise-only, but it starts from the rating (3b-sync) above has just
+  // written from the manifest, so the restored listing carries this version's declared
+  // rating, raised by its media. Same log-and-continue
   // posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {
@@ -5078,10 +5319,13 @@ export async function markRequestDeployState(
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  /** On a `RATE_LIMITED` refusal: its meta, which `blocks.retriggerBuild` answers with. */
+  readonly rateLimit?: RateLimitMeta;
+  constructor(code: string, message: string, rateLimit?: RateLimitMeta) {
     super(message);
     this.name = 'RetriggerBuildError';
     this.code = code;
+    this.rateLimit = rateLimit;
   }
 }
 
@@ -5332,21 +5576,28 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
 
   // (7) Abuse controls — redis-backed, because the tRPC `rateLimit` middleware
   //     short-circuits for moderators and would be a no-op here.
-  const { acquireRetriggerLock, releaseRetriggerLock, checkRetriggerModeratorQuota } = await import(
-    '~/server/utils/blocks-retrigger-rate-limit'
-  );
+  const {
+    acquireRetriggerLock,
+    releaseRetriggerLock,
+    checkRetriggerModeratorQuota,
+    RETRIGGER_LOCK_TTL_SECONDS,
+  } = await import('~/server/utils/blocks-retrigger-rate-limit');
+  const { appRateLimitMeta } = await import('~/server/utils/app-rate-limit');
   const quota = await checkRetriggerModeratorQuota(params.reviewerUserId);
   if (!quota.allowed) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`
+      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`,
+      appRateLimitMeta('apps.build-retrigger', quota.retryAfterSeconds)
     );
   }
   // Single-flight: a double-click must not create two PipelineRuns.
   if (!(await acquireRetriggerLock(request.id))) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      'A re-trigger for this request is already in flight.'
+      'A re-trigger for this request is already in flight.',
+      // The lock lapses by its TTL at the latest.
+      appRateLimitMeta('apps.build-retrigger', RETRIGGER_LOCK_TTL_SECONDS)
     );
   }
 

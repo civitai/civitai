@@ -1,12 +1,11 @@
 import { Text, UnstyledButton } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { IconLock, IconRestore } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import { TitleActions } from '~/components/ImageGeneration/mobile-generator-slots';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { overMobileSheetZIndex } from '~/shared/constants/app-layout.constants';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export function QuantityPicker({
   value,
@@ -90,11 +89,9 @@ export function QuantityPicker({
 /** Reset, in the sheet's title row beside the close chevron, so it confirms first. */
 export function TitleRowReset({ onReset }: { onReset: () => void }) {
   const confirmReset = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Reset the form?',
-      children: <Text size="sm">Your prompt and settings go back to their defaults.</Text>,
-      centered: true,
-      zIndex: overMobileSheetZIndex,
+      message: <Text size="sm">Your prompt and settings go back to their defaults.</Text>,
       labels: { confirm: 'Reset', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: onReset,

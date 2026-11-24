@@ -1,10 +1,7 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-
-const CollectionInvitesModal = dynamic(
-  () => import('~/components/Collections/CollectionCollaborators/CollectionInvitesModal')
-);
+import { openDialog } from '~/components/Dialog/openDialog';
 
 export function openCollectionInvitesModal() {
-  dialogStore.trigger({ component: CollectionInvitesModal });
+  openDialog(
+    () => import('~/components/Collections/CollectionCollaborators/CollectionInvitesModal')
+  );
 }

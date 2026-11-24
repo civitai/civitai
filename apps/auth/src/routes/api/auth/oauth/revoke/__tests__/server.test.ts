@@ -424,6 +424,7 @@ describe('revoke — request handling is unchanged', () => {
       error: 'rate_limited',
       error_description: 'Too many revocation requests',
       retry_after: 60,
+      rateLimit: { retryAfterSeconds: 60, retryAt: expect.any(String) },
     });
     expect(h.rateLimitCalls).toEqual([['revoke', h.clientIp]]);
     expect(stored('link_access')).toBe(true);

@@ -56,6 +56,7 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
+import { withoutUserImage } from '~/server/search-index/search-index-user';
 import { hasCompleteSfwFace, hoistCoverImage } from '~/shared/utils/model-sfw-face';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
 
@@ -640,7 +641,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         hasSfwFace: hasCompleteSfwFace(model),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
-        user,
+        user: withoutUserImage(user),
         category: {
           id: category?.id,
           name: category?.name,

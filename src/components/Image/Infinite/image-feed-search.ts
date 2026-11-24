@@ -35,6 +35,7 @@ export const imageFeedSearchUnavailableKeys = [
   'techniques',
   'hatTeams',
   'hatTurfMine',
+  'hatTurfExpired',
   'hideTurfHats',
   'hideWornHats',
 ] as const satisfies readonly MediaFilterKey[];
@@ -64,6 +65,7 @@ export const imageFeedFilterLabels: Record<
   techniques: 'Techniques',
   hatTeams: 'Teams',
   hatTurfMine: 'My live hats',
+  hatTurfExpired: 'My expired hats',
   hideTurfHats: 'Turf hats',
   hideWornHats: 'Worn hats',
   followed: 'Followed',
@@ -77,6 +79,7 @@ type FeedFilters = Partial<
     excludedTagIds: number[];
     hatTeams: unknown[];
     hatTurfMine: boolean;
+    hatTurfExpired: boolean;
     hideTurfHats: boolean;
     hideWornHats: boolean;
   }

@@ -68,8 +68,7 @@ export type TokenBlockBinding = {
   /**
    * The viewer's own browsing level (`civitai_viewer_browsing_level`), a browsing-level bit flag; with
    * the ceiling it resolves to the level the site's own reads use (`resolveViewerBrowsingLevel`).
-   * Null on a token the hub minted before it wrote the claim: no viewer level is known, so a reader
-   * falls back to the audience and the ceiling alone.
+   * Null on a token minted before the hub wrote the claim: no viewer level is known.
    */
   viewerBrowsingLevel: number | null;
 };

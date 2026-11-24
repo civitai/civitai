@@ -443,6 +443,47 @@ describe('POST /api/v1/block-tokens', () => {
     expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
   });
 
+  it('429: the per-IP mint limit answers Retry-After and the abuse meta, before any lookup', async () => {
+    // The 121st mint from one IP in the window (PER_IP_RATE_LIMIT_MAX = 120).
+    mockRedis.incrBy.mockResolvedValueOnce(121);
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(429);
+    expect(res._headers['retry-after']).toBe('60');
+    expect(res._body).toEqual({
+      error: 'Rate limit exceeded',
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: {
+        retryAfterSeconds: 60,
+        retryAt: expect.any(String),
+        id: 'apps.block-token-mint-ip',
+        kind: 'abuse',
+      },
+    });
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('429: the per-(subject, instance) mint limit answers Retry-After and the abuse meta', async () => {
+    mockTokenService.checkRateLimit.mockResolvedValueOnce(false);
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(429);
+    expect(res._headers['retry-after']).toBe('60');
+    expect((res._body as { rateLimit?: unknown }).rateLimit).toEqual({
+      retryAfterSeconds: 60,
+      retryAt: expect.any(String),
+      id: 'apps.block-token-mint',
+      kind: 'abuse',
+    });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
   it('404: returns "Block install not found" when the resolver returns null', async () => {
     // E.g. caller-supplied modelId doesn't match the install row, or the
     // install row was deleted between page load and token mint.

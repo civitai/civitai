@@ -448,6 +448,13 @@ describe('block token exchange — dark by default (empty caller allowlist)', ()
     for (let i = 0; i < 120; i++) expect((await exchange(token)).status).toBe(400);
     const res = await exchange(token);
     expect(res.status).toBe(429);
+    // The house meta, naming the per-IP bucket of failed secret checks: an abuse limit, no counts.
+    expect(res.body.rateLimit).toEqual({
+      retryAfterSeconds: 60,
+      retryAt: expect.any(String),
+      id: 'oauth.token-exchange-ip',
+      kind: 'abuse',
+    });
     expect(refusals()).toHaveLength(120);
   });
 });
@@ -482,6 +489,12 @@ describe('block token exchange — the caller', () => {
     const res = await exchange(token, { caller: OTHER_RELAY });
     expect(res.status).toBe(429);
     expect(res.body.error).toBe('rate_limited');
+    expect(res.body.rateLimit).toEqual({
+      retryAfterSeconds: 60,
+      retryAt: expect.any(String),
+      id: 'oauth.token-exchange',
+      kind: 'abuse',
+    });
     expect(refusals()).toHaveLength(3);
   });
 
@@ -1298,14 +1311,6 @@ describe('block token verification follows the site', () => {
         '    viewerBrowsingLevel >= 0',
         '      ? viewerBrowsingLevel',
         '      : publicBrowsingLevelsFlag;',
-      ].join('\n')
-    );
-    const middleware = read(BLOCK_SCOPE_MIDDLEWARE);
-    expect(middleware).toContain(
-      [
-        '        claims.viewerBrowsingLevel !== undefined &&',
-        '        // A non-negative integer: an all-bits value like -1 would pass AND-ing unchanged.',
-        '        !(Number.isInteger(claims.viewerBrowsingLevel) && claims.viewerBrowsingLevel >= 0)',
       ].join('\n')
     );
   });

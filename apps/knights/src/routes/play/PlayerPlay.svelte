@@ -17,6 +17,7 @@
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
   import Countdown from '$lib/Countdown.svelte';
+  import { limitPhrase } from '$lib/vote-limit-copy';
   import Icon from '$lib/Icon.svelte';
   import AnswerPill from '$lib/AnswerPill.svelte';
   import '$lib/answer-row.css';
@@ -676,9 +677,28 @@
       return { kind: 'no-practice' as const };
     }
     if (shown.muted) return { kind: 'muted' as const };
-    if (shown.lockoutSeconds) return { kind: 'lockout' as const, seconds: shown.lockoutSeconds };
+    if (shown.lockoutSeconds)
+      return {
+        kind: 'lockout' as const,
+        seconds: shown.lockoutSeconds,
+        limit: limitPhrase(shown.lockoutWindowSeconds ?? null),
+      };
     if (view) return { kind: 'queue-stage' as const, view };
     return { kind: shown.resetPending ? ('none' as const) : ('clear' as const), daily: shown.daily };
+  });
+  // The player's own clock and zone: rendered only in the browser, so the server's zone never shows.
+  // A primitive, so a stats signal that rebuilds `screen` does not move the time while the countdown holds still.
+  let pausedSeconds = $derived(screen.kind === 'lockout' ? screen.seconds : null);
+  let reopensAt = $state<string | null>(null);
+  $effect(() => {
+    const seconds = pausedSeconds;
+    reopensAt = seconds
+      ? new Date(Date.now() + seconds * 1000).toLocaleString(undefined, {
+          weekday: seconds > 12 * 3600 ? 'short' : undefined,
+          hour: 'numeric',
+          minute: '2-digit',
+        })
+      : null;
   });
   let rulingInStage = $derived(screen.kind === 'apprentice-question' || screen.kind === 'queue-stage');
   let formMessage = $derived(
@@ -887,11 +907,14 @@
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
         <p>
-          You reached the Order's pace limit: too many judgments in too short a time. It says
-          nothing about your accuracy. Rest a little; the queue will wait.
+          {#if screen.limit}You reached {screen.limit}.{:else}You reached the Order's pace limit: too
+            many judgments in too short a time.{/if} It says nothing about your accuracy. Rest a little;
+          the queue will wait.
         </p>
         <Countdown seconds={screen.seconds} label="Time until judging resumes" />
-        <p class="muted">Judging resumes by itself.</p>
+        <p class="muted">
+          {#if reopensAt}Voting reopens at {reopensAt}, by itself.{:else}Judging resumes by itself.{/if}
+        </p>
       </section>
     </div>
   {:else if screen.kind === 'queue-stage'}

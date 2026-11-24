@@ -82,7 +82,11 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: apps/feed-go/go.sum
+          # No Go cache here at all. setup-go's own saves on every ref, and the repo's
+          # restore/save actions (.github/actions/go-cache-*) cannot be used: this job builds a
+          # checkout of the release TAG, and a tag cut before those actions existed lacks them.
+          # A release build is rare enough that a cold module download costs nothing that matters.
+          cache: false
 
       - name: Build
         working-directory: apps/feed-go

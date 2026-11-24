@@ -266,17 +266,17 @@ describe('showing an answered mod-confirmed image again', () => {
     expect(await recap()).toBeNull();
   });
 
-  const judgedKey = async (playerId: number, imageId: number) =>
-    (await listJudgments(db, playerId, { page: 1 })).judgments.find((j) => j.imageId === imageId)
-      ?.imageKey;
+  // A hidden entry carries neither its image id nor its key, so entries are compared whole.
+  const judged = async (playerId: number) =>
+    (await listJudgments(db, playerId, { page: 1 })).judgments.map((j) => [j.imageId, j.imageKey]);
 
   it("hides it in a Knight's judgment history once it comes under a hold", async () => {
     await seedPlayer(pg, 1);
     const id = await skillCheck(10, '4');
     await answer(1, id, '16');
-    expect(await judgedKey(1, 10)).toBe('key-10');
+    expect(await judged(1)).toEqual([[10, 'key-10']]);
     await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=10`);
-    expect(await judgedKey(1, 10)).toBeNull();
+    expect(await judged(1)).toEqual([[null, null]]);
   });
 
   it("hides it in an Acolyte's judgment history once it comes under a hold", async () => {
@@ -287,9 +287,9 @@ describe('showing an answered mod-confirmed image again', () => {
       { userId: 1, kind: 'rating', referenceId: check, answer: '4' },
       { now: () => NOW, skillCheckRate: 1 }
     );
-    expect(await judgedKey(1, 10)).toBe('key-10');
+    expect(await judged(1)).toEqual([[10, 'key-10']]);
     await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=10`);
-    expect(await judgedKey(1, 10)).toBeNull();
+    expect(await judged(1)).toEqual([[null, null]]);
   });
 
   it('keeps a mod-confirmed image out of the judgment history, and the rest in, when a safety check cannot be read', async () => {
@@ -300,8 +300,14 @@ describe('showing an answered mod-confirmed image again', () => {
     await answer(1, hidden, '4');
     await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
     try {
-      expect(await judgedKey(1, 10)).toBeNull();
-      expect(await judgedKey(1, 11)).toBe('key-11');
+      const entries = await judged(1);
+      expect(entries).toHaveLength(2);
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          [null, null],
+          [11, 'key-11'],
+        ])
+      );
     } finally {
       await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
     }

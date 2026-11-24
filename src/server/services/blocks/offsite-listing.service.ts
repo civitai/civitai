@@ -137,6 +137,9 @@ import {
   newUlid,
 } from '~/server/utils/app-block-ids';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import { STANDING_LIMIT_RETRY_SECONDS, throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE submission service (Design B1).
@@ -205,7 +208,8 @@ function slugTakenError(slug: string): TRPCError {
  * `rateLimit` bounds the submit RATE). Mods bypass the router rate-limit but are
  * still subject to this cap.
  */
-export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
+/** The code default; the enforced cap is the user's resolved `apps.offsite-pending`. */
+export const MAX_PENDING_OFFSITE_SUBMISSIONS = getUsageLimitDef('apps.offsite-pending').base;
 
 /**
  * The author-written text a submission or patch carries. Tagline and description edits on a
@@ -372,14 +376,20 @@ export async function submitExternalListing(opts: {
 
   // Per-user pending-submission cap: bound the standing orphan-draft count (drafts
   // only clear on withdraw/reject, no TTL). At/over the cap → TOO_MANY_REQUESTS.
-  const pendingCount = await dbRead.appListingPublishRequest.count({
-    where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
-  });
-  if (pendingCount >= MAX_PENDING_OFFSITE_SUBMISSIONS) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
-    });
+  const [pendingCount, maxPending] = await Promise.all([
+    dbRead.appListingPublishRequest.count({
+      where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
+    }),
+    resolveUserAppLimit('apps.offsite-pending', userId),
+  ]);
+  if (pendingCount >= maxPending) {
+    // A standing allowance: it frees when a submission is withdrawn or reviewed, at no set time.
+    throwAppRateLimited(
+      'apps.offsite-pending',
+      STANDING_LIMIT_RETRY_SECONDS,
+      `You have ${pendingCount} pending submissions (max ${maxPending}). Withdraw one or wait for review before submitting another.`,
+      { limit: maxPending, used: pendingCount }
+    );
   }
 
   const slug = input.slug;
@@ -3388,11 +3398,13 @@ async function resolveApprovalContentRating(
  * its store art happens to be tame — an under-rating of the runtime, produced by looking at
  * a picture. So the app's declaration is a FLOOR that is raised by mature media and never
  * lowered by tame media: exactly {@link resolveListingRatingFloorInTx}, the same helper
- * `approveRequest`'s draft→approved transition and `republishOwnListing` use, so all three
- * on-site rating sites have ONE spelling.
+ * `approveRequest`'s draft→approved transition, reset restore and subsequent-version
+ * re-sync and `republishOwnListing` use, so the on-site rating sites have ONE spelling.
  *
  * A moderator override may still RAISE above the floor (a mod may always rate up) and is
- * ignored when it would lower.
+ * ignored when it would lower. It is stored only as the listing's `contentRating`; the next
+ * approved version's re-sync (`resolveVersionListingRating`) keeps it by recognising a rating
+ * above what the previous version's declaration gives.
  *
  * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
  * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a

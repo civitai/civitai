@@ -431,6 +431,7 @@ describe('introspect — rate limiting', () => {
       error: 'rate_limited',
       error_description: 'Too many introspection requests',
       retry_after: 60,
+      rateLimit: { retryAfterSeconds: 60, retryAt: expect.any(String) },
     });
     expect(h.rateLimitCalls).toEqual([
       ['introspect-anon', CLIENT_IP],

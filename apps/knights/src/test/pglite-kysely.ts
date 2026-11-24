@@ -1,3 +1,4 @@
+import { afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
@@ -13,12 +14,14 @@ import {
   type QueryResult,
 } from 'kysely';
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
+import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATIONS = [
   '20261209120000_knights_new_order_player_and_link_review',
   '20261210120000_knights_v2_tables',
   '20271120160000_knights_inquisitor_review',
+  '20271125120000_knights_legacy_player_days',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -60,14 +63,22 @@ CREATE TABLE "CsamReport" (
   "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]'
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY,
   "minor" BOOLEAN NOT NULL DEFAULT false,
-  "poi" BOOLEAN NOT NULL DEFAULT false
+  "poi" BOOLEAN NOT NULL DEFAULT false,
+  "status" TEXT NOT NULL DEFAULT 'Published',
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "deletedAt" TIMESTAMP(3)
 );
-CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
+CREATE TABLE "ModelVersion" (
+  "id" INTEGER PRIMARY KEY,
+  "modelId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Published',
+  "availability" TEXT NOT NULL DEFAULT 'Public'
+);
 CREATE TABLE "ImageResourceNew" ("imageId" INTEGER NOT NULL, "modelVersionId" INTEGER NOT NULL, PRIMARY KEY ("imageId", "modelVersionId"));
 CREATE TABLE "ScanLabelItem" (
   "id" serial PRIMARY KEY,
@@ -140,7 +151,8 @@ CREATE TABLE "TextScanHold" (
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
   "publishedAt" TIMESTAMP(3),
-  "availability" TEXT NOT NULL DEFAULT 'Public'
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "modelVersionId" INTEGER
 );
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
@@ -319,9 +331,40 @@ function asNodePgParameter(value: unknown): unknown {
   );
 }
 
+/**
+ * Reads that broke the JIT rule below. Recorded as well as thrown, since a caller that catches the error (a sweep counting
+ * failures, a read that falls back) would otherwise hide it: every test using this harness fails if any were recorded.
+ * Known limit: it checks that some transaction is open with JIT off, not that it is this statement's own, so an
+ * interleaved pool read could pass here; prod callers pass their trx to `readWithoutJit` explicitly.
+ */
+const jitViolations: string[] = [];
+afterEach(() => {
+  const found = jitViolations.splice(0);
+  if (found.length)
+    throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
+});
+
 function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean): Dialect {
+  // A read carrying the CSAM subplans (`servableImageContent`) must run with JIT off in its transaction
+  // (`readWithoutJit`): its inflated estimate would make a server with JIT on compile it for longer than it runs.
+  let jitOff = false;
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+      const text = compiled.sql.trim().toLowerCase();
+      if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
+      else if (text === 'set local jit = off') jitOff = transactions.open > 0;
+      else if (
+        compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
+        !(jitOff && transactions.open > 0)
+      ) {
+        jitViolations.push(compiled.sql.slice(0, 160));
+        throw new Error(
+          `A servableImageContent read ran with JIT on (wrap it in readWithoutJit): ${compiled.sql.slice(
+            0,
+            120
+          )}`
+        );
+      }
       const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
       return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },

@@ -20,7 +20,8 @@ const formEvent = (fields: Record<string, string>) => {
   for (const [k, v] of Object.entries(fields)) data.append(k, v);
   return {
     request: { formData: async () => data },
-    locals: { user: { id: 2 } },
+    // A grant holder, so the restricted-image check reads nothing.
+    locals: { user: { id: 2, roles: ['moderator:admin'] } },
   } as unknown as Parameters<(typeof actions)['resolveAppeal']>[0];
 };
 

@@ -1,11 +1,16 @@
 import { sql, type Kysely } from 'kysely';
-import { readVoteTallies, tallyByAnswer, type KnightsAnswerTally } from '@civitai/db/knights';
+import {
+  readVoteTallies,
+  readWithoutJit,
+  tallyByAnswer,
+  type KnightsAnswerTally,
+} from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { civitaiSiteUrl } from '../site-url';
 import { servableReviews, type ReviewOffer } from './review.service';
-import { failClosed, withoutJit } from '../skill-check/eligible';
+import { failClosed } from '../skill-check/eligible';
 
 export type ReviewSidebar = {
   /** The players' settled level, by its label. */
@@ -105,7 +110,7 @@ export async function moderatorStats(
       db,
       'review-stats',
       () =>
-        withoutJit(db, (q) =>
+        readWithoutJit(db, (q) =>
           q
             .selectFrom(
               servableReviews(q, moderatorId, now)

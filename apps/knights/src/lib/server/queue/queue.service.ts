@@ -1,6 +1,6 @@
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
-import { gradeKnightsVotes } from '@civitai/db/knights';
+import { gradeKnightsVotes, readWithoutJit } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import {
@@ -15,7 +15,7 @@ import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import {
   ESCALATED_FROM_LEVEL_META_KEY,
-  postNotPrivate,
+  postShownToKnights,
   servableImage,
   servableImageContent,
 } from '@civitai/db/knights';
@@ -335,7 +335,7 @@ export async function getFeed(
   for (const stage of [...stages].reverse()) {
     if (items.length >= limit) break;
     const rows = lowestTierPerItem(
-      await stageWindow(db, userId, stage, exclude, escalatedSince)
+      await readWithoutJit(db, (trx) => stageWindow(trx, userId, stage, exclude, escalatedSince))
     ).sort(
       (a, b) =>
         a.tier - b.tier || a.priority - b.priority || +a.createdAt - +b.createdAt || a.id - b.id
@@ -671,19 +671,21 @@ export async function castVote(
           .executeTakeFirst();
         if (!locked || locked.status !== 'Open') return rejected('not-open');
 
-        const item = await servableItems(trx)
-          .where('i.id', '=', input.itemId)
-          .where(notHiddenCreator(input.userId))
-          .select([
-            'i.id',
-            'i.questionKey',
-            'i.imageId',
-            'i.minRank',
-            'i.votesNeeded',
-            'img.nsfwLevel as imageLevel',
-            'q.options',
-          ])
-          .executeTakeFirst();
+        const item = await readWithoutJit(trx, (trx) =>
+          servableItems(trx)
+            .where('i.id', '=', input.itemId)
+            .where(notHiddenCreator(input.userId))
+            .select([
+              'i.id',
+              'i.questionKey',
+              'i.imageId',
+              'i.minRank',
+              'i.votesNeeded',
+              'img.nsfwLevel as imageLevel',
+              'q.options',
+            ])
+            .executeTakeFirst()
+        );
         if (!item) return rejected('unavailable');
 
         const vote = await insertVote(
@@ -1104,7 +1106,7 @@ export async function applyPendingResolutions(
  * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
  * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
  * when a later stage is served, and expires when the hand-up would reach the Inquisitors.
- * An item whose post is Private goes to the Inquisitors as `blocked` instead when the plurality of the latest stage with counted
+ * An item whose post's availability Knights does not show goes to the Inquisitors as `blocked` instead when the plurality of the latest stage with counted
  * votes, the current one if it has any, is Blocked.
  */
 export async function escalateExpired(
@@ -1133,7 +1135,7 @@ export async function escalateExpired(
     const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0, rerated: 0 };
     if (due.length === 0) return counts;
 
-    const onPrivatePost = new Set(
+    const onHiddenPost = new Set(
       (
         await trx
           .selectFrom('Image as img')
@@ -1144,7 +1146,7 @@ export async function escalateExpired(
             'in',
             due.map((item) => item.imageId)
           )
-          .where((eb) => eb.not(postNotPrivate(eb)))
+          .where((eb) => eb.not(postShownToKnights(eb)))
           .execute()
       ).map((row) => row.id)
     );
@@ -1171,15 +1173,15 @@ export async function escalateExpired(
 
     // Kept apart from `counted`, which `extend` and `expire` read as votes at the current stage.
     const latestStageVotes = new Map<number, WeightedAnswer[]>();
-    const unvotedPrivate = due
-      .filter((item) => onPrivatePost.has(item.imageId) && !counted.has(item.id))
+    const unvotedHidden = due
+      .filter((item) => onHiddenPost.has(item.imageId) && !counted.has(item.id))
       .map((item) => item.id);
-    if (unvotedPrivate.length > 0) {
+    if (unvotedHidden.length > 0) {
       const earlier = await trx
         .selectFrom('KnightsVote')
         .select(['itemId', 'stage', 'answer', 'weight'])
         .where('weight', '>', 0)
-        .where('itemId', 'in', unvotedPrivate)
+        .where('itemId', 'in', unvotedHidden)
         .execute();
       const latestStage = new Map<number, string>();
       for (const { itemId, stage } of earlier) {
@@ -1193,9 +1195,9 @@ export async function escalateExpired(
       }
     }
 
-    // A Private post's Blocked plurality, from the latest stage with counted votes, goes to the Inquisitors.
+    // A hidden post's Blocked plurality, from the latest stage with counted votes, goes to the Inquisitors.
     const routed = due.filter((item) => {
-      if (!onPrivatePost.has(item.imageId)) return false;
+      if (!onHiddenPost.has(item.imageId)) return false;
       const votes = counted.get(item.id) ?? latestStageVotes.get(item.id) ?? [];
       return votes.length > 0 && isBlockedLevel(Number(mostVotedLevel(votes)));
     });
@@ -1338,79 +1340,83 @@ export async function closeUnservableItems(
   const closedOpen: MovedItem[] = [];
   const result = await db.transaction().execute(async (trx) => {
     // Primary-key lookups into Image and Post from the open and Inquisitor items: never a scan of either table.
-    const due = await trx
-      .selectFrom('KnightsQueueItem as i')
-      .leftJoin('Image as img', 'img.id', 'i.imageId')
-      .leftJoin('Post as p', 'p.id', 'img.postId')
-      .select([
-        'i.id',
-        'i.status',
-        'i.minRank',
-        sql<boolean>`"p"."id" IS NULL`.as('gone'),
-        sql<boolean>`"p"."id" IS NOT NULL AND "p"."publishedAt" IS NULL`.as('draft'),
-        sql<boolean>`"p"."publishedAt" IS NOT NULL AND "p"."publishedAt" <= ${utc(now)}`.as('live'),
-      ])
-      // Narrows to the status index before the per-reason rules below.
-      .where('i.status', 'in', ['Open', 'Inquisitor', 'Ruling'])
-      .where('i.isHiddenCheck', '=', false)
-      .where('i.audience', 'is', null)
-      .where((eb) =>
-        eb.or([
-          // Also true when the image is gone: the Post join then has nothing to match.
-          eb.and([eb('i.status', '=', 'Open'), eb('p.id', 'is', null)]),
-          // Only the image row: an evidence hold keeps an image with its post deleted, and a moderator can still rule on it.
-          eb.and([
-            eb('img.id', 'is', null),
-            eb.or([
-              eb('i.status', '=', 'Inquisitor'),
-              // The moderator app's claim (`RULING_LEASE_MS`): a lapsed lease is free to reclaim, a live one is a ruling in progress.
-              eb.and([
-                eb('i.status', '=', 'Ruling'),
-                eb.or([eb('i.nextAttemptAt', 'is', null), eb('i.nextAttemptAt', '<=', utc(now))]),
+    const due = await readWithoutJit(trx, (trx) =>
+      trx
+        .selectFrom('KnightsQueueItem as i')
+        .leftJoin('Image as img', 'img.id', 'i.imageId')
+        .leftJoin('Post as p', 'p.id', 'img.postId')
+        .select([
+          'i.id',
+          'i.status',
+          'i.minRank',
+          sql<boolean>`"p"."id" IS NULL`.as('gone'),
+          sql<boolean>`"p"."id" IS NOT NULL AND "p"."publishedAt" IS NULL`.as('draft'),
+          sql<boolean>`"p"."publishedAt" IS NOT NULL AND "p"."publishedAt" <= ${utc(now)}`.as(
+            'live'
+          ),
+        ])
+        // Narrows to the status index before the per-reason rules below.
+        .where('i.status', 'in', ['Open', 'Inquisitor', 'Ruling'])
+        .where('i.isHiddenCheck', '=', false)
+        .where('i.audience', 'is', null)
+        .where((eb) =>
+          eb.or([
+            // Also true when the image is gone: the Post join then has nothing to match.
+            eb.and([eb('i.status', '=', 'Open'), eb('p.id', 'is', null)]),
+            // Only the image row: an evidence hold keeps an image with its post deleted, and a moderator can still rule on it.
+            eb.and([
+              eb('img.id', 'is', null),
+              eb.or([
+                eb('i.status', '=', 'Inquisitor'),
+                // The moderator app's claim (`RULING_LEASE_MS`): a lapsed lease is free to reclaim, a live one is a ruling in progress.
+                eb.and([
+                  eb('i.status', '=', 'Ruling'),
+                  eb.or([eb('i.nextAttemptAt', 'is', null), eb('i.nextAttemptAt', '<=', utc(now))]),
+                ]),
               ]),
             ]),
-          ]),
-          eb.and([
-            eb('i.status', '=', 'Open'),
-            eb('p.publishedAt', 'is not', null),
-            eb('p.publishedAt', '<=', utc(now)),
-            // A scan still to land (or a rescan) may yet make it servable: an owner rating can be queued before it.
-            eb('img.ingestion', 'in', ['Scanned', 'Blocked']),
-            eb.not(servableImageContent(eb)),
-            eb.not(moderatorRuledImageSql(eb)),
-          ]),
-          eb.and([
-            eb('i.status', '=', 'Open'),
-            eb('i.source', '=', SCAN_SAMPLE_SOURCE),
-            eb('p.id', 'is not', null),
-            eb('p.publishedAt', 'is', null),
-            eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),
-          ]),
-          eb.and([
-            eb('i.status', '=', 'Open'),
-            eb('i.minRank', '=', 'Knight'),
-            eb('i.escalatedAt', 'is', null),
-            eb('i.expiresAt', 'is not', null),
-            eb('p.publishedAt', '>', latestStageEndSql),
-            // The vote `escalateExpired` counts: one at the item's stage with weight.
-            eb.not(
-              eb.exists(
-                eb
-                  .selectFrom('KnightsVote as v')
-                  .select(sql`1`.as('one'))
-                  .whereRef('v.itemId', '=', 'i.id')
-                  .whereRef('v.stage', '=', 'i.minRank')
-                  .where('v.weight', '>', 0)
-              )
-            ),
-          ]),
-        ])
-      )
-      .orderBy('i.id', 'asc')
-      .limit(limit)
-      .forUpdate('i')
-      .skipLocked()
-      .execute();
+            eb.and([
+              eb('i.status', '=', 'Open'),
+              eb('p.publishedAt', 'is not', null),
+              eb('p.publishedAt', '<=', utc(now)),
+              // A scan still to land (or a rescan) may yet make it servable: an owner rating can be queued before it.
+              eb('img.ingestion', 'in', ['Scanned', 'Blocked']),
+              eb.not(servableImageContent(eb)),
+              eb.not(moderatorRuledImageSql(eb)),
+            ]),
+            eb.and([
+              eb('i.status', '=', 'Open'),
+              eb('i.source', '=', SCAN_SAMPLE_SOURCE),
+              eb('p.id', 'is not', null),
+              eb('p.publishedAt', 'is', null),
+              eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),
+            ]),
+            eb.and([
+              eb('i.status', '=', 'Open'),
+              eb('i.minRank', '=', 'Knight'),
+              eb('i.escalatedAt', 'is', null),
+              eb('i.expiresAt', 'is not', null),
+              eb('p.publishedAt', '>', latestStageEndSql),
+              // The vote `escalateExpired` counts: one at the item's stage with weight.
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom('KnightsVote as v')
+                    .select(sql`1`.as('one'))
+                    .whereRef('v.itemId', '=', 'i.id')
+                    .whereRef('v.stage', '=', 'i.minRank')
+                    .where('v.weight', '>', 0)
+                )
+              ),
+            ]),
+          ])
+        )
+        .orderBy('i.id', 'asc')
+        .limit(limit)
+        .forUpdate('i')
+        .skipLocked()
+        .execute()
+    );
 
     const gone = due.filter((item) => item.gone).map((item) => item.id);
     const drafts = due.filter((item) => item.draft).map((item) => item.id);

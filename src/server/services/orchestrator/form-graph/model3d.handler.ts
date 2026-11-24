@@ -8,7 +8,6 @@
  */
 
 import type {
-  Hunyuan3dImageTo3dComfyPolyGenInput,
   MeshyImageTo3dFalPolyGenInput,
   MeshyTextTo3dFalPolyGenInput,
   MeshyV7ImageTo3dFalPolyGenInput,
@@ -37,10 +36,6 @@ import {
   toTripoPolyGenInput,
   type TripoGenerationSchema,
 } from '~/server/orchestrator/tripo/tripo.schema';
-import {
-  toHunyuan3dPolyGenInput,
-  type Hunyuan3dGenerationSchema,
-} from '~/server/orchestrator/hunyuan3d/hunyuan3d.schema';
 import {
   toPixal3dPolyGenInput,
   type Pixal3dGenerationSchema,
@@ -167,22 +162,6 @@ function toTripoH31Input(data: TripoData): TripoH31Input {
     imageUrl: imageUrls[0],
   });
 }
-
-export const createHunyuan3dInput = defineHandler<EcosystemData<'Hunyuan3D'>, StepInput[]>(
-  (data, ctx) => {
-    const { images, prompt, version, ...rest } = data;
-
-    const input = toHunyuan3dPolyGenInput({
-      ...rest,
-      ...(images?.[0] ? { sourceImage: images[0] } : {}),
-      // empty prompt ⇒ omit (Hunyuan3D treats the prompt as an optional hint)
-      prompt: prompt ? prompt : undefined,
-      modelVersion: version,
-    } as unknown as Hunyuan3dGenerationSchema) as Hunyuan3dImageTo3dComfyPolyGenInput;
-
-    return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
-  }
-);
 
 export const createPixal3dInput = defineHandler<EcosystemData<'Pixal3D'>, StepInput[]>(
   (data, ctx) => {

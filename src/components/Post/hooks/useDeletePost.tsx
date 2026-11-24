@@ -1,6 +1,5 @@
 import { Text } from '@mantine/core';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
@@ -24,26 +23,23 @@ export function useDeletePost() {
   });
 
   return function ({ postId, imageCount }: { postId: number; imageCount?: number }) {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete Post',
-        message: (
-          <Text>
-            {imageCount === undefined
-              ? 'Delete this post and its images?'
-              : `Delete this post and its ${imageCount} ${
-                  imageCount === 1 ? 'image' : 'images'
-                }?`}{' '}
-            This can&apos;t be undone.
-          </Text>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Delete Post' },
-        confirmProps: { color: 'red' },
-        // onError already notifies; swallowing the rejection lets the dialog close instead of
-        // sticking on its spinner.
-        onConfirm: () => deletePostMutation.mutateAsync({ id: postId }).catch(() => undefined),
-      },
+    openConfirm({
+      title: 'Delete Post',
+      message: (
+        <Text>
+          {imageCount === undefined
+            ? 'Delete this post and its images?'
+            : `Delete this post and its ${imageCount} ${
+                imageCount === 1 ? 'image' : 'images'
+              }?`}{' '}
+          This can&apos;t be undone.
+        </Text>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Delete Post' },
+      confirmProps: { color: 'red' },
+      // onError already notifies; swallowing the rejection lets the dialog close instead of
+      // sticking on its spinner.
+      onConfirm: () => deletePostMutation.mutateAsync({ id: postId }).catch(() => undefined),
     });
   };
 }

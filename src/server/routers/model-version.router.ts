@@ -97,6 +97,9 @@ const versionFileUrlsForOwner = ownerOnlyFileUrls<
     return {
       ...data,
       files: isModelDeletedOrTakenDown(data.model) ? withoutEpochUrls(files) : files,
+      offDomainTrainingData: isModelDeletedOrTakenDown(data.model)
+        ? null
+        : view.offDomain(data.files),
     };
   },
   forOwner: (data) => {

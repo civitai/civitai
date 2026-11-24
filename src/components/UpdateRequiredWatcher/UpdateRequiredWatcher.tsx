@@ -1,13 +1,8 @@
 import { useEffect } from 'react';
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { noteSiteAlertsVersion } from '~/components/SiteAlerts/site-alerts-version.store';
 import { GENERATION_UPDATE_HEADER } from '~/shared/constants/generation.constants';
 import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
-
-const UpdateRequiredModal = dynamic(
-  () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal')
-);
 
 let originalFetch: typeof window.fetch | undefined;
 
@@ -111,14 +106,14 @@ export function createUpdateAwareFetch(
       const genVersion = response.headers.get(GENERATION_UPDATE_HEADER);
       if (genVersion && genVersion !== generationWarnedVersion) {
         const notes = response.headers.get('x-generation-update-notes');
-        dialogStore.trigger({
-          id: 'update-required-modal',
-          component: UpdateRequiredModal,
-          props: {
+        openDialog(
+          () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal'),
+          {
             title: 'Generator Update Available',
             description: notes || 'Please refresh to get the latest generator updates.',
           },
-        });
+          { id: 'update-required-modal' }
+        );
         generationWarnedVersion = genVersion;
       }
 
@@ -129,7 +124,11 @@ export function createUpdateAwareFetch(
         !generationWarnedVersion &&
         claimUpdatePrompt()
       ) {
-        dialogStore.trigger({ id: 'update-required-modal', component: UpdateRequiredModal });
+        openDialog(
+          () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal'),
+          undefined,
+          { id: 'update-required-modal' }
+        );
         warned = true;
       }
 

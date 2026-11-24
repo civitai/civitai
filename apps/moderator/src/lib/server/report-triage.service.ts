@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
+import { isReviewImageSql } from './review-image';
 
 // The suspect's own content, for reviewing a report against an account without leaving the queue
 // (Retool's TOSImages + GetImageCount).
@@ -27,6 +28,8 @@ export type SuspectImage = {
   negativePrompt: string | null;
   isProfilePicture: boolean;
   hasConnection: boolean;
+  /** On a service review (`BulkImage.isReviewImage`). */
+  isReviewImage: boolean;
 };
 
 /** Retool's "Images" and "Remaining" queue columns: `remaining` is what a colleague has not already
@@ -145,6 +148,7 @@ export async function getSuspectImages(
         sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = "Image"."id")`.as(
           'hasConnection'
         ),
+        isReviewImageSql(sql.ref('Image.id')).as('isReviewImage'),
       ])
       .orderBy('id', 'desc')
       .limit(limit)

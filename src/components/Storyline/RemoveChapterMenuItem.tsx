@@ -1,8 +1,8 @@
 import { Text } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import { IconTrash } from '@tabler/icons-react';
 import { useRemoveStorylineChapter } from '~/components/Storyline/storyline.data';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /**
  * Who is offered the removal, chapter 1 included so they are told why it can't go; the server
@@ -48,9 +48,9 @@ export function RemoveChapterMenuItem({
   const remove = useRemoveStorylineChapter({ onSuccess: onRemoved });
 
   const confirmRemove = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Remove chapter',
-      children: (
+      message: (
         <Text size="sm">
           Remove <strong>{title}</strong> from the storyline? Its post stays published on its own.
           {byAuthor && ' If you paid to add it, that Buzz is not returned.'}

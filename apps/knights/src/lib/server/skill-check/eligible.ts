@@ -344,19 +344,3 @@ export async function failClosed<T>(
     return failed(error);
   }
 }
-
-/**
- * Runs a read over many reviews or items with JIT off. The planner prices the exclusions' correlated subqueries far above
- * what they cost, so on a server with JIT on it spends seconds compiling a plan that runs in a fraction of one. Inside a
- * transaction the setting holds until that transaction ends.
- */
-export async function withoutJit<T>(db: Executor, read: (db: Executor) => Promise<T>): Promise<T> {
-  if (db.isTransaction) {
-    await sql`SET LOCAL jit = off`.execute(db);
-    return read(db);
-  }
-  return db.transaction().execute(async (trx) => {
-    await sql`SET LOCAL jit = off`.execute(trx);
-    return read(trx);
-  });
-}

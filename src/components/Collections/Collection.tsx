@@ -27,7 +27,6 @@ import {
   IconPhoto,
 } from '@tabler/icons-react';
 import { capitalize, truncate } from 'lodash-es';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import type { CSSProperties } from 'react';
@@ -68,7 +67,7 @@ import { CollectionCollaboratorsSummary } from '~/components/Collections/Collect
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
@@ -127,10 +126,6 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import classes from './Collection.module.scss';
 import { isViewer } from '~/utils/is-viewer';
-
-const AddUserContentModal = dynamic(() =>
-  import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
-);
 
 const ModelCollection = ({
   collection,
@@ -864,12 +859,14 @@ export function Collection({
                                     ) {
                                       router.push(`/posts/create?collectionId=${collection.id}`);
                                     } else {
-                                      dialogStore.trigger({
-                                        component: AddUserContentModal,
-                                        props: {
+                                      openDialog(
+                                        () =>
+                                          import('~/components/Collections/AddUserContentModal'),
+                                        'AddUserContentModal',
+                                        {
                                           collectionId: collection.id,
-                                        },
-                                      });
+                                        }
+                                      );
                                     }
                                   }}
                                 >
@@ -899,10 +896,11 @@ export function Collection({
                                   ) {
                                     router.push(`/posts/create?collectionId=${collection.id}`);
                                   } else {
-                                    dialogStore.trigger({
-                                      component: AddUserContentModal,
-                                      props: { collectionId: collection.id },
-                                    });
+                                    openDialog(
+                                      () => import('~/components/Collections/AddUserContentModal'),
+                                      'AddUserContentModal',
+                                      { collectionId: collection.id }
+                                    );
                                   }
                                 }}
                               >
@@ -923,12 +921,14 @@ export function Collection({
                                     if (!!metadata.existingEntriesDisabled) {
                                       router.push(`/posts/create?collectionId=${collection.id}`);
                                     } else {
-                                      dialogStore.trigger({
-                                        component: AddUserContentModal,
-                                        props: {
+                                      openDialog(
+                                        () =>
+                                          import('~/components/Collections/AddUserContentModal'),
+                                        'AddUserContentModal',
+                                        {
                                           collectionId: collection.id,
-                                        },
-                                      });
+                                        }
+                                      );
                                     }
                                   }}
                                 >

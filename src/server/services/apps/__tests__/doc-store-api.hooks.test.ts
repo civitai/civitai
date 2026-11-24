@@ -176,6 +176,7 @@ type HookIn = {
   viewer: { userId: number };
   app: { blockId: string };
   from: string | null;
+  parent?: string | null;
 };
 type HookOut = { allow: true } | { allow: false; reason: string } | { throws: true };
 
@@ -1809,3 +1810,106 @@ describe('publish, unpublish, unchanged writes and content levels on a hooked co
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Viewer-keyed collections (docs/app-storage-generic-core.md): the hook sees the derived key and,
+// in one additive field, the parent; on both runners, so the real runner's strict input schema
+// is part of the seam.
+// ---------------------------------------------------------------------------
+
+const VK_SECRET = 'viewer-keyed-hooks-secret-9d41c07b3a';
+const VK_OPEN_FLAG = 'app-blocks-storage-viewer-keyed-open';
+const VK_MANIFEST = {
+  scopes: SCOPES,
+  storage: {
+    collections: {
+      votes: {
+        visibility: 'shared',
+        write: 'own',
+        keyedBy: 'parent+viewer',
+        hook: hookOf(CARDS_SHA),
+      },
+      likes: { visibility: 'shared', write: 'own', keyedBy: 'viewer', hook: hookOf(CARDS_SHA) },
+    },
+  },
+};
+
+describe.each(['stub', 'real'] as const)(
+  'viewer-keyed writes call the hook (%s runner)',
+  (kind) => {
+    let runner: Runner;
+    beforeAll(async () => {
+      runner = kind === 'stub' ? await startStubRunner() : await startRealRunner();
+    });
+    afterAll(async () => {
+      await runner?.close();
+    });
+    useRunner(() => runner);
+    beforeEach(() => {
+      setEnv({ APP_STORAGE_VIEWER_KEY_SECRET: VK_SECRET });
+      h.flagsOn.add(VK_OPEN_FLAG);
+    });
+    afterEach(() => setEnv({ APP_STORAGE_VIEWER_KEY_SECRET: undefined }));
+
+    it('🔴 put and delete at the derived key carry `parent`; keyedBy viewer carries null', async () => {
+      seq += 1;
+      const A = appRow('vk', VK_MANIFEST);
+      const token = await mint(A, V1);
+      const put = await call({
+        token,
+        method: 'PUT',
+        path: '/votes/@me/rec-7',
+        body: { data: { title: 'up' } },
+      });
+      expect(put.status, JSON.stringify(put.body)).toBe(200);
+      const key = put.body.key as string;
+      expect(key.startsWith('rec-7:')).toBe(true);
+      const del = await call({ token, method: 'DELETE', path: '/votes/@me/rec-7' });
+      expect(del.status, JSON.stringify(del.body)).toBe(200);
+      const like = await call({
+        token,
+        method: 'PUT',
+        path: '/likes/@me',
+        body: { data: { title: 'on' } },
+      });
+      expect(like.status, JSON.stringify(like.body)).toBe(200);
+      expect(
+        runner.seen.map((x) => [x.input.op, x.input.collection, x.input.key, x.input.parent])
+      ).toEqual([
+        ['put', 'votes', key, 'rec-7'],
+        ['delete', 'votes', key, 'rec-7'],
+        ['put', 'likes', like.body.key, null],
+      ]);
+    });
+
+    it('a hook refusal of a @me write lands nothing', async () => {
+      seq += 1;
+      const A = appRow('vk', VK_MANIFEST);
+      const token = await mint(A, V1);
+      const r = await call({
+        token,
+        method: 'PUT',
+        path: '/votes/@me/rec-8',
+        body: { data: { title: 'DENY this vote' } },
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(403);
+      expect(r.body).toMatchObject({ code: 'hook_rejected' });
+      const after = await call({ token, method: 'GET', path: '/votes/@me/rec-8' });
+      expect(after.status).toBe(404);
+    });
+
+    it('a collection without keyedBy sends no `parent` at all', async () => {
+      const { P } = freshApps();
+      const token = await mint(P, V1);
+      const c = await call({
+        token,
+        method: 'POST',
+        path: '/cards',
+        body: { data: { title: 'c' } },
+      });
+      expect(c.status, JSON.stringify(c.body)).toBe(201);
+      expect(runner.seen).toHaveLength(1);
+      expect(Object.keys(runner.seen[0].input)).not.toContain('parent');
+    });
+  }
+);

@@ -53,11 +53,13 @@ vi.mock('~/server/utils/rate-limit-bucket', async (importOriginal) => {
     }: {
       keyName: string;
       user: { id: number };
-      rules: { limit: number; period: number }[];
+      rules: { usageLimitIds: readonly string[] };
     }) => {
+      // The routes charge the registry's `apps.sleeping-reads` (60 an hour by default).
+      if (rules.usageLimitIds.join() !== 'apps.sleeping-reads') throw new Error('wrong limit');
       const key = `${keyName}:${user.id}`;
       const n = (m.calls.get(key) ?? 0) + 1;
-      if (n > Math.min(m.limitAt, rules[0]!.limit))
+      if (n > Math.min(m.limitAt, 60))
         throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'slow down' });
       return async () => void m.calls.set(key, n);
     },

@@ -1,4 +1,12 @@
+import { TRPCError } from '@trpc/server';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  appRateLimitBody,
+  appRateLimitMeta,
+  rateLimitedTrpcError,
+} from '~/server/utils/app-rate-limit';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import { isAppBlocksDevTunnelEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import type { SessionUser } from '~/types/session';
@@ -18,7 +26,10 @@ import type { SessionUser } from '~/types/session';
  */
 
 export type DevTunnelRefusalCode = 'FORBIDDEN' | 'NOT_FOUND' | 'TOO_MANY_REQUESTS';
-export type DevTunnelRefusal = { code: DevTunnelRefusalCode; error: string };
+/** A rate-limited refusal always carries its `rateLimit` meta. */
+export type DevTunnelRefusal =
+  | { code: 'FORBIDDEN' | 'NOT_FOUND'; error: string }
+  | { code: 'TOO_MANY_REQUESTS'; error: string; rateLimit: RateLimitMeta };
 
 /** The HTTP status of each refusal code, for the routes that answer a refusal over HTTP. */
 export const DEV_TUNNEL_REFUSAL_STATUS: Record<DevTunnelRefusalCode, number> = {
@@ -28,6 +39,32 @@ export const DEV_TUNNEL_REFUSAL_STATUS: Record<DevTunnelRefusalCode, number> = {
 };
 
 export const DEV_TUNNELS_UNAVAILABLE = 'Dev tunnels are not available';
+
+/** A refusal as the HTTP routes answer it: its status, body and, when limited, `Retry-After`. */
+export function devTunnelRefusalAnswer(refusal: DevTunnelRefusal): {
+  status: number;
+  json: Record<string, unknown>;
+  retryAfterSeconds?: number;
+} {
+  const status = DEV_TUNNEL_REFUSAL_STATUS[refusal.code];
+  if (refusal.code !== 'TOO_MANY_REQUESTS') {
+    return { status, json: { error: refusal.error, code: refusal.code } };
+  }
+  return {
+    status,
+    // `code` stays the refusal code these routes always sent.
+    json: { ...appRateLimitBody(refusal.rateLimit, refusal.error), code: refusal.code },
+    retryAfterSeconds: refusal.rateLimit.retryAfterSeconds,
+  };
+}
+
+/** A refusal as the tRPC error `blocks.startDevTunnel` answers with. */
+export function devTunnelRefusalError(refusal: DevTunnelRefusal): TRPCError {
+  if (refusal.code === 'TOO_MANY_REQUESTS') {
+    return rateLimitedTrpcError(refusal.rateLimit, refusal.error);
+  }
+  return new TRPCError({ code: refusal.code, message: refusal.error });
+}
 
 /** The `app-blocks-dev-tunnel` kill switch, for this user. Fail-closed (see the flag's docblock). */
 export async function getDevTunnelFlagRefusal(user: SessionUser): Promise<DevTunnelRefusal | null> {
@@ -40,7 +77,9 @@ export async function getDevTunnelFlagRefusal(user: SessionUser): Promise<DevTun
 // author can trigger — blunts host-pool enumeration / DoS across many unclaimed
 // slugs. Applies ONLY to the ephemeral branch; the approved/owned path never
 // increments this counter. ONE counter per user, whichever caller starts the tunnel.
-export const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { max: 20, windowSeconds: 3600 } as const;
+// The window; the limit is the registry's `apps.dev-tunnel-starts`, resolved per user (code
+// default 20).
+export const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { windowSeconds: 3600 } as const;
 
 /**
  * Atomically counts one ephemeral dev-tunnel start against this user's fixed
@@ -50,27 +89,37 @@ export const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { max: 20, windowSeconds: 3600 } 
  * start is not latency-critical, and failing closed here can never block the
  * approved/owned path (which does not call this).
  */
-async function checkEphemeralDevTunnelRateLimit(userId: number): Promise<boolean> {
+async function checkEphemeralDevTunnelRateLimit(
+  userId: number
+): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
   const key = `${REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL_EPHEMERAL_RATE_LIMIT}:${userId}` as const;
+  const { windowSeconds } = EPHEMERAL_DEV_TUNNEL_RATE_LIMIT;
+  const max = await resolveUserAppLimit('apps.dev-tunnel-starts', userId);
   try {
     const count = await sysRedis.incrBy(key, 1);
     if (count === 1) {
-      await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
+      await sysRedis.expire(key, windowSeconds);
     } else {
       const ttl = await sysRedis.ttl(key);
-      if (ttl < 0) await sysRedis.expire(key, EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.windowSeconds);
+      if (ttl < 0) await sysRedis.expire(key, windowSeconds);
     }
-    return count <= EPHEMERAL_DEV_TUNNEL_RATE_LIMIT.max;
+    if (count <= max) return { allowed: true };
+    const ttl = await sysRedis.ttl(key).catch(() => windowSeconds);
+    return { allowed: false, retryAfterSeconds: ttl > 0 ? ttl : windowSeconds };
   } catch {
-    // Fail closed — never silently bypass the ephemeral enumeration limiter.
-    return false;
+    // Fail closed — never silently bypass the ephemeral enumeration limiter. The store is down,
+    // not the window spent, so the retry asked for is a short one.
+    return { allowed: false, retryAfterSeconds: 60 };
   }
 }
 
-const TOO_MANY_STARTS: DevTunnelRefusal = {
-  code: 'TOO_MANY_REQUESTS',
-  error: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
-};
+function tooManyStarts(retryAfterSeconds: number): DevTunnelRefusal {
+  return {
+    code: 'TOO_MANY_REQUESTS',
+    error: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
+    rateLimit: appRateLimitMeta('apps.dev-tunnel-starts', retryAfterSeconds),
+  };
+}
 
 /**
  * Counts one start against the hourly limit when the app is unsubmitted (`ephemeral`, as
@@ -83,7 +132,8 @@ export async function claimDevTunnelStart(
   ephemeral: boolean
 ): Promise<DevTunnelRefusal | null> {
   if (!ephemeral) return null;
-  return (await checkEphemeralDevTunnelRateLimit(userId)) ? null : TOO_MANY_STARTS;
+  const rate = await checkEphemeralDevTunnelRateLimit(userId);
+  return rate.allowed ? null : tooManyStarts(rate.retryAfterSeconds);
 }
 
 /**
@@ -127,8 +177,9 @@ export async function authorizeDevTunnelStart(
   // that trusted cohort, and it exposes nothing an exhausted-budget probe
   // couldn't already infer.
   const ephemeral = app.status === 'ephemeral';
-  if (countStart && ephemeral && !(await checkEphemeralDevTunnelRateLimit(user.id))) {
-    return { ok: false, refusal: TOO_MANY_STARTS };
+  if (countStart && ephemeral) {
+    const rate = await checkEphemeralDevTunnelRateLimit(user.id);
+    if (!rate.allowed) return { ok: false, refusal: tooManyStarts(rate.retryAfterSeconds) };
   }
   return { ok: true, blockId: app.blockId, ephemeral };
 }

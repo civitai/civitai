@@ -1,5 +1,10 @@
 import { sql, type Transaction } from 'kysely';
-import { REFERENCE_POOL, REFERENCE_SOURCE, REFERENCE_STATUS } from '@civitai/db/knights';
+import {
+  readWithoutJit,
+  REFERENCE_POOL,
+  REFERENCE_SOURCE,
+  REFERENCE_STATUS,
+} from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
@@ -64,13 +69,15 @@ export async function addSkillCheck(
     trx,
     'pool-insert',
     async () =>
-      (await trx
-        .selectFrom('Image as img')
-        .innerJoin('Post as p', 'p.id', 'img.postId')
-        .select('img.id')
-        .where('img.id', '=', imageId)
-        .where(skillCheckEligible)
-        .executeTakeFirst())
+      (await readWithoutJit(trx, (q) =>
+        q
+          .selectFrom('Image as img')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select('img.id')
+          .where('img.id', '=', imageId)
+          .where(skillCheckEligible)
+          .executeTakeFirst()
+      ))
         ? ('eligible' as const)
         : ('ineligible' as const),
     'unreadable' as const

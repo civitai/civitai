@@ -339,7 +339,7 @@ export async function getUsersWithSearch({
       searchClient!.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
         limit: Math.round(limit * 1.5),
         filter: filters.join(' AND '),
-        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture'],
       })
     );
   } catch (err) {
@@ -370,15 +370,17 @@ export async function getUsersWithSearch({
     throw err;
   }
 
-  return results.hits
-    .filter((x) => !x.deletedAt)
-    .map(({ deletedAt, profilePicture, image, ...user }) => ({
-      ...user,
-      avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
-      meta: null,
-    }))
-    .slice(0, limit);
+  return (
+    results.hits
+      .filter((x) => !x.deletedAt)
+      .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
+        ...user,
+        avatarUrl: profilePicture?.url,
+        avatarNsfw: profilePicture?.nsfwLevel ?? 0,
+        meta: null,
+      }))
+      .slice(0, limit)
+  );
 }
 
 type GetUsersRow = {
@@ -3783,6 +3785,10 @@ export const toggleBookmarkedArticle = async ({
 // TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
 //   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
 //   these maps (see toggleBookmarked below).
+const likedModelsCollection = {
+  name: 'Liked Models',
+  description: 'Your liked models will appear in this collection.',
+};
 const collectionEntityProps: Partial<Record<CollectionType, string>> = {
   [CollectionType.Article]: 'articleId',
   [CollectionType.Model]: 'modelId',
@@ -3831,8 +3837,12 @@ export const toggleBookmarked = async ({
             userId,
             type,
             mode: CollectionMode.Bookmark,
-            name: `Bookmarked ${type}`,
-            description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+            ...(type === CollectionType.Model
+              ? likedModelsCollection
+              : {
+                  name: `Bookmarked ${type}`,
+                  description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+                }),
           },
         })
         .catch((e) => {
@@ -4305,8 +4315,7 @@ export const getUserBookmarkCollections = async ({ userId }: { userId: number })
         userId,
         type: CollectionType.Model,
         mode: CollectionMode.Bookmark,
-        name: 'Liked Models',
-        description: 'Your liked models will appear in this collection.',
+        ...likedModelsCollection,
       },
     });
 

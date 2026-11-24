@@ -1,17 +1,21 @@
 import { Menu } from '~/components/MantineOverlays';
 import { IconConfetti } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
+import type { ComponentProps } from 'react';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import type EventHatPickerModal from '~/components/Decorations/EventHatPickerModal';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
 import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 import type { EventDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { trpc } from '~/utils/trpc';
 
-const EventHatPickerModal = dynamic(() => import('~/components/Decorations/EventHatPickerModal'), {
-  ssr: false,
-});
-export const openEventHatPicker = createDialogTrigger(EventHatPickerModal);
+export function openEventHatPicker({
+  props,
+}: {
+  props: ComponentProps<typeof EventHatPickerModal>;
+}) {
+  openDialog(() => import('~/components/Decorations/EventHatPickerModal'), props);
+}
 
 /**
  * Puts on or takes off this entity's event decoration (a party hat during the birthday event).
