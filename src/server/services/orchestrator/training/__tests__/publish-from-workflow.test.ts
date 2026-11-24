@@ -411,11 +411,13 @@ describe('createDraftModelFromWorkflow', () => {
     });
 
     it('follows the newest draft when a restored one and its replacement both exist', async () => {
+      // Newest in the middle, so neither the first nor the last row passes for it.
       draftsAre([
         { id: 77, status: ModelStatus.Draft, deletedBy: null },
+        { id: 95, status: ModelStatus.Draft, deletedBy: null },
         { id: 90, status: ModelStatus.Draft, deletedBy: null },
       ]);
-      expect((await publish()).modelId).toBe(90);
+      expect((await publish()).modelId).toBe(95);
     });
   });
 
