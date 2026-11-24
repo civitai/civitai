@@ -9,6 +9,10 @@ import {
   removalReasonLabel,
   type AppealFilter,
   type AppealSort,
+  type HeldFilter,
+  type HeldKind,
+  type HeldSongRow,
+  type HeldSort,
   type ReportedFilter,
   type SongAppealRow,
   type ReportedSongRow,
@@ -17,7 +21,12 @@ import {
   type SongReport,
 } from '$lib/audio-review';
 import { reportDetail, reportReasonLabel } from '$lib/reports';
-import { pendingSongReports, songAppealImages } from './audio-review-count';
+import {
+  flaggedCoverText,
+  flaggedSongsText,
+  pendingSongReports,
+  songAppealImages,
+} from './audio-review-count';
 import { dbRead } from './db';
 import { getAppealImageQueue, ruleBlockedSql } from './image-review.service';
 import { visibleSongLinks } from './song-links.service';
@@ -573,4 +582,237 @@ export async function isSongAppeal(imageId: number): Promise<boolean> {
     .where('i.id', '=', imageId)
     .executeTakeFirst();
   return !!row;
+}
+
+/** What holds a song, before the access rule: its kind, since when, and the hold or flagged cover. */
+type HeldEntry = { id: number; kind: HeldKind; waitingSince: Date; holdId: number | null };
+
+/** Every held song, one entry each: a lyrics hold first, then the song's own flag, then its cover's. */
+async function heldEntries(): Promise<HeldEntry[]> {
+  const [holds, songs, covers] = await Promise.all([
+    dbRead
+      .selectFrom('TextScanHold as h')
+      .innerJoin('Image as s', 's.id', 'h.entityId')
+      .select([
+        'h.entityId as id',
+        sql<number>`min(h.id)`.as('holdId'),
+        sql<Date>`min(h."createdAt")`.as('waitingSince'),
+      ])
+      .where('h.entityType', '=', 'TrackLyrics')
+      .where('h.label', '=', 'csam')
+      .where(sql<boolean>`h.status = 'Pending'`)
+      .where('s.type', '=', 'audio')
+      .groupBy('h.entityId')
+      .execute(),
+    dbRead
+      .selectFrom('Image as s')
+      .select(['s.id', 's.createdAt as waitingSince'])
+      .where(sql<boolean>`${sql.raw(flaggedSongsText('s'))}`)
+      .execute(),
+    dbRead
+      .selectFrom('Track as t')
+      .innerJoin('Image as s', 's.id', 't.imageId')
+      .innerJoin('Image as c', 'c.id', 't.coverImageId')
+      .select(['s.id', 'c.createdAt as waitingSince'])
+      .where(sql<boolean>`${sql.raw(flaggedCoverText('c', 's'))}`)
+      .execute(),
+  ]);
+  const entries = new Map<number, HeldEntry>();
+  const add = (kind: HeldKind, rows: { id: number; waitingSince: Date; holdId?: number }[]) => {
+    for (const r of rows)
+      if (!entries.has(r.id))
+        entries.set(r.id, {
+          id: r.id,
+          kind,
+          waitingSince: new Date(r.waitingSince),
+          holdId: r.holdId ?? null,
+        });
+  };
+  add('lyrics', holds);
+  add('song', songs);
+  add('cover', covers);
+  return [...entries.values()];
+}
+
+/** A held row with nothing that shows or names its song: a lyrics hold for everyone here, and a
+ *  cover or song withheld from this moderator. */
+const withheldHeldRow = (entry: HeldEntry): HeldSongRow => ({
+  id: entry.id,
+  kind: entry.kind,
+  withheld: true,
+  holdId: entry.holdId,
+  waitingSince: entry.waitingSince,
+  title: null,
+  url: null,
+  coverUrl: null,
+  cover: null,
+  flag: null,
+  nsfwLevel: null,
+  owner: null,
+  removed: false,
+  removableCoverId: null,
+});
+
+/** The rows of these held entries, one each in their order. A lyrics row reads nothing of its song,
+ *  and a song gone since the entries were read carries nothing either. */
+async function heldRows(
+  entries: HeldEntry[],
+  user: App.Locals['user'] | undefined
+): Promise<HeldSongRow[]> {
+  const open = entries.filter((e) => e.kind !== 'lyrics');
+  const ids = open.map((e) => e.id);
+  const [songs, links] = ids.length
+    ? await Promise.all([
+        dbRead
+          .selectFrom('Image as s')
+          .innerJoin('User as owner', 'owner.id', 's.userId')
+          .leftJoin('Track as t', 't.imageId', 's.id')
+          .leftJoin('Image as c', 'c.id', 't.coverImageId')
+          .select([
+            's.id',
+            's.url',
+            's.nsfwLevel',
+            's.ingestion',
+            's.needsReview',
+            sql<string | null>`s.metadata->>'title'`.as('title'),
+            'owner.id as ownerId',
+            'owner.username as ownerUsername',
+            'c.id as coverId',
+            'c.url as coverFile',
+            'c.needsReview as coverFlag',
+            'c.nsfwLevel as coverNsfwLevel',
+            sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
+              playerSongCoverText('c')
+            )} THEN c.url END`.as('coverUrl'),
+          ])
+          .where('s.id', 'in', ids)
+          .execute(),
+        visibleSongLinks(ids, user),
+      ])
+    : [[], new Map()];
+  const byId = new Map(songs.map((s) => [s.id, s]));
+  // A cover row is withheld when its song or its flagged cover is: the detail shows both.
+  const checked = [
+    ...ids,
+    ...open.flatMap((e) => {
+      const coverId = e.kind === 'cover' ? byId.get(e.id)?.coverId : null;
+      return coverId != null ? [coverId] : [];
+    }),
+  ];
+  const withheld = new Set(checked.length ? await withheldImageIds(user, checked) : []);
+  return entries.map((entry): HeldSongRow => {
+    const song = entry.kind === 'lyrics' ? undefined : byId.get(entry.id);
+    if (!song) return withheldHeldRow(entry);
+    const flaggedCover =
+      entry.kind === 'cover' && song.coverId != null && song.coverFile && song.coverFlag
+        ? {
+            id: song.coverId,
+            url: song.coverFile,
+            flag: song.coverFlag,
+            nsfwLevel: song.coverNsfwLevel ?? 0,
+          }
+        : null;
+    if (withheld.has(entry.id) || (flaggedCover && withheld.has(flaggedCover.id)))
+      return withheldHeldRow(entry);
+    return {
+      ...withheldHeldRow(entry),
+      withheld: false,
+      title: song.title || null,
+      url: song.url,
+      coverUrl: song.coverId != null && withheld.has(song.coverId) ? null : song.coverUrl,
+      cover: flaggedCover,
+      flag: entry.kind === 'song' ? song.needsReview : null,
+      nsfwLevel: song.nsfwLevel,
+      owner: { id: song.ownerId, username: song.ownerUsername },
+      removed: song.ingestion === 'Blocked',
+      removableCoverId: links.get(entry.id)?.songCoverId ?? null,
+    };
+  });
+}
+
+/**
+ * One page of the Held tab: songs whose lyrics are under a CSAM text hold, songs whose own cover is
+ * flagged for review, and songs flagged themselves, one row per song. Filtered here like the other
+ * tabs, since a withheld row (every lyrics hold, and what the access rule withholds) matches only
+ * its exact id, never its title or owner.
+ */
+export async function getHeldSongs({
+  sort,
+  filter,
+  q,
+  page,
+  user,
+}: {
+  sort: HeldSort;
+  filter: HeldFilter;
+  q: string;
+  page: number;
+  user: App.Locals['user'] | undefined;
+}) {
+  const entries = (await heldEntries()).sort(
+    (a, b) => a.waitingSince.getTime() - b.waitingSince.getTime() || a.id - b.id
+  );
+  if (sort === 'newest') entries.reverse();
+  const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
+  // Text search reads the rows it may match: the open ones.
+  const rows = q && !asId?.success ? await heldRows(entries, user) : null;
+  const searched = !q
+    ? entries
+    : asId?.success
+    ? entries.filter((e) => e.id === asId.data)
+    : entries.filter((_, i) => {
+        const row = rows![i];
+        const term = q.toLowerCase();
+        return (
+          !row.withheld &&
+          (!!row.title?.toLowerCase().includes(term) ||
+            !!row.owner?.username?.toLowerCase().startsWith(term))
+        );
+      });
+  const facets = {
+    all: searched.length,
+    lyrics: searched.filter((e) => e.kind === 'lyrics').length,
+    cover: searched.filter((e) => e.kind === 'cover').length,
+    song: searched.filter((e) => e.kind === 'song').length,
+  };
+  const filtered = searched.filter((e) => filter === 'all' || e.kind === filter);
+  const offset = (page - 1) * PAGE_SIZE;
+  const pageEntries = filtered.slice(offset, offset + PAGE_SIZE);
+  const items = rows
+    ? pageEntries.map((e) => rows[entries.indexOf(e)])
+    : await heldRows(pageEntries, user);
+  return {
+    items,
+    hasMore: filtered.length > offset + PAGE_SIZE,
+    total: facets[filter],
+    facets,
+    offset,
+    pageSize: PAGE_SIZE,
+  };
+}
+
+/** Whether song `songId` is held for review itself, with `flag` still its flag (Approve song). */
+export async function isFlaggedSong(songId: number, flag: string): Promise<boolean> {
+  const row = await dbRead
+    .selectFrom('Image as s')
+    .select('s.id')
+    .where('s.id', '=', songId)
+    .where('s.needsReview', '=', flag)
+    .where(sql<boolean>`${sql.raw(flaggedSongsText('s'))}`)
+    .executeTakeFirst();
+  return !!row;
+}
+
+/** The song's own cover when it is flagged for review with `flag` (Approve cover), else null. */
+export async function flaggedCoverOf(songId: number, flag: string): Promise<number | null> {
+  const row = await dbRead
+    .selectFrom('Track as t')
+    .innerJoin('Image as s', 's.id', 't.imageId')
+    .innerJoin('Image as c', 'c.id', 't.coverImageId')
+    .select('c.id')
+    .where('s.id', '=', songId)
+    .where('c.needsReview', '=', flag)
+    .where(sql<boolean>`${sql.raw(flaggedCoverText('c', 's'))}`)
+    .executeTakeFirst();
+  return row?.id ?? null;
 }

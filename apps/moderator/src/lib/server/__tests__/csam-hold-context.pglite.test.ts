@@ -18,7 +18,15 @@ vi.mock('../buzz', () => ({ getBuzz: vi.fn() }));
 vi.mock('../notifications', () => ({ getNotifications: vi.fn() }));
 vi.mock('../moderator-db', () => ({ getModeratorDb: vi.fn() }));
 
-const { getHoldContexts } = await import('../../../routes/csam/text-holds/hold-context.server');
+const { getHoldContexts: readContexts } = await import(
+  '../../../routes/csam/text-holds/hold-context.server'
+);
+
+const noneWithheld = async () => [];
+const getHoldContexts = (
+  holds: Parameters<typeof readContexts>[0],
+  withheld: (imageIds: number[]) => Promise<number[]> = noneWithheld
+) => readContexts(holds, { withheld });
 
 let db: PGlite;
 
@@ -47,6 +55,7 @@ beforeEach(async () => {
       (1, 'avatar-key', 'image', 1, false), (2, 'cover-key', 'image', 4, false),
       (3, 'sfw-cover-key', 'image', 1, false), (4, 'img-parent', 'image', 2, true),
       (5, 'art-cover', 'image', 1, false);
+    INSERT INTO "Image" ("id","url","type","postId") VALUES (9, 'song-key', 'audio', 91);
     INSERT INTO "Image" ("id","url","type","postId","index") VALUES
       (6, 'post-clip', 'video', 90, 0), (7, 'post-still', 'image', 90, 1);
     INSERT INTO "Image" ("id","url","type","nsfwLevel","minor") VALUES (8, 'art-banner', 'image', 4, false);
@@ -112,7 +121,13 @@ describe('getHoldContexts: profiles', () => {
       hold(2, 'UserProfile', 999),
     ]);
     expect(contexts.get(1)?.profile?.images.map((i) => i.caption)).toEqual(['Avatar']);
-    expect(contexts.get(2)).toEqual({ profile: null, parent: null });
+    expect(contexts.get(2)).toEqual({
+      profile: null,
+      parent: null,
+      song: null,
+      songWithheld: false,
+      songUnavailable: false,
+    });
   });
 });
 
@@ -172,5 +187,66 @@ describe('getHoldContexts: comment parents', () => {
       hold(4, 'Post', 90),
     ]);
     expect([...contexts.keys()].sort()).toEqual([1, 2, 3]);
+  });
+});
+
+describe('getHoldContexts: song lyrics', () => {
+  it('gives a lyrics hold its song for the player', async () => {
+    const contexts = await getHoldContexts([hold(1, 'TrackLyrics', 9)]);
+    expect(contexts.get(1)).toEqual({
+      profile: null,
+      parent: null,
+      song: { id: 9, url: 'song-key' },
+      songWithheld: false,
+      songUnavailable: false,
+    });
+  });
+
+  it('carries no song url for a song withheld from this moderator', async () => {
+    const withheld = vi.fn(async (ids: number[]) => ids);
+    const contexts = await getHoldContexts([hold(1, 'TrackLyrics', 9)], withheld);
+    expect(withheld).toHaveBeenCalledWith([9]);
+    expect(contexts.get(1)).toEqual({
+      profile: null,
+      parent: null,
+      song: null,
+      songWithheld: true,
+      songUnavailable: false,
+    });
+  });
+
+  it('marks the song unavailable, with no url, when the withheld check fails', async () => {
+    const contexts = await getHoldContexts([hold(1, 'TrackLyrics', 9)], async () => {
+      throw new Error('scanner down');
+    });
+    expect(contexts.get(1)).toEqual({
+      profile: null,
+      parent: null,
+      song: null,
+      songWithheld: false,
+      songUnavailable: true,
+    });
+  });
+
+  it('marks the song unavailable when the song read fails', async () => {
+    await db.exec(`DROP TABLE "Image"`);
+    const contexts = await getHoldContexts([hold(1, 'TrackLyrics', 9)]);
+    expect(contexts.get(1)).toMatchObject({ song: null, songUnavailable: true });
+  });
+
+  it('has no song for a lyrics hold whose song is gone or is not audio', async () => {
+    const contexts = await getHoldContexts([
+      hold(1, 'TrackLyrics', 999),
+      hold(2, 'TrackLyrics', 4),
+    ]);
+    expect(contexts.get(1)).toMatchObject({ song: null, songUnavailable: false });
+    expect(contexts.get(2)).toMatchObject({ song: null, songUnavailable: false });
+  });
+
+  it('reads no song for other hold types', async () => {
+    const withheld = vi.fn(async () => []);
+    const contexts = await getHoldContexts([hold(1, 'Post', 9)], withheld);
+    expect(withheld).not.toHaveBeenCalled();
+    expect(contexts.get(1)).toBeUndefined();
   });
 });

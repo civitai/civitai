@@ -3,6 +3,7 @@ import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { HELD_TAB_TABLE_SQL } from '../../../test/held-image-tables';
 
 /**
  * A block keeps the moderator-only review flag, so that queue has to list removed images as well:
@@ -57,6 +58,7 @@ CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityType" TEXT, "entityId"
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT, "nsfwLevel" INTEGER, "type" TEXT);
 CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "images" JSONB NOT NULL DEFAULT '[]', "details" JSONB, "type" TEXT NOT NULL DEFAULT 'Image');
+${HELD_TAB_TABLE_SQL}
 `;
 
 // Every level, Blocked included, so the browsing-level filter is not what decides a row.

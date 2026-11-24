@@ -23,6 +23,7 @@ import {
 } from '$lib/server/csam-holds.service';
 import { CSAM_REPORT_CHOICES } from '$lib/csam-holds/report-choice';
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
+import { withheldImageIds } from '$lib/server/retracted-media';
 import type { Actions, PageServerLoad } from './$types';
 import { ALSO_MAX } from './hold-author';
 import type { HoldContext } from './hold-context';
@@ -70,7 +71,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     return new Map<number, CsamHoldCovers>();
   });
   // Profile and comment-parent context is decoration too; its loader already degrades per kind.
-  const contexts = await getHoldContexts(queue.items).catch((err) => {
+  const contexts = await getHoldContexts(queue.items, {
+    withheld: (ids) => withheldImageIds(locals.user, ids),
+  }).catch((err) => {
     console.error('CSAM hold context failed', err);
     return new Map<number, HoldContext>();
   });
@@ -86,6 +89,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     imageTotal: covers.get(hold.id)?.total ?? 0,
     profile: contexts.get(hold.id)?.profile ?? null,
     parent: contexts.get(hold.id)?.parent ?? null,
+    song: contexts.get(hold.id)?.song ?? null,
+    songWithheld: contexts.get(hold.id)?.songWithheld ?? false,
+    songUnavailable: contexts.get(hold.id)?.songUnavailable ?? false,
   }));
   const typeCounts: Record<string, number> | null = byType && {
     ...byType,

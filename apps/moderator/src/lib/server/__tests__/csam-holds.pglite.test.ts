@@ -120,7 +120,8 @@ beforeEach(async () => {
     CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
       "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
-      "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false);
+      "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
+      "metadata" JSONB);
     INSERT INTO "Image" ("id","url","type","postId","index","nsfwLevel") VALUES
       (1, 'k-a', 'image', 10, 2, 4), (2, 'k-b', 'image', 10, 1, 1), (3, 'k-c', 'video', 10, 0, 1),
       (4, 'k-d', 'image', 10, 3, 1), (5, 'k-e', 'image', 10, 4, 1), (6, 'k-f', 'image', 10, 5, 1),
@@ -173,6 +174,23 @@ describe('listCsamHolds', () => {
     expect(byId.get(3)?.title).toBeNull();
     expect(byId.get(6)?.title).toBeNull();
     expect(byId.get(2)?.title).toBeNull();
+  });
+
+  it('titles a song lyrics hold with the song title, and leaves a post hold on the same id as before', async () => {
+    // Image 60 shares its id with untitled Post 60 (hold 6); hold 6 must not take the song's title.
+    await db.exec(`INSERT INTO "Image" ("id","url","type","metadata") VALUES
+      (60, 'song-a', 'audio', '{"title":"Song sixty"}'), (61, 'song-b', 'audio', '{}')`);
+    await seed([
+      { id: 20, createdAt: '2026-10-04', entityType: 'TrackLyrics', entityId: 60 },
+      { id: 21, createdAt: '2026-10-04', entityType: 'TrackLyrics', entityId: 61 },
+    ]);
+    const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });
+    const byId = new Map(items.map((h) => [h.id, h]));
+    expect(byId.get(20)?.title).toBe('Song sixty');
+    expect(byId.get(21)?.title).toBeNull();
+    expect(byId.get(6)?.title).toBeNull();
+    expect(byId.get(1)?.title).toBe('A post title');
+    expect(byId.get(7)?.title).toBe('A model name');
   });
 
   it('says whether the held content is still live: true, false, or unknown for types without a state', async () => {

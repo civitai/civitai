@@ -472,6 +472,7 @@ describe('Remove cover on a reported song (S2)', () => {
     const before = await imageRow(SONG);
     const result = await pageAction('removeCover', {
       imageId: String(SONG),
+      coverId: '620',
       violationType: 'gore',
     });
     expect(result).toMatchObject({ success: true, coverId: 620, key: SONG });
@@ -492,19 +493,40 @@ describe('Remove cover on a reported song (S2)', () => {
 
   it('refuses a song with no cover to remove, and one with no violation type', async () => {
     expect(
-      await pageAction('removeCover', { imageId: String(RULE_SONG), violationType: 'gore' })
+      await pageAction('removeCover', {
+        imageId: String(RULE_SONG),
+        coverId: '620',
+        violationType: 'gore',
+      })
     ).toMatchObject({ status: 409, data: { key: RULE_SONG } });
-    expect(await pageAction('removeCover', { imageId: String(SONG) })).toMatchObject({
+    expect(
+      await pageAction('removeCover', { imageId: String(SONG), coverId: '620' })
+    ).toMatchObject({
       status: 400,
       data: { error: 'Pick a violation type.' },
     });
     expect((await imageRow(620)).ingestion).toBe('Scanned');
   });
 
+  it('refuses a cover other than the one the moderator saw: the song has a new cover since', async () => {
+    expect(
+      await pageAction('removeCover', {
+        imageId: String(SONG),
+        coverId: '699',
+        violationType: 'gore',
+      })
+    ).toMatchObject({ status: 409, data: { key: SONG } });
+    expect((await imageRow(620)).ingestion).toBe('Scanned');
+  });
+
   it('says so when the cover cannot be checked, rather than that there is none', async () => {
     await db.exec(`ALTER TABLE "Track" RENAME TO "TrackGone"`);
     expect(
-      await pageAction('removeCover', { imageId: String(SONG), violationType: 'gore' })
+      await pageAction('removeCover', {
+        imageId: String(SONG),
+        coverId: '620',
+        violationType: 'gore',
+      })
     ).toMatchObject({
       status: 503,
       data: { error: "Couldn't check the cover. Try again.", key: SONG },
@@ -518,7 +540,7 @@ describe('Remove cover on a reported song (S2)', () => {
     expect(
       await pageAction(
         'removeCover',
-        { imageId: String(SONG), violationType: 'gore' },
+        { imageId: String(SONG), coverId: '620', violationType: 'gore' },
         GRANTS,
         WITHOUT_GRANT
       )
@@ -535,7 +557,7 @@ describe('Remove cover on a reported song (S2)', () => {
     expect(
       await pageAction(
         'removeCover',
-        { imageId: String(WITHHELD), violationType: 'gore' },
+        { imageId: String(WITHHELD), coverId: '620', violationType: 'gore' },
         GRANTS,
         WITHOUT_GRANT
       )

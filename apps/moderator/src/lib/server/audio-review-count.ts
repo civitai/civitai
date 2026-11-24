@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
+import { IMAGE_REVIEW_SLUGS } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS, reportCountKey } from '$lib/reports';
 import { dbRead } from './db';
 
@@ -75,4 +76,61 @@ export async function countSongAppeals(): Promise<number> {
     .select(sql<number>`count(*)::int`.as('n'))
     .executeTakeFirst();
   return row?.n ?? 0;
+}
+
+/** The review flags the Held tab decides on a song or its own cover: the generic review queues'.
+ *  The CSAM flag stays with the CSAM queue and an appeal with the Appeals tab. */
+export const HELD_REVIEW_FLAGS: readonly string[] = IMAGE_REVIEW_SLUGS;
+const heldFlagsSql = HELD_REVIEW_FLAGS.map((f) => `'${f}'`).join(', ');
+
+/** The song aliased `song` has its lyrics under a Pending CSAM text hold (`TrackLyrics`, whose
+ *  entity id is the song's Image id). */
+export const pendingLyricsHoldText = (song: string) =>
+  `EXISTS (SELECT 1 FROM "TextScanHold" lyrics_hold
+    WHERE lyrics_hold."entityType" = 'TrackLyrics' AND lyrics_hold."entityId" = ${song}.id
+      AND lyrics_hold.label = 'csam' AND lyrics_hold.status = 'Pending')`;
+
+/**
+ * Whether the `Image` aliased `image` is decided on the Held tab when it carries a review flag: a
+ * song not under a lyrics hold, or the own cover (`songsOwnCoverText`) of such a song. The flag
+ * itself is the caller's to check (`HELD_REVIEW_FLAGS`). The generic review queues leave these out,
+ * so a flag is decided in one place; the flagged cover of a lyrics-held song stays in them, since
+ * the Held tab shows that song only as its hold.
+ */
+export const onHeldTabText = (image: string) =>
+  `((${image}.type = 'audio' AND NOT ${pendingLyricsHoldText(image)}) OR EXISTS (
+    SELECT 1 FROM "Track" held_track JOIN "Image" held_song ON held_song.id = held_track."imageId"
+    WHERE held_track."coverImageId" = ${image}.id AND ${songsOwnCoverText(image, 'held_song')}
+      AND NOT ${pendingLyricsHoldText('held_song')}
+  ))`;
+
+/** The songs flagged for review themselves (Held tab, "song" rows): a held flag, Scanned as the
+ *  review queues list it, not under a lyrics hold. Null, not false, on a song with no flag, so
+ *  negate it through COALESCE; left bare, the flag test is served by `Image_needsReview_index`. */
+export const flaggedSongsText = (song: string) =>
+  `(${song}.type = 'audio' AND ${song}."needsReview" IN (${heldFlagsSql})
+    AND ${song}.ingestion = 'Scanned' AND NOT ${pendingLyricsHoldText(song)})`;
+
+/** The own cover aliased `cover` of the song aliased `song` is flagged for review (Held tab, "cover"
+ *  rows), on a song not under a lyrics hold and not flagged itself (that row is the song's). */
+export const flaggedCoverText = (cover: string, song: string) =>
+  `(${song}.type = 'audio' AND ${songsOwnCoverText(cover, song)}
+    AND ${cover}."needsReview" IN (${heldFlagsSql}) AND ${cover}.ingestion = 'Scanned'
+    AND NOT ${pendingLyricsHoldText(song)} AND NOT COALESCE(${flaggedSongsText(song)}, false))`;
+
+/** The Held tab's counts: songs under a lyrics hold (decided in CSAM holds, so not in the sidebar
+ *  badge), and the flagged songs and covers decided here. */
+export async function countHeldSongs(): Promise<{ lyrics: number; actionable: number }> {
+  const { rows } = await sql<{ lyrics: number; actionable: number }>`
+    SELECT
+      (SELECT count(DISTINCT h."entityId")::int FROM "TextScanHold" h
+        JOIN "Image" s ON s.id = h."entityId" AND s.type = 'audio'
+        WHERE h."entityType" = 'TrackLyrics' AND h.label = 'csam' AND h.status = 'Pending') AS lyrics,
+      (SELECT count(*)::int FROM "Image" s WHERE ${sql.raw(flaggedSongsText('s'))})
+      + (SELECT count(*)::int FROM "Track" t JOIN "Image" s ON s.id = t."imageId"
+          JOIN "Image" c ON c.id = t."coverImageId" WHERE ${sql.raw(
+            flaggedCoverText('c', 's')
+          )}) AS actionable
+  `.execute(dbRead);
+  return { lyrics: rows[0]?.lyrics ?? 0, actionable: rows[0]?.actionable ?? 0 };
 }

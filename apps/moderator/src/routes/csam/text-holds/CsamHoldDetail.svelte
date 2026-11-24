@@ -19,6 +19,8 @@
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import FactRow from '$lib/components/minor-flags/FactRow.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
+  import SongCard from '$lib/components/SongCard.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import HighlightedText from '$lib/components/restrictions/HighlightedText.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
@@ -335,6 +337,22 @@
           blurred={!imageReveal.on}
           allHref={entityHref ?? undefined}
         />
+      </TriageCard>
+    {/if}
+    {#if row.song}
+      <!-- The held lyrics' song: the moderator hears what the text belongs to. -->
+      <TriageCard dense title="Song">
+        <div class="h-72 overflow-hidden rounded-md border border-dark-4">
+          <SongCard item={row.song} />
+        </div>
+      </TriageCard>
+    {:else if row.songWithheld}
+      <TriageCard dense title="Song">
+        <p class="m-0 text-xs text-dark-2">{RETRACTED_REFUSED}</p>
+      </TriageCard>
+    {:else if row.songUnavailable}
+      <TriageCard dense title="Song">
+        <p class="m-0 text-xs text-dark-2">Couldn't load this song. Reload before deciding.</p>
       </TriageCard>
     {/if}
     <TriageCard dense title="Scanned text">

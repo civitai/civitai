@@ -18,7 +18,7 @@ import { pendingDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
-import { songAppealImages } from './audio-review-count';
+import { onHeldTabText, songAppealImages } from './audio-review-count';
 import {
   FEEDBACK_CAPTURE_METADATA_KEY,
   FEEDBACK_CAPTURE_OWNER_ID,
@@ -177,6 +177,10 @@ export async function getImageReviewQueue({
     .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
     .$if(!!capturesOnly, (qb) => qb.where('i.userId', '=', FEEDBACK_CAPTURE_OWNER_ID))
     .$if(setAside != null, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
+    // Audio review's Held tab decides these; the CSAM flag is not one it decides.
+    .$if(needsReview !== FLAG_KEPT_THROUGH_BLOCK, (qb) =>
+      qb.where(sql<boolean>`NOT ${sql.raw(onHeldTabText('i'))}`)
+    )
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
     .limit(limit + 1)
@@ -419,6 +423,12 @@ export async function getImageReviewCounts(): Promise<Record<string, number>> {
     )
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
+    // Counted as their queues list them: songs and own covers are Audio review's Held tab's.
+    .where(
+      sql<boolean>`("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} OR NOT ${sql.raw(
+        onHeldTabText('"Image"')
+      )})`
+    )
     .where((eb) =>
       eb.or([
         eb('ingestion', '=', 'Scanned'),

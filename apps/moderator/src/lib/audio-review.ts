@@ -3,8 +3,8 @@ import { removedKind, removedTitle, type RemovedState } from '$lib/image-review'
 import { VIOLATION_LABELS } from '$lib/violations';
 
 /**
- * Audio review (`/audio-review`): songs and their covers, on the shared triage shell. Reported and
- * Appeals work today; Held and Disputes are shown and arrive later on this page.
+ * Audio review (`/audio-review`): songs and their covers, on the shared triage shell. Reported,
+ * Appeals and Held work today; Disputes is shown and arrives later on this page.
  */
 export const AUDIO_TABS = ['reported', 'appeals', 'held', 'disputes'] as const;
 export type AudioTab = (typeof AUDIO_TABS)[number];
@@ -18,7 +18,7 @@ export const AUDIO_TAB_LABELS: Record<AudioTab, string> = {
 };
 
 /** The tabs that work on this page; the rest render disabled. */
-export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported', 'appeals'];
+export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported', 'appeals', 'held'];
 
 export const REPORTED_SORTS = ['oldest', 'newest', 'most'] as const;
 export type ReportedSort = (typeof REPORTED_SORTS)[number];
@@ -279,3 +279,91 @@ export const appealRowTitle = (row: Pick<SongAppealRow, 'id' | 'kind' | 'withhel
   const title = row.song?.title || (row.song ? `Untitled song #${row.song.id}` : null);
   return row.kind === 'song' ? title ?? `Song #${row.id}` : `Cover: ${title ?? `image #${row.id}`}`;
 };
+
+/**
+ * What holds a song on the Held tab: its lyrics under a CSAM text hold (decided in CSAM holds), its
+ * own cover flagged for review, or the song itself flagged for review.
+ */
+export const HELD_KINDS = ['lyrics', 'cover', 'song'] as const;
+export type HeldKind = (typeof HELD_KINDS)[number];
+export const HELD_FILTERS = ['all', ...HELD_KINDS] as const;
+export type HeldFilter = (typeof HELD_FILTERS)[number];
+export const HELD_FILTER_LABELS: Record<HeldFilter, string> = {
+  all: 'All',
+  lyrics: 'Lyrics',
+  cover: 'Cover',
+  song: 'Song',
+};
+export const HELD_SORTS = ['oldest', 'newest'] as const;
+export type HeldSort = (typeof HELD_SORTS)[number];
+
+/** One held song. A lyrics hold is withheld from every moderator on this page: its song, cover,
+ *  lyrics and owner are seen only in CSAM holds. A cover or song withheld from this moderator by the
+ *  media access rule carries only its id, kind and wait too. */
+export type HeldSongRow = {
+  /** The song. */
+  id: number;
+  kind: HeldKind;
+  withheld: boolean;
+  /** The lyrics hold, on a lyrics row. */
+  holdId: number | null;
+  /** Since the hold was written (lyrics), or the flagged image was uploaded. */
+  waitingSince: Date;
+  title: string | null;
+  /** The song's storage key. */
+  url: string | null;
+  /** The list thumbnail: the cover as the public player shows it, so never a flagged one. */
+  coverUrl: string | null;
+  /** The flagged cover under review, on a cover row. */
+  cover: { id: number; url: string; flag: string; nsfwLevel: number } | null;
+  /** The song's own review flag, on a song row. */
+  flag: string | null;
+  nsfwLevel: number | null;
+  owner: { id: number; username: string | null } | null;
+  /** The song is removed (`ingestion` Blocked). */
+  removed: boolean;
+  /** The song's own cover while there is one to remove (`visibleSongLinks`). */
+  removableCoverId: number | null;
+};
+
+const HELD_DECISIONS = {
+  lyrics: ['openHold'],
+  cover: ['approveCover', 'removeCover', 'removeSong', 'rate'],
+  song: ['approveSong', 'removeSong', 'removeCover', 'rate'],
+} as const satisfies Record<HeldKind, readonly string[]>;
+
+/** The decisions in key order for a held row: a lyrics hold only links to CSAM holds; a flagged
+ *  cover is approved or removed first; a flagged song takes the Reported tab's decisions with
+ *  Approve song in place of Dismiss. */
+export const heldDecisions = (kind: HeldKind): readonly string[] => HELD_DECISIONS[kind];
+
+type HeldDecisionRow = Pick<HeldSongRow, 'kind' | 'withheld' | 'removed' | 'removableCoverId'> & {
+  cover: unknown;
+};
+
+/**
+ * Which decision keys a held row takes. A lyrics hold's one key opens it in CSAM holds, for a
+ * moderator who can open that page (`canOpenHolds`), whatever their image grant. A withheld cover or
+ * song takes nothing; otherwise each needs the image grant (`canAct`), Approve cover a cover still
+ * under review, Remove cover a cover to remove, and Remove song and Set rating a song not removed.
+ */
+export function heldDecisionsEnabled(
+  row: HeldDecisionRow,
+  canAct: boolean,
+  canOpenHolds: boolean
+): boolean[] {
+  if (row.kind === 'lyrics') return [canOpenHolds];
+  const on = canAct && !row.withheld;
+  const live = on && !row.removed;
+  const cover = on && row.removableCoverId != null;
+  return row.kind === 'cover'
+    ? [on && row.cover != null, cover, live, live]
+    : [on, live, cover, live];
+}
+
+/** A lyrics hold in CSAM holds: its song's pending lyrics hold. */
+export const lyricsHoldHref = (songId: number) =>
+  `/csam/text-holds?entityType=TrackLyrics&q=${songId}`;
+
+export const heldRowTitle = (row: Pick<HeldSongRow, 'id' | 'withheld' | 'title'>) =>
+  row.withheld ? `Withheld song #${row.id}` : row.title || `Untitled song #${row.id}`;

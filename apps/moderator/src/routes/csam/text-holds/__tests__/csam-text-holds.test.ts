@@ -47,7 +47,9 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
 const { actions, load } = await import('../+page.server');
 const {
   canRemoveHeld,
+  CSAM_HOLD_ENTITY_TYPES,
   decisionLabel,
+  entityLabel,
   holdDecisionEnabled,
   holdEntityHref,
   holdMeta,
@@ -261,6 +263,43 @@ describe('csam text holds load', () => {
       { id: 2, profile: null, parent },
       { id: 3, profile: null, parent: null },
     ]);
+  });
+
+  it("hands a song lyrics row its song, read with this moderator's withheld check", async () => {
+    listCsamHolds.mockResolvedValue({
+      items: [
+        { id: 1, entityType: 'TrackLyrics', entityId: 9 },
+        { id: 2, entityType: 'TrackLyrics', entityId: 8 },
+        { id: 3, entityType: 'TrackLyrics', entityId: 7 },
+      ],
+      hasMore: false,
+    });
+    getHoldContexts.mockResolvedValue(
+      new Map([
+        [1, { profile: null, parent: null, song: { id: 9, url: 'k' }, songWithheld: false }],
+        [2, { profile: null, parent: null, song: null, songWithheld: true }],
+        [
+          3,
+          { profile: null, parent: null, song: null, songWithheld: false, songUnavailable: true },
+        ],
+      ])
+    );
+    const data = await loadAt('');
+    expect(getHoldContexts).toHaveBeenCalledWith(expect.any(Array), {
+      withheld: expect.any(Function),
+    });
+    expect(data.items).toMatchObject([
+      { id: 1, song: { id: 9, url: 'k' }, songWithheld: false },
+      { id: 2, song: null, songWithheld: true },
+      { id: 3, song: null, songUnavailable: true },
+    ]);
+  });
+
+  it('loads song lyrics as a type filter', async () => {
+    await loadAt('?entityType=TrackLyrics');
+    expect(listCsamHolds).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'TrackLyrics' })
+    );
   });
 
   it('still lists the queue when the context fails', async () => {
@@ -488,7 +527,7 @@ describe('csam text holds decide with the author’s other holds', () => {
 });
 
 describe('csam hold removal', () => {
-  it.each(['ChatMessage', 'CommentV3', 'UserProfile', 'Post', 'Model', 'Article'])(
+  it.each(['ChatMessage', 'CommentV3', 'UserProfile', 'Post', 'Model', 'Article', 'TrackLyrics'])(
     'offers removal for a %s hold',
     (type) => expect(canRemoveHeld(type)).toBe(true)
   );
@@ -534,6 +573,16 @@ describe('csam hold decision keys', () => {
     ]);
   });
 
+  it('offers remove, strike and ban on a song lyrics hold', () => {
+    expect(holdDecisionEnabled({ ...pendingHold, entityType: 'TrackLyrics' }, everyone)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+  });
+
   it('only dismisses a type the main app cannot remove', () => {
     expect(holdDecisionEnabled({ ...pendingHold, entityType: 'Image' }, everyone)).toEqual([
       true,
@@ -561,6 +610,17 @@ describe('decisionLabel', () => {
 
 describe('csam hold row text', () => {
   const base = { entityId: 5, title: null, username: null, userId: null };
+
+  it('labels a song lyrics hold "Song lyrics", and the other types as before', () => {
+    expect(entityLabel('TrackLyrics')).toBe('Song lyrics');
+    expect(holdTitle({ ...base, entityType: 'TrackLyrics' })).toBe('Song lyrics #5');
+    expect(entityLabel('PostText')).toBe('Storyline text');
+    expect(entityLabel('CommentV3')).toBe('Comment');
+  });
+
+  it('lists song lyrics among the type filters', () => {
+    expect(CSAM_HOLD_ENTITY_TYPES).toContain('TrackLyrics');
+  });
 
   it('titles a post or model by its title and falls back to the type and id', () => {
     expect(holdTitle({ ...base, entityType: 'Post', title: 'Some title' })).toBe('Some title');
@@ -600,6 +660,18 @@ describe('csam hold row text', () => {
 
 describe('holdEntityHref', () => {
   const ref = { entityId: 5, userId: null, username: null, chatId: null };
+
+  it('opens a song lyrics hold on the song in Image lookup', () => {
+    expect(holdEntityHref('https://site.test', { ...ref, entityType: 'TrackLyrics' })).toBe(
+      '/retool/image-lookup?q=5'
+    );
+  });
+
+  it('still opens a post hold on the site', () => {
+    expect(holdEntityHref('https://site.test', { ...ref, entityType: 'Post' })).toBe(
+      'https://site.test/posts/5'
+    );
+  });
 
   it('opens a comment hold through its CommentV3 permalink', () => {
     expect(holdEntityHref('https://site.test', { ...ref, entityType: 'CommentV3' })).toBe(

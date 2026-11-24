@@ -4,6 +4,7 @@ import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { HELD_TAB_TABLE_SQL } from '../../../test/held-image-tables';
 
 // PGlite boots a WASM Postgres; under a full parallel run that alone can pass the default hook budget.
 vi.setConfig({ hookTimeout: 60_000 });
@@ -53,6 +54,7 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
   "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image', "reportId" INTEGER
 );
+${HELD_TAB_TABLE_SQL}
 `;
 
 // The migration itself, so the trigger it installs is the one under test.
