@@ -161,7 +161,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       limit,
       csamReview: holdsCsamReview(user),
     });
-    // A restricted image's 3D model parent shows the image on the site.
+    // model3d would draw a withheld image's media; drop it.
     const cards = (await withModel3d(items)).map((item) =>
       item.restricted
         ? { ...item, model3d: null, approvedAppeal: withheldApprovedAppeal(item.approvedAppeal) }

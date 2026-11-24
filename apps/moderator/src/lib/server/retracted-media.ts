@@ -139,15 +139,16 @@ const RESTRICTED_READ_PAGE = 200;
  * Which of these images a moderator without `csamReview` is refused (`kept`), so a list withholds
  * what `/api/retracted-media` would refuse. Only rows that route could serve are read from the
  * scanner, so ordinary moderation never waits on ClickHouse; a row whose verdict can't be read is
- * kept and named in `unreadable`. An id the primary lacks is kept too.
+ * kept and named in `unreadable`. An id the primary lacks is kept too, and named in `missing`.
  */
 export async function restrictedImageAccess(
   imageIds: number[],
   { csamReview }: { csamReview: boolean }
-): Promise<{ kept: Set<number>; unreadable: Set<number> }> {
+): Promise<{ kept: Set<number>; unreadable: Set<number>; missing: Set<number> }> {
   const kept = new Set<number>();
   const unreadable = new Set<number>();
-  if (csamReview) return { kept, unreadable };
+  const missing = new Set<number>();
+  if (csamReview) return { kept, unreadable, missing };
   const patterns = blockedForPatterns();
   const scanScope = `(${retractedImageWhereSql('i', {
     cdnLeg: retractedMediaCdnLeg(),
@@ -184,9 +185,13 @@ export async function restrictedImageAccess(
         siblingsClearInPostgres(row.siblings, isSignal)
       )
         viewable.add(row.id);
-    for (const id of page) if (!viewable.has(id)) kept.add(id);
+    const found = new Set(rows.map((row) => row.id));
+    for (const id of page) {
+      if (!viewable.has(id)) kept.add(id);
+      if (!found.has(id)) missing.add(id);
+    }
   }
-  return { kept, unreadable };
+  return { kept, unreadable, missing };
 }
 
 /** What every list serves a withheld image with in place of these fields: none of the media, and
@@ -243,13 +248,14 @@ export async function withheldImageIds(user: App.Locals['user'] | undefined, ima
 }
 
 /** The refusal for a batch with an image withheld from `user`, which acts on none of it; `null`
- *  when nothing in it is withheld. */
+ *  when nothing in it is withheld. An id the primary lacks is left to the write, which reports it
+ *  not found. */
 export async function withheldRefusal(user: App.Locals['user'] | undefined, imageIds: number[]) {
-  const { kept, unreadable } = await restrictedImageAccess(imageIds, {
+  const { kept, unreadable, missing } = await restrictedImageAccess(imageIds, {
     csamReview: holdsCsamReview(user),
   });
-  if (!kept.size) return null;
-  const withheld = [...kept];
+  const withheld = [...kept].filter((id) => !missing.has(id));
+  if (!withheld.length) return null;
   if (withheld.some((id) => unreadable.has(id))) {
     console.error('[retracted-media] scanner unavailable; refused an image action', {
       count: withheld.length,

@@ -974,3 +974,22 @@ describe("a withheld image's overturned removal label", () => {
     });
   });
 });
+
+// civitai/civitai#10170: an image deleted since the page loaded is the write's to report, not a refusal.
+describe('a batch with an image deleted since the page loaded, without the grant', () => {
+  const DELETED = 990999999;
+
+  it('acts on the rest', async () => {
+    await reportActions.remove(event(WITHOUT_GRANT, { imageIds: `${CONTROL},${DELETED}` }));
+    expect(writes.removeImages).toHaveBeenCalledOnce();
+  });
+
+  it('is still refused when another image in it is withheld', async () => {
+    const result = (await reportActions.remove(
+      event(WITHOUT_GRANT, { imageIds: `${WITHHELD},${DELETED}` })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(result.data?.error).not.toContain(String(DELETED));
+    expect(writes.removeImages).not.toHaveBeenCalled();
+  });
+});
