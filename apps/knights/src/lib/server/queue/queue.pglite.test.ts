@@ -1,9 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
-import type { Kysely, KyselyPlugin } from 'kysely';
+import { sql, type Kysely, type KyselyPlugin } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import { countOpenServableKnightItems } from '@civitai/db/knights';
+import { countOpenServableKnightItems, readWithoutJit } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { engage, lockImage } from '../../../test/seed';
@@ -387,6 +387,19 @@ describe('getFeed', () => {
     expect(served).toContain(x);
   });
 
+  // SET LOCAL must not outlive the transaction it ran in: a pooled connection would carry JIT off to every later read.
+  it('turns JIT off only until the transaction that turned it off ends', async () => {
+    const jit = async (executor: Kysely<DB>) =>
+      (await sql<{ jit: string }>`SHOW jit`.execute(executor)).rows[0].jit;
+    await sql`SET jit = on`.execute(db);
+    expect(await readWithoutJit(db, (trx) => jit(trx))).toBe('off');
+    expect(await jit(db)).toBe('on');
+    await db.transaction().execute(async (trx) => {
+      expect(await readWithoutJit(trx, (inner) => jit(inner))).toBe('off');
+    });
+    expect(await jit(db)).toBe('on');
+  });
+
   it('reads each level bucket by the same rule as itemBucket', async () => {
     // Raw JSON text, so jsonb keeps what a producer could write (a 4.0 keeps its scale).
     const predictions = [
@@ -413,9 +426,11 @@ describe('getFeed', () => {
     await image(399, 3);
     await item(399);
 
-    const rows = await servableItems(db)
-      .select([bucketLevelSql.as('level'), 'i.prediction', 'img.nsfwLevel'])
-      .execute();
+    const rows = await readWithoutJit(db, (trx) =>
+      servableItems(trx)
+        .select([bucketLevelSql.as('level'), 'i.prediction', 'img.nsfwLevel'])
+        .execute()
+    );
     expect(rows).toHaveLength(predictions.length + 1);
     for (const row of rows) {
       expect(levelBucket(Number(row.level))).toBe(itemBucket(row.prediction, row.nsfwLevel));

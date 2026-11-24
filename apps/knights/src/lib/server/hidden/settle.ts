@@ -1,5 +1,10 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import { REFERENCE_SOURCE, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
+import {
+  readWithoutJit,
+  REFERENCE_SOURCE,
+  REFERENCE_STATUS,
+  servableImage,
+} from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -48,16 +53,18 @@ export async function gradeHiddenVotes(
   // A check whose image has since gone (removed, blocked, unpublished, Private post) is not graded: nothing is paid or penalised.
   const known = new Map(
     (
-      await trx
-        .selectFrom('KnightsReferenceImage as r')
-        .innerJoin('Image as img', 'img.id', 'r.imageId')
-        .innerJoin('Post as p', 'p.id', 'img.postId')
-        .select(['r.id', 'r.answer'])
-        .where('r.id', 'in', [...new Set(due.map((v) => -v.itemId))])
-        // A reference retired after the answer (e.g. a bad ruling pulled) no longer grades anyone.
-        .where('r.status', '=', REFERENCE_STATUS.active)
-        .where(servableImage)
-        .execute()
+      await readWithoutJit(trx, (trx) =>
+        trx
+          .selectFrom('KnightsReferenceImage as r')
+          .innerJoin('Image as img', 'img.id', 'r.imageId')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select(['r.id', 'r.answer'])
+          .where('r.id', 'in', [...new Set(due.map((v) => -v.itemId))])
+          // A reference retired after the answer (e.g. a bad ruling pulled) no longer grades anyone.
+          .where('r.status', '=', REFERENCE_STATUS.active)
+          .where(servableImage)
+          .execute()
+      )
     ).map((r) => [r.id, r.answer])
   );
   const gradedVotes = due.map((v) => {

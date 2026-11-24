@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { modReviewEligibleImage, removalLowersLevel } from '@civitai/db/knights';
+import { modReviewEligibleImage, readWithoutJit, removalLowersLevel } from '@civitai/db/knights';
 import type { ImageTagModerateResult } from '@civitai/moderation';
 import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
@@ -208,12 +208,14 @@ async function writeFlaggedTag({
       .where('tagId', '=', tagId)
       .forUpdate()
       .executeTakeFirst();
-    const image = await trx
-      .selectFrom('Image as img')
-      .leftJoin('Post as p', 'p.id', 'img.postId')
-      .select((eb) => ['img.id', modReviewEligibleImage(eb).as('eligible')])
-      .where('img.id', '=', imageId)
-      .executeTakeFirst();
+    const image = await readWithoutJit(trx, (trx) =>
+      trx
+        .selectFrom('Image as img')
+        .leftJoin('Post as p', 'p.id', 'img.postId')
+        .select((eb) => ['img.id', modReviewEligibleImage(eb).as('eligible')])
+        .where('img.id', '=', imageId)
+        .executeTakeFirst()
+    );
     if (!image) return { outcome: 'missing' };
     if (!row || !isFlagged(row.attributes)) return { outcome: 'already-ruled' };
     if (image.eligible !== true) return { outcome: 'ineligible', reason: 'image' };
