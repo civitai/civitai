@@ -89,6 +89,10 @@ export async function getRemovalConfirmations({
           violationDetails: null,
           reportIds: [] as number[],
           removalLabel: null,
+          appealMessage: null,
+          resolvedReason: null,
+          resolvedMessage: null,
+          decisionNote: null,
         }
       : { ...row, restricted: false }
   );

@@ -879,15 +879,19 @@ describe("the re-removal queue's list", () => {
         "requestedAt" TIMESTAMP(3) DEFAULT now(), "requestedById" INTEGER,
         "decidedAt" TIMESTAMP(3), "decidedById" INTEGER, "decisionNote" TEXT
       );
-      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId") VALUES
-        (990000041, 7, 'Image', ${WITHHELD}), (990000042, 7, 'Image', ${CONTROL});
+      INSERT INTO "Appeal"
+        (id, "userId", "entityType", "entityId", "appealMessage", "resolvedReason", "resolvedMessage")
+      VALUES
+        (990000041, 7, 'Image', ${WITHHELD}, 'appeal text', 'misclassified', 'reply text'),
+        (990000042, 7, 'Image', ${CONTROL}, 'appeal text', 'misclassified', 'reply text');
       INSERT INTO "AppealDecisionRecord" ("appealId", "removalLabel") VALUES
         (990000041, 'overturned-label'), (990000042, 'overturned-label');
       INSERT INTO "ImageRemovalConfirmation"
-        (id, "imageId", "appealId", status, source, "violationType", "violationDetails", "reportIds")
+        (id, "imageId", "appealId", status, source, "violationType", "violationDetails", "reportIds",
+          "decisionNote")
       VALUES
-        (1, ${WITHHELD}, 990000041, 'Pending', 'report', 'some-reason', 'details', '{990000043}'),
-        (2, ${CONTROL}, 990000042, 'Pending', 'report', 'some-reason', 'details', '{990000044}')`)
+        (1, ${WITHHELD}, 990000041, 'Pending', 'report', 'some-reason', 'details', '{990000043}', 'note'),
+        (2, ${CONTROL}, 990000042, 'Pending', 'report', 'some-reason', 'details', '{990000044}', 'note')`)
   );
   const list = async (user: { id: number; roles: string[] }) => {
     const data = (await reRemovalsPage.load({
@@ -900,6 +904,10 @@ describe("the re-removal queue's list", () => {
     violationType: 'some-reason',
     violationDetails: 'details',
     removalLabel: 'overturned-label',
+    appealMessage: 'appeal text',
+    resolvedReason: 'misclassified',
+    resolvedMessage: 'reply text',
+    decisionNote: 'note',
   };
 
   it('lists a withheld image without its media or its removal reason, without the grant', async () => {
@@ -911,6 +919,10 @@ describe("the re-removal queue's list", () => {
       violationDetails: null,
       reportIds: [],
       removalLabel: null,
+      appealMessage: null,
+      resolvedReason: null,
+      resolvedMessage: null,
+      decisionNote: null,
       restricted: true,
     });
     expect(items.get(CONTROL)).toMatchObject({
