@@ -20,6 +20,7 @@ import {
   markFpRunbookRemoval,
   readFpMirrorByUrns,
   readFpMirrorFacts,
+  readFpScanVerdict,
   readFpMirrorFactsPage,
   readFpRunbookCounts,
   readFpScanCandidates,
@@ -90,6 +91,7 @@ const SWEEP_CURSOR_KEY = 'feature-pages-sweep-scan-cursor';
 /** Seconds a new comment waits for the cron, so the inline push and the cron never post it twice. */
 export const FP_INLINE_GRACE_SECONDS = 60;
 const SCAN_INACTIVE_WAIT_MINUTES = 5;
+const SCAN_PENDING_WAIT_MINUTES = 1;
 const STANDING_WAIT_MINUTES = 15;
 const PARENT_WAIT_MINUTES = 5;
 const UNRESOLVED_WAIT_MINUTES = 60;
@@ -399,10 +401,13 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     return 'pushed';
   }
 
-  // Nothing is shown unless its text is scanned and its author is in standing.
+  // Nothing is shown until a finished scan of its current text found nothing, and only while its
+  // author is in standing.
   if (state === 'visible') {
     if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
       return wait(SCAN_INACTIVE_WAIT_MINUTES, 'text scan not active');
+    if (!(await scannedCleanNow(row.commentId)))
+      return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned clean');
     if (!authorInStanding(row)) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
   }
 
@@ -588,6 +593,14 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
   await done(state === 'mod-removed' ? { removeWanted: true } : {});
   log('info', 'pushed', { commentId: row.commentId, state, prior: row.pushedState, steps });
   return 'pushed';
+}
+
+/** Whether a finished scan of the comment's current text found nothing. */
+async function scannedCleanNow(commentId: number) {
+  const hash = (await currentScanContentHashes('CommentV3', [commentId])).get(commentId);
+  if (!hash) return false;
+  const verdict = await readFpScanVerdict(kyselyWrite, commentId);
+  return verdict?.status === 'Succeeded' && verdict.contentHash === hash && !verdict.flagged;
 }
 
 /** What the frame shows: shown on civitai, and pushed to the platform as shown. */
