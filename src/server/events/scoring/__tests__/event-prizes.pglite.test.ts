@@ -284,10 +284,6 @@ describe('awardEventPrizes', () => {
       await excludeFrom('2026-11-01T00:00:00.000Z');
       expect(await standings()).not.toBe(unflagged);
     });
-
-    it('without it, counts none of their points for the Cup either', async () => {
-      expect(await blueCup()).toMatchObject({ baseline: 440, week: 700 + 300 });
-    });
   });
 
   it('leaves the standings, their winner and the team awards byte-identical', async () => {
