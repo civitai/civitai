@@ -13,10 +13,9 @@ import { blockedReasonMessage, isCappedBlock } from '~/shared/orchestrator/workf
 //    orchestrator's *transient* blurred preview, never persisted).
 //
 // `nsfwLevel` is the orchestrator-derived level for the slot. Even clean
-// slots can carry a mature level — on red with nsfwEnabled+
-// allowMatureContent, the orchestrator hands back R/X/XXX outputs without a
-// `blockedReason`. We blur those by default in the picker so they aren't
-// rendered uncensored just because they made it past the block gate.
+// slots can carry a mature level — on red the orchestrator hands back R/X/XXX
+// outputs without a `blockedReason`. On green the picker blurs them by default
+// (`blurMatureCandidates`) as a safety net; on red they are shown as-is.
 export type CandidateSlot =
   | { key: string; requiresUnlock?: false; nsfwLevel?: number | null }
   | {
@@ -85,11 +84,9 @@ export function CandidateImageModal({
   const [zoomedKey, setZoomedKey] = useState<string | null>(null);
 
   // The effective selection: user's pick, or the current panel image, or nothing
-  // Per-tile reveal toggle for clean-but-mature candidates. The orchestrator
-  // can hand back R/X/XXX outputs uncensored on red+nsfwEnabled+
-  // allowMatureContent, and we don't want the picker to surface them
-  // raw — even a moderator scanning the modal shouldn't see uncensored
-  // mature content unless they explicitly click Show on each tile.
+  // Per-tile reveal toggle for clean-but-mature candidates when
+  // `blurMatureCandidates` is on (green only): a blurred tile stays blurred
+  // until its Show is clicked.
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(() => new Set());
   const reveal = (key: string) =>
     setRevealedKeys((prev) => {
@@ -132,7 +129,7 @@ export function CandidateImageModal({
         </Text>
         {hasUnlockable && (
           <div
-            className="rounded-md p-3 mb-md flex flex-col items-center gap-2 mb-2"
+            className="mb-md mb-2 flex flex-col items-center gap-2 rounded-md p-3"
             style={{
               border: '1px solid var(--mantine-color-yellow-7)',
               background: 'rgba(250, 176, 5, 0.08)',
@@ -194,7 +191,7 @@ export function CandidateImageModal({
               return (
                 <div key={`locked-${idx}`} className="relative">
                   <div
-                    className="relative overflow-hidden rounded-md w-full"
+                    className="relative w-full overflow-hidden rounded-md"
                     style={{
                       aspectRatio: '3/4',
                       border: '3px solid var(--mantine-color-yellow-6)',
@@ -233,16 +230,11 @@ export function CandidateImageModal({
 
             const isSelected = slot.key === effectiveSelection;
             const matureClean = isCandidateMature(slot);
-            // Gate the blur on `blurMatureCandidates`. On red the user has
-            // already consented to mature output (nsfwEnabled + domain) so
-            // the blur+Show treatment is unnecessary friction; on green
-            // mature outputs would normally arrive locked, but if a clean
-            // mature one slips through we keep the blur as a safety net.
             const showBlur = blurMatureCandidates && matureClean && !revealedKeys.has(slot.key);
             return (
               <div key={slot.key} className="relative">
                 <button
-                  className="relative overflow-hidden rounded-md w-full"
+                  className="relative w-full overflow-hidden rounded-md"
                   style={{
                     aspectRatio: '3/4',
                     border: isSelected
@@ -322,7 +314,7 @@ export function CandidateImageModal({
                   )}
                   {isSelected && !showBlur && (
                     <div
-                      className="absolute top-2 left-2 flex items-center justify-center rounded-full"
+                      className="absolute left-2 top-2 flex items-center justify-center rounded-full"
                       style={{
                         width: 24,
                         height: 24,
@@ -349,7 +341,7 @@ export function CandidateImageModal({
                       variant="filled"
                       color="dark"
                       size="sm"
-                      className="absolute top-2 right-2"
+                      className="absolute right-2 top-2"
                       onClick={(e: React.MouseEvent) => {
                         e.stopPropagation();
                         setZoomedKey(slot.key!);

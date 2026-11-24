@@ -44,6 +44,9 @@
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       dataPolicyUrl: `${data.civitaiUrl}/content/training/data-policy`,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — the session user is fixed for the page's life
+      userId: data.userId,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),

@@ -2909,7 +2909,7 @@ export const comicsRouter = router({
         // use. The orchestrator does NOT hand us a final
         // `blockedReason: 'canUpgrade' | 'siteRestricted'` — those are
         // *derived* in `BlobData`'s constructor from the output's
-        // `nsfwLevel` plus the (domain, nsfwEnabled, allowMatureContent)
+        // `nsfwLevel` plus the (domain, allowMatureContent)
         // context. Reading raw `step.output.images[i].blockedReason`
         // misses the derived path, so mature outputs slipped through and
         // we'd download the blurred preview as if it were a clean image.
@@ -2921,7 +2921,6 @@ export const comicsRouter = router({
         domainFlags[ctx.domain as ColorDomain] = true;
         const wfData = new WorkflowData(normalized as any, {
           domain: domainFlags,
-          nsfwEnabled: !!ctx.user!.showNsfw,
           holdUnrated: true,
         });
         const firstStep = wfData.steps[0];
@@ -2987,7 +2986,7 @@ export const comicsRouter = router({
             // Capture the orchestrator-derived nsfwLevel per slot so the
             // picker can blur mature candidates by default. Without this,
             // mature outputs that aren't `blockedReason`'d (e.g. on red with
-            // nsfwEnabled+allowMatureContent) flow to the picker uncensored.
+            // allowMatureContent) flow to the picker uncensored.
             const nsfwLevel = normalizeCandidateNsfwLevel((candidateImg as any)?.nsfwLevel);
 
             // Locked candidate: marker only. The orchestrator MAY provide a
@@ -3359,7 +3358,7 @@ export const comicsRouter = router({
         throw throwBadRequestError('Panel has no workflow to unlock.');
       }
 
-      assertUnlockAllowed({ domain: ctx.domain, showNsfw: !!ctx.user!.showNsfw });
+      assertUnlockAllowed({ domain: ctx.domain });
 
       // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
       // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
@@ -3429,7 +3428,6 @@ export const comicsRouter = router({
         domainFlags[ctx.domain as ColorDomain] = true;
         const wfData = new WorkflowData(normalized as any, {
           domain: domainFlags,
-          nsfwEnabled: !!ctx.user!.showNsfw,
           holdUnrated: true,
         });
         const firstStep = wfData.steps[0];
@@ -3726,7 +3724,6 @@ export const comicsRouter = router({
           domainFlags[ctx.domain as ColorDomain] = true;
           const wfData = new WorkflowData(normalized as any, {
             domain: domainFlags,
-            nsfwEnabled: !!ctx.user!.showNsfw,
           });
           civitaiResources = (wfData.steps[0]?.resources ?? []).map((r) => ({
             modelVersionId: r.id,

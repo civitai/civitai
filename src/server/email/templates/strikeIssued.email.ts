@@ -33,6 +33,8 @@ const formatDate = (date: Date) =>
   });
 
 export const strikeIssuedEmail = createEmail({
+  template: 'strikeIssued',
+  mailClass: 'transactional',
   header: ({ to }: StrikeEmailData) => ({
     subject: 'Civitai - Strike Issued on Your Account',
     to,

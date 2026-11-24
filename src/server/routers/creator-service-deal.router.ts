@@ -78,6 +78,7 @@ export const creatorServiceDealRouter = router({
       licenseAgreed: input.licenseAgreed,
       requestText: input.requestText,
       disclosureVersion: input.disclosureVersion,
+      disclosureReviewEnabled: input.disclosureReviewEnabled,
       buyerId: ctx.user.id,
       // From the request's domain, never the input: yellow, or green on the green site.
       buzzType: domainSpendType(ctx.features),

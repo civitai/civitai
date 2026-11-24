@@ -3,9 +3,14 @@
 import {
   isEmailConfigured as isTransportConfigured,
   sendEmail as sendWithTransport,
+  setEmailSendRecorder,
   type SendEmailInput,
 } from '@civitai/email';
 import { env } from '~/env/server';
+import { recordEmailSend } from '~/server/email/send-tracking';
+
+// Every send through this app writes one emailEvents `send` row (send-tracking.ts).
+setEmailSendRecorder(recordEmailSend);
 
 export const isEmailConfigured = () => !env.IS_BUILD && isTransportConfigured();
 

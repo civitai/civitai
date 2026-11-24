@@ -8,6 +8,8 @@ type TipaltiTaxFormRequiredData = {
 };
 
 export const tipaltiTaxFormRequiredEmail = createEmail({
+  template: 'tipaltiTaxFormRequired',
+  mailClass: 'transactional',
   header: ({ email }: TipaltiTaxFormRequiredData) => ({
     subject: `Action required: update your tax information to keep receiving payments`,
     to: email,

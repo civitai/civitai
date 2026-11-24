@@ -13,7 +13,7 @@ describe('blocked reasons', () => {
     [PRIVATE_GEN, true],
     ['canUpgrade', false],
     ['siteRestricted', false],
-    ['enableNsfw', false],
+    ['MatureContent', false],
     ['unknownReason', false],
     [undefined, false],
   ])('%s is a rating cap: %s', (reason, capped) => {

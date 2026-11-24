@@ -7708,7 +7708,6 @@ export const blocksRouter = router({
       const { deps, unlockService } = await outputUnlockDeps({
         ctx,
         ...auth,
-        showNsfw: !!ctx.user.showNsfw,
         workflowId: input.workflowId,
       });
       return unlockService.previewBlockOutputUnlock(
@@ -7731,7 +7730,6 @@ export const blocksRouter = router({
       const { deps, unlockService } = await outputUnlockDeps({
         ctx,
         ...auth,
-        showNsfw: !!ctx.user.showNsfw,
         workflowId: input.workflowId,
       });
       return unlockService.unlockBlockOutput(
@@ -15564,14 +15562,9 @@ async function outputUnlockDeps(opts: {
   ctx: Context;
   claims: BlockClaims;
   userId: number;
-  /**
-   * The signed-in viewer's own mature-content setting, from the SESSION (already asserted to be
-   * the token subject). `getBlockSessionUser` does not select it, so it cannot come from there.
-   */
-  showNsfw: boolean;
   workflowId: string;
 }) {
-  const { ctx, claims, userId, showNsfw, workflowId } = opts;
+  const { ctx, claims, userId, workflowId } = opts;
   const [unlockService, { acquireOutputUnlockLock }, orchestration, workflows] = await Promise.all([
     import('~/server/services/blocks/block-output-unlock.service'),
     import('~/server/services/blocks/block-output-unlock-lock'),
@@ -15585,7 +15578,6 @@ async function outputUnlockDeps(opts: {
     assertUnlockAllowed: () =>
       orchestration.assertUnlockAllowed({
         domain: resolveBlockMaturity(claims).isGreen ? 'green' : 'red',
-        showNsfw,
       }),
     assertUnlockReleasesOutput: async () =>
       orchestration.assertUnlockReleasesOutput({ token: await token(), workflowId }),

@@ -40,7 +40,12 @@ describe('~/server/email/client against an SMTP server that never greets', () =>
     const started = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const outcome = await Promise.race([
-      sendEmail({ to: 'a@example.test', subject: 'Hi', html: '<p>Hello</p>' }).then(
+      sendEmail({
+        to: 'a@example.test',
+        subject: 'Hi',
+        html: '<p>Hello</p>',
+        tags: { template: 'test', mailClass: 'transactional' },
+      }).then(
         () => 'sent' as const,
         (err: Error) => err
       ),

@@ -3309,20 +3309,16 @@ export async function assertUnlockReleasesOutput({
   if (cap && matureLevels.every((level) => exceedsNsfwLevel(level, cap))) throw capRefusal();
 }
 
-type UnlockViewer = { domain: ColorDomain; showNsfw: boolean };
+type UnlockViewer = { domain: ColorDomain };
 
 /**
- * Generation submits `allowMatureContent: false` on the green domain and for users with mature
- * content off; an unlock there would charge yellow Buzz for outputs they cannot be shown.
+ * Generation submits `allowMatureContent: false` on the green domain; an unlock there would charge
+ * yellow Buzz for outputs it cannot show.
  */
-export function assertUnlockAllowed({ domain, showNsfw }: UnlockViewer) {
+export function assertUnlockAllowed({ domain }: UnlockViewer) {
   if (domain === 'green')
     throw throwBadRequestError(
       'Mature content cannot be unlocked on this site. Open it on civitai.red to unlock.'
-    );
-  if (!showNsfw)
-    throw throwBadRequestError(
-      'Enable mature content in your account settings to unlock this generation.'
     );
 }
 

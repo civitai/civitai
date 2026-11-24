@@ -124,7 +124,6 @@ export async function pollIterationWorkflow({
     );
     const wfData = new WorkflowData(normalized as any, {
       domain: domainFlags,
-      nsfwEnabled: !!ctx?.user?.showNsfw,
       holdUnrated: true,
     });
     rawImages = wfData.steps[0]?.output ?? [];

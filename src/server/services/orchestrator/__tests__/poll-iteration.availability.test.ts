@@ -217,14 +217,14 @@ describe('pollIterationWorkflow availability', () => {
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
-  it('withholds a mature result from a user with mature content turned off', async () => {
+  // Domain-only mature rule: civitai/civitai#10332.
+  it('returns a mature result on red whatever the mature content setting', async () => {
     givenWorkflow([output({ nsfwLevel: MATURE })], { allowMatureContent: true });
 
     const result = await poll({ showNsfw: false });
 
-    expect(result.status).toBe('failed');
-    expect(result.errorMessage).toMatch(/settings/i);
-    expect(mocks.createImage).not.toHaveBeenCalled();
+    expect(result.status).toBe('succeeded');
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
   });
 
   it('keeps polling while a finished result has not been rated', async () => {

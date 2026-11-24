@@ -11904,6 +11904,10 @@ model ServiceDeal {
   licenseAllowResale        Boolean                 @default(false)
   /// When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
   licenseAgreedAt           DateTime?
+  /// The buyer disclosure version (`BUYER_DISCLOSURE_VERSION`) and its lines as the buyer was shown
+  /// them before the hold. Null on a deal made before they were recorded.
+  buyerDisclosureVersion    String?
+  buyerDisclosureLines      String[]
   /// The offering's maxNsfwLevel when requested; never re-read from the offering.
   maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)

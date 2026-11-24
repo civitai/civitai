@@ -5,7 +5,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import { BUYER_DISCLOSURE_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -150,6 +150,7 @@ const MIGRATIONS = [
   '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
+  '20271125130000_service_deal_buyer_disclosure',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -199,7 +200,8 @@ async function accepted(previewKind = 'Image') {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
-    disclosureVersion: SERVICES_TERMS_VERSION,
+    disclosureVersion: BUYER_DISCLOSURE_VERSION,
+    disclosureReviewEnabled: false,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
@@ -349,7 +351,8 @@ describe('requesting an upload', () => {
           expectedDeliveryDays: 3,
           buyerId: BUYER,
           requestText: 'please',
-          disclosureVersion: SERVICES_TERMS_VERSION,
+          disclosureVersion: BUYER_DISCLOSURE_VERSION,
+          disclosureReviewEnabled: false,
           buzzType: 'yellow',
           servableLevels: 31,
           consentLevels: 1,
