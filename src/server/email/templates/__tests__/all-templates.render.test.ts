@@ -12,8 +12,14 @@ const ORIGIN = 'https://civitai.com';
 type Template = {
   template?: unknown;
   mailClass?: unknown;
+  optOutType?: unknown;
+  oneTimeTokenLinks?: unknown;
   getHtml: (data: unknown) => string;
   getText: (data: unknown) => string;
+  render: (
+    data: unknown,
+    input: { sendId: string; userId?: number; campaign?: string; variant?: string }
+  ) => { html: string; text: string; headers: Record<string, string> };
   getTestData?: (input: Record<string, unknown>) => Promise<unknown>;
 };
 const isTemplate = (value: unknown): value is Template =>
@@ -48,16 +54,23 @@ const indexNames = Object.entries(indexModule)
  */
 const UNBRANDED = ['personalDataExportRefusedEmail'];
 
-const rendered = await Promise.all(
-  [...fromFiles.entries()]
-    .filter(([name]) => !UNBRANDED.includes(name))
-    .sort()
-    .map(async ([name, template]) => {
+const testData = new Map(
+  await Promise.all(
+    [...fromFiles.entries()].map(async ([name, template]) => {
       const data = await template.getTestData?.({});
       if (!data) throw new Error(`${name} has no testData`);
-      return { name, html: template.getHtml(data), text: template.getText(data) };
+      return [name, data] as const;
     })
+  )
 );
+
+const rendered = [...fromFiles.entries()]
+  .filter(([name]) => !UNBRANDED.includes(name))
+  .sort()
+  .map(([name, template]) => {
+    const data = testData.get(name);
+    return { name, html: template.getHtml(data), text: template.getText(data) };
+  });
 
 /** The app-review emails, rendered through the notification email as they are sent. */
 const APP_REVIEW_TYPES = ['app-block-approved', 'app-block-rejected'];
@@ -230,4 +243,162 @@ describe('every email template tags its sends', () => {
     const keys = Object.values(TAGS).map(([key]) => key);
     expect(new Set(keys).size).toBe(keys.length);
   });
+});
+
+/**
+ * Tracked links. Every link a template sends is the tracked click redirect, except:
+ *   - every link of a template whose links carry a single-use token (TOKEN_LINK_TEMPLATES, pinned
+ *     whole: sign-in, verification, password reset, invite and claim links stay direct and
+ *     uncounted, so a scanner following a redirect never spends one);
+ *   - a link off the site, or not http(s): the redirect only goes to a site path;
+ *   - a link to one of our own signed endpoints (OWN_SIGNED_PATHS).
+ * Same-site and off-site are decided here from the test's own origin, not by the rewriter's code.
+ */
+const TOKEN_LINK_TEMPLATES = ['emailVerificationEmail', 'merchClaimInviteEmail'];
+const OWN_SIGNED_PATHS = [
+  '/api/email/click',
+  '/api/notifications/digest-click',
+  '/api/notifications/email-unsubscribe',
+];
+const SEND = {
+  sendId: '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b',
+  userId: 77,
+  campaign: 'camp-1',
+  variant: 'arm-b',
+};
+const hrefs = (html: string) =>
+  [...html.matchAll(/<a\b[^>]*?\shref="([^"]*)"/gi)].map((m) => decode(m[1]!));
+const isSameSite = (href: string) => {
+  try {
+    const url = new URL(href, ORIGIN);
+    return url.origin === ORIGIN && (url.protocol === 'https:' || url.protocol === 'http:');
+  } catch {
+    return false;
+  }
+};
+const ownSigned = (href: string) => OWN_SIGNED_PATHS.includes(new URL(href, ORIGIN).pathname);
+const sitePath = (href: string) => {
+  const url = new URL(href, ORIGIN);
+  return `${url.pathname}${url.search}${url.hash}`;
+};
+
+const { verifyEmailClick, NEVER_WRAPPED_PATHS, EMAIL_CLICK_PATH } = await import(
+  '~/server/email/link-tracking'
+);
+const { DIGEST_CLICK_PATH } = await import('~/server/notifications/digest-tracking');
+const { LIFECYCLE_EMAIL_OPT_OUTS } = await import('~/server/email/lifecycle-opt-outs');
+const { isEmailOptOutType } = await import('~/server/notifications/utils.notifications');
+
+const sends = [...fromFiles.entries()].sort().map(([name, template]) => {
+  const data = testData.get(name);
+  return { name, template, plain: template.getHtml(data), sent: template.render(data, SEND) };
+});
+
+describe('every email template tracks its links', () => {
+  it('the templates whose links carry a single-use token are exactly these', () => {
+    const declared = sends.filter((s) => s.template.oneTimeTokenLinks === true).map((s) => s.name);
+    expect(declared).toEqual(TOKEN_LINK_TEMPLATES);
+  });
+
+  it('the paths never wrapped are the click, digest-click and unsubscribe routes', () => {
+    expect([...NEVER_WRAPPED_PATHS].sort()).toEqual([...OWN_SIGNED_PATHS].sort());
+    expect(NEVER_WRAPPED_PATHS).toContain(EMAIL_CLICK_PATH);
+    expect(NEVER_WRAPPED_PATHS).toContain(DIGEST_CLICK_PATH);
+  });
+
+  it('every <a> has a double-quoted href, the only form the rewriter reads', () => {
+    for (const { name, sent, plain } of sends)
+      for (const html of [sent.html, plain]) {
+        const anchors = html.match(/<a\b[^>]*>/gi) ?? [];
+        for (const tag of anchors) expect(tag, name).toMatch(/\shref="/);
+      }
+  });
+
+  it.each(TOKEN_LINK_TEMPLATES)('%s sends every link as it is, untracked', (name) => {
+    const send = sends.find((s) => s.name === name)!;
+    expect(send.sent.html).toBe(send.plain);
+    expect(hrefs(send.sent.html).length).toBeGreaterThan(0);
+    expect(send.sent.html).not.toContain(EMAIL_CLICK_PATH);
+  });
+
+  it.each(sends.filter((s) => !TOKEN_LINK_TEMPLATES.includes(s.name)).map((s) => [s.name, s]))(
+    '%s sends each same-site link through the signed click redirect, in order',
+    (_name, { template, plain, sent }) => {
+      const before = hrefs(plain);
+      const after = hrefs(sent.html);
+      expect(after).toHaveLength(before.length);
+      let position = 0;
+      before.forEach((href, i) => {
+        if (!isSameSite(href) || ownSigned(href)) {
+          expect(after[i]).toBe(href);
+          return;
+        }
+        position++;
+        const url = new URL(after[i]!);
+        expect(url.origin).toBe(ORIGIN);
+        expect(url.pathname).toBe('/api/email/click');
+        expect(verifyEmailClick(Object.fromEntries(url.searchParams))).toEqual({
+          ...SEND,
+          template: template.template,
+          mailClass: template.mailClass,
+          position,
+          to: sitePath(href),
+        });
+      });
+    }
+  );
+
+  it('positive controls: the notification button is tracked, the verification button is not', () => {
+    const notification = sends.find((s) => s.name === 'notificationEmail')!;
+    const button = notification.sent.html.match(/<a class="em-btn" href="([^"]+)"/)![1]!;
+    const click = verifyEmailClick(Object.fromEntries(new URL(decode(button)).searchParams));
+    expect(click).toMatchObject({ template: 'notification', userId: 77, sendId: SEND.sendId });
+    const verification = sends.find((s) => s.name === 'emailVerificationEmail')!;
+    expect(verification.sent.html).toContain(
+      'class="em-btn" href="https://civitai.com/verify-email?token=test-token"'
+    );
+    // Across all templates, the redirect is actually used.
+    const tracked = sends
+      .flatMap((s) => hrefs(s.sent.html))
+      .filter((h) => h.includes('/api/email/click?'));
+    expect(tracked.length).toBeGreaterThan(sends.length);
+  });
+});
+
+describe('every lifecycle email carries its own opt-out', () => {
+  it('each lifecycle template declares an opt-out type, listed for it; no other template has one', () => {
+    const lifecycle = Object.fromEntries(
+      sends
+        .filter((s) => s.template.mailClass === 'lifecycle')
+        .map((s) => [s.template.optOutType, s.template.template])
+    );
+    expect(lifecycle).toEqual(LIFECYCLE_EMAIL_OPT_OUTS);
+    expect(lifecycle).toEqual({ 'missed-notification-digest': 'missedNotificationsDigest' });
+    for (const type of Object.keys(lifecycle)) expect(isEmailOptOutType(type), type).toBe(true);
+    for (const s of sends.filter((s) => s.template.mailClass !== 'lifecycle'))
+      expect(s.template.optOutType, s.name).toBeUndefined();
+  });
+
+  it.each(sends.filter((s) => s.template.mailClass === 'lifecycle').map((s) => [s.name, s]))(
+    '%s: List-Unsubscribe one-click with the send id, and the footer links',
+    (_name, { template, sent }) => {
+      expect(sent.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+      const header = sent.headers['List-Unsubscribe']!;
+      expect(header).toMatch(
+        /^<https:\/\/civitai\.com\/api\/notifications\/email-unsubscribe\?.+>$/
+      );
+      const unsubscribe = new URL(header.slice(1, -1));
+      expect(unsubscribe.searchParams.get('t')).toBe(template.optOutType);
+      expect(unsubscribe.searchParams.get('e')).toBe(SEND.sendId);
+      const links = hrefs(sent.html);
+      // The opt-out link in the body is the header's own, untracked.
+      expect(links).toContain(unsubscribe.toString());
+      expect(sent.text).toContain(unsubscribe.toString());
+      // The email settings link, tracked like any other site link.
+      const settings = links
+        .filter((h) => h.includes('/api/email/click?'))
+        .map((h) => verifyEmailClick(Object.fromEntries(new URL(h).searchParams))?.to);
+      expect(settings).toContain('/user/account#notification-settings');
+    }
+  );
 });

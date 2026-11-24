@@ -68,6 +68,11 @@ export interface SendEmailInput {
   headers?: Record<string, string>;
   /** Required: a send without a template and mail class is a type error. */
   tags: EmailTags;
+  /**
+   * The message's send id, when the sender rendered it into the message (a tracked link or an
+   * unsubscribe link carries it). Anything but a UUID is replaced by a fresh one, as is none.
+   */
+  sendId?: string;
 }
 
 /** One send, as handed to the recorder: the tags and our send id, never an address or content. */
@@ -123,10 +128,26 @@ function recordSend(record: EmailSendRecord) {
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The send id a message goes out with: the sender's own when it is a UUID, otherwise a fresh one. */
+export function resolveSendId(given: unknown): string {
+  return typeof given === 'string' && UUID.test(given) ? given.toLowerCase() : randomUUID();
+}
+
 function compose(
   client: Transporter,
   sendId: string,
-  { to, cc, from, text, tags, headers, ...data }: SendEmailInput & { to: string | string[] }
+  {
+    to,
+    cc,
+    from,
+    text,
+    tags,
+    headers,
+    sendId: _given,
+    ...data
+  }: SendEmailInput & { to: string | string[] }
 ) {
   const env = loadEmailEnv();
   return client.sendMail({
@@ -151,7 +172,7 @@ function compose(
 export async function sendEmail(input: SendEmailInput): Promise<void> {
   const client = getClient();
   if (!client || !input.to) return;
-  const sendId = randomUUID();
+  const sendId = resolveSendId(input.sendId);
   const info = await compose(client, sendId, { ...input, to: input.to });
   const failed = (info.rejected ?? []).filter(Boolean);
   if (failed.length) {
@@ -185,7 +206,7 @@ export async function sendEmailStrict(input: SendEmailStrictInput): Promise<{ me
     ? input.to.filter(Boolean)
     : [input.to].filter(Boolean);
   if (!recipients.length) throw new Error('Email has no recipient');
-  const sendId = randomUUID();
+  const sendId = resolveSendId(input.sendId);
   const info = await compose(client, sendId, { ...input, to: recipients });
   const failed = (info.rejected ?? []).filter(Boolean);
   if (failed.length) throw new Error(`${failed.length} recipient(s) could not be sent to`);

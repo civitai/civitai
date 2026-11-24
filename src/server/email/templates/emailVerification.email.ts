@@ -17,6 +17,8 @@ type EmailVerificationData = {
 export const emailVerificationEmail = createEmail({
   template: 'emailVerification',
   mailClass: 'transactional',
+  // Untracked: its button is the single-use verification token link.
+  oneTimeTokenLinks: true,
   header: ({ to, isEmailChange }: EmailVerificationData) => ({
     subject: isEmailChange
       ? 'Verify your new email address - Civitai'

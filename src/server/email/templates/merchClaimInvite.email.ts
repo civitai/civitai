@@ -10,6 +10,8 @@ type MerchClaimInviteData = {
 export const merchClaimInviteEmail = createEmail({
   template: 'merchClaimInvite',
   mailClass: 'transactional',
+  // Untracked: its claim link carries the single-use claim key.
+  oneTimeTokenLinks: true,
   header: ({ to }: MerchClaimInviteData) => ({
     subject: 'Claim your Blue Buzz from your Civitai merch order',
     to,

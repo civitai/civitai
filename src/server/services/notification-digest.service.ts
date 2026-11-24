@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { NOTICE_MIN_INTERVAL_MS, withThrottleRetry, type Sleep } from '@civitai/email';
 import type { UnseenNotifications } from '@civitai/notifications';
@@ -230,16 +231,24 @@ async function renderItems(user: UnseenNotifications): Promise<RenderedItem[]> {
 }
 
 /**
- * The email's links, each routed through the click endpoint with the user, the pass and the
- * item's position and type signed into it. A link off the site is left as it is, untracked.
+ * The email's links, each routed through the click endpoint with the user, the pass, the email's
+ * send id and the item's position and type signed into it. A link off the site is left as it is,
+ * untracked.
  */
-function trackedLinks(userId: number, cycleStartedAt: Date, items: RenderedItem[]) {
+function trackedLinks(userId: number, cycleStartedAt: Date, items: RenderedItem[], sendId: string) {
   const linked: MissedNotificationsDigestItem[] = items.map(({ message, url, type }, i) => {
     const to = digestTargetPath(url);
     return {
       message,
       url: to
-        ? getDigestClickUrl({ userId, cycleStartedAt, position: i + 1, notificationType: type, to })
+        ? getDigestClickUrl({
+            userId,
+            cycleStartedAt,
+            position: i + 1,
+            notificationType: type,
+            to,
+            sendId,
+          })
         : url,
     };
   });
@@ -249,6 +258,7 @@ function trackedLinks(userId: number, cycleStartedAt: Date, items: RenderedItem[
     position: DIGEST_ALL_POSITION,
     notificationType: '',
     to: DIGEST_FALLBACK_PATH,
+    sendId,
   });
   return { items: linked, allUrl };
 }
@@ -428,7 +438,9 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
           continue;
         }
         try {
-          const links = trackedLinks(user.id, cycleStartedAt, items);
+          // Ours, not the transport's, so the digest's own click links can carry it.
+          const sendId = randomUUID();
+          const links = trackedLinks(user.id, cycleStartedAt, items, sendId);
           // `c` names the pass, so an unsubscribe from this email counts against it.
           const unsubscribeUrl = `${getEmailUnsubscribeUrl(
             user.id,
@@ -444,7 +456,8 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
                 totalIsFloor: missed.floor,
                 unsubscribeUrl,
               },
-              { userId: user.id, campaign: cycleStartedAt.toISOString() }
+              { userId: user.id, campaign: cycleStartedAt.toISOString() },
+              { sendId }
             )
           );
           result.emailed++;

@@ -1,8 +1,11 @@
 import { escape as escapeHtml } from 'he';
-import { createEmail } from '~/server/email/templates/base.email';
+import { createEmail, type EmailRenderContext } from '~/server/email/templates/base.email';
 import { absoluteUrl, notificationSettingsUrl } from '~/server/email/templates/notification.email';
 import { emailTheme, simpleEmailWithTemplate } from '~/server/email/templates/util';
-import { MISSED_DIGEST_DISPLAY_NAME } from '~/server/notifications/missed-digest.constants';
+import {
+  MISSED_DIGEST_DISPLAY_NAME,
+  MISSED_DIGEST_EMAIL_TYPE,
+} from '~/server/notifications/missed-digest.constants';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 export type MissedNotificationsDigestItem = { message: string; url?: string };
@@ -15,6 +18,7 @@ export type MissedNotificationsDigestData = {
   total: number;
   /** True when `total` stopped at its ceiling, so the real number may be higher. */
   totalIsFloor: boolean;
+  /** The recipient's signed unsubscribe link; each send adds its send id (base.email.ts). */
   unsubscribeUrl: string;
   /** The "See all notifications" link; the notifications page when not given. */
   allUrl?: string;
@@ -40,15 +44,17 @@ const moreLine = (data: MissedNotificationsDigestData) => {
 export const missedNotificationsDigestEmail = createEmail({
   template: 'missedNotificationsDigest',
   mailClass: 'lifecycle',
+  // createEmail sets List-Unsubscribe and List-Unsubscribe-Post from this link.
+  optOut: {
+    type: MISSED_DIGEST_EMAIL_TYPE,
+    url: (data: MissedNotificationsDigestData) => data.unsubscribeUrl,
+  },
   header: (data: MissedNotificationsDigestData) => ({
     subject: subjectFor(data),
     to: data.to,
-    headers: {
-      'List-Unsubscribe': `<${data.unsubscribeUrl}>`,
-      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-    },
   }),
-  html: (data: MissedNotificationsDigestData) => {
+  html: (data: MissedNotificationsDigestData, ctx?: EmailRenderContext) => {
+    const unsubscribeUrl = ctx?.unsubscribeUrl ?? data.unsubscribeUrl;
     const list = data.items
       .map(({ message, url }) => {
         const link = absoluteUrl(url);
@@ -67,7 +73,7 @@ export const missedNotificationsDigestEmail = createEmail({
       )}" is on. <a href="${notificationSettingsUrl()}" style="color: ${
       emailTheme.link
     };">Manage notification emails</a>
-      or <a href="${escapeHtml(data.unsubscribeUrl)}" style="color: ${
+      or <a href="${escapeHtml(unsubscribeUrl)}" style="color: ${
       emailTheme.link
     };">unsubscribe from this one</a>.`;
     return simpleEmailWithTemplate({
@@ -85,7 +91,7 @@ export const missedNotificationsDigestEmail = createEmail({
       footer,
     });
   },
-  text: (data: MissedNotificationsDigestData) => {
+  text: (data: MissedNotificationsDigestData, ctx?: EmailRenderContext) => {
     const more = moreLine(data);
     return [
       `You have ${countLabel(data)} on Civitai you haven't seen.`,
@@ -99,7 +105,7 @@ export const missedNotificationsDigestEmail = createEmail({
       `See all notifications: ${data.allUrl ?? notificationsPageUrl()}`,
       `You're getting this because "${MISSED_DIGEST_DISPLAY_NAME}" is on.`,
       `Manage notification emails: ${notificationSettingsUrl()}`,
-      `Unsubscribe from this one: ${data.unsubscribeUrl}`,
+      `Unsubscribe from this one: ${ctx?.unsubscribeUrl ?? data.unsubscribeUrl}`,
     ]
       .filter(Boolean)
       .join('\n\n');
