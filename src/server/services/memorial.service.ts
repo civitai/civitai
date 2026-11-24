@@ -1,3 +1,5 @@
+import { TRPCError } from '@trpc/server';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import {
   MEMORIAL_BASES,
@@ -7,7 +9,10 @@ import {
   type MemorialState,
   type MemorialTribute,
 } from '@civitai/shared/memorial';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { dbWrite } from '~/server/db/client';
+import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -25,14 +30,40 @@ export const memorialTributeSchema = z.object({
     .trim()
     .url()
     .refine((value) => {
-      const { protocol, hostname } = new URL(value);
+      let url: URL;
+      try {
+        url = new URL(value);
+      } catch {
+        return false;
+      }
       return (
-        protocol === 'https:' &&
-        TRIBUTE_HOSTS.some((host) => hostname === host || hostname.endsWith(`.${host}`))
+        url.protocol === 'https:' &&
+        TRIBUTE_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))
       );
     }, 'Tribute links must be https links on a Civitai site.'),
 });
 export const memorialTributesSchema = z.array(memorialTributeSchema).max(MEMORIAL_TRIBUTES_MAX);
+
+/**
+ * Every memorial endpoint's gate. An impersonation session is refused because the two-person rule
+ * compares moderator ids, and a moderator acting as another moderator would carry the second id.
+ */
+export async function assertMemorialModerator(ctx: {
+  actor: { roles?: string[] };
+  req: NextApiRequest;
+  res: NextApiResponse;
+}) {
+  if (!(await hasModeratorGrant(ctx.actor, 'user.memorialize')))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Memorializing an account needs the "user.memorialize" moderator permission.',
+    });
+  const session = await getServerAuthSession({ req: ctx.req, res: ctx.res });
+  assertNotImpersonating(
+    { impersonatedBy: session?.impersonatedBy },
+    'Memorialization cannot be done while impersonating.'
+  );
+}
 
 export class MemorializedAccountError extends Error {
   constructor() {
@@ -44,7 +75,7 @@ export class MemorializedAccountError extends Error {
 export const isMemorialized = (flags: number | null | undefined) =>
   Flags.hasFlag(flags ?? 0, UserFlag.Memorialized);
 
-/** `User.meta` never reaches a public payload; this is all of the memorial that does. What a profile shows: tributes once a second moderator has confirmed, nothing before. */
+/** The only part of the memorial a profile receives: the tributes, once a second moderator has confirmed. */
 export function publicMemorial(meta: unknown): { tributes: MemorialTribute[] } | null {
   const memorial = memorialOf(meta);
   if (memorial?.status !== 'active') return null;
@@ -103,10 +134,6 @@ export async function proposeMemorial(input: {
   throw throwBadRequestError('A memorialization is already waiting for confirmation.');
 }
 
-/**
- * The second moderator's step. The two-person rule is a predicate on the write itself, so a
- * proposer cannot confirm their own proposal by any route, and two concurrent confirms set it once.
- */
 /** What a memorialization reaches outside the database: sessions, keys and the creator-card cache. */
 export type MemorialEffects = {
   invalidateSession: (userId: number, caller: 'moderation') => Promise<unknown>;
@@ -125,6 +152,7 @@ const defaultEffects: MemorialEffects = {
     (await import('~/server/services/user-creator.service')).bustUserCreator(userId, opts),
 };
 
+/** The proposer-differs check is in the UPDATE's WHERE, so no route lets a proposer confirm their own proposal. */
 export async function confirmMemorial(
   input: { userId: number; actorId: number },
   effects: MemorialEffects = defaultEffects
@@ -143,6 +171,7 @@ export async function confirmMemorial(
         )
     WHERE id = ${input.userId}
       AND "deletedAt" IS NULL
+      AND "bannedAt" IS NULL
       AND jsonb_typeof(meta) = 'object'
       AND meta -> 'memorial' ->> 'status' = 'pending'
       AND (meta -> 'memorial' ->> 'proposedBy')::int <> ${input.actorId}::int
@@ -151,6 +180,7 @@ export async function confirmMemorial(
   if (!updated.length) {
     const target = await readTarget(input.userId);
     if (target.deletedAt) throw throwBadRequestError('This account is deleted.');
+    if (target.bannedAt) throw throwBadRequestError('A banned account cannot be memorialized.');
     if (target.memorial?.status === 'active')
       throw throwBadRequestError('This account is already memorialized.');
     if (target.memorial?.status !== 'pending')
@@ -162,9 +192,13 @@ export async function confirmMemorial(
 
   await afterMemorialChanged(input.userId, updated[0].username, effects);
   // The account change has committed; each step logs its own failure so one cannot skip the next.
-  await effects
+  const sessionsRevoked = await effects
     .invalidateSession(input.userId, 'moderation')
-    .catch((error) => logMemorialError('memorial-invalidate-session', input.userId, error));
+    .then(() => true)
+    .catch((error) => {
+      logMemorialError('memorial-invalidate-session', input.userId, error);
+      return false;
+    });
   const keys = await effects.expireUserApiKeys(input.userId).catch((error) => {
     logMemorialError('memorial-expire-api-keys', input.userId, error);
     return null;
@@ -176,12 +210,13 @@ export async function confirmMemorial(
       new Error('orchestrator did not confirm token revocation')
     );
   return {
-    keysExpired: keys?.expired ?? null,
+    sessionsRevoked,
+    keysRevoked: keys !== null,
     orchestratorConfirmed: keys?.orchestratorConfirmed ?? false,
   };
 }
 
-/** Cancels a pending proposal or lifts an active memorialization. Sessions are not restored. */
+/** Sessions are not restored. */
 export async function reverseMemorial(
   input: { userId: number },
   effects: MemorialEffects = defaultEffects

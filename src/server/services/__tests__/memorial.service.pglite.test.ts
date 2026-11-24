@@ -85,7 +85,6 @@ describe('memorialization', () => {
     const { flags, meta } = await row();
     expect(flags & UserFlag.Memorialized).toBe(UserFlag.Memorialized);
     expect(flags & UserFlag.ExcludeFromEventPoints).toBe(UserFlag.ExcludeFromEventPoints);
-    // Only the tributes reach a profile: not who proposed it, nor how the death was confirmed.
     expect(publicMemorial(meta)).toEqual({ tributes: [TRIBUTE] });
     expect(invalidateSession).toHaveBeenCalledWith(USER, 'moderation');
     expect(expireUserApiKeys).toHaveBeenCalledWith(USER);

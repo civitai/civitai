@@ -109,7 +109,6 @@ type UserModActivity = {
     | 'tipaltiResync:status'
     // A moderator released a built personal-data export to the account owner (personal-data-export.service).
     | 'releasePersonalDataExport'
-    // Memorialization (memorial.service): proposed by one moderator, confirmed by another; reverse cancels either.
     | 'memorialPropose'
     | 'memorialConfirm'
     | 'memorialReverse'

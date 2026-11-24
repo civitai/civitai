@@ -2540,8 +2540,13 @@ export async function removePlacement(input: {
   return { ok: true };
 }
 
-// MEMORIALIZATION. The account change and the two-person rule live in the main app's memorial service;
-// the evidence note is a moderator note (the page action writes it), so it never sits on the account row.
+// The evidence note is written by the page action as a moderator note, never on the account row.
+const MEMORIAL_MAY_HAVE_COMPLETED =
+  'Outcome unknown: the change may have gone through. Reload the page before trying again.';
+const memorialFailure = (result: Extract<JsonResult, { ok: false }>): ActionResult => ({
+  ok: false,
+  error: writeFailureError(result, MEMORIAL_MAY_HAVE_COMPLETED),
+});
 export type MemorialPanelState = {
   memorial: MemorialState | null;
   proposedBy: string | null;
@@ -2577,19 +2582,30 @@ export async function proposeMemorial(input: {
     { userId: input.userId, basis: input.basis, tributes: input.tributes },
     'Memorialization proposal'
   );
-  if (!result.ok) return result;
+  if (!result.ok) return memorialFailure(result);
+  if (result.body.status !== 'pending') return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
   return { ok: true };
 }
 
 export async function confirmMemorial(userId: number): Promise<ActionResult> {
-  const result = await callModEndpoint('user/memorial-confirm', { userId }, 'Memorialization');
-  if (!result.ok) return result;
-  if (result.body.orchestratorConfirmed === false)
-    return {
-      ok: true,
-      warning:
-        'Memorialized. The generation service did not confirm revoking its tokens; that is logged for a retry.',
-    };
+  // Longer than the default: it waits on session revocation and the generation service.
+  const result = await callModEndpoint(
+    'user/memorial-confirm',
+    { userId },
+    'Memorialization',
+    60_000
+  );
+  if (!result.ok) return memorialFailure(result);
+  const { status, sessionsRevoked, keysRevoked, orchestratorConfirmed } = result.body;
+  if (status !== 'active') return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
+  const gaps = [
+    sessionsRevoked === false && 'its sessions were not signed out (use Force logout)',
+    keysRevoked === false && 'its API keys were not expired',
+    keysRevoked !== false &&
+      orchestratorConfirmed === false &&
+      'the generation service did not confirm revoking its tokens',
+  ].filter(Boolean);
+  if (gaps.length) return { ok: true, warning: `Memorialized, but ${gaps.join('; ')}.` };
   return { ok: true };
 }
 
@@ -2599,6 +2615,7 @@ export async function reverseMemorial(userId: number): Promise<ActionResult> {
     { userId },
     'Reverse memorialization'
   );
-  if (!result.ok) return result;
+  if (!result.ok) return memorialFailure(result);
+  if (result.body.memorialized !== false) return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
   return { ok: true };
 }

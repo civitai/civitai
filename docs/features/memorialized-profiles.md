@@ -32,7 +32,9 @@ The private note goes to the moderator notes (Notes & Strikes), never to the acc
 
 - State: the `Memorialized` bit on `User.flags` (`src/shared/constants/user-flags.constants.ts`) and
   `User.meta.memorial` (shape in `packages/civitai-shared/src/memorial.ts`). Confirming sets both in one
-  statement. `User.meta` is not sent to profile viewers; `publicMemorial` gives them the tributes only.
+  statement. `meta.memorial` is stripped from the owner's session (`apps/auth` session shape) and from
+  profile payloads; `publicMemorial` gives visitors the tributes only.
+- Endpoints refuse an impersonation session, since the two-person rule compares moderator ids.
 - Service: `src/server/services/memorial.service.ts`; endpoints `/api/mod/user/memorial-propose`,
   `memorial-confirm`, `memorial-reverse`.
 - Moderator UI: `apps/moderator/src/routes/retool/user-lookup/MemorialPanel.svelte`.

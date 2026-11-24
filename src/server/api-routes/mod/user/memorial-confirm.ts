@@ -1,8 +1,6 @@
 import * as z from 'zod';
-import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
-import { confirmMemorial } from '~/server/services/memorial.service';
-import { hasModeratorGrant } from '~/server/services/moderator-grants';
+import { confirmMemorial, assertMemorialModerator } from '~/server/services/memorial.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { userId } from '~/server/schema/moderator/user';
@@ -10,20 +8,17 @@ import { userId } from '~/server/schema/moderator/user';
 export default defineModeratorEndpoint('user.memorialConfirm', {
   summary:
     'Confirm a pending memorialization. Signs the account out everywhere and expires its API keys.',
-  returns: '{ status: "active", keysExpired, orchestratorConfirmed, auditRecorded }',
+  returns:
+    '{ status: "active", sessionsRevoked, keysRevoked, orchestratorConfirmed, auditRecorded }',
   notes: [
-    'Requires the moderator app permission `user.memorialize`.',
+    'Requires the moderator app permission `user.memorialize`, and refuses an impersonation session.',
     'The confirming moderator must not be the one who proposed it; the write itself refuses that.',
     'Also excludes the account from event points, and reversing clears that only if this set it.',
   ],
   rateLimit: { max: 20, windowSeconds: 60 },
   input: z.object({ userId }),
   async handler(input, ctx) {
-    if (!(await hasModeratorGrant(ctx.actor, 'user.memorialize')))
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'Memorializing an account needs the "user.memorialize" moderator permission.',
-      });
+    await assertMemorialModerator(ctx);
     const revoked = await confirmMemorial({ userId: input.userId, actorId: ctx.actor.id });
     const result = { status: 'active' as const, ...revoked };
 

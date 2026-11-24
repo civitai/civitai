@@ -13,8 +13,8 @@ export type MemorialTribute = { label: string; url: string };
 export const MEMORIAL_TRIBUTES_MAX = 3;
 
 /**
- * `User.meta.memorial`. Written only by the main app's memorial service; `status: 'active'` is set in
- * the same statement as the `Memorialized` user flag, so either can be read as the state.
+ * `User.meta.memorial`, written only by the main app's memorial service. `status: 'active'` is set in
+ * the same statement as the `Memorialized` user flag. Never send it to the account's owner or visitors.
  */
 export type MemorialState = {
   status: 'pending' | 'active';

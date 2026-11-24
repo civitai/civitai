@@ -940,24 +940,18 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return memorialFail(input);
 
+    // First, so a proposal is never left without its evidence, whatever the endpoint answers.
+    await addUserNote({
+      userId: input.userId,
+      notes: `Memorialization evidence (${MEMORIAL_BASIS_LABELS[input.basis]}): ${input.note}`,
+      author,
+    });
     const result = await proposeMemorial({
       userId: input.userId,
       basis: input.basis,
       tributes: input.tributes,
     });
     if (!result.ok) return memorialFail(result.error);
-    try {
-      await addUserNote({
-        userId: input.userId,
-        notes: `Memorialization proposed (${MEMORIAL_BASIS_LABELS[input.basis]}): ${input.note}`,
-        author,
-      });
-    } catch {
-      return {
-        success: true,
-        warning: 'Proposed, but the evidence note did not save. Add it on Notes & Strikes.',
-      };
-    }
     return { success: true };
   }),
 

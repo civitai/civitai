@@ -149,7 +149,7 @@ export const resolveChatRecipients = async ({
   ]);
   const blockedUserIds = new Set(blockedUsers.flat().map((u) => u.id));
   let allowed = recipientIds.filter((u) => u !== userId && !blockedUserIds.has(u));
-  // Nobody reads a memorialized account's messages, moderators included.
+  // No new chats to a memorialized account, moderators included: nobody can read them.
   const memorialized = await memorializedAmong(allowed);
   if (memorialized.size) allowed = allowed.filter((u) => !memorialized.has(u));
 

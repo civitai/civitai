@@ -90,7 +90,7 @@
       <dt class="text-dark-2">Tributes</dt>
       <dd class="text-white">
         {#if memorial.tributes.length}
-          {#each memorial.tributes as tribute (tribute.url)}
+          {#each memorial.tributes as tribute, i (i)}
             <a href={tribute.url} class="{LINK_CLASS} mr-3" target="_blank" rel="noreferrer">
               {tribute.label}
             </a>

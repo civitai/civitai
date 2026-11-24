@@ -1,8 +1,6 @@
 import * as z from 'zod';
-import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
-import { reverseMemorial } from '~/server/services/memorial.service';
-import { hasModeratorGrant } from '~/server/services/moderator-grants';
+import { reverseMemorial, assertMemorialModerator } from '~/server/services/memorial.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { userId } from '~/server/schema/moderator/user';
@@ -11,17 +9,13 @@ export default defineModeratorEndpoint('user.memorialReverse', {
   summary: 'Cancel a pending memorialization, or lift an active one. One moderator is enough.',
   returns: '{ memorialized: false, auditRecorded }',
   notes: [
-    'Requires the moderator app permission `user.memorialize`.',
+    'Requires the moderator app permission `user.memorialize`, and refuses an impersonation session.',
     'Sessions and API keys revoked at confirmation are not restored; the holder signs in again.',
   ],
   rateLimit: { max: 20, windowSeconds: 60 },
   input: z.object({ userId }),
   async handler(input, ctx) {
-    if (!(await hasModeratorGrant(ctx.actor, 'user.memorialize')))
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'Memorializing an account needs the "user.memorialize" moderator permission.',
-      });
+    await assertMemorialModerator(ctx);
     await reverseMemorial({ userId: input.userId });
     const result = { memorialized: false };
 
