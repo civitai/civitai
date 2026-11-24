@@ -314,10 +314,7 @@ describe('the sweep’s page of deleted accounts', () => {
       (h.prisma.$queryRaw as (...a: unknown[]) => unknown)(...args)
     );
     try {
-      const deps = await liveTraceSweepDeps({
-        isMissingTable: () => false,
-        isHeld: async () => false,
-      });
+      const deps = await liveTraceSweepDeps({ isMissingTable: () => false });
       expect(await deps.deletedAccountsWithTraces(0, 10)).toEqual([7402, 7503, 7604]);
       expect(await deps.deletedAccountsWithTraces(7402, 1)).toEqual([7503]);
       expect(await deps.deletedAccountsWithTraces(7604, 10)).toEqual([]);

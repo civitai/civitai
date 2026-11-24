@@ -52,31 +52,6 @@ const PERSIST_RETRY_MIGRATION = path.join(
   '20261129120000_job_queue_image_cdn_persist_retry_type/migration.sql'
 );
 
-const EVIDENCE_HOLD_MIGRATION = path.join(MIGRATIONS, '20261019220000_evidence_hold/migration.sql');
-
-/**
- * The hold marker table, its view and the trigger that marks a sent report's users, taken from the
- * migration: the trigger is what holds a reported owner once a report is sent.
- */
-const evidenceHoldSql = () => {
-  const migration = readFileSync(EVIDENCE_HOLD_MIGRATION, 'utf8');
-  const slice = (from: string, to: string) => {
-    const start = migration.indexOf(from);
-    const end = migration.indexOf(to, start);
-    if (start < 0) throw new Error(`evidence_hold migration has no ${from}`);
-    if (end < 0) throw new Error(`evidence_hold migration has no ${to} after ${from}`);
-    return migration.slice(start, end + to.length);
-  };
-  return [
-    slice('CREATE TABLE "EvidenceHold" (', 'ON "EvidenceHold" ("userId");'),
-    slice('CREATE VIEW "EvidenceHeldUser"', 'GROUP BY "userId";'),
-    slice(
-      'CREATE OR REPLACE FUNCTION evidence_hold_from_csam_report()',
-      'EXECUTE FUNCTION evidence_hold_from_csam_report();'
-    ),
-  ].join('\n');
-};
-
 const CACHER = 'http://image-cacher.test';
 const OWNER = 10;
 const OTHER_OWNER = 11;
@@ -154,7 +129,6 @@ const {
 } = await import('~/server/services/cdn-access.service');
 const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
 const { cdnAccessSync } = await import('~/server/jobs/cdn-access-sync');
-const { purgeHoldGuard } = await import('~/server/jobs/image-ingestion');
 const { EVIDENCE_VERIFIED_KEY, CSAM_HOLD_POST_UNPUBLISH_REASON } = await import(
   '~/server/services/cdn-access.service'
 );
@@ -237,7 +211,6 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, "createdById" int, data jsonb);
     CREATE TABLE "CosmeticShopItem" (
       id int PRIMARY KEY,
@@ -247,7 +220,6 @@ beforeAll(async () => {
     );
     CREATE TABLE "ItemDefinition" (id int PRIMARY KEY, "imageUrl" text);
   `);
-  await pg.db.exec(evidenceHoldSql());
   await pg.db.exec(readFileSync(BLOCKED_QUEUE_MIGRATION, 'utf8'));
   await pg.db.exec(readFileSync(CDN_ACCESS_MIGRATION, 'utf8'));
   await pg.db.exec(readFileSync(CDN_ACCESS_FIXES_MIGRATION, 'utf8'));
@@ -262,7 +234,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await pg.db.exec(`
     TRUNCATE "JobQueue", "Image", "Post", "ModelVersion", "Model", "ModActivity", "CsamReport",
-      "EvidenceHold", "ImageCdnAccess", "ImageCdnModeratorDelete", "ImageCdnAccessClaim",
+      "ImageCdnAccess", "ImageCdnModeratorDelete", "ImageCdnAccessClaim",
       "Cosmetic", "CosmeticShopItem", "ItemDefinition", "ImageCdnShopTakedown";
     INSERT INTO "Model" (id, status) VALUES (1, 'Published');
     INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1, 1, 'Published');
@@ -383,17 +355,10 @@ const coverImages = (imageIds: number[]) =>
   sql`UPDATE "CsamReport" SET "reportSentAt" = now(), details = jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'),
       images = ${JSON.stringify(imageIds.map((id) => ({ id })))}::jsonb`;
 
-/** A moderator's manual hold marker on `userId`. */
-const holdMarker = (userId: number) =>
-  sql`INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${userId}, 'manual', 'test')`;
-/**
- * A moderator releasing every hold marker on `userId`. A sent report marks its users held for a year,
- * so a coverage release only shows once the marker is released.
- */
-const releaseMarkers = (userId = OWNER) =>
-  sql`UPDATE "EvidenceHold"
-      SET "releasedAt" = now(), "releasedById" = ${MOD}, "releaseReason" = 'released'
-      WHERE "userId" = ${userId} AND "releasedAt" IS NULL`;
+/** An unsent report naming `userId`, which holds them until it is sent. */
+const unsentReport = (userId: number) =>
+  sql`INSERT INTO "CsamReport" ("userId") VALUES (${userId})`;
+const dropUnsentReports = () => sql`DELETE FROM "CsamReport" WHERE "reportSentAt" IS NULL`;
 
 // ── observations ────────────────────────────────────────────────────────────────────────────────
 
@@ -717,14 +682,12 @@ describe('post takedowns', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
 
     await coverImages([1, 2]);
-    await releaseMarkers();
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('a csam-hold removal is not released by an earlier report about other images', async () => {
     await verifiedReport([900]);
-    await releaseMarkers();
     await moderatorPostUnpublish(5, CSAM_HOLD_POST_UNPUBLISH_REASON);
     await syncCdnAccess();
     await reconcileCdnAccess();
@@ -742,14 +705,12 @@ describe('post takedowns', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
 
     await coverImages([1, 2]);
-    await releaseMarkers();
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
   it('a mature-underage violation unpublish is not released by an earlier report about other images', async () => {
     await verifiedReport([900]);
-    await releaseMarkers();
     await modelCascade(5, MOD, 'UnpublishedViolation', 'mature-underage');
     await syncCdnAccess();
     await reconcileCdnAccess();
@@ -825,7 +786,7 @@ describe('shared url', () => {
   });
 });
 
-describe('evidence holds', () => {
+describe('holds', () => {
   it('a CSAM review flag caps a human takedown at deny, and the release does not upgrade it', async () => {
     await image(1);
     await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`;
@@ -857,7 +818,6 @@ describe('evidence holds', () => {
 
     // Verification of a report covering the image releases the hold, but not the deny.
     await coverImages([1]);
-    await releaseMarkers();
     await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
   });
@@ -868,18 +828,6 @@ describe('evidence holds', () => {
               VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, 'pending'))`;
     await moderatorBlock(1);
     await syncCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny']);
-  });
-
-  it('a sent report covering the image holds, and its released marker does not upgrade the deny', async () => {
-    await image(1);
-    await verifiedReport([1]);
-    await moderatorBlock(1);
-    await syncCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny']);
-
-    await releaseMarkers();
-    await reconcileCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
@@ -897,8 +845,6 @@ describe('evidence holds', () => {
     await image(2, { userId: OTHER_OWNER });
     await verifiedReport([1]);
     await verifiedReport([2], OTHER_OWNER);
-    await releaseMarkers(OWNER);
-    await releaseMarkers(OTHER_OWNER);
     await sql`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`;
     await sql`INSERT INTO "CsamReport" ("userId", details)
               VALUES (${MOD}, jsonb_build_object('secondaryUserId', ${OTHER_OWNER}::int))`;
@@ -921,55 +867,6 @@ describe('evidence holds', () => {
     expect(callsFor(u(1))).toEqual(['deny']);
   });
 
-  it('an active hold marker on the owner caps a takedown at deny', async () => {
-    await image(1);
-    await image(2, { userId: OTHER_OWNER });
-    await holdMarker(OWNER);
-    await moderatorBlock(1);
-    await moderatorBlock(2);
-    await syncCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny']);
-    expect(callsFor(u(2))).toEqual(['retract']);
-  });
-
-  it('a hold marker holds an image a verified report covers', async () => {
-    await image(1);
-    await verifiedReport([1]);
-    await releaseMarkers();
-    await holdMarker(OWNER);
-    await moderatorBlock(1);
-    await syncCdnAccess();
-    expect(callsFor(u(1))).toEqual(['deny']);
-  });
-
-  it('a released or expired hold marker does not hold', async () => {
-    await image(1);
-    await image(2, { userId: OTHER_OWNER });
-    await holdMarker(OWNER);
-    await releaseMarkers(OWNER);
-    await sql`INSERT INTO "EvidenceHold" ("userId", role, reason, "releaseAt")
-              VALUES (${OTHER_OWNER}, 'manual', 'test', now() - interval '1 day')`;
-    await moderatorBlock(1);
-    await moderatorBlock(2);
-    await syncCdnAccess();
-    expect(callsFor(u(1))).toEqual(['retract']);
-    expect(callsFor(u(2))).toEqual(['retract']);
-  });
-
-  it('a missing hold marker view holds everyone', async () => {
-    await image(1);
-    await verifiedReport([1]);
-    await releaseMarkers();
-    await moderatorBlock(1);
-    await pg.db.exec(`ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUserAway"`);
-    try {
-      await syncCdnAccess();
-    } finally {
-      await pg.db.exec(`ALTER VIEW "EvidenceHeldUserAway" RENAME TO "EvidenceHeldUser"`);
-    }
-    expect(callsFor(u(1))).toEqual(['deny']);
-  });
-
   it('a held image caps a shared url, even when the other row is a takedown', async () => {
     await image(1, { url: SHARED });
     await image(2, { url: SHARED, userId: OTHER_OWNER });
@@ -984,7 +881,6 @@ describe('report coverage', () => {
   it('a takedown of a reported owner that no verified report covers is deny only', async () => {
     await image(1);
     await verifiedReport([2]);
-    await releaseMarkers();
     await moderatorBlock(1);
     await syncCdnAccess();
     await reconcileCdnAccess();
@@ -994,7 +890,6 @@ describe('report coverage', () => {
   it('a takedown a verified report covers retracts', async () => {
     await image(1);
     await verifiedReport([1]);
-    await releaseMarkers();
     await moderatorBlock(1);
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['retract']);
@@ -1013,7 +908,6 @@ describe('report coverage', () => {
     await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details)
               VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'))`;
     await verifiedReport([1], OTHER_OWNER);
-    await releaseMarkers();
     await moderatorBlock(1);
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
@@ -1043,7 +937,7 @@ describe('report coverage', () => {
                       '[{"id": 2}]'::jsonb)`;
     await moderatorBlock(1);
     await moderatorBlock(2);
-    // The owner's evidence hold is read as lifted, so only coverage decides.
+    // The owner's report hold is read as lifted, so only coverage decides.
     const queryRaw = dbMock.dbWrite.$queryRaw.getMockImplementation();
     dbMock.dbWrite.$queryRaw.mockImplementation((async (...a: unknown[]) => {
       const rows = await queryRaw?.(...(a as Parameters<NonNullable<typeof queryRaw>>));
@@ -1059,7 +953,6 @@ describe('report coverage', () => {
   it('a failed coverage lookup releases nothing', async () => {
     await image(1);
     await verifiedReport([1]);
-    await releaseMarkers();
     await moderatorBlock(1);
     await pg.db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN images TO "imagesAway"`);
     try {
@@ -1074,7 +967,6 @@ describe('report coverage', () => {
     await image(1);
     await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images)
               VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'), '{"id": 1}'::jsonb)`;
-    await releaseMarkers();
     await moderatorBlock(1);
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
@@ -1095,24 +987,6 @@ describe('moderator-app deletes', () => {
   it('denies only when the owner is held', async () => {
     await sql`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`;
     await queueDelete(1, GONE);
-    await syncCdnAccess();
-    expect(callsFor(GONE)).toEqual(['deny']);
-  });
-
-  it('denies when the owner has an active hold marker', async () => {
-    await holdMarker(OWNER);
-    await queueDelete(1, GONE);
-    await queueDelete(2, DELETED, { userId: OTHER_OWNER });
-    await syncCdnAccess();
-    expect(callsFor(GONE)).toEqual(['deny']);
-    expect(callsFor(DELETED)).toEqual(['retract']);
-  });
-
-  it('denies a delete a verified report covers when the owner has a hold marker', async () => {
-    await queueDelete(1, GONE);
-    await verifiedReport([1]);
-    await releaseMarkers();
-    await holdMarker(OWNER);
     await syncCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny']);
   });
@@ -1154,7 +1028,6 @@ describe('moderator-app deletes', () => {
     expect(await stateOf(GONE)).toBe('Denied');
 
     await coverImages([1]);
-    await releaseMarkers();
     await reconcileCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny', 'retract']);
     expect(await stateOf(GONE)).toBe('Retracted');
@@ -1163,13 +1036,11 @@ describe('moderator-app deletes', () => {
   it('releases a delete flagged for CSAM review only once a verified report covers it', async () => {
     await queueDelete(1, GONE, { csamReview: true });
     await verifiedReport([900]);
-    await releaseMarkers();
     await syncCdnAccess();
     await reconcileCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny']);
 
     await verifiedReport([1]);
-    await releaseMarkers();
     await reconcileCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny', 'retract']);
   });
@@ -1431,23 +1302,23 @@ describe('Creator Shop takedowns', () => {
   });
 
   it('caps a held creator at deny, and retracts once the hold is released', async () => {
-    await holdMarker(OWNER);
+    await unsentReport(OWNER);
     await listing(1);
     await takedown(1);
     await syncCdnAccess();
     expect(callsFor(ART)).toEqual(['deny']);
 
-    await releaseMarkers();
+    await dropUnsentReports();
     await reconcileCdnAccess();
     expect(callsFor(ART)).toEqual(['deny', 'retract']);
   });
 
   it('leaves an upgrade to the drain while a takedown row still covers the art', async () => {
-    await holdMarker(OWNER);
+    await unsentReport(OWNER);
     await listing(1);
     await takedown(1);
     await syncCdnAccess();
-    await releaseMarkers();
+    await dropUnsentReports();
     await takedown(1);
 
     expect(await reconcileCdnAccess()).toMatchObject({ leftToSync: 1 });
@@ -1457,7 +1328,7 @@ describe('Creator Shop takedowns', () => {
   });
 
   it('holds the creator, not the lister, of a cosmetic someone else listed', async () => {
-    await holdMarker(OWNER);
+    await unsentReport(OWNER);
     await listing(1, { lister: OTHER_OWNER });
     await takedown(1);
     await syncCdnAccess();
@@ -1466,7 +1337,6 @@ describe('Creator Shop takedowns', () => {
 
   it('caps a creator any CSAM report names at deny', async () => {
     await verifiedReport([999]);
-    await releaseMarkers();
     await listing(1);
     await takedown(1);
     await syncCdnAccess();
@@ -2613,34 +2483,6 @@ describe('persist after a takedown hard delete', () => {
     expect(await retryRows()).toHaveLength(30);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
-
-  // The retry retracts a url with no image row left without asking about holds: it relies on the
-  // delete job never deleting a held owner's row. Inlines `deleteImages`' DELETE under the job's
-  // guard; the job passing that guard is pinned in remove-blocked-images-retention.test.ts.
-  it("never retracts a held owner's url, persist failing and retried", async () => {
-    await holdMarker(OWNER);
-    await image(1);
-    await image(2, { userId: OTHER_OWNER });
-    await moderatorBlock(1);
-    await moderatorBlock(2);
-    await syncCdnAccess();
-    const before = calls.length;
-
-    const rows = (
-      await sql`DELETE FROM "Image" WHERE id IN (1, 2)
-                AND (${purgeHoldGuard({ holdForTrainingCopy: false })}) RETURNING id, url`
-    ).rows as { id: number; url: string }[];
-    scripted = [503];
-    await persistDeletedTakedowns(rows);
-    combinedOk.add(u(2));
-    await retryTakedownPersists();
-
-    const after = calls.slice(before);
-    expect(after.filter(onUrl(u(1))).map(kind)).toEqual([]);
-    expect((await sql`SELECT id FROM "Image"`).rows).toEqual([{ id: 1 }]);
-    // The control: the unheld owner's url is retracted by the retry.
-    expect(after.filter(onUrl(u(2))).map(kind)).toEqual(['deny', 'retract']);
-  });
 });
 
 describe('the persist retry, as the job runs it', () => {
@@ -3603,7 +3445,6 @@ describe('heldUrlSql parity with loadFacts', () => {
         await moderatorBlock(1);
       },
     ],
-    ['an owner hold marker', true, async () => (await holdMarker(OWNER), blockedImage(1))],
     [
       'an unsent report on the owner',
       true,
@@ -3629,14 +3470,14 @@ describe('heldUrlSql parity with loadFacts', () => {
       ),
     ],
     [
-      'a verified report covering the image, marker released',
+      'a verified report covering the image',
       false,
-      async () => (await verifiedReport([1]), await releaseMarkers(), blockedImage(1)),
+      async () => (await verifiedReport([1]), blockedImage(1)),
     ],
     [
       'a verified report naming the owner but not the image',
       true,
-      async () => (await verifiedReport([2]), await releaseMarkers(), blockedImage(1)),
+      async () => (await verifiedReport([2]), blockedImage(1)),
     ],
     [
       'a csam-hold post removal',
@@ -3688,7 +3529,6 @@ describe('heldUrlSql parity with loadFacts', () => {
       false,
       async () => (
         await verifiedReport([1, 901]),
-        await releaseMarkers(),
         await blockedImage(1),
         sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
             VALUES (901, ${u(1)}, ${OWNER}, true)`
@@ -3718,7 +3558,6 @@ describe('heldUrlSql parity with loadFacts', () => {
       true,
       async () => (
         await verifiedReport([1]),
-        await releaseMarkers(),
         // The image on the url is another owner's, so only the takedown's owner can hold it.
         await blockedImage(2, { userId: OTHER_OWNER }),
         sql`INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES (${u(

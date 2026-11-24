@@ -10,7 +10,6 @@ import type { MoveImagesToPostInput } from '~/server/schema/post.schema';
 import { createImageResources, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
-import { assertAccountNotUnderLegalHold } from '~/server/services/legal-hold.service';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   bustCachesForPosts,
@@ -30,7 +29,7 @@ import {
   JobQueueType,
 } from '~/shared/utils/prisma/enums';
 import type { ImageMoveRefusal, MovePostRow } from '~/server/services/post-image-move.rules';
-import { getImageMoveRefusal, IMAGES_NOT_MOVABLE } from '~/server/services/post-image-move.rules';
+import { getImageMoveRefusal } from '~/server/services/post-image-move.rules';
 
 function throwRefusal(refusal: ImageMoveRefusal): never {
   if (refusal.kind === 'not-found') throw throwNotFoundError(refusal.message);
@@ -45,10 +44,6 @@ export async function moveImagesToPost({
   userId,
 }: MoveImagesToPostInput & { userId: number }) {
   const imageIds = uniq(inputImageIds);
-
-  await assertAccountNotUnderLegalHold(userId, 'Image move refused').catch(() => {
-    throw throwBadRequestError(IMAGES_NOT_MOVABLE);
-  });
 
   let leftPrivate = false;
   const { targetPostId, targetModelVersionId } = await dbWrite.$transaction(async (tx) => {

@@ -97,7 +97,7 @@ beforeEach(async () => {
       (${SCANNER_HIT}, 'scanner-hit-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 16),
       (${SCANNER_SIBLING}, 'scan-sibling-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 17),
       (213, 'scan-sibling-key', 'image', 'Scanned', NULL, NULL, 300, 300, 12);
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (${HELD});
+    INSERT INTO "CsamReport" ("userId", details, images) VALUES (13, '{}', jsonb_build_array(jsonb_build_object('id', ${HELD})));
     INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES
       (7, 'Image', ${RESTRICTED}), (8, 'Image', ${CONTROL}), (9, 'Image', ${SIGNAL}), (10, 'Image', ${HELD}), (11, 'Image', ${SHARED_URL}),
       (14, 'Image', ${SIGNAL_SIBLING}), (15, 'Image', ${CLEAN_SIBLING}), (16, 'Image', ${SCANNER_HIT}), (17, 'Image', ${SCANNER_SIBLING});

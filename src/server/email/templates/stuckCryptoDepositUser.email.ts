@@ -24,6 +24,8 @@ const sent = ({ payAmount, payCurrency, network }: StuckCryptoDepositUserData) =
 };
 
 export const stuckCryptoDepositUserEmail = createEmail({
+  template: 'stuckCryptoDepositUser',
+  mailClass: 'transactional',
   header: ({ userEmail }: StuckCryptoDepositUserData) => ({
     subject: 'Your Civitai crypto deposit needs a refund from NowPayments',
     to: userEmail,

@@ -20,10 +20,6 @@ import {
 
 const h = vi.hoisted(() => ({
   storeConfigured: true,
-  /** What the legal-hold check answers: `null` is "could not be read". */
-  hold: false as boolean | null,
-  /** A hold that lands after deleteUser's own check: only the later content-removal reads see it. */
-  lateHold: false,
   log: [] as string[],
   repo: undefined as unknown as ReturnType<typeof fakeRepo>,
   store: undefined as unknown as ReturnType<typeof fakeStore>,
@@ -54,16 +50,6 @@ vi.mock('~/utils/s3-client-factory', () => ({
   }),
 }));
 
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-  isAccountUnderLegalHold: async () => h.hold,
-  areAccountsUnderLegalHold: async (ids: number[]) =>
-    new Map(ids.map((id) => [id, h.hold !== false])),
-  isContentRemovalHeld: async () => (h.hold !== false ? h.hold : h.lateHold),
-  areContentRemovalsHeld: async (ids: number[]) =>
-    new Map(ids.map((id) => [id, h.hold !== false || h.lateHold])),
-}));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({ wipeAccount: vi.fn() }),
 }));
@@ -104,8 +90,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.log = [];
   h.storeConfigured = true;
-  h.hold = false;
-  h.lateHold = false;
   h.repo = fakeRepo(h.log);
   h.store = fakeStore(h.log);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: USER_ID, meta: {} });
@@ -156,27 +140,6 @@ describe('deleteUser — sleeping apps', () => {
     ]);
   });
 
-  it('a hold landing after the check keeps the sleeping apps, in deleteUser and the sweep', async () => {
-    sleeping(USER_ID, 'tip-calculator');
-    h.lateHold = true;
-
-    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
-
-    // The deletion itself ran.
-    expect(dbMock.dbWrite.$transaction).toHaveBeenCalled();
-    expect(dbMock.dbWrite.account.deleteMany).toHaveBeenCalled();
-    expect([...h.repo.rows.keys()]).toEqual([`${USER_ID}/tip-calculator`]);
-    expect(h.store.objects.size).toBe(2);
-
-    h.repo.accounts.set(USER_ID, 'deleted');
-    const res = (await (
-      await sweepHibernationObjectsJob.run({} as never)
-    ).result) as Record<string, unknown>;
-    expect(res.heldAccounts).toBe(1);
-    expect(h.repo.rows.size).toBe(1);
-    expect(h.store.objects.size).toBe(2);
-  });
-
   it('a failed sleeping-apps step keeps the rows; the hourly sweep job then leaves nothing for that user', async () => {
     sleeping(USER_ID, 'tip-calculator');
     sleeping(OTHER_ID, 'tip-calculator');
@@ -207,11 +170,9 @@ describe('deleteUser — sleeping apps', () => {
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
       scanned: 0,
       removed: 0,
-      orphansHeld: 0,
       deletedAccountsFinished: 1,
       deletedAccountRowsFinished: 1,
       deletedAccountObjectsRemoved: 2,
-      heldAccounts: 0,
       errors: 0,
     });
     expect(h.repo.rows.size).toBe(0);
@@ -225,11 +186,9 @@ describe('deleteUser — sleeping apps', () => {
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
       scanned: 2,
       removed: 0,
-      orphansHeld: 0,
       deletedAccountsFinished: 0,
       deletedAccountRowsFinished: 0,
       deletedAccountObjectsRemoved: 0,
-      heldAccounts: 0,
       errors: 1,
     });
     expect(h.repo.rows.size).toBe(1);
@@ -242,22 +201,6 @@ describe('deleteUser — sleeping apps', () => {
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
       skipped: 'no archive store configured',
     });
-    expect(h.repo.rows.size).toBe(1);
-    expect(h.store.objects.size).toBe(2);
-  });
-
-  it.each([
-    ['under a legal hold', true],
-    ['whose hold cannot be read', null],
-  ])('the sweep job leaves a deleted account %s untouched', async (_label, hold) => {
-    sleeping(USER_ID, 'tip-calculator');
-    h.repo.accounts.set(USER_ID, 'deleted');
-    h.hold = hold;
-    const res = (await (
-      await sweepHibernationObjectsJob.run({} as never)
-    ).result) as Record<string, unknown>;
-    expect(res.heldAccounts).toBe(1);
-    expect(res.deletedAccountsFinished).toBe(0);
     expect(h.repo.rows.size).toBe(1);
     expect(h.store.objects.size).toBe(2);
   });
@@ -305,13 +248,6 @@ describe('deleteUser — App Assistant session links', () => {
     expect(stepErrors()).toEqual([]);
   });
 
-  it('a hold landing after the check keeps the link rows', async () => {
-    h.lateHold = true;
-    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
-    expect(dbMock.dbWrite.account.deleteMany).toHaveBeenCalled();
-    expect(links()).not.toHaveBeenCalled();
-  });
-
   it('the table not applied yet is nothing to delete: no failure is logged', async () => {
     links().mockRejectedValue(
       Object.assign(new Error('The table `app_assistant_session_links` does not exist'), {
@@ -333,8 +269,8 @@ describe('deleteUser — App Assistant session links', () => {
 /**
  * App Assistant session traces go with the account too (retention: "request lifetime + account
  * delete"): the REAL `deleteUser` deletes the user's frozen chat transcripts from the bundle store,
- * then their trace rows (the link rows are their own step); a held account keeps them, and a store that refuses a delete keeps
- * the rows (so they still name what is left).
+ * then their trace rows (the link rows are their own step); a store that refuses a delete keeps the
+ * rows (so they still name what is left).
  */
 describe('deleteUser — App Assistant session traces', () => {
   const MINE = 'app-assistant-transcripts/pubreq_mine/1a2b.json';
@@ -375,15 +311,6 @@ describe('deleteUser — App Assistant session traces', () => {
     expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).toHaveBeenCalledWith({
       where: { userId: USER_ID },
     });
-  });
-
-  it('a hold landing after the check keeps the transcripts and the rows', async () => {
-    h.lateHold = true;
-    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
-    expect(dbMock.dbWrite.account.deleteMany).toHaveBeenCalled();
-    expect(h.bundles.size).toBe(3);
-    expect(dbMock.dbWrite.appPublishRequestTrace.deleteMany).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).not.toHaveBeenCalled();
   });
 
   it('a store that refuses the deletes keeps the trace rows; the link rows go regardless', async () => {

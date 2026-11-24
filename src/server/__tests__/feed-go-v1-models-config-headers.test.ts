@@ -35,14 +35,21 @@ describe('feed-go /api/v1/models: next.config headers', () => {
     );
   });
 
-  it.each(['/api/v1/models', '/api/v1/models?limit=2', '/api/v1/models/123'])(
-    '%s gets exactly configheaders.json',
-    (url) => {
-      const { headers } = JSON.parse(readFileSync(CONFIG_HEADERS, 'utf8')) as {
-        headers: { key: string; value: string }[];
-      };
-      expect(headers.length).toBeGreaterThan(0);
-      expect(resolved(url)).toEqual(headers);
-    }
-  );
+  // The REST model routes write them on every answer; every route below also writes them on the 451
+  // it answers a blocked region with (FEED_GO_ANSWER_REGION_BLOCKED).
+  it.each([
+    '/api/v1/models',
+    '/api/v1/models?limit=2',
+    '/api/v1/models/123',
+    '/api/v1/images?limit=2',
+    '/api/trpc/image.getImagesAsPostsInfinite',
+    '/api/trpc/image.getInfinite',
+    '/api/trpc/model.getAll',
+  ])('%s gets exactly configheaders.json', (url) => {
+    const { headers } = JSON.parse(readFileSync(CONFIG_HEADERS, 'utf8')) as {
+      headers: { key: string; value: string }[];
+    };
+    expect(headers.length).toBeGreaterThan(0);
+    expect(resolved(url)).toEqual(headers);
+  });
 });

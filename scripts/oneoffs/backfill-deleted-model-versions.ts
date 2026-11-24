@@ -3,9 +3,7 @@
  * set to Deleted, the status deleting a model writes on its versions. Rows like this were left by
  * account deletion before it flipped versions itself.
  *
- * Status only: no `updatedAt`, no files, no storage, no other table. A model whose owner is held
- * (`ownerHeldSql`) is skipped, and the check is repeated inside the UPDATE, so a hold placed after
- * a chunk is selected still stops it.
+ * Status only: no `updatedAt`, no files, no storage, no other table.
  *
  * After each chunk, for the versions it flipped: the version caches, then the orchestrator's copy,
  * 100 versions per call with a pause between calls; then the models' caches and search entries.
@@ -27,7 +25,6 @@ import { Prisma } from '@prisma/client';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ownerHeldSql } from '~/server/services/legal-hold.service';
 
 export const SCRIPT_BASENAME = 'backfill-deleted-model-versions';
 export const ORCHESTRATOR_BATCH = 100;
@@ -69,7 +66,6 @@ export function parseArgs(argv: string[]): RunOptions {
   };
 }
 
-const owner = Prisma.sql`m."userId"`;
 const target = Prisma.sql`m.status = 'Deleted'::"ModelStatus"
   AND mv.status IN ('Published'::"ModelStatus", 'Scheduled'::"ModelStatus")`;
 
@@ -78,7 +74,7 @@ export function candidateIdsSql(after: number, limit: number) {
     SELECT mv.id
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
-    WHERE ${target} AND mv.id > ${after} AND NOT ${ownerHeldSql(owner)}
+    WHERE ${target} AND mv.id > ${after}
     ORDER BY mv.id
     LIMIT ${limit}
   `;
@@ -90,7 +86,6 @@ export function flipSql(ids: number[]) {
     SET status = 'Deleted'::"ModelStatus"
     FROM "Model" m
     WHERE m.id = mv."modelId" AND mv.id = ANY(${ids}::int[]) AND ${target}
-      AND NOT ${ownerHeldSql(owner)}
     RETURNING mv.id, mv."modelId"
   `;
 }
@@ -100,7 +95,6 @@ export function dryRunSql() {
   return Prisma.sql`
     SELECT
       mv.status::text AS status,
-      ${ownerHeldSql(owner)} AS held,
       (u."deletedAt" IS NULL) AS owner_live,
       CASE WHEN m."deletedBy" IS NULL AND m.meta->>'statusAtDelete' IS NULL
         THEN 'account-delete' ELSE 'model-delete' END AS delete_path,
@@ -110,14 +104,13 @@ export function dryRunSql() {
     JOIN "Model" m ON m.id = mv."modelId"
     JOIN "User" u ON u.id = m."userId"
     WHERE ${target}
-    GROUP BY 1, 2, 3, 4
-    ORDER BY 1, 2, 3, 4
+    GROUP BY 1, 2, 3
+    ORDER BY 1, 2, 3
   `;
 }
 
 export type DryRunRow = {
   status: string;
-  held: boolean;
   owner_live: boolean;
   delete_path: string;
   models: number;
@@ -143,13 +136,9 @@ export async function dryRun(deps: Pick<Deps, 'query' | 'log'>) {
     rows.filter(pick).reduce((n, r) => n + r[field], 0);
   deps.log(`candidates: ${sum(() => true)} versions`);
   for (const status of ['Published', 'Scheduled'])
-    deps.log(
-      `  ${status}: ${sum((r) => r.status === status && !r.held)} to flip, ${sum(
-        (r) => r.status === status && r.held
-      )} held`
-    );
+    deps.log(`  ${status}: ${sum((r) => r.status === status)} to flip`);
   for (const pathName of ['account-delete', 'model-delete']) {
-    const live = (r: DryRunRow) => r.owner_live && !r.held && r.delete_path === pathName;
+    const live = (r: DryRunRow) => r.owner_live && r.delete_path === pathName;
     deps.log(
       `  owner not deleted, ${pathName}: ${sum(live, 'models')} models, ${sum(live)} versions`
     );

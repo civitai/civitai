@@ -1,10 +1,10 @@
 import { sql } from '@civitai/db/kysely';
 import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
-import { restrictedImageIds, withheldRow } from './retracted-media';
+import { listWithheldIds, withheldRow } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
-import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
+import { getFlagClearHolds, type FlagClearHoldLeg } from './csam-flag-clear';
 import {
   imagesVersion,
   imageVersion,
@@ -251,9 +251,7 @@ function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Block
 
 export const CSAM_QUEUE_USER_LIMIT = 500;
 
-/** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
- *  the status is unknown rather than that this user is on a hold. */
-export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
+export type CsamQueueHoldReason = FlagClearHoldLeg;
 
 export type CsamQueueUser = {
   userId: number;
@@ -343,7 +341,7 @@ export async function getCsamQueueByUser({
       : null;
 
   const none = userIds.length === 0;
-  const [users, reports, removed, holds, marker] = await Promise.all([
+  const [users, reports, removed, holds] = await Promise.all([
     none
       ? []
       : dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
@@ -373,12 +371,7 @@ export async function getCsamQueueByUser({
           .groupBy('i.userId')
           .execute(),
     getFlagClearHolds(userIds),
-    holdMarkerState(dbRead),
   ]);
-  const reasons = (legs: FlagClearHoldLeg[] = []): CsamQueueHoldReason[] =>
-    marker === 'view'
-      ? legs
-      : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
   const removedByUser = new Map(removed.map((r) => [r.userId, r]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
   const reportsByUser = new Map(reports.map((r) => [r.userId, r]));
@@ -397,7 +390,7 @@ export async function getCsamQueueByUser({
         : reportsByUser.get(g.userId)?.reportSentAt ?? null,
       latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
       reported: isFeedbackCaptureOwner(g.userId) ? g.captureReported : reportsByUser.has(g.userId),
-      heldBy: reasons(holds.get(g.userId)),
+      heldBy: holds.get(g.userId) ?? [],
       capture: capture(g),
     })),
     truncated,
@@ -696,7 +689,7 @@ export async function getAppealImageQueue({
   const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
-  const restricted = await restrictedImageIds(ids, { csamReview });
+  const restricted = await listWithheldIds(ids, { csamReview }, 'appeals');
   const tosByImage = new Map<number, string>();
   const reportsByImage = new Map<number, AppealReportRow[]>();
   if (ids.length) {

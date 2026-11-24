@@ -13,12 +13,8 @@ import {
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
-import {
-  ESCALATED_FROM_LEVEL_META_KEY,
-  postShownToKnights,
-  servableImage,
-  servableImageContent,
-} from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, postShownToKnights } from '@civitai/db/knights';
+import { servableImage, servableImageContent } from '../image-gate';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
@@ -1310,7 +1306,7 @@ END`;
  * no label, no write-back, leftover votes inconclusive (`settleFinalItems`, next in the tick, settles them unpaid).
  * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back. Also an item
  *   waiting on the Inquisitors (`Inquisitor`, or `Ruling` whose moderator lease has lapsed) whose image row is gone, which no
- *   moderator can rule on; an image an evidence hold kept with its post deleted still can, and so a ruling in progress, or an
+ *   moderator can rule on; an image whose post is deleted still can, and so a ruling in progress, or an
  *   Inquisitor item whose image is merely blocked, is left alone.
  * - `image-unservable`: the post is live (published, not later than `now`) but the image fails `servableImageContent`: blocked,
  *   held for review, flagged poi/minor, or unrated, once scanned (ingestion `Scanned` or `Blocked`: a scan still to land may make
@@ -1363,7 +1359,7 @@ export async function closeUnservableItems(
           eb.or([
             // Also true when the image is gone: the Post join then has nothing to match.
             eb.and([eb('i.status', '=', 'Open'), eb('p.id', 'is', null)]),
-            // Only the image row: an evidence hold keeps an image with its post deleted, and a moderator can still rule on it.
+            // Only the image row: an image can outlive its post, and a moderator can still rule on it.
             eb.and([
               eb('img.id', 'is', null),
               eb.or([
@@ -1476,7 +1472,6 @@ export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: D
   });
 }
 
-const pad = (n: number) => String(n).padStart(2, '0');
 const monthStart = (year: number, month: number) => {
   const d = new Date(Date.UTC(year, month, 1));
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
@@ -1491,20 +1486,8 @@ export async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Mont
   `.execute(db);
   if (existing.rows[0]?.found) return;
 
-  const from = monthStart(year, month - 1);
-  const to = monthStart(year, month);
-  await db.transaction().execute(async (trx) => {
-    // Two voters can find the same month missing; without the lock the loser fails on a duplicate relation.
-    await sql`SELECT pg_advisory_xact_lock(hashtext('KnightsVote partitions'))`.execute(trx);
-    await sql
-      .raw(
-        `CREATE TABLE IF NOT EXISTS "${name}" PARTITION OF "KnightsVote" ` +
-          `FOR VALUES FROM ('${from.year}-${pad(from.month)}-01') TO ('${to.year}-${pad(
-            to.month
-          )}-01')`
-      )
-      .execute(trx);
-  });
+  // Only the table's owner may add a partition: the owner's function does, for a month near now, under the partition lock.
+  await sql`SELECT public.knights_ensure_vote_partition(${year}::int, ${month}::int)`.execute(db);
 }
 
 export async function ensureVotePartitions(

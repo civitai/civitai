@@ -447,8 +447,6 @@ export interface TraceSweepDeps {
    * `limit`); none while the table is not applied.
    */
   deletedAccountsWithTraces(after: number, limit: number): Promise<number[]>;
-  /** The content-removal hold: `false` = not held; `true` or `null` (unreadable) = keep. */
-  isHeld(userId: number): Promise<boolean | null>;
   deletion: TraceDeletionDeps;
 }
 
@@ -457,23 +455,18 @@ export const TRACE_SWEEP_BATCH = 200;
 
 /**
  * The retry of unfinished trace deletions (the `sweep-app-assistant-traces` job): every deleted
- * account that still has trace rows, unless its content removal is held, is deleted again. Counts
- * per run; never throws for one account.
+ * account that still has trace rows is deleted again. Counts per run; never throws for one account.
  */
 export async function sweepDeletedAccountTraces(deps: TraceSweepDeps) {
-  const summary = { accounts: 0, finished: 0, held: 0, failed: 0 };
-  // Keyset pages past every account already handled, held and failing ones included, so they can
-  // never fill every batch and keep later deleted accounts from being reached.
+  const summary = { accounts: 0, finished: 0, failed: 0 };
+  // Keyset pages past every account already handled, failing ones included, so they can never fill
+  // every batch and keep later deleted accounts from being reached.
   let after = 0;
   for (;;) {
     const accounts = await deps.deletedAccountsWithTraces(after, TRACE_SWEEP_BATCH);
     for (const userId of accounts) {
       summary.accounts++;
       after = userId;
-      if ((await deps.isHeld(userId).catch(() => null)) !== false) {
-        summary.held++;
-        continue;
-      }
       const outcome = await deleteAssistantTracesOfAccount(userId, deps.deletion);
       if (outcome.failedObjects > 0) summary.failed++;
       else summary.finished++;
@@ -544,10 +537,8 @@ export async function liveTraceDeletionDeps(
 /** The real dependencies of `sweepDeletedAccountTraces`. */
 export async function liveTraceSweepDeps({
   isMissingTable,
-  isHeld,
 }: {
   isMissingTable: (err: unknown) => boolean;
-  isHeld: (userId: number) => Promise<boolean | null>;
 }): Promise<TraceSweepDeps> {
   const { dbWrite } = await import('~/server/db/client');
   return {
@@ -568,7 +559,6 @@ export async function liveTraceSweepDeps({
         throw err;
       }
     },
-    isHeld,
     deletion: await liveTraceDeletionDeps(isMissingTable),
   };
 }

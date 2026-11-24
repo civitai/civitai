@@ -33,6 +33,10 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 |                                   | `POST /internal/shadow/api/v1/models`, `…/models/id`   | shadow comparison of the REST model endpoints, body and response headers (DESIGN.md §16)                                                        |
 |                                   | `GET /debug/pprof/…`                                   | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2)                                                                 |
 
+A request from a blocked region (`REGION_BLOCK_CONFIG`) is handed to the Node app, which answers its
+451, unless `FEED_GO_ANSWER_REGION_BLOCKED=true` (default off): then every public route writes that
+same 451 here (outcome `region_blocked`; DESIGN.md §6.2).
+
 Every answer on the public routes carries `X-Feed-Go-Served`: `go` when this service computed it
 (or answered the error itself), `node` when it was proxied to the Node app, including the proxy's own 502. The browser's shadow compare (`src/utils/faro/shadowCompare.ts`) reads it, so a proxied answer,
 which is Node's own bytes, is never counted as Go matching Node. Same-origin, so no CORS
@@ -137,7 +141,11 @@ Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `in
 samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 `feed-go-shadow-infinite` and `feed-go-shadow-model-getall` (both default off), sharing
 `FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
-are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
+are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). Its `ids` and `followed` input shapes are
+computed only behind `FEED_GO_GETALL_SERVE_INPUT_IDS` / `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both
+default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). An owner's user-cosmetics miss on a
+`model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
+`user-cosmetics-miss` fallback; DESIGN.md §15.2.5). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 
@@ -157,3 +165,37 @@ OpenMetrics to a scrape that asks, carrying trace-id exemplars on `feed_go_reque
 and `feed_go_shadow_phase_seconds`. `FEED_GO_FALLBACK_LOG_PER_MIN` (default 0) logs one line per
 fallback with its reason and safe detail, rate-limited per endpoint and reason;
 `FEED_GO_ERROR_LOG_PER_MIN` (default 60) bounds the error lines the same way.
+
+## Profiling
+
+`FEED_GO_PPROF=true` (default off) mounts `net/http/pprof` under `/debug/pprof/` on the internal
+listener (`FEED_GO_INTERNAL_ADDR`) only; the public listener never routes it, whatever the toggle
+says, and nothing serves `http.DefaultServeMux` (`internal/server/mux_test.go` pins both). Pull a CPU
+profile through a port-forward to the internal port:
+
+```bash
+go tool pprof -http=:0 'http://localhost:9090/debug/pprof/profile?seconds=30'
+```
+
+Every public, shadow and probe handler runs under two pprof labels, `feed_endpoint` (the endpoint
+label of the metrics) and `mode` (`serve` | `shadow` | `probe`), inherited by every goroutine the
+request starts, so one profile splits per route and per mode: `-tagfocus feed_endpoint=infinite
+-tagfocus mode=serve` keeps one, `-tags` lists the split (`internal/server/labels.go`). The CPU
+phases of a served answer add a third label, `phase`: `decode hydrate` (a page's cache reads and
+their decode), `build page` (the per-item build) and `encode devalue` / `encode superjson` (the
+payload write). On a sampled request (tracing on) each phase is also a child span of that name in the
+request's trace, with `feed_go.items` (ids hydrated, rows built) or `feed_go.response.bytes`; an
+unsampled request starts no span (`internal/tracing/phase.go`). A phase span's duration is wall time,
+I/O waits included (`decode hydrate` covers its Redis and Postgres round trips), so rank CPU by the
+`phase` pprof label and wall time by the spans.
+
+`/metrics` carries, next to `process_cpu_seconds_total` and the default Go series, the runtime's CPU
+classes and GC families (`go_cpu_classes_*`: GC, scavenger, idle and user CPU seconds; `go_gc_*`), a
+fixed set the runtime defines.
+
+Benchmarks (run by the `feed-go benchmarks (allocs/op gate)` job of `.github/workflows/feed-go.yml`,
+on a dispatch): `BenchmarkRoute/{as-posts,infinite,model-getall}` is one served signed-in request per
+op, input through the in-memory Redis and Postgres fakes to the devalue bytes, on golden worlds
+scaled to production pages (`internal/server/route_bench_test.go`); `BenchmarkDevaluePayload` is the
+devalue writer alone over those answers; `BenchmarkUnpackCache/{model-data,tag-ids,follows}` is one
+request's decode of each cache (`internal/hydrate/bench_test.go`).

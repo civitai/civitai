@@ -26,7 +26,7 @@ import (
 const trainingDataType = "Training Data"
 
 // trainingDataListingSQL is trainingDataListingSql's text (training-data-restricted.service.ts), byte
-// for byte as Node renders it (trainingDataOwnerRestrictedSql over ownerHeldSql, and
+// for byte as Node renders it (trainingDataOwnerRestrictedSql and
 // trainingDataContentRestrictedSql), with the candidate version ids as $1. The golden fixtures hold it
 // to the statement the Node route sends, and
 // src/server/services/__tests__/feed-go-training-data-listing.parity.test.ts holds it to Node's

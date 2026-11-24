@@ -72,10 +72,25 @@ type Config struct {
 	// route (`/api/trpc/model.getAll`). Off, every request there is the `model-getall-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeModelGetAll bool
+	// GetAllServeInputIDs / GetAllServeInputFollowed are FEED_GO_GETALL_SERVE_INPUT_IDS and
+	// FEED_GO_GETALL_SERVE_INPUT_FOLLOWED (each default off): compute a model.getAll request with
+	// `ids` / `followed` (DESIGN.md §15.2.4). Off, it is the `input-ids` / `input-followed` fallback, as
+	// before; they change nothing while ServeModelGetAll is off, except in the shadow.
+	GetAllServeInputIDs      bool
+	GetAllServeInputFollowed bool
+	// GetAllServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): on, a
+	// model.getAll page computes its owners' user-cosmetics misses (the image pages' lookup) instead
+	// of falling back (`user-cosmetics-miss`); written back only as FEED_GO_CACHE_WRITEBACK lists
+	// `user-cosmetics`. It needs the miss computation (FEED_GO_COMPUTE_MISSES, default on).
+	GetAllServeUserCosmeticsMiss bool
 	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
+	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
+	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
+	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
+	AnswerRegionBlocked bool
 	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch, read as the app reads it (exactly
 	// "true" is on; default off): write a public tRPC answer as devalue where the app would
 	// (server.Server.WriteDevalue). Off, every answer is superjson.
@@ -246,8 +261,13 @@ func Load() (*Config, error) {
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
 		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
 		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
+		AnswerRegionBlocked:  boolEnv("FEED_GO_ANSWER_REGION_BLOCKED", false),
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		GetAllServeInputIDs:          boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
+		GetAllServeInputFollowed:     boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
+		GetAllServeUserCosmeticsMiss: boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),

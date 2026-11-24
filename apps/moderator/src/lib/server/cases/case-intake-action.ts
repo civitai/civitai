@@ -21,6 +21,16 @@ export const PARTY_LINK_DAYS = 365;
 export const LINK_TOKEN_PLACEHOLDER = '[link-token]';
 /** Receipts one address gets in a day; past it the case is still filed, without the email. */
 export const RECEIPTS_PER_ADDRESS_PER_DAY = 5;
+/**
+ * The per-address cap from TAKEDOWN_RECEIPTS_PER_ADDRESS_PER_DAY: unset or unreadable is the default,
+ * 0 turns the cap off (null). The hourly ceiling below is not configurable.
+ */
+export function receiptCapFromEnv(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === '') return RECEIPTS_PER_ADDRESS_PER_DAY;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) return RECEIPTS_PER_ADDRESS_PER_DAY;
+  return n === 0 ? null : n;
+}
 /** Receipts sent in any hour, all addresses. */
 export const RECEIPTS_PER_HOUR = 100;
 
@@ -48,6 +58,8 @@ export type CaseIntakeDeps = {
   alert: (subject: string, text: string) => Promise<unknown>;
   background: (work: Promise<unknown>) => void;
   now?: () => Date;
+  /** Receipts one address gets in a day; null is no cap. Defaults to RECEIPTS_PER_ADDRESS_PER_DAY. */
+  receiptsPerAddressPerDay?: number | null;
 };
 
 const notOpen = () =>
@@ -126,7 +138,11 @@ export async function caseIntake(
       .where('created_at', '>', sql<Date>`now() - interval '1 hour'`)
       .executeTakeFirstOrThrow();
     // Both caps skip only the email, so a flood of forms can't pause every other case notice.
-    if (recent >= RECEIPTS_PER_ADDRESS_PER_DAY || lastHour >= RECEIPTS_PER_HOUR) {
+    const perAddress =
+      deps.receiptsPerAddressPerDay === undefined
+        ? RECEIPTS_PER_ADDRESS_PER_DAY
+        : deps.receiptsPerAddressPerDay;
+    if ((perAddress !== null && recent >= perAddress) || lastHour >= RECEIPTS_PER_HOUR) {
       await recordUnsent(deps.db, filed.caseId, 'capped');
       return done('capped');
     }
@@ -205,13 +221,20 @@ export function defaultCaseIntakeDeps(
     verifyTurnstile: (token, ip) => verifyTurnstile(token, ip),
     rateLimit: limitPerIp,
     sendDeps: defaultSendDeps,
+    receiptsPerAddressPerDay: receiptCapFromEnv(env.TAKEDOWN_RECEIPTS_PER_ADDRESS_PER_DAY),
     alert: async (subject, text) => {
       const to = env.MODERATION_ALERT_EMAIL;
       if (!to)
         throw Object.assign(new Error('MODERATION_ALERT_EMAIL is not set'), {
           name: 'NoAlertAddress',
         });
-      await sendEmailStrict({ to, subject, text, html: `<p>${text}</p>` });
+      await sendEmailStrict({
+        to,
+        subject,
+        text,
+        html: `<p>${text}</p>`,
+        tags: { template: 'caseIntakeAlert', mailClass: 'transactional' },
+      });
     },
     background: (work) =>
       void work.catch((e) => console.error('case receipt send failed', e?.name)),

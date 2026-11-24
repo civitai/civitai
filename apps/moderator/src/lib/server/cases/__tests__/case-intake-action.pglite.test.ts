@@ -10,7 +10,9 @@ import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 
 vi.mock('../../redis', () => ({ getSysRedis: () => ({}) }));
-const { caseIntake, RECEIPTS_PER_ADDRESS_PER_DAY } = await import('../case-intake-action');
+const { caseIntake, RECEIPTS_PER_ADDRESS_PER_DAY, receiptCapFromEnv } = await import(
+  '../case-intake-action'
+);
 const { IntakeRefusedError } = await import('../intake');
 const { TurnstileRefusedError } = await import('../turnstile');
 const { hashAddress } = await import('../send-notice');
@@ -224,7 +226,7 @@ describe('caseIntake', () => {
     expect(ev).toEqual([{ type: 'receipt-unsent' }]);
   });
 
-  it('stops emailing one address past the daily cap, still filing the case', async () => {
+  const fillReceipts = async () => {
     for (let i = 0; i < RECEIPTS_PER_ADDRESS_PER_DAY; i++) {
       const c = await pg.query<{ id: number }>(
         "INSERT INTO case_record (public_ref, process_key, definition_version_id, state, source, received_at) VALUES ($1, 'dmca-notice', $2, 'received', 'form', now()) RETURNING id",
@@ -235,10 +237,31 @@ describe('caseIntake', () => {
         [c.rows[0].id, hashAddress('a@example.com')]
       );
     }
+  };
+
+  it('stops emailing one address past the daily cap, still filing the case', async () => {
+    await fillReceipts();
     const out = await caseIntake(input(), deps());
     expect(out.receipt).toBe('capped');
     expect(send).not.toHaveBeenCalled();
     expect(await count('case_record')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY + 1);
+  });
+
+  it('emails the receipt past the daily cap when the cap is off', async () => {
+    await fillReceipts();
+    const out = await caseIntake(input(), { ...deps(), receiptsPerAddressPerDay: null });
+    await settled();
+    expect(out.receipt).toBe('queued');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the per-address cap from its env value: unset or junk keeps 5, 0 turns it off', () => {
+    expect(receiptCapFromEnv(undefined)).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('lots')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('-1')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('0')).toBeNull();
+    expect(receiptCapFromEnv('20')).toBe(20);
   });
 
   it('flags a case whose submitter says the person shown is a minor, and alerts with the reference only', async () => {

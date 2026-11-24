@@ -329,7 +329,9 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
       [mira]
     );
     await expect(submit(mira, MIRA_IDEA)).resolves.toMatchObject({ status: 'pending' });
-    await decide((await rowsFor(mira))[0].id, 'declined');
+    // Cleared by deleting the row, not declining it: a declined request now sends the next submit
+    // to the queue, which would hide whether the email read came from the primary.
+    await pg.query(`DELETE FROM "AppAccessRequest" WHERE "userId" = $1`, [mira]);
 
     // The same session (nothing about it changed) once the address is proven.
     await pg.query(`UPDATE "User" SET "emailVerified" = CURRENT_TIMESTAMP WHERE "id" = $1`, [mira]);
@@ -379,7 +381,10 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
   });
 
-  it('🔴 after a REVOKE, a new submit with the flag on is approved again (operator decision: re-grant is fine)', async () => {
+  // Moderation Lead decision: a revoke or a decline stays a moderator's call. Re-granting on the
+  // next submit would undo a revoke in one click, so a person with any declined request goes to
+  // the queue.
+  it('🔴 after a REVOKE, a new submit with the flag on goes to the queue, PENDING', async () => {
     flag.on.add(String(mira));
     const first = await submit(mira, MIRA_IDEA);
     await decide(first.id, 'declined');
@@ -387,14 +392,52 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     refreshSession.mockClear();
 
     const again = await submit(mira, MIRA_IDEA_AGAIN);
-    expect(again).toMatchObject({ status: 'approved', whatToBuild: MIRA_IDEA_AGAIN });
-    expect(again.id).not.toBe(first.id);
+    expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
     expect(await rowsFor(mira)).toEqual([
       { id: first.id, status: 'declined', whatToBuild: MIRA_IDEA },
-      { id: again.id, status: 'approved', whatToBuild: MIRA_IDEA_AGAIN },
+      { id: again.id, status: 'pending', whatToBuild: MIRA_IDEA_AGAIN },
     ]);
-    expect(await isApproved(mira)).toBe(true);
-    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'profile' });
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).not.toHaveBeenCalled();
+    // Only that person: someone with no decline is still approved.
+    flag.on.add(String(tomasz));
+    await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
+  });
+
+  it('🔴 a decline that commits BETWEEN the eligibility read and the approved insert is not undone: PENDING', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    flag.on.add(String(mira));
+    // The moderator's decline lands after the submit's eligibility read (no declined row yet) and
+    // before its approved INSERT: run the real `decide` just ahead of that one statement.
+    let injected = false;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (q: Prisma.Sql) => {
+      if (!injected && q.text.includes(`'approved', CURRENT_TIMESTAMP`)) {
+        injected = true;
+        await decide(first.id, 'declined');
+      }
+      return run(q);
+    }) as never);
+    refreshSession.mockClear();
+
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
+    expect(injected).toBe(true);
+    expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await rowsFor(mira)).toEqual([
+      { id: first.id, status: 'declined', whatToBuild: MIRA_IDEA },
+      { id: again.id, status: 'pending', whatToBuild: MIRA_IDEA_AGAIN },
+    ]);
+    expect(await isApproved(mira)).toBe(false);
+    // The only session bust is the decline's own; the submit granted nothing.
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 a request a moderator DECLINED (never approved): the next submit with the flag on is PENDING', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'declined');
+    flag.on.add(String(mira));
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
+    expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await isApproved(mira)).toBe(false);
   });
 
   it('🔴 already approved (by a moderator or automatically): a submit is the same CONFLICT and writes nothing', async () => {

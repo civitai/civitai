@@ -23,7 +23,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -102,13 +104,56 @@ func RefusalCode(err error) string {
 	return "other"
 }
 
-// Exchanger calls the hub.
+// RateLimitedError is the hub answering 429: this client's exchange budget is spent (the hub's
+// `token-exchange` limit, one budget per client for user and block exchanges alike). Not a refusal:
+// the subject may be fine. RetryAfter is how long the Exchanger holds every exchange back.
+type RateLimitedError struct {
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitedError) Error() string {
+	return fmt.Sprintf("exchange: the token endpoint is rate limiting this client (retry in %s)", e.RetryAfter)
+}
+
+// After a 429 the Exchanger waits the hub's Retry-After (or the body's rateLimit.retryAfterSeconds
+// or retry_after, whichever is longest) before it calls the hub again. An answer naming none is held
+// minRateLimitHold; one naming more than maxRateLimitHold is held that long, so a broken header cannot
+// stop the exchange for good.
+const (
+	minRateLimitHold = time.Second
+	maxRateLimitHold = 15 * time.Minute
+)
+
+// Exchanger calls the hub. Use it through a pointer: it holds the rate-limit hold.
 type Exchanger struct {
 	Config
 	// HTTP is the client; nil is http.DefaultClient. Calls are bounded by their context.
 	HTTP *http.Client
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+
+	mu sync.Mutex
+	// heldUntil: no exchange calls the hub before it (the last 429's wait); zero is none.
+	heldUntil time.Time
+}
+
+// held is how long the last 429 still holds exchanges back at now; zero once it has passed.
+func (e *Exchanger) held(now time.Time) time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if now.Before(e.heldUntil) {
+		return e.heldUntil.Sub(now)
+	}
+	return 0
+}
+
+// hold holds exchanges back until until, never shortening a longer hold.
+func (e *Exchanger) hold(until time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if until.After(e.heldUntil) {
+		e.heldUntil = until
+	}
 }
 
 // Exchange trades subject, a user's hub access token, for a token toward Resource.
@@ -123,6 +168,14 @@ func (e *Exchanger) ExchangeBlock(ctx context.Context, subject string) (Token, e
 }
 
 func (e *Exchanger) exchange(ctx context.Context, subject, subjectType string) (Token, error) {
+	now := time.Now
+	if e.Now != nil {
+		now = e.Now
+	}
+	// Within a 429's wait the hub is not asked: every exchange shares this client's budget there.
+	if wait := e.held(now()); wait > 0 {
+		return Token{}, &RateLimitedError{RetryAfter: wait}
+	}
 	form := url.Values{
 		"grant_type":         {GrantType},
 		"subject_token":      {subject},
@@ -139,10 +192,6 @@ func (e *Exchanger) exchange(ctx context.Context, subject, subjectType string) (
 	// RFC 6749 §2.3.1: the id and secret are form-encoded before Basic encoding.
 	req.SetBasicAuth(url.QueryEscape(e.ClientID), url.QueryEscape(e.ClientSecret))
 	hc := NoRedirects(e.HTTP)
-	now := time.Now
-	if e.Now != nil {
-		now = e.Now
-	}
 	start := now()
 	res, err := hc.Do(req)
 	if err != nil {
@@ -157,9 +206,19 @@ func (e *Exchanger) exchange(ctx context.Context, subject, subjectType string) (
 		AccessToken string  `json:"access_token"`
 		ExpiresIn   float64 `json:"expires_in"`
 		Error       string  `json:"error"`
+		RetryAfter  float64 `json:"retry_after"`
+		RateLimit   struct {
+			RetryAfterSeconds float64 `json:"retryAfterSeconds"`
+		} `json:"rateLimit"`
 	}
 	_ = json.Unmarshal(raw, &body)
 	switch {
+	case res.StatusCode == http.StatusTooManyRequests:
+		// Measured from the answer, so the hold is never shorter than the wait the hub named.
+		answered := now()
+		wait := rateLimitWait(res.Header.Get("Retry-After"), answered, body.RateLimit.RetryAfterSeconds, body.RetryAfter)
+		e.hold(answered.Add(wait))
+		return Token{}, &RateLimitedError{RetryAfter: wait}
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnauthorized:
 		// invalid_grant, unauthorized_client, invalid_scope, invalid_client: a fact about this
 		// subject or this client, not a transient failure.
@@ -183,6 +242,26 @@ func NoRedirects(hc *http.Client) *http.Client {
 	}
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &c
+}
+
+// rateLimitWait is how long a 429 holds the exchange back: the longest of the Retry-After header
+// (delta-seconds or an HTTP-date, RFC 9110 §10.2.3) and the body's wait fields, within
+// [minRateLimitHold, maxRateLimitHold].
+func rateLimitWait(header string, now time.Time, bodySeconds ...float64) time.Duration {
+	wait := time.Duration(0)
+	if h := strings.TrimSpace(header); h != "" {
+		if secs, err := strconv.ParseInt(h, 10, 64); err == nil && secs >= 0 {
+			wait = time.Duration(min(secs, int64(maxRateLimitHold/time.Second))) * time.Second
+		} else if at, err := http.ParseTime(h); err == nil {
+			wait = at.Sub(now)
+		}
+	}
+	for _, secs := range bodySeconds {
+		if secs > 0 {
+			wait = max(wait, time.Duration(min(secs, maxRateLimitHold.Seconds())*float64(time.Second)))
+		}
+	}
+	return min(max(wait, minRateLimitHold), maxRateLimitHold)
 }
 
 func safeCode(code string) string {

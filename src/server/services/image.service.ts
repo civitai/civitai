@@ -2,12 +2,12 @@ import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallb
 import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { ilikeContains } from '~/server/utils/ilike';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
-import { ownerHeld } from '~/server/services/legal-hold.service';
 import {
   BlocklistStoreError,
   blocklistCall,
@@ -708,7 +708,7 @@ async function deleteImageFromStorage({
   let outcome: StorageDeleteOutcome = 'deleted';
   try {
     // Every caller runs this after deleting the row, so a row with this url that still exists,
-    // this image's own included, is one the delete skipped (a hold marker keeps it) or another
+    // this image's own included, is one the delete skipped (a child-safety case keeps it) or another
     // image sharing the object. Either way the object stays.
     const imageWithSameUrl = await dbWrite.image.findFirst({
       select: { id: true },
@@ -898,19 +898,7 @@ export function attachTagsToImages<TImage extends { id: number }, TTag extends {
 
 type KeptImage = { imageId: number; userId: number; postId: number | null };
 
-/** Of `ids`, the ones a hold marker's delete trigger kept, with the post each was taken out of. */
-async function getKeptImages(ids: number[]) {
-  if (!ids.length) return [];
-  return dbWrite.$queryRaw<KeptImage[]>`
-    SELECT "imageId", "userId", "postId" FROM "EvidenceHoldImage"
-    WHERE "imageId" IN (${Prisma.join(ids)})
-  `;
-}
-
-/**
- * A kept image is now blocked (and, if a hold marker kept it, out of its post), so the caches a delete
- * busts are stale too.
- */
+/** A hidden image is now blocked, so the caches a delete busts are stale too. */
 async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
   const ids = kept.map((x) => x.imageId);
   const postIds = updatePosts ? uniq(kept.map((x) => x.postId).filter(isDefined)) : [];
@@ -1126,13 +1114,7 @@ export async function deleteImagesWithOutcome(
     );
 
     keptForCase.push(...caseKept);
-    // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
-    // caller's condition or ownership skipped.
-    const accounted = new Set([...rows.map((row) => row.id), ...caseKept, ...gone]);
-    const kept = [
-      ...(await getKeptImages(ids.filter((id) => !accounted.has(id)))),
-      ...hidden.map(({ id, userId, postId }) => ({ imageId: id, userId, postId })),
-    ];
+    const kept = hidden.map(({ id, userId, postId }) => ({ imageId: id, userId, postId }));
     await invalidateDeletedImages({
       rows,
       kept,
@@ -1173,8 +1155,8 @@ async function invalidateDeletedImages({
   const thumbnailParentIds = uniq(rows.map((row) => row.parentId).filter(isDefined));
   const results = await Promise.allSettled([
     queueImageSearchIndexUpdate({
-      // A row left in place by a condition or ownership stays in search; a blocked (hold-kept or
-      // hidden) or already-gone row leaves it.
+      // A row left in place by a condition or ownership stays in search; a hidden or already-gone
+      // row leaves it.
       ids: [...deletedIds, ...kept.map((x) => x.imageId), ...gone],
       action: SearchIndexUpdateQueueAction.Delete,
     }),
@@ -8086,8 +8068,6 @@ async function getFailedEntryDrafts({
   servableLevels: number;
 }) {
   try {
-    const held = await ownerHeld(dbWrite, Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`);
-    if (held) return [];
     const rows = await dbRead.image.findMany({
       select: { ...myImagesSelect, pHash: true },
       where: {
@@ -8122,10 +8102,48 @@ async function getFailedEntryDrafts({
   }
 }
 
+/** How many of the owner's newest media a typed `getMyImages` query matches within. */
+export const OWN_MEDIA_QUERY_WINDOW = 1000;
+
+/** The owner's media among their newest `OWN_MEDIA_QUERY_WINDOW` whose prompt, post title or post tag contains `query`. */
+async function getOwnMediaIdsMatching({
+  userId,
+  types,
+  query,
+}: {
+  userId: number;
+  types: MediaType[];
+  query: string;
+}) {
+  const pattern = ilikeContains(query);
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    WITH recent AS (
+      SELECT i.id, i."postId", i.meta->>'prompt' AS prompt
+      FROM "Image" i
+      WHERE i."userId" = ${userId}
+        AND i.type = ANY(${types}::"MediaType"[])
+        AND i."postId" IS NOT NULL
+      ORDER BY i.id DESC
+      LIMIT ${OWN_MEDIA_QUERY_WINDOW}
+    )
+    SELECT r.id
+    FROM recent r
+    LEFT JOIN "Post" p ON p.id = r."postId"
+    WHERE r.prompt ILIKE ${pattern}
+      OR p.title ILIKE ${pattern}
+      OR EXISTS (
+        SELECT 1 FROM "TagsOnPost" top JOIN "Tag" t ON t.id = top."tagId"
+        WHERE top."postId" = r."postId" AND NOT top.disabled AND t.name ILIKE ${pattern}
+      )
+  `;
+  return rows.map((row) => row.id);
+}
+
 export const getMyImages = async ({
   mediaTypes,
   publishedOnly,
   includeEntryDrafts,
+  query,
   userId,
   limit,
   cursor = 0,
@@ -8141,12 +8159,18 @@ export const getMyImages = async ({
   };
 
   try {
+    const matchingIds = query
+      ? await getOwnMediaIdsMatching({ userId, types: type.in, query })
+      : undefined;
+    if (matchingIds && !matchingIds.length) return { items: [], nextCursor: undefined };
+
     const mediaQuery = dbRead.image.findMany({
       select: myImagesSelect,
       where: {
         userId,
         type,
         postId: { not: null },
+        ...(matchingIds && { id: { in: matchingIds } }),
         // Published-only callers render still-scanning images as pending rather than hiding them.
         ingestion: publishedOnly
           ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
@@ -8165,7 +8189,7 @@ export const getMyImages = async ({
       orderBy: { id: 'desc' },
     });
     const failedEntryDraftsQuery =
-      publishedOnly && includeEntryDrafts && !cursor
+      publishedOnly && includeEntryDrafts && !cursor && !query
         ? getFailedEntryDrafts({ userId, type, limit, servableLevels })
         : Promise.resolve([]);
     const [media, failedEntryDrafts] = await Promise.all([mediaQuery, failedEntryDraftsQuery]);

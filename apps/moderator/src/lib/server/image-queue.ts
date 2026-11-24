@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { holdsCsamReview } from '$lib/server/held-media';
 import {
-  restrictedImageIds,
+  listWithheldIds,
   withheldAccountRefusal,
   withheldApprovedAppeal,
   withheldRefusal,
@@ -114,10 +114,8 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
 /** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule, review tags, report
  *  reason or 3D model parent. */
 async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
-  const withheld = await restrictedImageIds(
-    items.map((i) => i.id),
-    { csamReview: holdsCsamReview(user) }
-  );
+  const ids = items.map((i) => i.id);
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, 'image-queue');
   return items.map((item) => {
     if (!withheld.has(item.id)) return { ...item, restricted: false };
     const { report } = item as { report?: object };

@@ -261,6 +261,27 @@ put or delete at the derived key; a create or a write by key to such a collectio
 Code: `src/server/services/apps/doc-store-viewer-keyed.ts` (derivation; golden vectors in its
 test), `viewerKeyedRoute` in `doc-store-api.ts`.
 
+### Document store: deprecated tallies and publish
+
+Rollout step 3 of `docs/app-storage-generic-core.md`. Marks, counters, `write: "none"` and
+server-side publish still work, but are deprecated in favour of viewer-keyed documents (above) and
+the report API (`POST /api/v1/blocks/moderation/reports`).
+
+- **Submit and approve** refuse a mark, a counter or `write: "none"` that the collection did not
+  declare in the previous approved version (the baseline the schema-migration check uses,
+  `app_blocks.manifest`). A collection may keep exactly what it declares, or drop some or all of
+  it; a first version may declare none. A collection dropped and declared again is new.
+  `deprecatedPrimitiveErrors` in `storage-schema-migrations.ts`, run by `checkStorageMigrations`.
+  The parser keeps accepting them, so approved manifests replay unchanged.
+- **Headers:** the per-tally routes, the tally `PATCH`, `_publish` / `_unpublish` (while the publish
+  flag serves them), and a list using `sort=counter:` / `sort=mark:`, `markedBy` or `mark` answer
+  with `Deprecation` and `Link` (`LEGACY_TALLY_HEADERS`, `isDeprecatedRequest` in
+  `doc-store-api.ts`), on refusals and 405s too. No `Sunset`: removal waits for measured usage to
+  reach zero (step 5). CORS exposes both (`BLOCK_CORS_EXPOSE_HEADERS`).
+- **Schema:** `public/schemas/app-block/v1.json` marks `counters` and `marks` `deprecated`
+  (annotations only; what validates is unchanged, pinned in `manifest-storage.schema-drift.test.ts`),
+  and the `write` description calls `none` deprecated (`deprecated` cannot mark one enum value).
+
 ## Feature flag
 
 `appBlocks` (Flipt key: `app-blocks-enabled`) gates the BlockSlot mount
@@ -837,6 +858,12 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 - **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
+
+### Private and unpublished resources
+
+An app-built step or workflow that names a Private or unpublished (not Published) version has its
+output capped at PG-13 with mature content refused, as `kind: 'textToImage'` is for any private
+generation; `checkAppStepResources` returns that cap as `capOutput`.
 
 ### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
 

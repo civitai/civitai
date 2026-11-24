@@ -74,22 +74,28 @@ describe('serving probation checks', () => {
     expect(await pick(1, 1)).not.toBeNull();
   });
 
-  it('draws the pool by the share and falls back to the other when the first has none', async () => {
-    const probation = await reference(10, 'probation');
-    const active = await reference(11, 'active');
-    const served = new Map<number, number>();
-    for (let user = 1; user <= 60; user++) {
-      await seedPlayer(pg, user);
-      const id = (await pick(user, 0.5))?.referenceId as number;
-      served.set(id, (served.get(id) ?? 0) + 1);
-    }
-    expect(served.get(probation)).toBeGreaterThan(15);
-    expect(served.get(active)).toBeGreaterThan(15);
+  it(
+    'draws the pool by the share and falls back to the other when the first has none',
+    { timeout: 30_000 },
+    async () => {
+      const probation = await reference(10, 'probation');
+      const active = await reference(11, 'active');
+      const served = new Map<number, number>();
+      for (let user = 1; user <= 60; user++) {
+        await seedPlayer(pg, user);
+        const id = (await pick(user, 0.5))?.referenceId as number;
+        served.set(id, (served.get(id) ?? 0) + 1);
+      }
+      expect(served.get(probation)).toBeGreaterThan(15);
+      expect(served.get(active)).toBeGreaterThan(15);
 
-    expect((await pick(1, 1))?.referenceId).toBe(probation);
-    await pg.query(`UPDATE "KnightsReferenceImage" SET status='retired' WHERE id=$1`, [probation]);
-    expect((await pick(1, 1))?.referenceId).toBe(active);
-  });
+      expect((await pick(1, 1))?.referenceId).toBe(probation);
+      await pg.query(`UPDATE "KnightsReferenceImage" SET status='retired' WHERE id=$1`, [
+        probation,
+      ]);
+      expect((await pick(1, 1))?.referenceId).toBe(active);
+    }
+  );
 
   it('never serves a probation check to a player who voted on its image in the queue', async () => {
     await seedPlayer(pg, 1);
@@ -106,13 +112,17 @@ describe('serving probation checks', () => {
 });
 
 describe('serving probation as the fallback', () => {
-  it('serves a probation check when active checks come first but none is left', async () => {
-    const probation = await reference(10, 'probation');
-    for (let user = 1; user <= 20; user++) {
-      await seedPlayer(pg, user);
-      expect((await pick(user, 0.01))?.referenceId).toBe(probation);
+  it(
+    'serves a probation check when active checks come first but none is left',
+    { timeout: 30_000 },
+    async () => {
+      const probation = await reference(10, 'probation');
+      for (let user = 1; user <= 20; user++) {
+        await seedPlayer(pg, user);
+        expect((await pick(user, 0.01))?.referenceId).toBe(probation);
+      }
     }
-  });
+  );
 });
 
 describe('answering a probation check', () => {

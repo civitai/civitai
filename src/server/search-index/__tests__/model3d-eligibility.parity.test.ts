@@ -15,28 +15,22 @@ import {
 } from '~/server/services/semantic-model3d-eligibility';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 
-// Users: 1 clean, 2 banned, 3 deleted, 4 a CsamReport's subject, 5 its secondary user, 6 under an
-// evidence hold, 7 a released hold, 8 a reported image owner, -1 the placeholder owner (named on a
-// report, which holds nothing).
+// Users: 1 clean, 2 banned, 3 deleted, 4 a CsamReport's subject, 5 its secondary user, 7 another
+// clean owner, 8 a reported image owner.
 const SCHEMA = `
   CREATE TYPE "Model3DStatus" AS ENUM ('Draft', 'Published', 'Unpublished');
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, NULL, NULL),
-    (5, NULL, NULL), (6, NULL, NULL), (7, NULL, NULL), (8, NULL, NULL), (-1, NULL, NULL);
+    (5, NULL, NULL), (7, NULL, NULL), (8, NULL, NULL);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
   INSERT INTO "CsamReport" ("userId", details, images) VALUES
     (4, '{}', '[]'), (8, '{"secondaryUserId": "5"}', '[]'), (NULL, '{}', '[{"id": 210}, "220"]'),
-    (-1, '{}', '[]'),
     -- Malformed rows the rule must read past without failing the statement.
     (NULL, '{"secondaryUserId": "abc"}', '{"id": 10}'),
     (NULL, '{"secondaryUserId": "123456789012345678901"}', '"10"');
-  CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-  INSERT INTO "EvidenceHold" VALUES (6, NULL), (7, now());
-  CREATE VIEW "EvidenceHeldUser" AS
-    SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
   CREATE TABLE "Image" (
     id int PRIMARY KEY, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL,
     "needsReview" text, "tosViolation" boolean NOT NULL, "blockedFor" text,
@@ -126,7 +120,6 @@ const spec: ParitySpec = {
       userId: '5',
       thumbnail: `5, 'Scanned', NULL, false, NULL`,
     }),
-    model(18, 'ownerEvidenceHold', { userId: '6', thumbnail: `6, 'Scanned', NULL, false, NULL` }),
     model(19, 'thumbnailBlockedCsam', { thumbnail: `1, 'Scanned', NULL, false, 'CSAM'` }),
     model(21, 'thumbnailListed', {}),
     model(22, 'thumbnailListedAsText', {}),
@@ -136,17 +129,11 @@ const spec: ParitySpec = {
     model(25, 'availability:Private', { availability: `'Private'` }),
     model(26, 'availability:EarlyAccess', { availability: `'EarlyAccess'` }),
     model(27, 'eligible:mature', { nsfwLevel: '16' }),
-    // A released evidence hold holds nothing.
-    model(28, 'eligible:releasedHold', {
-      userId: '7',
-      thumbnail: `7, 'Scanned', NULL, false, NULL`,
-    }),
     model(29, 'modelBlocked', { nsfwLevel: '32' }),
     model(30, 'thumbnailBlockedLevel', { thumbnailLevel: '32' }),
     model(31, 'thumbnailUnrated', { thumbnailLevel: '0' }),
     model(32, 'thumbnailBlockedFor', { thumbnail: `1, 'Scanned', NULL, false, 'TOS'` }),
     model(33, 'thumbnailOwnerSecondaryReported', { thumbnail: `5, 'Scanned', NULL, false, NULL` }),
-    model(34, 'thumbnailOwnerEvidenceHold', { thumbnail: `6, 'Scanned', NULL, false, NULL` }),
     // The thumbnail must be the model owner's own image.
     model(35, 'thumbnailOtherOwner', { thumbnail: `7, 'Scanned', NULL, false, NULL` }),
     model(36, 'thumbnailMinor', { thumbnailFlags: 'true, false' }),
@@ -165,7 +152,6 @@ const spec: ParitySpec = {
     'deletedOwner',
     'ownerReported',
     'ownerSecondaryReported',
-    'ownerEvidenceHold',
     'thumbnail',
     'thumbnailScanned',
     'thumbnailNotInReview',
@@ -179,7 +165,6 @@ const spec: ParitySpec = {
     'thumbnailUnrated',
     'thumbnailBlockedFor',
     'thumbnailOwnerSecondaryReported',
-    'thumbnailOwnerEvidenceHold',
     'thumbnailOtherOwner',
     'thumbnailMinor',
     'thumbnailPoi',

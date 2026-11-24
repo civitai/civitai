@@ -108,4 +108,13 @@ describe('appeal queue order', () => {
   it.each([1, 2, 3, 4])('reaches every appeal exactly once at %i per page', async (limit) => {
     expect(await walk(limit)).toEqual(IMAGES_BY_APPEAL_AGE);
   });
+
+  // This schema has none of the tables the media access rule reads, so that read fails here.
+  it('serves the page with every card withheld, rather than failing, when the access read fails', async () => {
+    const { items } = await getAppealImageQueue({ browsingLevel: 1, limit: 10, csamReview: false });
+
+    expect(items.map((i) => [i.id, i.restricted])).toEqual(
+      IMAGES_BY_APPEAL_AGE.map((id) => [id, true])
+    );
+  });
 });

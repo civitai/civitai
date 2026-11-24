@@ -21,7 +21,6 @@ import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteImages } from '~/server/services/image.service';
-import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import { deletePost } from '~/server/services/post.service';
 import { heldPostTextPostIds } from '~/server/services/post-text-hold';
 
@@ -33,14 +32,13 @@ type Row = { id: number; data: PendingDelete; attempted: boolean };
 const db = () => kyselyOver(dbWrite);
 
 /**
- * A held owner, or one with a safety report on file, keeps every image a cleanup would take, since
+ * An owner with a safety report on file keeps every image a cleanup would take, since
  * the review needs them. Only valid on a statement over an unaliased "Image".
  */
 export const heldOwner = () =>
-  fromPrismaSql<boolean>(Prisma.sql`(
-    ${ownerHeldSql(Prisma.raw('"Image"."userId"'))}
-    OR EXISTS (SELECT 1 FROM "CsamReport" r WHERE r."userId" = "Image"."userId")
-  )`);
+  fromPrismaSql<boolean>(
+    Prisma.sql`EXISTS (SELECT 1 FROM "CsamReport" r WHERE r."userId" = "Image"."userId")`
+  );
 
 /**
  * What a cleanup's DELETE takes: an image still unused, since it may have been linked again, unless
@@ -200,8 +198,8 @@ async function carryOut(kind: Kind, rows: Row[]) {
 
 /**
  * Carries out the deletes that had to wait (`PendingDelete`) once nothing blocks them: a delete once
- * its child-safety case closes, a parent's cleanup once its image is free of moderation and holds. One
- * linked again, given away or kept by a hold marker is done with. See docs/features/pending-deletes.md.
+ * its child-safety case closes, a parent's cleanup once its image is free of moderation and its
+ * owner is the subject of no CSAM report. One linked again or given away is done with. See docs/features/pending-deletes.md.
  */
 export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async () => {
   const result: Record<string, unknown> = {};
@@ -238,8 +236,8 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       )
     );
 
-    // A row carried out is done once gone or no longer applicable (in use again, given away, kept by
-    // a hold marker); blocked again it waits, and a delete that threw is retried.
+    // A row carried out is done once gone or no longer applicable (in use again, given away); blocked
+    // again it waits, and a delete that threw is retried.
     const after = await standing(kind, ids);
     const done: number[] = [];
     const waiting: number[] = [];

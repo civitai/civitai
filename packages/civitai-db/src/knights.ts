@@ -187,13 +187,13 @@ export const MOD_TAG_REVIEW_AXIS = 'tag_review';
  * (`servableImage` for serving).
  */
 export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
-  eb.and([
-    servableImageContent(eb),
-    sql<SqlBool>`NOT EXISTS (
-      SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
-      WHERE ir."imageId" = img.id AND r.status IN ('Pending', 'Processing')
-    )`,
-  ]);
+  eb.and([servableImageContent(eb), noOpenImageReport]);
+
+/** No report waiting on a moderator names the image `img`. */
+export const noOpenImageReport = sql<SqlBool>`NOT EXISTS (
+  SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
+  WHERE ir."imageId" = img.id AND r.status IN ('Pending', 'Processing')
+)`;
 
 /**
  * Whether disabling `tagId` on the image would lower its `nsfwLevel`, read as `update_nsfw_levels_new` decides it: the
@@ -239,22 +239,23 @@ export async function removalLowersLevel(
 }
 
 /**
- * Runs a read that applies `servableImageContent` with JIT off (SET LOCAL, so in a transaction: the caller's, or one
- * opened here). Its CSAM subplans inflate the
- * planner's estimate far past the read's real cost, and on a server with JIT on, compiling for that estimate costs more
- * than the read.
+ * Runs a read that applies `servableImageContent` with JIT and parallel workers off (SET LOCAL, so in a transaction: the
+ * caller's, or one opened here). Its CSAM subplans inflate the planner's estimate far past the read's real cost, and for
+ * that estimate a server compiles with JIT, or starts parallel workers, for longer than the read runs.
  */
 export async function readWithoutJit<T>(
   db: Kysely<DB>,
   read: (trx: Kysely<DB>) => Promise<T>
 ): Promise<T> {
-  // Already in a transaction: turn JIT off in it rather than nest one, which Kysely refuses.
+  // Already in a transaction: turn JIT and parallel workers off in it rather than nest one, which Kysely refuses.
   if (db.isTransaction) {
     await sql`SET LOCAL jit = off`.execute(db);
+    await sql`SET LOCAL max_parallel_workers_per_gather = 0`.execute(db);
     return read(db);
   }
   return db.transaction().execute(async (trx) => {
     await sql`SET LOCAL jit = off`.execute(trx);
+    await sql`SET LOCAL max_parallel_workers_per_gather = 0`.execute(trx);
     return read(trx);
   });
 }

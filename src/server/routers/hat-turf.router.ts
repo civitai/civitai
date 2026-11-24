@@ -17,6 +17,7 @@ import {
   setTurfOwnerOff,
   watchTurfImages,
 } from '~/server/events/turf/turf.service';
+import { getComebackPace, getEventMedia } from '~/server/events/scoring/comeback-pace';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -104,6 +105,16 @@ export const hatTurfRouter = router({
     .input(turfEventSchema)
     .use(edgeCacheIt({ ttl: 60 }))
     .query(({ input }) => getFlagRaceTotals(input.event)),
+  // Each team's Comeback Cup week so far against its own pace, for the event page's Cup card.
+  getComebackPace: publicProcedure
+    .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.md }))
+    .query(({ input }) => getComebackPace(input.event)),
+  // The event page's films and art from the flagRace key, so a new id lands without a deploy.
+  getEventMedia: publicProcedure
+    .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(({ input }) => getEventMedia(input.event)),
   // Past days' frozen flags, for their badges on the all-time collection and image detail.
   getPastFlags: publicProcedure
     .input(turfEventSchema)

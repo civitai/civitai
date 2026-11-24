@@ -2,7 +2,7 @@ import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead } from './db';
-import { restrictedImageIds, withheldRow } from './retracted-media';
+import { listWithheldIds, withheldRow } from './retracted-media';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 import { isReviewImageSql } from './review-image';
@@ -103,9 +103,10 @@ export async function withholdBatchMedia<B extends { items: BulkImage[] }>(
   batch: B,
   { csamReview }: { csamReview: boolean }
 ): Promise<Omit<B, 'items'> & { items: ServedBulkImage[] }> {
-  const withheld = await restrictedImageIds(
+  const withheld = await listWithheldIds(
     batch.items.map((i) => i.id),
-    { csamReview }
+    { csamReview },
+    'bulk-image-manager'
   );
   return {
     ...batch,

@@ -73,6 +73,8 @@ const { postgresSlugify } = await repo('src/utils/string-helpers.ts');
 const { isMinorContentRestricted } = await repo(
   'packages/civitai-shared/src/minor-content-gate.ts'
 );
+// getAllModelsSchema's `ids` and `followed` (src/server/schema/model.schema.ts) are these helpers.
+const { commaDelimitedNumberArray, booleanString } = await repo('src/utils/zod-helpers.ts');
 
 // ---------------------------------------------------------------------------------------------
 // The synthetic world
@@ -408,6 +410,8 @@ const PRIVACY = {
   1001: { hideModelBuzz: false, hideModelDownloads: false, hideModelGenerations: true },
 };
 const MEMBERS = { 1001: true };
+// Each viewer's Follow rows (UserEngagement, type Follow): the creators they follow.
+const FOLLOWS = { 1003: [1002], 1001: [] };
 
 // ---------------------------------------------------------------------------------------------
 // Caches, as Node writes them; reads are traced so each fixture carries what Node read.
@@ -496,6 +500,9 @@ class Trace {
       usernames: new Map(),
       privacy: new Map(),
       collections: new Map(),
+      userFollows: new Map(),
+      followsRead: 0,
+      userCosmetics: [],
     };
   }
 }
@@ -523,6 +530,30 @@ function coldLookup(prefix, id) {
         tags: [],
         versions: structuredClone(byIndex(m.versions)),
       };
+      T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
+      return result;
+    }
+    case K.userCosmetics: {
+      // userCosmeticCache's lookupFn: the user's equipped cosmetics not equipped to an entity (none
+      // here is a creator-made cosmetic, so none is withheld); none is a day's notFound marker.
+      const equipped = USER_COSMETICS[id] ?? [];
+      for (const c of equipped)
+        T.db.userCosmetics.push({
+          userId: id,
+          cosmeticId: c.cosmeticId,
+          data: c.data === null ? null : JSON.stringify(c.data),
+          equippedAt: true,
+          equippedToId: null,
+          equippedToType: null,
+        });
+      if (!equipped.length) {
+        T.writes.set(`${prefix}:${id}`, {
+          value: { userId: id, notFound: true, cachedAt: NOW },
+          ex: DAY,
+        });
+        return undefined;
+      }
+      const result = { userId: id, cosmetics: structuredClone(equipped) };
       T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
       return result;
     }
@@ -675,8 +706,14 @@ function boundCursor(cursor) {
 /** The page query: the fixture's next page, checked against the cursor Node sends. With a collection
  *  the page records the values Node binds into its CollectionItem semi-join (the collection, the
  *  viewer its in-review items are kept for, the collection tag), which the harness checks feed-go
- *  binds too. */
-function pageQuery(input, take, viewerId, { onlyModelIds, excludeModelIds } = {}) {
+ *  binds too; likewise a non-empty `ids` (`mm."modelId" IN (…)`) and a signed-in `followed`'s follow
+ *  list (`mm."userId" IN (…)`, or `1 = 0` for none). */
+function pageQuery(
+  input,
+  take,
+  viewerId,
+  { onlyModelIds, excludeModelIds, followedUserIds } = {}
+) {
   const listed = T.pages.shift();
   if (!listed) throw new Error(`${T.name}: Node asks for a page the fixture does not list`);
   const cursor = input.cursor ?? null;
@@ -697,6 +734,12 @@ function pageQuery(input, take, viewerId, { onlyModelIds, excludeModelIds } = {}
   // The pin's id filters (`mm."modelId" IN (…)` / `NOT IN (…)`): the harness checks feed-go binds them.
   if (onlyModelIds?.length) page.onlyModelIds = onlyModelIds;
   if (excludeModelIds?.length) page.excludeModelIds = excludeModelIds;
+  if (input.ids?.length) page.ids = input.ids;
+  if (followedUserIds?.length) page.followedUserIds = followedUserIds;
+  else if (followedUserIds) {
+    if (rows.length) throw new Error(`${T.name}: a \`1 = 0\` page answers no row`);
+    page.followedNone = true;
+  }
   if (input.collectionId)
     page.collection = {
       collectionId: input.collectionId,
@@ -755,7 +798,7 @@ function getModelsRaw({
     isModerator: sessionUser?.isModerator,
   });
   if (enforcement.emptyResult) return { items: [], isPrivate: false };
-  const { take, username, user, baseModels, modelVersionIds, status } = input;
+  const { take, username, user, baseModels, modelVersionIds, status, ids, followed } = input;
   const includeDetails = !!include?.includes('details');
   const tagName = input.tagname ?? input.tag;
   if (tagName)
@@ -772,6 +815,14 @@ function getModelsRaw({
     T.db.usernames.set(name, target.id);
   }
   let isPrivate = false;
+  // `followed && sessionUser?.id`: the viewer's Follow rows on dbRead, on every getModelsRaw call.
+  let followedUserIds;
+  if (followed && sessionUser?.id) {
+    followedUserIds = [...(FOLLOWS[sessionUser.id] ?? [])];
+    T.db.userFollows.set(sessionUser.id, followedUserIds);
+    T.db.followsRead++;
+    isPrivate = true;
+  }
   if (input.collectionId) {
     const permissions = getUserCollectionPermissionsById({
       userId: sessionUser?.id,
@@ -782,8 +833,12 @@ function getModelsRaw({
     // pageQuery for the harness to check).
     isPrivate = !permissions.publicCollection;
   }
-  const hidePrivateModels = !username && !user && !input.collectionId;
-  const models = pageQuery(input, take ?? 100, sessionUser?.id, { onlyModelIds, excludeModelIds });
+  const hidePrivateModels = !ids && !username && !user && !followed && !input.collectionId;
+  const models = pageQuery(input, take ?? 100, sessionUser?.id, {
+    onlyModelIds,
+    excludeModelIds,
+    followedUserIds,
+  });
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
   const userBasicData = cacheFetch(K.basic, userIds);
@@ -1291,6 +1346,9 @@ function runModels(spec) {
     ...raw,
   };
   if (input.username !== undefined) input.username = postgresSlugify(input.username);
+  // The schema's own transforms of `ids` and `followed` (commaDelimitedNumberArray, booleanString).
+  if ('ids' in raw) input.ids = commaDelimitedNumberArray().optional().parse(raw.ids);
+  if ('followed' in raw) input.followed = booleanString().optional().parse(raw.followed);
   const features = {
     getAllModelImagesSlim: spec.config.modelImagesSlim,
     coverageNext: spec.config.coverageNext,
@@ -1624,6 +1682,119 @@ const SPECS = [
     dropKeys: [`${K.versionImages}:6012`],
     fallback: 'model-images-miss',
   },
+  // `ids` and `followed` (each served only behind its switch: FEED_GO_GETALL_SERVE_INPUT_IDS,
+  // FEED_GO_GETALL_SERVE_INPUT_FOLLOWED; off, the input-ids / input-followed fallback).
+  {
+    name: 'ids-embed-signed-out',
+    description:
+      'An id list (the embeds’ lookup): the page is held to those ids, in the sort’s order, and a Private version is listed (any `ids` turns hidePrivateModels off).',
+    host: HOST.green,
+    config: { serveInputIds: true },
+    input: { ids: [5005, 5001], limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5005] }],
+  },
+  {
+    name: 'ids-comma-string-showcase',
+    description:
+      'A profile showcase: `ids` as a comma-separated string (split and trimmed) with the creator’s name, for another signed-in viewer.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveInputIds: true },
+    input: { ids: '5005, 5002', username: 'artist_two', period: 'AllTime', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5002, 5005] }],
+  },
+  {
+    name: 'ids-empty-string',
+    description: '`ids: ""` is [0]: the page is held to model 0, which no row is.',
+    host: HOST.blue,
+    config: { serveInputIds: true },
+    input: { ids: '', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [] }],
+  },
+  {
+    name: 'ids-empty-list',
+    description:
+      'An empty list filters nothing, but is still `ids`: a Private version is listed, and the lookahead cursor is kept.',
+    host: HOST.blue,
+    config: { serveInputIds: true },
+    input: { ids: [], limit: 1, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5005, 5009] }],
+  },
+  {
+    name: 'fallback-ids-off',
+    description: '`ids` with its switch off (the default): not served.',
+    host: HOST.blue,
+    input: { ids: [5001], browsingLevel: 1 },
+    fallback: 'input-ids',
+  },
+  {
+    name: 'fallback-ids-not-integer',
+    description: 'An id JS Number does not read as an int4 integer: left to Node.',
+    host: HOST.blue,
+    config: { serveInputIds: true },
+    input: { ids: ['0x10'], browsingLevel: 1 },
+    fallback: 'model-ids',
+  },
+  {
+    name: 'followed-signed-in',
+    description:
+      'Followed creators only, signed in: the page is held to the creators the viewer follows (read on every page), and a Private version is listed.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveInputFollowed: true },
+    input: { followed: true, sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5002, 5005, 5009] }],
+  },
+  {
+    name: 'followed-no-follows',
+    description: 'Followed creators only, for a viewer who follows no one: `1 = 0`, an empty answer.',
+    host: HOST.blue,
+    viewer: 1001,
+    config: { serveInputFollowed: true },
+    input: { followed: 'true', sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [] }],
+  },
+  {
+    name: 'followed-signed-out',
+    description:
+      '`followed` signed out filters nothing (Node reads it only with a user), but still turns hidePrivateModels off.',
+    host: HOST.green,
+    config: { serveInputFollowed: true },
+    input: { followed: true, limit: 1, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5005] }],
+  },
+  {
+    name: 'fallback-followed-off',
+    description: '`followed` with its switch off (the default): not served.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { followed: true, browsingLevel: 1 },
+    fallback: 'input-followed',
+  },
+  // An owner's user-cosmetics miss: computed only behind FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS
+  // (default off: the user-cosmetics-miss fallback).
+  {
+    name: 'cold-user-cosmetics',
+    description:
+      'User cosmetics entries absent: computed with userCosmeticCache’s lookup (the owner’s equipped badge; an owner with none gets a day’s notFound marker) and written back.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveUserCosmeticsMiss: true },
+    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5009] }],
+    cold: [`${K.userCosmetics}:1001`, `${K.userCosmetics}:1002`],
+  },
+  {
+    name: 'fallback-user-cosmetics-miss',
+    description:
+      'The same user cosmetics entries absent with the switch off (the default): not served.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5009] }],
+    cold: [`${K.userCosmetics}:1001`, `${K.userCosmetics}:1002`],
+    fallback: 'user-cosmetics-miss',
+  },
   // The minor content rule on the shared version-showcase cache (imagesForModelVersionsCache's
   // appendFn): viewer-independent, so 8150 is left out for every viewer, its owner and moderators
   // included; the cover is then looked up on the replica, found on the same version, and left out
@@ -1681,6 +1852,16 @@ function dbTables() {
   if (T.db.modelHashes.length) tables.modelHashes = T.db.modelHashes;
   if (T.db.tagsOnModels.length) tables.tagsOnModels = T.db.tagsOnModels;
   if (T.db.officialModels) tables.officialModels = T.db.officialModels;
+  // Only a fixture whose request reads the viewer's follows lists them, and how often Node read them.
+  if (T.db.followsRead) {
+    tables.userFollows = m2o(T.db.userFollows, ([userId, ids]) =>
+      ids.map((targetUserId) => ({ userId, targetUserId }))
+    ).flat();
+    tables.followsRead = T.db.followsRead;
+  }
+  // Only a fixture with a cold user-cosmetics key lists the UserCosmetic rows its lookup read.
+  if ([...T.cold].some((k) => k.startsWith(`${K.userCosmetics}:`)))
+    tables.userCosmetics = T.db.userCosmetics;
   // Only a fixture that reads a collection lists the table (a missing collection is no row).
   if (T.db.collections.size)
     tables.collections = m2o(T.db.collections, ([, c]) => c)

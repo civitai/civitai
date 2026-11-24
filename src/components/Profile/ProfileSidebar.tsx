@@ -59,6 +59,7 @@ import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-prof
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
 import { LegendStatusLine } from '~/components/CreatorJourney/LegendStatusLine';
+import { MemorialBadge, MemorialBanner } from '~/components/Profile/MemorialBanner';
 import { getBadgeImageUrl, splitProfileBadges } from '~/shared/utils/badge-visibility';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
@@ -115,6 +116,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   });
   const isCurrentUser = currentUser?.id === user?.id;
   const muted = !!user?.muted;
+  const memorial = user?.memorial ?? null;
   const [showAllBadges, setShowAllBadges] = useState<boolean>(false);
   const [enlargedBadge, setEnlargedBadge] = useState<number | null>(null);
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
@@ -308,8 +310,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             {!user?.bannedAt && (
               <>
                 {followUserBtn}
-                <TipBuzzBtn label="" />
-                <ChatBtn label="" />
+                {!memorial && <TipBuzzBtn label="" />}
+                {!memorial && <ChatBtn label="" />}
               </>
             )}
             {shareBtn}
@@ -323,6 +325,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
+        {memorial && (
+          <Group mt={4}>
+            <MemorialBadge />
+          </Group>
+        )}
         {features.creatorJourney && <LegendStatusLine userId={user.id} />}
         {currentUser?.isModerator && (
           <CopyButton value={String(user.id)}>
@@ -406,14 +413,17 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           ))}
         </Group>
       )}
+      {memorial && user.username && (
+        <MemorialBanner username={user.username} tributes={memorial.tributes} />
+      )}
       {!isMobile && !user?.bannedAt && (
         <>
           <Group grow>
             {muted ? mutedAlert : editProfileBtn}
             {followUserBtn}
           </Group>
-          <TipBuzzBtn />
-          <ChatBtn />
+          {!memorial && <TipBuzzBtn />}
+          {!memorial && <ChatBtn />}
           {shopBtn}
         </>
       )}

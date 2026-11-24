@@ -11,6 +11,8 @@ type RedeemableCodePurchaseData = {
 };
 
 export const redeemableCodePurchaseEmail = createEmail({
+  template: 'redeemableCodePurchase',
+  mailClass: 'transactional',
   header: ({ email }: RedeemableCodePurchaseData) => ({
     subject: 'Your Civitai Redeemable Code is Ready!',
     to: email,

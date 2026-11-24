@@ -24,7 +24,8 @@ beforeAll(async () => {
       id int PRIMARY KEY,
       "userId" int NOT NULL,
       ingestion text NOT NULL,
-      "needsReview" text
+      "needsReview" text,
+      "blockedFor" text DEFAULT 'CSAM'
     );
     CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
@@ -125,5 +126,15 @@ describe('releaseReviewFlagsToReportHold', () => {
 
     expect(await releaseReviewFlagsToReportHold([3])).toBe(1);
     expect((await flags())[2]).toEqual({ id: 3, needsReview: null });
+  });
+
+  it('keeps the flag on an image blocked for anything but CSAM, so its case stays open', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "blockedFor" = 'moderated' WHERE id = 3;
+      INSERT INTO "CsamReport" ("userId") VALUES (${OWNER});
+    `);
+
+    expect(await releaseReviewFlagsToReportHold([3])).toBe(0);
+    expect((await flags())[2]).toEqual({ id: 3, needsReview: 'csam' });
   });
 });

@@ -415,6 +415,12 @@ export const serverSchema = z
     // per-id populate locks within seconds. Keep it above CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and
     // the server-side lookup cap. .int().positive() for the same reason as that timeout.
     CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    // Dedicated downloads replica (`~/server/clickhouse/downloads-client`); unset HOST or USERNAME: no client.
+    CLICKHOUSE_DOWNLOADS_HOST: z.string().optional(),
+    CLICKHOUSE_DOWNLOADS_USERNAME: z.string().optional(),
+    CLICKHOUSE_DOWNLOADS_PASSWORD: z.string().optional(),
+    // Must equal the key the replica's address hashes were made with; unset: address branch stays shared.
+    CLICKHOUSE_DOWNLOADS_IP_HASH_KEY: z.string().optional(),
     // OAuth LOGIN provider secrets now live ONLY in the hub (apps/auth) — the spoke fetches the enabled-provider
     // list from GET {hub}/api/auth/providers and never holds login secrets. Discord's creds REMAIN here because
     // the Discord ROLE-CONNECTION integration (src/server/integrations/discord.ts) uses them — that's a separate
@@ -467,8 +473,6 @@ export const serverSchema = z
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
-    // Recipients of evidence-hold-expiry-alert. Unset or empty: it logs an error instead of sending.
-    EVIDENCE_HOLD_ALERT_EMAILS: commaDelimitedStringArray().default([]),
     // Server-to-server base for the moderator app, for callers that never hand the URL to a browser.
     // SEPARATE from MODERATOR_APP_URL on purpose: that one also feeds the /moderator/* redirect's
     // Location header, so it must stay publicly resolvable. Optional — unset, moderator-app.service.ts

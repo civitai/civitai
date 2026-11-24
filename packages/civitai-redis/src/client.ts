@@ -3574,6 +3574,7 @@ const REDIS_KEYS_UNPREFIXED = {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
     HISTORY_DOWNLOADS: 'counters:history-downloads',
     BUG_REPORTS: 'counters:bug-reports',
+    FEATURE_PAGES_LIFTS: 'counters:feature-pages-lifts',
   },
   LIVE_NOW: 'live-now',
   TAG: 'tag',

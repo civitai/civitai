@@ -1,12 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-}));
-
 // Any inline wipe would have to go through the maintenance object: make reaching it loud.
 const wipeAccount = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({

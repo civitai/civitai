@@ -90,8 +90,9 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
       )} INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ITEM}, ${SIBLING}, 'csam-hold');`,
   },
   {
-    label: 'a row on its url with a csam scan flag',
-    restricts: true,
+    // An automated review flag is a signal for review, not a CSAM mark.
+    label: 'a row on its url with only an automated review flag',
+    restricts: false,
     mark: (t) =>
       `${sibling(t)} ${item(
         SIBLING
@@ -363,6 +364,29 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
         'Confirmed'
       )}`,
   },
+  // Its own label item: a hold or a vote keeps it with the grant, an automated review flag alone does not.
+  {
+    label: 'its own label item with only an automated review flag',
+    restricts: false,
+    mark: (t) =>
+      `${item(
+        t.id
+      )} INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (${ITEM}, '{"csam": "true"}');`,
+  },
+  {
+    label: 'its own label item on a csam hold',
+    restricts: true,
+    mark: (t) =>
+      `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ITEM}, ${t.id}, 'csam-hold');`,
+  },
+  {
+    label: 'its own label item with a csam vote',
+    restricts: true,
+    mark: (t) =>
+      `${item(
+        t.id
+      )} INSERT INTO "ScanLabelVote" ("itemId", reason) VALUES (${ITEM}, 'csam-realistic');`,
+  },
   // civitai/civitai#10202: item-level CSAM signals stay with the grant; owner, post, model and entity
   // signals do not.
   {
@@ -380,19 +404,6 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
       `INSERT INTO "CsamReport" ("userId", details, images)
         SELECT ${REPORTED_USER}, '${CASE_DETAILS}'::jsonb || jsonb_build_object('secondaryUserId', "userId"::text), '[]'
         FROM "Image" WHERE id = ${t.id};`,
-  },
-  {
-    label: 'its owner under an evidence hold',
-    restricts: false,
-    held: true,
-    mark: (t) =>
-      `INSERT INTO "EvidenceHeldUser" ("userId") SELECT "userId" FROM "Image" WHERE id = ${t.id};`,
-  },
-  {
-    label: 'a row on its url whose owner is under an evidence hold',
-    restricts: false,
-    mark: (t) =>
-      `${sibling(t)} INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${SIBLING_OWNER});`,
   },
   {
     label: 'a row on its url whose owner is named on a CSAM report',
@@ -461,8 +472,6 @@ export const csamCaseCleanupSql = (t: Target) => `
   DELETE FROM "ScanLabelItem" WHERE id = ${ITEM};
   DELETE FROM "BlockedImage" WHERE hash = ${HASH};
   DELETE FROM "CsamReport" WHERE details ->> 'case' = 'csam-restriction';
-  DELETE FROM "EvidenceHeldUser"
-    WHERE "userId" = ${SIBLING_OWNER} OR "userId" = (SELECT "userId" FROM "Image" WHERE id = ${t.id});
   DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = ${OTHER_IMAGE};
   DELETE FROM "ImageCdnShopTakedown" WHERE "shopItemId" = ${OFFERING};
 `;
