@@ -84,6 +84,9 @@ type fakeSources struct {
 	official      []hydrate.OfficialModel
 	officialErr   error
 	officialCalls int
+	// follows is FollowedUserIDs' answer per viewer; followRq the viewers it was asked for.
+	follows  map[int][]int
+	followRq []int
 }
 
 func (f *fakeSources) OfficialModels(_ context.Context) ([]hydrate.OfficialModel, error) {
@@ -128,6 +131,13 @@ func (f *fakeSources) CreatorMemberships(_ context.Context, ids []int) (map[int]
 func (f *fakeSources) UserIDByUsername(_ context.Context, name string) (int, bool, error) {
 	id, ok := f.users[name]
 	return id, ok, nil
+}
+
+func (f *fakeSources) FollowedUserIDs(_ context.Context, userID int) ([]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.followRq = append(f.followRq, userID)
+	return append([]int{}, f.follows[userID]...), nil
 }
 
 type fakeGallery struct{ settings map[int]*feed.GallerySettings }

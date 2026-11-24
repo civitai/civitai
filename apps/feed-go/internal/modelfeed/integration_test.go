@@ -390,3 +390,19 @@ func TestIntegrationModelPageOfficialPinFilters(t *testing.T) {
 	integWant(t, "exclude, from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
 		Cursor: "9|3101001", ExcludeModelIDs: []int{3101002}})), []int{3101001, 3101005})
 }
+
+// The `ids` and `followed` filters (DESIGN.md §15.2.4) against Postgres: ids in the sort's order
+// whatever order they were sent in, from a cursor too; a follow list of one owner; `1 = 0` for none.
+func TestIntegrationModelPageIDsAndFollowed(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	integWant(t, "ids", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		IDs: []int{3101002, 3101001, 3101999}})), []int{3101001, 3101002})
+	integWant(t, "ids, from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		Cursor: "9|3101001", IDs: []int{3101005, 3101001}})), []int{3101001, 3101005})
+	// 3101902's Archived, Private and Draft models stay out: the feed's own filters still apply.
+	integWant(t, "followed", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		ViewerID: 3101903, Followed: true, FollowedUserIDs: []int{3101902}})), []int{3101002})
+	integWant(t, "followed, nobody", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		ViewerID: 3101903, Followed: true})), []int{})
+}

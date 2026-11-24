@@ -494,6 +494,7 @@ func run(log *slog.Logger) error {
 			CoverageNext:            cfg.CoverageNext,
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
+			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed},
 			ServeUserCosmeticsMiss:  cfg.GetAllServeUserCosmeticsMiss,
 		},
 	}
@@ -615,6 +616,7 @@ func run(log *slog.Logger) error {
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
+		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed,
 		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
