@@ -4,7 +4,7 @@ import type { Context } from '~/server/createContext';
 import {
   createRatingReviewSchema,
   getMyRatingReviewSchema,
-  ratingDisputeFeature,
+  ratingDisputeEnabled,
 } from '~/server/schema/rating-review.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
@@ -14,7 +14,7 @@ import {
 import { protectedProcedure, router } from '~/server/trpc';
 
 function assertDisputeEnabled(ctx: Context, entityType: RatingReviewEntityType) {
-  if (!getFeatureFlags(ctx)[ratingDisputeFeature(entityType)])
+  if (!ratingDisputeEnabled(getFeatureFlags(ctx), entityType))
     throw new TRPCError({ code: 'FORBIDDEN' });
 }
 

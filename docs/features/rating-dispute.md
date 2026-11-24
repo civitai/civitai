@@ -8,11 +8,11 @@ A rated entity's `nsfwLevel` is derived: from its images and from a floor that t
 
 ## Entity types
 
-Eight, spelled as `EntityModeration.entityType` spells them, from `@civitai/shared/rating-review` (`RATING_REVIEW_ENTITY_TYPES`): `Article`, `Model`, `Post`, `Bounty`, `BountyEntry`, `Challenge`, `Crucible`, `Collection`. The same module holds the level options per entity, their labels, the entity page paths, the scan-reason reader and the notification builder, so both apps render the same thing.
+Nine, from `@civitai/shared/rating-review` (`RATING_REVIEW_ENTITY_TYPES`): `Article`, `Model`, `Post`, `Bounty`, `BountyEntry`, `Challenge`, `Crucible`, `Collection`, spelled as `EntityModeration.entityType` spells them, and `Song`, a song's `Image` id (see `docs/features/music.md`, "Rating disputes"). The same module holds the level options per entity, their labels, the entity page paths, the scan-reason reader and the notification builder, so both apps render the same thing.
 
 A Model's rating is its `nsfw` flag rather than a level. It is shown as SFW/NSFW and stored as PG (`nsfw = false`) or R (`nsfw = true`).
 
-Feature flags: `articleRatingDispute` (Flipt `article-rating-dispute`) for Article, `ratingDispute` (Flipt `rating-dispute`) for the other seven.
+Feature flags: `articleRatingDispute` (Flipt `article-rating-dispute`) for Article, `ratingDispute` (Flipt `rating-dispute`) for the other eight; a Song also needs `music` (`ratingDisputeEnabled`).
 
 ## Data model
 
@@ -36,12 +36,12 @@ A partial unique index `RatingReview_pending_per_entity` on `(entityType, entity
 
 ## Filing (main app)
 
-`src/server/services/rating-review.service.ts` (`createRatingReview`, `getRatingReviewForOwner`), router `ratingReview.create` / `ratingReview.getMine`, and one `OwnerRatingControls` component on each of the eight entity pages.
+`src/server/services/rating-review.service.ts` (`createRatingReview`, `getRatingReviewForOwner`), router `ratingReview.create` / `ratingReview.getMine`, and one `OwnerRatingControls` component on each of the eight entity pages; a song files from its ⋯ menu instead.
 
 - **Owner only**, checked in the service.
 - **One Pending per entity** (the partial unique index).
 - **3 per 24h per user, shared across types**; moderators bypass. Redis key `rating-review:rate:<userId>`.
-- **Eligibility.** Article is always disputable, including unrated. The others need the live `EntityModeration` row to be a text-scan raise (`result.version` set and a level above PG; Model R or above — `isTextScanRaised` from `@civitai/shared/rated-entity-sql`) or a prior resolved review. Non-Article unrated is refused.
+- **Eligibility.** Article is always disputable, including unrated. A Song needs no text scan, only a level and a review by its own scans (`ingestion` Scanned). The others need the live `EntityModeration` row to be a text-scan raise (`result.version` set and a level above PG; Model R or above — `isTextScanRaised` from `@civitai/shared/rated-entity-sql`) or a prior resolved review. Non-Article unrated is refused.
 - **Re-filing** after a resolution needs the scanned text to have changed: the live `result.textHash` differs from the last review's `resolvedTextHash`. An edit with no new completed scan cannot re-file until it is scanned. A copied row with no hash falls back to "the entity was edited after the resolution".
 
 ## Overrides and auto-approve
@@ -58,7 +58,7 @@ A Pending dispute blocked only by a scan in flight is re-evaluated when the scan
 
 ## Resolving (`apps/moderator`, `/ratings`)
 
-`apps/moderator/src/lib/server/rating-dispute-queue.ts` loads the queue (`ratingDisputeTriageLoad`) and wires the resolve action; `rating-reviews.service.ts` resolves; `rating-review-actions.ts` runs the side effects after commit. The page uses the shared triage master-detail layout: type tabs (Posts, Models, Articles, Other; Other narrows by `kind`), status, ask lower/higher and scan-raised chips, sort, `q` owner/ID search, an `owner` filter and `selected`. The detail is image-first — a preview strip, the scanned text, the owner's comment and the scan's reason — and two-press keys rate. `/articles/ratings` redirects to `/ratings?tab=articles`.
+`apps/moderator/src/lib/server/rating-dispute-queue.ts` loads the queue (`ratingDisputeTriageLoad`) and wires the resolve action; `rating-reviews.service.ts` resolves; `rating-review-actions.ts` runs the side effects after commit. Song disputes are not listed, deep-linked or counted here: they are decided on the Audio review page. The page uses the shared triage master-detail layout: type tabs (Posts, Models, Articles, Other; Other narrows by `kind`), status, ask lower/higher and scan-raised chips, sort, `q` owner/ID search, an `owner` filter and `selected`. The detail is image-first — a preview strip, the scanned text, the owner's comment and the scan's reason — and two-press keys rate. `/articles/ratings` redirects to `/ratings?tab=articles`.
 
 A moderator applies a level; the review reads `Actioned` when it matches the suggestion and `Unactioned` otherwise. One transaction, every read that feeds a write on its connection:
 
@@ -68,6 +68,7 @@ A moderator applies a level; the review reads `Actioned` when it matches the sug
    - **Article, Post, BountyEntry:** the override pair and `nsfwLevel`; Article also locks `userNsfwLevel`.
    - **Bounty:** as above, plus `nsfw` from the applied level, locked.
    - **Model:** `nsfw`, keeping its lock. Marking a model NSFW is refused while it is flagged POI, minor or SFW-only, by the `UPDATE`'s own condition.
+   - **Song:** through the moderator rating writer (`updateImageNsfwLevel`), which sets and locks the level and refuses, rolling the claim back, a song its own scans have not reviewed. A ruling is refused the same way before the claim.
    - **Challenge:** lower-only, judged against the live level read under a row lock. The allowed mask is narrowed to the applied level, its collection's `forcedBrowsingLevel` follows, and the basis is the narrowed mask's level.
 4. Queue `JobQueue(UpdateNsfwLevel)` for Post, Bounty, BountyEntry and Model, so the main app's crons run the connected-entity cascade.
 

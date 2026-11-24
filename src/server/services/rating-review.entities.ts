@@ -13,7 +13,12 @@ import { ratedLevel, scanFlagLevel, withContentLevel } from '~/server/services/b
 import { ratedEntityContentNsfwLevelSql } from '~/server/services/text-scan/scan-floor';
 import { BOUNTY_SCAN_DETAILS_KEY } from '~/server/utils/bounty-details';
 import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
-import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeSource,
+  EntityModerationStatus,
+  ImageIngestionStatus,
+  MediaType,
+} from '~/shared/utils/prisma/enums';
 
 export type RatingReviewSubject = {
   ownerId: number | null;
@@ -36,6 +41,13 @@ export const FLAG_RESTRICTED_MESSAGE =
 // A forced level wins over a moderator rating, so resolving a dispute would change nothing.
 export const FORCED_LEVEL_MESSAGE =
   "This collection's rating is fixed by Civitai, so it can't be disputed.";
+
+// A moderator's ruling locks a song's level, and a locked level counts as the song's review, which
+// only its own scans may give: so a song is disputable only once they have reviewed it.
+export const SONG_UNREVIEWED_MESSAGE =
+  "This song is still being reviewed, so its rating can't be disputed yet.";
+export const SONG_REMOVED_MESSAGE = "This song was removed, so its rating can't be disputed.";
+const REMOVED_SONG_STATES: string[] = [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound];
 
 // Moderator actions that lock or unlock a model's nsfw flag. Any logged after the system marker makes
 // the lock that stands now the moderator's: an unlock means a later lock (a dispute resolution logs
@@ -306,6 +318,36 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
         disputeRestriction: forced ? FORCED_LEVEL_MESSAGE : undefined,
       }
     );
+  },
+  Song: async (id, db) => {
+    const i = await db.image.findUnique({
+      where: { id },
+      select: {
+        userId: true,
+        type: true,
+        ingestion: true,
+        nsfwLevel: true,
+        updatedAt: true,
+        metadata: true,
+      },
+    });
+    if (!i || i.type !== MediaType.audio) return null;
+    const title = (i.metadata as { title?: unknown } | null)?.title;
+    return {
+      ownerId: i.userId,
+      currentLevel: ratedLevel(i.nsfwLevel),
+      updatedAt: i.updatedAt,
+      title: typeof title === 'string' && title.trim() ? title : `Song #${id}`,
+      parentId: null,
+      override: null,
+      overrideBasis: null,
+      disputeRestriction:
+        i.ingestion === ImageIngestionStatus.Scanned
+          ? undefined
+          : REMOVED_SONG_STATES.includes(i.ingestion)
+          ? SONG_REMOVED_MESSAGE
+          : SONG_UNREVIEWED_MESSAGE,
+    };
   },
 };
 

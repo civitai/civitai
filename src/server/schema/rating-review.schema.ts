@@ -22,3 +22,9 @@ export const getMyRatingReviewSchema = z.object({
 
 export const ratingDisputeFeature = (entityType: RatingReviewEntityType) =>
   entityType === 'Article' ? ('articleRatingDispute' as const) : ('ratingDispute' as const);
+
+// A song is also behind the music flag.
+export const ratingDisputeEnabled = (
+  features: Partial<Record<ReturnType<typeof ratingDisputeFeature> | 'music', boolean>>,
+  entityType: RatingReviewEntityType
+) => !!features[ratingDisputeFeature(entityType)] && (entityType !== 'Song' || !!features.music);

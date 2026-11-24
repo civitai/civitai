@@ -1,0 +1,223 @@
+import type { PGlite } from '@electric-sql/pglite';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ThumbnailCache from '../thumbnail-cache';
+import { pgliteDialect } from './abuse-detection-pglite.harness';
+import {
+  freshRatingReviewDb,
+  ratingReviewKysely,
+  rows,
+  seedUser,
+} from './rating-review-pglite.harness';
+import { Kysely } from 'kysely';
+
+/**
+ * A song's rating dispute (entity type `Song`, entityId = the song's Image id) is ruled through the
+ * moderator rating writer, so a ruling follows its rule: a locked level counts as the song's review,
+ * which only its own scans may give, so a song is ruled on only once they have (`ingestion` Scanned).
+ */
+
+const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
+
+vi.mock('../db', () => ({
+  get dbRead() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
+  get dbWrite() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
+}));
+// Redis, the main app's cache-bust and search endpoints: the writer's side effects past the process.
+vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
+vi.mock('../image-moderation-effects', () => ({
+  bustPostGalleryCaches: vi.fn(async () => undefined),
+}));
+vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn(async () => undefined) }));
+vi.mock('../thumbnail-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ThumbnailCache>()),
+  invalidateThumbnails: vi.fn(async () => undefined),
+}));
+vi.mock('../image-models-reindex', () => ({
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+}));
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://com.test', CIVITAI_LINK_URL: 'https://red.test' },
+}));
+
+const service = await import('../rating-reviews.service');
+
+let db: PGlite;
+let owner: number;
+let mod: number;
+
+beforeEach(async () => {
+  db = await freshRatingReviewDb();
+  await db.exec(`ALTER TABLE "Image"
+    ADD COLUMN "userId" INTEGER,
+    ADD COLUMN "metadata" JSONB NOT NULL DEFAULT '{}',
+    ADD COLUMN "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE`);
+  dbHandle.current = ratingReviewKysely(db);
+  owner = await seedUser(db, 'owner');
+  mod = await seedUser(db, 'mod');
+});
+
+afterEach(async () => {
+  dbHandle.current = null;
+  await db.close();
+});
+
+async function seedSong(row: { type?: string; ingestion?: string; nsfwLevel?: number } = {}) {
+  const [r] = await rows<{ id: number }>(
+    db,
+    `INSERT INTO "Image" ("url", "type", "postId", "nsfwLevel", "ingestion", "userId", "metadata")
+     VALUES ('song.mp3', $1, 7, $2, $3, $4, '{"title":"Night drive"}') RETURNING "id"`,
+    [row.type ?? 'audio', row.nsfwLevel ?? 8, row.ingestion ?? 'Scanned', owner]
+  );
+  return r.id;
+}
+
+async function fileSongReview(songId: number, suggestedLevel = 4) {
+  const [r] = await rows<{ id: number }>(
+    db,
+    `INSERT INTO "RatingReview" ("entityType", "entityId", "userId", "currentLevel", "suggestedLevel")
+     VALUES ('Song', $1, $2, 8, $3) RETURNING "id"`,
+    [songId, owner, suggestedLevel]
+  );
+  return r.id;
+}
+
+const image = async (id: number) =>
+  (
+    await rows<{ nsfwLevel: number; nsfwLevelLocked: boolean }>(
+      db,
+      `SELECT "nsfwLevel", "nsfwLevelLocked" FROM "Image" WHERE "id" = $1`,
+      [id]
+    )
+  )[0];
+
+const review = async (id: number) =>
+  (
+    await rows<{ status: string; appliedLevel: number | null; resolvedBy: number | null }>(
+      db,
+      `SELECT "status"::text AS status, "appliedLevel", "resolvedBy" FROM "RatingReview" WHERE "id" = $1`,
+      [id]
+    )
+  )[0];
+
+describe('a song rating dispute', () => {
+  it('lists with the song as its entity, its page as the path and every level to apply', async () => {
+    const song = await seedSong();
+    const id = await fileSongReview(song);
+
+    const [row] = await service.hydrateRatingReviews(
+      await service.ratingReviewRowQuery().where('rr.id', '=', id).execute()
+    );
+
+    expect(row).toMatchObject({
+      entityType: 'Song',
+      entityId: song,
+      entity: { id: song, title: 'Night drive', path: `/images/${song}`, nsfwLevel: 8 },
+      levelOptions: [1, 2, 4, 8, 16],
+    });
+  });
+
+  it("applies the ruled level to the reviewed song and locks it, as a moderator's rating does", async () => {
+    const song = await seedSong();
+    const id = await fileSongReview(song);
+
+    const res = await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 4,
+      moderatorId: mod,
+    });
+
+    expect(res).toMatchObject({
+      entityType: 'Song',
+      entityId: song,
+      title: 'Night drive',
+      ownerUserId: owner,
+      previousLevel: 8,
+      status: 'Actioned',
+      entityMissing: false,
+    });
+    expect(await image(song)).toEqual({ nsfwLevel: 4, nsfwLevelLocked: true });
+    expect(await review(id)).toEqual({ status: 'Actioned', appliedLevel: 4, resolvedBy: mod });
+  });
+
+  it('refuses a ruling on a song its own scans have not reviewed, and changes nothing', async () => {
+    for (const ingestion of ['Pending', 'Rescan', 'Error']) {
+      const song = await seedSong({ ingestion });
+      const id = await fileSongReview(song);
+
+      await expect(
+        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      ).rejects.toThrow(/not been reviewed yet/);
+
+      expect(await image(song)).toEqual({ nsfwLevel: 8, nsfwLevelLocked: false });
+      expect(await review(id)).toEqual({ status: 'Pending', appliedLevel: null, resolvedBy: null });
+    }
+  });
+
+  it('refuses a ruling when a rescan returns the song to Pending between the read and the write', async () => {
+    const song = await seedSong();
+    const id = await fileSongReview(song);
+    // Another writer commits between the ruling's read and its Image UPDATE: the read saw Scanned.
+    let raced = false;
+    const racing = new Proxy(db, {
+      get(target, key) {
+        if (key === 'query')
+          return async (text: string, params?: unknown[]) => {
+            if (!raced && /^update "Image"/i.test(text.trim())) {
+              raced = true;
+              await target.query(`UPDATE "Image" SET "ingestion" = 'Pending' WHERE id = $1`, [
+                song,
+              ]);
+            }
+            return target.query(text, params);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    dbHandle.current = new Kysely({ dialect: pgliteDialect(racing) });
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+    ).rejects.toThrow('This song changed while it was being rated. Reload.');
+
+    dbHandle.current = ratingReviewKysely(db);
+    expect(raced).toBe(true);
+    expect(await image(song)).toMatchObject({ nsfwLevel: 8, nsfwLevelLocked: false });
+    expect(await review(id)).toEqual({ status: 'Pending', appliedLevel: null, resolvedBy: null });
+  });
+
+  it('closes the dispute with nothing applied when the song is gone, or the image is not a song', async () => {
+    const gone = await fileSongReview(990000999);
+    const picture = await seedSong({ type: 'image' });
+    const onPicture = await fileSongReview(picture);
+
+    for (const id of [gone, onPicture])
+      await expect(
+        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      ).resolves.toMatchObject({ entityMissing: true, status: 'Unactioned' });
+
+    expect(await image(picture)).toEqual({ nsfwLevel: 8, nsfwLevelLocked: false });
+  });
+
+  it('counts no song dispute in the /ratings badge', async () => {
+    await fileSongReview(await seedSong());
+    await rows(
+      db,
+      `INSERT INTO "RatingReview" ("entityType", "entityId", "userId", "currentLevel", "suggestedLevel")
+       VALUES ('Post', 1, $1, 4, 2)`,
+      [owner]
+    );
+
+    expect(await service.getRatingReviewCounts()).toEqual({
+      Pending: 1,
+      Actioned: 0,
+      Unactioned: 0,
+    });
+  });
+});

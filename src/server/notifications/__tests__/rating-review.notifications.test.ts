@@ -31,4 +31,28 @@ describe('rating-review notifications', () => {
       'Your rating dispute on "Entry #3" was reviewed — a moderator set the rating to PG-13. Reason: still explicit'
     );
   });
+
+  it("names a song as the owner's song and links its page", () => {
+    const song = (approved: boolean) => {
+      const n = buildRatingReviewNotification({
+        reviewId: 2,
+        approved,
+        entityType: 'Song',
+        entityId: 41,
+        title: 'Night drive',
+        previousLevel: 8,
+        appliedLevel: 4,
+        modComment: null,
+      });
+      return ratingReviewNotifications[n.type].prepareMessage({ details: n.details } as never);
+    };
+    expect(song(true)).toEqual({
+      message:
+        'Your rating dispute on your song "Night drive" was approved — the rating was updated from X to R.',
+      url: '/images/41',
+    });
+    expect(song(false)?.message).toBe(
+      'Your rating dispute on your song "Night drive" was reviewed — a moderator set the rating to R.'
+    );
+  });
 });

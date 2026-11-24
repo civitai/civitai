@@ -14,6 +14,8 @@ export const RATING_REVIEW_ENTITY_TYPES = [
   'Challenge',
   'Crucible',
   'Collection',
+  // A song is an `Image` row of type audio; its own value keeps a plain image from being disputable.
+  'Song',
 ] as const;
 export type RatingReviewEntityType = (typeof RATING_REVIEW_ENTITY_TYPES)[number];
 
@@ -33,6 +35,7 @@ export const ratingReviewEntityLabels: Record<RatingReviewEntityType, string> = 
   Challenge: 'Challenge',
   Crucible: 'Crucible',
   Collection: 'Collection',
+  Song: 'Song',
 };
 
 // A Model's rating override is its `nsfw` flag, not a level, so it is represented as PG (off) / R (on).
@@ -101,6 +104,8 @@ export function ratingReviewEntityPath(
       return `/crucibles/${entityId}`;
     case 'Collection':
       return `/collections/${entityId}`;
+    case 'Song':
+      return `/images/${entityId}`;
   }
 }
 

@@ -62,6 +62,16 @@ describe('rating-review constants', () => {
     expect(ratingReviewModeratorLevels('Article', NsfwLevel.R)).toEqual([1, 2, 4, 8, 16]);
   });
 
+  it('rates a song like a post, offers its owner every level, and links its own page', () => {
+    expect(isRatingReviewEntityType('Song')).toBe(true);
+    expect(ratingReviewEntityLabels.Song).toBe('Song');
+    expect(ratingReviewLevels('Song')).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewOwnerLevels('Song', NsfwLevel.R)).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewModeratorLevels('Song', NsfwLevel.R)).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewLevelLabel('Song', NsfwLevel.R)).toBe('R');
+    expect(ratingReviewEntityPath('Song', 3)).toBe('/images/3');
+  });
+
   it('builds each entity path, and none for an entry without its bounty', () => {
     expect(ratingReviewEntityPath('Article', 3)).toBe('/articles/3');
     expect(ratingReviewEntityPath('Model', 3)).toBe('/models/3');
