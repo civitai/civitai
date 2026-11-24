@@ -9,7 +9,12 @@ const state = vi.hoisted(() => {
   const s = {
     flags: {} as Record<string, boolean>,
     items: [] as unknown[],
-    useQuery: vi.fn((..._args: unknown[]) => ({ data: { items: s.items }, isLoading: false })),
+    ownReviews: [] as { modelVersionId: number }[],
+    // Like React Query: a disabled query has no data.
+    useQuery: vi.fn((_input: unknown, opts?: { enabled?: boolean }) => ({
+      data: opts?.enabled ? { items: s.items } : undefined,
+      isLoading: false,
+    })),
   };
   return s;
 });
@@ -21,7 +26,12 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy({
-    'resourceReview.getPaged': { useQuery: (...args: unknown[]) => state.useQuery(...args) },
+    'resourceReview.getPaged': {
+      useQuery: (input: unknown, opts?: { enabled?: boolean }) => state.useQuery(input, opts),
+    },
+    'resourceReview.getUserResourceReview': {
+      useQuery: () => ({ data: state.ownReviews, isLoading: false, isRefetching: false }),
+    },
   }),
 }));
 
@@ -45,14 +55,22 @@ const review = (id: number, details: string) => ({
   user: { id: 100 + id, username: `reviewer${id}`, cosmetics: [], profilePicture: null },
 });
 
-const renderSection = (counts: { thumbsUpCount?: number; thumbsDownCount?: number } = {}) =>
-  renderWithProviders(<ModelVersionWrittenReviews modelId={1} modelVersionId={2} {...counts} />);
+const renderSection = (
+  counts: { thumbsUpCount?: number; thumbsDownCount?: number; versionRatingCount?: number } = {}
+) => renderWithProviders(<ModelVersionWrittenReviews modelId={1} modelVersionId={2} {...counts} />);
 const section = () => document.querySelector('[data-testid="model-written-reviews"]');
+const enabledCalls = (modelVersionId: number) =>
+  state.useQuery.mock.calls.filter(
+    ([input, opts]) =>
+      (input as { modelVersionId: number }).modelVersionId === modelVersionId && opts?.enabled
+  );
 
 beforeEach(() => {
   state.flags = { modelPageReviews: true };
   state.items = [review(1, '<p>Works with the turbo base only.</p>'), review(2, '<p>Solid.</p>')];
+  state.ownReviews = [];
   state.useQuery.mockClear();
+  window.scrollTo(0, 0);
 });
 
 describe('ModelVersionWrittenReviews', () => {
@@ -121,5 +139,53 @@ describe('ModelVersionWrittenReviews', () => {
   test('with no thumbs on the model, shows no summary line', async () => {
     await renderSection();
     expect(document.querySelector('[data-testid="model-written-reviews-summary"]')).toBeNull();
+  });
+
+  describe('when it asks for reviews', () => {
+    // The version with reviews renders beside the gated one: it proves the observer has run.
+    test('a version with no ratings asks for none, while one with ratings beside it does', async () => {
+      renderWithProviders(
+        <>
+          <ModelVersionWrittenReviews modelId={1} modelVersionId={2} versionRatingCount={0} />
+          <ModelVersionWrittenReviews modelId={1} modelVersionId={3} versionRatingCount={7} />
+        </>
+      );
+      await vi.waitFor(() => expect(enabledCalls(3)).not.toHaveLength(0));
+      expect(enabledCalls(2)).toHaveLength(0);
+      expect(document.querySelectorAll('[data-testid="model-written-reviews"]')).toHaveLength(1);
+    });
+
+    test('a version with no ratings still asks when the viewer has reviewed it', async () => {
+      state.ownReviews = [{ modelVersionId: 2 }];
+      const screen = await renderSection({ versionRatingCount: 0 });
+      await expect.element(screen.getByText('Solid.')).toBeVisible();
+      expect(enabledCalls(2)).not.toHaveLength(0);
+    });
+
+    test('waits until the section nears the viewport, then sends the same request', async () => {
+      renderWithProviders(
+        <>
+          <ModelVersionWrittenReviews modelId={1} modelVersionId={3} versionRatingCount={5} />
+          <div style={{ height: '400vh' }} />
+          <ModelVersionWrittenReviews modelId={1} modelVersionId={2} versionRatingCount={5} />
+        </>
+      );
+      // The section at the top has been reported in view, so the observer has run.
+      await vi.waitFor(() => expect(enabledCalls(3)).not.toHaveLength(0));
+      expect(enabledCalls(2)).toHaveLength(0);
+      window.scrollTo(0, document.body.scrollHeight);
+      await vi.waitFor(() => expect(enabledCalls(2)).not.toHaveLength(0));
+      expect(enabledCalls(2)[0][0]).toEqual({
+        modelId: 1,
+        modelVersionId: 2,
+        limit: 4,
+        page: 1,
+        writtenOnly: true,
+        browsingLevel: expect.any(Number),
+      });
+      await vi.waitFor(() =>
+        expect(document.querySelectorAll('[data-testid="model-written-reviews"]')).toHaveLength(2)
+      );
+    });
   });
 });
