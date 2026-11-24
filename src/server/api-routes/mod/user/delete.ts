@@ -141,7 +141,7 @@ export default defineModeratorEndpoint('user.delete', {
       if (e instanceof LegalHoldError)
         throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
       if (e instanceof MemorializedAccountError)
-        throw new TRPCError({ code: 'FORBIDDEN', message: e.message });
+        throw new TRPCError({ code: 'FORBIDDEN', message: e.message, cause: e });
       throw e;
     }
 
