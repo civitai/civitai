@@ -160,6 +160,9 @@ export function parseSimilarTo(value: unknown) {
   return Number.isInteger(id) && id > 0 ? id : undefined;
 }
 
+/** The `?prefer=` tag id ("more like this" steering), when it is one. */
+export const parsePrefer = parseSimilarTo;
+
 /**
  * The feed's filters as a semantic image search: only what the index can apply. A query searches by
  * text; without one, `imageId` searches for images like that one ("more like this").
@@ -171,11 +174,14 @@ export function toSemanticImageSearchInput({
   browsingLevel,
   sort,
   excludeOwn,
+  preferTagId,
   modelVersionIds,
   now,
 }: {
   query?: string;
   imageId?: number;
+  /** "More like this" steering (behind `moreLikeThisSteer`, decided by the caller). */
+  preferTagId?: number;
   /** Images made with any of these versions (behind `imageSearchResources`, decided by the caller). */
   modelVersionIds?: number[];
   /** "More like this" without the viewer's own images. */
@@ -189,6 +195,7 @@ export function toSemanticImageSearchInput({
     query: query || undefined,
     imageId: query ? undefined : imageId,
     excludeOwn: !query && imageId && excludeOwn ? true : undefined,
+    preferTagIds: !query && imageId && preferTagId ? [preferTagId] : undefined,
     browsingLevel,
     tagIds: filters.tags?.length ? filters.tags : undefined,
     excludedTagIds: filters.excludedTagIds?.length ? filters.excludedTagIds : undefined,

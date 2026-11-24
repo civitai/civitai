@@ -40,6 +40,7 @@ import {
   resolveTags,
   resolveUserIds,
   searchServiceSource,
+  withPreferredTagFirst,
   withTagMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
@@ -311,7 +312,18 @@ export async function searchSemanticImages({
           (t) => !blockedTags.some((b) => b.id === t.id)
         )
       : undefined;
-  const ranked = queryTag ? withTagMatchesFirst(cachedSource, queryTag.id) : cachedSource;
+  // A blocked or viewer-hidden tag is not boosted: hydration would drop every image it ranks first.
+  const preferTagId =
+    'similarTo' in query && collection === 'images'
+      ? input.preferTagIds?.find(
+          (id) => !blockedTags.some((b) => b.id === id) && !viewerExcludedTagIds.includes(id)
+        )
+      : undefined;
+  const ranked = queryTag
+    ? withTagMatchesFirst(cachedSource, queryTag.id)
+    : preferTagId
+    ? withPreferredTagFirst(cachedSource, preferTagId)
+    : cachedSource;
 
   let correctedQuery: string | undefined;
   // Every correction is audited, not only the first: rounds of one page can come from cached blocks
