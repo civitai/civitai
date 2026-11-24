@@ -1772,6 +1772,8 @@ export async function restoreImages(input: {
 // IMAGE FLAGS (Retool's TogglePoIMakeSureToEdit — its name is a warning that it was edited in place
 // and easy to get wrong). The endpoint takes `flag=poi|minor`; Retool hardcoded poi and value=true, so
 // there was no way to UNSET one from the app. Both are parameters here.
+export const SONG_FLAG_REFUSED = 'Minor and POI do not apply to songs.';
+
 export async function setImageFlag(input: {
   imageIds: number[];
   flag: 'poi' | 'minor';
@@ -1779,6 +1781,20 @@ export async function setImageFlag(input: {
   moderatorId: number;
 }): Promise<ActionResult> {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
+  // A song shows no person, so neither flag may be set on one; clearing one stays possible.
+  if (input.value) {
+    const songs = await dbRead
+      .selectFrom('Image')
+      .select('id')
+      .where('id', 'in', input.imageIds)
+      .where('type', '=', 'audio')
+      .execute();
+    if (songs.length)
+      return {
+        ok: false,
+        error: `${SONG_FLAG_REFUSED} Nothing was changed: ${songs.map((s) => s.id).join(', ')}.`,
+      };
+  }
 
   // Chunked like remove/restore, and for a harder reason: this endpoint reads `req.query`, so the ids
   // ride in the URL. 5,000 of them is a ~40 KB request line, which the server rejects outright — the

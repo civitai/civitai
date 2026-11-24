@@ -463,6 +463,17 @@ export type ReportedImageItem = {
   };
 };
 
+/** Image `alias` was blocked by an automated moderation rule (one that blocks, or is gone), which a
+ *  report verdict may still lift. Not for a row the account deletion parked. */
+export const ruleBlockedSql = (alias: string) =>
+  sql<boolean>`(${sql.ref(
+    `${alias}.metadata`
+  )} -> 'ruleId') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = ${sql.ref(
+    `${alias}.metadata`
+  )}->>'ruleId' AND mr.action <> 'Block' AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')) AND (${sql.ref(
+    `${alias}.metadata`
+  )} -> 'accountDeletionPriorIngestion') IS NULL`;
+
 // One row PER report (an image with N pending reports appears N times). Ordered by report.id ASC needs the
 // `Report_pending_id_idx` partial index, or it seq-scans ~400k pending rows.
 export async function getReportedImageQueue({
@@ -502,9 +513,7 @@ export async function getReportedImageQueue({
         'i.modelRestricted',
         'i.ingestion',
         'i.blockedFor',
-        sql<boolean>`(i."metadata" -> 'ruleId') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = i."metadata"->>'ruleId' AND mr.action <> 'Block' AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')) AND (i."metadata" -> 'accountDeletionPriorIngestion') IS NULL`.as(
-          'ruleBlocked'
-        ),
+        ruleBlockedSql('i').as('ruleBlocked'),
         'i.userId',
         'u.username',
         'r.id as reportId',

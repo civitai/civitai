@@ -320,8 +320,6 @@ export function parseResolutionReason(form: FormData, status: ResolutionVerdict<
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
 }
 
-export const SONG_FLAG_REFUSED = 'Minor and POI do not apply to songs.';
-
 const IMAGE_CHANGED = 'This image changed since this page loaded. Reload and try again.';
 
 /** The review flag a card showed, posted with its accept: '' is no flag; absent, nothing to check. */
@@ -798,16 +796,6 @@ export const imageQueueActions = {
     if (!flagValue) return fail(400, { error: 'Unknown flag.' });
     const withheldFlag = await withheldRefusal(locals.user, imageIds);
     if (withheldFlag) return fail(403, { error: withheldFlag });
-    const songs = await dbRead
-      .selectFrom('Image')
-      .select('id')
-      .where('id', 'in', imageIds)
-      .where('type', '=', 'audio')
-      .execute();
-    if (songs.length)
-      return fail(400, {
-        error: `${SONG_FLAG_REFUSED} Nothing was changed: ${songs.map((s) => s.id).join(', ')}.`,
-      });
 
     const result = await setImageFlag({ ...flagValue, imageIds, moderatorId: locals.user.id });
     if (!result.ok) return fail(400, { error: result.error });

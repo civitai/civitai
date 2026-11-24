@@ -1,4 +1,5 @@
 import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
+import { removedKind, removedTitle, type RemovedState } from '$lib/image-review';
 
 /**
  * Audio review (`/audio-review`): songs and their covers, on the shared triage shell. Only the
@@ -80,8 +81,12 @@ export type ReportedSongRow = {
   /** The song's storage key; null when withheld. */
   url: string | null;
   coverUrl: string | null;
-  nsfwLevel: number;
-  ingestion: string;
+  /** Null when withheld. */
+  nsfwLevel: number | null;
+  /** Removed (`ingestion` Blocked); kept on a withheld song for its Removed chip. */
+  removed: boolean;
+  /** How it was removed, which decides what a verdict does to it; null when live or withheld. */
+  removal: RemovedState | null;
   owner: { id: number; username: string | null } | null;
   /** When the oldest pending report was filed. */
   waitingSince: Date;
@@ -100,18 +105,58 @@ export function songReportReasons(reports: readonly Pick<SongReport, 'label' | '
 /** The decisions in key order: 1 Dismiss reports, 2 Remove song, 3 Remove cover, 4 Set rating. */
 export const REPORTED_DECISIONS = ['dismiss', 'remove', 'removeCover', 'rate'] as const;
 
+type DecisionRow = Pick<ReportedSongRow, 'withheld' | 'removed' | 'removal'>;
+const SONG_VERBS = { restore: 'Restore and dismiss', remove: 'Remove song' };
+
 /**
- * Which decision keys a song takes. A withheld song takes none here; Remove cover is not built on
- * this page yet; a removed song can still have its reports dismissed but not be removed or rated.
+ * Which decision keys a song takes, as Image reports rules on a removed image: a live song takes
+ * Dismiss, Remove and Set rating; a rule-blocked or otherwise blocked one is restored by its
+ * dismissal and can be made a moderator removal; a moderator-removed one can only have its reports
+ * closed; one removed for CSAM, or under CSAM review, takes nothing here. A withheld song takes
+ * nothing, and Remove cover is not built on this page yet.
  */
-export function reportedDecisionsEnabled(
-  row: Pick<ReportedSongRow, 'withheld' | 'ingestion'>,
-  canAct: boolean
-): boolean[] {
+export function reportedDecisionsEnabled(row: DecisionRow, canAct: boolean): boolean[] {
   if (!canAct || row.withheld) return REPORTED_DECISIONS.map(() => false);
-  const removed = row.ingestion === 'Blocked';
-  return [true, !removed, false, !removed];
+  if (!row.removed || !row.removal) return [true, true, false, true];
+  switch (removedKind(row.removal)) {
+    case 'rule':
+    case 'other':
+      return [true, true, false, false];
+    case 'moderator':
+      return [true, false, false, false];
+    default:
+      return [false, false, false, false];
+  }
 }
+
+/** Key 1's label and the outcome it shows once pressed. */
+export function dismissDecision(row: DecisionRow): { label: string; outcome: string } {
+  const kind = row.removed && row.removal ? removedKind(row.removal) : null;
+  if (kind === 'rule' || kind === 'other')
+    return { label: 'Restore and dismiss', outcome: 'Restored, reports dismissed' };
+  if (kind === 'moderator') return { label: 'Close reports', outcome: 'Closed: already removed' };
+  return { label: 'Dismiss reports', outcome: 'Reports dismissed' };
+}
+
+/** The Removed chip's tooltip, in this page's verbs. */
+export const songRemovedTitle = (row: DecisionRow) =>
+  row.removal ? removedTitle(row.removal, SONG_VERBS) : 'Removed';
+
+/** What a decided song shows: the writer's own word when it did something other than asked (a
+ *  removal held for a second moderator, reports closed on a song already removed). */
+export function reportedOutcome(
+  result: { type: string; data?: Record<string, unknown> },
+  outcome: string
+): string {
+  if (result.type !== 'success') return outcome;
+  if (typeof result.data?.held === 'string') return result.data.held;
+  if (result.data?.alreadyRemoved) return 'Closed: already removed';
+  return outcome;
+}
+
+/** The rating keys while the picker is open: every level the song can be given but the one it has. */
+export const ratingKeysEnabled = (current: number | null, canRate: boolean) =>
+  SONG_RATING_LEVELS.map((level) => canRate && level !== current);
 
 /** How a lyrics source reads on the generation card. */
 export const LYRICS_SOURCE_LABELS: Record<string, string> = {

@@ -13,6 +13,7 @@
   import { formatPlaybackTime } from '@civitai/shared';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
+  import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { getEdgeUrl } from '$lib/media/edge-url';
   import { probeRetractedRefusal, RETRACTED_REFUSED, retractedMediaUrl } from '$lib/held-media';
   import { fetchJson } from '$lib/fetch-json';
@@ -40,7 +41,6 @@
     item,
     cardKey,
     variant = 'card',
-    meta,
     class: className,
   }: {
     item: { id: number; url: string };
@@ -49,8 +49,6 @@
     /** `card` fits a queue tile, its lyrics scrolling inside it. `detail` is a triage pane's middle
      *  column: the player and the lyrics as two panels at reading size, the column scrolling. */
     variant?: 'card' | 'detail';
-    /** A line under the title in `detail`, e.g. its length, genre and when it was posted. */
-    meta?: string;
     class?: string;
   } = $props();
   const detail = $derived(variant === 'detail');
@@ -131,6 +129,38 @@
   const isSection = (text: string) => /^\s*\[[^\]]+\]\s*$/.test(text);
 </script>
 
+{#snippet lyrics(lines: SongCard['lines'])}
+  {#each lines as line, i (i)}
+    {#if isSection(line.text)}
+      <p class="mt-1 text-xs font-semibold uppercase tracking-wide text-dark-2">{line.text}</p>
+    {:else if line.t != null}
+      {@const at = line.t / 1000}
+      <button
+        type="button"
+        class={cn(
+          'flex w-full items-baseline text-left hover:bg-dark-5',
+          detail ? 'gap-2 rounded-md px-2 py-1.5' : 'min-h-6 gap-2 rounded px-1 py-0.5'
+        )}
+        title="Play from {formatPlaybackTime(at)}"
+        onclick={() => {
+          intent.requested();
+          playSongAt(item.id, at, ownKey);
+        }}
+      >
+        <span
+          class={cn(
+            'shrink-0 tabular-nums text-dark-2',
+            detail && 'w-[34px] text-xs font-semibold'
+          )}>{formatPlaybackTime(at)}</span
+        >
+        <span>{line.text}</span>
+      </button>
+    {:else}
+      <p class={detail ? 'm-0 px-2 py-1.5' : 'px-1'}>{line.text}</p>
+    {/if}
+  {/each}
+{/snippet}
+
 <!-- `phase`: the card's details are loading, came back, or could not be read (the song still plays). -->
 {#snippet player(song: SongCard | null, phase: 'loading' | 'loaded' | 'failed')}
   <div
@@ -162,8 +192,7 @@
               {song?.title || 'Untitled song'}
             {/if}
           </p>
-          {#if detail && meta}<p class="truncate text-xs text-dark-2">{meta}</p>{/if}
-          {#if mode === 'failed'}
+            {#if mode === 'failed'}
             <p class="text-xs text-dark-2">{reason}</p>
           {:else}
             <p class="text-xs tabular-nums text-dark-2">
@@ -216,46 +245,17 @@
     </div>
 
     {#if song?.lines.length}
-      <div
-        class={cn(
-          detail
-            ? cn(PANEL, 'text-sm leading-snug')
-            : 'min-h-0 flex-1 overflow-y-auto rounded-md bg-dark-7 p-2 text-xs leading-relaxed'
-        )}
-      >
-        {#if detail}
-          <h3 class="m-0 mb-2 text-xs font-semibold text-dark-2">Lyrics · click a line to seek</h3>
-        {/if}
-        {#each song.lines as line, i (i)}
-          {#if isSection(line.text)}
-            <p class="mt-1 text-xs font-semibold uppercase tracking-wide text-dark-2">{line.text}</p>
-          {:else if line.t != null}
-            {@const at = line.t / 1000}
-            <button
-              type="button"
-              class={cn(
-                'flex w-full items-baseline text-left hover:bg-dark-5',
-                detail ? 'gap-2 rounded-md px-2 py-1.5' : 'min-h-6 gap-2 rounded px-1 py-0.5'
-              )}
-              title="Play from {formatPlaybackTime(at)}"
-              onclick={() => {
-                intent.requested();
-                playSongAt(item.id, at, ownKey);
-              }}
-            >
-              <span
-                class={cn(
-                  'shrink-0 tabular-nums text-dark-2',
-                  detail && 'w-[34px] text-xs font-semibold'
-                )}>{formatPlaybackTime(at)}</span
-              >
-              <span>{line.text}</span>
-            </button>
-          {:else}
-            <p class={detail ? 'm-0 px-2 py-1.5' : 'px-1'}>{line.text}</p>
-          {/if}
-        {/each}
-      </div>
+      {#if detail}
+        <TriageCard title="Lyrics · click a line to seek" dense>
+          <div class="text-sm leading-snug">{@render lyrics(song.lines)}</div>
+        </TriageCard>
+      {:else}
+        <div
+          class="min-h-0 flex-1 overflow-y-auto rounded-md bg-dark-7 p-2 text-xs leading-relaxed"
+        >
+          {@render lyrics(song.lines)}
+        </div>
+      {/if}
     {:else if song}
       <p class="text-xs text-dark-2">No lyrics.</p>
     {:else if phase === 'failed'}

@@ -36,7 +36,7 @@ const { getReportedSongs, boundSongReports } = await import('../audio-review.ser
 const { countReportedSongs } = await import('../audio-review-count');
 const page = await import('../../../routes/audio-review/+page.server');
 const details = await import('../../../routes/audio-review/details/[imageId]/+server');
-const { imageQueueActions, SONG_FLAG_REFUSED } = await import('../image-queue');
+const { setImageFlag, SONG_FLAG_REFUSED } = await import('../user-actions.service');
 
 const OWNER = 7;
 const REPORTER_A = 8;
@@ -47,6 +47,8 @@ const RULED_SONG = 603;
 const PICTURE = 604;
 // Shares its key with an image still scanning, so the access rule withholds it without the grant.
 const WITHHELD = 605;
+// Blocked by an automated Block rule: its dismissal would restore it.
+const RULE_SONG = 607;
 const WITHOUT_GRANT = { id: 2, roles: [] };
 const WITH_GRANT = { id: 3, roles: ['moderator:admin'] };
 const GRANTS = { 'image.moderate': true };
@@ -59,6 +61,9 @@ beforeEach(async () => {
   await db.exec(`
     CREATE TABLE "Track" ("imageId" INTEGER PRIMARY KEY, "coverImageId" INTEGER UNIQUE, genre TEXT);
     CREATE TABLE "TrackLyrics" ("imageId" INTEGER PRIMARY KEY, text TEXT NOT NULL, lines JSONB NOT NULL, source TEXT);
+    CREATE TABLE "ModerationRule" (id INTEGER PRIMARY KEY, action TEXT NOT NULL);
+    CREATE TABLE "ModerationRuleVersion" (id SERIAL PRIMARY KEY, "ruleId" INTEGER NOT NULL, action TEXT NOT NULL);
+    INSERT INTO "ModerationRule" VALUES (1, 'Block');
     CREATE TABLE "UserStrike" ("userId" INTEGER, points INTEGER, status TEXT, "voidedAt" TIMESTAMP, "expiresAt" TIMESTAMP);
     INSERT INTO "User" (id, username) VALUES
       (${OWNER}, 'owner'), (${REPORTER_A}, 'reporter-a'), (${REPORTER_B}, 'reporter-b');
@@ -68,7 +73,16 @@ beforeEach(async () => {
       (${RULED_SONG}, 'ruled-key', 'audio', 'Scanned', NULL, ${OWNER}, '{"title": "Ruled"}'),
       (${PICTURE}, 'picture-key', 'image', 'Scanned', NULL, ${OWNER}, NULL),
       (${WITHHELD}, 'shared-key', 'audio', 'Blocked', 'moderated', ${OWNER}, '{"title": "Held"}'),
-      (606, 'shared-key', 'image', 'Pending', NULL, 1, NULL);
+      (606, 'shared-key', 'image', 'Pending', NULL, 1, NULL),
+      (${RULE_SONG}, 'rule-key', 'audio', 'Blocked', 'moderated', ${OWNER}, '{"title": "Rule", "ruleId": 1}'),
+      (620, 'cover-key', 'image', 'Scanned', NULL, ${OWNER}, NULL),
+      (622, 'shared-cover', 'image', 'Blocked', 'moderated', ${OWNER}, NULL),
+      (623, 'shared-cover', 'image', 'Pending', NULL, 1, NULL);
+    INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview", "nsfwLevel") VALUES
+      (621, 'quiet-cover', 'image', 'Scanned', ${OWNER}, 'minor', 1);
+    UPDATE "Image" SET "nsfwLevel" = 2 WHERE id = 620;
+    INSERT INTO "Track" ("imageId", "coverImageId") VALUES
+      (${SONG}, 620), (${QUIET_SONG}, 621), (${RULE_SONG}, 622);
     INSERT INTO "Report" (id, "userId", reason, status, details, "createdAt", "alsoReportedBy") VALUES
       (11, ${REPORTER_A}, 'TOSViolation', 'Pending', '{"comment": "Bullying line", "timestampSec": 84}', '2026-11-01', '{${REPORTER_B}}'),
       (12, ${REPORTER_B}, 'Spam', 'Pending', NULL, '2026-11-02', NULL),
@@ -76,10 +90,11 @@ beforeEach(async () => {
       (14, ${REPORTER_A}, 'Automated', 'Pending', NULL, '2026-10-02', NULL),
       (15, ${REPORTER_A}, 'TOSViolation', 'Pending', NULL, '2026-11-03', NULL),
       (16, ${REPORTER_A}, 'TOSViolation', 'Pending', NULL, '2026-10-15', NULL),
-      (17, ${REPORTER_B}, 'TOSViolation', 'Pending', '{"comment": "names a person", "timestampSec": 3}', '2026-11-04', NULL);
+      (17, ${REPORTER_B}, 'TOSViolation', 'Pending', '{"comment": "names a person", "timestampSec": 3}', '2026-11-04', NULL),
+      (18, ${REPORTER_A}, 'TOSViolation', 'Pending', NULL, '2026-10-20', NULL);
     INSERT INTO "ImageReport" ("imageId", "reportId") VALUES
       (${SONG}, 11), (${SONG}, 12), (${RULED_SONG}, 13), (${QUIET_SONG}, 14),
-      (${QUIET_SONG}, 15), (${PICTURE}, 16), (${WITHHELD}, 17);
+      (${QUIET_SONG}, 15), (${PICTURE}, 16), (${WITHHELD}, 17), (${RULE_SONG}, 18);
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -105,37 +120,47 @@ const reported = (
 describe('the Reported tab', () => {
   it('lists each song with Pending reports once, its reports under it, and no picture', async () => {
     const { items, total } = await reported(WITH_GRANT);
-    expect(total).toBe(3);
+    expect(total).toBe(4);
     expect(items.map((r) => [r.id, r.reportCount, r.reports.map((x) => x.id)])).toEqual([
+      [RULE_SONG, 1, [18]],
       [SONG, 3, [11, 12]],
       [QUIET_SONG, 1, [15]],
       [WITHHELD, 1, [17]],
     ]);
-    expect(items[0]).toMatchObject({
+    expect(items[1]).toMatchObject({
       title: 'Neon Rain',
       url: 'song-key',
       owner: { id: OWNER, username: 'owner' },
       withheld: false,
+      removed: false,
+      removal: null,
+      coverUrl: 'cover-key',
     });
-    expect(items[0].reports[0]).toMatchObject({
+    expect(items[0]).toMatchObject({
+      removed: true,
+      removal: { blockedFor: 'moderated', ruleBlocked: true, needsReview: null },
+    });
+    expect(items.find((r) => r.id === QUIET_SONG)?.coverUrl).toBeNull();
+    expect(items[1].reports[0]).toMatchObject({
       label: 'TOSViolation',
       comment: 'Bullying line',
       timeSec: 84,
       also: 1,
       reporter: { id: REPORTER_A, username: 'reporter-a' },
     });
-    expect(items[0].reports[1].timeSec).toBeNull();
+    expect(items[1].reports[1].timeSec).toBeNull();
   });
 
   it('narrows to songs with a reported time or three reporters, and counts each chip', async () => {
     const timed = await reported(WITH_GRANT, { filter: 'timed' });
     expect(timed.items.map((r) => r.id)).toEqual([SONG, WITHHELD]);
-    expect(timed.facets).toEqual({ all: 3, timed: 2, many: 1 });
+    expect(timed.facets).toEqual({ all: 4, timed: 2, many: 1 });
     expect((await reported(WITH_GRANT, { filter: 'many' })).items.map((r) => r.id)).toEqual([SONG]);
     expect((await reported(WITH_GRANT, { sort: 'newest' })).items.map((r) => r.id)).toEqual([
       WITHHELD,
       QUIET_SONG,
       SONG,
+      RULE_SONG,
     ]);
     expect((await reported(WITH_GRANT, { q: 'paper' })).items.map((r) => r.id)).toEqual([
       QUIET_SONG,
@@ -150,6 +175,9 @@ describe('the Reported tab', () => {
       url: null,
       coverUrl: null,
       owner: null,
+      nsfwLevel: null,
+      removed: true,
+      removal: null,
       reportCount: 1,
     });
     expect(withheld?.reports).toEqual([
@@ -159,8 +187,23 @@ describe('the Reported tab', () => {
     expect(open).toMatchObject({ withheld: false, title: 'Held' });
   });
 
+  it('matches a withheld song only by its exact id, and leaves it out of the time chip', async () => {
+    const ids = async (q: string) => (await reported(WITHOUT_GRANT, { q })).items.map((r) => r.id);
+    expect(await ids('Held')).toEqual([]);
+    expect(await ids('own')).toEqual([RULE_SONG, SONG, QUIET_SONG]);
+    expect(await ids(String(WITHHELD))).toEqual([WITHHELD]);
+    const { facets } = await reported(WITHOUT_GRANT);
+    expect(facets).toEqual({ all: 4, timed: 1, many: 1 });
+    expect((await reported(WITHOUT_GRANT, { filter: 'timed' })).items.map((r) => r.id)).toEqual([
+      SONG,
+    ]);
+    expect(
+      await (async () => (await reported(WITH_GRANT, { q: 'Held' })).items.map((r) => r.id))()
+    ).toEqual([WITHHELD]);
+  });
+
   it('counts songs and their reports for the sidebar', async () => {
-    expect(await countReportedSongs()).toEqual({ songs: 3, reports: 4 });
+    expect(await countReportedSongs()).toEqual({ songs: 4, reports: 5 });
   });
 });
 
@@ -218,22 +261,27 @@ describe('a decision on a song', () => {
 });
 
 describe('Minor and POI on a song', () => {
-  it('are refused by the image queues, and nothing is changed', async () => {
-    const form = new FormData();
-    form.set('imageIds', `${PICTURE},${SONG}`);
-    form.set('flagValue', 'minor:true');
-    const result = await imageQueueActions.setFlag({
-      request: new Request('https://mod.example/images/minor', { method: 'POST', body: form }),
-      locals: { user: WITH_GRANT, grants: GRANTS },
-    } as never);
-    expect(result).toMatchObject({
-      status: 400,
-      data: { error: `${SONG_FLAG_REFUSED} Nothing was changed: ${SONG}.` },
+  it('cannot be set by any writer, and nothing reaches the main app', async () => {
+    const result = await setImageFlag({
+      imageIds: [PICTURE, SONG],
+      flag: 'minor',
+      value: true,
+      moderatorId: 3,
     });
-    const { rows } = await db.query<{ minor: boolean }>(
-      `SELECT minor FROM "Image" WHERE id IN (${PICTURE}, ${SONG})`
-    );
-    expect(rows.every((r) => r.minor === false)).toBe(true);
+    expect(result).toEqual({
+      ok: false,
+      error: `${SONG_FLAG_REFUSED} Nothing was changed: ${SONG}.`,
+    });
+    expect(
+      await setImageFlag({ imageIds: [SONG], flag: 'poi', value: true, moderatorId: 3 })
+    ).toMatchObject({ ok: false });
+  });
+
+  it('can still be cleared, which goes on to the main app', async () => {
+    // No WEBHOOK_TOKEN in this test: reaching the call is the refusal it answers with.
+    expect(
+      await setImageFlag({ imageIds: [SONG], flag: 'minor', value: false, moderatorId: 3 })
+    ).toEqual({ ok: false, error: 'WEBHOOK_TOKEN is not configured.' });
   });
 });
 
@@ -257,9 +305,20 @@ describe('the open song details', () => {
     const { status, body } = await get(WITH_GRANT, SONG);
     expect(status).toBe(200);
     expect(body).toMatchObject({
-      checks: { song: 'passed', cover: null },
-      owner: { id: OWNER, username: 'owner', strikes: 0, removedSongs: 1, otherReported: 2 },
+      checks: { song: 'passed', cover: 'passed' },
+      owner: { id: OWNER, username: 'owner', strikes: 0, removedSongs: 2, otherReported: 3 },
+      cover: { id: 620, url: 'cover-key', nsfwLevel: 2, shown: true },
     });
     expect((await get(WITH_GRANT, PICTURE)).status).toBe(404);
+  });
+
+  it('sends a cover the public player would not show, or one withheld, without its file', async () => {
+    expect((await get(WITH_GRANT, QUIET_SONG)).body.cover).toEqual({
+      id: 621,
+      url: null,
+      nsfwLevel: 1,
+      shown: false,
+    });
+    expect((await get(WITHOUT_GRANT, RULE_SONG)).body.cover).toMatchObject({ id: 622, url: null });
   });
 });

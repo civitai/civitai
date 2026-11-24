@@ -1,5 +1,6 @@
 <script lang="ts">
   import { IconMusic, IconZoomCancel } from '@tabler/icons-svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { page } from '$app/state';
   import TriageFilterChips, {
     type ChipGroup,
@@ -18,7 +19,10 @@
     REPORTED_FILTERS,
     REPORTED_SORT_LABELS,
     REPORTED_SORTS,
+    ratingKeysEnabled,
     reportedDecisionsEnabled,
+    reportedOutcome,
+    songRemovedTitle,
     songReportReasons,
     SONG_RATING_LEVELS,
     type ReportedSongRow,
@@ -35,11 +39,19 @@
   const SELECTION = 'selected';
   const f = $derived(data.filters);
 
-  // Key 4 opens the rating row for the open song; the next digit picks its level.
+  // Key 4 opens the rating row for the open song; the next digit picks its level. Moving to another
+  // song closes it.
   let current = $state<number | null>(null);
-  let rating = $state<number | null>(null);
-  const ratingOpen = $derived(rating !== null && rating === current);
-  const closeRating = () => (rating = null);
+  let ratingOpen = $state(false);
+  const closeRating = () => (ratingOpen = false);
+  const select = (key: number | null) => {
+    if (key !== current) ratingOpen = false;
+    current = key;
+  };
+  // A rating is a correction, not a decision: the song stays in the queue and the page does not
+  // reload, so the level each song was given here is kept for when the moderator comes back to it.
+  const rated = new SvelteMap<number, number>();
+  const levelOf = (row: ReportedSongRow) => rated.get(row.id) ?? row.nsfwLevel;
 
   const actionHref = (action: string) =>
     formActionHref(action, {
@@ -80,13 +92,14 @@
   const rowTitle = (row: ReportedSongRow) =>
     row.withheld ? `Withheld song #${row.id}` : row.title || `Untitled song #${row.id}`;
 
+  const picking = (row: ReportedSongRow) => ratingOpen && row.id === current;
   const decisionsFor = (row: ReportedSongRow) => {
     const enabled = reportedDecisionsEnabled(row, data.canAct);
-    return ratingOpen && row.id === current ? SONG_RATING_LEVELS.map(() => enabled[3]) : enabled;
+    return picking(row) ? ratingKeysEnabled(levelOf(row), enabled[3]) : enabled;
   };
 
   function decide(row: ReportedSongRow, index: number) {
-    if (ratingOpen && row.id === current) {
+    if (picking(row)) {
       const level = SONG_RATING_LEVELS[index];
       closeRating();
       document
@@ -97,7 +110,7 @@
       return;
     }
     if (REPORTED_DECISIONS[index] === 'rate') {
-      rating = row.id;
+      ratingOpen = true;
       return;
     }
     submitDecisionForm(REPORTED_DECISIONS, reportedDecisionsEnabled(row, data.canAct), index);
@@ -166,12 +179,13 @@
       decisionEnabled={decisionsFor}
       decisionActions={REPORTED_DECISIONS}
       ondecision={decide}
-      outcomeFor={(result, outcome) =>
-        result.type === 'success' && typeof result.data?.held === 'string'
-          ? result.data.held
-          : outcome}
+      ondecisionrefused={(row) => {
+        // The digit of the level the song already has: nothing to change, so the picker closes.
+        if (picking(row)) closeRating();
+      }}
+      outcomeFor={reportedOutcome}
       pinned={data.pinned}
-      bind:current
+      bind:current={() => current, select}
       pageNumber={data.page}
       hasMore={data.hasMore}
       offset={data.offset}
@@ -204,8 +218,8 @@
             <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-medium text-dark-0">
               {plural(row.reportCount, 'report')}
             </span>
-            {#if row.ingestion === 'Blocked'}
-              <span class="text-[11px] text-dark-2 italic">Removed</span>
+            {#if row.removed}
+              <span class="text-[11px] text-dark-2 italic" title={songRemovedTitle(row)}>Removed</span>
             {/if}
             {#if row.owner}
               <span class="ml-auto truncate text-xs text-dark-2">
@@ -224,9 +238,14 @@
           error={state.error}
           submit={state.submit}
           {actionHref}
-          ratingOpen={ratingOpen && row.id === current}
-          onrate={() => (rating = row.id)}
-          oncloserating={closeRating}
+          level={levelOf(row)}
+          ratingOpen={picking(row)}
+          onrate={() => (ratingOpen = true)}
+          onrated={(level) => {
+            closeRating();
+            if (level === null) rated.delete(row.id);
+            else rated.set(row.id, level);
+          }}
         />
       {/snippet}
     </TriageShell>

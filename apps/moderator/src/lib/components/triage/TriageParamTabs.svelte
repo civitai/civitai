@@ -51,7 +51,7 @@
       <span
         aria-disabled="true"
         title={tab.hint}
-        class="flex min-w-0 cursor-not-allowed flex-col items-center justify-center gap-0.5 rounded px-1.5 py-1 text-[13px] leading-tight font-medium text-dark-3"
+        class="flex min-w-0 cursor-not-allowed flex-col items-center justify-center gap-0.5 rounded px-1.5 py-1 text-[13px] leading-tight font-medium text-dark-2"
       >
         <span class="whitespace-nowrap">{tab.label}</span>
         <span class="text-[11px] font-normal">Soon</span>

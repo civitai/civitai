@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkState,
+  dismissDecision,
+  ratingKeysEnabled,
+  reportedOutcome,
+  songRemovedTitle,
   isSongRatingLevel,
   reportedDecisionsEnabled,
   reportTimeSec,
@@ -21,26 +25,68 @@ describe('a report time in the song', () => {
 });
 
 describe('the decision keys on a reported song', () => {
-  const live = { withheld: false, ingestion: 'Scanned' };
-  it('offers Dismiss, Remove song and Set rating, never Remove cover yet', () => {
+  const live = { withheld: false, removed: false, removal: null };
+  const removed = (
+    blockedFor: string | null,
+    ruleBlocked = false,
+    needsReview: string | null = null
+  ) => ({
+    withheld: false,
+    removed: true,
+    removal: { blockedFor, ruleBlocked, needsReview },
+  });
+
+  it('offers Dismiss, Remove song and Set rating on a live song, never Remove cover yet', () => {
     expect(reportedDecisionsEnabled(live, true)).toEqual([true, true, false, true]);
+    expect(dismissDecision(live)).toEqual({
+      label: 'Dismiss reports',
+      outcome: 'Reports dismissed',
+    });
   });
-  it('offers only Dismiss on a song already removed', () => {
-    expect(reportedDecisionsEnabled({ ...live, ingestion: 'Blocked' }, true)).toEqual([
-      true,
-      false,
-      false,
-      false,
-    ]);
+
+  it('restores a rule-blocked song on dismissal, and can make it a moderator removal', () => {
+    const row = removed('moderated', true);
+    expect(reportedDecisionsEnabled(row, true)).toEqual([true, true, false, false]);
+    expect(dismissDecision(row).label).toBe('Restore and dismiss');
+    expect(songRemovedTitle(row)).toBe(
+      'Blocked by an automated rule: Restore and dismiss restores it, Remove song makes it a moderator removal.'
+    );
   });
+
+  it('only closes the reports of a song a moderator removed', () => {
+    const row = removed('moderated');
+    expect(reportedDecisionsEnabled(row, true)).toEqual([true, false, false, false]);
+    expect(dismissDecision(row)).toEqual({
+      label: 'Close reports',
+      outcome: 'Closed: already removed',
+    });
+  });
+
+  it('takes nothing on a song removed for CSAM or under CSAM review', () => {
+    expect(reportedDecisionsEnabled(removed('CSAM'), true).some(Boolean)).toBe(false);
+    expect(reportedDecisionsEnabled(removed(null, false, 'csam'), true).some(Boolean)).toBe(false);
+  });
+
   it('offers nothing on a withheld song, or without the grant', () => {
-    expect(reportedDecisionsEnabled({ ...live, withheld: true }, true)).toEqual([
-      false,
-      false,
-      false,
-      false,
-    ]);
+    expect(reportedDecisionsEnabled({ ...live, withheld: true }, true).some(Boolean)).toBe(false);
     expect(reportedDecisionsEnabled(live, false).some(Boolean)).toBe(false);
+  });
+
+  it('shows what the writer did when it was not what was asked', () => {
+    expect(
+      reportedOutcome({ type: 'success', data: { alreadyRemoved: 'x' } }, 'Reports dismissed')
+    ).toBe('Closed: already removed');
+    expect(
+      reportedOutcome({ type: 'success', data: { held: 'Held for confirmation.' } }, 'Song removed')
+    ).toBe('Held for confirmation.');
+    expect(reportedOutcome({ type: 'success', data: {} }, 'Song removed')).toBe('Song removed');
+  });
+});
+
+describe('the rating keys', () => {
+  it('skip the level the song already has', () => {
+    expect(ratingKeysEnabled(2, true)).toEqual([true, false, true, true, true]);
+    expect(ratingKeysEnabled(2, false).some(Boolean)).toBe(false);
   });
 });
 

@@ -18,8 +18,10 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import {
+    dismissDecision,
     reportedDecisionsEnabled,
     songDetailsUrl,
+    songRemovedTitle,
     songRatingLabel,
     SONG_RATING_LEVELS,
     type CheckState,
@@ -42,9 +44,10 @@
     error,
     submit,
     actionHref,
+    level,
     ratingOpen,
     onrate,
-    oncloserating,
+    onrated,
   }: {
     row: ReportedSongRow;
     civitaiUrl: string;
@@ -53,26 +56,23 @@
     error: string | undefined;
     submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
+    /** The song's rating, including one set on this page since it loaded. Null when withheld. */
+    level: number | null;
     /** Key 4 was pressed: the next digit picks the level. */
     ratingOpen: boolean;
     onrate: () => void;
-    oncloserating: () => void;
+    /** A rating was sent (the level), or refused (null: back to the loaded one). */
+    onrated: (level: number | null) => void;
   } = $props();
 
-  // Client only: the shell remounts this per song, so each song reads its own details once. The
-  // player stays mounted while they load; only its line under the title waits for them.
-  let loaded = $state<SongDetails | null>(null);
-  const details = $derived(
-    browser
-      ? fetchJson<SongDetails>(songDetailsUrl(row.id)).then((d) => (loaded = d))
-      : SSR_PENDING
-  );
+  // Client only, one read per song.
+  const details = $derived(browser ? fetchJson<SongDetails>(songDetailsUrl(row.id)) : SSR_PENDING);
 
   const enabled = $derived(reportedDecisionsEnabled(row, canAct));
   const reportIds = $derived(row.reports.map((r) => r.id).join(','));
   const owner = $derived(row.owner);
   const songHref = $derived(entityUrl(civitaiUrl, 'image', row.id));
-  const removed = $derived(row.ingestion === 'Blocked');
+  const dismiss = $derived(dismissDecision(row));
 
   // Remove song asks for a violation type before it submits.
   let violationType = $state('');
@@ -91,13 +91,9 @@
   };
 
   // A rating is a correction, not a verdict: the song stays open, its reports still to decide.
-  let ratedLevel = $state<number | null>(null);
-  const level = $derived(ratedLevel ?? row.nsfwLevel);
   const rate = optimisticEnhancer(({ formData }) => {
-    const previous = ratedLevel;
-    ratedLevel = Number(formData.get('nsfwLevel'));
-    oncloserating();
-    return () => (ratedLevel = previous);
+    onrated(Number(formData.get('nsfwLevel')));
+    return () => onrated(null);
   });
 
   const CHECK_LOOK: Record<CheckState, { label: string; class: string }> = {
@@ -107,15 +103,6 @@
     pending: { label: 'not finished', class: 'bg-dark-5 text-dark-0' },
     failed: { label: 'failed', class: 'bg-dark-5 text-dark-0' },
   };
-
-  const factsLine = (d: SongDetails | null) =>
-    [
-      d?.facts.durationSec ? formatPlaybackTime(d.facts.durationSec) : null,
-      d?.facts.genre,
-      d?.facts.postedAt ? `posted ${new Date(d.facts.postedAt).toLocaleDateString()}` : null,
-    ]
-      .filter(Boolean)
-      .join(' · ');
 
   const accountAge = (createdAt: Date | string | null) =>
     createdAt ? shortAge(createdAt) : 'unknown';
@@ -138,7 +125,7 @@
     action={actionHref('dismiss')}
     data-triage-action="dismiss"
     id="dismiss-{row.id}"
-    use:enhance={submit('Reports dismissed')}
+    use:enhance={submit(dismiss.outcome)}
   >
     <input type="hidden" name="imageId" value={row.id} />
     <input type="hidden" name="reportIds" value={reportIds} />
@@ -157,14 +144,21 @@
   <TriageDecisionBar
     compact
     {problem}
-    hint="J / K next and previous · 1 to 4 decide. Remove song asks for a violation type. Dismiss closes all {plural(
-      row.reports.length,
-      'report'
-    )}."
+    hint={ratingOpen
+      ? 'Rating: 1 to 5 picks the level · Esc cancels. A rating leaves the reports open.'
+      : `J / K next and previous · 1 to 4 decide. Remove song asks for a violation type. ${dismiss.label} closes ${plural(row.reports.length, 'report')}.`}
   >
     {#snippet buttons()}
-      <TriageKeyButton key={1} type="submit" form="dismiss-{row.id}" disabled={!enabled[0]}>
-        Dismiss reports
+      <!-- Dimmed while the rating picker owns the digits. -->
+      <TriageKeyButton
+        key={1}
+        type="submit"
+        form="dismiss-{row.id}"
+        disabled={!enabled[0]}
+        class={cn(ratingOpen && 'opacity-50')}
+        title={row.removed ? songRemovedTitle(row) : undefined}
+      >
+        {dismiss.label}
       </TriageKeyButton>
       <TriageKeyButton
         key={2}
@@ -172,6 +166,7 @@
         type="submit"
         form="remove-{row.id}"
         disabled={!enabled[1]}
+        class={cn(ratingOpen && 'opacity-50')}
       >
         Remove song
       </TriageKeyButton>
@@ -199,27 +194,24 @@
         action={actionHref('setRating')}
         data-rating-form
         use:enhance={rate}
-        class="flex flex-wrap items-center gap-1.5"
+        class="flex flex-wrap items-center gap-1.5 {ratingOpen ? '' : 'opacity-80'}"
       >
         <input type="hidden" name="imageId" value={row.id} />
-        <span class="mr-1 text-xs text-dark-2">Rating</span>
+        <span class="col-span-2 text-xs text-dark-2">Rating</span>
         {#each SONG_RATING_LEVELS as option, i (option)}
-          <button
+          <TriageKeyButton
             type="submit"
+            key={i + 1}
             name="nsfwLevel"
             value={option}
+            selected={level === option}
             disabled={!enabled[3] || level === option}
-            class={cn(
-              'rounded border px-2 py-0.5 text-xs font-semibold disabled:cursor-default',
-              level === option
-                ? 'border-blue-500 bg-blue-600 text-white'
-                : 'border-dark-4 text-dark-0 hover:border-dark-2'
-            )}
+            class="h-7 px-2.5"
           >
-            {#if ratingOpen}<span class="mr-1 text-dark-2">{i + 1}</span>{/if}{songRatingLabel(option)}
-          </button>
+            {songRatingLabel(option)}
+            {#if level === option}<span class="text-[11px] font-normal text-dark-2">current</span>{/if}
+          </TriageKeyButton>
         {/each}
-        {#if ratingOpen}<span class="text-[11px] text-dark-2">1 to 5 picks · Esc cancels</span>{/if}
       </form>
     {/snippet}
     {#snippet fields()}
@@ -262,9 +254,11 @@
       {#snippet chips()}
         <SongBadge class="h-[17px] px-1.5 text-[11px]" />
         {@render chip('Reported', 'bg-red-500/15 text-red-300')}
-        {#if !row.withheld}{@render chip(getBrowsingLevelLabel(level))}{/if}
+        {#if level !== null}{@render chip(getBrowsingLevelLabel(level))}{/if}
         {@render chip(plural(row.reportCount, 'report'))}
-        {#if removed}{@render chip('Removed')}{/if}
+        {#if row.removed}
+          <span title={songRemovedTitle(row)}>{@render chip('Removed')}</span>
+        {/if}
       {/snippet}
       {#snippet links()}
         {#if !row.withheld}
@@ -309,43 +303,47 @@
 
   {#snippet evidence()}
     <div class="space-y-3">
-    {#if row.withheld || !row.url}
-      <div class="space-y-2 rounded-lg border border-dark-4 bg-dark-7 p-3.5 text-sm text-dark-0">
-        <p class="m-0">
-          This song is withheld from you: its audio, lyrics, cover and owner are not shown here.
-        </p>
-        <a href="/csam/text-holds?status=all&q={row.id}" class={LINK_CLASS}>Open in CSAM holds</a>
-      </div>
-    {:else}
-      <SongCard item={{ id: row.id, url: row.url }} variant="detail" meta={factsLine(loaded)} />
-      {#await details then d}
-        <TriageCard title="Song" dense>
-          {@render fact(
-            'Length',
-            d.facts.durationSec ? formatPlaybackTime(d.facts.durationSec) : null
-          )}
-          {@render fact('Genre', d.facts.genre)}
-          <div class="flex justify-between gap-3 py-0.5">
-            <span class="text-dark-2">Posted</span>
-            <span class="text-dark-0">
-              {d.facts.postedAt ? new Date(d.facts.postedAt).toLocaleDateString() : 'Not posted'}
-              {#if d.facts.postId}
-                · <a
-                  href={entityUrl(civitaiUrl, 'post', d.facts.postId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  class={LINK_CLASS}>Open post</a
-                >
-              {/if}
-            </span>
-          </div>
-          {@render fact('Rating', getBrowsingLevelLabel(level))}
-          {@render fact('Remix', d.facts.allowRemix ? 'Allowed' : 'Not allowed')}
-        </TriageCard>
-      {:catch}
-        <p class="m-0 text-sm text-dark-2">Couldn't load this song's details.</p>
-      {/await}
-    {/if}
+      {#if row.withheld}
+        <div class="space-y-2 rounded-lg border border-dark-4 bg-dark-7 p-3.5 text-sm text-dark-0">
+          <p class="m-0">
+            This song is withheld from you: its audio, lyrics, cover and owner are not shown here.
+          </p>
+          <a href="/csam/text-holds?status=all&q={row.id}" class={LINK_CLASS}>Open in CSAM holds</a>
+        </div>
+      {:else if !row.url}
+        <p class="m-0 text-sm text-dark-2">No audio file.</p>
+      {:else}
+        <SongCard item={{ id: row.id, url: row.url }} variant="detail" />
+      {/if}
+      {#if !row.withheld}
+        <!-- The one place a failed read is reported; the sidebar's cards just stay away. -->
+        {#await details}
+          <p class="m-0 text-sm text-dark-2">Loading the song's details…</p>
+        {:then d}
+          <TriageCard title="Song" dense>
+            {@render fact('Genre', d.facts.genre)}
+            <div class="flex justify-between gap-3 py-0.5">
+              <span class="text-dark-2">Posted</span>
+              <span class="text-dark-0">
+                {d.facts.postedAt ? new Date(d.facts.postedAt).toLocaleDateString() : 'Not posted'}
+                {#if d.facts.postId}
+                  · <a
+                    href={entityUrl(civitaiUrl, 'post', d.facts.postId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    class={LINK_CLASS}>Open post</a
+                  >
+                {/if}
+              </span>
+            </div>
+            {@render fact('Remix', d.facts.allowRemix ? 'Allowed' : 'Not allowed')}
+          </TriageCard>
+        {:catch}
+          <p class="m-0 text-sm text-dark-2">
+            Couldn't load this song's facts, cover, checks, generation details and owner.
+          </p>
+        {/await}
+      {/if}
     </div>
   {/snippet}
 
@@ -374,9 +372,8 @@
     </TriageCard>
 
     {#if !row.withheld}
-      {#await details}
-        <p class="m-0 text-sm text-dark-2">Loading the song's details…</p>
-      {:then d}
+      <!-- Pending and failed reads are reported once, in the middle column. -->
+      {#await details then d}
         <TriageCard title="Cover" dense>
           {#if d.cover}
             <div class="flex items-center gap-3">
@@ -443,7 +440,7 @@
           </TriageCard>
         {/if}
       {:catch}
-        <p class="m-0 text-sm text-dark-2">Couldn't load the cover, checks and owner.</p>
+        <!-- Reported in the middle column. -->
       {/await}
     {/if}
   {/snippet}

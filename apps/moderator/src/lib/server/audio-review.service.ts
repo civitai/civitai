@@ -15,36 +15,53 @@ import {
 import { reportDetail, reportReasonLabel } from '$lib/reports';
 import { pendingSongReports } from './audio-review-count';
 import { dbRead } from './db';
-import { escapeLike } from './like';
+import { ruleBlockedSql } from './image-review.service';
 import { int4Id } from './query';
 import { withheldImageIds } from './retracted-media';
 import { getActiveStrikes } from './user-lookup.service';
 
-/** Per song: when its oldest report was filed, how many reported it, whether any report has a time. */
+/** Per song: when its oldest report was filed, how many reported it, whether any report has a
+ *  time, and what a text search matches (its title and owner). */
 const songGroups = () =>
   pendingSongReports()
     .innerJoin('User as owner', 'owner.id', 'i.userId')
     .select([
       'i.id',
+      sql<string | null>`i.metadata->>'title'`.as('title'),
+      'owner.username',
       sql<Date>`min(r."createdAt")`.as('waitingSince'),
       sql<number>`sum(1 + coalesce(array_length(r."alsoReportedBy", 1), 0))::int`.as('reportCount'),
       sql<boolean>`bool_or(r.details ? 'timestampSec')`.as('hasTime'),
     ])
-    .groupBy('i.id');
+    .groupBy(['i.id', 'owner.username']);
 
-function searchPredicate(q: string) {
-  if (!q) return null;
-  const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
-  if (asId?.success) return sql<boolean>`i.id = ${asId.data}`;
-  const like = `%${escapeLike(q)}%`;
-  return sql<boolean>`(i.metadata->>'title' ILIKE ${like} OR owner.username ILIKE ${
-    escapeLike(q) + '%'
-  })`;
-}
+type SongGroup = Awaited<ReturnType<ReturnType<typeof songGroups>['execute']>>[number];
 
 const PAGE_SIZE = 50;
 
-/** One page of reported songs, the total under the filters, and the chip counts under the search. */
+/** A text search over the songs it may name: title anywhere, owner username from the start. */
+function matchesText(group: SongGroup, q: string) {
+  const term = q.toLowerCase();
+  return (
+    !!group.title?.toLowerCase().includes(term) || !!group.username?.toLowerCase().startsWith(term)
+  );
+}
+
+const byWait = (a: SongGroup, b: SongGroup) =>
+  new Date(a.waitingSince).getTime() - new Date(b.waitingSince).getTime() || a.id - b.id;
+const SORTS: Record<ReportedSort, (a: SongGroup, b: SongGroup) => number> = {
+  oldest: byWait,
+  newest: (a, b) => byWait(b, a),
+  most: (a, b) => b.reportCount - a.reportCount || byWait(a, b),
+};
+
+/**
+ * One page of reported songs, the total under the filters, and the chip counts under the search.
+ * Every song with a Pending report is read and filtered here, not in SQL, because what a moderator
+ * may search on depends on the media access rule: a song withheld from them matches only its exact
+ * id, never its title or owner, and its reports' times count for no chip. The set is the songs
+ * with open reports, which stays small.
+ */
 export async function getReportedSongs({
   sort,
   filter,
@@ -58,54 +75,38 @@ export async function getReportedSongs({
   page: number;
   user: App.Locals['user'] | undefined;
 }) {
-  const search = searchPredicate(q);
-  const groups = () => {
-    const base = songGroups();
-    return search ? base.where(search) : base;
-  };
-  const filtered = sql<boolean>`${
-    filter === 'timed'
-      ? sql`bool_or(r.details ? 'timestampSec')`
-      : filter === 'many'
-      ? sql`sum(1 + coalesce(array_length(r."alsoReportedBy", 1), 0)) >= ${MANY_REPORTS}`
-      : sql`true`
-  }`;
-  const order =
-    sort === 'most'
-      ? sql`"reportCount" DESC, "waitingSince" ASC, id ASC`
-      : sort === 'newest'
-      ? sql`"waitingSince" DESC, id DESC`
-      : sql`"waitingSince" ASC, id ASC`;
-
-  const [pageGroups, facets] = await Promise.all([
-    dbRead
-      .selectFrom(groups().having(filtered).as('g'))
-      .selectAll()
-      .orderBy(order)
-      .limit(PAGE_SIZE + 1)
-      .offset((page - 1) * PAGE_SIZE)
-      .execute(),
-    dbRead
-      .selectFrom(groups().as('g'))
-      .select([
-        sql<number>`count(*)::int`.as('all'),
-        sql<number>`(count(*) FILTER (WHERE "hasTime"))::int`.as('timed'),
-        sql<number>`(count(*) FILTER (WHERE "reportCount" >= ${MANY_REPORTS}))::int`.as('many'),
-      ])
-      .executeTakeFirst(),
-  ]);
-  const hasMore = pageGroups.length > PAGE_SIZE;
-  const items = await getReportedSongRows(
-    pageGroups.slice(0, PAGE_SIZE).map((g) => g.id),
-    user
+  const groups = await songGroups().execute();
+  const withheld = new Set(
+    await withheldImageIds(
+      user,
+      groups.map((g) => g.id)
+    )
   );
-  const counts = { all: facets?.all ?? 0, timed: facets?.timed ?? 0, many: facets?.many ?? 0 };
+  const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
+  const searched = !q
+    ? groups
+    : groups.filter((g) =>
+        asId?.success ? g.id === asId.data : !withheld.has(g.id) && matchesText(g, q)
+      );
+  const timed = (g: SongGroup) => g.hasTime && !withheld.has(g.id);
+  const many = (g: SongGroup) => g.reportCount >= MANY_REPORTS;
+  const facets = {
+    all: searched.length,
+    timed: searched.filter(timed).length,
+    many: searched.filter(many).length,
+  };
+  const filtered = searched
+    .filter((g) => (filter === 'timed' ? timed(g) : filter === 'many' ? many(g) : true))
+    .sort(SORTS[sort]);
+  const offset = (page - 1) * PAGE_SIZE;
+  const pageIds = filtered.slice(offset, offset + PAGE_SIZE).map((g) => g.id);
+  const items = await getReportedSongRows(pageIds, user, withheld);
   return {
     items,
-    hasMore,
-    total: counts[filter],
-    facets: counts,
-    offset: (page - 1) * PAGE_SIZE,
+    hasMore: filtered.length > offset + PAGE_SIZE,
+    total: facets[filter],
+    facets,
+    offset,
     pageSize: PAGE_SIZE,
   };
 }
@@ -114,7 +115,9 @@ export async function getReportedSongs({
  *  `user` comes back as `withheldSongRow`. A song with no Pending report left is dropped. */
 export async function getReportedSongRows(
   imageIds: number[],
-  user: App.Locals['user'] | undefined
+  user: App.Locals['user'] | undefined,
+  /** The songs already known to be withheld from `user`, when the caller has read them. */
+  knownWithheld?: Set<number>
 ): Promise<ReportedSongRow[]> {
   if (!imageIds.length) return [];
   const [songs, reports, withheld] = await Promise.all([
@@ -128,6 +131,9 @@ export async function getReportedSongRows(
         's.url',
         's.nsfwLevel',
         's.ingestion',
+        's.needsReview',
+        's.blockedFor',
+        ruleBlockedSql('s').as('ruleBlocked'),
         sql<string | null>`s.metadata->>'title'`.as('title'),
         'owner.id as ownerId',
         'owner.username as ownerUsername',
@@ -154,7 +160,7 @@ export async function getReportedSongRows(
       .orderBy('r.createdAt', 'asc')
       .orderBy('r.id', 'asc')
       .execute(),
-    withheldImageIds(user, imageIds),
+    knownWithheld ? [...knownWithheld] : withheldImageIds(user, imageIds),
   ]);
   const withheldSet = new Set(withheld);
   const reportsBySong = new Map<number, SongReport[]>();
@@ -184,7 +190,15 @@ export async function getReportedSongRows(
       url: song.url,
       coverUrl: song.coverUrl,
       nsfwLevel: song.nsfwLevel,
-      ingestion: String(song.ingestion),
+      removed: song.ingestion === 'Blocked',
+      removal:
+        song.ingestion === 'Blocked'
+          ? {
+              needsReview: song.needsReview,
+              blockedFor: song.blockedFor,
+              ruleBlocked: !!song.ruleBlocked,
+            }
+          : null,
       owner: { id: song.ownerId, username: song.ownerUsername },
       waitingSince: songReports[0].createdAt,
       reportCount: songReports.reduce((n, r) => n + 1 + r.also, 0),
@@ -206,6 +220,8 @@ export function withheldSongRow(row: ReportedSongRow): ReportedSongRow {
     title: null,
     url: null,
     coverUrl: null,
+    nsfwLevel: null,
+    removal: null,
     owner: null,
     reports: row.reports.map((r) => ({
       ...r,
@@ -255,8 +271,13 @@ async function songModelName(meta: Record<string, unknown> | null): Promise<stri
 }
 
 /** The open song's facts, scans, cover, generation and owner (`SongDetails`), or null when it is
- *  not a song. The caller refuses a song withheld from the moderator before calling this. */
-export async function getSongDetails(imageId: number): Promise<SongDetails | null> {
+ *  not a song. The caller refuses a song withheld from the moderator before calling this; the cover
+ *  is checked here, and its file is sent only when the public player would show it and it is not
+ *  withheld from `user`. */
+export async function getSongDetails(
+  imageId: number,
+  user: App.Locals['user'] | undefined
+): Promise<SongDetails | null> {
   const song = await dbRead
     .selectFrom('Image as s')
     .leftJoin('Track as t', 't.imageId', 's.id')
@@ -292,7 +313,7 @@ export async function getSongDetails(imageId: number): Promise<SongDetails | nul
 
   const meta = (song.meta as Record<string, unknown> | null) ?? null;
   const metadata = (song.metadata as Record<string, unknown> | null) ?? null;
-  const [model, owner, strikes] = await Promise.all([
+  const [model, owner, strikes, coverWithheld] = await Promise.all([
     songModelName(meta),
     dbRead
       .selectFrom('User as u')
@@ -312,6 +333,7 @@ export async function getSongDetails(imageId: number): Promise<SongDetails | nul
       .where('u.id', '=', song.userId)
       .executeTakeFirst(),
     getActiveStrikes(song.userId),
+    song.coverId != null ? withheldImageIds(user, [song.coverId]) : [],
   ]);
   const otherReported = await pendingSongReports()
     .select(sql<number>`count(DISTINCT i.id)::int`.as('n'))
@@ -323,7 +345,7 @@ export async function getSongDetails(imageId: number): Promise<SongDetails | nul
     song.coverId != null
       ? {
           id: song.coverId,
-          url: song.coverUrl ?? null,
+          url: song.coverShown && !coverWithheld.length ? song.coverUrl ?? null : null,
           nsfwLevel: song.coverNsfwLevel ?? 0,
           shown: song.coverShown,
         }

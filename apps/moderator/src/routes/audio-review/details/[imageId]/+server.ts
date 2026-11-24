@@ -19,7 +19,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
       error(503, 'Could not check this song; retry.');
     });
     if (withheld.length) error(404, RETRACTED_REFUSED);
-    const details = await getSongDetails(id.data);
+    const details = await getSongDetails(id.data, locals.user);
     if (!details) error(404, 'Not a song.');
     return json(details, { headers: NO_STORE });
   } catch (e) {
