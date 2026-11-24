@@ -89,12 +89,37 @@ const row = async (id: number) =>
 
 describe("a moderator's rating", () => {
   it('refuses a song its scans have not given their verdict on, and writes nothing', async () => {
-    for (const ingestion of ['Pending', 'Rescan', 'Error', 'Blocked']) {
+    for (const ingestion of ['Pending', 'Rescan', 'Error']) {
       await db.query(`UPDATE "Image" SET "ingestion" = $1 WHERE id = $2`, [ingestion, SONG]);
       const refusal = updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 });
       await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
       await expect(refusal).rejects.toThrow(/not been reviewed yet/);
       expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
+    }
+  });
+
+  it('refuses a removed song as removed, and writes nothing', async () => {
+    for (const ingestion of ['Blocked', 'NotFound']) {
+      await db.query(`UPDATE "Image" SET "ingestion" = $1 WHERE id = $2`, [ingestion, SONG]);
+      const refusal = updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 });
+      await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
+      await expect(refusal).rejects.toThrow("This song was removed, so it can't be rated.");
+      expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
+    }
+  });
+
+  it('refuses a song that changed between its read and the write, saying so', async () => {
+    // The write matches no row, as when a rescan started since the read.
+    await db.exec(`
+      CREATE FUNCTION skip_write() RETURNS trigger AS $$ BEGIN RETURN NULL; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER skip_write BEFORE UPDATE ON "Image" FOR EACH ROW EXECUTE FUNCTION skip_write();
+    `);
+    try {
+      const refusal = updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 1 });
+      await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
+      await expect(refusal).rejects.toThrow('This song changed while it was being rated. Reload.');
+    } finally {
+      await db.exec(`DROP TRIGGER skip_write ON "Image"; DROP FUNCTION skip_write();`);
     }
   });
 
