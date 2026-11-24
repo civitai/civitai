@@ -47,6 +47,8 @@ export function getNcEarningsNoticeHtml({
 }
 
 export const ncEarningsNoticeEmail = createEmail({
+  template: 'ncEarningsNotice',
+  mailClass: 'transactional',
   header: ({ to, notice, baseModels }: NcEarningsNoticeData) => ({
     subject: getNcEarningsNoticeSubject({ notice, baseModels }),
     to,

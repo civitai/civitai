@@ -516,6 +516,7 @@ jobs:
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000
         internal/hydrate:FuzzUnpack:230000
+        internal/hydrate:FuzzUnpackMatchesOracle:80000
         internal/modelfeed:FuzzParse:210000
         internal/shadow:FuzzCompare:420000
         internal/shadow:FuzzCompareJSON:620000

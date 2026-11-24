@@ -1,6 +1,11 @@
+import type { EmailSendTags, MailClass } from '@civitai/email';
 import { sendEmail } from '~/server/email/client';
 import { htmlToPlainText } from '~/server/email/plain-text';
 export function createEmail<T, T2>(email: {
+  /** The template's stable key, recorded on every send (emailEvents.template). */
+  template: string;
+  /** `transactional` (needed or asked for) or `lifecycle` (engagement mail). */
+  mailClass: MailClass;
   header: (data: T) => {
     subject: string;
     from?: string;
@@ -23,16 +28,19 @@ export function createEmail<T, T2>(email: {
   const getText = (data: T, html?: string) =>
     email.text ? email.text(data) : htmlToPlainText(html ?? getHtml(data));
 
-  const send = async (data: T) => {
+  const send = async (data: T, tags?: EmailSendTags) => {
     const html = getHtml(data);
     await sendEmail({
       ...email.header(data),
       html,
       text: getText(data, html),
+      tags: { ...tags, template: email.template, mailClass: email.mailClass },
     });
   };
 
   return {
+    template: email.template,
+    mailClass: email.mailClass,
     send,
     getHtml,
     getText,

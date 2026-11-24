@@ -363,6 +363,6 @@ describe('generator list opts into the hold', () => {
     const calls = source.match(/new WorkflowData\([^)]*\)/g) ?? [];
 
     expect(calls.length).toBe(1);
-    expect(calls[0]).toMatch(/\{ domain, nsfwEnabled, holdUnrated: true \}/);
+    expect(calls[0]).toMatch(/\{ domain, holdUnrated: true \}/);
   });
 });

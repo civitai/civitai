@@ -459,6 +459,52 @@ describe('the flag', () => {
     // Evaluated per app: the entity is the app block id.
     expect(h.publishFlagEntities).toEqual([A.id, A.id]);
   });
+
+  it('off: not a route, so no deprecation headers either', async () => {
+    h.publishFlag = false;
+    const t = await mint(freshApp(), V1);
+    for (const r of [
+      await publish(t, { from: 'drafts', keys: ['k1'] }),
+      await unpublish(t, { keys: ['k1'] }),
+    ]) {
+      expect(r.status).toBe(404);
+      expect(r.headers.deprecation).toBeUndefined();
+      expect(r.headers.link).toBeUndefined();
+    }
+  });
+});
+
+// docs/app-storage-generic-core.md, rollout step 3: server-side publish is being removed; while it
+// is served, every response says so (no `Sunset`: removal is gated on measured usage).
+describe('deprecation headers', () => {
+  const DEPRECATION = '@1794182400';
+  const LINK = '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"';
+
+  it('a publish, an unpublish, a refusal and a wrong method all carry Deprecation and Link', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(putPrivate(t, 'k1', { n: 1 }));
+    const replies = [
+      await expectOk(publish(t, { from: 'drafts', keys: ['k1'] })),
+      await expectOk(unpublish(t, { keys: ['k1'] })),
+      // Refused by the body parser (an empty key list).
+      await publish(t, { from: 'drafts', keys: [] }),
+      await call({ token: t, method: 'GET', path: '/_publish/clips' }),
+    ];
+    expect(replies.map((r) => r.status)).toEqual([200, 200, 400, 405]);
+    for (const r of replies) {
+      expect(r.headers.deprecation).toBe(DEPRECATION);
+      expect(r.headers.link).toBe(LINK);
+      expect(r.headers.sunset).toBeUndefined();
+    }
+  });
+
+  it('a plain private write beside it carries neither', async () => {
+    const t = await mint(freshApp(), V1);
+    const r = await expectOk(putPrivate(t, 'k1', { n: 1 }));
+    expect(r.headers.deprecation).toBeUndefined();
+    expect(r.headers.link).toBeUndefined();
+  });
 });
 
 describe('publish', () => {

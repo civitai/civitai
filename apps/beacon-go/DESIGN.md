@@ -183,6 +183,19 @@ sampler (below) posts samples; each one is computed and compared.
 by a bounded worker pool with the Node retry policy (a full queue drops the row and counts it). A
 fallback is proxied to `BEACON_GO_FALLBACK_URL` with the original Host and the whole body.
 
+Every queued row ends in exactly one `beacon_go_tracker_writes_total{table, result}` count: `ok`,
+`rejected` (a 4xx), `failed` (attempts spent) or `dropped` (the queue was full, the client was
+closed, or the row was still waiting, or inside a POST still running, when the shutdown grace period
+ended; that POST is then cancelled and no row starts another attempt, its own outcome is never
+recorded, so the row is not counted twice, and an in-flight row counted as dropped may in fact have
+landed). The
+shutdown order keeps those counts scrapeable: the public listener drains first, then the shadow
+samples, then the tracker queue, and the internal listener (`/metrics`) closes last. A scrape can
+still miss the final counts (the process exits right after), so the shutdown warning logs the rows
+given up on per table (`dropped`), their total and how many were in flight. Beside it,
+`beacon_go_tracker_send_seconds{table}` times each sent row (every attempt and retry wait) and
+`beacon_go_tracker_queue_depth` is the queue's backlog.
+
 ## 4. Shadow comparison
 
 The sampler is `src/server/beacon/beacon-go-shadow.ts` (payload code in
@@ -257,6 +270,8 @@ in front of a bounded queue (`BEACON_GO_TRACKER_QUEUE`); a full queue drops the 
 any replica to `BEACON_GO_MODE=serve`:
 
 1. size the workers from measurement: per-pod beacon rate (from the shadow phase) × the tracker's
-   p99 POST latency, with headroom, and set `BEACON_GO_TRACKER_WORKERS` to at least that;
+   p99 POST latency, with headroom, and set `BEACON_GO_TRACKER_WORKERS` to at least that; once
+   serving, `beacon_go_tracker_send_seconds` and `beacon_go_tracker_queue_depth` show whether the
+   pool keeps up;
 2. alert on `beacon_go_tracker_writes_total{result="dropped"}` increasing (any dropped row is a lost
    page view or view), and watch `result="failed"` beside it.

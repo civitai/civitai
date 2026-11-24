@@ -1,9 +1,11 @@
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
+import {
+  eventPlayerEligibleSql,
+  eventPointsExcludedFromSql,
+} from '~/server/events/player-eligibility';
 import { logToAxiom } from '~/server/logging/client';
-import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 export const COMEBACK_KIND = 'comeback';
 const COMEBACK_SOURCE = 'comeback:result';
@@ -89,17 +91,21 @@ export function comebackCup(teams: ComebackTeam[], { baseline, week, floorPerDay
 
 type PrizeEvent = { name: string; startDate: Date; endDate: Date; teams: readonly string[] };
 
-// Play points only, from the daily snapshot, without the users the standings hide.
+// Play points only, from the daily snapshot; a user the standings hide counts only for days before
+// their exclusion start.
 async function comebackTeams(event: PrizeEvent, { baseline, week }: CupWindows) {
   const rows = await dbWrite.$queryRaw<{ team: string; baseline: bigint; week: bigint }[]>`
     SELECT d.team,
-      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${baseline.from}::date AND d.day < ${baseline.to}::date), 0)::bigint AS baseline,
-      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${week.from}::date AND d.day < ${week.to}::date), 0)::bigint AS week
+      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${baseline.from}::date AND d.day < ${
+    baseline.to
+  }::date), 0)::bigint AS baseline,
+      COALESCE(sum(d.points) FILTER (WHERE d.day >= ${week.from}::date AND d.day < ${
+    week.to
+  }::date), 0)::bigint AS week
     FROM "EventCosmeticScoreDaily" d
     JOIN "User" u ON u.id = d."userId"
     WHERE d.event = ${event.name}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-      AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0
+      AND d.day < COALESCE(${eventPointsExcludedFromSql()}, 'infinity'::date)
     GROUP BY d.team
   `;
   const byTeam = new Map(rows.map((r) => [r.team, r]));

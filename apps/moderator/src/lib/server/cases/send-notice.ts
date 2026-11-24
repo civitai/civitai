@@ -76,7 +76,12 @@ export function defaultSendDeps(): Omit<SendDeps, 'holdsLock'> {
     alert: async (message) => {
       const to = env.MODERATION_ALERT_EMAIL;
       if (!to) return;
-      await sendEmailStrict({ to, subject: 'Case notices paused', html: `<p>${message}</p>` });
+      await sendEmailStrict({
+        to,
+        subject: 'Case notices paused',
+        html: `<p>${message}</p>`,
+        tags: { template: 'caseNoticesPausedAlert', mailClass: 'transactional' },
+      });
     },
     from: env.CASES_NOTICE_FROM || DEFAULT_NOTICE_FROM,
     replyTo: env.CASES_NOTICE_REPLY_TO || DEFAULT_NOTICE_REPLY_TO,
@@ -180,6 +185,7 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
           subject: row.subject_snapshot,
           text: body,
           html: plainToHtml(body),
+          tags: { template: 'caseNotice', mailClass: 'transactional' },
         }),
       deps.sleep ? { sleep: deps.sleep } : {}
     ));

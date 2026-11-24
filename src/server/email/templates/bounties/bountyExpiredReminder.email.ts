@@ -26,6 +26,8 @@ function getRefundFormUrl({ user, bounty }: BountyExpiredData) {
 
 const bountyUrl = (bounty: BountyExpiredData['bounty']) => getBaseUrl() + `/bounties/${bounty.id}`;
 export const bountyExpiredReminderEmail = createEmail({
+  template: 'bountyExpiredReminder',
+  mailClass: 'transactional',
   header: ({ user, bounty }: BountyExpiredData) => ({
     subject: `Reminder: Your bounty "${bounty.name}" expired and you have not awarded any entries`,
     to: user.email,

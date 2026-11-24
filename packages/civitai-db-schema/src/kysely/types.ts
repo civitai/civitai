@@ -5899,6 +5899,12 @@ export type ServiceDeal = {
    */
   licenseAgreedAt: Timestamp | null;
   /**
+   * The buyer disclosure version (`BUYER_DISCLOSURE_VERSION`) and its lines as the buyer was shown
+   * them before the hold. Null on a deal made before they were recorded.
+   */
+  buyerDisclosureVersion: string | null;
+  buyerDisclosureLines: string[];
+  /**
    * The offering's maxNsfwLevel when requested; never re-read from the offering.
    */
   maxNsfwLevel: Generated<number>;

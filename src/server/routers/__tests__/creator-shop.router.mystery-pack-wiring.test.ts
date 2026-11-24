@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CreatorMysteryPackService from '~/server/services/creator-mystery-pack.service';
 import type * as CreatorShopService from '~/server/services/creator-shop.service';
 
@@ -80,6 +81,8 @@ const calls = {
 
 beforeEach(() => {
   for (const fn of Object.values(service)) fn.mockClear();
+  // Past the Creator Shop score gate, which `creator-shop.router.open-gate.test.ts` covers.
+  dbMock.dbRead.user.findUnique.mockResolvedValue({ meta: { scores: { total: 10_000 } } } as never);
 });
 
 describe('creator mystery pack procedures', () => {
