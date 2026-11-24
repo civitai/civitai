@@ -13,6 +13,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
+import type * as CfImagesUtils from '~/client-utils/cf-images-utils';
 import type * as BrowserSettings from '~/providers/BrowserSettingsProvider';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 import type * as Trpc from '~/utils/trpc';
@@ -26,7 +27,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/client-utils/cf-images-utils', async (importOriginal) => {
   const clip = (await import('../../utils/metadata/__tests__/fixtures/video/core.webm?url'))
     .default;
-  const orig = await importOriginal<typeof import('~/client-utils/cf-images-utils')>();
+  const orig = await importOriginal<typeof CfImagesUtils>();
   return {
     ...orig,
     useEdgeUrl: (...a: Parameters<typeof orig.useEdgeUrl>) => ({
