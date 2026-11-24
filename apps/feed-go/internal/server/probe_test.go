@@ -51,7 +51,7 @@ func cacheState(r *testkit.Redis) map[string]string {
 type goldenProbeCase struct {
 	dir, procedure string
 	min            int
-	setup          func(*testing.T, *goldenFixture) *goldenEnv
+	setup          func(testing.TB, *goldenFixture) *goldenEnv
 	serve          func(*Server, context.Context, *http.Request) (*computed, error)
 	request        func(context.Context, ShadowRequest) (*http.Request, error)
 	// required: the caches the emptied-cache comparison must reach as would_miss.

@@ -900,6 +900,13 @@ const (
 // request policy, the origin check, and fn inside a serve slot. An answer is written here; any
 // fallback is proxied to the Node app. The serve slots (MaxInFlight) are shared by every public route.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedure string, off error, fn func(context.Context, *http.Request) (*computed, error)) {
+	withProfileLabels(r.Context(), endpoint, "serve", func(ctx context.Context) {
+		s.serveLabelled(w, r.WithContext(ctx), endpoint, procedure, off, fn)
+	})
+}
+
+// serveLabelled is serve under the request's profile labels (withProfileLabels).
+func (s *Server) serveLabelled(w http.ResponseWriter, r *http.Request, endpoint, procedure string, off error, fn func(context.Context, *http.Request) (*computed, error)) {
 	start := time.Now()
 	// The request's span (tracing on only): the compute, its store spans and the proxy hop are its
 	// children, and the duration exemplar is its trace id.
@@ -1033,6 +1040,14 @@ func (s *Server) ShadowV1Handler(w http.ResponseWriter, r *http.Request) {
 // shadowHandler answers 202 at once and compares in the background; a full queue drops the sample.
 // Every endpoint shares one queue, so the solo-phase CPU method (DESIGN.md §10.1) sees every sample.
 func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint string) {
+	withProfileLabels(r.Context(), endpoint, "shadow", func(ctx context.Context) {
+		s.shadowHandlerLabelled(w, r.WithContext(ctx), endpoint) //nolint:contextcheck // the background work runs on the server's background context after the 202 is written: it must outlive the request
+	})
+}
+
+// shadowHandlerLabelled is shadowHandler under the sample's profile labels (withProfileLabels); its
+// background goroutine runs the comparison under them too.
+func (s *Server) shadowHandlerLabelled(w http.ResponseWriter, r *http.Request, endpoint string) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -1115,7 +1130,7 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 		if s.Tracer != nil {
 			ctx = trace.ContextWithSpan(ctx, span)
 		}
-		s.compare(ctx, endpoint, req)
+		withProfileLabels(ctx, endpoint, "shadow", func(ctx context.Context) { s.compare(ctx, endpoint, req) })
 	}()
 }
 
