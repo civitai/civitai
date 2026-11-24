@@ -380,14 +380,15 @@ describe('enqueueKnightsItems', () => {
     expect((await items()).map((i) => i.imageId)).toEqual([1, 4]);
   });
 
-  it('refuses an image on a Private post when the caller requires a published post, and queues Unsearchable and EarlyAccess ones', async () => {
+  it('refuses an image on a Private or unlisted-availability post when the caller requires a published post, and queues Unsearchable and EarlyAccess ones', async () => {
     await pg.exec(`
       INSERT INTO "Post" (id, "publishedAt", availability) VALUES
         (10, '2026-12-11 09:00:00', 'Private'), (20, '2026-12-11 09:00:00', 'Unsearchable'),
-        (30, '2026-12-11 09:00:00', 'EarlyAccess');
+        (30, '2026-12-11 09:00:00', 'EarlyAccess'), (40, '2026-12-11 09:00:00', 'NotYetAValue');
       UPDATE "Image" SET "postId" = 10 WHERE id = 1;
       UPDATE "Image" SET "postId" = 20 WHERE id = 2;
       UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+      UPDATE "Image" SET "postId" = 40 WHERE id = 4;
     `);
 
     const outcomes = await enqueueKnightsItems(
@@ -395,16 +396,17 @@ describe('enqueueKnightsItems', () => {
       {
         source: 'owner-rating',
         questionKey: Q,
-        items: [1, 2, 3].map((imageId) => ({ imageId, priority: 1 as const })),
+        items: [1, 2, 3, 4].map((imageId) => ({ imageId, priority: 1 as const })),
       },
       NOW,
       { requirePublished: true }
     );
 
-    expect(outcomes).toMatchObject([
+    expect(outcomes).toEqual([
       { imageId: 1, outcome: 'refused', reason: 'private-post' },
-      { imageId: 2, outcome: 'enqueued' },
-      { imageId: 3, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'enqueued', itemId: expect.any(Number) },
+      { imageId: 3, outcome: 'enqueued', itemId: expect.any(Number) },
+      { imageId: 4, outcome: 'refused', reason: 'private-post' },
     ]);
   });
 

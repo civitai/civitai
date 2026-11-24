@@ -25,7 +25,7 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   arriving, a model, version or collection publish), at most 200 per run in `(publishedAt, id)` order, so posts sharing one instant drain
   across runs. It also re-reads the posts published in the 15 minutes behind its cursor (up to 2000), since a scheduled publish stamps the
   scheduled time and an owner's publish stamps before it commits, so a post can land behind a cursor that has passed it. Never more than six
-  hours back. Their scanned still images on a post that is not Private (`servableImageContent` and `postNotPrivate` in `@civitai/db/knights`) go through the same enqueue and rates as a scan
+  hours back. Their scanned still images on a post Knights shows (`servableImageContent` and `postShownToKnights` in `@civitai/db/knights`) go through the same enqueue and rates as a scan
   sample, with the same `scan-sample` source; an image not scanned yet is left to its scan. The SFW/NSFW split there is `Image.nsfwLevel`
   above the SFW levels, as the scan splits it. The cursor (`{ publishedAt, postId }`) is a `KeyValue` row, `knights-publish-sampling:cursor`,
   stored only after a run completes; a run that could not read the sources switch in time stores nothing, so the window is retried, while

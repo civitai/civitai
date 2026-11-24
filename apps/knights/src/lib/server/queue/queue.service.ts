@@ -15,7 +15,7 @@ import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import {
   ESCALATED_FROM_LEVEL_META_KEY,
-  postNotPrivate,
+  postShownToKnights,
   servableImage,
   servableImageContent,
 } from '@civitai/db/knights';
@@ -1152,7 +1152,7 @@ export async function escalateExpired(
             'in',
             due.map((item) => item.imageId)
           )
-          .where((eb) => eb.not(postNotPrivate(eb)))
+          .where((eb) => eb.not(postShownToKnights(eb)))
           .execute()
       ).map((row) => row.id)
     );

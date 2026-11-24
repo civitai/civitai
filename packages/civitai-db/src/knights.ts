@@ -112,13 +112,13 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
  */
 export const KNIGHTS_SHOWN_POST_AVAILABILITIES = ['Public', 'Unsearchable', 'EarlyAccess'] as const;
 
-/** `postNotPrivate` for a row already read: the same list, and a missing value is hidden, as the SQL's NULL is. */
+/** The opposite of `postShownToKnights`, for a row already read: the same list, and a missing value is hidden, as the SQL's NULL is. */
 export const postHiddenFromKnights = (availability: string | null | undefined): boolean =>
   availability == null ||
   !(KNIGHTS_SHOWN_POST_AVAILABILITIES as readonly string[]).includes(availability);
 
 /** The post's availability is one Knights shows. */
-export const postNotPrivate = (eb: ExpressionBuilder<Joined, 'p'>) =>
+export const postShownToKnights = (eb: ExpressionBuilder<Joined, 'p'>) =>
   eb('p.availability', 'in', KNIGHTS_SHOWN_POST_AVAILABILITIES);
 
 /**
@@ -157,7 +157,7 @@ export const imageSourceVisible = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =
   ]);
 
 /**
- * `servableImageContent` on a published post, without the rules that must only hide an image (`postNotPrivate`): for
+ * `servableImageContent` on a published post, without the rules that must only hide an image (`postShownToKnights`): for
  * sweeps that would otherwise retire a reference or close a question over them. Expects `Image as img` joined to
  * `Post as p`.
  */
@@ -257,7 +257,7 @@ export async function readWithoutJit<T>(
  * Expects `Image as img` joined to `Post as p`.
  */
 export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
-  eb.and([servableImageForSweeps(eb), postNotPrivate(eb), imageSourceVisible(eb)]);
+  eb.and([servableImageForSweeps(eb), postShownToKnights(eb), imageSourceVisible(eb)]);
 
 /**
  * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).

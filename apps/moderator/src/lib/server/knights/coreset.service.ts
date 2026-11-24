@@ -242,7 +242,7 @@ export async function unservableReason(
     return `Image ${imageId} is not published, so Acolytes could not see it.`;
   }
   if (postHiddenFromKnights(image.availability)) {
-    return `Image ${imageId} is on a Private post, so Knights does not show it.`;
+    return `Image ${imageId} is on a post whose availability Knights does not show.`;
   }
   return `Image ${imageId} cannot be shown to Acolytes: it must be a rated image with no review hold.`;
 }

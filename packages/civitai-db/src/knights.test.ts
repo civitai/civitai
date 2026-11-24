@@ -16,7 +16,7 @@ import {
   closeYesNoItemRow,
   gradeKnightsVotes,
   postHiddenFromKnights,
-  postNotPrivate,
+  postShownToKnights,
   servableImage,
   servableImageForSweeps,
 } from './knights';
@@ -147,7 +147,7 @@ describe('servableImage', () => {
       .innerJoin('Post as p', 'p.id', 'img.postId')
       .select('p.availability')
       .where('img.id', '>=', 990000300)
-      .where(postNotPrivate)
+      .where(postShownToKnights)
       .orderBy('img.id')
       .execute();
 
@@ -170,7 +170,7 @@ describe('servableImage', () => {
       .innerJoin('Post as p', 'p.id', 'img.postId')
       .select('img.id')
       .where('img.id', '=', 990000399)
-      .where(postNotPrivate)
+      .where(postShownToKnights)
       .execute();
     expect(unknownShown).toEqual([]);
     await pg.exec(`DELETE FROM "Image" WHERE id >= 990000300; DELETE FROM "Post" WHERE id >= 100`);
