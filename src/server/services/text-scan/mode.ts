@@ -107,6 +107,25 @@ export async function isTextScanEnabled() {
   }
 }
 
+const BUCKETS = Array.from({ length: 100 }, (_, bucket) => bucket);
+
+/**
+ * Whether any entity of this type can be in `mode` right now. False only when no bucket maps to it,
+ * so then `getTextScanMode` gives no entity that mode; it reads the same way, a failure included.
+ */
+export async function isTextScanModeReachable(
+  entityType: TextScanEntityType,
+  mode: Exclude<TextScanMode, 'off'>
+) {
+  try {
+    if (!(await isTextScanEnabled())) return false;
+    const rollout = (await getTextScanRollouts())[entityType];
+    return BUCKETS.some((bucket) => modeForBucket(rollout, bucket) === mode);
+  } catch {
+    return false;
+  }
+}
+
 export async function getTextScanMode(
   entityType: TextScanEntityType,
   entityId: number
@@ -168,9 +187,37 @@ export async function getTextScanWebSearchMode(
     if (main === 'off' || !(await isTextScanEnabled())) return 'off';
     const rollouts = await getTextScanWebSearchRollouts();
     const search = modeForBucket(rollouts[entityType], textScanBucket(entityType, entityId));
-    return MODE_ORDER[search] < MODE_ORDER[main] ? search : main;
+    return lowerMode(search, main);
   } catch {
     return 'off';
+  }
+}
+
+function lowerMode(a: TextScanMode, b: TextScanMode) {
+  return MODE_ORDER[a] < MODE_ORDER[b] ? a : b;
+}
+
+/** `isTextScanModeReachable` for the web-search pass, read as `getTextScanWebSearchMode` reads it. */
+export async function isTextScanWebSearchModeReachable(
+  entityType: TextScanEntityType,
+  mode: Exclude<TextScanMode, 'off'>
+) {
+  if (!isTextScanWebSearchEntityType(entityType)) return false;
+  try {
+    if (!(await isTextScanEnabled())) return false;
+    const [main, search] = await Promise.all([
+      getTextScanRollouts(),
+      getTextScanWebSearchRollouts(),
+    ]);
+    return BUCKETS.some(
+      (bucket) =>
+        lowerMode(
+          modeForBucket(search[entityType], bucket),
+          modeForBucket(main[entityType], bucket)
+        ) === mode
+    );
+  } catch {
+    return false;
   }
 }
 

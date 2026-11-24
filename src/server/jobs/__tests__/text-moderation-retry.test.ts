@@ -212,6 +212,43 @@ describe('review text while its scan cannot ask every label (civitai/civitai#101
     expect(submit.mock.calls.map(([args]) => args.entityId)).toEqual([5]);
   });
 
+  it('a full batch of older rows of a type that is off for everyone does not hold other text back, and those rows are left untouched', async () => {
+    rows = [
+      ...Array.from({ length: 500 }, (_, i) => ({
+        id: 1000 + i,
+        entityType: 'Post',
+        entityId: 1000 + i,
+        status: i % 2 ? 'Failed' : 'Pending',
+        retryCount: 1,
+      })),
+      { id: 202, entityType: 'Model', entityId: 3, status: 'Failed', retryCount: 1 },
+    ];
+    askable();
+    const off = { ...adapter, isEnabled: async () => false, isDarkForAll: async () => true };
+    vi.mocked(getModerationAdapter).mockImplementation((type) => (type === 'Post' ? off : adapter));
+
+    expect(await run()).toMatchObject({ processed: 1, retried: 1, skipped: 0 });
+    expect(submit.mock.calls.map(([args]) => args.entityId)).toEqual([3]);
+    expect(rows.filter((r) => r.entityType === 'Post' && r.retryCount !== 1)).toEqual([]);
+    expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a type off for only some entities is still queried, and its off rows skipped one by one', async () => {
+    rows = [
+      { id: 401, entityType: 'Post', entityId: 10, status: 'Failed', retryCount: 1 },
+      { id: 402, entityType: 'Post', entityId: 11, status: 'Failed', retryCount: 1 },
+    ];
+    askable();
+    vi.mocked(getModerationAdapter).mockReturnValue({
+      ...adapter,
+      isEnabled: async ({ entityId }) => entityId === 11,
+      isDarkForAll: async () => false,
+    });
+
+    expect(await run()).toMatchObject({ processed: 2, retried: 1, skipped: 1 });
+    expect(submit.mock.calls.map(([args]) => args.entityId)).toEqual([11]);
+  });
+
   it('a full batch of older review rows does not hold other text back while the labels are out', async () => {
     rows = [
       ...Array.from({ length: 500 }, (_, i) => ({
