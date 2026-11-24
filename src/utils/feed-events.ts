@@ -1,18 +1,29 @@
 import Router from 'next/router';
 import type { Query, QueryCache, QueryCacheNotifyEvent } from '@tanstack/react-query';
 import { enqueueTrackEvent } from '~/components/TrackView/trackEventBuffer';
-import { getImpressionSessionKey } from '~/components/TrackView/impressionBuffer';
-import type { TrackFeedInput } from '~/server/schema/track.schema';
+import { getImpressionSessionKey, recordFeedSeen } from '~/components/TrackView/impressionBuffer';
+import type { FeedEventContext } from '~/components/TrackView/impressionBuffer';
+import type {
+  ImpressionEntityType,
+  TrackFeedInput,
+  TrackSearchInput,
+} from '~/server/schema/track.schema';
 import { FEED_EVENT_FILTER_KEYS } from '~/shared/constants/feed-events.constants';
 import type { FeedEventFeed } from '~/shared/constants/feed-events.constants';
 
 // tRPC v11 keys an infinite query as [path segments, { input, type: 'infinite' }].
-const FEED_PROCEDURES: Record<string, FeedEventFeed> = {
-  'model.getAll': 'models',
-  'image.getInfinite': 'images',
-  'post.getInfinite': 'posts',
-  'article.getInfinite': 'articles',
+const FEED_PROCEDURES: Record<string, { feed: FeedEventFeed; entityType: ImpressionEntityType }> = {
+  'model.getAll': { feed: 'models', entityType: 'Model' },
+  'image.getInfinite': { feed: 'images', entityType: 'Image' },
+  'post.getInfinite': { feed: 'posts', entityType: 'Post' },
+  'article.getInfinite': { feed: 'articles', entityType: 'Article' },
 };
+
+// Bounds the item map; the oldest entries go first. A few dozen pages of the largest feed.
+const FEED_ITEMS_MAX = 5_000;
+
+type FeedItem = { context: FeedEventContext; position: number; queryHash: string };
+type FeedTarget = { entityType: ImpressionEntityType; entityId: number };
 
 // The search pages' URL names for facets the feed allowlist names differently.
 const SEARCH_PARAM_FILTERS: Record<string, string> = {
@@ -29,14 +40,19 @@ type Deps = {
 
 type InfiniteData = { pages?: unknown[] };
 
+const pageItemIds = (page: unknown): unknown[] => {
+  const items = (page as { items?: unknown } | null | undefined)?.items;
+  return Array.isArray(items) ? items.map((item) => (item as { id?: unknown } | null)?.id) : [];
+};
+
 function feedQuery(query: Query) {
   const [path, meta] = query.queryKey as [unknown, unknown];
   if (!Array.isArray(path) || (meta as { type?: unknown } | undefined)?.type !== 'infinite')
     return undefined;
-  const feed = FEED_PROCEDURES[path.join('.')];
-  if (!feed) return undefined;
+  const procedure = FEED_PROCEDURES[path.join('.')];
+  if (!procedure) return undefined;
   const input = ((meta as { input?: unknown }).input ?? {}) as Record<string, unknown>;
-  return { feed, input };
+  return { ...procedure, input };
 }
 
 export function feedFilters(feed: FeedEventFeed, input: Record<string, unknown>) {
@@ -54,25 +70,52 @@ export function feedFilters(feed: FeedEventFeed, input: Record<string, unknown>)
 export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }: Deps) {
   // Per query: the route visit it was last emitted on, and how many of its pages have been.
   const emitted = new Map<string, { visit: number; pages: number }>();
+  // Per query: this visit's load of each page, which that page's seen and click rows carry.
+  const loads = new Map<string, FeedEventContext[]>();
+  // entityType:id -> the load it last came from. If one item is in two feeds, the latest load wins.
+  const items = new Map<string, FeedItem>();
   let visit = 0;
   let started = false;
 
-  function emit(query: Query, pagesFrom: number, pagesTo: number) {
+  function mapItems(query: Query, entityType: ImpressionEntityType, pages: unknown[]) {
+    const contexts = loads.get(query.queryHash) ?? [];
+    let position = 0;
+    pages.forEach((page, pageIndex) => {
+      const context = contexts[pageIndex];
+      for (const id of pageItemIds(page)) {
+        if (context && typeof id === 'number') {
+          const key = `${entityType}:${id}`;
+          items.delete(key);
+          items.set(key, { context, position, queryHash: query.queryHash });
+          if (items.size > FEED_ITEMS_MAX) items.delete(items.keys().next().value as string);
+        }
+        position++;
+      }
+    });
+  }
+
+  // Starts this visit's load of pages [from, to) and sends a load row for each below `sendTo`.
+  function emit(query: Query, from: number, to: number, sendTo = to) {
     const feed = feedQuery(query);
     if (!feed) return;
     const page = getPage();
     const sort = typeof feed.input.sort === 'string' ? feed.input.sort : '';
     const filters = feedFilters(feed.feed, feed.input);
-    for (let pageIndex = pagesFrom; pageIndex < pagesTo; pageIndex++)
-      send({
-        event: 'load',
-        sessionKey: getSessionKey(),
-        feed: feed.feed,
-        page,
-        sort,
-        pageIndex,
-        filters,
-      });
+    const contexts = loads.get(query.queryHash) ?? [];
+    loads.set(query.queryHash, contexts);
+    for (let pageIndex = from; pageIndex < to; pageIndex++) {
+      const context: FeedEventContext = { feed: feed.feed, page, sort, pageIndex, filters };
+      contexts[pageIndex] = context;
+      if (pageIndex < sendTo) send({ event: 'load', sessionKey: getSessionKey(), ...context });
+    }
+    remap(query);
+  }
+
+  // A refetch can change what a page holds without being a new load.
+  function remap(query: Query) {
+    const feed = feedQuery(query);
+    const pages = (query.state.data as InfiniteData | undefined)?.pages;
+    if (feed && pages) mapItems(query, feed.entityType, pages);
   }
 
   function onData(query: Query) {
@@ -88,11 +131,14 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     } else {
       // A refetch can come back shorter; the pages fetched after it are new loads.
       state.pages = pages;
+      const contexts = loads.get(query.queryHash);
+      if (contexts) contexts.length = Math.min(contexts.length, pages);
+      remap(query);
     }
   }
 
   // A cached feed shown again on a later route visit counts as one page-0 load, however many hooks
-  // watch it.
+  // watch it. Its cached pages' items belong to this visit's load from then on.
   function onRevisit(query: Query) {
     const state = emitted.get(query.queryHash);
     if (!state || state.visit === visit) return onData(query);
@@ -100,13 +146,27 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     if (!pages) return;
     state.visit = visit;
     state.pages = Math.max(state.pages, pages);
-    emit(query, 0, 1);
+    emit(query, 0, pages, 1);
   }
 
   function onEvent(event: QueryCacheNotifyEvent) {
-    if (event.type === 'removed') emitted.delete(event.query.queryHash);
-    else if (event.type === 'observerAdded') onRevisit(event.query);
+    if (event.type === 'removed') {
+      emitted.delete(event.query.queryHash);
+      loads.delete(event.query.queryHash);
+      for (const [key, item] of items)
+        if (item.queryHash === event.query.queryHash) items.delete(key);
+    } else if (event.type === 'observerAdded') onRevisit(event.query);
     else if (event.type === 'updated' && event.action.type === 'success') onData(event.query);
+  }
+
+  // The feed item a card shows: the first of its targets a feed on this page loaded. An item loaded
+  // under another page pattern (a feed left behind) is not this card's.
+  function findItem(targets: FeedTarget[]) {
+    const page = getPage();
+    for (const target of targets) {
+      const item = items.get(`${target.entityType}:${target.entityId}`);
+      if (item && item.context.page === page) return { target, item };
+    }
   }
 
   return {
@@ -117,7 +177,21 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
       return () => {
         started = false;
         unsubscribe();
+        items.clear();
       };
+    },
+    findItem,
+    click(targets: FeedTarget[]) {
+      const found = findItem(targets);
+      if (!found) return;
+      send({
+        event: 'click',
+        sessionKey: getSessionKey(),
+        ...found.item.context,
+        entityType: found.target.entityType,
+        entityId: found.target.entityId,
+        position: found.item.position,
+      });
     },
     newVisit() {
       visit++;
@@ -188,3 +262,26 @@ export function setFeedEventsCache(queryCache: QueryCache) {
 
 export const sendSearchFeedLoad = (index: string, params: Record<string, unknown>) =>
   tracker?.searchLoad(index, params);
+
+/** A search page visit: a text search goes to the search table, facet-only browsing is a feed load. */
+export function trackSearchPage(
+  indexName: string,
+  {
+    query,
+    sortBy: index,
+    ...filters
+  }: { query?: string; sortBy?: string } & Record<string, unknown>,
+  trackSearch: (input: TrackSearchInput) => void
+) {
+  if (query && index) trackSearch({ query, index, filters });
+  else if (!query) sendSearchFeedLoad(indexName, { sortBy: index, ...filters });
+}
+
+/** A card was seen: adds it to its load's seen set, if a feed on this page loaded it. */
+export function recordFeedItemSeen(targets: FeedTarget[]) {
+  const found = tracker?.findItem(targets);
+  if (found) recordFeedSeen(found.item.context, found.target.entityId);
+}
+
+/** A link in a card was clicked: one click row, if a feed on this page loaded the card. */
+export const recordFeedItemClick = (targets: FeedTarget[]) => tracker?.click(targets);
