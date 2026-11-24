@@ -20,6 +20,7 @@ import {
   csamReportListedImageIdsSql,
   csamReportNamedUserIdsSql,
 } from '@civitai/shared/held-media';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
@@ -1046,6 +1047,36 @@ describe('imagesPendingDeletion', () => {
     expect(await pending()).toHaveLength(1);
     expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Set());
   });
+
+  it('names it the same whatever the state of the review behind the block', async () => {
+    await addImage({ blockedFor: 'CSAM' });
+    await pg.exec(`INSERT INTO "CsamReport" (images, details)
+      VALUES ('[{"id": ${IMAGE}}]', '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')`);
+    await ownDelete([IMAGE]);
+    const before = await imagesPendingDeletion(db, [IMAGE]);
+
+    await pg.exec(`UPDATE "CsamReport" SET "reportSentAt" = now()`);
+
+    expect(before).toEqual(new Set([IMAGE]));
+    expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(before);
+  });
+
+  it.each(OWNER_HIDDEN_REVIEWS)(
+    'does not name one still held for a %s review, whatever the state of the review',
+    async (needsReview) => {
+      await addImage({ blockedFor: 'CSAM' });
+      await pg.exec(`INSERT INTO "CsamReport" (images, details)
+        VALUES ('[{"id": ${IMAGE}}]', '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')`);
+      await ownDelete([IMAGE]);
+      // After the delete, which takes the image out of every review queue but one.
+      await pg.query(`UPDATE "Image" SET "needsReview" = $1 WHERE id = ${IMAGE}`, [needsReview]);
+      expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Set());
+
+      await pg.exec(`UPDATE "CsamReport" SET "reportSentAt" = now()`);
+
+      expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Set());
+    }
+  );
 
   it('does not name a blocked image nothing is pending for', async () => {
     await addImage({ blockedFor: 'CSAM' });
