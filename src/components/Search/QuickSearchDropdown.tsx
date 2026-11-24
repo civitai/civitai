@@ -411,7 +411,7 @@ function FirstPageOptions<TIndex extends SearchIndexKey>(
   props: QuickSearchDropdownContentProps<TIndex>
 ) {
   const { hits, results } = useHitsTransformed<TIndex>();
-  return <QuickSearchDropdownOptions {...props} hits={hits} results={results} />;
+  return <QuickSearchDropdownOptions {...props} hits={hits} searchResults={results} />;
 }
 
 function OwnerPickerOptions<TIndex extends SearchIndexKey>(
@@ -422,7 +422,7 @@ function OwnerPickerOptions<TIndex extends SearchIndexKey>(
     <QuickSearchDropdownOptions
       {...props}
       hits={hits}
-      results={results}
+      searchResults={results}
       onListEnd={isLastPage ? undefined : showMore}
     />
   );
@@ -430,7 +430,7 @@ function OwnerPickerOptions<TIndex extends SearchIndexKey>(
 
 function QuickSearchDropdownOptions<TIndex extends SearchIndexKey>({
   hits,
-  results,
+  searchResults: results,
   onListEnd,
   indexName: indexNameProp,
   onItemSelected,
@@ -444,7 +444,7 @@ function QuickSearchDropdownOptions<TIndex extends SearchIndexKey>({
   ...autocompleteProps
 }: QuickSearchDropdownContentProps<TIndex> & {
   hits: ReturnType<typeof useHitsTransformed<TIndex>>['hits'];
-  results: ReturnType<typeof useHitsTransformed<TIndex>>['results'];
+  searchResults: ReturnType<typeof useHitsTransformed<TIndex>>['results'];
   onListEnd?: () => void;
 }) {
   // const currentUser = useCurrentUser();
