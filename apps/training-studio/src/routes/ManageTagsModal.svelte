@@ -11,15 +11,16 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { portalProps } from '$lib/host';
   import { mediaCount, type Media } from '$lib/data/trainingModels';
-  import { splitTags, type Img } from './trainingFlow';
-  import { planReplace, prependTags, removeTag, renameTag, type TagGroup } from './tagReplace';
+  import { datasetBatches, imagesInScope, splitTags, type Img } from './trainingFlow';
+  import { groupTags, planReplace, prependTags, removeTag, renameTag, type TagGroup } from './tagReplace';
 
-  // Dataset-wide edits: add/rename/remove one tag, and find-and-replace inside tags. `images` is the flow's
-  // own state proxy, so mutating a tile's tags here applies live to the grid (the label editor's contract).
-  // A per-tag row is every casing of that tag, so its rename and remove apply to all of them. Every change
-  // is undoable once: a dataset-wide edit that lands wrong has no other way back.
+  // Edits over the whole dataset or one batch: add/rename/remove one tag, and find-and-replace inside tags.
+  // `images` is the flow's own state proxy, so mutating a tile's tags here applies live to the grid (the label
+  // editor's contract). A per-tag row is every casing of that tag, so its rename and remove apply to all of
+  // them. Every change is undoable once: a dataset-wide edit that lands wrong has no other way back.
   let {
     open = $bindable(false),
     tagGroups,
@@ -45,16 +46,23 @@
   let replaceDraft = $state('');
   let useRegex = $state(false);
   let matchCase = $state(false);
+  // A batch id, or null for the whole dataset. A batch whose images were all removed falls back to the whole
+  // dataset rather than leaving every action a no-op.
+  let scope = $state<number | null>(null);
+  const batches = $derived(datasetBatches(images, media));
+  const batchId = $derived(batches.some((b) => b.id === scope) ? scope : null);
+  const scoped = $derived(imagesInScope(images, batchId));
+  const scopedTagGroups = $derived(batchId === null ? tagGroups : groupTags(scoped));
 
   // Keyed by image id, never index, so an image removed from the dataset in between simply drops
   // out of the restore.
   let lastChange = $state<{ summary: string; before: Map<number, string[]> } | null>(null);
 
-  const trainableWithTags = $derived(images.filter((i) => i.tags.length > 0).length);
+  const trainableWithTags = $derived(scoped.filter((i) => i.tags.length > 0).length);
 
   const plan = $derived(
     findReplace
-      ? planReplace(images, { find: findDraft, replace: replaceDraft, regex: useRegex, matchCase })
+      ? planReplace(scoped, { find: findDraft, replace: replaceDraft, regex: useRegex, matchCase })
       : null
   );
   const affected = $derived(plan && !plan.error ? plan.changes.length : 0);
@@ -74,6 +82,7 @@
 
   // An inline rename or find text left open must not ride onto the next opening; neither should a stale Undo.
   function resetDrafts() {
+    scope = null;
     renameFrom = null;
     lastChange = null;
     findDraft = '';
@@ -83,7 +92,7 @@
   function applyReplace() {
     if (!plan || plan.error || plan.changes.length === 0) return;
     const after = new Map(plan.changes.map((c) => [c.id, c.after]));
-    const touched = images.filter((img) => after.has(img.id));
+    const touched = scoped.filter((img) => after.has(img.id));
     record(
       `Replaced "${findDraft}" with "${replaceDraft}" on ${mediaCount(touched.length, media)}`,
       touched
@@ -107,17 +116,17 @@
   function renameEverywhere(from: string, to: string[], verb: string) {
     if (to.length === 0) return;
     const after = new Map<number, string[]>();
-    for (const img of images) {
+    for (const img of scoped) {
       const next = renameTag(img.tags, from, to);
       if (next.length !== img.tags.length || next.some((t, i) => t !== img.tags[i])) after.set(img.id, next);
     }
     if (after.size === 0) return;
-    const touched = images.filter((img) => after.has(img.id));
+    const touched = scoped.filter((img) => after.has(img.id));
     record(`${verb} "${from}" to "${to.join(', ')}" on ${mediaCount(touched.length, media)}`, touched);
     for (const img of touched) img.tags = after.get(img.id)!;
   }
   function removeTagEverywhere(tag: string) {
-    const touched = images.filter((img) => removeTag(img.tags, tag).length !== img.tags.length);
+    const touched = scoped.filter((img) => removeTag(img.tags, tag).length !== img.tags.length);
     record(`Removed "${tag}" from ${mediaCount(touched.length, media)}`, touched);
     for (const img of touched) img.tags = removeTag(img.tags, tag);
   }
@@ -127,7 +136,7 @@
     const tags = splitTags(addDraft);
     addDraft = '';
     if (tags.length === 0) return;
-    const touched = images.filter(
+    const touched = scoped.filter(
       (img) => img.tags.length > 0 && prependTags(img.tags, tags) !== img.tags
     );
     if (touched.length === 0) return;
@@ -151,10 +160,31 @@
     <Dialog.Header>
       <Dialog.Title>Manage tags</Dialog.Title>
       <Dialog.Description>
-        Add, rename or remove a tag across the whole dataset. Changes apply immediately and the last
-        one can be undone.
+        Add, rename or remove a tag across {batchId === null ? 'the whole dataset' : 'one batch'}.
+        Changes apply immediately and the last one can be undone.
       </Dialog.Description>
     </Dialog.Header>
+    {#if batches.length > 1}
+      <Select.Root
+        type="single"
+        bind:value={
+          () => (batchId === null ? 'all' : String(batchId)),
+          (v) => (scope = v === 'all' ? null : Number(v))
+        }
+      >
+        <Select.Trigger class="h-8 w-full min-w-0 font-mono text-xs" aria-label="Apply tag edits to">
+          <span class="min-w-0 truncate">
+            {batches.find((b) => b.id === batchId)?.label ?? 'Whole dataset'}
+          </span>
+        </Select.Trigger>
+        <Select.Content portalProps={portalProps()}>
+          <Select.Item value="all">Whole dataset</Select.Item>
+          {#each batches as b (b.id)}
+            <Select.Item value={String(b.id)}>{b.label}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    {/if}
     <form
       class="flex items-center gap-2"
       onsubmit={(e) => {
@@ -223,11 +253,13 @@
         {/if}
       </form>
     {/if}
-    {#if tagGroups.length === 0}
-      <p class="font-mono text-xs text-dark-2">No tags in this dataset.</p>
+    {#if scopedTagGroups.length === 0}
+      <p class="font-mono text-xs text-dark-2">
+        No tags in {batchId === null ? 'this dataset' : 'this batch'}.
+      </p>
     {:else}
       <ul class="m-0 flex max-h-[50vh] min-h-0 list-none flex-col gap-1 overflow-y-auto p-0">
-        {#each tagGroups as { tag, count, variants } (tag)}
+        {#each scopedTagGroups as { tag, count, variants } (tag)}
           <li class="flex items-center gap-2 rounded border border-dark-4 bg-dark-7 px-2.5 py-1.5">
             {#if renameFrom === tag}
               <form

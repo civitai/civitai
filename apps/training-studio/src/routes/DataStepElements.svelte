@@ -68,6 +68,7 @@
     labelString,
     matchesTagFilter,
     mergeAutoLabel,
+    newBatch,
     nextImgId,
     parseLabel,
     plural,
@@ -76,6 +77,7 @@
     startLabelPass,
     tagsHaveTrigger,
     withFilterTags,
+    type BatchSource,
     type DatasetFilter,
     type Img,
     type LabelPosition,
@@ -362,6 +364,7 @@
       .map((file) => ({ file, fileMediaType: fileMedia(file.type) }))
       .filter((x): x is { file: File; fileMediaType: Media } => !!x.fileMediaType);
     if (matched.length === 0) return;
+    const batch = newBatch('upload');
     const added: Img[] = matched.map(({ file, fileMediaType }) => ({
       id: nextImgId(),
       file,
@@ -372,6 +375,7 @@
       progress: 0,
       tags: [],
       caption: '',
+      batch,
     }));
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
@@ -421,7 +425,7 @@
       nsfwLevel?: string;
       repeats?: number;
     }[],
-    { silent = false }: { silent?: boolean } = {}
+    { silent = false, source = 'reuse' }: { silent?: boolean; source?: BatchSource } = {}
   ) {
     // Skip blobs already in the dataset (the picker can't see what's here) or repeated in the batch.
     const have = new Map<string, number>();
@@ -445,6 +449,7 @@
     if (!silent && skipped.length) dupOwnerIds = [...dupOwnerIds, ...skipped];
     if (fresh.length === 0) return;
     const toHydrate: { id: number; air: string; workflowId: string }[] = [];
+    const batch = newBatch(source);
     const added: Img[] = fresh.map(({ id, ...item }) => {
       const label = item.caption?.trim() ?? '';
       if (!item.url && item.previewWorkflowId)
@@ -467,6 +472,7 @@
         sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
         repeats: item.repeats,
+        batch,
       };
     });
     images = [...images, ...added];
@@ -651,6 +657,7 @@
       captions: entries.map((e) => e.caption),
     });
     if (suggested) trigger = suggested;
+    const batch = newBatch('zip');
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -665,6 +672,7 @@
         // Verbatim (untrimmed) — the switch logic promises to restore the file's text exactly.
         sourceLabel: e.caption || undefined,
         labelTried: label ? true : undefined,
+        batch,
       };
     });
     images = [...images, ...added];
@@ -875,7 +883,8 @@
         url: media === 'image' ? i.previewUrl ?? i.url : i.url,
         name: `generation ${i.blobId.slice(0, 8)}`,
         nsfwLevel: i.nsfwLevel,
-      }))
+      })),
+      { source: 'generations' }
     );
   }
 

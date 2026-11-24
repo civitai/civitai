@@ -24,6 +24,7 @@ import {
   cardsForMedia,
   findByAir,
   isCardVisible,
+  mediaCount,
   visibleVersions,
   versionPriceKey,
   ecosystemTakesSampleImages,
@@ -333,7 +334,71 @@ export interface Img {
   caption: string;
   /** Per-image repeats: how many times this image goes into the dataset. Absent means once. */
   repeats?: number;
+  /** The add this image came in with, so Manage tags can scope an edit to it. */
+  batch?: ImgBatch;
 }
+
+export type BatchSource = 'upload' | 'zip' | 'reuse' | 'generations';
+
+/** One add to the dataset: a drop or pick, one zip, one reused dataset, one generations pick. */
+export interface ImgBatch {
+  /** Unique and increasing. Seeded from the clock, so a batch restored after a reload never shares an
+   *  id with one added after it. */
+  id: number;
+  source: BatchSource;
+  addedAt: number;
+}
+
+let lastBatchId = 0;
+export function newBatch(source: BatchSource, now = Date.now()): ImgBatch {
+  lastBatchId = Math.max(now, lastBatchId + 1);
+  return { id: lastBatchId, source, addedAt: now };
+}
+
+const BATCH_SOURCE_NAMES: Record<BatchSource, string> = {
+  upload: 'Upload',
+  zip: 'Zip import',
+  reuse: 'Reused dataset',
+  generations: 'Generations',
+};
+
+export interface BatchOption {
+  id: number;
+  label: string;
+}
+
+/** The batches still in the dataset, oldest first, each named "Upload 2 · 14 images · 3:41 PM": the
+ *  number counts that source's batches, and the time tells same-source batches apart. */
+export function datasetBatches(images: Pick<Img, 'batch'>[], media: Media): BatchOption[] {
+  const byId = new Map<number, { batch: ImgBatch; count: number }>();
+  for (const img of images) {
+    if (!img.batch) continue;
+    const entry = byId.get(img.batch.id);
+    if (entry) entry.count++;
+    else byId.set(img.batch.id, { batch: img.batch, count: 1 });
+  }
+  const perSource = new Map<BatchSource, number>();
+  return [...byId.values()]
+    .sort((a, b) => a.batch.id - b.batch.id)
+    .map(({ batch, count }) => {
+      const n = (perSource.get(batch.source) ?? 0) + 1;
+      perSource.set(batch.source, n);
+      const time = new Date(batch.addedAt).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      return {
+        id: batch.id,
+        label: `${BATCH_SOURCE_NAMES[batch.source]} ${n} · ${mediaCount(count, media)} · ${time}`,
+      };
+    });
+}
+
+/** The images a Manage-tags edit applies to: one batch's, or the whole dataset's when `batchId` is null. */
+export const imagesInScope = <T extends Pick<Img, 'batch'>>(
+  images: T[],
+  batchId: number | null
+): T[] => (batchId === null ? images : images.filter((i) => i.batch?.id === batchId));
 
 /** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
  *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be
