@@ -58,7 +58,7 @@ export const creatorServiceDealsJob = createJob(
     const releases = await sweepServiceDealReleases({ limit: BATCH });
     // Last: its gauge counts every exhausted leg, the releases' included.
     const refunds = await sweepServiceDealRefunds({ limit: BATCH });
-    // After the payouts, so its read-back sees this run's releases. Counters are recounted hourly.
+    // After the payouts, so its read-back sees this run's releases.
     const [countersAt, setCountersAt] = await getJobDate(REVIEW_COUNTERS_SINCE, new Date(0));
     const counters = Date.now() - countersAt.getTime() >= 60 * 60_000;
     const reviews = await reconcileServiceDealReviews({ limit: BATCH, counters })

@@ -525,6 +525,21 @@ describe('a csam verdict on review text', () => {
     expect((await statuses()).comment).toBe('Pending');
   });
 
+  it('settles and shows a review whose held comment the buyer cleared, once the hold is dismissed', async () => {
+    await seed(X);
+    await textScan({ csam: true });
+    // The edit keeps a held comment Blocked, whatever it is changed to.
+    await q(`UPDATE "ServiceDealReview" SET comment = NULL, "scanWorkflowId" = NULL`);
+
+    await q(`UPDATE "TextScanHold" SET status = 'Dismissed', meta = '{"decision":"dismiss"}'`);
+    await adapter.requeueBlockedServiceDealReviewText('ServiceDealReview', REVIEW);
+    expect((await statuses()).comment).toBe('Scanned');
+    const [{ publishedAt }] = await q<{ publishedAt: Date | null }>(
+      `SELECT "publishedAt" FROM "ServiceDealReview"`
+    );
+    expect(publishedAt).not.toBeNull();
+  });
+
   it('holds a reply under the seller, its author, and a comment under the buyer', async () => {
     await seed(R);
     expect((await loadSubject('ServiceDealReviewReply'))?.userId).toBe(SELLER);
