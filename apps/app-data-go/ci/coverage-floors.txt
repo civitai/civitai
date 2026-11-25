@@ -12,6 +12,8 @@ internal/exchange 100
 internal/registry 98
 internal/rest 90
 internal/session 95
+internal/shared 98
 internal/sign 100
+internal/token 89
 internal/urn 100
 internal/writes 99

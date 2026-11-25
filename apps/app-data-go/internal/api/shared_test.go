@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -232,7 +234,7 @@ func TestTheViewersOwnDocumentIsFoundAmongTheirOwn(t *testing.T) {
 		"/@me/rec-1?x=": {"200", ""},
 	} {
 		g := s.shared(t, notesPath+path, "civitai_shared-v")
-		if fmt.Sprint(g.status) != want[0] || (want[0] == "400" && want[1] != "invalid_request" && g.err.Details["reason"] != want[1]) ||
+		if strconv.Itoa(g.status) != want[0] || (want[0] == "400" && want[1] != "invalid_request" && g.err.Details["reason"] != want[1]) ||
 			(want[0] == "404" && g.err.Error != want[1]) {
 			t.Errorf("%s: %d %s, want %v", path, g.status, g.body, want)
 		}
@@ -407,5 +409,28 @@ func TestACutOverPrivateReadNeverFallsBack(t *testing.T) {
 	noReg.h = noReg.srv.Handler()
 	if g := noReg.get(t, notesPath, "civitai_empty-c"); g.status != 503 || !strings.Contains(g.body, `"registry_off"`) || noReg.store.calls.Load() != 0 {
 		t.Fatalf("registry off: %d %s", g.status, g.body)
+	}
+}
+
+// A keyed get is the first read of a shared collection: the private stream's "not this feed" sends it
+// to the shared path too, and the schema is remembered from it. The memo forgets expired schemas.
+func TestAKeyedGetLearnsASharedSchema(t *testing.T) {
+	s, f := newSharedStack(t)
+	s.reg.notPrivate["civitai_shared-g"] = true
+	f.board = shared.Board{Docs: []shared.Doc{sdoc("g-1", "G1", false)}}
+	if g := s.shared(t, notesPath+"/g-1", "civitai_shared-g"); g.status != 200 || g.one.Item.Key != "g-1" {
+		t.Fatalf("first read a get: %d %s", g.status, g.body)
+	}
+	if !s.srv.shared.known(notesSchema, time.Now()) {
+		t.Fatal("the schema was not remembered")
+	}
+	s.srv.shared.mark("urn:schema:apps.civitai.com:old-app/c@v1", time.Now().Add(-time.Hour))
+	s.srv.shared.mark("urn:schema:apps.civitai.com:new-app/c@v1", time.Now())
+	if s.srv.shared.known("urn:schema:apps.civitai.com:old-app/c@v1", time.Now()) || len(s.srv.shared.until) != 2 {
+		t.Fatalf("an expired schema is forgotten: %v", s.srv.shared.until)
+	}
+	// A block-token shape whose payload is not base64url JSON is not signed-out.
+	if anonymousShape("abc.b.c") {
+		t.Fatal("an undecodable payload")
 	}
 }

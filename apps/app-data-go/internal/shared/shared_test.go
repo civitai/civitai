@@ -64,10 +64,11 @@ func (f *fakeViews) fail(token, sch string, err error) {
 	f.errs[token+"#"+sch] = err
 }
 
-func (f *fakeViews) n(token, sch string) int {
+// n is how many times subject's stream of the collection was read.
+func (f *fakeViews) n(subject string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.calls[token+"#"+sch]
+	return f.calls[subject+"#"+schema]
 }
 
 func doc(key string, seq int64, canary string) registry.Entity {
@@ -157,7 +158,7 @@ func TestTheUnionHoldsEachDocumentOnceAndMarksTheViewersOwn(t *testing.T) {
 		t.Fatalf("keyedBy %q floor %q", b.KeyedBy, b.Floor)
 	}
 	for _, bit := range []string{"2", "8", "16", "none"} {
-		if g.levels.n(lvl(bit), schema) != 0 {
+		if g.levels.n(lvl(bit)) != 0 {
 			t.Fatalf("🔴 level %s read for a mask of 5", bit)
 		}
 	}
@@ -178,7 +179,7 @@ func TestARefusedViewerIsRefusedFromEveryLevelStreamAtOnce(t *testing.T) {
 		if _, err := g.read(t, Viewer{Token: hubTok}, 0); !errors.Is(err, ErrViewerRefused) {
 			t.Fatalf("meta %q: %v, want ErrViewerRefused", meta, err)
 		}
-		if g.levels.n(lvl("1"), schema) != 0 {
+		if g.levels.n(lvl("1")) != 0 {
 			t.Fatalf("meta %q: a level stream was read for a refused viewer", meta)
 		}
 	}
@@ -208,9 +209,9 @@ func TestTheLevelsModeFollowsTheAdaptersEnds(t *testing.T) {
 	if err != nil || shown(b) != "k-all=ALL" {
 		t.Fatalf("after levels_off: %s %v", shown(b), err)
 	}
-	before := g.levels.n(lvl("1"), schema)
-	if b, err = g.read(t, Viewer{Token: hubTok}, 0); err != nil || shown(b) != "k-all=ALL" || g.levels.n(lvl("1"), schema) != before {
-		t.Fatalf("the mode is remembered: %s %v, bit 1 read %d more times", shown(b), err, g.levels.n(lvl("1"), schema)-before)
+	before := g.levels.n(lvl("1"))
+	if b, err = g.read(t, Viewer{Token: hubTok}, 0); err != nil || shown(b) != "k-all=ALL" || g.levels.n(lvl("1")) != before {
+		t.Fatalf("the mode is remembered: %s %v, bit 1 read %d more times", shown(b), err, g.levels.n(lvl("1"))-before)
 	}
 	// `none` ends levels_on: back to the bits.
 	g.levels.fail(lvl("1"), schema, nil)
@@ -222,8 +223,8 @@ func TestTheLevelsModeFollowsTheAdaptersEnds(t *testing.T) {
 	// The per-viewer stream says off: straight to `none`, no bit read.
 	g.levels.fail(lvl("none"), schema, nil)
 	g.viewers.set(hubTok, vschema, snap(100, `{"head":{"seq":100},"mask":3,"levels":"off"}`))
-	ones := g.levels.n(lvl("1"), schema)
-	if b, err = g.read(t, Viewer{Token: hubTok}, 0); err != nil || shown(b) != "k-all=ALL" || g.levels.n(lvl("1"), schema) != ones {
+	ones := g.levels.n(lvl("1"))
+	if b, err = g.read(t, Viewer{Token: hubTok}, 0); err != nil || shown(b) != "k-all=ALL" || g.levels.n(lvl("1")) != ones {
 		t.Fatalf("viewer says off: %s %v", shown(b), err)
 	}
 	// Ends twice in a row switch once, then answer the error: never a loop.
