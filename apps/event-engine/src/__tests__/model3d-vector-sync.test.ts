@@ -191,7 +191,7 @@ describe('3D model removal', () => {
     }
   }, 60_000);
 
-  // A held owner does not hide the row.
+  // A held owner does not hide the row (civitai/civitai#10360).
   test('a reported owner or a reported thumbnail keeps the model in search', async () => {
     const pg = await pglite();
     try {

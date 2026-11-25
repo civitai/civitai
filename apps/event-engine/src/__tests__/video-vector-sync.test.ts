@@ -130,7 +130,7 @@ describe('which videos get a point', () => {
     }
   }, 60_000);
 
-  // A held owner does not hide the row. A clip listed on a report is
+  // A held owner does not hide the row (civitai/civitai#10360). A clip listed on a report is
   // flagged itself, so it goes.
   test('a reported owner keeps the clip; a clip listed on a report gets no point', async () => {
     const pg = await pglite(`

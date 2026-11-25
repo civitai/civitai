@@ -172,7 +172,7 @@ describe('semantic collection search', () => {
       UPDATE "CollectionItem" SET status = 'REJECTED' WHERE "collectionId" = 4;
       INSERT INTO "CsamReport" ("userId") VALUES (5);
       UPDATE "Collection" SET "nsfwLevel" = 33 WHERE id = 6;`);
-    // 5's owner is held. A held owner does not hide the row.
+    // 5's owner is held. A held owner does not hide the row (civitai/civitai#10360).
     expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([5, 1]);
     expect(h.fetched).toEqual([[5, 1]]);
   });

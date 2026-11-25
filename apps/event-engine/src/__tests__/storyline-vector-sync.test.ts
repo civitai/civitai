@@ -171,8 +171,8 @@ describe('storyline removal', () => {
        VALUES ('PostText', 500, 'csam', 'Pending')`,
     ],
   ];
-  // A held owner does not hide the row.
-  test('a reported owner or a reported chapter 1 image keeps the storyline in search', async () => {
+  // A held owner does not hide the row (civitai/civitai#10360).
+  test('a reported owner keeps the storyline in search', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();
     try {

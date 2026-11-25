@@ -37,7 +37,8 @@ export const videoDomain: Domain<VideoPayload> = {
   getDocs: getVideoDocs,
   topics: VIDEO_TOPICS,
   refFromEvent: videoRefFromEvent,
-  // No refresh walk: eligibility reads only the Image row.
+  // No refresh walk: removals arrive as changes to the Image row. A report listing reaches a video
+  // only once filing flags its row; until then the point stays.
   cdcTables: ['public.Image', 'public.TagsOnImageNew', 'public.ImageResourceNew'],
   embedInput: (id, payload) => ({ id: String(id), videoUrl: videoEmbedUrl(payload.url) }),
   rejected: redisRejectedMemo,

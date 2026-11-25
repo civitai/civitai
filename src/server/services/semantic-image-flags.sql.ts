@@ -6,8 +6,8 @@ import {
 
 /**
  * The "Image" row aliased `image` is under CSAM review, blocked as CSAM, or listed on a CsamReport,
- * so the semantic search indexes never embed or return it. Never NULL, so NOT of it is safe on an unflagged image. The
- * event-engine's vector-sync/image-flags.ts csamFlaggedImageSql is its copy, pinned to it by
+ * so the semantic search indexes never embed or return it. The event-engine's
+ * vector-sync/image-flags.ts csamFlaggedImageSql is its copy, pinned to it by
  * semantic-image-flags.test.ts.
  */
 export const semanticImageCsamFlaggedText = (image: string) =>

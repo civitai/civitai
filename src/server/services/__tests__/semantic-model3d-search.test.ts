@@ -171,7 +171,7 @@ describe('semantic 3D model search', () => {
     expect(shown(await search([2, 1]))).toEqual([2, 1]);
   });
 
-  // A held owner does not hide the row.
+  // A held owner does not hide the row (civitai/civitai#10360).
   it('serves a model whose owner is named on a report', async () => {
     await model(1);
     await model(2, { owner: 77 });
