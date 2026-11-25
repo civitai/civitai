@@ -340,8 +340,8 @@ export type ShownRendition = 'original' | 'cdn-450';
 export const SHOWN_ACTIONS: readonly ShownAction[] = ['open', 'select'];
 export const SHOWN_RENDITIONS: readonly ShownRendition[] = ['original', 'cdn-450'];
 
-/** The ModActivity `activity` for one shown image. ModActivity has no details column, so the act and
- *  the rendition ride in the string. */
+/** The ModActivity `activity` for one shown image: the act and the rendition ride in the string, as
+ *  every held-media view row has since before ModActivity had `details`. */
 export const shownActivity = (action: ShownAction, rendition: ShownRendition) =>
   `reportMedia:${action}:${rendition}` as const;
 

@@ -405,7 +405,15 @@ export async function getSongDetails(
     song.lyricsId != null ? lyricsCheck(imageId, canOpenHolds) : null,
     tab === 'disputes' ? songDisputeTally(song.userId, user) : null,
     tab === 'disputes'
-      ? songRatingSource(imageId, { locked: song.nsfwLevelLocked, scannedAt: song.scannedAt })
+      ? songRatingSource(imageId, {
+          locked: song.nsfwLevelLocked,
+          scannedAt: song.scannedAt,
+        }).catch((error) => {
+          // The card is optional: a failed read (e.g. ModActivity.details not yet migrated)
+          // hides it rather than blanking the details pane.
+          logAxiomError(error, { name: 'audio-review-rating-source' });
+          return null;
+        })
       : null,
     tab === 'disputes' || tab === 'reported' ? songActivity(imageId) : null,
   ]);
