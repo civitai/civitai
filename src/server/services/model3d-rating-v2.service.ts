@@ -29,7 +29,6 @@ export const MODEL3D_RATING_V2_GLOBAL_LIMIT = {
   max: 20_000,
   windowSeconds: 24 * 60 * 60,
 };
-const WAIT_SECONDS = 20;
 /** Cap on preview angles sent to the rater in one call. */
 export const MAX_ANGLES = 4;
 /** How long a mature v2 verdict holds the gate for that workflow without asking again. */
@@ -121,7 +120,6 @@ export async function rateModel3DByV2(
       matureLevel,
       metadata: { kind: 'model3d-post-rating', userId: user.id, workflowId },
       tags: ['civitai', 'model3d', 'post-rating'],
-      waitSeconds: WAIT_SECONDS,
     })
     .catch(() => null);
   if (!results || !anglesMature(results.map((r) => r.mature))) return 'clear';

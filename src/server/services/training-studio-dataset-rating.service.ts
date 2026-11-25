@@ -15,9 +15,6 @@ export const STUDIO_DATASET_RATING_GLOBAL_LIMIT = {
   max: 50_000,
   windowSeconds: 24 * 60 * 60,
 };
-/** Under the Studio's 30s rating deadline; a step still running then answers no output. */
-const WAIT_SECONDS = 20;
-
 export async function rateStudioDatasetImages({
   userId,
   matureLevel,
@@ -34,7 +31,6 @@ export async function rateStudioDatasetImages({
     matureLevel,
     metadata: { kind: 'studio-dataset-rating', userId },
     tags: ['civitai', 'training-studio', 'dataset-rating'],
-    waitSeconds: WAIT_SECONDS,
   });
   return { results };
 }

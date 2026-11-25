@@ -14,8 +14,7 @@ const items = [
   { key: 'a', mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/A-0.png' },
   { key: 'b', mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/B-0.png' },
 ];
-const rate = () =>
-  rateImagesV2({ items, matureLevel: 2, metadata: { kind: 'test' }, tags: [], waitSeconds: 1 });
+const rate = () => rateImagesV2({ items, matureLevel: 2, metadata: { kind: 'test' }, tags: [] });
 
 describe('rateImagesV2', () => {
   beforeEach(() => orch.submitWorkflow.mockReset());
@@ -66,7 +65,7 @@ describe('rateImagesV2 wire shape', () => {
     orch.submitWorkflow.mockResolvedValue({ data: { steps: [] } });
     await rate();
     const call = orch.submitWorkflow.mock.calls[0][0];
-    expect(call.query).toEqual({ wait: 1 });
+    expect(call.query).toEqual({ wait: 20 });
     expect(call.body.currencies).toEqual([]);
     expect(call.body.steps).toEqual([
       expect.objectContaining({
