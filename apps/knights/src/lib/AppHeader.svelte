@@ -28,6 +28,7 @@
     goldPerBuzz,
     ladder,
     badges,
+    inquisitor = false,
   }: {
     player: PlayerBadge | null;
     /** Keys this player's sound setting in the browser. */
@@ -44,6 +45,7 @@
     ladder: LadderRow[];
     /** Rank badge image addresses by rank; a rank without one shows the crest. */
     badges: { small: Record<string, string> };
+    inquisitor?: boolean;
   } = $props();
 
   let open = $state(false);
@@ -106,14 +108,18 @@
     <span class="wordmark">Knights</span>
   </a>
 
-  <PrimaryNav />
+  <PrimaryNav {inquisitor} />
 
-  {#if status}
+  {#if inquisitor}
+    <span class="inquisitor-pill"><Icon name="scale" size={16} />Inquisitor</span>
+  {:else if status}
     <HeaderStats {status} {goldPerBuzz} {shopOpen} {ladder} />
   {/if}
 
   {#if player}
-    <RecapButton unseen={recapUnseen} />
+    {#if !inquisitor}
+      <RecapButton unseen={recapUnseen} />
+    {/if}
     <div class="account" bind:this={wrapper} {onfocusout}>
       <button
         type="button"
@@ -126,7 +132,9 @@
       >
         <span class="portrait">
           <Avatar src={player.avatarUrl} name={player.username} size={32} />
-          {#if status}
+          {#if inquisitor}
+            <span class="rank-badge"><RankBadge rank="Inquisitor" size={16} /></span>
+          {:else if status}
             <span class="rank-badge"><RankBadge rank={status.rank} src={badges.small[status.rank]} size={16} /></span>
           {/if}
         </span>
@@ -253,6 +261,23 @@
     display: inline-flex;
     width: 36px;
     height: 34px;
+  }
+  .inquisitor-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 999px;
+    background: var(--io-bg);
+    color: var(--io-parchment);
+    font: 600 13px/1.2 var(--io-font-ui);
+    white-space: nowrap;
+  }
+  .inquisitor-pill :global(svg) {
+    color: var(--io-gold);
   }
   .rank-badge {
     position: absolute;
