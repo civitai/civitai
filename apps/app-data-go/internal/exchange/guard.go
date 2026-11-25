@@ -88,7 +88,10 @@ const refusalMemory = 2 * time.Minute
 // the same bound) a refusal is not remembered (the hub is asked again). At MaxThrottledAddresses a new
 // address takes the place of the address charged least recently: never admitted untracked, which would
 // turn the throttle off for every address once one flood filled the table. The address dropped is the
-// one whose budget has refilled the longest, so it loses at most a partial refill.
+// one charged least recently (a throttled attempt counts), so an address still flooding is never the one
+// dropped. A dropped address that returns starts again with a full burst, so a flood cycling through
+// more prefixes than the table holds is bounded by its own rate, not by the burst; the hub's
+// per-(client, address) miss limit is the backstop there.
 const (
 	MaxKnownTokens        = 50_000
 	MaxThrottledAddresses = 50_000
