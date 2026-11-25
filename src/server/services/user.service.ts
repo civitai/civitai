@@ -1879,12 +1879,8 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
 /** `softDeleteUser`'s media block: every image of the user, as CSAM. */
 export async function blockUserImagesAsCsam(userId: number) {
   await dbWrite.image.updateMany({ where: { userId }, data: CSAM_IMAGE_BLOCK });
-  // A CSAM block outranks an account-deletion grace block. If this account had already
-  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
-  // later restore would un-block CSAM-blocked content.
-  //
   // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
-  // user owns, and the clear's scope is the block's.
+  // user owns, and the after-block steps (the marker clear first) take the block's scope.
   await afterCsamImageBlock({ userId });
 }
 

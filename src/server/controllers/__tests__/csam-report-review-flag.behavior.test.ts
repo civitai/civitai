@@ -256,7 +256,7 @@ describe('fileCsamReport', () => {
 
   it('keeps the flag when the report updates an open report past the release cutoff', async () => {
     // As `createCsamReport` does for an unsent report: the row is rewritten, its createdAt is not.
-    createCsamReport.mockImplementationOnce(async () => undefined);
+    createCsamReport.mockImplementationOnce(async () => ({ id: 990000501 }));
 
     await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
 
@@ -321,6 +321,9 @@ describe('fileCsamReport', () => {
     });
 
     expect(createSupplementalCsamReport).toHaveBeenCalledTimes(1);
+    expect(createSupplementalCsamReport).toHaveBeenCalledWith(
+      expect.objectContaining({ blockListedImages: true })
+    );
     expect(createCsamReport).not.toHaveBeenCalled();
     expect(softDeleteUser).not.toHaveBeenCalled();
     expect(await flag(OWNED)).toBeNull();
@@ -358,6 +361,8 @@ describe('fileCsamReport', () => {
     ).rows[0].blockedFor;
 
   // Search drops a listed image through its own row, so every path the filing takes must block it.
+  // The services' own block is tested on PGlite in csam-report-send-append-only and
+  // csam-supplemental-filing; here, that the controller asks for it on every path.
   it.each([
     ['an image of another account', OWNER, OTHER_OWNERS_SCANNED],
     ['an internal filing that removes no account', -1, UNBLOCKED_HELD],
@@ -367,6 +372,9 @@ describe('fileCsamReport', () => {
     if (userId !== -1) softDeleteUser.mockImplementationOnce(async () => undefined);
     await report(userId, [imageId]);
 
+    expect(createCsamReport).toHaveBeenCalledWith(
+      expect.objectContaining({ imageIds: [imageId], blockListedImages: true })
+    );
     expect(await blockedFor(imageId)).toBe('CSAM');
   });
 
@@ -412,8 +420,10 @@ describe('fileCsamReport', () => {
   });
 
   it('passes a refusal through unchanged, blocking nothing', async () => {
-    const { throwBadRequestError } = await import('~/server/utils/errorHandling');
-    createCsamReport.mockImplementationOnce(async () => throwBadRequestError('refused'));
+    const { TRPCError } = await import('@trpc/server');
+    createCsamReport.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'refused' })
+    );
 
     await expect(report(OWNER, [OTHER_OWNERS_SCANNED])).rejects.toMatchObject({
       code: 'BAD_REQUEST',

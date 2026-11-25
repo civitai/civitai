@@ -522,57 +522,94 @@ describe('the send claim under the append-only trigger', () => {
   });
 });
 
-describe('a filing whose report insert fails', () => {
+describe('the block a filing makes in its own transaction', () => {
   type ImageBlock = {
     where: { id: { in: number[] } };
     data: { ingestion: string; nsfwLevel: number; blockedFor: string };
   };
-  const blockOn =
-    (client: Pick<PGlite, 'query'>) =>
-    async ({ where, data }: ImageBlock) => {
-      const result = await client.query(
-        `UPDATE "Image" SET ingestion = $1, "nsfwLevel" = $2, "blockedFor" = $3 WHERE id = ANY($4)`,
-        [data.ingestion, data.nsfwLevel, data.blockedFor, where.id.in]
-      );
-      return { count: result.affectedRows ?? 0 };
-    };
-
-  it('rolls back the block of the images it lists', async () => {
-    const imageId = 990000301;
-    await db.pg.query(`INSERT INTO "Image" (id, ingestion) VALUES ($1, 'Scanned')`, [imageId]);
-    dbMock.dbWrite.image.updateMany.mockReset();
+  /** Runs the next transaction on PGlite; returns the image ids each block inside it listed. */
+  const nextTransactionOnPglite = ({ insertFails = false } = {}) => {
+    const blocks: number[][] = [];
     dbMock.dbWrite.$transaction.mockImplementationOnce((async (
       fn: (tx: unknown) => Promise<unknown>
     ) =>
       db.pg.transaction((t) =>
         fn({
-          image: { updateMany: blockOn(t) },
+          image: {
+            updateMany: async ({ where, data }: ImageBlock) => {
+              blocks.push(where.id.in);
+              const result = await t.query(
+                `UPDATE "Image" SET ingestion = $1, "nsfwLevel" = $2, "blockedFor" = $3 WHERE id = ANY($4)`,
+                [data.ingestion, data.nsfwLevel, data.blockedFor, where.id.in]
+              );
+              return { count: result.affectedRows ?? 0 };
+            },
+          },
           csamReport: {
             findMany: async () => [],
-            create: async () => {
-              throw new Error('report insert failed');
+            create: async ({ data }: { data: Record<string, unknown> }) => {
+              if (insertFails) throw new Error('report insert failed');
+              const { rows } = await t.query(
+                `INSERT INTO "CsamReport" ("userId", "reportedById", "details", "images", "type")
+                 VALUES ($1, $2, $3::jsonb, $4::jsonb, $5) RETURNING *`,
+                [
+                  data.userId,
+                  data.reportedById,
+                  JSON.stringify(data.details ?? {}),
+                  JSON.stringify(data.images),
+                  data.type,
+                ]
+              );
+              return rows[0];
             },
           },
         })
       )) as never);
+    return blocks;
+  };
+  const insertImage = (id: number) =>
+    db.pg.query(`INSERT INTO "Image" (id, ingestion) VALUES ($1, 'Scanned')`, [id]);
+  const imageRow = async (id: number) =>
+    (await db.pg.query(`SELECT ingestion, "blockedFor" FROM "Image" WHERE id = $1`, [id])).rows[0];
+  const fileListing = (userId: number, imageId: number) =>
+    createCsamReport({
+      userId,
+      reportedById: 10,
+      type: 'Image',
+      imageIds: [imageId],
+      writeBlocklist: false,
+      blockListedImages: true,
+    });
 
-    await expect(
-      createCsamReport({
-        userId: 990000302,
-        reportedById: 10,
-        type: 'Image',
-        imageIds: [imageId],
-        writeBlocklist: false,
-        blockListedImages: true,
-      })
-    ).rejects.toThrow('report insert failed');
+  beforeEach(() => dbMock.dbWrite.image.updateMany.mockReset());
 
-    const { rows } = await db.pg.query(
-      `SELECT ingestion, "blockedFor" FROM "Image" WHERE id = $1`,
-      [imageId]
-    );
-    expect(rows).toEqual([{ ingestion: 'Scanned', blockedFor: null }]);
-    // A block outside the transaction would commit on its own and survive the failed insert.
+  it.each([
+    ['an account, listing an image another account owns', 990000302, 990000311],
+    ['no account (an internal filing)', -1, 990000312],
+  ] as const)(
+    'blocks the listed image as CSAM when it files for %s',
+    async (_, userId, imageId) => {
+      await insertImage(imageId);
+      const blocks = nextTransactionOnPglite();
+
+      await fileListing(userId, imageId);
+
+      expect(blocks).toEqual([[imageId]]);
+      expect(await imageRow(imageId)).toEqual({ ingestion: 'Blocked', blockedFor: 'CSAM' });
+      // A block outside the transaction would commit on its own and survive a failed insert.
+      expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
+    }
+  );
+
+  it('blocks the listed image and then rolls the block back when the report insert fails', async () => {
+    const imageId = 990000301;
+    await insertImage(imageId);
+    const blocks = nextTransactionOnPglite({ insertFails: true });
+
+    await expect(fileListing(990000302, imageId)).rejects.toThrow('report insert failed');
+
+    expect(blocks).toEqual([[imageId]]);
+    expect(await imageRow(imageId)).toEqual({ ingestion: 'Scanned', blockedFor: null });
     expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
   });
 });
