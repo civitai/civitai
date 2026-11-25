@@ -316,9 +316,9 @@ describe('a stale index cannot surface a hidden image', () => {
 });
 
 describe('the CSAM-flag rule', () => {
-  const HELD_IMAGE = 202;
-  const HELD_OWNER_IMAGE = 204;
-  const HELD = new Set([HELD_IMAGE, HELD_OWNER_IMAGE]);
+  const FLAGGED_IMAGE = 202;
+  const FLAGGED_IMAGE_2 = 204;
+  const FLAGGED = new Set([FLAGGED_IMAGE, FLAGGED_IMAGE_2]);
 
   /** Postgres answering the flag query: the flagged ids among those it was asked about. */
   function heldQuery() {
@@ -331,7 +331,7 @@ describe('the CSAM-flag rule', () => {
       // The statement as Postgres would get it, with the rule spliced in and the ids as $1.
       const statement = strings[0] + '$1' + strings[1] + rule.sql + strings[2];
       asked.push({ ids, rule: rule.sql, statement: statement.replace(/\s+/g, ' ') });
-      return ids.filter((id) => HELD.has(id)).map((id) => ({ id }));
+      return ids.filter((id) => FLAGGED.has(id)).map((id) => ({ id }));
     }) as never);
     return asked;
   }
@@ -339,8 +339,8 @@ describe('the CSAM-flag rule', () => {
   it('drops CSAM-flagged images from the results, for every viewer, moderators included', async () => {
     for (const user of [VIEWER, { id: 501, isModerator: true } as SessionUser]) {
       const asked = heldQuery();
-      h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE, 203, HELD_OWNER_IMAGE]));
-      const { source } = rankedSource([201, HELD_IMAGE, 203, HELD_OWNER_IMAGE]);
+      h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE, 203, FLAGGED_IMAGE_2]));
+      const { source } = rankedSource([201, FLAGGED_IMAGE, 203, FLAGGED_IMAGE_2]);
 
       const { items } = await searchSemanticImages({
         ...SESSION_VIEWS,
@@ -356,8 +356,8 @@ describe('the CSAM-flag rule', () => {
 
   it('asks about the hydrated ids, with the rule on the same "Image" alias', async () => {
     const asked = heldQuery();
-    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE]));
-    const { source } = rankedSource([201, HELD_IMAGE]);
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE]));
+    const { source } = rankedSource([201, FLAGGED_IMAGE]);
 
     await searchSemanticImages({
       ...SESSION_VIEWS,
@@ -368,7 +368,7 @@ describe('the CSAM-flag rule', () => {
 
     const { ids, statement } = asked.at(-1)!;
     // The last call is the page's hydration; the anchor's came first.
-    expect([...ids].sort()).toEqual([201, HELD_IMAGE]);
+    expect([...ids].sort()).toEqual([201, FLAGGED_IMAGE]);
     expect(statement).toMatch(
       /^ ?SELECT i\.id FROM "Image" i WHERE i\.id = ANY\(\$1::int\[\]\) AND /
     );
@@ -377,8 +377,8 @@ describe('the CSAM-flag rule', () => {
 
   it('fills the page from further candidates when flagged images are dropped', async () => {
     heldQuery();
-    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE, HELD_OWNER_IMAGE, 205, 206]));
-    const { source } = rankedSource([HELD_IMAGE, 201, HELD_OWNER_IMAGE, 205, 206]);
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE, FLAGGED_IMAGE_2, 205, 206]));
+    const { source } = rankedSource([FLAGGED_IMAGE, 201, FLAGGED_IMAGE_2, 205, 206]);
 
     const { items } = await searchSemanticImages({
       ...SESSION_VIEWS,
@@ -408,13 +408,13 @@ describe('the CSAM-flag rule', () => {
   it('answers "more like this" from a flagged image as not found', async () => {
     heldQuery();
     // Visible to the feed path, so only the flag rule can refuse it.
-    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE]));
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE]));
     const { source, calls } = rankedSource([201]);
 
     await expect(
       searchSemanticImages({
         ...SESSION_VIEWS,
-        input: input({ imageId: HELD_IMAGE }),
+        input: input({ imageId: FLAGGED_IMAGE }),
         user: VIEWER,
         candidateSource: source,
       })

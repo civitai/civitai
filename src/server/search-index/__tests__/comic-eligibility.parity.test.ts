@@ -188,8 +188,17 @@ const spec: ParitySpec = {
       `INSERT INTO "Image" (id, ingestion, "tosViolation", minor) VALUES (3901, 'Scanned', false, true)`,
       `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (39, 2, 3901, 'u', 'Ready')`
     ),
+    // A panel image listed on a report, anywhere in the comic, even in an unpublished chapter.
+    withSql(
+      comic(40, 'panelListed', false),
+      `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (40, 2, 'Draft')`,
+      `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (4001, 'Scanned', false, 1)`,
+      `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (40, 2, 4001, 'u', 'Pending')`,
+      `INSERT INTO "CsamReport" (images) VALUES ('[4001]')`
+    ),
   ],
   clauses: [
+    'panelListed',
     'coverListed',
     'status',
     'tosViolation',

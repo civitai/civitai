@@ -191,7 +191,7 @@ describe('3D model removal', () => {
     }
   }, 60_000);
 
-  // Holds hide nothing: only a delete or block removes content.
+  // A held owner does not hide the row.
   test('a reported owner or a reported thumbnail keeps the model in search', async () => {
     const pg = await pglite();
     try {
