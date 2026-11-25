@@ -46,6 +46,7 @@ SQL on PGlite.
 - `enqueueItem`: an item's `minRank` defaults to its question's, an override wins; `votesNeeded` can only lower the votes a stage needs (`STAGE_RULES`), never raise them. `minRank` must be a stage rank (Knight, Templar, Paladin); anything else throws.
 - `getFeed`: the highest stage the player may judge with an unjudged open item, from a per-stage window (`feed.ts`): one read of the items escalated in the last day (none at the entry stage),
   then `bucketWindowSize` items per level bucket, PG/PG-13/R/X/XXX by prediction else image level (`bucketLevelSql` is `itemBucket` in SQL; an item whose level has no bucket is served only once escalated).
+  Those come from a scan of each priority in turn, each with its own row budget (`STAGE_SCAN_ROW_BUDGET`, at most `STAGE_SCAN_MAX_PRIORITIES`), so a large priority-1 (SFW) backlog cannot hide priority-2 (NSFW) items.
   Each pick draws a bucket with equal probability among those with candidates, avoiding the player's last judged buckets when it can; within the bucket, escalated items first, then priority, in a
   per-player hash order, and about one pick in ten takes the bucket's oldest. An image the player judged for the question is never
   served again, at any stage or earlier item (served by the `("playerId","imageId")` index). `canVote` (`ranks.ts`, shared with `castVote`) says which ranks judge a stage; Inquisitors and Acolytes get no feed. It never selects the
