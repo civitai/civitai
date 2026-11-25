@@ -76,7 +76,7 @@
 
       <h1 class="rank-name">Inquisitor</h1>
       <p class="xp">You review the Order's settled ratings</p>
-      <p class="line">Two moderators who agree set the image's level and add a skill check</p>
+      <p class="line">Two moderators who agree set the image's level.</p>
 
       <a class="btn primary begin" href="/play" data-sveltekit-preload-data="off">Begin reviewing</a>
 
