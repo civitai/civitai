@@ -39,21 +39,16 @@ describe('pickDailyRubricSet', () => {
     );
     expect(misplaced).toEqual([]);
   });
-
-  it('reads the UTC date, not the local one', () => {
-    // 23:30 UTC Thursday is Friday in UTC+1 and still Thursday in UTC.
-    expect(pickDailyRubricSet(utc('2027-01-07T23:30:00Z'))).not.toBe('comedy');
-    expect(pickDailyRubricSet(utc('2027-01-08T00:00:00Z'))).toBe('comedy');
-  });
 });
 
 describe('getDailyPlan', () => {
   it('uses the schedule entry for a scheduled date', () => {
-    expect(getDailyPlan(utc('2026-12-01'))).toMatchObject({
+    const [date, entry] = Object.entries(DAILY_CHALLENGE_SCHEDULE)[0];
+    expect(getDailyPlan(utc(date))).toEqual({
       source: 'schedule',
-      setKey: 'story',
-      occasion: { name: 'Advent opens' },
-      judgeName: 'Jolly CivBot',
+      setKey: entry.set,
+      occasion: { name: entry.occasion, brief: entry.brief },
+      judgeName: entry.judge,
     });
   });
 

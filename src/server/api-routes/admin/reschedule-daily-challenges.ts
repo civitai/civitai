@@ -1,23 +1,31 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { dbRead, dbWrite } from '~/server/db/client';
 import {
   eligibleRows,
-  guardSql,
   hashOf,
   planIsCurrent,
   preImage,
+  writeReschedule,
   type RescheduleRow as Row,
 } from '~/server/games/daily-challenge/daily-reschedule';
 import {
   getDailyPlanFlags,
   resolveDailyPlan,
+  type DailyPlanFlags,
   type ResolvedDailyPlan,
 } from '~/server/games/daily-challenge/daily-plan';
-import { getChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import {
+  getChallengeConfig,
+  type ChallengeConfig,
+  type JudgingConfig,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
 import { generateArticle } from '~/server/games/daily-challenge/generative-content';
-import { getShowcaseImagesOfModel } from '~/server/jobs/daily-challenge-processing';
+import {
+  getChallengeResource,
+  getShowcaseImagesOfModel,
+} from '~/server/jobs/daily-challenge-processing';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
+import { resolveJudgingEngineForJudge } from '~/server/services/challenge-judge.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { DEFAULT_CATEGORY_ROWS } from '~/shared/constants/challenge.constants';
@@ -25,7 +33,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { booleanString, numericString } from '~/utils/zod-helpers';
 
 /**
- * Re-plan already-queued System dailies onto daily-schedule.ts (docs/features/challenge-platform.md §9).
+ * Re-plan already-queued System dailies onto daily-schedule.ts (docs/features/challenge-platform.md §3, Daily plan).
  *
  * GET is the dry run: it generates each row's proposal and returns it with the row's current values
  * and a hash of them. Keep that response; it is the only copy of the old rows. POST applies exactly
@@ -80,49 +88,47 @@ const proposalSchema = z.object({
 const applySchema = z.object({ proposals: z.array(proposalSchema).min(1).max(10) });
 type Proposal = z.infer<typeof proposalSchema>;
 
-async function planForRow(row: Row) {
+type Ctx = { config: ChallengeConfig; defaultJudge: JudgingConfig; flags: DailyPlanFlags };
+
+async function loadCtx(): Promise<Ctx> {
   const config = await getChallengeConfig();
   if (!config.defaultJudge) throw new Error('defaultJudge not configured');
-  const plan = await resolveDailyPlan(row.startsAt, {
-    defaultJudge: config.defaultJudge,
-    flags: await getDailyPlanFlags(),
-  });
-  return { config, plan };
+  return { config, defaultJudge: config.defaultJudge, flags: await getDailyPlanFlags() };
 }
+
+const planForRow = (row: Row, ctx: Ctx) =>
+  resolveDailyPlan(row.startsAt, { defaultJudge: ctx.defaultJudge, flags: ctx.flags });
 
 async function propose(
   row: Row,
   mode: Proposal['mode'],
   rubricOnly: boolean,
-  planned?: { config: Awaited<ReturnType<typeof getChallengeConfig>>; plan: ResolvedDailyPlan }
+  ctx: Ctx,
+  plan?: ResolvedDailyPlan
 ): Promise<Proposal> {
   const base = { challengeId: row.id, preImageHash: hashOf(preImage(row)), mode, rubricOnly };
   if (mode === 'defaults') return { ...base, setKey: null };
 
-  const { config, plan } = planned ?? (await planForRow(row));
-  const setKey = plan.record?.setKey ?? null;
+  const resolved = plan ?? (await planForRow(row, ctx));
+  const setKey = resolved.record?.setKey ?? null;
   if (rubricOnly) return { ...base, setKey };
 
   const meta = parseChallengeMetadata(row.metadata);
   if (!meta.resourceModelId) throw new Error('no resourceModelId in metadata');
-  const [resource] = await dbRead.$queryRaw<{ modelId: number; title: string; creator: string }[]>`
-    SELECT m.id as "modelId", m.name as title, u.username as creator
-    FROM "Model" m JOIN "User" u ON u.id = m."userId"
-    WHERE m.id = ${meta.resourceModelId}
-  `;
+  const resource = await getChallengeResource(meta.resourceModelId);
   if (!resource) throw new Error(`resource model ${meta.resourceModelId} not found`);
   const [image] = await getShowcaseImagesOfModel(resource.modelId, 1);
   const article = await generateArticle({
     resource,
     resourceConcept: meta.resourceConcept,
-    occasion: plan.occasion,
+    occasion: resolved.occasion,
     image,
     challengeDate: dayjs(row.startsAt).add(1, 'day').toDate(),
-    prizes: config.prizes,
-    entryPrizeRequirement: config.entryPrizeRequirement,
-    entryPrize: config.entryPrize,
+    prizes: ctx.config.prizes,
+    entryPrizeRequirement: ctx.config.entryPrizeRequirement,
+    entryPrize: ctx.config.entryPrize,
     allowedNsfwLevel: 1,
-    config: plan.judgingConfig,
+    config: resolved.judgingConfig,
   });
   return {
     ...base,
@@ -137,21 +143,16 @@ async function propose(
   };
 }
 
-async function apply(proposal: Proposal) {
+async function apply(proposal: Proposal, ctx: Ctx) {
   const [row] = await eligibleRows({ ids: [proposal.challengeId] }, proposal.rubricOnly);
   if (!row) return 'not eligible (started, visible, entered or not a Scheduled System daily)';
-  if (hashOf(preImage(row)) !== proposal.preImageHash) return 'row changed since the dry run';
-  if (!proposal.rubricOnly && !proposal.article) return 'full reschedule needs an article';
 
-  const config = await getChallengeConfig();
-  if (!config.defaultJudge) return 'defaultJudge not configured';
-
-  let judgeId = config.defaultJudge.judgeId;
+  let judgeId = ctx.defaultJudge.judgeId;
   let judgingCategories: unknown = DEFAULT_CATEGORY_ROWS;
-  let dailyPlan: unknown = null;
+  let dailyPlan: Record<string, unknown> | null = null;
   if (proposal.mode === 'schedule') {
     // Rubric and judge are re-derived here, never taken from the request body.
-    const { plan } = await planForRow(row);
+    const plan = await planForRow(row, ctx);
     if ((plan.record?.setKey ?? null) !== proposal.setKey)
       return 'schedule changed since the dry run';
     judgeId = plan.judgeId;
@@ -159,34 +160,28 @@ async function apply(proposal: Proposal) {
     dailyPlan = plan.record ?? null;
   }
 
-  const article = proposal.rubricOnly ? undefined : proposal.article;
-  const metadataPatch = {
-    ...(article ? { themeElements: article.themeElements } : {}),
-    ...(dailyPlan ? { dailyPlan } : {}),
-  };
-  const updated = await dbWrite.$executeRaw`
-    UPDATE "Challenge" c
-    SET title = COALESCE(${article?.title ?? null}, c.title),
-        description = COALESCE(${article?.description ?? null}, c.description),
-        theme = COALESCE(${article?.theme ?? null}, c.theme),
-        invitation = COALESCE(${article?.invitation ?? null}, c.invitation),
-        "judgeId" = ${judgeId},
-        "judgingCategories" = ${JSON.stringify(judgingCategories)}::jsonb,
-        metadata = ((CASE WHEN jsonb_typeof(c.metadata) = 'object' THEN c.metadata ELSE '{}'::jsonb END)
-                    - ${dailyPlan ? '' : 'dailyPlan'}) || ${JSON.stringify(metadataPatch)}::jsonb
-    WHERE c.id = ${row.id} AND ${guardSql(proposal.rubricOnly)}
-  `;
-  return updated === 1 ? 'updated' : 'guard refused the write';
+  return writeReschedule({
+    challengeId: row.id,
+    preImageHash: proposal.preImageHash,
+    rubricOnly: proposal.rubricOnly,
+    article: proposal.article,
+    judgeId,
+    // Same rule as creation: a challenge runs on its judge's engine, copied at write time.
+    judgingEngine: await resolveJudgingEngineForJudge(judgeId),
+    judgingCategories,
+    dailyPlan,
+  });
 }
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method === 'POST') {
     const parsed = applySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: z.treeifyError(parsed.error) });
+    const ctx = await loadCtx();
     const results: { challengeId: number; result: string }[] = [];
     for (const proposal of parsed.data.proposals) {
       try {
-        results.push({ challengeId: proposal.challengeId, result: await apply(proposal) });
+        results.push({ challengeId: proposal.challengeId, result: await apply(proposal, ctx) });
       } catch (e) {
         results.push({
           challengeId: proposal.challengeId,
@@ -201,23 +196,21 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (!parsed.success) return res.status(400).json({ error: z.treeifyError(parsed.error) });
   const { from, to, mode, rubricOnly, limit } = parsed.data;
 
-  if (mode === 'schedule') {
-    const flags = await getDailyPlanFlags();
-    if (!flags.schedule && !flags.rotation)
-      return res.status(409).json({ error: 'both daily-challenge plan flags are off' });
-  }
+  const ctx = await loadCtx();
+  if (mode === 'schedule' && !ctx.flags.schedule && !ctx.flags.rotation)
+    return res.status(409).json({ error: 'both daily-challenge plan flags are off' });
 
   const eligible = await eligibleRows({ from, to }, rubricOnly);
   // A row whose stored plan already matches what the date resolves to now drops out, so the next
   // dry run is the next page; one planned while its judge was missing does not match, so it stays.
-  const candidates: { row: Row; planned?: Awaited<ReturnType<typeof planForRow>> }[] = [];
+  const candidates: { row: Row; plan?: ResolvedDailyPlan }[] = [];
   for (const row of eligible) {
     if (mode === 'defaults') {
       candidates.push({ row });
       continue;
     }
-    const planned = await planForRow(row);
-    if (!planIsCurrent(row, planned.plan.record)) candidates.push({ row, planned });
+    const plan = await planForRow(row, ctx);
+    if (!planIsCurrent(row, plan.record)) candidates.push({ row, plan });
   }
   const page = candidates.slice(0, limit);
   const results: {
@@ -228,13 +221,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     error?: string;
   }[] = [];
   await limitConcurrency(
-    page.map(({ row, planned }) => async () => {
+    page.map(({ row, plan }) => async () => {
       try {
         results.push({
           challengeId: row.id,
           startsAt: row.startsAt,
           before: preImage(row),
-          proposal: await propose(row, mode, rubricOnly, planned),
+          proposal: await propose(row, mode, rubricOnly, ctx, plan),
         });
       } catch (e) {
         results.push({

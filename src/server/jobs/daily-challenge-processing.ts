@@ -85,10 +85,8 @@ import {
   FIXED_JUDGING_CATEGORIES,
   normalizeJudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge-scoring';
-import {
-  getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { usesNsfwRubrics } from '~/server/services/challenge-category.service';
 import {
   DEFAULT_REVIEW_MODEL,
   REVIEW_FALLBACK_MODEL,
@@ -257,6 +255,24 @@ async function preComputeContext(): Promise<ChallengeCreationContext> {
   };
 }
 
+/** The featured model as the content steps describe it: name, creator, description. */
+export async function getChallengeResource(
+  modelId: number
+): Promise<SelectedResource | undefined> {
+  const [resource] = await dbRead.$queryRaw<SelectedResource[]>`
+    SELECT
+      m.id as "modelId",
+      u."username" as creator,
+      m.name as title,
+      m.description
+    FROM "Model" m
+    JOIN "User" u ON u.id = m."userId"
+    WHERE m.id = ${modelId}
+    LIMIT 1
+  `;
+  return resource;
+}
+
 // Select a resource for a specific date, respecting cooldowns + batch exclusions
 // ----------------------------------------------
 async function selectResourceForDate(
@@ -303,17 +319,7 @@ async function selectResourceForDate(
     if (!resourceIds.length) continue;
 
     const randomResourceId = getRandom(resourceIds);
-    [resource] = await dbRead.$queryRaw<SelectedResource[]>`
-      SELECT
-        m.id as "modelId",
-        u."username" as creator,
-        m.name as title,
-        m.description
-      FROM "Model" m
-      JOIN "User" u ON u.id = m."userId"
-      WHERE m.id = ${randomResourceId.id}
-      LIMIT 1
-    `;
+    resource = await getChallengeResource(randomResourceId.id);
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
@@ -1131,7 +1137,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
             name: c.label,
             criteria: c.criteria,
           })),
-          nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+          nsfw: usesNsfwRubrics(allowedNsfwLevel),
           model,
         });
       const review = await reviewWithShadow({

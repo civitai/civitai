@@ -1,4 +1,3 @@
-import type { JudgingEngineKey } from '~/server/games/daily-challenge/challenge-judging-engine';
 import type { DailyRubricSetKey } from '~/shared/constants/challenge.constants';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -14,7 +13,6 @@ export type DailyScheduleEntry = {
   brief: string;
   set: DailyRubricSetKey;
   judge: string;
-  engine?: JudgingEngineKey;
 };
 
 export type DailyPlan = {
@@ -22,7 +20,6 @@ export type DailyPlan = {
   occasion?: { name: string; brief: string };
   /** null = the configured default judge. */
   judgeName: string | null;
-  engine?: JudgingEngineKey;
   source: 'schedule' | 'rotation';
 };
 
@@ -245,15 +242,17 @@ export function pickDailyRubricSet(date: Date): DailyRubricSetKey {
   return ROTATION_SETS[dayNumber % ROTATION_SETS.length];
 }
 
+export function getRotationPlan(date: Date): DailyPlan {
+  return { setKey: pickDailyRubricSet(date), judgeName: null, source: 'rotation' };
+}
+
 export function getDailyPlan(date: Date): DailyPlan {
   const entry = DAILY_CHALLENGE_SCHEDULE[dateKey(date)];
-  if (entry)
-    return {
-      setKey: entry.set,
-      occasion: { name: entry.occasion, brief: entry.brief },
-      judgeName: entry.judge,
-      engine: entry.engine,
-      source: 'schedule',
-    };
-  return { setKey: pickDailyRubricSet(date), judgeName: null, source: 'rotation' };
+  if (!entry) return getRotationPlan(date);
+  return {
+    setKey: entry.set,
+    occasion: { name: entry.occasion, brief: entry.brief },
+    judgeName: entry.judge,
+    source: 'schedule',
+  };
 }

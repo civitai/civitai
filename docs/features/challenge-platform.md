@@ -101,7 +101,8 @@ generated and judged with, resolved at creation by `resolveDailyPlan`:
   panel, and recorded in `metadata.dailyPlan` (`setKey`, `source`, `judgeName`, `occasion`).
 - **Brakes:** Flipt `daily-challenge-schedule` (calendar entries) and `daily-challenge-rubric-rotation`
   (unscheduled days), read once per creation batch. Both default-off: off, unknown or unreachable gives the fixed
-  rubric and default judge. They change dailies created after the flip, not rows already written.
+  rubric and default judge. The reschedule route reads them too; rows already written change only when
+  the route rewrites them.
 - **Already-queued rows:** `/api/admin/reschedule-daily-challenges` (webhook token) re-plans Scheduled System dailies
   that have not started, have no entries and are not yet visible. GET is a dry run that returns each proposal with
   the row's current values and their hash (keep the response: it is the only copy of the old rows); POST applies

@@ -73,8 +73,7 @@ export async function challengeJudgingEngineForCreate(
   return engine === DEFAULT_JUDGING_ENGINE ? {} : { judgingEngine: engine };
 }
 
-// Judges are referenced by NAME from code (daily-schedule.ts) because ids differ per environment.
-// Null when no active judge has the name; the caller falls back to the default judge.
+// Null when no active judge has the name.
 export async function findActiveJudgeIdByName(name: string): Promise<number | null> {
   const { dbRead } = await import('~/server/db/client');
   const judge = await dbRead.challengeJudge.findFirst({

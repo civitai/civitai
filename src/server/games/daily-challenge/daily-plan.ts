@@ -1,4 +1,4 @@
-import { getDailyPlan, pickDailyRubricSet } from '~/server/games/daily-challenge/daily-schedule';
+import { getDailyPlan, getRotationPlan } from '~/server/games/daily-challenge/daily-schedule';
 import type { DailyPlan } from '~/server/games/daily-challenge/daily-schedule';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
@@ -21,7 +21,6 @@ export type ResolvedDailyPlan = {
   /** Undefined = the fixed default rubric (createChallengeRecord's fallback). */
   judgingCategories?: ChallengeJudgingCategory[];
   occasion?: DailyOccasion;
-  /** Stored on Challenge.metadata.dailyPlan so a read-back can compare a row with its plan. */
   record?: {
     setKey: DailyPlan['setKey'];
     source: DailyPlan['source'];
@@ -43,8 +42,7 @@ export async function getDailyPlanFlags(): Promise<DailyPlanFlags> {
 function planFor(date: Date, flags: DailyPlanFlags): DailyPlan | null {
   const plan = getDailyPlan(date);
   if (plan.source === 'schedule' && flags.schedule) return plan;
-  if (!flags.rotation) return null;
-  return { setKey: pickDailyRubricSet(date), judgeName: null, source: 'rotation' };
+  return flags.rotation ? getRotationPlan(date) : null;
 }
 
 // A library read failing at cron time must not fail the day: the set's preset rows carry the same

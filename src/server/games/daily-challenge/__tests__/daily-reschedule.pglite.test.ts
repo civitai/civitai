@@ -3,7 +3,14 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
-import { eligibleRows, planIsCurrent } from '~/server/games/daily-challenge/daily-reschedule';
+import {
+  eligibleRows,
+  hashOf,
+  planIsCurrent,
+  preImage,
+  writeReschedule,
+  type RescheduleRow,
+} from '~/server/games/daily-challenge/daily-reschedule';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -16,7 +23,8 @@ beforeAll(async () => {
     CREATE TABLE "Challenge" (
       id int PRIMARY KEY, source text, status text, "startsAt" timestamp, "visibleAt" timestamp,
       "collectionId" int, title text, description text, theme text, invitation text,
-      "judgeId" int, "judgingCategories" jsonb, metadata jsonb
+      "judgeId" int, "judgingEngine" text DEFAULT 'legacy-absolute', "judgingCategories" jsonb,
+      metadata jsonb
     );
     CREATE TABLE "CollectionItem" (id int, "collectionId" int);
     INSERT INTO "Challenge" (id, source, status, "startsAt", "visibleAt", "collectionId", metadata) VALUES
@@ -33,14 +41,22 @@ beforeAll(async () => {
 });
 afterAll(() => db.close());
 
+const toSql = (strings: TemplateStringsArray, values: unknown[]) =>
+  Prisma.sql(strings, ...(values as never[]));
+
 beforeEach(() => {
-  vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation((async (
+  const query = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = toSql(strings, values);
+    return (await db.query(sql.text, sql.values as unknown[])).rows;
+  }) as never;
+  vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(query);
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(query);
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
-    const sql = Prisma.sql(strings, ...(values as never[]));
-    const { rows } = await db.query(sql.text, sql.values as unknown[]);
-    return rows;
+    const sql = toSql(strings, values);
+    return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
   }) as never);
 });
 
@@ -84,5 +100,64 @@ describe('planIsCurrent', () => {
     expect(planIsCurrent({ metadata: {} }, { setKey: 'story', judgeName: 'Jolly CivBot' })).toBe(
       false
     );
+  });
+});
+
+describe('writeReschedule', () => {
+  const article = {
+    title: 'New title',
+    description: '<p>New</p>',
+    theme: 'Snow globe',
+    invitation: 'Shake it',
+    themeElements: ['glass dome'],
+  };
+  const write = (challengeId: number, preImageHash: string) =>
+    writeReschedule({
+      challengeId,
+      preImageHash,
+      rubricOnly: false,
+      article,
+      judgeId: 9,
+      judgingEngine: 'legacy-absolute',
+      judgingCategories: [{ key: 'theme', weight: 100 }],
+      dailyPlan: { setKey: 'cute', source: 'schedule', judgeName: 'Jolly CivBot' },
+    });
+  const fetchRow = async (id: number) =>
+    (await db.query<RescheduleRow>(`SELECT * FROM "Challenge" WHERE id = $1`, [id])).rows[0];
+
+  it('updates an eligible row with the reviewed proposal', async () => {
+    const [row] = await eligibleRows({ ids: [1] }, false);
+
+    expect(await write(1, hashOf(preImage(row)))).toBe('updated');
+
+    const after = await fetchRow(1);
+    expect(after.theme).toBe('Snow globe');
+    expect(after.judgeId).toBe(9);
+    expect(after.metadata).toMatchObject({
+      themeElements: ['glass dome'],
+      dailyPlan: { setKey: 'cute' },
+    });
+  });
+
+  it('refuses a row that changed since the dry run', async () => {
+    const [row] = await eligibleRows({ ids: [7] }, false);
+    const hash = hashOf(preImage(row));
+    await db.query(`UPDATE "Challenge" SET title = 'edited by a mod' WHERE id = 7`);
+
+    expect(await write(7, hash)).toBe('row changed since the dry run');
+    expect((await fetchRow(7)).title).toBe('edited by a mod');
+  });
+
+  it.each([
+    [2, 'visible'],
+    [3, 'started'],
+    [4, 'entered'],
+    [5, 'Active'],
+    [6, 'Mod source'],
+  ])('leaves row %i (%s) untouched', async (id) => {
+    const before = await fetchRow(id);
+
+    expect(await write(id, '0'.repeat(64))).toMatch(/^not eligible/);
+    expect(await fetchRow(id)).toEqual(before);
   });
 });
