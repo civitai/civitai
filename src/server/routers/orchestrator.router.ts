@@ -44,7 +44,7 @@ import {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { APP_BLOCK_TAG_REFUSED_MESSAGE, isAppBlockTag } from '~/shared/utils/app-block-tags';
+import { callerTagsRefusal } from '~/shared/utils/app-block-tags';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
@@ -477,13 +477,9 @@ export const orchestratorRouter = router({
       } = input;
       // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
       assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
-      // `z.any()` leaves tags unchecked: reject anything but a list of strings, then app-block tags.
-      if (inputTags != null) {
-        if (!Array.isArray(inputTags) || inputTags.some((tag) => typeof tag !== 'string'))
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'tags must be a list of strings.' });
-        if (inputTags.some(isAppBlockTag))
-          throw new TRPCError({ code: 'BAD_REQUEST', message: APP_BLOCK_TAG_REFUSED_MESSAGE });
-      }
+      // `.input(z.any())` leaves tags unchecked.
+      const tagsRefusal = callerTagsRefusal(inputTags);
+      if (tagsRefusal) throw new TRPCError({ code: 'BAD_REQUEST', message: tagsRefusal });
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(

@@ -76,3 +76,31 @@ describe('generateFromGraph source metadata cap', () => {
     expect(h.buildGenerationContext).toHaveBeenCalledTimes(1);
   });
 });
+
+// Decision (civitai/civitai#10435): generateFromGraph refuses caller tags through
+// `callerTagsRefusal` (its cases are in app-block-tags.test.ts); this pins the router's call to it.
+describe('generateFromGraph caller tags', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('🔴 refuses an app-block tag before building the generation context', async () => {
+    expect(
+      await errorOf(caller().generateFromGraph({ input: {}, tags: ['favorite', 'app-block:x'] }))
+    ).toEqual({
+      code: 'BAD_REQUEST',
+      message: 'App block tags are set by the app, not added by hand.',
+    });
+    expect(h.buildGenerationContext).not.toHaveBeenCalled();
+  });
+
+  it('🔴 refuses tags that are not a list of strings', async () => {
+    expect(await errorOf(caller().generateFromGraph({ input: {}, tags: 'app-block:x' }))).toEqual({
+      code: 'BAD_REQUEST',
+      message: 'tags must be a list of strings.',
+    });
+  });
+
+  it('POSITIVE CONTROL: ordinary tags reach the generation context', async () => {
+    await errorOf(caller().generateFromGraph({ input: {}, tags: ['favorite'] }));
+    expect(h.buildGenerationContext).toHaveBeenCalledTimes(1);
+  });
+});
