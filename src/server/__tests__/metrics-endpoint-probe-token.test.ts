@@ -32,7 +32,7 @@ const CURRENT = 'c'.repeat(40);
 const PROBE = 'r'.repeat(40);
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
-async function scrape(bearer: string) {
+async function scrape(bearer: string, query?: string) {
   const state = { status: 200, body: undefined as string | undefined };
   const res = {
     status(code: number) {
@@ -47,8 +47,8 @@ async function scrape(bearer: string) {
   } as unknown as NextApiResponse;
   const req = {
     method: 'GET',
-    url: '/api/metrics',
-    query: {},
+    url: query === undefined ? '/api/metrics' : `/api/metrics?token=${query}`,
+    query: query === undefined ? {} : { token: query },
     headers: { authorization: `Bearer ${bearer}`, 'user-agent': 'Prometheus/3.1.0' },
   };
   const handler = (await import('~/pages/api/metrics')).default as unknown as Handler;
@@ -101,6 +101,7 @@ describe('/api/metrics', () => {
       setEnv({ PROBE_TOKEN: blank });
       expect((await scrape(PROBE)).status).toBe(401);
       expect((await scrape(blank ?? '')).status).toBe(401);
+      expect((await scrape('x'.repeat(PROBE.length), blank ?? '')).status).toBe(401);
     }
   });
 });

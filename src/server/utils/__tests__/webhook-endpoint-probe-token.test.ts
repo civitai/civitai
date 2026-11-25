@@ -21,7 +21,11 @@ const PROBE = 'r'.repeat(40);
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
-async function call(endpoint: Handler, path: string, auth: { query?: string; bearer?: string }) {
+async function call(
+  endpoint: Handler,
+  path: string,
+  auth: { query?: string; bearer?: string; header?: string }
+) {
   let status = 200;
   const res = {
     status(code: number) {
@@ -34,7 +38,10 @@ async function call(endpoint: Handler, path: string, auth: { query?: string; bea
     method: 'GET',
     url: auth.query === undefined ? path : `${path}?token=${auth.query}`,
     query: auth.query === undefined ? {} : { token: auth.query },
-    headers: auth.bearer === undefined ? {} : { authorization: `Bearer ${auth.bearer}` },
+    headers: {
+      ...(auth.bearer === undefined ? {} : { authorization: `Bearer ${auth.bearer}` }),
+      ...(auth.header === undefined ? {} : { 'x-webhook-token': auth.header }),
+    },
   };
   await endpoint(req as unknown as NextApiRequest, res);
   return status;
@@ -72,6 +79,14 @@ describe('PROBE_TOKEN', () => {
     expect(await call(otherRoute, '/api/webhooks/other', { query: PROBE })).toBe(401);
     expect(await call(otherRoute, '/api/webhooks/other', { bearer: PROBE })).toBe(401);
     expect(await call(otherRoute, '/api/webhooks/other', { query: CURRENT })).toBe(200);
+    expect(ok).toHaveBeenCalledTimes(1);
+  });
+
+  it('is never read from x-webhook-token, which also hides a Bearer probe token', async () => {
+    const path = '/api/probe-header';
+    expect(await call(healthRoute, path, { header: PROBE })).toBe(401);
+    expect(await call(healthRoute, path, { header: 'wrong', bearer: PROBE })).toBe(401);
+    expect(await call(healthRoute, path, { header: CURRENT })).toBe(200);
     expect(ok).toHaveBeenCalledTimes(1);
   });
 
