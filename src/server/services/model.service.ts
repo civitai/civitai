@@ -8,6 +8,8 @@ import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
+import type { ArticleReader } from '~/server/services/article-read';
+import { canReadArticle } from '~/server/services/article-read';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
@@ -6262,10 +6264,10 @@ export const setModelsCategory = async ({
 };
 
 // #region [associated models]
-export const getAssociatedResourcesSimple = async ({
-  fromId,
-  type,
-}: GetAssociatedResourcesInput) => {
+export const getAssociatedResourcesSimple = async (
+  { fromId, type }: GetAssociatedResourcesInput,
+  viewer?: ArticleReader
+) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
@@ -6275,19 +6277,28 @@ export const getAssociatedResourcesSimple = async ({
         select: associatedResourceSelect,
       },
       toArticle: {
-        select: { id: true, title: true, nsfwLevel: true, user: { select: simpleUserSelect } },
+        select: {
+          id: true,
+          title: true,
+          nsfwLevel: true,
+          user: { select: simpleUserSelect },
+          userId: true,
+          publishedAt: true,
+          status: true,
+          ingestion: true,
+          availability: true,
+        },
       },
     },
   });
 
   const items = associations
-    .map(({ id, toModel, toArticle }) =>
-      toModel
-        ? { id, item: toModel, resourceType: 'model' as const }
-        : toArticle
-        ? { id, item: toArticle, resourceType: 'article' as const }
-        : null
-    )
+    .map(({ id, toModel, toArticle }) => {
+      if (toModel) return { id, item: toModel, resourceType: 'model' as const };
+      if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
+      const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
+      return { id, item, resourceType: 'article' as const };
+    })
     .filter(isDefined);
 
   return items;
