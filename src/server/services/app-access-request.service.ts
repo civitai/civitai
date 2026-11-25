@@ -14,6 +14,7 @@ import type {
   ListAppAccessRequestsInput,
   SubmitAppAccessRequestInput,
 } from '~/server/schema/app-access-request.schema';
+import { APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS } from '~/shared/constants/app-access-request.constants';
 import type {
   AppAccessRequestStatus,
   AppAccessReviewSource,
@@ -107,10 +108,11 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
  * having to prove its email fails it until it does; an older account with no verified email
  * passes; the person has no declined request, so a moderator's decline or revoke is never undone by
  * the next submit; and the account is in good standing by its active strikes, the same {@link
- * accountStandingFromPoints} rule the profile and the moderator tools show. Every field is read
- * from the PRIMARY at submit time rather than from the session, which can be hours old: a ban, a
- * mute or a verification since must count. A person who fails any check still gets a request,
- * pending, for a moderator to decide.
+ * accountStandingFromPoints} rule the profile and the moderator tools show; and the account is at
+ * least {@link APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS} days old, by the database's clock. Every
+ * field is read from the PRIMARY at submit time rather than from the session, which can be hours
+ * old: a ban, a mute or a verification since must count. A person who fails any check still gets a
+ * request, pending, for a moderator to decide.
  */
 async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
   const [row] = await dbWrite.$queryRaw<
@@ -120,6 +122,7 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
       "deletedAt" IS NULL
       AND "bannedAt" IS NULL
       AND "muted" = FALSE
+      AND "createdAt" <= CURRENT_TIMESTAMP - make_interval(days => ${APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS}::int)
       AND NOT EXISTS (
         SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'declined'
       )
@@ -254,6 +257,36 @@ export async function countPendingAppAccessRequests(): Promise<number> {
     SELECT COUNT(*)::int AS "count" FROM "AppAccessRequest" WHERE "status" = 'pending'
   `);
   return row?.count ?? 0;
+}
+
+/**
+ * A BAN takes app access away: every approved or pending request the person holds is declined in
+ * one statement, attributed to whoever banned them (`reviewSource` 'system' with no reviewer when
+ * that is the system account, as an auto-approval is). Because the rows are declined rather than
+ * deleted, an unban does not hand access back: `submit` never auto-approves someone holding a
+ * declined row, so a new request after the unban waits for a moderator.
+ *
+ * Sends no notification (the ban email is the notice) and refreshes no session (the ban invalidates
+ * it). Idempotent: a second call finds nothing to decline. Returns how many rows it declined.
+ */
+export async function revokeAppAccessForBannedUser({
+  userId,
+  actorId,
+}: {
+  userId: number;
+  actorId: number;
+}): Promise<number> {
+  const bySystem = actorId === constants.system.user.id;
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+    UPDATE "AppAccessRequest"
+    SET "status" = 'declined',
+        "reviewedAt" = CURRENT_TIMESTAMP,
+        "reviewedById" = ${bySystem ? null : actorId}::int,
+        "reviewSource" = ${bySystem ? 'system' : 'moderator'}
+    WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved')
+    RETURNING "id"
+  `);
+  return rows.length;
 }
 
 /** The statuses each decision may replace. Declining an approved row is the revoke. */

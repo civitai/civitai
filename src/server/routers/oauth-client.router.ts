@@ -21,6 +21,7 @@ import {
   updateOauthClientSchema,
 } from '~/server/schema/oauth-client.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isAppAssistantClientId } from '@civitai/auth/app-assistant-client';
 import {
   APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
   isAppBlockOauthClientId,
@@ -46,6 +47,22 @@ function rejectAppBlockClient(clientId: string): void {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'App clients are managed by the Civitai Apps platform and cannot be modified here',
+    });
+  }
+}
+
+/**
+ * App Assistant's per-user client (`appassist-<userId>`, see `@civitai/auth/app-assistant-client`)
+ * is created and kept in shape by `enableAppAssistant` alone. Its owner may not edit it here: a
+ * rename would put any name on the consent screen, a redirect URI would make the client usable in
+ * an interactive authorization, and wider scopes would let it ask for more than App Assistant
+ * needs. Deleting it stays allowed: that turns App Assistant off, and re-enabling recreates it.
+ */
+function rejectAppAssistantClient(clientId: string): void {
+  if (isAppAssistantClientId(clientId)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'The App Assistant app is managed by Civitai and cannot be modified here',
     });
   }
 }
@@ -249,6 +266,7 @@ export const oauthClientRouter = router({
     .input(updateOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
+      rejectAppAssistantClient(input.id);
       const client = await findOwnedClient(ctx.user.id, { id: input.id });
       // An app that skips the consent screen keeps only https, non-loopback redirects.
       const refused =
@@ -286,6 +304,7 @@ export const oauthClientRouter = router({
     .input(rotateOauthClientSecretSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
+      rejectAppAssistantClient(input.id);
       await findOwnedClient(ctx.user.id, { id: input.id, isConfidential: true });
 
       const newSecret = generateKey(48);
