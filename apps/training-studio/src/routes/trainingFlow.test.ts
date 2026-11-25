@@ -989,16 +989,16 @@ describe('Kohya engine selection and options', () => {
   });
 
   it.each(['sdxl', 'pony', 'illustrious'])(
-    'offers Kohya clip skip for %s, defaulting to 2 with a floor of 2',
+    'offers Kohya clip skip for %s, defaulting to 2 and allowing 1',
     (type) => {
       const kohya = { ...run(type), engine: 'kohya' };
       const { ecosystem } = runVersion(kohya);
       expect(kohyaFieldSupported('clipSkip', ecosystem)).toBe(true);
-      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 2, max: 4 });
+      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 1, max: 4 });
       expect(defaultRunParams(kohya).clipSkip).toBe('2');
       expect(runTrainingParams(kohya, defaultRunParams(kohya), 'tag').kohya?.clipSkip).toBe(2);
-      const picked = { ...defaultRunParams(kohya), clipSkip: '3' };
-      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(3);
+      const picked = { ...defaultRunParams(kohya), clipSkip: '1' };
+      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(1);
     }
   );
 
