@@ -593,6 +593,10 @@ func run(log *slog.Logger) error {
 		Metrics:             metrics,
 		Log:                 log,
 		ShadowQueue:         make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+
+		// FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE: the app's 503 for a failed feed call written here.
+		AnswerInfiniteFeedUnavailable: cfg.InfiniteAnswerFeedUnavailable,
+
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
@@ -663,7 +667,8 @@ func run(log *slog.Logger) error {
 		"FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", cfg.InfiniteServeInputPublishedOnly,
 		"FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", cfg.InfiniteServeInputPostIDs,
 		"FEED_GO_INFINITE_SERVE_SORT_RANDOM", cfg.InfiniteServeSortRandom,
-		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss)
+		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss,
+		"FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", cfg.InfiniteAnswerFeedUnavailable)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,

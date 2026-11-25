@@ -2277,6 +2277,44 @@ Golden fixtures: `infinite/cold-gallery-settings-*` (a held version, the `ids` p
 unheld model), each with the key absent; the `GallerySettingsMiss` rows of
 `TestInfinitePortsSwitch` and `TestInfinitePortsShadow` require the old fallback with the switch off.
 
+### 14.11 A failed feed call (`FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE`, default off)
+
+When the feed-service call fails, Node's `serveFromFeed` returns `timeout`, `error` or `status:5xx`
+and `answerWithoutFeed` throws `SERVICE_UNAVAILABLE` ("Image search is temporarily overloaded — please
+retry.", `isTransientFeedReason`). Handed back as the `feed-unavailable` / `feed-status` fallback, the
+request makes the app call the feed again, which in an outage usually fails again: the slow call runs
+twice and the 503 comes about twice as late. With the switch on, the public route writes that 503
+here instead (`writeFeedUnavailable`), counted as request outcome `feed_unavailable`, neither `served`
+nor a fallback.
+
+- **Which failures.** A failed call (a transport error, the 5 s `FEED_PRIMARY_TIMEOUT_MS`, a body that
+  is not JSON) and a 500–599 answer (`^status:5\d\d$`). A 2xx other than 200, a 4xx or a status past
+  599 is Node's empty page and stays the `feed-status` fallback. A failed hydrate (`hydrate:error`) is
+  also Node's 503 but is not part of this port: it stays `feed-hydrate-error`. The request's own budget
+  or client ending first stays `deadline` / `canceled` (with `FEED_GO_REQUEST_BUDGET_MS` under the feed
+  timeout plus the work before the call, a hung feed ends as `deadline`).
+- **feed-service-degrade.** With that Flipt flag on, Node may answer a failed call with a last-good
+  page from its pod's cache, which this service does not hold and cannot see. That cache holds
+  anonymous first pages only: `lastGoodKey` is undefined for a signed-in viewer and for a feed query
+  with `cursor`, `offset`, `before` or `viewerId`, and for those requests the failed call is the 503
+  whether the flag is on or off. Only those are answered here (`feed.UnavailableError`, set in
+  `infiniteFromFeed`); an anonymous first page always falls back. The flag is not read.
+- **The answer.** The tRPC error envelope as the route writes it for one unbatched query in a
+  production build (`trpc.WriteAppError`): status 503; body `{"error":<shape>}`, the shape
+  `{message, code: -32603, data: {code: "SERVICE_UNAVAILABLE", httpStatus: 503, path: "image.getInfinite"}}`
+  (no stack; the error formatter keeps a 503's message), superjson, or devalue when the request's
+  answer would be (an error is never edge-cacheable, so never pinned to superjson); `Content-Type: application/json`,
+  `Vary: trpc-accept, accept`, the policy's private `Cache-Control`, next.config.mjs's
+  `X-Frame-Options: DENY`, and `X-Feed-Go-Served: go`. Not `X-Handled-By` (the app's pod) nor the
+  per-caller headers `responseMeta` may add (`x-update-required`, the site-alerts version, rate-limit
+  headers), as on every answer here (§7). A batch never reaches the call (`trpc.ParseInput` refuses it).
+  The bytes are derived from the app's code and its own superjson and devalue, not captured from a
+  running server; `internal/trpc/apperror_test.go` and `internal/server/feed_unavailable_test.go`
+  pin them as literals.
+- **Shadow and Go-first probe.** Unchanged: they write to no client, and count the fallback
+  (`unsupported` with its reason) as before.
+- **Rollback.** Switch off: every such request is the fallback again.
+
 ## 15. `model.getAll` (tRPC, shadow; served only behind `FEED_GO_SERVE_MODEL_GETALL`, default off)
 
 The model browse feed (`/models`, a creator's models, a tag's models): `src/server/routers/model.router.ts`

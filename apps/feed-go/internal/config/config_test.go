@@ -397,6 +397,39 @@ func TestLoadAnswerRegionBlockedDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE is off unless set (a failed feed call is then handed back
+// to the app), and is its own: FEED_GO_SERVE_INFINITE and FEED_GO_ANSWER_REGION_BLOCKED do not turn
+// it on, nor it them.
+func TestLoadInfiniteAnswerFeedUnavailableDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteAnswerFeedUnavailable != want {
+			t.Errorf("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE=%q -> %v, want %v", in, c.InfiniteAnswerFeedUnavailable, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	t.Setenv("FEED_GO_ANSWER_REGION_BLOCKED", "true")
+	if c, err := Load(); err != nil || c.InfiniteAnswerFeedUnavailable || !c.ServeInfinite || !c.AnswerRegionBlocked {
+		t.Fatalf("the other switches alone: answer=%v ServeInfinite=%v AnswerRegionBlocked=%v err=%v, want false, true, true",
+			c.InfiniteAnswerFeedUnavailable, c.ServeInfinite, c.AnswerRegionBlocked, err)
+	}
+	t.Setenv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	t.Setenv("FEED_GO_ANSWER_REGION_BLOCKED", "")
+	if c, err := Load(); err != nil || !c.InfiniteAnswerFeedUnavailable || c.ServeInfinite || c.AnswerRegionBlocked {
+		t.Fatalf("the switch alone: answer=%v ServeInfinite=%v AnswerRegionBlocked=%v err=%v, want true, false, false",
+			c.InfiniteAnswerFeedUnavailable, c.ServeInfinite, c.AnswerRegionBlocked, err)
+	}
+}
+
 // The publishedOnly port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not
 // turn it on, nor it FEED_GO_SERVE_INFINITE.
 func TestLoadInfinitePublishedOnlyPortDefaultOff(t *testing.T) {

@@ -126,6 +126,13 @@ type Server struct {
 	// request from a blocked region here (writeRegionBlocked, outcome `region_blocked`) instead of
 	// proxying it as the `region-blocked` fallback. Off, the request is handed back as before.
 	AnswerRegionBlocked bool
+	// AnswerInfiniteFeedUnavailable is FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE (default off): on the
+	// public image.getInfinite route, write the app's 503 here (writeFeedUnavailable, outcome
+	// `feed_unavailable`) for a feed-service failure the app answers with it whatever
+	// feed-service-degrade says (feed.UnavailableError), instead of handing the request back as the
+	// `feed-unavailable` / `feed-status` fallback, where the app calls the feed again. Off, the request
+	// is handed back as before.
+	AnswerInfiniteFeedUnavailable bool
 	// Fallback serves what this service does not (a reverse proxy to the Node app). Required to serve
 	// public traffic; nil only in shadow-only deployments, where the public route is not exposed.
 	Fallback http.Handler
@@ -1001,6 +1008,10 @@ func (s *Server) serveLabelled(w http.ResponseWriter, r *http.Request, endpoint,
 		return
 	}
 	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
+		return
+	}
+	// r, not ctx, carries the devalue mark (set above, after the span).
+	if s.answerFeedUnavailable(ctx, span, start, w, endpoint, procedure, trpc.DevalueWrite(r.Context(), nil), err) {
 		return
 	}
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
