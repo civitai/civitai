@@ -12,16 +12,27 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+/** What follows a write run, passed in: the level recompute and the cache bust. */
+const updateModelNsfwLevels = vi.fn();
+const effects = { updateModelNsfwLevels, bustPublicModelResponseCache: vi.fn() };
+
 const {
   backfillSchema,
-  countScanLocks,
+  countLocks,
   exclusionsFor,
   nextRevertBatch,
-  nextScanLockBatch,
-  revertScanLocks,
+  nextUnlockBatch,
+  revertLocks,
   runBackfill,
-  unlockScanLocks,
+  unlockLocks,
 } = await import('~/server/api-routes/admin/temp/model-nsfw-lock-backfill');
+
+const SCAN = 'scan-locks';
+const PROFANITY = 'profanity-locks';
+const countScanLocks = () => countLocks(SCAN);
+const nextScanLockBatch = (afterId: number, limit: number) => nextUnlockBatch(SCAN, afterId, limit);
+const unlockScanLocks = (ids: number[]) => unlockLocks(SCAN, ids);
+const revertScanLocks = (ids: number[]) => revertLocks(SCAN, ids);
 
 let db: PGlite;
 
@@ -262,7 +273,7 @@ describe('model nsfw lock backfill: scan locks', () => {
   it.each(excluded)(
     'keeps the lock when %s, by that exclusion alone',
     async (_reason, id, _f, leg) => {
-      expect(await exclusionsFor(id)).toEqual([leg]);
+      expect(await exclusionsFor(id, SCAN)).toEqual([leg]);
       const before = await row(id);
       expect(await unlockScanLocks([id])).toEqual([]);
       expect(await row(id)).toEqual(before);
@@ -316,7 +327,7 @@ describe('model nsfw lock backfill: revert', () => {
       `UPDATE "Model" SET "lockedProperties" = array_append("lockedProperties", 'name') WHERE id = $1`,
       [ELIGIBLE]
     );
-    expect(await nextRevertBatch(0, 100)).toEqual([ELIGIBLE]);
+    expect(await nextRevertBatch(SCAN, 0, 100)).toEqual([ELIGIBLE]);
     expect(await revertScanLocks([ELIGIBLE])).toEqual([ELIGIBLE]);
 
     const after = await row(ELIGIBLE);
@@ -342,14 +353,14 @@ describe('model nsfw lock backfill: revert', () => {
     await unlockScanLocks([ELIGIBLE]);
     await db.exec(sql.replaceAll('$ID', String(ELIGIBLE)));
     const before = await row(ELIGIBLE);
-    expect(await nextRevertBatch(0, 100)).toEqual([]);
+    expect(await nextRevertBatch(SCAN, 0, 100)).toEqual([]);
     expect(await revertScanLocks([ELIGIBLE])).toEqual([]);
     expect(await row(ELIGIBLE)).toEqual(before);
   });
 
   it('touches no model an unlock never changed', async () => {
     const before = await row(ELIGIBLE_RULED_BEFORE);
-    expect(await nextRevertBatch(0, 100)).toEqual([]);
+    expect(await nextRevertBatch(SCAN, 0, 100)).toEqual([]);
     expect(await revertScanLocks([ELIGIBLE_RULED_BEFORE])).toEqual([]);
     expect(await row(ELIGIBLE_RULED_BEFORE)).toEqual(before);
   });
@@ -371,5 +382,166 @@ describe('model nsfw lock backfill: the endpoint', () => {
     );
     expect(result).toMatchObject({ action: 'revert', dryRun: true, ids: [ELIGIBLE] });
     expect(await row(ELIGIBLE)).toEqual(before);
+  });
+});
+
+/** The profanity filter's marker as it stores it: the reason fields ride along and must come back intact. */
+const profanityMarker = {
+  source: 'profanity-filter',
+  at: LOCKED_AT,
+  category: 'sexual',
+  fields: ['name'],
+  textHash: 'abc123',
+};
+
+describe('model nsfw lock backfill: profanity locks', () => {
+  // The same models under the other marker: each scan lock becomes a profanity lock and the one
+  // profanity lock (model 23) becomes a scan lock, outside this bucket.
+  beforeEach(async () => {
+    await db.query(
+      `UPDATE "Model" SET meta = jsonb_set(meta, '{systemNsfwLock}',
+         CASE WHEN meta->'systemNsfwLock'->>'source' = 'text-scan'
+           THEN (meta->'systemNsfwLock') || ($1::jsonb - 'at')
+           ELSE (meta->'systemNsfwLock') || '{"source": "text-scan"}'::jsonb END)
+       WHERE meta->'systemNsfwLock'->>'source' IN ('text-scan', 'profanity-filter')`,
+      [JSON.stringify(profanityMarker)]
+    );
+    updateModelNsfwLevels.mockClear();
+  });
+
+  it('selects only profanity-locked models no exclusion applies to', async () => {
+    expect(await nextUnlockBatch(PROFANITY, 0, 100)).toEqual(ALL_ELIGIBLE);
+    // Model 23 is the one scan lock now.
+    expect(await nextUnlockBatch(SCAN, 0, 100)).toEqual([23]);
+  });
+
+  it.each(excluded)(
+    'keeps the lock when %s, by that exclusion alone',
+    async (_reason, id, _f, leg) => {
+      expect(await exclusionsFor(id, PROFANITY)).toEqual([leg]);
+      const before = await row(id);
+      expect(await unlockLocks(PROFANITY, [id])).toEqual([]);
+      expect(await row(id)).toEqual(before);
+    }
+  );
+
+  it('keeps the lock on a model not rated mature, by that exclusion alone', async () => {
+    await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
+    expect(await exclusionsFor(ELIGIBLE, PROFANITY)).toEqual(['notMature']);
+    const before = await row(ELIGIBLE);
+    expect(await unlockLocks(PROFANITY, [ELIGIBLE])).toEqual([]);
+    expect(await row(ELIGIBLE)).toEqual(before);
+  });
+
+  const outsideProfanity: [string, number][] = [
+    ...outside.filter(([, id]) => id !== 23).map(([reason, id]): [string, number] => [reason, id]),
+    ["the lock is the text scan's", 23],
+  ];
+  it.each(outsideProfanity)('leaves the model as it was when %s', async (_reason, id) => {
+    const before = await row(id);
+    expect(await unlockLocks(PROFANITY, [id])).toEqual([]);
+    expect(await row(id)).toEqual(before);
+  });
+
+  it('lifts the nsfw lock, keeps the rating, and parks the marker with the prior state', async () => {
+    expect(await unlockLocks(PROFANITY, [ELIGIBLE])).toEqual([ELIGIBLE]);
+    const after = await row(ELIGIBLE);
+    expect(after.nsfw).toBe(true);
+    expect(after.lockedProperties).toEqual(['tags']);
+    expect(after.meta.systemNsfwLock).toBeUndefined();
+    expect(after.meta.nsfwLockBackfill).toMatchObject({
+      bucket: PROFANITY,
+      priorLockedProperties: ['nsfw', 'tags'],
+      priorNsfw: true,
+      priorSystemNsfwLock: profanityMarker,
+    });
+    expect(await nextUnlockBatch(PROFANITY, 0, 100)).not.toContain(ELIGIBLE);
+  });
+
+  it('counts the bucket, each exclusion and the models not rated mature', async () => {
+    await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
+    const counts = await countLocks(PROFANITY);
+    expect(counts).toMatchObject({
+      eligible: ALL_ELIGIBLE.length - 1,
+      notMature: 1,
+      moderatorRuled: 3,
+      pendingDetection: 4,
+      ownerCsamReport: 4,
+    });
+    expect(counts.profanityLocked).toBe(ALL_ELIGIBLE.length + excluded.length);
+  });
+
+  it('writes nothing for a bare request: a dry run of unlock with the counts', async () => {
+    const before = await row(ELIGIBLE);
+    const result = await runBackfill(backfillSchema.parse({ bucket: PROFANITY }));
+    expect(result).toMatchObject({ action: 'unlock', dryRun: true, ids: ALL_ELIGIBLE });
+    expect(result.counts).toMatchObject({ eligible: ALL_ELIGIBLE.length });
+    expect(await row(ELIGIBLE)).toEqual(before);
+  });
+
+  describe('revert', () => {
+    it('puts back the lock, the exact marker and the rating, after the owner unticked mature', async () => {
+      await unlockLocks(PROFANITY, [ELIGIBLE]);
+      await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
+      expect(await nextRevertBatch(PROFANITY, 0, 100)).toEqual([ELIGIBLE]);
+      expect(await nextRevertBatch(SCAN, 0, 100)).toEqual([]);
+
+      const result = await runBackfill(
+        backfillSchema.parse({ bucket: PROFANITY, action: 'revert', dryRun: false }),
+        effects
+      );
+      expect(result).toMatchObject({ changed: [ELIGIBLE] });
+      const after = await row(ELIGIBLE);
+      expect(after.nsfw).toBe(true);
+      expect(after.lockedProperties).toEqual(['nsfw', 'tags']);
+      expect(after.meta.systemNsfwLock).toEqual(profanityMarker);
+      expect(after.meta.nsfwLockBackfill).toMatchObject({ revertedAt: expect.any(String) });
+      // The rating moved back, so the level follows it.
+      expect(updateModelNsfwLevels).toHaveBeenCalledWith([ELIGIBLE]);
+      expect(await nextUnlockBatch(PROFANITY, 0, 100)).not.toContain(ELIGIBLE);
+      expect(await revertLocks(PROFANITY, [ELIGIBLE])).toEqual([]);
+    });
+
+    it("reverts over the text scan's marker its re-scan stamped after the unlock", async () => {
+      await unlockLocks(PROFANITY, [ELIGIBLE]);
+      await db.query(
+        `UPDATE "Model" SET meta = meta || jsonb_build_object('systemNsfwLock',
+           jsonb_build_object('source', 'text-scan', 'at', now() + interval '1 second')) WHERE id = $1`,
+        [ELIGIBLE]
+      );
+      expect(await revertLocks(PROFANITY, [ELIGIBLE])).toEqual([ELIGIBLE]);
+      expect((await row(ELIGIBLE)).meta.systemNsfwLock).toEqual(profanityMarker);
+    });
+
+    it.each([
+      [
+        'a moderator ruled on its nsfw since the unlock',
+        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+          VALUES (7, 'lockProperty:nsfw', 'model', $ID, now() + interval '1 minute')`,
+      ],
+      [
+        'the intent check locked it since',
+        `UPDATE "Model" SET "lockedProperties" = array_append("lockedProperties", 'nsfw'),
+           meta = meta || '{"systemNsfwLock": {"source": "com-face-intent", "at": "2030-01-01T00:00:00Z"}}'
+         WHERE id = $ID`,
+      ],
+      [
+        'it carries a text-scan marker from before the unlock',
+        `UPDATE "Model" SET meta = meta || '{"systemNsfwLock": {"source": "text-scan", "at": "2020-01-01T00:00:00Z"}}'
+         WHERE id = $ID`,
+      ],
+      [
+        'its text-scan marker has no readable time',
+        `UPDATE "Model" SET meta = meta || '{"systemNsfwLock": {"source": "text-scan", "at": "soon"}}'
+         WHERE id = $ID`,
+      ],
+    ])('leaves the model as it is when %s', async (_reason, sql) => {
+      await unlockLocks(PROFANITY, [ELIGIBLE]);
+      await db.exec(sql.replaceAll('$ID', String(ELIGIBLE)));
+      const before = await row(ELIGIBLE);
+      expect(await nextRevertBatch(PROFANITY, 0, 100)).toEqual([]);
+      expect(await revertLocks(PROFANITY, [ELIGIBLE])).toEqual([]);
+      expect(await row(ELIGIBLE)).toEqual(before);
+    });
   });
 });
