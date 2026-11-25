@@ -70,7 +70,8 @@ const range = (from: number, count: number) => Array.from({ length: count }, (_,
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(
-    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public', "modelVersionId" integer);
+    `CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);
+     CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public', "modelVersionId" integer);
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,

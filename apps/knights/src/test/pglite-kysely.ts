@@ -135,7 +135,7 @@ CREATE TABLE "CsamReport" (
   "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]'
 );
-CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
+CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY,
   "minor" BOOLEAN NOT NULL DEFAULT false,

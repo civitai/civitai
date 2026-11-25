@@ -43,10 +43,11 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
     ) le
   ) listed
-  WHERE listed.id IS NOT NULL) and NOT EXISTS (
-    SELECT 1 FROM "Image" sf_i
-    WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
+  WHERE listed.id IS NOT NULL) and NOT (
+    EXISTS (
+      SELECT 1 FROM "Image" sf_i
+      WHERE sf_i.url = img.url AND sf_i.id <> img.id
+        AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
@@ -54,6 +55,19 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     ) le
   ) listed
   WHERE listed.id IS NOT NULL))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" sf_d
+      WHERE sf_d.url = img.url AND sf_d."imageId" <> img.id
+        AND (sf_d."csamReview" OR (sf_d."imageId")::text IN (SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL))
+    )
   ) and not exists (select 1 as "one" from "User" as "owner" where "owner"."id" = "img"."userId" and "owner"."deletedAt" is not null) and not exists (select 1 as "one" from "ModelVersion" as "mv" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "mv"."id" = "p"."modelVersionId" and ("mv"."status" in ('Deleted', 'UnpublishedViolation') or "m"."status" in ('Deleted', 'UnpublishedViolation') or "m"."deletedAt" is not null))) and "p"."publishedAt" is not null and "p"."publishedAt" < (now() AT TIME ZONE 'utc')) and "p"."availability" in ('Public', 'Unsearchable', 'EarlyAccess') and (not exists (select 1 as "one" from "User" as "owner" where "owner"."id" = "img"."userId" and ("owner"."bannedAt" is not null or "owner"."muted" = true)) and not exists (select 1 as "one" from "ModelVersion" as "mv" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "mv"."id" = "p"."modelVersionId" and ("mv"."status" != 'Published' or "mv"."availability" = 'Private' or "m"."status" != 'Published' or "m"."availability" = 'Private')))), false) as "servable", COALESCE(("img"."type" = 'image' and "img"."nsfwLevel" not in (0, 32) and "img"."ingestion" != 'Blocked' and "img"."blockedFor" is null and "img"."needsReview" is null and "img"."acceptableMinor" = false and "img"."poi" = false and "img"."minor" = false and "img"."tosViolation" = false and /* servable-image-content */ true and NOT COALESCE((
     img."needsReview" = 'csam'
     OR img."blockedFor" = 'CSAM'
@@ -77,10 +91,11 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
     ) le
   ) listed
-  WHERE listed.id IS NOT NULL) and NOT EXISTS (
-    SELECT 1 FROM "Image" sf_i
-    WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
+  WHERE listed.id IS NOT NULL) and NOT (
+    EXISTS (
+      SELECT 1 FROM "Image" sf_i
+      WHERE sf_i.url = img.url AND sf_i.id <> img.id
+        AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
@@ -88,6 +103,19 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     ) le
   ) listed
   WHERE listed.id IS NOT NULL))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" sf_d
+      WHERE sf_d.url = img.url AND sf_d."imageId" <> img.id
+        AND (sf_d."csamReview" OR (sf_d."imageId")::text IN (SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL))
+    )
   ) and not exists (select 1 as "one" from "User" as "owner" where "owner"."id" = "img"."userId" and "owner"."deletedAt" is not null) and not exists (select 1 as "one" from "ModelVersion" as "mv" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "mv"."id" = "p"."modelVersionId" and ("mv"."status" in ('Deleted', 'UnpublishedViolation') or "m"."status" in ('Deleted', 'UnpublishedViolation') or "m"."deletedAt" is not null))), false) as "sweepServable", COALESCE((((("img"."type" = 'image' and "img"."nsfwLevel" not in (0, 32) and "img"."ingestion" != 'Blocked' and "img"."blockedFor" is null and "img"."needsReview" is null and "img"."acceptableMinor" = false and "img"."poi" = false and "img"."minor" = false and "img"."tosViolation" = false and /* servable-image-content */ true and NOT COALESCE((
     img."needsReview" = 'csam'
     OR img."blockedFor" = 'CSAM'
@@ -111,10 +139,11 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
     ) le
   ) listed
-  WHERE listed.id IS NOT NULL) and NOT EXISTS (
-    SELECT 1 FROM "Image" sf_i
-    WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
+  WHERE listed.id IS NOT NULL) and NOT (
+    EXISTS (
+      SELECT 1 FROM "Image" sf_i
+      WHERE sf_i.url = img.url AND sf_i.id <> img.id
+        AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
@@ -122,6 +151,19 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     ) le
   ) listed
   WHERE listed.id IS NOT NULL))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" sf_d
+      WHERE sf_d.url = img.url AND sf_d."imageId" <> img.id
+        AND (sf_d."csamReview" OR (sf_d."imageId")::text IN (SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL))
+    )
   ) and not exists (select 1 as "one" from "User" as "owner" where "owner"."id" = "img"."userId" and "owner"."deletedAt" is not null) and not exists (select 1 as "one" from "ModelVersion" as "mv" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "mv"."id" = "p"."modelVersionId" and ("mv"."status" in ('Deleted', 'UnpublishedViolation') or "m"."status" in ('Deleted', 'UnpublishedViolation') or "m"."deletedAt" is not null))) and "p"."publishedAt" is not null and "p"."publishedAt" < (now() AT TIME ZONE 'utc')) and "p"."availability" in ('Public', 'Unsearchable', 'EarlyAccess') and (not exists (select 1 as "one" from "User" as "owner" where "owner"."id" = "img"."userId" and ("owner"."bannedAt" is not null or "owner"."muted" = true)) and not exists (select 1 as "one" from "ModelVersion" as "mv" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "mv"."id" = "p"."modelVersionId" and ("mv"."status" != 'Published' or "mv"."availability" = 'Private' or "m"."status" != 'Published' or "m"."availability" = 'Private')))) and "img"."tosViolation" = false and NOT COALESCE((
     img."needsReview" = 'csam'
     OR img."blockedFor" = 'CSAM'
@@ -215,10 +257,11 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
     ) le
   ) listed
-  WHERE listed.id IS NOT NULL) and NOT EXISTS (
-    SELECT 1 FROM "Image" sf_i
-    WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
+  WHERE listed.id IS NOT NULL) and NOT (
+    EXISTS (
+      SELECT 1 FROM "Image" sf_i
+      WHERE sf_i.url = img.url AND sf_i.id <> img.id
+        AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
@@ -226,6 +269,19 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     ) le
   ) listed
   WHERE listed.id IS NOT NULL))
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" sf_d
+      WHERE sf_d.url = img.url AND sf_d."imageId" <> img.id
+        AND (sf_d."csamReview" OR (sf_d."imageId")::text IN (SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL))
+    )
   ) and not exists (select 1 as "one" from "User" as "owner" where "owner"."id" = "img"."userId" and "owner"."deletedAt" is not null) and not exists (select 1 as "one" from "ModelVersion" as "mv" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "mv"."id" = "p"."modelVersionId" and ("mv"."status" in ('Deleted', 'UnpublishedViolation') or "m"."status" in ('Deleted', 'UnpublishedViolation') or "m"."deletedAt" is not null))) and "p"."publishedAt" is not null and "p"."publishedAt" < (now() AT TIME ZONE 'utc')) and "p"."availability" in ('Public', 'Unsearchable', 'EarlyAccess') and (not exists (select 1 as "one" from "User" as "owner" where "owner"."id" = "img"."userId" and ("owner"."bannedAt" is not null or "owner"."muted" = true)) and not exists (select 1 as "one" from "ModelVersion" as "mv" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "mv"."id" = "p"."modelVersionId" and ("mv"."status" != 'Published' or "mv"."availability" = 'Private' or "m"."status" != 'Published' or "m"."availability" = 'Private')))) and "img"."tosViolation" = false and NOT COALESCE((
     img."needsReview" = 'csam'
     OR img."blockedFor" = 'CSAM'

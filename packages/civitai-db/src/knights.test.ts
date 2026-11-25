@@ -76,6 +76,7 @@ describe('servableImage', () => {
         minor BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER NOT NULL,
         "tosViolation" BOOLEAN NOT NULL DEFAULT false, "userId" INTEGER NOT NULL DEFAULT 1, url TEXT
       );
+      CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "csamReview" BOOLEAN NOT NULL DEFAULT true);
       CREATE TABLE "Post" (
         id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP, availability TEXT NOT NULL DEFAULT 'Public',
         "modelVersionId" INTEGER

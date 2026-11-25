@@ -418,4 +418,51 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
       await pg.exec('DROP VIEW "KnightsImageGateMutant"');
     }
   });
+
+  /** Image 2 is clean; image 9 was on image 2's stored url and a moderator deleted it. */
+  async function seedDeletedTwin(csamReview: boolean, listed = false) {
+    await seedImage(pg, 2);
+    await pg.query(
+      `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "csamReview") VALUES (9, 'key-2', $1)`,
+      [csamReview]
+    );
+    if (listed)
+      await pg.query(
+        `INSERT INTO "CsamReport" ("images") VALUES (jsonb_build_array(jsonb_build_object('id',9)))`
+      );
+  }
+
+  it.each([
+    ['in CSAM review when it was deleted', true, false],
+    ['listed on a CsamReport', false, true],
+  ])(
+    'puts an image out of every column when a deleted row on its file was %s',
+    async (_l, review, listed) => {
+      await seedDeletedTwin(review, listed);
+      expect((await fromView([2])).get(2)).toEqual(OUT);
+      expect((await fromTables([2])).get(2)).toEqual(OUT);
+    }
+  );
+
+  it('keeps serving an image whose file a deleted row shares that was neither in review nor listed', async () => {
+    await seedDeletedTwin(false);
+    for (const answers of [await fromView([2]), await fromTables([2])])
+      expect(answers.get(2)?.servable).toBe(true);
+  });
+
+  it('answers differently without the deleted-row leg (the cases above can fail)', async () => {
+    const full = imageGateViewSql();
+    const leg = 'WHERE sf_d.url = img.url';
+    expect(full.split(leg).length - 1).toBe(IMAGE_GATE_COLUMNS.length);
+    const mutant = full.split(leg).join(`WHERE false AND sf_d.url = img.url`);
+    await pg.exec(`CREATE VIEW "KnightsImageGateMutant" AS ${mutant};
+      GRANT SELECT ON "KnightsImageGateMutant" TO ${KNIGHTS_APP_ROLE};`);
+    try {
+      await seedDeletedTwin(true);
+      expect((await fromView([2], 'KnightsImageGateMutant')).get(2)?.servable).toBe(true);
+      expect((await fromView([2])).get(2)?.servable).toBe(false);
+    } finally {
+      await pg.exec('DROP VIEW "KnightsImageGateMutant"');
+    }
+  });
 });
