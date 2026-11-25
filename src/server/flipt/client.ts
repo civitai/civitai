@@ -836,6 +836,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // The Training Studio's v2 dataset rating (apps/training-studio/src/lib/server/dataset-rating.ts), a
   // variant flag: a mature-level variant (s1-s4) is on; off, no match or unknown is off.
   TRAINING_STUDIO_DATASET_RATING_V2 = 'trainingStudioDatasetRatingV2',
+  // variant flag, read like TRAINING_STUDIO_DATASET_RATING_V2: gates posting a 3D result on the v2 rater.
+  MODEL3D_RATING_V2 = 'model3dRatingV2',
   // Gates sending the reporter's page capture to HQ.
   FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
   // Gates the `feedback-hq-sync` job: a feedback row's triage status follows its HQ task. Off (or
