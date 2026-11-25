@@ -1,6 +1,5 @@
 import * as z from 'zod';
-import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
-import { seesReportListed } from '~/server/utils/report-listed-viewer';
+import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
 import {
   router,
   publicProcedure,
@@ -103,10 +102,7 @@ export const articleRouter = router({
       getArticles({
         ...input,
         sessionUser: ctx?.user,
-        reportListedViewer: {
-          seesReportListed: seesReportListed(ctx),
-          ownerSeesReportListed: isSessionOrFullUserKey(ctx),
-        },
+        reportListedViewer: reportListedViewerOf(ctx),
         include: ['cosmetics'],
         // Uncached per viewer, so a flagged viewer may see decorations before launch.
         eventDecorationViewer: eventViewerOf(ctx),
@@ -130,10 +126,7 @@ export const articleRouter = router({
           ...input,
           userId: ctx.user?.id,
           isModerator: ctx.user?.isModerator,
-          reportListedViewer: {
-            seesReportListed: seesReportListed(ctx),
-            ownerSeesReportListed: isSessionOrFullUserKey(ctx),
-          },
+          reportListedViewer: reportListedViewerOf(ctx),
         }),
         // The hat the cover wears. A signed-out response is edge-cached for every signed-out
         // viewer (createContext), so the hat gate must read nothing but the user.

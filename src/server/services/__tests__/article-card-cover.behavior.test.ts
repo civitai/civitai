@@ -229,6 +229,25 @@ describe('article card reads use the card cover', () => {
     );
   });
 
+  it.each([
+    ['the uploader on a session', { seesReportListed: false, ownerSeesReportListed: true }],
+    ['a viewer who sees report-listed images', { seesReportListed: true }],
+  ])('the article feed selects the card cover for %s', async (_, viewer) => {
+    await getArticles({
+      limit: 10,
+      sort: ArticleSort.Newest,
+      period: MetricTimeframe.AllTime,
+      periodMode: 'published',
+      browsingLevel: 1,
+      sessionUser: { id: OWNER },
+      reportListedViewer: viewer,
+    } as Parameters<typeof getArticles>[0]).catch(() => undefined);
+
+    const forViewer = articleCardCoverIdSql({ userId: OWNER, ...viewer }).text;
+    expect(forViewer).not.toBe(articleCardCoverIdSql({ seesReportListed: false }).text);
+    expect(issued[0]).toContain(`${forViewer} AS "coverId"`);
+  });
+
   it('Civitai News follows the article availability rule', async () => {
     await getCivitaiNews().catch(() => undefined);
 

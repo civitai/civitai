@@ -946,15 +946,11 @@ export const getArticleById = async ({
     // A cover or banner its model withholds is shown only to moderators, and to the article's
     // owner when they uploaded it. The edit form learns of one it may not see from the
     // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
-    const withheldByModel = isModerator
-      ? new Set<number>()
-      : await getModelWithheldImageIds(
-          [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
-        );
-    const listedHidden = await getReportListedHiddenImageIds(
-      [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
-      { userId, ...reportListedViewer }
-    );
+    const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
+    const [withheldByModel, listedHidden] = await Promise.all([
+      isModerator ? new Set<number>() : getModelWithheldImageIds(ownImageIds),
+      getReportListedHiddenImageIds(ownImageIds, { userId, ...reportListedViewer }),
+    ]);
     const hiddenByModel = (image: { id: number; userId: number } | null) =>
       !!image &&
       (listedHidden.has(image.id) ||
