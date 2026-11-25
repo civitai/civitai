@@ -30,8 +30,8 @@ import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isProd } from '~/env/other';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
-import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import {
+  blockImagesAsCsamInTransaction,
   bulkAddBlockedImages,
   CSAM_IMAGE_BLOCK,
   logCsamBlocklistNoHash,
@@ -265,10 +265,12 @@ export async function createCsamReport({
   // A filing's capture of text the report already holds, recorded once the fold commits.
   const identical: { capture: CsamContextText; reviewUpgrade?: CsamContextReview }[] = [];
   const blockListed = async (tx: Prisma.TransactionClient) => {
-    if (!blockListedImages || !imageIds.length) return;
-    await tx.image.updateMany({ where: { id: { in: imageIds } }, data: CSAM_IMAGE_BLOCK });
-    // Part of the block: a grace breadcrumb left on would let an account restore un-block it.
-    await clearAccountDeletionImageMarkers({ ids: imageIds }, tx);
+    if (!blockListedImages) return;
+    await blockImagesAsCsamInTransaction(imageIds, {
+      $executeRaw: (query, ...values) => tx.$executeRaw(query, ...values),
+      writeBlock: (ids) =>
+        tx.image.updateMany({ where: { id: { in: ids } }, data: CSAM_IMAGE_BLOCK }),
+    });
   };
   // Only fold into a report of the same account AND type: internal reports belong to no account, and
   // a different type is a different report.

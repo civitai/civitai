@@ -223,6 +223,9 @@ describe('the steps every image block runs after its write', () => {
     await blockUserImagesAsCsam(990000402);
     expect(steps.markers).toHaveBeenCalledWith({ userId: 990000402 });
     expectEveryStep();
+    expect(steps.markers.mock.invocationCallOrder[0]).toBeLessThan(
+      steps.search.mock.invocationCallOrder[0]
+    );
   });
 
   it('a CSAM block of an account fails when the breadcrumb clear fails', async () => {

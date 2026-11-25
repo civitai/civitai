@@ -10,6 +10,7 @@ import {
 } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import * as imageService from '~/server/services/image.service';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
@@ -198,8 +199,12 @@ describe('a supplemental report', () => {
       [PRIOR_INGESTION_KEY]
     );
 
+    const sharedBlock = vi.spyOn(imageService, 'blockImagesAsCsamInTransaction');
+
     await file([101]);
 
+    // Through the one CSAM block every filing path runs.
+    expect(sharedBlock).toHaveBeenCalledWith([101], expect.anything());
     const [row] = await filed();
     expect(row.images).toEqual([{ id: 101 }]);
     // Only the listed image, in the report's own transaction, and its grace breadcrumb with it.

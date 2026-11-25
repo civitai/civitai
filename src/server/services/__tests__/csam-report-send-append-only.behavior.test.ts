@@ -77,6 +77,7 @@ import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
 import { CSAM_SEND_BLOCKED_AFTER_HOURS } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { createCsamReport } from '~/server/services/csam.service';
+import * as imageService from '~/server/services/image.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
 
@@ -610,9 +611,12 @@ describe('the block a filing makes in its own transaction', () => {
     async (_, userId, imageId) => {
       await insertImage(imageId);
       const blocks = nextTransactionOnPglite();
+      const sharedBlock = vi.spyOn(imageService, 'blockImagesAsCsamInTransaction');
 
       await fileListing(userId, imageId);
 
+      // Through the one CSAM block every filing path runs.
+      expect(sharedBlock).toHaveBeenCalledWith([imageId], expect.anything());
       expect(blocks).toEqual([[imageId]]);
       // The grace breadcrumb goes with the block, or an account restore would un-block it.
       expect(await imageRow(imageId)).toEqual({

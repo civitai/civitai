@@ -1,7 +1,6 @@
 import type { Kysely } from 'kysely';
 import { Prisma } from '@prisma/client';
 import { CompiledQuery, sql } from 'kysely';
-import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getCsamSupplementalCandidates } from '@civitai/db-queries/csam-queue';
 import { SHOWN_RENDITIONS } from '@civitai/shared/held-media';
@@ -13,7 +12,7 @@ import type {
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import { getViewedImageIds, shownActivities } from '~/server/services/csam.service-new';
-import { CSAM_IMAGE_BLOCK } from '~/server/services/image.service';
+import { blockImagesAsCsamInTransaction, CSAM_IMAGE_BLOCK } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 const SHOWN_ACTIVITIES = SHOWN_RENDITIONS.flatMap(shownActivities);
@@ -148,25 +147,19 @@ export async function createSupplementalCsamReport({
       reportedById,
     });
     if (blockListedImages)
-      await tx
-        .updateTable('Image')
-        .set({ ...CSAM_IMAGE_BLOCK })
-        .where('id', 'in', imageIds)
-        .execute();
-    // Part of the block: a grace breadcrumb left on would let an account restore un-block it.
-    if (blockListedImages)
-      await clearAccountDeletionImageMarkers(
-        { ids: imageIds },
-        {
-          $executeRaw: async (strings, ...values) => {
-            const statement = Prisma.sql(strings, ...values);
-            const result = await tx.executeQuery(
-              CompiledQuery.raw(statement.text, statement.values)
-            );
-            return Number(result.numAffectedRows ?? 0);
-          },
-        }
-      );
+      await blockImagesAsCsamInTransaction(imageIds, {
+        $executeRaw: async (strings, ...values) => {
+          const statement = Prisma.sql(strings, ...values);
+          const result = await tx.executeQuery(CompiledQuery.raw(statement.text, statement.values));
+          return Number(result.numAffectedRows ?? 0);
+        },
+        writeBlock: (ids) =>
+          tx
+            .updateTable('Image')
+            .set({ ...CSAM_IMAGE_BLOCK })
+            .where('id', 'in', ids)
+            .execute(),
+      });
     return tx
       .insertInto('CsamReport')
       .values({

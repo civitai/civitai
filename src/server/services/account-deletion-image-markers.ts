@@ -1,6 +1,11 @@
 import { dbWrite } from '~/server/db/client';
 import { PRIOR_INGESTION_KEY, minusPriorKeysSql } from '~/server/utils/image-removal-mode';
 
+/** Where the clear runs: the primary by default, or the caller's transaction. */
+export type MarkerClearClient = {
+  $executeRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<number>;
+};
+
 /**
  * 🔴 Strips the grace-block breadcrumbs off rows a MODERATION path is blocking right now.
  *
@@ -28,11 +33,6 @@ import { PRIOR_INGESTION_KEY, minusPriorKeysSql } from '~/server/utils/image-rem
  * `"metadata" - key` leaves a NULL metadata NULL, so this never materialises `{}` on a row that
  * had nothing.
  */
-/** Where the clear runs: the primary by default, or the caller's transaction. */
-export type MarkerClearClient = {
-  $executeRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<number>;
-};
-
 export async function clearAccountDeletionImageMarkers(
   target: { ids: number[]; userId?: undefined } | { userId: number; ids?: undefined },
   client: MarkerClearClient = dbWrite
