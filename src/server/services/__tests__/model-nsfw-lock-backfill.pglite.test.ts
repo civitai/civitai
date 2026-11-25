@@ -685,11 +685,16 @@ describe('model nsfw lock backfill: profanity locks', () => {
     });
 
     it('takes at most 200 ids a call', async () => {
+      // 205 more copies of the eligible model, so a cap not applied to the batch query shows.
+      await db.exec(`INSERT INTO "Model" (id, "userId", nsfw, minor, poi, "sfwOnly", status, "deletedAt", "lockedProperties", meta)
+        SELECT 10000 + g, "userId", nsfw, minor, poi, "sfwOnly", status, "deletedAt", "lockedProperties", meta
+        FROM "Model", generate_series(1, 205) g WHERE id = ${ELIGIBLE}`);
       const result = await runBackfill(
         backfillSchema.parse({ bucket: PROFANITY, limit: 500 }),
         effects
       );
       expect(result.limit).toBe(200);
+      expect(result.ids).toHaveLength(200);
       expect(
         (await runBackfill(backfillSchema.parse({ bucket: SCAN, limit: 500 }), effects)).limit
       ).toBe(500);
