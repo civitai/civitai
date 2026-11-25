@@ -821,9 +821,9 @@ export async function assertReportGate(
  * report mark alias (`PUT /:c/:key/marks/report`). `access` is the access the report runs with (the
  * source's, through an import) and `coll` its collection. In this order: a signed-in viewer; a
  * shared collection, refused `400 invalid_request` before any budget; the report gate
- * (`assertReportGate`); then the store's `report`, which writes the viewer's one `report` row in
- * `appdata.doc_mark` (a repeat adds none) on a document that exists and is not hidden, and is what
- * the moderator queue reads. No permission hook is asked: a hook must never silence a report.
+ * (`assertReportGate`); then the store's `report`, which writes the viewer's one report row (a
+ * repeat adds none) on a document that exists and is not hidden, and is what the moderator queue
+ * reads. No permission hook is asked: a hook must never silence a report.
  */
 export async function fileReport(
   access: StorageAccess,
