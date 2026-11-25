@@ -168,7 +168,12 @@ feed card, the song row, the post page and the song detail view, and offers:
 - For the owner: Dispute rating, with the `ratingDispute` flag, once the song's own scans have
   reviewed it (see "Rating disputes" below).
 - For the owner and moderators: Delete song (not on a collection page, which removes from the collection).
-- For moderators: Lookup song and post, Remove as ToS violation, Rescan song and Report CSAM.
+- For moderators: Lookup song and post, Remove as ToS violation, Remove cover, Rescan song and Report
+  CSAM. Remove cover (`image.removeSongCover`) removes only the song's own cover, with its own
+  violation type, and leaves the song up with the placeholder. It is hidden while the song has no own
+  cover, and refused for every moderator while the cover is held for CSAM review (its own flag or
+  block, a held owner, or a CSAM signal on its bytes), since the main app has no CSAM-review grant.
+  Either removal's owner notice names the song or "the cover of your song" and links to the song.
 
 Report song asks, whatever the reason, for a required "Time in the song" (m:ss), prefilled from the
 playhead when the song is the current one and 0:00 otherwise, and editable. The report stores it as

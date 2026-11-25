@@ -50,10 +50,8 @@ import {
   toggleSectionMute,
   toggleCommentMute,
 } from '~/server/services/commentv3/section.service';
-import {
-  getCommentSong,
-  type TimedCommentMetadata,
-} from '~/server/services/commentv3/timed-comments.service';
+import type { TimedCommentMetadata } from '~/server/services/commentv3/timed-comments.service';
+import { readSong } from '~/server/services/song-read.service';
 import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import {
@@ -355,8 +353,11 @@ async function timedCommentMetadata(
   if (timestampSec === undefined) return undefined;
   if (!ctx.features?.music) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   if (isReply) throw throwBadRequestError('A reply cannot be pinned to a time in the song.');
+  // Unchecked: assertSectionVisible already decided who may comment on the song.
   const song =
-    section.entityType === 'image' ? await getCommentSong(kyselyV3Read, section.entityId) : null;
+    section.entityType === 'image'
+      ? await readSong(section.entityId, { visibility: 'unchecked' })
+      : null;
   if (!song) throw throwBadRequestError('Only a comment on a song can be pinned to a time.');
   // Without a stored length the time cannot be checked against the song.
   if (song.durationSec === null)

@@ -21,9 +21,8 @@ import {
 } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyV3Read } from '~/server/db/kyselyDb';
-import { getCommentSong } from '~/server/services/commentv3/timed-comments.service';
 import { getVisibleSongIds } from '~/server/services/image-visibility.service';
+import { readSong } from '~/server/services/song-read.service';
 import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -410,7 +409,10 @@ export async function assertSongReportTime(
           viewer: { user: viewer.user, features: { music: !!viewer.features?.music } },
         })
       : null;
-  const song = visible?.has(input.id) ? await getCommentSong(kyselyV3Read, input.id) : null;
+  // getVisibleSongIds is the reporter-can-open rule; the read itself adds none on top.
+  const song = visible?.has(input.id)
+    ? await readSong(input.id, { visibility: 'unchecked' })
+    : null;
   if (!song) {
     if (details.timestampSec !== undefined)
       throw throwBadRequestError('Only a report on a song can carry a time.');

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '$lib/server/__tests__/abuse-detection-pglite.harness';
 import { APPEAL_MEDIA_SCHEMA as SCHEMA } from '$lib/server/__tests__/appeal-media-schema';
+import { HELD_TAB_TABLE_SQL } from '../../../../test/held-image-tables';
 
 /**
  * What the card load sends for an image withheld from a moderator without the restricted-review
@@ -81,6 +82,8 @@ beforeEach(async () => {
   scanner.down = false;
   db = await freshPglite();
   await db.exec(SCHEMA);
+  // The queues leave out what Audio review's Held tab decides, which reads songs' covers and holds.
+  await db.exec(HELD_TAB_TABLE_SQL);
   await db.exec(`
     INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other'), (9, 'third'), (10, 'fourth'), (11, 'fifth'), (12, 'sixth'), (14, 'seventh'), (15, 'eighth'), (16, 'ninth'), (17, 'tenth');
     INSERT INTO "Image" (id, url, type, ingestion, "needsReview", "blockedFor", width, height, "userId") VALUES

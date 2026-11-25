@@ -33,12 +33,14 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ratingDisputeEnabled } from '~/server/schema/rating-review.schema';
+import { songDisputable } from '@civitai/shared/rating-review';
 import {
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
 } from '~/shared/constants/moderator-app';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { RemoveSongCoverMenuItem } from '~/components/Music/RemoveSongCoverMenuItem';
 import { storedSongDurationSec } from '~/shared/utils/song-play';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -89,7 +91,7 @@ export function canDisputeSongRating({
   return (
     isOwner &&
     ratingDisputeEnabled(features, 'Song') &&
-    (ingestion === undefined || ingestion === 'Scanned')
+    (ingestion === undefined || songDisputable(ingestion))
   );
 }
 
@@ -223,6 +225,7 @@ function SongMenuItems({ image, leadingMenuItems, additionalMenuItems }: SongCon
           >
             Remove as ToS violation
           </Menu.Item>
+          <RemoveSongCoverMenuItem songId={imageId} />
           <Menu.Item
             leftSection={<IconRadar2 size={16} stroke={1.5} />}
             onClick={() => rescanImage({ imageId })}

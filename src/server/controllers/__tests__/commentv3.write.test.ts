@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createCommentV3Schema } from '~/server/schema/commentv3.schema';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
-import type * as TimedComments from '~/server/services/commentv3/timed-comments.service';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
@@ -37,9 +36,12 @@ const m = vi.hoisted(() => ({
   metric: vi.fn(async (_: unknown) => undefined),
   authors: vi.fn(async (..._a: unknown[]) => (_id: number): object => ({})),
   authorRow: vi.fn(async (): Promise<object | undefined> => undefined),
-  song: vi.fn<(db: unknown, imageId: number) => Promise<{ durationSec: number | null } | null>>(
-    async () => null
-  ),
+  song: vi.fn<
+    (
+      imageId: number,
+      opts: { visibility: string }
+    ) => Promise<{ durationSec: number | null } | null>
+  >(async () => null),
 }));
 
 // `profanity-managed-list` per test; every other flag as the real client answers it.
@@ -107,10 +109,7 @@ vi.mock('~/server/events/points/hooks', () => ({
   onCommentCreated: m.onCommentCreated,
   onTopicCommentsRemoved: m.onTopicCommentsRemoved,
 }));
-vi.mock('~/server/services/commentv3/timed-comments.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof TimedComments>()),
-  getCommentSong: m.song,
-}));
+vi.mock('~/server/services/song-read.service', () => ({ readSong: m.song }));
 vi.mock('~/server/services/user.service', () => ({
   getCosmeticsAndProfilePicturesForUsers: m.authors,
 }));
@@ -511,9 +510,7 @@ describe('commentv3 create with a time on a song', () => {
   const SONG = 20;
   const MUSIC = { music: true };
   beforeEach(() => {
-    m.song.mockImplementation(async (_db, imageId) =>
-      imageId === SONG ? { durationSec: 180 } : null
-    );
+    m.song.mockImplementation(async (imageId) => (imageId === SONG ? { durationSec: 180 } : null));
   });
   const onSong = (input: Record<string, unknown>, features = MUSIC) =>
     createCommentV3Handler({
@@ -530,6 +527,8 @@ describe('commentv3 create with a time on a song', () => {
 
   it('stores the time as the only key of metadata, and answers it on the new item', async () => {
     const saved = await onSong({ timestampSec: 42 });
+    // The section's own visibility check already ran; the song read adds none.
+    expect(m.song).toHaveBeenCalledWith(SONG, { visibility: 'unchecked' });
     expect(insertedMetadata()).toEqual({ timestampSec: 42 });
     expect(saved.timestampSec).toBe(42);
   });
