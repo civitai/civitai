@@ -484,18 +484,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
   // `storage-migration-run.service.ts`.
   APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
-  // Server-side PUBLISH and UNPUBLISH in the document store (`POST /storage/_publish/:to`,
-  // `/_unpublish/:to`: copy a viewer's own private documents into a shared collection in one call,
-  // on its own publish budget). EVALUATED PER APP like the moderation pair above (entityId = the
-  // app block id, NO context): ramp by boolean, percentage, or an ENTITY_ID segment of app block
-  // ids. DEFAULT-OFF — absent or Flipt unreachable, both paths answer as an unknown route. See
-  // PUBLISH in `doc-store-api.ts`.
-  APP_BLOCKS_STORAGE_PUBLISH = 'app-blocks-storage-publish',
-  // The REPORT MODERATION API (`POST /api/v1/blocks/moderation/reports`, the replacement for the
-  // `report` mark; `doc-store-report-api.ts`). EVALUATED PER APP like the publish flag above
-  // (entityId = the REQUESTING app's block id, NO context). DEFAULT-OFF — absent or Flipt
-  // unreachable, the path answers as an unknown route; the `report` mark is unaffected either way.
-  APP_BLOCKS_STORAGE_REPORT_API = 'app-blocks-storage-report-api',
   // A shared document PUT that would change no stored row is free of the shared-write budget:
   // when the body's content hash and index rows equal the stored document's (the caller's own,
   // visible, at the version any `ifVersion` names), the route answers with the stored document
@@ -740,7 +728,7 @@ export enum FLIPT_FEATURE_FLAGS {
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
   // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
   // apps are refused. Off: blob urls are accepted as before. Unreadable: answers on (refused).
-  // EVALUATED PER APP like `app-blocks-storage-publish` (entityId = the app block id, NO context):
+  // EVALUATED PER APP like `app-blocks-shared-data-moderation` (entityId = the app block id, NO context):
   // ramp it with an ENTITY_ID segment of app block ids. Read ONLY through
   // `appUsesScannedSourceRows` (`services/blocks/source-scanned-rows.ts`), so the host's picker,
   // the copy and the generation gate answer the same for one app.

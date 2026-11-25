@@ -62,7 +62,7 @@ export function createInternalStorageRoute(deps: InternalStorageRouteDeps = {}) 
       endpoint: storageEndpointLabel,
       requiredScope: 'apps:storage',
       allowOpaqueOrigin: true,
-      extraCorsMethods: ['PUT', 'DELETE', 'PATCH'],
+      extraCorsMethods: ['PUT', 'DELETE'],
       formatRefusal: storageRefusalBody,
     }),
     {

@@ -6,6 +6,8 @@
   import RankBadge from '$lib/RankBadge.svelte';
   import SmiteNotice from '$lib/SmiteNotice.svelte';
   import VerdictsCard from '$lib/VerdictsCard.svelte';
+  import InquisitorCard from '$lib/InquisitorCard.svelte';
+  import { inquisitorStats } from '$lib/inquisitor-home';
   import { nextRankLine } from '$lib/chrome';
   import { count } from '$lib/format';
   import { pendingSegment } from '$lib/gauge';
@@ -24,6 +26,8 @@
   const segment = $derived(
     status ? pendingSegment(status.xpIntoLevel, status.xpForNextLevel, status.xpPending) : { confirmed: 0, pending: 0, overflow: 0 }
   );
+
+  const inquisitor = $derived(data.inquisitor ? inquisitorStats(data.inquisitor.stats) : null);
 
   const links = $derived([
     { href: '/judgments', icon: 'scroll-text' as const, title: 'Judgments' },
@@ -56,7 +60,49 @@
   <title>Home · Knights of New Order</title>
 </svelte:head>
 
-{#if data.player && status && !data.needsConsent}
+{#if inquisitor}
+  <div class="page-wide home">
+    <section class="hero" aria-label="The Inquisitor">
+      <p class="eyebrow">Welcome back{data.username ? `, ${data.username}` : ''}</p>
+
+      <div class="crest-wrap">
+        <span class="glow" aria-hidden="true"></span>
+        <svg class="ring" viewBox="0 0 224 224" aria-hidden="true" focusable="false">
+          <circle class="track" cx="112" cy="112" r="106" />
+          <circle class="fill" cx="112" cy="112" r="106" pathLength="100" stroke-dasharray="100" stroke-dashoffset="0" />
+        </svg>
+        <span class="crest inquisitor-crest" role="img" aria-label="Inquisitor badge"><Icon name="scale" size={79} /><span class="shimmer" aria-hidden="true"></span></span>
+      </div>
+
+      <h1 class="rank-name">Inquisitor</h1>
+      <p class="xp">You review the Order's settled ratings</p>
+      <p class="line">Two moderators who agree set the image's level and add a skill check</p>
+
+      <a class="btn primary begin" href="/play" data-sveltekit-preload-data="off">Begin reviewing</a>
+
+      <ul class="stats" aria-label="Your reviews">
+        {#each inquisitor as stat (stat.key)}
+          <li>
+            <b><Icon name={stat.icon} size={18} />{stat.value}</b>
+            <span>{stat.label}</span>
+          </li>
+        {/each}
+      </ul>
+    </section>
+
+    <div class="verdicts">
+      <InquisitorCard />
+    </div>
+
+    <nav class="links" aria-label="The Order">
+      <div class="divider" aria-hidden="true"><span></span></div>
+      <ul>
+        <li><a href="/leaderboard"><Icon name="trophy" size={16} />Leaderboard</a></li>
+        <li><a href="/codex"><Icon name="book-open" size={16} />Codex</a></li>
+      </ul>
+    </nav>
+  </div>
+{:else if data.player && status && !data.needsConsent}
   <div class="page-wide home">
     <section class="hero" aria-label="Your standing in the Order">
       <p class="eyebrow">Welcome back{data.username ? `, ${data.username}` : ''}</p>
@@ -292,6 +338,15 @@
     background: linear-gradient(115deg, transparent 30%, rgb(232 220 192 / 0.35) 50%, transparent 70%);
     pointer-events: none;
     animation: mo-crest-shimmer 1100ms var(--ease-in-out) 500ms both;
+  }
+  .inquisitor-crest {
+    align-items: center;
+    justify-content: center;
+    width: 180px;
+    height: 180px;
+    border: 1px solid var(--io-gold-muted);
+    background: var(--io-surface);
+    color: var(--io-parchment);
   }
   .level-pill {
     position: absolute;

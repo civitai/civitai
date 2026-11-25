@@ -1039,20 +1039,20 @@ describe('checkStorageMigrations — keyedBy is immutable against every approved
 });
 
 // docs/app-storage-generic-core.md, "Manifest, schema majors and the SDK" and rollout step 3:
-// marks, counters and `write: "none"` are deprecated. A version may keep what its previous
+// marks, counters and `write: "none"` are removed. A version may keep what its previous
 // approved version declared on a collection (or less), and may declare nothing new.
-describe('checkStorageMigrations — marks, counters and write "none" are deprecated', () => {
+describe('checkStorageMigrations — marks, counters and write "none" are removed', () => {
   const INSTEAD =
     'declare a viewer-keyed collection instead (keyedBy "viewer" or "parent+viewer": each viewer\'s own document is their vote or entry), and report a document through the moderation report API — see https://developer.civitai.com/apps/guide/storage';
   const newNames = (coll: string, field: 'marks' | 'counters', names: string) =>
-    `storage.collections.${coll}.${field}: ${names} not declared on this collection by the previous approved version, and ${field} are deprecated — a collection may keep only the ${field} it already declares, until its data is migrated; ${INSTEAD}`;
+    `storage.collections.${coll}.${field}: ${names} not declared on this collection by the previous approved version, and ${field} were removed — a collection may keep only the ${field} it already declares, which do nothing; ${INSTEAD}`;
   const newNone = (coll: string) =>
-    `storage.collections.${coll}.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated — a collection may keep it only if it already declares it, until its data is migrated; ${INSTEAD}`;
+    `storage.collections.${coll}.write: "none" is not declared on this collection by the previous approved version, and write "none" was removed — a collection may keep it only if it already declares it, and is then read-only; ${INSTEAD}`;
   // With no previous approved version there is nothing to keep, and the message says so.
   const firstNames = (coll: string, field: 'marks' | 'counters', listed: string) =>
-    `storage.collections.${coll}.${field}: ${field} are deprecated and cannot be declared on a new app (declared: ${listed}); ${INSTEAD}`;
+    `storage.collections.${coll}.${field}: ${field} were removed and cannot be declared on a new app (declared: ${listed}); ${INSTEAD}`;
   const firstNone = (coll: string) =>
-    `storage.collections.${coll}.write: "none" is deprecated and cannot be declared on a new app; ${INSTEAD}`;
+    `storage.collections.${coll}.write: "none" was removed and cannot be declared on a new app; ${INSTEAD}`;
   const withColls = (collections: Record<string, unknown>) => ({ storage: { collections } });
   const posts = (extra: Record<string, unknown> = {}) =>
     withColls({ posts: { visibility: 'shared', write: 'own', ...extra } });

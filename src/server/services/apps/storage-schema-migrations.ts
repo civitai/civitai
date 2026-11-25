@@ -623,11 +623,17 @@ function rawNames(decl: unknown, field: 'marks' | 'counters'): string[] {
 }
 
 /**
- * 🔴 MARKS, COUNTERS AND `write: "none"` ARE DEPRECATED (docs/app-storage-generic-core.md, "Manifest,
- * schema majors and the SDK"): a version may not declare one its PREVIOUS APPROVED version did not
- * declare on that same collection. A collection may keep exactly what `prev` declared there, or
- * less, until its data is migrated; a first version (`prev` null) may declare none of them. Only
- * `prev` grandfathers, not older history: a collection dropped and declared again is new here.
+ * 🔴 MARKS, COUNTERS AND `write: "none"` ARE REMOVED (docs/app-storage-generic-core.md, rollout
+ * step 5; deprecated since step 3): a version may not declare one its PREVIOUS APPROVED version did
+ * not declare on that same collection. A collection may keep exactly what `prev` declared there,
+ * or less; a first version (`prev` null) may declare none of them. Only `prev` grandfathers, not
+ * older history: a collection dropped and declared again is new here.
+ *
+ * Kept declarations are INERT: the store serves no mark or counter (a declared `marks` /
+ * `counters` changes nothing), and a kept `write: "none"` is a read-only collection
+ * (`assertShareWritable`). Grandfathering stays, rather than refusing every declaration, so an
+ * approved app that still declares one can ship an unrelated fix, and a rollback to its previous
+ * approved version passes, without first having to rewrite a declaration that does nothing.
  *
  * `prev` is read RAW, not parsed: a baseline that no longer parses still names what its
  * collections declared, and the parser keeps accepting these fields on replay (approved history).
@@ -657,10 +663,10 @@ export function deprecatedPrimitiveErrors(
       const listed = added.map((n) => JSON.stringify(n)).join(', ');
       errors.push(
         firstVersion
-          ? `storage.collections.${name}.${field}: ${field} are deprecated and cannot be declared on a new app (declared: ${listed}); ${VIEWER_KEYED_INSTEAD}`
+          ? `storage.collections.${name}.${field}: ${field} were removed and cannot be declared on a new app (declared: ${listed}); ${VIEWER_KEYED_INSTEAD}`
           : `storage.collections.${name}.${field}: ${listed} ${
               added.length === 1 ? 'is' : 'are'
-            } not declared on this collection by the previous approved version, and ${field} are deprecated — a collection may keep only the ${field} it already declares, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
+            } not declared on this collection by the previous approved version, and ${field} were removed — a collection may keep only the ${field} it already declares, which do nothing; ${VIEWER_KEYED_INSTEAD}`
       );
     }
     if (
@@ -669,8 +675,8 @@ export function deprecatedPrimitiveErrors(
     ) {
       errors.push(
         firstVersion
-          ? `storage.collections.${name}.write: "none" is deprecated and cannot be declared on a new app; ${VIEWER_KEYED_INSTEAD}`
-          : `storage.collections.${name}.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated — a collection may keep it only if it already declares it, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
+          ? `storage.collections.${name}.write: "none" was removed and cannot be declared on a new app; ${VIEWER_KEYED_INSTEAD}`
+          : `storage.collections.${name}.write: "none" is not declared on this collection by the previous approved version, and write "none" was removed — a collection may keep it only if it already declares it, and is then read-only; ${VIEWER_KEYED_INSTEAD}`
       );
     }
   }

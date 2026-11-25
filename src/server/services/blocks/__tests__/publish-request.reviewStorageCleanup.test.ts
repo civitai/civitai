@@ -190,9 +190,7 @@ const { createDocStore, createDocStoreMaintenance, reviewNamespace } = await imp
   '~/server/services/apps/doc-store'
 );
 const { createPgliteHarness } = await import('~/server/services/apps/__tests__/doc-store.harness');
-const { PREFS, POSTS, TALLIES, ctx } = await import(
-  '~/server/services/apps/__tests__/doc-store.functional'
-);
+const { PREFS, POSTS, ctx } = await import('~/server/services/apps/__tests__/doc-store.functional');
 const { APPDATA_TABLES } = await import('~/server/services/apps/__tests__/doc-store.sql-scan');
 const { approveRequest, rejectRequest, withdrawRequest, teardownReviewStorageForRequest } =
   await import('~/server/services/blocks/publish-request.service');
@@ -225,14 +223,15 @@ function pending(slug: string, extra: Partial<Req> = {}): Req {
   return r;
 }
 
-/** Both moderators write a private doc, a shared doc, a mark and a counter in their namespaces. */
+/** Both moderators write a private doc, a shared doc, a report and a deleted doc's tombstone. */
 async function seedReview(publishRequestId: string) {
   for (const uid of MODS) {
     const c = ctx(publishRequestId, reviewNamespace(publishRequestId, uid), uid);
     await liveStore.put(c, PREFS, 'k', { uid });
     await liveStore.put(c, POSTS, 'p', { status: 'open' });
-    await liveStore.mark(c, POSTS, 'p', 'vote');
-    await liveStore.increment(c, TALLIES, 'g', 'plays', 2);
+    await liveStore.report(c, POSTS, 'p');
+    await liveStore.put(c, POSTS, 'gone', { status: 'open' });
+    await liveStore.delete(c, POSTS, 'gone');
   }
 }
 

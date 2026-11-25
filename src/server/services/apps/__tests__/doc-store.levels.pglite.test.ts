@@ -16,7 +16,7 @@ import {
   MIGRATION_DOC_LEVELS_UP,
   type Harness,
 } from './doc-store.harness';
-import { BOARD, ctx, freshApp, NS_PROD, PREFS, TALLIES } from './doc-store.functional';
+import { BOARD, ctx, freshApp, NS_PROD, PREFS } from './doc-store.functional';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -356,12 +356,6 @@ describe('levels ON', () => {
       expect(await readsOf(store, author, BOARD, 'own-p')).toEqual(seen('own-p'));
       expect(await readsOf(store, author, BOARD, 'own-n')).toEqual(seen('own-n'));
     });
-  });
-
-  it('a counter document (no data to rate) stays visible to everyone', async () => {
-    const app = freshApp('LVLCOUNT');
-    await store.increment(gated(ctx(app, NS_PROD, AUTHOR), 31), TALLIES, 'game-1', 'plays', 3);
-    expect(await listKeys(store, gated(ctx(app, NS_PROD, OTHER), 1), TALLIES)).toEqual(['game-1']);
   });
 
   it('🔴 registry feed: a document the gate leaves out reads as hidden, and the full read omits it', async () => {

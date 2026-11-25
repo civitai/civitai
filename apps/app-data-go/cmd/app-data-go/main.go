@@ -122,7 +122,10 @@ func run(log *slog.Logger) error {
 		}
 		// One router decides which tokens are exchanged, for the handler and the streams alike. Its
 		// block cache is nil while APP_DATA_BLOCK_EXCHANGE is off: block tokens then read REST only.
-		router := &exchange.Router{User: ex.Exchange}
+		// The user exchange goes through a Guard (exchange.NewRouter): a token the hub refused is not sent
+		// again for a while, and an address presenting many tokens the hub cannot exchange is throttled
+		// before the hub.
+		router, _ := exchange.NewRouter(ex.Exchange, func(o string) { m.UserExchangeGuard.WithLabelValues(o).Inc() })
 		if cfg.BlockExchange {
 			// Each block token is verified against the site's JWKS before it is sent to the hub.
 			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Verify: verifier.Check, Margin: expiryMargin,

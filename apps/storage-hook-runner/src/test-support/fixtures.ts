@@ -23,7 +23,7 @@ export function hookInput(over: Partial<HookInput> = {}): HookInput {
     doc: {
       version: 4,
       author: { kind: 'user', isViewer: true },
-      counters: { likes: 3 },
+      counters: {},
       marks: {},
     },
     tally: null,

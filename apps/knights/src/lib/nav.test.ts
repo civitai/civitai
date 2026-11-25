@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeHref, NAV_ITEMS } from './nav';
+import { activeHref, NAV_ITEMS, navItems } from './nav';
 
 describe('activeHref', () => {
   it.each([
@@ -28,5 +28,12 @@ describe('activeHref', () => {
 
   it('gives every tab a distinct address', () => {
     expect(new Set(NAV_ITEMS.map((item) => item.href)).size).toBe(NAV_ITEMS.length);
+  });
+});
+
+describe('navItems', () => {
+  it('leaves the Shop out for the Inquisitor, who earns no gold, and keeps it for players', () => {
+    expect(navItems(true).map((item) => item.href)).toEqual(['/home', '/play', '/codex']);
+    expect(navItems(false)).toBe(NAV_ITEMS);
   });
 });

@@ -9,7 +9,7 @@
     fill = false,
   }: { rank: string; size?: Size; dim?: boolean; fill?: boolean } = $props();
 
-  const ICONS = { Acolyte: 'flame', Knight: 'sword', Templar: 'shield', Paladin: 'crown' } as const;
+  const ICONS = { Acolyte: 'flame', Knight: 'sword', Templar: 'shield', Paladin: 'crown', Inquisitor: 'scale' } as const;
   const DIAMETER = { xs: 24, sm: 56, md: 70, lg: 76 } as const;
   const icon = $derived(ICONS[rank as keyof typeof ICONS] ?? 'shield');
 </script>
