@@ -54,6 +54,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 vi.mock('~/providers/AppProvider', () => ({ useServerDomains: () => ({ red: 'civitai.red' }) }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
+vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/comics/project/1' }) }));
 
 const { PanelCard } = await import('~/components/Comics/PanelCard');
 
