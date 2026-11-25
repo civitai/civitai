@@ -1196,10 +1196,11 @@ function finalLevelGate(
   servableLevels: number,
   disputeReview: boolean
 ): 'served' | 'offDomain' | 'refused' {
-  const video = isFinalVideoName(row.fileName);
-  if (row.kind !== 'Final' || (!video && row.contentLevel === null)) return 'served';
-  // Held for CSAM or a minor, it goes only through the CSAM path, never this route.
+  if (row.kind !== 'Final') return 'served';
+  // Held for CSAM or a minor, it goes only through the CSAM path, never this route, rated or not.
   if (row.csamHeld) return 'refused';
+  const video = isFinalVideoName(row.fileName);
+  if (!video && row.contentLevel === null) return 'served';
   const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
   // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold,
   // but only while the scan image that shows it is not held is still there to say so.

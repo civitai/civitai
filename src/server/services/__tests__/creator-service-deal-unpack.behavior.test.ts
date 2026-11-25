@@ -2002,6 +2002,15 @@ describe('a Final rated outside the domain', () => {
     }
   );
 
+  it('a file with no rated image is still refused while an image in it is held', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = NULL`);
+    await q(`UPDATE "Image" SET minor = true`);
+    expect(await download(fileId, 31)).toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
+    expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
+  });
+
   it('a file with no rated image is served on any domain', async () => {
     const { dealId, fileId } = await completedRatedFinal('result.zip');
     await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = NULL`);
