@@ -108,7 +108,7 @@ export const platform = {
   /** Per comment: the newest `at` applied, and the site verdict each token was posted with. */
   lastAt: new Map<number, string>(),
   tokenSite: new Map<string, string>(),
-  readback: null as null | ((items: unknown[]) => unknown[]),
+  readback: null as null | ((items: unknown[], url: URL) => unknown[]),
   /** Called as a post is received, before it is applied: to land a change mid-send. */
   onPost: null as null | ((body: Record<string, any>) => Promise<void> | void),
   /** Drop the next reply after applying it, post or verdict (a lost response). */
@@ -414,8 +414,23 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
           removed: platform.removed.has(p.sourceId as number) || undefined,
           verdict: decidingStepOf(p.sourceId as number),
         });
-      const items = [...latest.values()];
-      return json(200, { items: platform.readback ? platform.readback(items) : items, next: null });
+      // In key order from after the cursor, as the platform pages.
+      const keyOf = (i: unknown) =>
+        String((i as { urn: string }).urn)
+          .split('/')
+          .pop()!;
+      const cursor = url.searchParams.get('cursor');
+      const limit = Number(url.searchParams.get('limit') ?? 0);
+      let items = [...latest.values()];
+      if (cursor !== null)
+        items = items
+          .filter((i) => keyOf(i) > cursor)
+          .sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : 1));
+      if (limit) items = items.slice(0, limit);
+      return json(200, {
+        items: platform.readback ? platform.readback(items, url) : items,
+        next: null,
+      });
     }
   }
   return json(404, { code: 'not_found' });
@@ -470,6 +485,7 @@ export async function bootFpDatabase(holder: { kysely: unknown }) {
     const [value, rest] = migration('20271125140000_feature_page_comments').split('\n-- 2.');
     await pg.db.exec(value);
     await pg.db.exec(`-- 2.${rest}`);
+    await pg.db.exec(migration('20271129120000_feature_page_mirror_lift'));
   }
   holder.kysely = new Kysely({ dialect: dialect(pg.db) });
   vi.stubEnv('AUTH_JWT_ISSUER', HUB);
