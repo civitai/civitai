@@ -223,6 +223,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
   CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
+  // Daily challenge plan (daily-plan.ts). Both default-off: off/unknown/unreachable gives the
+  // fixed rubric and default judge, the pre-schedule behaviour. SCHEDULE uses the calendar's
+  // entries; ROTATION picks a rubric set by date on unscheduled days. Read at creation only, so
+  // flipping one changes dailies created after it, not rows already written.
+  DAILY_CHALLENGE_SCHEDULE = 'daily-challenge-schedule',
+  DAILY_CHALLENGE_RUBRIC_ROTATION = 'daily-challenge-rubric-rotation',
   // Streams the two large evidence archives straight to object storage instead of staging them
   // on the container's local scratch volume first. DEFAULT-OFF — `isFlipt` returns false for an
   // unknown flag or an unreachable Flipt, which leaves the long-standing disk-staging path in
