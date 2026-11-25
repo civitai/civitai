@@ -22,6 +22,7 @@ import {
 } from '~/server/schema/oauth-client.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { isAppAssistantClientId } from '@civitai/auth/app-assistant-client';
+import { isSelfOnlyClientId } from '@civitai/auth/self-only-client';
 import {
   APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
   isAppBlockOauthClientId,
@@ -63,6 +64,20 @@ function rejectAppAssistantClient(clientId: string): void {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'The App Assistant app is managed by Civitai and cannot be modified here',
+    });
+  }
+}
+
+/**
+ * A self-only client (App Assistant, dev tunnel) that staff or a ban disabled cannot be deleted by
+ * its owner: the next App Assistant enable or dev-tunnel mint would recreate it, open, and so undo
+ * the disable. Only staff re-open it. An open one deletes as before (turning the feature off).
+ */
+function rejectDeletingDisabledSelfOnlyClient(client: { id: string; accessMode: string }): void {
+  if (isSelfOnlyClientId(client.id) && client.accessMode === 'disabled') {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This app was disabled by staff and cannot be removed here',
     });
   }
 }
@@ -345,7 +360,8 @@ export const oauthClientRouter = router({
     .input(deleteOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      await findOwnedClient(ctx.user.id, { id: input.id });
+      const owned = await findOwnedClient(ctx.user.id, { id: input.id });
+      rejectDeletingDisabledSelfOnlyClient(owned);
 
       // Collect every user who holds a token under this client BEFORE the
       // cascade wipes the rows — we need their ids to expire the orchestrator's

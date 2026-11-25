@@ -3,14 +3,13 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 
-/**
- * Which disabled OAuth clients a BAN disabled. `accessMode: 'disabled'` alone cannot say: staff
- * also disable clients, and a re-enable must never undo that. So the ban marks each self-only
- * client it disabled, with the mode it had, and only a marked client is ever re-opened.
- *
- * The mark lives on the cache Redis. A lost mark, or one that cannot be read (read as "no mark"),
- * fails closed: the client stays disabled until staff re-open it.
- */
+// Which disabled OAuth clients a BAN disabled. `accessMode: 'disabled'` alone cannot say: staff also
+// disable clients, and a re-enable must never undo that. So the ban marks each self-only client it
+// disabled, with the mode it had, and only a marked client is ever re-opened. The mark lives on the
+// cache Redis; a lost mark, or one that cannot be read (read as "no mark"), fails closed: the client
+// stays disabled until staff re-open it.
+
+/** An expired mark means the client fails closed (stays disabled). */
 const BAN_DISABLED_TTL_SECONDS = 365 * 24 * 60 * 60;
 
 /**

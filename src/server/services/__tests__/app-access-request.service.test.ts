@@ -500,7 +500,8 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
   });
 
   // The rule is APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS (7) in
-  // `~/shared/constants/app-access-request.constants`; the ages below bracket it.
+  // `~/shared/constants/app-access-request.constants`; the ages below bracket it. Policy decided in
+  // civitai#10463.
   describe('account age: at least APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS (7) days', () => {
     const createdAgo = (userId: number, interval: string) =>
       pg.query(`UPDATE "User" SET "createdAt" = CURRENT_TIMESTAMP - $2::interval WHERE "id" = $1`, [

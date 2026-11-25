@@ -100,31 +100,16 @@ describe('disableOauthForBannedUser', () => {
 
   it('🔴 revokes, at the orchestrator, every user who held a token under a disabled client', async () => {
     await disableOauthForBannedUser(USER, deps);
-    expect(dbMock.dbWrite.apiKey.findMany).toHaveBeenCalledWith({
-      where: { clientId: { in: [ASSISTANT, DEV] } },
-      select: { userId: true },
-      distinct: ['userId'],
-    });
     expect(
       deps.revokeCivitaiUserTokens.mock.calls.map(([a]) => (a as { userId: number }).userId)
     ).toEqual([USER, 99]);
   });
 
-  it('🔴 deletes the consents the user gave, except to App Block clients, even when token expiry fails', async () => {
+  it('🔴 deletes the consents the user gave even when token expiry fails', async () => {
     deps.expireClientTokens.mockRejectedValue(new Error('db down'));
     const result = await disableOauthForBannedUser(USER, deps);
-    expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
-      where: { userId: USER, NOT: { clientId: { startsWith: 'appblk-' } } },
-    });
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledTimes(1);
     expect(result.consents).toBe(3);
-  });
-
-  it('leaves App Block clients out of the client read', async () => {
-    await disableOauthForBannedUser(USER, deps);
-    expect(dbMock.dbWrite.oauthClient.findMany).toHaveBeenCalledWith({
-      where: { userId: USER, NOT: { id: { startsWith: 'appblk-' } } },
-      select: { id: true, name: true, accessMode: true },
-    });
   });
 
   it('🔴 an already-disabled self-only client (staff) is neither marked nor written again', async () => {

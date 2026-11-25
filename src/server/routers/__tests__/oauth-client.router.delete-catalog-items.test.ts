@@ -106,12 +106,39 @@ describe('oauthClient.delete', () => {
   });
 });
 
-// Deleting an App Assistant client stays allowed (it turns App Assistant off), unlike editing it.
-describe('oauthClient.delete on an App Assistant client', () => {
-  it('deletes it', async () => {
+// Deleting an App Assistant client stays allowed (it turns App Assistant off), unlike editing it,
+// unless staff or a ban disabled it: the next enable or dev-tunnel mint would recreate it open.
+describe('oauthClient.delete on a self-only client', () => {
+  it('deletes an open one', async () => {
     const id = `appassist-${OWNER_ID}`;
-    dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({ id, userId: OWNER_ID });
+    dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({
+      id,
+      userId: OWNER_ID,
+      accessMode: 'open',
+    });
     await expect(caller.delete({ id })).resolves.toEqual({ success: true });
     expect(dbMock.dbWrite.oauthClient.delete).toHaveBeenCalledWith({ where: { id } });
+  });
+
+  it.each([`appassist-${OWNER_ID}`, `appdev-${OWNER_ID}-pose-board`])(
+    '🔴 refuses deleting %s once it is disabled, and deletes nothing',
+    async (id) => {
+      dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({
+        id,
+        userId: OWNER_ID,
+        accessMode: 'disabled',
+      });
+      await expect(caller.delete({ id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(dbMock.dbWrite.oauthClient.delete).not.toHaveBeenCalled();
+    }
+  );
+
+  it('control: a disabled third-party client is not covered by this refusal', async () => {
+    dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({
+      id: CLIENT_ID,
+      userId: OWNER_ID,
+      accessMode: 'disabled',
+    });
+    await expect(caller.delete({ id: CLIENT_ID })).resolves.toEqual({ success: true });
   });
 });
