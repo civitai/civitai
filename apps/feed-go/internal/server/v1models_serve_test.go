@@ -573,8 +573,13 @@ func TestServeV1ModelsAnswersNotFound(t *testing.T) {
 	s, up, cache := notFoundV1Server(t, reg, true)
 	w := httptest.NewRecorder()
 	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
-	if w.Code != http.StatusNotFound || up.count() != 0 || w.Body.String() != `{"error":"No model with id 42"}` {
-		t.Fatalf("code=%d proxied=%d body=%s, want Node's 404", w.Code, up.count(), w.Body.String())
+	// Errorf, not Fatalf, from here to the 304: the status, the headers and the outcome are each
+	// reported, so a regression in one is not hidden behind another.
+	if up.count() != 0 {
+		t.Fatalf("proxied %d, want the 404 answered here (code=%d)", up.count(), w.Code)
+	}
+	if w.Code != http.StatusNotFound || w.Body.String() != `{"error":"No model with id 42"}` {
+		t.Errorf("code=%d body=%s, want Node's 404", w.Code, w.Body.String())
 	}
 	got := map[string]string{}
 	for k, v := range w.Header() {
@@ -596,10 +601,10 @@ func TestServeV1ModelsAnswersNotFound(t *testing.T) {
 		"X-Feed-Go-Served":             "go",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("404 headers:\n got  %v\n want %v", got, want)
+		t.Errorf("404 headers:\n got  %v\n want %v", got, want)
 	}
 	if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": OutcomeNotFound}); n != 1 {
-		t.Fatalf("not_found = %v, want 1", n)
+		t.Errorf("not_found = %v, want 1", n)
 	}
 	for _, o := range []string{"served", "served_empty", "fallback"} {
 		if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": o}); n != 0 {
@@ -607,7 +612,7 @@ func TestServeV1ModelsAnswersNotFound(t *testing.T) {
 		}
 	}
 	if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-not-found"}); n != 0 {
-		t.Fatalf("v1-models-not-found = %v, want 0", n)
+		t.Errorf("v1-models-not-found = %v, want 0", n)
 	}
 
 	// Next's 304 to a request naming the 404's ETag (sendEtagResponse runs whatever the status).
