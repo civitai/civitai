@@ -16,7 +16,8 @@ import {
 // literal values, so a key the list has not met yet is held to the stricter rule. An orchestrator
 // file is an owner check, not a position one: the viewer's own job file is accepted at any key, and
 // another user's file, a blob or a file whose owner cannot be read is refused. At a media key any
-// other AIR, a bare blob key and a bare number are refused too (`mediaReferenceRefusal`).
+// other AIR, a job file without a prefix, a bare blob key, a bare number and a blob path URL on a
+// host other than the orchestrator's are refused too (`mediaReferenceRefusal`).
 // `trainingData` is added here only: its items are orchestrator blobs, but it also
 // carries captions, which the prompt audit must keep reading as text.
 const MEDIA_KEYS: ReadonlySet<string> = new Set([...STEP_MEDIA_INPUT_KEYS, 'trainingdata']);
@@ -532,7 +533,7 @@ export async function stepPositionsRefusal(opts: {
       mode,
     });
     if (mode === 'log') return null;
-    return `step '${step.$type}' cannot take this value at '${problem.key}'; only media inputs take references or URLs, an orchestrator file must be the viewer's own, and a media input takes no other AIR, blob key or bare id`;
+    return `step '${step.$type}' cannot take this value at '${problem.key}'; only media inputs take references or URLs, an orchestrator file must be the viewer's own, and a media input takes no other AIR, job file, blob key, bare id or blob URL on another host`;
   }
   return null;
 }

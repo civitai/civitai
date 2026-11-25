@@ -9,7 +9,7 @@ import {
  * scanned `Image` rows, so the gate refuses the orchestrator blob urls it sends.
  *
  * Evaluated PER APP — entityId = the app block id, NO context — the same way as
- * `app-blocks-storage-publish` and `app-blocks-shared-data-moderation`: ramp it by boolean, by
+ * `app-blocks-shared-data-moderation`: ramp it by boolean, by
  * percentage (a sticky subset of apps), or with an ENTITY_ID segment listing app block ids. A
  * context-reading segment (moderators, testers, any cohort) matches nothing here.
  *

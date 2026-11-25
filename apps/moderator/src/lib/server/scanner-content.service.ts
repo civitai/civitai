@@ -4,6 +4,9 @@ import { getWorkflow, type XGuardModerationStep } from '@civitai/orchestration-c
 import { dbRead, dbWrite } from './db';
 import { getOrchestratorClient } from './orchestrator';
 import type { ScanContent } from '$lib/scanner-audit';
+import { RETRACTED_REFUSED } from '$lib/held-media';
+import { holdsCsamReview } from './held-media';
+import { listWithheldIds } from './retracted-media';
 
 export type { ScanContent };
 
@@ -145,7 +148,12 @@ async function resolveScanContent(
   }
 }
 
-export async function getScanContents(items: ScanContentItem[]): Promise<ScanContent[]> {
+/** Each item's content. An image withheld from `viewer` comes back unavailable, with no key and
+ *  nothing the scanner read from it. */
+export async function getScanContents(
+  items: ScanContentItem[],
+  viewer: App.Locals['user'] | undefined
+): Promise<ScanContent[]> {
   if (items.length === 0) return [];
 
   const contentHashes = items.map((i) => i.contentHash);
@@ -162,6 +170,20 @@ export async function getScanContents(items: ScanContentItem[]): Promise<ScanCon
     ...new Set(results.map((r) => r.imageId).filter((id): id is number => typeof id === 'number')),
   ];
   if (imageIds.length) {
+    const withheld = await listWithheldIds(
+      imageIds,
+      { csamReview: holdsCsamReview(viewer) },
+      'scanner-content'
+    );
+    for (const [i, r] of results.entries())
+      if (r.imageId !== undefined && withheld.has(r.imageId))
+        results[i] = {
+          contentHash: r.contentHash,
+          scanner: r.scanner,
+          imageId: r.imageId,
+          unavailable: true,
+          unavailableReason: RETRACTED_REFUSED,
+        };
     const images = await dbRead
       .selectFrom('Image')
       .select(['id', 'url'])
@@ -169,7 +191,7 @@ export async function getScanContents(items: ScanContentItem[]): Promise<ScanCon
       .execute();
     const imageMap = new Map(images.map((img) => [img.id, img.url]));
     for (const r of results) {
-      if (r.imageId !== undefined) {
+      if (r.imageId !== undefined && !r.unavailable) {
         const url = imageMap.get(r.imageId);
         if (url) r.imageUrl = url;
         else {

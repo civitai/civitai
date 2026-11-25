@@ -8,6 +8,8 @@ import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
+import type { ArticleReader } from '~/server/services/article-read';
+import { articleReadSelect, canReadArticle } from '~/server/services/article-read';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
@@ -4887,8 +4889,7 @@ export const upsertModel = async (
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
-    // the old level listed, and even when a step before it throws.
+    // The owner's notice follows the level refresh, so a slow notice cannot keep the old level listed.
     try {
       // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
       // the gate ran: it read the description before blurb expansion, not the text stored.
@@ -6263,10 +6264,10 @@ export const setModelsCategory = async ({
 };
 
 // #region [associated models]
-export const getAssociatedResourcesSimple = async ({
-  fromId,
-  type,
-}: GetAssociatedResourcesInput) => {
+export const getAssociatedResourcesSimple = async (
+  { fromId, type }: GetAssociatedResourcesInput,
+  viewer?: ArticleReader
+) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
@@ -6276,19 +6277,24 @@ export const getAssociatedResourcesSimple = async ({
         select: associatedResourceSelect,
       },
       toArticle: {
-        select: { id: true, title: true, nsfwLevel: true, user: { select: simpleUserSelect } },
+        select: {
+          id: true,
+          title: true,
+          nsfwLevel: true,
+          user: { select: simpleUserSelect },
+          ...articleReadSelect,
+        },
       },
     },
   });
 
   const items = associations
-    .map(({ id, toModel, toArticle }) =>
-      toModel
-        ? { id, item: toModel, resourceType: 'model' as const }
-        : toArticle
-        ? { id, item: toArticle, resourceType: 'article' as const }
-        : null
-    )
+    .map(({ id, toModel, toArticle }) => {
+      if (toModel) return { id, item: toModel, resourceType: 'model' as const };
+      if (!toArticle || !canReadArticle(toArticle, viewer)) return null;
+      const { userId, publishedAt, status, ingestion, availability, ...item } = toArticle;
+      return { id, item, resourceType: 'article' as const };
+    })
     .filter(isDefined);
 
   return items;
@@ -6304,7 +6310,7 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true, toModelId: true },
+        select: { id: true, toModelId: true, toArticle: { select: articleReadSelect } },
         orderBy: { index: 'asc' },
       },
     },
@@ -6314,7 +6320,11 @@ export const setAssociatedResources = async (
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
-  const existingAssociations = fromModel.associations.map((x) => x.id);
+  // The editor never lists an article the caller cannot read, so its absence from the payload
+  // is not a removal.
+  const existingAssociations = fromModel.associations
+    .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
+    .map((x) => x.id);
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)
   );
@@ -7474,8 +7484,7 @@ export async function migrateResourceToCollection({
     },
     { timeout: 60000, maxWait: 10000 }
   );
-  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
-  // notice cannot keep the old level listed, and even when one of them throws.
+  // The owners' notices follow the level refresh, as in upsertModel.
   try {
     // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
     // each was given its version's stored level. Versions first: the model level reads them.

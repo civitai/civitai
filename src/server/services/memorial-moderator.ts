@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { invalidateSession } from '~/server/auth/session-invalidation';
+import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { expireUserApiKeys } from '~/server/services/api-key.service';
@@ -24,6 +24,7 @@ export async function assertMemorialModerator(
 
 export const memorialEffects: MemorialEffects = {
   invalidateSession,
+  refreshSession: (userId) => refreshSession(userId, { caller: 'moderation' }),
   expireUserApiKeys,
   bustUserCreator,
   syncEventStanding: async (userId) => {

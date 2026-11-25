@@ -71,8 +71,21 @@ const challengeConfigSchema = z.object({
   defaultJudgeId: z.number().nullable(),
   // Cached full judge config - populated when defaultJudgeId is set
   defaultJudge: judgingConfigSchema.nullable(),
-  // Candidate model reviewed alongside production and logged to Axiom; null turns it off.
-  reviewShadow: z.object({ model: z.string(), sampleRate: z.number().min(0).max(1) }).nullable(),
+  // Candidate model reviewed alongside production and logged to Axiom; null, or no provider with
+  // dataCollection 'deny', turns it off (shadowFor).
+  reviewShadow: z
+    .object({
+      model: z.string(),
+      sampleRate: z.number().min(0).max(1),
+      provider: z
+        .object({
+          order: z.array(z.string()).min(1),
+          allowFallbacks: z.boolean(),
+          dataCollection: z.enum(['deny', 'allow']),
+        })
+        .optional(),
+    })
+    .nullable(),
 });
 export type ChallengeConfig = z.infer<typeof challengeConfigSchema>;
 export const dailyChallengeConfig: ChallengeConfig = {

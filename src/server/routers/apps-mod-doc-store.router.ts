@@ -4,9 +4,9 @@
 // cross-app action runs under the store's row-level security and how each action is
 // audited.
 //
-// `maintenance.*`: the data-migration ops of `docs/app-storage-generic-core.md` (the mark
-// migration, its rollback, the per-collection purge, and their run records). No UI calls them;
-// `storage-mark-migration.service.ts` explains each and its audit.
+// `maintenance.*`: read-only views of the run records the rollout step 4 data migration left
+// (`docs/app-storage-generic-core.md`): the runs, and one purge's dump while it is retained. The
+// tooling that wrote them is removed. No UI calls them; `storage-mark-migration.service.ts`.
 //
 // Session `moderatorProcedure`, NOT block-token reachable: a block token is not a
 // session, and the store's block-token routes (`doc-store-api.ts`) never call the
@@ -38,9 +38,6 @@ import {
   isDocStoreError,
 } from '~/server/services/apps/doc-store.types';
 import {
-  migrateMarksToDocs,
-  purgeStorageCollection,
-  rollbackMarkMigration,
   StorageMaintenanceError,
   storageMaintenanceStatus,
   storagePurgeDump,
@@ -96,9 +93,6 @@ async function mapped<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** A mark name (`[a-z][a-z0-9_]{0,31}`, the manifest's tally names). */
-const markInput = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/);
-
 /**
  * The maintenance ops' refusals carry their reason to the moderator: the message names what to do
  * next (`invalid_request` messages are the store's own fixed strings, naming collections only).
@@ -137,47 +131,10 @@ async function mappedMaintenance<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const maintenanceRouter = router({
-  /** Every mark migration and purge recorded for the app's production namespace. */
+  /** Every mark migration and purge recorded for the app's production namespace (read only). */
   status: moderatorProcedure
     .input(z.object({ appBlockId: appBlockIdInput }))
     .query(({ input }) => mappedMaintenance(() => storageMaintenanceStatus(input))),
-
-  /**
-   * `migrateMarksToDocs`: key check, freeze, copy and verify of one (collection, mark) into one
-   * viewer-keyed target. `dryRun` (the default) runs the key check and the counts only.
-   */
-  migrateMarks: moderatorProcedure
-    .input(
-      z.object({
-        appBlockId: appBlockIdInput,
-        from: collectionInput,
-        mark: markInput,
-        to: collectionInput,
-        data: z.record(z.string(), z.unknown()).optional(),
-        keyMap: z.record(z.string(), z.string()).optional(),
-        dryRun: z.boolean().default(true),
-        reason: reasonInput,
-      })
-    )
-    .mutation(({ ctx, input }) =>
-      mappedMaintenance(() => migrateMarksToDocs({ ...input, actorUserId: ctx.user.id }))
-    ),
-
-  /** Roll a mark migration back before its target opens: purge the target, lift the freeze. */
-  rollbackMarks: moderatorProcedure
-    .input(z.object({ appBlockId: appBlockIdInput, to: collectionInput, reason: reasonInput }))
-    .mutation(({ ctx, input }) =>
-      mappedMaintenance(() => rollbackMarkMigration({ ...input, actorUserId: ctx.user.id }))
-    ),
-
-  /** Delete every document of one collection (dumped first), behind the purge's gates. Irreversible. */
-  purgeCollection: moderatorProcedure
-    .input(
-      z.object({ appBlockId: appBlockIdInput, collection: collectionInput, reason: reasonInput })
-    )
-    .mutation(({ ctx, input }) =>
-      mappedMaintenance(() => purgeStorageCollection({ ...input, actorUserId: ctx.user.id }))
-    ),
 
   /** Every row one purge deleted. */
   purgeDump: moderatorProcedure
@@ -229,6 +186,6 @@ export const appsModDocStoreRouter = router({
       mapped(() => deleteModeratedDoc({ ...input, actorUserId: ctx.user.id }))
     ),
 
-  /** The data-migration ops (`storage-mark-migration.service.ts`). */
+  /** The data-migration run records, read only (`storage-mark-migration.service.ts`). */
   maintenance: maintenanceRouter,
 });

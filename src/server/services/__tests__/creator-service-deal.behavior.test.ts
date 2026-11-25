@@ -12,6 +12,7 @@ import {
   BUYER_DISCLOSURE_VERSION,
   SERVICES_TERMS_VERSION,
 } from '~/shared/constants/creator-service-terms.constants';
+import { SCAN_COPY_SETTLE_WINDOW_MINUTES } from '~/server/services/creator-service-deal-file-sql';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as AccessLog from '~/server/services/creator-service-deal-file-access';
@@ -191,6 +192,8 @@ const LATER_MIGRATIONS = [
   '20271120100100_service_deal_reviews',
   '20271120230000_service_deal_review_report',
   '20271125130000_service_deal_buyer_disclosure',
+  '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -771,6 +774,159 @@ describe('license terms', () => {
   it('records no agreement on an offering with no license', async () => {
     const { id } = await request();
     expect(await deal(id)).toMatchObject({ licensePreset: null, licenseAgreedAt: null });
+  });
+});
+
+describe('a request form', () => {
+  /** Base 500 over 3 days; a style that adds 300 and 2 days, and a required brief. */
+  const FORM = {
+    questions: [
+      {
+        type: 'pickOne',
+        id: 'style',
+        label: 'Style',
+        options: [
+          { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+          { id: 'color', label: 'Full color', price: 300, days: 2 },
+        ],
+      },
+      { type: 'text', id: 'brief', label: 'Describe it', required: true },
+    ],
+  };
+  const withForm = (version = 1) =>
+    q(`UPDATE "ServiceOffering" SET "requestForm" = $1::jsonb, "requestFormVersion" = $2`, [
+      JSON.stringify(FORM),
+      version,
+    ]);
+  const COLOR = { style: 'color', brief: 'a tabby, sleeping' };
+
+  it('charges the total its answers give, and keeps the answers and the breakdown', async () => {
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const { id } = await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(await deal(id)).toMatchObject({
+      price: 800,
+      deliveryDays: 5,
+      formVersion: 1,
+      formAnswers: [
+        { label: 'Style', answer: 'Full color' },
+        { label: 'Describe it', answer: 'a tabby, sleeping' },
+      ],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it.each([
+    ['a total other than its answers give', { expectedPrice: 500, expectedDeliveryDays: 5 }],
+    ['days other than its answers give', { expectedPrice: 800, expectedDeliveryDays: 3 }],
+    ['an older form', { expectedPrice: 800, expectedDeliveryDays: 5, formVersion: 0 }],
+    [
+      'the terms of a page that saw no form',
+      {
+        expectedPrice: 500,
+        expectedDeliveryDays: 3,
+        formVersion: undefined,
+        formAnswers: undefined,
+      },
+    ],
+  ])('refuses a request with %s as changed terms', async (_n, overrides) => {
+    await withForm();
+    await expect(request({ formVersion: 1, formAnswers: COLOR, ...overrides })).rejects.toEqual(
+      expect.objectContaining({ code: 'CONFLICT' })
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+  });
+
+  it('refuses answers left out of a required question, and charges nothing', async () => {
+    await withForm();
+    await expect(
+      request({ expectedPrice: 500, formVersion: 1, formAnswers: { style: 'sketch' } })
+    ).rejects.toEqual(expect.objectContaining({ code: 'BAD_REQUEST' }));
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses answers sent after the seller removed the form', async () => {
+    await expect(request({ formVersion: 1, formAnswers: COLOR })).rejects.toEqual(conflict);
+  });
+
+  it('shows the deal page the answers and the breakdown, and neither without a form', async () => {
+    const view = async (id: number) => {
+      const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+      (
+        dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+      ).serviceDeal.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...row, offering: OFFERING_ROW, events: [] });
+      return deals.getServiceDealView({ dealId: id, userId: BUYER, servicesEnabled: true });
+    };
+    const plain = await request();
+    expect(await view(plain.id)).toMatchObject({ formAnswers: null, priceBreakdown: null });
+    await q(`UPDATE "ServiceDeal" SET status = 'Cancelled'`);
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const { id } = await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(await view(id)).toMatchObject({
+      formAnswers: [
+        { label: 'Style', answer: 'Full color' },
+        { label: 'Describe it', answer: 'a tabby, sleeping' },
+      ],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it('refuses a request whose text answer is blocked, before any hold or deal', async () => {
+    await withForm();
+    const scan = vi.mocked(throwOnBlockedUserContent);
+    scan.mockImplementation(async (text) => {
+      if (Array.isArray(text) && text.includes('blocked words'))
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'blocked' });
+    });
+    try {
+      await expect(
+        request({
+          expectedPrice: 800,
+          expectedDeliveryDays: 5,
+          formVersion: 1,
+          formAnswers: { style: 'color', brief: 'blocked words' },
+        })
+      ).rejects.toMatchObject({ message: 'blocked' });
+      expect(scan).toHaveBeenCalledTimes(2);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    } finally {
+      scan.mockImplementation(async () => undefined);
+    }
+  });
+
+  it('checks the text answers as it checks the request text', async () => {
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(vi.mocked(throwOnBlockedUserContent)).toHaveBeenCalledWith(
+      ['a tabby, sleeping'],
+      expect.objectContaining({ surface: 'creator-service-request' })
+    );
   });
 });
 
@@ -2039,6 +2195,63 @@ describe('the finals gate and dispute resolution', () => {
     expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     expect((await deal(id)).status).toBe('Disputed');
     expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+  });
+
+  it.each([
+    ['pays a release whose final still has its scanned image', false],
+    ['holds a release whose final lost its scanned image, and pays nothing', true],
+  ])('%s', async (_n, imageGone) => {
+    const id = await completed();
+    await windowClosed(id);
+    const [{ id: imageId }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url) VALUES ('scan') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         SELECT f.id, f."dealId", 0, 'a.png', 1, $2, 'Passed' FROM "ServiceDealFile" f
+         WHERE f."dealId" = $1 AND f.kind = 'Final'`,
+      [id, imageId]
+    );
+    if (imageGone) await q(`DELETE FROM "Image" WHERE id = $1`, [imageId]);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({
+      considered: 1,
+      released: imageGone ? 0 : 1,
+    });
+    if (!imageGone) return;
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+  });
+
+  describe('a release while our own scan-copy delete is settling', () => {
+    /** A completed deal whose Final's one entry our copy delete marked `minutesAgo` and whose image is gone. */
+    const settling = async (minutesAgo: number) => {
+      const id = await completed();
+      await windowClosed(id);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus", "copyDeleteStartedAt")
+           SELECT f.id, f."dealId", 0, 'a.png', 1, 990000987, 'Passed', now() - $2::int * interval '1 minute'
+           FROM "ServiceDealFile" f WHERE f."dealId" = $1 AND f.kind = 'Final'`,
+        [id, minutesAgo]
+      );
+      return id;
+    };
+
+    it('waits, neither paid nor held, and pays on the next run once the entry settles', async () => {
+      const id = await settling(1);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+      expect((await deal(id)).status).toBe('Completed');
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      await q(`UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "copyDeleteStartedAt" = NULL`);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 1 });
+    });
+
+    it('holds as before once the settle window has passed', async () => {
+      const id = await settling(SCAN_COPY_SETTLE_WINDOW_MINUTES + 1);
+      expect(await escrow.sweepServiceDealReleases()).toEqual({ considered: 1, released: 0 });
+      expect((await deal(id)).status).toBe('Disputed');
+      expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+    });
   });
 
   it('sends a delivered deal to the moderators, but never one whose payout is claimed', async () => {
@@ -4459,8 +4672,8 @@ describe('review publishing and counters', () => {
 });
 
 describe('dispute reviews', () => {
-  const disputed = async (buyerId = BUYER) => {
-    const { id } = await request({ buyerId });
+  const disputed = async (buyerId = BUYER, overrides: Parameters<typeof request>[0] = {}) => {
+    const { id } = await request({ buyerId, ...overrides });
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: buyerId });
@@ -4509,6 +4722,48 @@ describe('dispute reviews', () => {
       ?.latestReview;
   const resolve = (id: number, resolution: 'Refund' | 'Release') =>
     deals.resolveServiceDealDispute({ dealId: id, moderatorId: STRANGER, resolution });
+
+  it("shows the reviewer the buyer's form answers and the price they gave", async () => {
+    await q(`UPDATE "ServiceOffering" SET "requestForm" = $1::jsonb, "requestFormVersion" = 1`, [
+      JSON.stringify({
+        questions: [
+          {
+            type: 'pickOne',
+            id: 'style',
+            label: 'Style',
+            options: [
+              { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+              { id: 'color', label: 'Full color', price: 300, days: 2 },
+            ],
+          },
+        ],
+      }),
+    ]);
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const id = await disputed(BUYER, {
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: { style: 'color' },
+    });
+    const { deal } = await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER });
+    expect(deal).toMatchObject({
+      price: 800,
+      formAnswers: [{ label: 'Style', answer: 'Full color' }],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it('shows no form answers for a deal requested without a form', async () => {
+    const { deal } = await reviews.getServiceDisputeEvidence({
+      dealId: await disputed(),
+      viewerId: STRANGER,
+    });
+    expect(deal).toMatchObject({ formAnswers: null, priceBreakdown: null });
+  });
 
   it('refuses a review of a deal that is not Disputed, and writes nothing', async () => {
     const { id } = await request();

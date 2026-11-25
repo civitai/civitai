@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { escapeHtml } from '@civitai/shared/html-escape';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -817,6 +818,7 @@ async function loadValidatedImage(
   if (image.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this image' });
   }
+  await assertNotDealFileImages([image.id], 'used here');
   await assertStoredObjectUnchanged(image, kind);
   const size = (image.metadata as { size?: unknown } | null)?.size;
   const result = validateListingImage(

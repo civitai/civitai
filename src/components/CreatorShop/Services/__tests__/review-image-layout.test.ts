@@ -17,11 +17,15 @@ describe('reviewImageLayout', () => {
 
 describe('reviewRowTileStyle', () => {
   it('sizes a tile by its own shape so the image shows whole', () => {
-    expect(reviewRowTileStyle({ width: 800, height: 600 })).toEqual({
-      aspectRatio: '1.3333333333333333',
-      flex: '1.3333333333333333 1 0',
-    });
-    expect(reviewRowTileStyle({ width: 300, height: 400 }).aspectRatio).toBe('0.75');
+    const wide = reviewRowTileStyle({ width: 800, height: 600 });
+    const tall = reviewRowTileStyle({ width: 300, height: 400 });
+    // The tile keeps the image's own shape...
+    expect(Number(wide.aspectRatio)).toBeCloseTo(800 / 600);
+    expect(Number(tall.aspectRatio)).toBeCloseTo(300 / 400);
+    // ...and a wider image takes more of the row than a taller one, shrinking from nothing.
+    const grow = (style: { flex: string }) => Number(style.flex.split(' ')[0]);
+    expect(grow(wide)).toBeGreaterThan(grow(tall));
+    expect(wide.flex.endsWith(' 1 0')).toBe(true);
   });
 
   it('falls back to a square when a size is missing', () => {

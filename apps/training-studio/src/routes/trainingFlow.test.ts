@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
 import { kohyaBound, kohyaFieldSupported } from '$lib/data/kohya';
-import { removeTag } from './tagReplace';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
   LORA_TYPES,
@@ -990,16 +989,16 @@ describe('Kohya engine selection and options', () => {
   });
 
   it.each(['sdxl', 'pony', 'illustrious'])(
-    'offers Kohya clip skip for %s, defaulting to 2 with a floor of 2',
+    'offers Kohya clip skip for %s, defaulting to 2 and allowing 1',
     (type) => {
       const kohya = { ...run(type), engine: 'kohya' };
       const { ecosystem } = runVersion(kohya);
       expect(kohyaFieldSupported('clipSkip', ecosystem)).toBe(true);
-      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 2, max: 4 });
+      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 1, max: 4 });
       expect(defaultRunParams(kohya).clipSkip).toBe('2');
       expect(runTrainingParams(kohya, defaultRunParams(kohya), 'tag').kohya?.clipSkip).toBe(2);
-      const picked = { ...defaultRunParams(kohya), clipSkip: '3' };
-      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(3);
+      const picked = { ...defaultRunParams(kohya), clipSkip: '1' };
+      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(1);
     }
   );
 
@@ -1284,16 +1283,17 @@ describe('rating filters', () => {
 describe('dataset batches', () => {
   const at = (h: number, m: number) => new Date(2026, 10, 24, h, m).getTime();
 
-  it('scopes a tag removal to one batch and leaves the other batch untouched', () => {
+  it('imagesInScope keeps only the chosen batch, and the whole dataset when no batch is chosen', () => {
     const first = newBatch('upload', at(15, 0));
     const second = newBatch('upload', at(15, 41));
     const images = [
-      { id: 1, tags: ['1boy', 'smile'], batch: first },
-      { id: 2, tags: ['1boy'], batch: first },
-      { id: 3, tags: ['1boy', 'hat'], batch: second },
+      { id: 1, batch: first },
+      { id: 2, batch: second },
+      { id: 3, batch: first },
+      { id: 4 },
     ];
-    for (const img of imagesInScope(images, second.id)) img.tags = removeTag(img.tags, '1boy');
-    expect(images.map((i) => i.tags)).toEqual([['1boy', 'smile'], ['1boy'], ['hat']]);
+    expect(imagesInScope(images, first.id).map((i) => i.id)).toEqual([1, 3]);
+    expect(imagesInScope(images, second.id).map((i) => i.id)).toEqual([2]);
     expect(imagesInScope(images, null)).toBe(images);
   });
 

@@ -722,10 +722,11 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	// 22: feed_go_shadow_compare_viewer_total (model-associated's per-viewer-class results),
+	// 23: feed_go_shadow_compare_viewer_total (per-viewer-class body results),
+	// feed_go_shadow_response_viewer_total (the tRPC feeds' per-viewer-class header results),
 	// feed_go_devalue_write_total and feed_go_serve_parity_total included.
-	if checked != 22 {
-		t.Fatalf("checked %d per-endpoint families, want 22 (a family was renamed or lost)", checked)
+	if checked != 23 {
+		t.Fatalf("checked %d per-endpoint families, want 23 (a family was renamed or lost)", checked)
 	}
 }
 

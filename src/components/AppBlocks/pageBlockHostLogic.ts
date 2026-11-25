@@ -4,6 +4,7 @@
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
 import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
+import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
@@ -1421,7 +1422,7 @@ export const AUTO_RETRY_BACKOFF_MS: readonly number[] = [2_000, 5_000];
  * inputs to `worstReachableLaunchMs()` below, and importing them from the
  * component would drag the whole React graph into the `unit` project.
  */
-export const BLOCK_READY_TIMEOUT_MS = 10_000;
+export { BLOCK_READY_TIMEOUT_MS };
 export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 
 /**

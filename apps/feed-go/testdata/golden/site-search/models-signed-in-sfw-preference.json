@@ -1,0 +1,36 @@
+{
+  "name": "models-signed-in-sfw-preference",
+  "description": "Signed in on the mature host with showNsfw off: no cap, but the viewer level is PG, so model hits carry their civitai.com face.",
+  "request": {
+    "path": "/api/search/indexes/models_v9/search",
+    "body": "{\"q\":\"x\"}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": {
+    "id": 1002,
+    "username": "sfw",
+    "isModerator": false,
+    "browsingLevel": 31,
+    "showNsfw": false
+  },
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[{\"id\":131,\"name\":\"Red\",\"sfwName\":\"Green\",\"images\":[{\"id\":1301,\"nsfwLevel\":4}]}],\"query\":\"x\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/models_v9/search",
+      "body": {
+        "q": "x",
+        "filter": [
+          "poi != true OR user.id = 1002",
+          "availability != Private OR user.id = 1002"
+        ]
+      }
+    },
+    "body": "{\"hits\":[{\"id\":131,\"name\":\"Green\",\"images\":[{\"id\":1301,\"nsfwLevel\":4}]}],\"query\":\"x\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  }
+}

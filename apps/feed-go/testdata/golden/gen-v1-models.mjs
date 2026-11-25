@@ -568,6 +568,19 @@ fx('detail-training-data-red-host', detail(5006, { host: RED_HOST }), trainingDa
   fx('detail-origin-cache-no-versions', detail(5036), w);
 }
 
+// 6c'. Not found: Node answers `res.status(404).json({ error })` (expect.status). With no row from
+// the model statement feed-go may answer that 404 itself (FEED_GO_V1_MODELS_ANSWER_NOT_FOUND); with
+// a row getModelsWithVersions then drops (here: no Published version), the same 404 is Node's, but
+// the decision rests on the model-data cache, and feed-go hands it back.
+fx('detail-not-found', detail(5099), baseWorld());
+{
+  const w = baseWorld();
+  addModel(w, modelRow(5098, { cursorId: '1|1|5098' }), [version(6098, { status: 'Draft' })], {
+    files: { 6098: [file(7098, 6098)] },
+  });
+  fx('detail-not-found-no-published-version', detail(5098), w);
+}
+
 // 6d. The listing's read fails: Node leaves every Training Data file out; whether Node's own read
 // failed is unknown to feed-go, so it falls back rather than answer.
 {
@@ -925,6 +938,29 @@ fx('fallback-list-favorites', list('favorites=false'), baseWorld(), {
   expect: { fallback: 'v1-models-authed-only' },
 });
 
+// A model-data cache miss on the list (FEED_GO_V1_MODELS_SERVE_DATA_MISS): the record is not in
+// the cache (`coldModelData`), so feed-go computes it with dataForModelsCache's lookup over the
+// replica rows its harness builds from `world.modelData`; Node's fetch answers the same record (its
+// mock returns `world.modelData`, which is what the lookup writes). A cold fixture: the record shape is
+// the lookup's transcription (internal/hydrate/modeldata.go), the answer is the real handler's.
+{
+  const w = baseWorld();
+  addModel(
+    w,
+    modelRow(5981, { cursorId: '9|9|5981' }),
+    [version(6981, { trainedWords: ['cold'] })],
+    {
+      files: { 6981: [file(7981, 6981)] },
+      images: { 6981: [image(8981, 6981)] },
+    }
+  );
+  addModel(w, modelRow(5982, { cursorId: '8|8|5982' }), [version(6982)], {
+    files: { 6982: [file(7982, 6982)] },
+  });
+  w.coldModelData = [5981];
+  fx('list-data-miss-computed', list('limit=5'), w, { config: { serveDataMiss: true } });
+}
+
 // --- writing -------------------------------------------------------------------------------------
 
 /** The world's cache values under their real keys, as the Node app writes them. */
@@ -941,7 +977,8 @@ function redisEntries(w) {
     };
   };
   for (const [id, v] of Object.entries(w.modelData))
-    record('packed:caches:data-for-model-2', id, v);
+    if (!(w.coldModelData ?? []).includes(Number(id)))
+      record('packed:caches:data-for-model-2', id, v);
   for (const [id, v] of Object.entries(w.modelTags)) record('packed:caches:model-tags', id, v);
   for (const [id, v] of Object.entries(w.tags)) record('packed:caches:basic-tags', id, v);
   for (const [id, v] of Object.entries(w.users)) record('packed:caches:basic-users', id, v);

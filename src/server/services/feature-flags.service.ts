@@ -101,9 +101,9 @@ const featureFlags = createFeatureFlags({
   // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down.
   trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
-  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Edge rules keyed on
-  // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
-  // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Enable only once the edge
+  // routes that path. A signed-out answer there is edge-cached as on `/api/trpc/`, as its own cache
+  // entry (measured: apps/feed-go/DESIGN.md, "Edge caching of"). See `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
   // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
   // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
@@ -119,6 +119,18 @@ const featureFlags = createFeatureFlags({
   // whose own Go-transport flag is also on for the user. Every compare is one extra request, so ramp
   // it slowly. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   clientShadowCompare: { availability: [], fliptKey: 'client-shadow-compare' },
+  // The SIGNED-OUT twins of the three Go-transport flags and of `clientShadowCompare`: a signed-out
+  // browser sends that procedure to `/api/trpc-go` (and, for the last, shadow-compares it). Each
+  // ramps on its own, apart from the signed-in flags, which never read these. No `fliptKey` and `[]`
+  // on purpose: the registry evaluates a signed-out request with the single entity `anonymous`, so a
+  // percentage rollout there would switch every signed-out visitor at once. These are DARK here and
+  // set only by `applySignedOutRolloutFlags` (`~/server/services/signed-out-rollout`), which reads the
+  // Flipt key named in `SIGNED_OUT_ROLLOUT_FLAGS` per visitor bucket, for requests with no session
+  // user. Off when the key is absent, Flipt is down, or the visitor has no bucket yet.
+  feedGoTransportSignedOut: { availability: [] },
+  feedGoTransportSignedOutModelGetAll: { availability: [] },
+  feedGoTransportSignedOutInfinite: { availability: [] },
+  clientShadowCompareSignedOut: { availability: [] },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -1281,6 +1293,20 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
         }
       : undefined
   );
+}
+
+/**
+ * One Flipt boolean evaluated for an explicit entity id with the signed-out context (no user), for
+ * `applySignedOutRolloutFlags`. `true` / `false` when the client answers; `null` when the Flipt
+ * module is not loaded (always, in the browser), the key is absent, or the evaluation throws.
+ */
+export function evaluateSignedOutFlipt(fliptKey: string, entityId: string): boolean | null {
+  if (!_fliptModule) return null;
+  try {
+    return _fliptModule.isFliptSync(fliptKey, entityId, buildFliptContext());
+  } catch {
+    return null;
+  }
 }
 
 const hasFeature = (

@@ -315,12 +315,16 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 	if err != nil {
 		return nil, err
 	}
-	// getBearerTokenUser: a banned user, or the moderation account, has no bearer session.
+	// getBearerTokenUser: a banned or memorialized user, or the moderation account, has no bearer session.
 	banned, ok := jsTruthy(u.raw["bannedAt"])
 	if !ok {
 		return nil, fallback.New("bearer-user-shape")
 	}
-	if banned {
+	memorialized, ok := jsTruthy(u.raw["memorialized"])
+	if !ok {
+		return nil, fallback.New("bearer-user-shape")
+	}
+	if banned || memorialized {
 		return nil, nil
 	}
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {

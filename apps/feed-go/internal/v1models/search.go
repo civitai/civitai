@@ -39,8 +39,8 @@ const MaxSearchTimeout = 2500 * time.Millisecond
 // search brownout cannot hold this pod's serve slots and push its other routes into bulkhead
 // fallbacks. A rejected call never reaches the backend and returns ErrSearchRejected at once.
 const (
-	// SearchConcurrency is the cap on the search calls in flight per process: half of the pod's
-	// default serve slots, so text queries alone can never fill them. Unlike the Node app's limiter
+	// SearchConcurrency is the cap on the search calls in flight per process, kept below the serve
+	// cap so text queries alone cannot fill every slot. Unlike the Node app's limiter
 	// (MEILI_CALL_CONCURRENCY, a queue), a call past the cap is not queued: it is rejected.
 	SearchConcurrency = 4
 	// DefaultCircuitTripThreshold, DefaultCircuitWindow and DefaultCircuitCooldown are the Node app's
@@ -232,7 +232,7 @@ type MeiliClient struct {
 	OnReject func(why string)
 }
 
-// maxSearchResponse bounds a search response read: at most 101 hits of one id each.
+// maxSearchResponse caps the bytes read from a search response (1 MiB; a real page is ~101 ids).
 const maxSearchResponse = 1 << 20
 
 // NewMeiliClient returns the client for host (SEARCH_HOST) and apiKey (SEARCH_API_KEY), each call

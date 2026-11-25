@@ -30,7 +30,12 @@ import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isProd } from '~/env/other';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
-import { bulkAddBlockedImages, logCsamBlocklistNoHash } from '~/server/services/image.service';
+import {
+  blockImagesAsCsamInTransaction,
+  bulkAddBlockedImages,
+  CSAM_IMAGE_BLOCK,
+  logCsamBlocklistNoHash,
+} from '~/server/services/image.service';
 import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -238,11 +243,14 @@ export async function createCsamReport({
   details,
   type,
   writeBlocklist = true,
+  blockListedImages = false,
 }: Omit<CreateCsamReportSchema, 'details'> & {
   reportedById: number;
   details?: CreateCsamReportSchema['details'] | GeneratorEvidenceDetails;
   /** Off for a caller that writes the blocklist itself, after the account removal. */
   writeBlocklist?: boolean;
+  /** Blocks the listed images as CSAM in the same transaction as the report row. */
+  blockListedImages?: boolean;
 }) {
   const isInternalReport = userId === -1;
   const data = {
@@ -256,11 +264,23 @@ export async function createCsamReport({
 
   // A filing's capture of text the report already holds, recorded once the fold commits.
   const identical: { capture: CsamContextText; reviewUpgrade?: CsamContextReview }[] = [];
+  const blockListed = async (tx: Prisma.TransactionClient) => {
+    if (!blockListedImages) return;
+    await blockImagesAsCsamInTransaction(imageIds, {
+      $executeRaw: (query, ...values) => tx.$executeRaw(query, ...values),
+      writeBlock: (ids) =>
+        tx.image.updateMany({ where: { id: { in: ids } }, data: CSAM_IMAGE_BLOCK }),
+    });
+  };
   // Only fold into a report of the same account AND type: internal reports belong to no account, and
   // a different type is a different report.
   const report = isInternalReport
-    ? await dbWrite.csamReport.create({ data })
+    ? await dbWrite.$transaction(async (tx) => {
+        await blockListed(tx);
+        return tx.csamReport.create({ data });
+      })
     : await dbWrite.$transaction(async (tx) => {
+        await blockListed(tx);
         // A report a send run has claimed is being sent from the copy it read: evidence folded into
         // it would never reach NCMEC, so the filing becomes a report of its own. An expired claim
         // is a run that died or stalled; the fold clears it, so that run cannot mark the report sent.

@@ -4076,6 +4076,11 @@ export type KnightsQueueItem = {
    * Yes/no items only: answers so far; serving finishes questions that are under way first.
    */
   voteCount: Generated<number>;
+  /**
+   * The settled value the label pass has finished with: recorded as its verdict label, or skipped for good (image not
+   * servable or gone, or refused by the label store too often). Null until then.
+   */
+  verdictLabelledValue: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -5861,6 +5866,9 @@ export type ServiceDeal = {
   settledAt: Timestamp | null;
   chatId: number | null;
   requestText: string;
+  formVersion: number | null;
+  formAnswers: unknown | null;
+  priceBreakdown: unknown | null;
   requestedAt: Generated<Timestamp>;
   acceptedAt: Timestamp | null;
   dueAt: Timestamp | null;
@@ -5996,6 +6004,10 @@ export type ServiceDealFileEntry = {
   scanStatus: Generated<ServiceDealFileScanStatus>;
   failReason: string | null;
   createdAt: Generated<Timestamp>;
+  /**
+   * Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+   */
+  copyDeleteStartedAt: Timestamp | null;
 };
 export type ServiceDealFilePurge = {
   id: Generated<number>;
@@ -6143,6 +6155,15 @@ export type ServiceOffering = {
    * The seller lets buyers attach delivered work to their review. Off until the seller opts in.
    */
   allowReviewWork: Generated<boolean>;
+  /**
+   * Questions whose answers add to the price and days; null for a single-price service.
+   */
+  requestForm: unknown | null;
+  requestFormVersion: Generated<number>;
+  /**
+   * The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
+   */
+  fromPrice: number | null;
   /**
    * Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
    * only in the transaction that publishes or hides a review; the deals job compares them to rows.

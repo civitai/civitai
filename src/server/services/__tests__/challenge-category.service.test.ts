@@ -17,8 +17,13 @@ import {
   pickCategoryRubric,
   resolveJudgingCategories,
   resolveRubricBlock,
+  usesNsfwRubrics,
   type ChallengeCategoryRow,
 } from '~/server/services/challenge-category.service';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { CHALLENGE_PRESET_CATEGORIES } from '~/shared/constants/challenge.constants';
 
 const row = (overrides: Partial<ChallengeCategoryRow> & { key: string }): ChallengeCategoryRow => ({
@@ -30,6 +35,20 @@ const row = (overrides: Partial<ChallengeCategoryRow> & { key: string }): Challe
   sortOrder: 0,
   active: true,
   ...overrides,
+});
+
+describe('usesNsfwRubrics', () => {
+  // The system daily is created with allowedNsfwLevel = sfwBrowsingLevelsFlag (PG + PG-13).
+  it('never gives an SFW daily the NSFW rubric variants', () => {
+    const r = row({ key: 'dread', rubric: 'DB SFW', rubricNsfw: 'DB NSFW' });
+    const nsfw = usesNsfwRubrics(sfwBrowsingLevelsFlag);
+    expect(nsfw).toBe(false);
+    expect(pickCategoryRubric(r, { key: 'dread' }, { nsfw })).toBe('DB SFW');
+  });
+
+  it('gives a challenge that allows mature levels the NSFW variants', () => {
+    expect(usesNsfwRubrics(sfwBrowsingLevelsFlag | nsfwBrowsingLevelsFlag)).toBe(true);
+  });
 });
 
 describe('pickCategoryRubric precedence', () => {

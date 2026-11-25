@@ -2,6 +2,9 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
 import { isReviewImageSql } from './review-image';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { holdsCsamReview } from './held-media';
+import { withheldRow, withheldRows } from './retracted-media';
 
 // The suspect's own content, for reviewing a report against an account without leaving the queue
 // (Retool's TOSImages + GetImageCount).
@@ -12,6 +15,8 @@ import { isReviewImageSql } from './review-image';
 
 export type SuspectImage = {
   id: number;
+  /** Withheld from this moderator (`withheldRow`): no key, prompt or reason. */
+  restricted?: boolean;
   url: string;
   /** `type` and `name` both feed media-type inference. Without them every video renders through the
    *  image pipeline, in a grid whose whole purpose is judging what this account posted. */
@@ -85,19 +90,35 @@ export const EMPTY_SUSPECT_FILTERS: SuspectImageFilters = {
   negativePrompt: '',
 };
 
+/** The most matches the Images tab counts. */
+export const MATCH_COUNT_CAP = 5000;
+
 export async function getSuspectImages(
   userId: number,
   filters: SuspectImageFilters = EMPTY_SUSPECT_FILTERS,
-  { limit = 60, page = 1 }: { limit?: number; page?: number } = {}
+  {
+    limit = 60,
+    page = 1,
+    viewer,
+  }: { limit?: number; page?: number; viewer: App.Locals['user'] | undefined }
 ): Promise<{
-  items: SuspectImage[];
+  items: (SuspectImage | ReturnType<typeof withheldRow<SuspectImage>>)[];
   page: number;
   perPage: number;
   total: number;
   blocked: number;
   matched: number;
+  /** `matched` stopped at `MATCH_COUNT_CAP`: there are at least that many. */
+  matchedCapped: boolean;
 }> {
   const base = dbRead.selectFrom('Image').where('userId', '=', userId);
+  // A prompt filter never matches an image withheld from the viewer, or paging it would read the
+  // prompt back a substring at a time.
+  const promptShown = sql<boolean>`NOT EXISTS (
+    SELECT 1 FROM "Image" wi WHERE wi.id = "Image".id AND ${sql.raw(
+      moderatorWithheldSql('wi', { csamReview: holdsCsamReview(viewer) })
+    )}
+  )`;
 
   const filtered = (() => {
     let q = base;
@@ -110,16 +131,19 @@ export async function getSuspectImages(
         sql<boolean>`("tosViolation" = true OR ("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM 'AiNotVerified'))`
       );
     // `meta` is null on an upload and `{}` on a wipe; both are "no prompt" to a moderator.
-    if (filters.noPrompt) q = q.where(sql<boolean>`coalesce("meta" ->> 'prompt', '') = ''`);
+    if (filters.noPrompt)
+      q = q.where(sql<boolean>`coalesce("meta" ->> 'prompt', '') = ''`).where(promptShown);
     if (filters.levels.length) q = q.where('nsfwLevel', 'in', filters.levels);
     if (filters.from) q = q.where('createdAt', '>=', filters.from);
     if (filters.to) q = q.where('createdAt', '<=', filters.to);
     if (filters.prompt)
-      q = q.where(sql<boolean>`"meta" ->> 'prompt' ILIKE ${contains(filters.prompt)}`);
+      q = q
+        .where(sql<boolean>`"meta" ->> 'prompt' ILIKE ${contains(filters.prompt)}`)
+        .where(promptShown);
     if (filters.negativePrompt)
-      q = q.where(
-        sql<boolean>`"meta" ->> 'negativePrompt' ILIKE ${contains(filters.negativePrompt)}`
-      );
+      q = q
+        .where(sql<boolean>`"meta" ->> 'negativePrompt' ILIKE ${contains(filters.negativePrompt)}`)
+        .where(promptShown);
     return q;
   })();
 
@@ -160,15 +184,31 @@ export async function getSuspectImages(
         eb.fn.count<string>(sql`case when "ingestion" = 'Blocked' then 1 end`).as('blocked'),
       ])
       .executeTakeFirst(),
-    filtered.select((eb) => eb.fn.countAll<string>().as('matched')).executeTakeFirst(),
+    // Capped: a prompt filter reads every image of the account, and the withheld check doubles it.
+    dbRead
+      .selectFrom(
+        filtered
+          .select(sql`1`.as('one'))
+          .limit(MATCH_COUNT_CAP + 1)
+          .as('m')
+      )
+      .select((eb) => eb.fn.countAll<string>().as('matched'))
+      .executeTakeFirst(),
   ]);
 
   return {
-    items: rows as unknown as SuspectImage[],
+    items: await withheldRows(
+      rows as unknown as SuspectImage[],
+      viewer,
+      'reported-account-images',
+      (i) => i.id,
+      withheldRow
+    ),
     page,
     perPage: limit,
     total: Number(counts?.total ?? 0),
     blocked: Number(counts?.blocked ?? 0),
-    matched: Number(matchedRow?.matched ?? 0),
+    matched: Math.min(Number(matchedRow?.matched ?? 0), MATCH_COUNT_CAP),
+    matchedCapped: Number(matchedRow?.matched ?? 0) > MATCH_COUNT_CAP,
   };
 }

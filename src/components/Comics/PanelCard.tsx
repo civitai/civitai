@@ -27,7 +27,7 @@ import type { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
@@ -151,10 +151,10 @@ export function PanelCard({
   //    true and the result is downloaded into S3 inline.
   const requiresUnlock = status === 'RequireUnlock';
   const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   const unlockHref =
     features.isGreen && redDomain
-      ? syncAccount(`//${redDomain}/comics/project/${projectId}/chapter/${chapterPosition}`)
+      ? redHref(`/comics/project/${projectId}/chapter/${chapterPosition}`)
       : null;
 
   // Build the per-candidate slot list from persisted metadata. Each slot is

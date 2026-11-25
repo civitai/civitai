@@ -16,6 +16,7 @@ import {
   getFeatureFlagsAsync,
   getFliptGatedEligibility,
 } from '~/server/services/feature-flags.service';
+import { applySignedOutRolloutFlags } from '~/server/services/signed-out-rollout';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { getRequestCredential } from '~/server/auth/request-credential';
@@ -109,6 +110,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       user: withModeratorRightsFor(session?.user, getRequestCredential(sessionRequest)),
       req,
     });
+    // This response is one visitor's own (`private, no-store`), so the signed-out per-visitor
+    // rollouts apply here as in `_app`'s render.
+    applySignedOutRolloutFlags(flags, { user: session?.user, req });
     // The route cookie follows the flag from here too: a viewer the flag went off for stops being
     // considered for the shell, and one it is on for keeps the cookie from expiring.
     if (!flags.shellImages) {

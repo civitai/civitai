@@ -17,6 +17,7 @@
     PaginationPrevious,
   } from '@civitai/ui/components/ui/pagination/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import {
     articleStatusFilters,
     articleStatusBadge,
@@ -99,7 +100,13 @@
   <div class="flex flex-col gap-3">
     {#each data.items as article (article.id)}
       <div class="flex gap-4 rounded-xl border p-3">
-        {#if article.coverUrl}
+        {#if article.coverRestricted}
+          <div
+            class="grid size-24 shrink-0 place-items-center rounded-lg bg-muted p-1 text-center text-[10px] text-dark-2"
+          >
+            {RETRACTED_REFUSED}
+          </div>
+        {:else if article.coverUrl}
           <div class="size-24 shrink-0 overflow-hidden rounded-lg bg-muted">
             <EdgeMedia
               src={article.coverUrl}

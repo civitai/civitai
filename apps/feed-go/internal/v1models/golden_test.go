@@ -38,7 +38,7 @@ import (
 const (
 	goldenDir = "../../testdata/golden/v1-models"
 	// The fixture count gen-v1-models.mjs writes: fewer found means the glob matched the wrong place.
-	goldenMin = 37
+	goldenMin = 40
 )
 
 type goldenEntry struct {
@@ -58,6 +58,9 @@ type goldenFixture struct {
 		// SERVER_DOMAIN_RED and its aliases, as the Node golden test sets them.
 		ServerDomainRed        string `json:"serverDomainRed"`
 		ServerDomainRedAliases string `json:"serverDomainRedAliases"`
+		// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (with the miss computation on): a fixture
+		// whose `coldModelData` records are computed by dataForModelsCache's lookup.
+		ServeDataMiss bool `json:"serveDataMiss"`
 	} `json:"config"`
 	Request struct {
 		Path    string            `json:"path"`
@@ -68,9 +71,12 @@ type goldenFixture struct {
 	Redis    map[string]goldenEntry     `json:"redis"`
 	SysRedis map[string]goldenEntry     `json:"sysRedis"`
 	Expect   struct {
-		Fallback string     `json:"fallback"`
-		Body     *string    `json:"body"`
-		SQL      *goldenSQL `json:"sql"`
+		Fallback string `json:"fallback"`
+		// Status is the status Node answers with (0: 200); the `[id]` not-found answer is a 404,
+		// which Go marks Answer.NotFound.
+		Status int        `json:"status"`
+		Body   *string    `json:"body"`
+		SQL    *goldenSQL `json:"sql"`
 		// TrainingDataSQL is trainingDataListing's statement, when Node sent one.
 		TrainingDataSQL *goldenSQL `json:"trainingDataSql"`
 		// Search is the text search's call, when Node made one.
@@ -398,8 +404,14 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 		}},
 	}}
 
+	if fx.Config.ServeDataMiss {
+		env.db.Routes = append(modelDataLookupRoutes(t, fx), env.db.Routes...)
+	}
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: env.db}
+	if fx.Config.ServeDataMiss {
+		sources.Compute = &hydrate.MissCompute{Now: nowFn}
+	}
 	env.deps = &Deps{
 		DB:      env.db,
 		Packed:  packed,
@@ -414,7 +426,10 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			BaseURL:              fx.Config.BaseURL,
 			CoverageNext:         fx.Config.CoverageNext,
 			BaseModelFeedMetrics: fx.Config.BaseModelFeedMetrics,
-			ResponseCacheTTL:     180 * time.Second,
+			ServeDataMiss:        fx.Config.ServeDataMiss,
+			// ServeDataMiss needs ComputeMisses (ValidateMisses).
+			ComputeMisses:    fx.Config.ServeDataMiss,
+			ResponseCacheTTL: 180 * time.Second,
 			// The Node golden test runs the non-production build (isProd false): localhost origins.
 			Production: false,
 			// isRedCapableHost's list from the env the Node golden test sets (config.Hosts["red"] order).
@@ -435,6 +450,78 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 		env.deps.Search = env.search
 	}
 	return env
+}
+
+// modelDataLookupColumns are dataForModelsCache's lookup columns, in its query's order.
+var modelDataLookupColumns = []string{"id", "index", "modelId", "name", "earlyAccessTimeFrame", "baseModel",
+	"baseModelType", "createdAt", "trainingStatus", "publishedAt", "status", "flags", "availability", "nsfwLevel",
+	"description", "trainedWords", "vaeId", "covered", "coveredNext"}
+
+// modelDataLookupRoutes answer dataForModelsCache's lookup queries (its versions and its SHA256 model
+// hashes) with the rows each requested model's `world.modelData` record was written from: the
+// versions in record order with their modelId (integers as int64, text[] as []string), the hashes
+// in record order. The record is what the lookup writes (gen-v1-models.mjs), so the rows are that
+// record's inverse.
+func modelDataLookupRoutes(t *testing.T, fx *goldenFixture) []testkit.Route {
+	t.Helper()
+	var data map[string]any
+	fx.world(t, "modelData", &data)
+	records := map[int]map[string]any{}
+	for k, v := range data {
+		id, err := strconv.Atoi(k)
+		if err != nil {
+			t.Fatalf("modelData key %q", k)
+		}
+		records[id], _ = revive(v).(map[string]any)
+	}
+	column := func(col string, v any) any {
+		switch x := v.(type) {
+		case float64:
+			return int64(x)
+		case []any:
+			if col == "trainedWords" {
+				out := make([]string, len(x))
+				for i, e := range x {
+					out[i], _ = e.(string)
+				}
+				return out
+			}
+		}
+		return v
+	}
+	return []testkit.Route{
+		{Match: `LEFT JOIN "GenerationCoverage"`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				vs, _ := records[id]["versions"].([]any)
+				for _, x := range vs {
+					v, _ := x.(map[string]any)
+					row := make([]any, len(modelDataLookupColumns))
+					for i, c := range modelDataLookupColumns {
+						if c == "modelId" {
+							row[i] = int64(id)
+							continue
+						}
+						row[i] = column(c, v[c])
+					}
+					rows = append(rows, row)
+				}
+			}
+			return testkit.NewRows(modelDataLookupColumns, rows...), nil
+		}},
+		{Match: `FROM "ModelHash"`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			var rows [][]any
+			for _, id := range ids {
+				hs, _ := records[id]["hashes"].([]any)
+				for _, h := range hs {
+					rows = append(rows, []any{int64(id), h})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "hash"}, rows...), nil
+		}},
+	}
 }
 
 // seedUncuratedShowcases writes, for every version the fixture caches images for, the
@@ -560,6 +647,9 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 	if fx.Expect.Body == nil {
 		t.Fatalf("the fixture has no expected body yet: run the Node golden test and copy its GOLDEN-ACTUAL")
 	}
+	if err := fx.sameStatus(ans); err != nil {
+		t.Error(err)
+	}
 	got, err := superjson.Plain(ans.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -597,6 +687,21 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 		paths = append(paths, d.Kind+":"+d.Path)
 	}
 	t.Fatalf("not the bytes Node writes (structural match %v, diffs %v)\n go:   %s\n node: %s", rep.Match, paths, got, want)
+}
+
+// sameStatus is nil when ans is marked as Node's answer is: NotFound exactly when Node answers 404.
+func (fx *goldenFixture) sameStatus(ans *Answer) error {
+	status := fx.Expect.Status
+	if status == 0 {
+		status = 200
+	}
+	if status != 200 && status != 404 {
+		return fmt.Errorf("Node answers %d: not a status the port answers", status)
+	}
+	if ans.NotFound != (status == 404) {
+		return fmt.Errorf("NotFound=%v, Node answers %d", ans.NotFound, status)
+	}
+	return nil
 }
 
 func TestGoldenV1Models(t *testing.T) {

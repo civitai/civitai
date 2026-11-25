@@ -19,6 +19,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/shop', label: 'Shop', icon: 'coins' },
 ];
 
+/** Shop is omitted for the Inquisitor, who earns no gold. */
+export const navItems = (inquisitor: boolean): readonly NavItem[] =>
+  inquisitor ? NAV_ITEMS.filter((item) => item.href !== '/shop') : NAV_ITEMS;
+
 const under = (root: string, pathname: string) =>
   pathname === root || pathname.startsWith(`${root}/`);
 

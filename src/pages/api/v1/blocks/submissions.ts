@@ -24,6 +24,7 @@ import {
   sendAppRateLimited,
 } from '~/server/utils/app-rate-limit';
 import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -178,8 +179,14 @@ function shapeRow(
     status: row.status, // 'pending' | 'approved' | 'rejected' | 'withdrawn'
     rejectionReason: row.rejectionReason,
     approvalNotes: row.approvalNotes,
-    deployState: row.deployState, // null | 'building' | 'deploying' | 'live' | 'failed'
-    deployDetail: row.deployDetail,
+    // Approved rows: null | 'building' | 'deploying' | 'live' | 'failed'. A PENDING row carries its
+    // review preview instead: 'preview-building' | 'preview-deploying' | 'preview-live' |
+    // 'preview-failed', with `deployDetail` the preview's JSON detail: on 'preview-failed' its
+    // `error` is the reason, and `bootCheck` is present when a review boot check ran.
+    // 🔴 `bootCheck` is the AUTHOR VIEW (a fixed reason, never the app's own output), through
+    // the one author-facing redaction (`redactDeployDetailForAuthor`).
+    deployState: row.deployState,
+    deployDetail: redactDeployDetailForAuthor(row.deployDetail),
     deployUpdatedAt: row.deployUpdatedAt ? row.deployUpdatedAt.toISOString() : null,
     // #4059 build provenance — the submitting CLIENT'S OWN CLAIM about the tree
     // the bundle was built from, echoed back unverified. The server never

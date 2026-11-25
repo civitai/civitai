@@ -25,6 +25,12 @@ type Answer struct {
 	Cached bool
 	// NotFound: the `[id]` body is the not-found answer, which Node sends with a 404.
 	NotFound bool
+	// Absent: a NotFound answer the public route may write as Node's 404 (Config.AnswerNotFound): the
+	// request is a public one (DetailRequest.Serving), the model statement returned no row, and the
+	// model's lag flag read clean (absentConfirmed). Every other NotFound answer (a statement row that
+	// getModelsWithVersions then dropped, a set or unreadable lag flag, the switch off, a shadow
+	// sample) leaves it false, and the public route falls back.
+	Absent bool
 }
 
 // NodeBuiltWindow is how recent an origin cache entry must be to count as the one Node built for the
@@ -93,7 +99,11 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		return nil, err
 	}
 	if len(res.items) == 0 {
-		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true, NotFound: true}, nil
+		ans := &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true, NotFound: true}
+		if req.Serving && d.Config.AnswerNotFound && res.statementRows == 0 {
+			ans.Absent = d.absentConfirmed(ctx, id)
+		}
+		return ans, nil
 	}
 	// buildPublicModelResponse lists every Public file (Training Data too, without its metadata); the
 	// listing is applied to the built body as to a cached one.
@@ -108,6 +118,19 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		return nil, err
 	}
 	return &Answer{Body: out}, nil
+}
+
+// absentConfirmed reports whether a model the statement found no row for may be answered not found
+// here: its lag flag (`lag-helper:model:<id>`, hydrate.Sources.ModelLagFlagged) reads clean. Node's
+// statement reads the replica without consulting the flag, so this is stricter than Node: a model a
+// recent write flagged (a replica that may not show it yet) is handed to Node, as is one whose flag
+// cannot be read (no cache client, a failed read).
+func (d *Deps) absentConfirmed(ctx context.Context, id int) bool {
+	if d.Sources == nil || d.Sources.Packed == nil || d.Sources.Packed.Redis == nil {
+		return false
+	}
+	flagged, err := d.Sources.ModelLagFlagged(ctx, []int{id})
+	return err == nil && !flagged
 }
 
 // cachedDetail is fetchModelResponseCached's read: the packed `{ data, cachedAt }` entry, served when
@@ -149,7 +172,19 @@ type ListRequest struct {
 	// Serving: a public request, not a shadow sample. A text query is answered serving only with
 	// Config.ServeQuery (FEED_GO_V1_MODELS_SERVE_QUERY); a sample is computed whenever a search
 	// backend is configured (the Node sampler sends one only with FEED_GO_SHADOW_V1_MODELS_QUERY).
+	// A model-data miss is computed serving only with Config.ServeDataMiss
+	// (FEED_GO_V1_MODELS_SERVE_DATA_MISS); a sample computes it whenever the miss computation is on
+	// (Config.ComputeMisses), so the shadow compares it before it is served.
 	Serving bool
+}
+
+// computeDataMiss is whether the list computes a model-data miss: serving, only with
+// Config.ServeDataMiss; in a shadow sample, whenever the miss computation is on.
+func (d *Deps) computeDataMiss(serving bool) bool {
+	if serving {
+		return d.Config.ServeDataMiss
+	}
+	return d.Config.ComputeMisses
 }
 
 // UsernameResolver is the `username` filter's user lookup on the replica.
@@ -257,6 +292,7 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 		Take: in.Limit, Cursor: in.Cursor, Archived: in.Archived, DisablePoi: true, TargetUserID: target, TagID: tagID,
 		Types: in.Types, BaseModels: in.BaseModels, Sort: in.Sort, Period: in.Period, PeriodMode: in.PeriodMode,
 		IDs: in.IDs, EarlyAccess: in.EarlyAccess, BrowsingLevel: level,
+		ComputeDataMiss: d.computeDataMiss(req.Serving),
 	}
 	if text != nil {
 		if len(text.ids) == 0 {

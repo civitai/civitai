@@ -317,6 +317,28 @@ export function blockInitStorageMode(surface: BlockHostSurface): {
 }
 
 /**
+ * The `appData` fragment of a BLOCK_INIT payload (the App Storage writes cutover): where this
+ * app's document store is served when it has moved to the app-data service.
+ *
+ * 🔴 THE DECISION IS THE SERVER'S. `appData` is what the block token mint answered
+ * (`app-data-writes-routing.ts`: the per-app flag, the service URL, a production page run, a block
+ * token); the host evaluates no flag. This only FORWARDS it, and drops it unless the host agrees
+ * on what it can see itself: the `page-run` surface, a block token, and a slug that is this
+ * frame's own blockId. Present only then, and ABSENT (not `undefined`) everywhere else.
+ */
+export function blockInitAppData(args: {
+  surface: BlockHostSurface;
+  tokenKind: 'block' | 'oauth' | undefined;
+  blockId: string;
+  appData: { url: string; slug: string } | undefined;
+}): { appData?: { url: string; slug: string } } {
+  const { surface, tokenKind, blockId, appData } = args;
+  if (surface !== 'page-run' || tokenKind !== 'block' || !appData) return {};
+  if (appData.slug !== blockId) return {};
+  return { appData: { url: appData.url, slug: appData.slug } };
+}
+
+/**
  * Blocks permitted the fragment fast path, keyed by `blockId` OR `slug`
  * (whichever the surface knows — the model slot has a `blockId`, the page host
  * has both).

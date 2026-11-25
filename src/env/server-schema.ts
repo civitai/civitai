@@ -11,6 +11,7 @@ import {
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
 import { isClusterLocalServiceUrl } from './cluster-local-url';
+import { isPlainHttpsUrl } from './plain-https-url';
 
 // Strict integer env values: digits only, so '', ' 3', '2.5' and '-1' are rejected instead of being
 // coerced (z.coerce turns '' into 0). Mirrors packages/civitai-db/src/env.ts — both schemas are
@@ -694,6 +695,16 @@ export const serverSchema = z
       .string()
       .optional()
       .transform((raw) => (raw !== undefined && isClusterLocalServiceUrl(raw) ? raw : undefined))
+      .catch(undefined),
+    // The app-data service's PUBLIC base URL, as an app's frame reaches it: sent to the app as
+    // `BLOCK_INIT.appData.url` when the `app-data-writes-via-service` flag is on for that app
+    // (`app-data-writes-routing.ts`). Unset = never sent, whatever the flag says. Only a plain
+    // https URL with no credentials, query or fragment is taken (the SDK's own rule for that field,
+    // `plain-https-url.ts`); anything else reads as UNSET rather than failing the env parse.
+    APP_DATA_SERVICE_PUBLIC_URL: z
+      .string()
+      .optional()
+      .transform((raw) => (raw !== undefined && isPlainHttpsUrl(raw) ? raw : undefined))
       .catch(undefined),
     // The fraction (0-1) of eligible lists, of apps the flag is on for, also asked of app-data-go;
     // the most such reads in flight per process (more are dropped, not queued); each read's timeout.
@@ -1518,6 +1529,11 @@ export const serverSchema = z
     // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
     // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
+    // Base URL of the App Block review boot-check service, which loads a review preview the way
+    // a host does and reports whether the app sent BLOCK_READY (see review-boot-check.service).
+    // OPTIONAL: when unset, every boot check reads `unavailable` (fail-open) and the review is
+    // never blocked on it. Only read while the `app-blocks-review-boot-check` flag is not off.
+    APP_BLOCK_BOOT_CHECK_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
     // dev-uploaded ZIP bundles. Production points at an in-cluster MinIO

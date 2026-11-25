@@ -1185,3 +1185,133 @@ describe('the reported and review queues, without the grant', () => {
     expect(acceptImage).toHaveBeenCalledOnce();
   });
 });
+
+describe("the model flag appeals queue's cover images", () => {
+  const rows = () => [
+    {
+      modelId: 1,
+      coverImages: [
+        { id: WITHHELD, url: 'shared-key', nsfwLevel: 4, type: 'image', minor: true },
+        { id: CONTROL, url: 'control-key', nsfwLevel: 4, type: 'image' },
+      ],
+    },
+  ];
+
+  it('sends a withheld cover with no key or flag, and the rest as they are, without the grant', async () => {
+    const { withheldCoverImages } = await import('../retracted-media');
+    const [row] = await withheldCoverImages(rows(), WITHOUT_GRANT as never, 'test');
+    expect(row.coverImages).toEqual([
+      { id: WITHHELD, url: '', nsfwLevel: 4, restricted: true },
+      { id: CONTROL, url: 'control-key', nsfwLevel: 4, type: 'image' },
+    ]);
+  });
+
+  it('sends every cover to a grant holder', async () => {
+    const { withheldCoverImages } = await import('../retracted-media');
+    expect(await withheldCoverImages(rows(), WITH_GRANT as never, 'test')).toEqual(rows());
+  });
+
+  const faced = (coverId: number) => [
+    {
+      coverImages: [],
+      comFace: {
+        name: 'face',
+        url: 'https://civitai.com/models/1',
+        coverPicked: true,
+        cover: { id: coverId, url: `key-${coverId}`, type: 'image' as const, nsfwLevel: 1 },
+      },
+    },
+  ];
+
+  it('sends a withheld civitai.com face cover with no key, and an open one as it is, without the grant', async () => {
+    const { withheldCoverImages } = await import('../retracted-media');
+    const [withheld] = await withheldCoverImages(faced(WITHHELD), WITHOUT_GRANT as never, 'test');
+    expect(withheld.comFace?.cover).toEqual({
+      id: WITHHELD,
+      url: '',
+      type: 'image',
+      nsfwLevel: 1,
+      restricted: true,
+    });
+    const [open] = await withheldCoverImages(faced(CONTROL), WITHOUT_GRANT as never, 'test');
+    expect(open.comFace?.cover).toMatchObject({ url: `key-${CONTROL}` });
+    const [granted] = await withheldCoverImages(faced(WITHHELD), WITH_GRANT as never, 'test');
+    expect(granted.comFace?.cover).toMatchObject({ url: `key-${WITHHELD}` });
+  });
+});
+
+describe("the model flag detail panes' images", () => {
+  const image = (id: number, url: string) => ({
+    id,
+    url,
+    type: 'image' as const,
+    nsfwLevel: 4,
+    blocked: true,
+    minor: true,
+    acceptableMinor: false,
+  });
+  const preview = () =>
+    ({ id: 1, images: [image(WITHHELD, 'shared-key'), image(CONTROL, 'control-key')] } as never);
+  const detail = (modelCoverId: number, minorModelCoverId: number) =>
+    ({
+      modelCoverId,
+      modelCoverUrl: `key-${modelCoverId}`,
+      modelCoverType: 'image',
+      minorModelCoverId,
+      minorModelCoverUrl: `key-${minorModelCoverId}`,
+      minorModelCoverType: 'image',
+    } as never);
+
+  it('sends a withheld preview image with no key or flag, and the rest as they are, without the grant', async () => {
+    const { withheldPreviewImages } = await import('../retracted-media');
+    const { images } = await withheldPreviewImages(preview(), WITHOUT_GRANT as never);
+    expect(images).toEqual([
+      {
+        id: WITHHELD,
+        url: '',
+        type: 'image',
+        nsfwLevel: 4,
+        blocked: false,
+        minor: false,
+        acceptableMinor: false,
+        restricted: true,
+      },
+      image(CONTROL, 'control-key'),
+    ]);
+  });
+
+  it('sends every preview image to a grant holder', async () => {
+    const { withheldPreviewImages } = await import('../retracted-media');
+    expect(await withheldPreviewImages(preview(), WITH_GRANT as never)).toEqual(preview());
+  });
+
+  it.each([
+    ['model', detail(WITHHELD, CONTROL), 'modelCover', 'minorModelCover'],
+    ['seed', detail(CONTROL, WITHHELD), 'minorModelCover', 'modelCover'],
+  ] as const)(
+    'blanks a withheld %s cover in the file-match detail, keeping the other, without the grant',
+    async (_, input, blanked, kept) => {
+      const { withheldHashDetail } = await import('../retracted-media');
+      const out = (await withheldHashDetail(input, WITHOUT_GRANT as never)) as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(out).toMatchObject({
+        [`${blanked}Id`]: null,
+        [`${blanked}Url`]: null,
+        [`${blanked}Type`]: null,
+        [`${blanked}Withheld`]: true,
+        [`${kept}Id`]: CONTROL,
+        [`${kept}Url`]: `key-${CONTROL}`,
+      });
+      expect(out[`${kept}Withheld`]).toBeUndefined();
+    }
+  );
+
+  it('sends the file-match detail whole to a grant holder', async () => {
+    const { withheldHashDetail } = await import('../retracted-media');
+    expect(await withheldHashDetail(detail(WITHHELD, CONTROL), WITH_GRANT as never)).toEqual(
+      detail(WITHHELD, CONTROL)
+    );
+  });
+});

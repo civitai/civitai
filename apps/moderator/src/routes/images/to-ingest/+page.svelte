@@ -77,6 +77,9 @@
 {:else if form?.success}
   <p class="mb-4 text-sm text-teal-400">
     Queued {num(form.count)} images for rescan. The ingest job sends them within a few minutes.
+    {#if form.skipped}
+      Left out {num(form.skipped)} withheld from you.
+    {/if}
   </p>
 {/if}
 

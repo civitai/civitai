@@ -1,0 +1,21 @@
+{
+  "name": "fallback-unknown-key",
+  "description": "A key the schema does not have: zod strips it and Node answers; feed-go hands it back.",
+  "request": {
+    "path": "/api/search/indexes/tools_v2/search",
+    "body": "{\"q\":\"x\",\"showRankingScore\":true}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[],\"query\":\"x\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":0}"
+  },
+  "expect": {
+    "fallback": "input-unknown-key",
+    "nodeStatus": 200
+  }
+}

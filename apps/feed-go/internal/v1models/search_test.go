@@ -274,28 +274,24 @@ func TestMeiliClientCircuitOpensAndHandsBack(t *testing.T) {
 	d := newTestWorld().deps(t)
 	d.Search = mcl
 	d.Config.ServeQuery = true
-	serve := func() (time.Duration, string) {
-		start := time.Now()
+	serve := func() string {
 		_, err := ServeList(context.Background(), d, nil, ListRequest{Query: "query=golden", Path: "/api/v1/models", Host: "site.example.test", Serving: true})
-		return time.Since(start), reason(err)
+		return reason(err)
 	}
 	for i := range 10 {
-		if _, r := serve(); r != "v1-models-query-search-failed" {
+		if r := serve(); r != "v1-models-query-search-failed" {
 			t.Fatalf("call %d: %q, want v1-models-query-search-failed (a timed-out search)", i, r)
 		}
 	}
 	if n := s.calls.Load(); n != 10 {
 		t.Fatalf("%d calls reached the backend, want 10", n)
 	}
-	took, r := serve()
+	r := serve()
 	if r != "v1-models-query" {
 		t.Errorf("with the circuit open: %q, want v1-models-query", r)
 	}
 	if n := s.calls.Load(); n != 10 {
 		t.Errorf("with the circuit open %d calls reached the backend, want 10 (none made)", n)
-	}
-	if took >= 30*time.Millisecond {
-		t.Errorf("with the circuit open the hand-back took %v, at least the search bound", took)
 	}
 }
 

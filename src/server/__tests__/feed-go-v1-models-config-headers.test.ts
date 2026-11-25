@@ -45,6 +45,8 @@ describe('feed-go /api/v1/models: next.config headers', () => {
     '/api/trpc/image.getImagesAsPostsInfinite',
     '/api/trpc/image.getInfinite',
     '/api/trpc/model.getAll',
+    '/api/search/multi-search',
+    '/api/search/indexes/models_v9/search',
   ])('%s gets exactly configheaders.json', (url) => {
     const { headers } = JSON.parse(readFileSync(CONFIG_HEADERS, 'utf8')) as {
       headers: { key: string; value: string }[];

@@ -24,10 +24,11 @@ import { isDocStoreError } from '~/server/services/apps/doc-store.types';
  *      refuse a write to a hooked collection without a HookPass (half 2 runs every one of them).
  *      `exempt` writers are platform operations, never a viewer's write: moderation, account and
  *      app deletion, the viewer's own "empty my data", review cleanup, declarative schema
- *      migrations and the content-level rater. `refusesHooked` writers write a BATCH of shared
- *      documents (publish, unpublish), which no single hook call can decide, so they refuse a
- *      hooked collection outright. `unchangedProbe` (`putIfUnchanged`) writes nothing; on a hooked
- *      collection it answers null without a read, so every put there takes the hooked write. The production importers of the viewer store and of `mintHookPass` are listed
+ *      migrations and the content-level rater. `reportExempt` (`report`) is the report API's
+ *      write: a hook must never silence a report. `unchangedProbe` (`putIfUnchanged`) writes
+ *      nothing; on a hooked collection it answers null without a read, so every put there takes
+ *      the hooked write. (The tally writers and the batch publish writers were removed,
+ *      docs/app-storage-generic-core.md rollout step 5.) The production importers of the viewer store and of `mintHookPass` are listed
  *      too, so a new caller is a deliberate edit of this file.
  *   2. BEHAVIOUR. On a store with no database, a write that passes the hook check goes on to the
  *      transaction and is answered `storage_disabled`, and one that does not throws the HookPass
@@ -48,14 +49,8 @@ const LEDGER = {
     put: 'hooked',
     create: 'hooked',
     delete: 'hooked',
-    increment: 'hooked',
-    mark: 'hooked',
-    unmark: 'hooked',
     report: 'reportExempt',
     putIfUnchanged: 'unchangedProbe',
-    previewPublish: 'refusesHooked',
-    publishCopies: 'refusesHooked',
-    unpublishCopies: 'refusesHooked',
   },
   moderation: {
     listReported: 'read',
@@ -70,14 +65,9 @@ const LEDGER = {
     wipeAccount: 'exempt',
     purgeApp: 'exempt',
     migrateDocuments: 'exempt',
-    // The mark migration and the per-collection purge: moderator-run platform operations.
-    checkMarkMigration: 'read',
-    freezeMarks: 'exempt',
-    copyMarksToDocs: 'exempt',
-    verifyMarkMigration: 'exempt',
+    // What is left of the rollout step 4 tooling: its run records (read) and their retention.
     listMaintRuns: 'read',
     purgeDump: 'read',
-    purgeCollection: 'exempt',
     expireMaintDumps: 'exempt',
   },
   rater: {
@@ -180,7 +170,7 @@ describe('a hooked collection refuses every hooked write without a HookPass', ()
   const data = { title: 't' };
   const KEY = 'k1';
 
-  type Op = 'create' | 'put' | 'delete' | 'increment' | 'mark' | 'unmark';
+  type Op = 'create' | 'put' | 'delete';
   const write = (op: Op, coll: DocCollection, hookPass?: unknown) => {
     const opts = { hookPass } as { hookPass: never };
     switch (op) {
@@ -190,18 +180,12 @@ describe('a hooked collection refuses every hooked write without a HookPass', ()
         return store.put(ctx, coll, KEY, data, opts);
       case 'delete':
         return store.delete(ctx, coll, KEY, opts);
-      case 'increment':
-        return store.increment(ctx, coll, KEY, 'likes', 1, opts);
-      case 'mark':
-        return store.mark(ctx, coll, KEY, 'star', opts);
-      case 'unmark':
-        return store.unmark(ctx, coll, KEY, 'star', opts);
     }
   };
   const HOOKED = Object.entries(LEDGER.store)
     .filter(([, v]) => v === 'hooked')
     .map(([k]) => k);
-  const OPS: Op[] = ['create', 'put', 'delete', 'increment', 'mark', 'unmark'];
+  const OPS: Op[] = ['create', 'put', 'delete'];
   const passFor = (op: Op, over: Partial<{ key: string; op: Op; ns: string }> = {}) =>
     mintHookPass({
       appId: ctx.appId,
@@ -267,53 +251,12 @@ describe('a hooked collection refuses every hooked write without a HookPass', ()
     );
   });
 
-  it('the report mark is exempt: no pass needed on a hooked collection', async () => {
-    expect(await outcome(store.mark(ctx, hooked, KEY, 'report'))).toBe('reached the transaction');
-  });
-
   // The report API's write takes no HookPass at all: a hook must never be able to silence a
   // report. (Through the route: `doc-store-report-api.test.ts`, a hooked collection.)
   it('the report API write is exempt: it reaches the transaction on a hooked collection', async () => {
     expect(await outcome(store.report(ctx, hooked, KEY))).toBe('reached the transaction');
   });
 
-  // Publish and unpublish write a batch no single hook call decides: a hooked target refuses
-  // them before any transaction, even with a live pass in hand; an unhooked one reaches it.
-  const from = {
-    name: 'drafts',
-    config: { ...decl, visibility: 'private', counters: [], marks: [] },
-  } as unknown as DocCollection;
-  const HOOKED_REFUSAL = 'publish is not available for a collection with a permission hook';
-  it('the refusesHooked methods are exactly publish, its preview and unpublish', () => {
-    expect(
-      Object.entries(LEDGER.store)
-        .filter(([, v]) => v === 'refusesHooked')
-        .map(([k]) => k)
-        .sort()
-    ).toEqual(['previewPublish', 'publishCopies', 'unpublishCopies']);
-  });
-  it('publish into a hooked collection → invalid_request hooked_collection; unhooked reaches the transaction', async () => {
-    const publish = (to: DocCollection) =>
-      store.publishCopies(ctx, from, to, { keys: [KEY], checked: new Map() });
-    const preview = (to: DocCollection) => store.previewPublish(ctx, from, to, [KEY]);
-    for (const call of [publish, preview]) {
-      const err = await call(hooked).catch((e: unknown) => e);
-      expect(isDocStoreError(err, 'invalid_request')).toBe(true);
-      expect((err as Error).message).toContain(HOOKED_REFUSAL);
-      expect((err as { details?: Record<string, unknown> }).details).toMatchObject({
-        reason: 'hooked_collection',
-      });
-      expect(await outcome(call(plain))).toBe('reached the transaction');
-    }
-  });
-  it('unpublish from a hooked collection → invalid_request hooked_collection; unhooked reaches the transaction', async () => {
-    const err = await store.unpublishCopies(ctx, hooked, [KEY]).catch((e: unknown) => e);
-    expect(isDocStoreError(err, 'invalid_request')).toBe(true);
-    expect((err as { details?: Record<string, unknown> }).details).toMatchObject({
-      reason: 'hooked_collection',
-    });
-    expect(await outcome(store.unpublishCopies(ctx, plain, [KEY]))).toBe('reached the transaction');
-  });
   it('putIfUnchanged on a hooked collection answers null without a transaction; unhooked reads', async () => {
     expect(await store.putIfUnchanged(ctx, hooked, KEY, data)).toBeNull();
     expect(await outcome(store.putIfUnchanged(ctx, plain, KEY, data))).toBe(

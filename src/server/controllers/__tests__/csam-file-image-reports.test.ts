@@ -305,7 +305,10 @@ describe('fileCsamReport', () => {
     expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'Rejected' }) })
     );
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const deferredDeletes = dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
+      (sql as unknown as string[]).join('?').includes('DELETE FROM "ImageDeferredBlockEffect"')
+    );
+    expect(deferredDeletes).toHaveLength(1);
     expect(releaseSettledAppealFlags).toHaveBeenCalledWith([IMAGE]);
     expect(releaseReviewFlagsToReportHold).toHaveBeenCalledWith([IMAGE]);
   });

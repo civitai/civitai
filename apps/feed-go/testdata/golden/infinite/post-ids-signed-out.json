@@ -1,6 +1,6 @@
 {
   "name": "post-ids-signed-out",
-  "description": "`postIds` signed out: requiresImageDbPath, the Postgres page of those posts’ images only (`i.\"postId\" IN (…)`), Newest (i.\"id\" DESC), the look-ahead row’s id as the cursor; no feed call; edge-cacheable.",
+  "description": "`postIds` signed out: requiresImageDbPath, the Postgres page of those posts’ images only (`i.\"postId\" = ANY(…)`), Newest (i.\"id\" DESC), the look-ahead row’s id as the cursor; no feed call; edge-cacheable.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageIndexFeed": true,

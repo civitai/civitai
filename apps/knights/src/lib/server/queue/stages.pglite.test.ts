@@ -316,7 +316,11 @@ describe('feed serving rules', () => {
     ]);
 
     expect(await feedIds(1, { now: hoursAfter(23) })).toEqual([escalated, normal]);
-    expect(await feedIds(1, { now: hoursAfter(25) })).toEqual([normal, escalated]);
+    // Once its priority lapses it is a priority-3 item; a draw below the priority-1 share serves priority 1 first.
+    expect(await feedIds(1, { now: hoursAfter(25), random: () => 0.5 })).toEqual([
+      normal,
+      escalated,
+    ]);
   });
 
   it('never serves an image the player already judged for the question', async () => {

@@ -32,6 +32,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
+	"github.com/civitai/civitai/apps/feed-go/internal/sitesearch"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
@@ -272,6 +273,21 @@ func personalHotLeadReader(cfg *config.Config) (server.UserFlagReader, error) {
 	return flipt.NewUserFlag(fc, server.PersonalHotLeadFlag), nil
 }
 
+// userHubsReader reads server.UserHubsFlag per viewer from FLIPT_URL for image.getInfinite's `hubId`
+// (nil without it, or with FEED_GO_INFINITE_SERVE_INPUT_HUB_ID off: every `hubId` request falls back).
+// Answers are cached per viewer (flipt.UserFlag); a read is bounded as the personal hot lead's is.
+func userHubsReader(cfg *config.Config) (server.UserFlagReader, error) {
+	if cfg.FliptURL == "" || !cfg.InfiniteServeInputHubID {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment,
+		Timeout: personalHotLeadTimeout})
+	if err != nil {
+		return nil, err
+	}
+	return flipt.NewUserFlag(fc, server.UserHubsFlag), nil
+}
+
 // opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
 // on and a written-back cache whose lookup reads the primary (hydrate.PrimaryCaches). A replica-only
 // allowlist (e.g. metrics,tag-ids) never opens it.
@@ -479,12 +495,12 @@ func run(log *slog.Logger) error {
 		Blocked: blocked,
 		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
-		// The input shapes and fallback reasons ported behind their own switch, all default off.
 		Ports: feed.InfinitePorts{
 			PublishedOnly:       cfg.InfiniteServeInputPublishedOnly,
 			PostIDs:             cfg.InfiniteServeInputPostIDs,
 			SortRandom:          cfg.InfiniteServeSortRandom,
 			GallerySettingsMiss: cfg.InfiniteServeGallerySettingsMiss,
+			HubID:               cfg.InfiniteServeInputHubID,
 		},
 		// A collection's Random seed: the system redis key, read-only.
 		RandomSeed: &feed.RandomSeed{Sys: sys},
@@ -539,6 +555,9 @@ func run(log *slog.Logger) error {
 		search = mcl
 	}
 	log.Info("GET /api/v1/models text search", "configured", search != nil, "serve", mc.ServeQuery)
+	if err := mc.ValidateMisses(cfg.ComputeMisses); err != nil {
+		return err
+	}
 	v1Models := &server.V1ModelsDeps{
 		Deps: &v1models.Deps{
 			DB:      pool,
@@ -555,6 +574,8 @@ func run(log *slog.Logger) error {
 				CoverageNext:         cfg.CoverageNext,
 				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
 				ComputeMisses:        cfg.ComputeMisses,
+				ServeDataMiss:        mc.ServeDataMiss,
+				AnswerNotFound:       mc.AnswerNotFound,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
 				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
@@ -563,18 +584,39 @@ func run(log *slog.Logger) error {
 		Users: sources,
 		Rules: &v1models.TrainingDataRules{Redis: cache, Prefix: cfg.CacheKeyPrefix},
 	}
+	// POST /api/search/* (DESIGN.md §18): the shadow reshapes the backend response Node recorded and needs
+	// none of this; the public route (FEED_GO_SERVE_SEARCH) calls the search backend Node calls and keeps
+	// Node's rate-limit windows on the cache cluster.
+	sc := config.LoadSiteSearch()
+	if err := sc.Validate(); err != nil {
+		return err
+	}
+	searchDeps := &server.SearchDeps{Rate: cache, KeyPrefix: cfg.CacheKeyPrefix}
+	if sc.Host != "" {
+		cl, err := sitesearch.NewClient(sc.Host, sc.APIKey)
+		if err != nil {
+			return err
+		}
+		searchDeps.Upstream = cl
+	}
 	// nil (no FLIPT_URL, or a bad one): every page the flag could lead falls back.
 	personalHotLead, err := personalHotLeadReader(cfg)
 	if err != nil {
 		log.Error("flag not read; every page it could lead falls back", "flag", server.PersonalHotLeadFlag, "err", err)
 	}
 	log.Info("model.getAll personal hot lead", "flag", server.PersonalHotLeadFlag, "flag_read", personalHotLead != nil)
+	// nil (no FLIPT_URL, a bad one, or the hubId port off): every `hubId` request falls back.
+	userHubs, err := userHubsReader(cfg)
+	if err != nil {
+		log.Error("flag not read; every hubId request falls back", "flag", server.UserHubsFlag, "err", err)
+	}
 	srv := &server.Server{
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		PersonalHotLead:  personalHotLead,
+		UserHubs:         userHubs,
 		// FLIPT_DEPLOYMENT_ID, the targeting property Node's buildFliptContext adds.
 		FliptDeploymentID: cfg.FliptDeploymentID,
 		ServeInfinite:     cfg.ServeInfinite,
@@ -589,6 +631,10 @@ func run(log *slog.Logger) error {
 		Metrics:             metrics,
 		Log:                 log,
 		ShadowQueue:         make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+
+		// FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE: the app's 503 for a failed feed call written here.
+		AnswerInfiniteFeedUnavailable: cfg.InfiniteAnswerFeedUnavailable,
+
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
@@ -599,6 +645,8 @@ func run(log *slog.Logger) error {
 		ServeV1Images:  mc.ServeImages,
 		V1BearerAuth:   mc.BearerAuth,
 		Associated:     associated,
+		Search:         searchDeps,
+		ServeSearch:    sc.Serve,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
@@ -648,6 +696,18 @@ func run(log *slog.Logger) error {
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
 	}
+	// The public /api/search route's one upstream (FEED_GO_SEARCH_FALLBACK_URL); unset, the route is not
+	// mounted.
+	if sc.FallbackURL != "" {
+		target, err := url.Parse(sc.FallbackURL)
+		if err != nil {
+			return err
+		}
+		srv.SearchFallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
+			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
+	}
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
@@ -659,11 +719,15 @@ func run(log *slog.Logger) error {
 		"FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", cfg.InfiniteServeInputPublishedOnly,
 		"FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", cfg.InfiniteServeInputPostIDs,
 		"FEED_GO_INFINITE_SERVE_SORT_RANDOM", cfg.InfiniteServeSortRandom,
-		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss)
+		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss,
+		"FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", cfg.InfiniteAnswerFeedUnavailable,
+		"FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", cfg.InfiniteServeInputHubID, "user_hubs_flag_read", userHubs != nil)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
-		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
+		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth, "FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", mc.AnswerNotFound)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil)
+	log.Info("public /api/search", "FEED_GO_SERVE_SEARCH", sc.Serve, "mounted", srv.SearchFallback != nil,
+		"search_backend_configured", searchDeps.Upstream != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	log.Info("blocked-region requests answered here (451) instead of handed back", "FEED_GO_ANSWER_REGION_BLOCKED", cfg.AnswerRegionBlocked)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
@@ -678,7 +742,7 @@ func run(log *slog.Logger) error {
 	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
 	// do not listen publicly at all.
-	if srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil {
+	if srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil || srv.SearchFallback != nil {
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))
@@ -695,20 +759,26 @@ func run(log *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 	}
-	// One grace period for the whole sequence: first cancel the shadow samples and wait for them to
-	// return (they hold replica connections), then drain the listeners' in-flight requests; the
-	// deferred closes of the pool and both redis clients run after both.
-	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := srv.Close(shutdown); err != nil {
-		log.Warn("shadow samples still running at the end of the grace period", "err", err)
-	}
-	for _, s := range servers {
-		_ = s.Shutdown(shutdown)
-	}
-	// The spans of the drained requests are exported before exit.
-	if err := tp.Shutdown(shutdown); err != nil {
-		log.Warn("trace exporter shutdown", "err", err)
-	}
+	// server.Drain: /readyz fails now, the listeners keep serving for ShutdownDelay (so requests the
+	// router still sends here are answered, not refused), then they close and drain.
+	log.Info("draining: readiness failing, listeners still serving", "FEED_GO_SHUTDOWN_DELAY_MS",
+		cfg.ShutdownDelay.Milliseconds())
+	server.Drain(&srv.Readiness, func() { time.Sleep(cfg.ShutdownDelay) }, func() {
+		// One grace period for the whole sequence: first cancel the shadow samples and wait for them to
+		// return (they hold replica connections), then drain the listeners' in-flight requests; the
+		// deferred closes of the pool and both redis clients run after both.
+		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Close(shutdown); err != nil {
+			log.Warn("shadow samples still running at the end of the grace period", "err", err)
+		}
+		for _, s := range servers {
+			_ = s.Shutdown(shutdown)
+		}
+		// The spans of the drained requests are exported before exit.
+		if err := tp.Shutdown(shutdown); err != nil {
+			log.Warn("trace exporter shutdown", "err", err)
+		}
+	})
 	return nil
 }

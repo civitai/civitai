@@ -17,6 +17,9 @@
     alt = '',
     class: className,
     unprocessed = false,
+    anim,
+    hoverPlay,
+    controls = true,
   }: {
     item: { id: number; url: string; type?: MediaType | null; name?: string | null };
     width?: number;
@@ -24,6 +27,11 @@
     class?: string;
     /** The upload never finished processing, so storage has no file to fall back to either. */
     unprocessed?: boolean;
+    /** Passed to `EdgeMedia` for the CDN copy. */
+    anim?: boolean;
+    hoverPlay?: boolean;
+    /** False for a tile drawn blurred: its storage copy must not play or save unblurred. */
+    controls?: boolean;
   } = $props();
 
   const mediaType = $derived(
@@ -83,7 +91,7 @@
     class={className}
     muted
     playsinline
-    controls
+    {controls}
     preload="metadata"
     onerror={onRetractedError}
   ></video>
@@ -104,6 +112,8 @@
       type={mediaType}
       {width}
       {alt}
+      {anim}
+      {hoverPlay}
       class={className}
     />
   </span>

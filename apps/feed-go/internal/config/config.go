@@ -124,10 +124,22 @@ type Config struct {
 	// row (its hold only, never written back), as the Node rebuild decides it, instead of the
 	// `gallery-settings-miss` fallback. Needs FEED_GO_COMPUTE_MISSES (otherwise the miss falls back).
 	InfiniteServeGallerySettingsMiss bool
+	// InfiniteServeInputHubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID (default off): compute an
+	// `image.getInfinite` request with `hubId` (a user-composed hub, and its `hubExcludedSources`;
+	// feed.InfinitePorts.HubID), reading the `user-hubs` flag per viewer from FLIPT_URL. Off, such a
+	// request is the `input-hubId` (or `input-hubExcludedSources`) fallback, as before the port.
+	InfiniteServeInputHubID bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
 	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
 	AnswerRegionBlocked bool
+	// InfiniteAnswerFeedUnavailable is FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE (default off): on the
+	// public image.getInfinite route, answer a failed feed-service call with the app's own 503 here
+	// (server.Server.AnswerInfiniteFeedUnavailable), for the requests the app answers it to whatever
+	// feed-service-degrade says (feed.UnavailableError). Off, it is the `feed-unavailable` /
+	// `feed-status` fallback, proxied to the Node app, which calls the feed again. It changes nothing
+	// while ServeInfinite is off.
+	InfiniteAnswerFeedUnavailable bool
 	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch, read as the app reads it (exactly
 	// "true" is on; default off): write a public tRPC answer as devalue where the app would
 	// (server.Server.WriteDevalue). Off, every answer is superjson.
@@ -164,6 +176,13 @@ type Config struct {
 	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
+	// ShutdownDelay is FEED_GO_SHUTDOWN_DELAY_MS (default 10 s; 0 = none, negative or junk = default):
+	// how long, after SIGTERM, /readyz answers 503 while every listener keeps serving, before the
+	// listeners close and drain. The 503 removes the pod from rotation early only when the readiness
+	// probe reads /readyz with period × failure threshold inside this delay; otherwise the delay alone
+	// keeps the pod answering. The pod's termination grace must exceed any pre-stop hook + this + 15 s
+	// (DESIGN.md §6.1 Shutdown).
+	ShutdownDelay time.Duration
 	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT: the public requests one pod computes at once. Past it a
 	// request is not computed but proxied to the Node app (fallback reason `bulkhead`). 0 = not set
 	// explicitly (unset, zero, negative or junk): the cap is then the replica pool's connection ceiling
@@ -265,6 +284,9 @@ type Config struct {
 	ErrorLogPerMinute int
 }
 
+// DefaultShutdownDelay is ShutdownDelay when FEED_GO_SHUTDOWN_DELAY_MS is unset.
+const DefaultShutdownDelay = 10 * time.Second
+
 // Load reads the environment.
 func Load() (*Config, error) {
 	c := &Config{
@@ -304,6 +326,9 @@ func Load() (*Config, error) {
 		InfiniteServeGallerySettingsMiss: boolEnv("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", false),
 
 		InfiniteServeInputPostIDs: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", false),
+		InfiniteServeInputHubID:   boolEnv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", false),
+
+		InfiniteAnswerFeedUnavailable: boolEnv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", false),
 
 		AnswerRegionBlocked: boolEnv("FEED_GO_ANSWER_REGION_BLOCKED", false),
 		WriteDevalue:        trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
@@ -345,6 +370,10 @@ func Load() (*Config, error) {
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.ShutdownDelay = DefaultShutdownDelay
+	if n := intEnv("FEED_GO_SHUTDOWN_DELAY_MS", -1); n >= 0 {
+		c.ShutdownDelay = time.Duration(n) * time.Millisecond
+	}
 	c.MaxInFlight = positiveIntEnv("FEED_GO_MAX_IN_FLIGHT", 0)
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond

@@ -134,7 +134,7 @@ func v1ModelsAnswer(ans *v1models.Answer) (*computed, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial, cached: ans.Cached, notFound: ans.NotFound}, nil
+	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial, cached: ans.Cached, notFound: ans.NotFound, absent: ans.NotFound && ans.Absent}, nil
 }
 
 // sampledRequest reports whether r was rebuilt from a Node sample (withSampled): `[id]` then reads the

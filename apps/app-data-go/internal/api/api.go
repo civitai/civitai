@@ -159,7 +159,19 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
-	return mux
+	return withClientIP(mux)
+}
+
+// withClientIP puts the viewer's address, as the edge named it (exchange.ClientIPHeader), in each
+// request's context: the user exchange charges a token it has not seen exchanged to it
+// (exchange.Guard) and forwards it to the hub. A request without the header carries none.
+func withClientIP(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ip := exchange.ClientIPFrom(r.Header); ip != "" {
+			r = r.WithContext(exchange.WithClientIP(r.Context(), ip))
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // An app calls this from its sandboxed frame, an opaque origin, with a bearer token and no cookies,

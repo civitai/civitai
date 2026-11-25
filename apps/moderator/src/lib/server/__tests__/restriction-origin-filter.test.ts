@@ -135,11 +135,11 @@ describe('facets', () => {
 
 describe('remix sources', () => {
   it('reads nothing for no ids', async () => {
-    expect(await emitted(() => getRemixSources([]))).toEqual([]);
+    expect(await emitted(() => getRemixSources([], undefined))).toEqual([]);
   });
 
   it('reads the stored prompt out of the image meta', async () => {
-    const [sql] = await emitted(() => getRemixSources([5]));
+    const [sql] = await emitted(() => getRemixSources([5], undefined));
     expect(sql).toContain(`i."meta" ->> 'prompt'`);
     expect(sql).toContain('"i"."id" in ($1)');
   });

@@ -8749,6 +8749,9 @@ model KnightsQueueItem {
   meta              Json?
   /// Yes/no items only: answers so far; serving finishes questions that are under way first.
   voteCount         Int             @default(0)
+  /// The settled value the label pass has finished with: recorded as its verdict label, or skipped for good (image not
+  /// servable or gone, or refused by the label store too often). Null until then.
+  verdictLabelledValue String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -11779,6 +11782,11 @@ model ServiceOffering {
   sellerAffirmation Json?
   /// The seller lets buyers attach delivered work to their review. Off until the seller opts in.
   allowReviewWork   Boolean               @default(false)
+  /// Questions whose answers add to the price and days; null for a single-price service.
+  requestForm        Json?
+  requestFormVersion Int                   @default(0)
+  /// The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
+  fromPrice          Int?
   /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
   /// only in the transaction that publishes or hides a review; the deals job compares them to rows.
   happyCount        Int                   @default(0)
@@ -11850,6 +11858,9 @@ model ServiceDeal {
   settledAt                 DateTime?
   chatId                    Int?
   requestText               String
+  formVersion               Int?
+  formAnswers               Json?
+  priceBreakdown            Json?
   requestedAt               DateTime                @default(now())
   acceptedAt                DateTime?
   dueAt                     DateTime?
@@ -12090,8 +12101,11 @@ model ServiceDealFileEntry {
   scanStatus ServiceDealFileScanStatus @default(Pending)
   failReason String?
   createdAt  DateTime                  @default(now())
+  /// Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+  copyDeleteStartedAt DateTime?
 
   @@unique([fileId, entryIndex])
+  @@index([imageId])
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

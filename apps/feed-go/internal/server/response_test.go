@@ -117,6 +117,62 @@ func TestShadowComparesHeaders(t *testing.T) {
 	waitFor(t, "an uncompared response", response("uncompared", 1))
 }
 
+// A tRPC feed sample is counted under its viewer class twice, the body's result in
+// feed_go_shadow_compare_viewer_total and the headers' in feed_go_shadow_response_viewer_total, so
+// the signed-out (anon) cohort's parity reads apart from a session's. Every class starts at 0.
+func TestShadowCountsFeedViewerClass(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	class, ttl := FeedViewerAnon, &trpc.SignedOutTTL
+	s := newPhaseServer(reg, 1, func(context.Context, *http.Request) (*computed, error) {
+		return &computed{payload: []byte(servedPayload), ttl: ttl, viewerClass: class}, nil
+	})
+	viewer := func(name, v, r string) float64 {
+		n, _ := metricValue(t, reg, name, map[string]string{"feed_endpoint": EndpointAsPosts, "viewer": v, "result": r})
+		return n
+	}
+	for _, e := range []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll} {
+		for _, v := range []string{"anon", "crawler", "banned", "user", "moderator"} {
+			for _, r := range []string{"match", "mismatch"} {
+				if n, found := metricValue(t, reg, "feed_go_shadow_response_viewer_total", map[string]string{"feed_endpoint": e, "viewer": v, "result": r}); !found || n != 0 {
+					t.Fatalf("%s %s %s: %v found=%v, want a 0 series", e, v, r, n, found)
+				}
+			}
+			if n, found := metricValue(t, reg, "feed_go_shadow_compare_viewer_total", map[string]string{"feed_endpoint": e, "viewer": v, "result": "match"}); !found || n != 0 {
+				t.Fatalf("%s %s body match: %v found=%v, want a 0 series", e, v, n, found)
+			}
+		}
+	}
+	public := "public, max-age=60, s-maxage=60, stale-while-revalidate=30"
+	const vary = "trpc-accept, accept"
+
+	// A signed-out sample whose headers match.
+	postResponseSample(t, s, map[string]string{"cache-control": public, "vary": vary})
+	waitFor(t, "the anon header match", func() bool {
+		return viewer("feed_go_shadow_response_viewer_total", "anon", "match") == 1 && len(s.ShadowQueue) == 0
+	})
+	if n := viewer("feed_go_shadow_compare_viewer_total", "anon", "match"); n != 1 {
+		t.Fatalf("anon body match = %v, want 1", n)
+	}
+	// A signed-out sample whose Cache-Control differs (Node did not make it public): a header
+	// mismatch for anon, the body still a match.
+	postResponseSample(t, s, map[string]string{"cache-control": "max-age=0, private, no-cache", "vary": vary})
+	waitFor(t, "the anon header mismatch", func() bool {
+		return viewer("feed_go_shadow_response_viewer_total", "anon", "mismatch") == 1 && len(s.ShadowQueue) == 0
+	})
+	// A session's sample is counted under its own class, never anon's.
+	class, ttl = FeedViewerUser, nil
+	postResponseSample(t, s, map[string]string{"cache-control": "max-age=0, private, no-cache", "vary": vary, "set-cookie": "present"})
+	waitFor(t, "the user header mismatch", func() bool {
+		return viewer("feed_go_shadow_response_viewer_total", "user", "mismatch") == 1 && len(s.ShadowQueue) == 0
+	})
+	if a, m := viewer("feed_go_shadow_response_viewer_total", "anon", "match"), viewer("feed_go_shadow_response_viewer_total", "anon", "mismatch"); a != 1 || m != 1 {
+		t.Fatalf("anon header results match=%v mismatch=%v, want 1 and 1 (a session's sample leaked into anon)", a, m)
+	}
+	if n := viewer("feed_go_shadow_compare_viewer_total", "user", "match"); n != 1 {
+		t.Fatalf("user body match = %v, want 1", n)
+	}
+}
+
 // A /api/v1/images sample's response headers are compared, as the model routes' are
 // (TestV1ModelsShadowComparesResponseHeaders): the headers the public images route writes
 // (v1ImagesCompute) against Node's, over the base list for a sample without the REST mark. Here Node's

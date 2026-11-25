@@ -58,6 +58,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, username text, image text,
       "profilePictureId" int, muted boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}'
     );
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',

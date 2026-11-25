@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import { getAgentReport, getPriorAgentReport } from '../app-review-report.service';
+import {
+  getAgentReport,
+  getPriorAgentReport,
+  listAgentReports,
+} from '../app-review-report.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindMany = dbMock.dbRead.appReviewAgentReport.findMany;
 const mockFindFirst = dbMock.dbRead.appReviewAgentReport.findFirst;
@@ -116,6 +120,57 @@ describe('getAgentReport', () => {
     const r = await getAgentReport('');
     expect(r).toBeNull();
     expect(mockFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a chosen run (report picker) is looked up WITHIN the request, never by id alone', async () => {
+    // The tRPC gate is per request; an id-only lookup would let a report id from another
+    // request (another lane, another flag) be read through this request's gate.
+    mockFindFirst.mockResolvedValue({ id: 'arar_old' });
+    await getAgentReport('pubreq_1', 'arar_old');
+    expect(mockFindFirst).toHaveBeenCalledWith({
+      where: { publishRequestId: 'pubreq_1', id: 'arar_old' },
+      orderBy: { startedAt: 'desc' },
+    });
+  });
+});
+
+describe('listAgentReports', () => {
+  it('lists every run of the request, newest first, without report content; cost as a number', async () => {
+    mockFindMany.mockResolvedValue([
+      {
+        id: 'arar_2',
+        model: 'openrouter/b/m',
+        status: 'running',
+        startedAt: new Date('2026-01-02T00:00:00Z'),
+        completedAt: null,
+        costUsd: null,
+      },
+      {
+        id: 'arar_1',
+        model: 'openrouter/a/m',
+        status: 'failed',
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+        completedAt: new Date('2026-01-01T00:05:00Z'),
+        // Prisma hands a Decimal; anything with a numeric toString stands in for it.
+        costUsd: { toString: () => '0.012500' },
+      },
+    ]);
+    const runs = await listAgentReports('pubreq_1');
+    expect(runs.map((r) => [r.id, r.costUsd])).toEqual([
+      ['arar_2', null],
+      ['arar_1', 0.0125],
+    ]);
+    const args = mockFindMany.mock.calls[0][0] as {
+      where: unknown;
+      orderBy: unknown;
+      select: Record<string, boolean>;
+    };
+    expect(args.where).toEqual({ publishRequestId: 'pubreq_1' });
+    expect(args.orderBy).toEqual({ startedAt: 'desc' });
+    // The picker never needs the analyses themselves.
+    expect(Object.keys(args.select).sort()).toEqual(
+      ['completedAt', 'costUsd', 'id', 'model', 'startedAt', 'status'].sort()
+    );
   });
 });
 

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isSafeToRetry } from '@civitai/buzz';
 import { dbWrite } from '~/server/db/client';
-import { liveFile } from '~/server/services/creator-service-deal-file-sql';
+import { fileImageGone, liveFile } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   serviceDealExhaustedLegsGauge,
@@ -129,12 +129,15 @@ type ServiceDealHoldReason =
   (typeof SERVICE_DEAL_HOLD_REASONS)[keyof typeof SERVICE_DEAL_HOLD_REASONS];
 
 /**
- * The deal's current round has at least one final, and every final in it is Ready and passed
- * scanning: a final not yet Ready blocks, as it blocks delivery (`dealReadyToDeliver`). The
- * buyer downloads the finals only once the deal completes, so completing it and paying the seller
- * both wait on this. `deal` names the deal row in the surrounding statement.
+ * The deal's current round has at least one final, and every final in it is Ready, passed scanning
+ * and none of its scanned images is gone (`fileImageGone`): a final not yet Ready blocks, as it blocks
+ * delivery (`dealReadyToDeliver`). The buyer downloads the finals only once the deal completes, so
+ * completing it and paying the seller both wait on this. `deal` names the deal row in the surrounding statement.
  */
-export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) => Prisma.sql`(
+export const dealFinalsClear = (
+  deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`,
+  options?: Parameters<typeof fileImageGone>[1]
+) => Prisma.sql`(
   EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
@@ -145,7 +148,10 @@ export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) =>
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
       AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
       AND (f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
-        OR f."status" <> 'Ready'::"ServiceDealFileStatus")
+        OR f."status" <> 'Ready'::"ServiceDealFileStatus" OR ${fileImageGone(
+          Prisma.sql`f`,
+          options
+        )})
   )
 )`;
 
@@ -225,6 +231,13 @@ export async function claimRelease(tx: Db, dealId: number): Promise<'held' | boo
   const releasable = Prisma.sql`"id" = ${dealId}::int AND "status" = 'Completed'::"ServiceDealStatus"
       AND "releaseAt" <= now() AND "settledAt" IS NULL AND "heldAt" IS NOT NULL`;
   const unclaimed = Prisma.sql`${releasable} AND ${noReleaseLeg}`;
+  // Our own scan-copy delete still settling is the only thing in the way: wait for the next run
+  // rather than send the deal to the moderators. A settle that never lands holds once the window ends.
+  const [finals] = await tx.$queryRaw<{ clear: boolean; clearOnceSettled: boolean }[]>`
+    SELECT ${dealFinalsClear(Prisma.sql`d`)} AS "clear",
+      ${dealFinalsClear(Prisma.sql`d`, { exceptSettling: true })} AS "clearOnceSettled"
+    FROM "ServiceDeal" d WHERE d."id" = ${dealId}::int`;
+  if (finals && !finals.clear && finals.clearOnceSettled) return false;
   // Finals that have not all passed scanning are never paid for, whatever a moderator decided.
   if (
     await holdForReview(

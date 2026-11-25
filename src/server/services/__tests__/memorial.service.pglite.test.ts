@@ -24,8 +24,10 @@ const invalidateSession = vi.fn(async () => undefined);
 const expireUserApiKeys = vi.fn(async () => ({ expired: 2, orchestratorConfirmed: true }));
 const syncEventStanding = vi.fn(async () => undefined);
 const bustUserCreator = vi.fn(async () => undefined);
+const refreshSession = vi.fn(async () => undefined);
 const effects = {
   invalidateSession,
+  refreshSession,
   expireUserApiKeys,
   bustUserCreator,
   syncEventStanding,
@@ -61,6 +63,7 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
   dbMock.dbRead.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
   invalidateSession.mockImplementation(async () => undefined);
+  refreshSession.mockImplementation(async () => undefined);
   dbMock.dbWrite.user.findUnique.mockImplementation(
     (async ({ where }: { where: { id: number } }) =>
       (await pg.query('SELECT * FROM "User" WHERE id = $1', [where.id])).rows[0] ?? null) as never
@@ -154,6 +157,31 @@ describe('memorialization (docs/features/memorialized-profiles.md)', () => {
 
   it('refuses to reverse an account that is not memorialized', async () => {
     await expect(reverse()).rejects.toThrow(/not memorialized/);
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the session after the flag is cleared, so cached sessions resolve again at once', async () => {
+    await propose();
+    await confirm(CONFIRMER);
+    expect(refreshSession).not.toHaveBeenCalled();
+    let flagsAtRefresh: number | undefined;
+    refreshSession.mockImplementation(async () => {
+      flagsAtRefresh = (await row()).flags;
+    });
+
+    await reverse();
+
+    expect(refreshSession).toHaveBeenCalledWith(USER);
+    expect(flagsAtRefresh! & UserFlag.Memorialized).toBe(0);
+  });
+
+  it('still reverses when the session refresh fails', async () => {
+    await propose();
+    await confirm(CONFIRMER);
+    refreshSession.mockRejectedValue(new Error('hub unreachable'));
+
+    await expect(reverse()).resolves.toBeUndefined();
+    expect((await row()).flags & UserFlag.Memorialized).toBe(0);
   });
 
   it('finds memorialized ids among others, and refuses a memorialized account at the delete check', async () => {

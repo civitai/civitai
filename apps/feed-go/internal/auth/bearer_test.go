@@ -119,6 +119,7 @@ func TestResolveAPIKeysAsNodeDoes(t *testing.T) {
 	f.session(t, 45, map[string]any{"id": 45, "username": "viewer-c"})
 	f.session(t, 46, map[string]any{"id": 46, "username": "banned-d", "bannedAt": time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)})
 	f.session(t, 47, map[string]any{"id": 47, "username": "unbanned-e", "bannedAt": nil})
+	f.session(t, 57, map[string]any{"id": 57, "username": "memorialized-k", "memorialized": true})
 	f.session(t, 48, map[string]any{"id": 48, "username": "civitaimoderation"})
 	f.session(t, 9131, map[string]any{"id": 9131, "username": "renamed-mod-account"})
 	f.session(t, 49, map[string]any{"id": 49, "username": "sys-f", "meta": map[string]any{"systemAccount": true}})
@@ -162,6 +163,7 @@ func TestResolveAPIKeysAsNodeDoes(t *testing.T) {
 	f.principal(t, "k-banned", row(46, nil))
 	f.principal(t, "k-banned-stale-use", row(46, func(m map[string]any) { m["lastUsedAt"] = nil }))
 	f.principal(t, "k-unbanned", row(47, nil))
+	f.principal(t, "k-memorialized", row(57, nil))
 	f.principal(t, "k-mod-account-name", row(48, nil))
 	f.principal(t, "k-mod-account-id", row(9131, nil))
 	f.principal(t, "k-system-meta", row(49, nil))
@@ -235,6 +237,7 @@ func TestResolveAPIKeysAsNodeDoes(t *testing.T) {
 
 		// the user
 		{"banned user: signed out", B("k-banned"), "/x", bearerWant{}},
+		{"memorialized user: signed out", B("k-memorialized"), "/x", bearerWant{}},
 		{"banned user, but the app writes lastUsedAt first", B("k-banned-stale-use"), "/x", bearerWant{reason: "bearer-last-used"}},
 		{"moderation account by username: signed out", B("k-mod-account-name"), "/x", bearerWant{}},
 		{"moderation account by id: signed out", B("k-mod-account-id"), "/x", bearerWant{}},
@@ -261,6 +264,7 @@ func TestResolveAPIKeysAsNodeDoes(t *testing.T) {
 		{"signed-out key + valid cookie: signed out", withCookie(B("github:secret"), cookieUser), "/x", bearerWant{}},
 		{"unknown key + valid cookie: the key's fallback", withCookie(B("k-unknown"), cookieUser), "/x", bearerWant{reason: "bearer-key-cache-miss"}},
 		{"banned key + valid cookie: signed out", withCookie(B("k-banned"), cookieUser), "/x", bearerWant{}},
+		{"memorialized key + valid cookie: signed out", withCookie(B("k-memorialized"), cookieUser), "/x", bearerWant{}},
 		{"scheme with no token + valid cookie: the cookie", withCookie(auth("Bearer"), cookieUser), "/x", bearerWant{id: 45}},
 		{"control: cookie alone", withCookie(map[string]string{}, cookieUser), "/x", bearerWant{id: 45}},
 

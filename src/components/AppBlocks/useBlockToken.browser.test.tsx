@@ -84,6 +84,7 @@ function TokenProbe({
       data-error={r.error ? 'true' : 'false'}
       data-retrying={String(r.retrying)}
       data-terminal={String(r.terminal)}
+      data-appdata={r.appData === undefined ? 'absent' : JSON.stringify(r.appData)}
     />
   );
 }
@@ -545,5 +546,57 @@ describe('the dev-tunnel marker on the mint request', () => {
     renderWithProviders(<TokenProbe devTunnel={false} />);
     await waitForToken('tok_1');
     expect('devTunnel' in bodyOf(0)).toBe(false);
+  });
+});
+
+describe('appData — the mint decision, carried as the mint answered it', () => {
+  const SERVICE = { url: 'https://records.example.test/v2', slug: 'kestrel-notes' };
+  const mintWith = (extra: Record<string, unknown>) => {
+    let n = 0;
+    respondWith(
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            token: `tok_${++n}`,
+            expiresAt: new Date(Date.now() + TOKEN_TTL_MS).toISOString(),
+            kind: 'block',
+            ...extra,
+          }),
+        } as unknown as Response)
+    );
+  };
+  const readAppData = () => attr('data-appdata');
+
+  test('a mint answering appData exposes exactly { url, slug }', async () => {
+    mintWith({ appData: { ...SERVICE, extra: 'dropped' } });
+    renderWithProviders(<TokenProbe />);
+    await waitForToken('tok_1');
+    expect(JSON.parse(readAppData() ?? 'null')).toEqual(SERVICE);
+  });
+
+  test('a mint without it: absent', async () => {
+    renderWithProviders(<TokenProbe />);
+    await waitForToken('tok_1');
+    expect(readAppData()).toBe('absent');
+  });
+
+  test('a malformed appData: absent', async () => {
+    mintWith({ appData: { url: 42, slug: 'kestrel-notes' } });
+    renderWithProviders(<TokenProbe />);
+    await waitForToken('tok_1');
+    expect(readAppData()).toBe('absent');
+  });
+
+  test("🔴 another instance never sees the previous instance's appData", async () => {
+    mintWith({ appData: SERVICE });
+    const { rerender } = await renderWithProviders(<TokenProbe instanceId="bki_app_A" />);
+    await waitForToken('tok_1');
+    expect(JSON.parse(readAppData() ?? 'null')).toEqual(SERVICE);
+    // The new instance's mint hangs, so only the identity scope can clear it.
+    fetchSpy.mockImplementation(() => new Promise<Response>(() => undefined));
+    await rerender(<TokenProbe instanceId="bki_app_B" />);
+    expect(readAppData()).toBe('absent');
   });
 });

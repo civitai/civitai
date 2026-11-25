@@ -9,7 +9,7 @@ import type { LinkedComponentSettings } from '~/server/schema/model-version.sche
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { canViewArticle } from '~/server/services/article.service';
+import { canViewArticle } from '~/server/services/article-read';
 import { hasFailedScan } from '~/server/utils/failed-scan';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';

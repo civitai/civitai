@@ -183,12 +183,14 @@ export async function getPlannerPostDetail({
   id,
   user,
   servableLevels,
+  ownerSeesHeld = false,
 }: {
   id: number;
   user: SessionUser;
   servableLevels: number;
+  ownerSeesHeld?: boolean;
 }): Promise<PlannerPostDetail> {
-  const post = await getPostEditDetail({ id, user, servableLevels });
+  const post = await getPostEditDetail({ id, user, servableLevels, ownerSeesHeld });
   // The planner is the owner's own calendar; `getPostEditDetail` also admits moderators.
   if (post.user.id !== user.id) throw throwAuthorizationError();
 

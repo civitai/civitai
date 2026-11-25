@@ -58,6 +58,18 @@ type V1Models struct {
 	CircuitTripThreshold int
 	CircuitWindow        time.Duration
 	CircuitCooldown      time.Duration
+	// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (default off): on the public
+	// `GET /api/v1/models` route, a model-data cache miss is computed with the cache's own lookup
+	// instead of falling back (`v1-models-data-miss`; DESIGN.md §16.7). A shadow sample computes it
+	// whenever FEED_GO_COMPUTE_MISSES is on, this switch or not. Needs FEED_GO_COMPUTE_MISSES
+	// (ValidateMisses).
+	ServeDataMiss bool
+	// AnswerNotFound is FEED_GO_V1_MODELS_ANSWER_NOT_FOUND (default off): a public
+	// `GET /api/v1/models/{id}` request for a model the model statement returns no row for, with the
+	// model's lag flag read clean, is answered here with Node's 404 (outcome `not_found`) instead of
+	// falling back (`v1-models-not-found`; DESIGN.md §16.8). A not-found answer Go cannot decide that
+	// way still falls back. It changes nothing while Serve is off.
+	AnswerNotFound bool
 }
 
 // LoadV1Models reads the V1Models settings from the environment.
@@ -74,6 +86,8 @@ func LoadV1Models() V1Models {
 		SearchHost:        strings.TrimSpace(os.Getenv("SEARCH_HOST")),
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
 		SearchTimeout:     2500 * time.Millisecond,
+		ServeDataMiss:     boolEnv("FEED_GO_V1_MODELS_SERVE_DATA_MISS", false),
+		AnswerNotFound:    boolEnv("FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", false),
 	}
 	if ms, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MEILI_CALL_TIMEOUT_MS"))); err == nil && ms > 0 {
 		c.SearchTimeout = time.Duration(ms) * time.Millisecond
@@ -104,6 +118,16 @@ func (c V1Models) Validate(bearerAuth bool) error {
 	}
 	if c.BearerAuth && !bearerAuth {
 		return errors.New("FEED_GO_V1_BEARER_AUTH is on without FEED_GO_BEARER_AUTH: GET /api/v1/models/{id} reads API keys with the key resolver that switch turns on")
+	}
+	return nil
+}
+
+// ValidateMisses refuses FEED_GO_V1_MODELS_SERVE_DATA_MISS without computeMisses
+// (FEED_GO_COMPUTE_MISSES, Config.ComputeMisses): with no miss computation every model-data miss
+// would fall back anyway, so the setting would claim what it cannot do.
+func (c V1Models) ValidateMisses(computeMisses bool) error {
+	if c.ServeDataMiss && !computeMisses {
+		return errors.New("FEED_GO_V1_MODELS_SERVE_DATA_MISS is on without FEED_GO_COMPUTE_MISSES: a model-data miss on GET /api/v1/models is computed by the miss computation that switch turns on")
 	}
 	return nil
 }

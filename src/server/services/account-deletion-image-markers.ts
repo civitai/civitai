@@ -1,6 +1,11 @@
 import { dbWrite } from '~/server/db/client';
 import { PRIOR_INGESTION_KEY, minusPriorKeysSql } from '~/server/utils/image-removal-mode';
 
+/** Where the clear runs: the primary by default, or the caller's transaction. */
+export type MarkerClearClient = {
+  $executeRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<number>;
+};
+
 /**
  * 🔴 Strips the grace-block breadcrumbs off rows a MODERATION path is blocking right now.
  *
@@ -29,7 +34,8 @@ import { PRIOR_INGESTION_KEY, minusPriorKeysSql } from '~/server/utils/image-rem
  * had nothing.
  */
 export async function clearAccountDeletionImageMarkers(
-  target: { ids: number[]; userId?: undefined } | { userId: number; ids?: undefined }
+  target: { ids: number[]; userId?: undefined } | { userId: number; ids?: undefined },
+  client: MarkerClearClient = dbWrite
 ) {
   // Two statements rather than one with an interpolated predicate: the scope of a destructive
   // UPDATE stays literal in the source, so neither shape can be widened by a value.
@@ -40,14 +46,14 @@ export async function clearAccountDeletionImageMarkers(
   // this key disagree; here the wider reading is the correct one — strip whatever is there.
   if (target.ids !== undefined) {
     if (!target.ids.length) return 0;
-    return dbWrite.$executeRaw`
+    return client.$executeRaw`
       UPDATE "Image"
       SET "metadata" = "metadata"${minusPriorKeysSql}
       WHERE id = ANY(${target.ids})
         AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
     `;
   }
-  return dbWrite.$executeRaw`
+  return client.$executeRaw`
     UPDATE "Image"
     SET "metadata" = "metadata"${minusPriorKeysSql}
     WHERE "userId" = ${target.userId}

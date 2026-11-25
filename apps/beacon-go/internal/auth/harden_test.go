@@ -385,6 +385,14 @@ func TestResolve(t *testing.T) {
 	unknownUser := f.token(t, func(m map[string]any) { m["sub"] = "44"; m["jti"] = "tok-44" })
 	revoked := f.token(t, func(m map[string]any) { m["jti"] = "tok-revoked" })
 	f.sys.SetHash("session:token-state", map[string]string{"tok-revoked": "invalid"})
+	f.session(t, 60, map[string]any{"id": 60, "username": "memorialized-c", "memorialized": true})
+	f.session(t, 61, map[string]any{"id": 61, "username": "viewer-d", "memorialized": false})
+	memorialized := f.token(t, func(m map[string]any) { m["sub"] = "60"; m["jti"] = "tok-60" })
+	impersonatingMemorialized := f.token(t, func(m map[string]any) {
+		m["sub"], m["jti"] = "60", "tok-60-imp"
+		m["impersonatedBy"], m["impExp"] = 7, f.now.Add(time.Hour).UnixMilli()
+	})
+	notMemorialized := f.token(t, func(m map[string]any) { m["sub"] = "61"; m["jti"] = "tok-61" })
 
 	type want struct {
 		id        int
@@ -410,6 +418,9 @@ func TestResolve(t *testing.T) {
 		{"expired token", map[string]string{"Cookie": "__Secure-civ-token=" + f.token(t, func(m map[string]any) { m["exp"] = f.now.Add(-time.Minute).Unix() })}, "/x", want{}},
 		{"revoked", map[string]string{"Cookie": "__Secure-civ-token=" + revoked}, "/x", want{}},
 		{"banned", map[string]string{"Cookie": "__Secure-civ-token=" + banned}, "/x", want{id: 43, banned: true}},
+		{"memorialized", map[string]string{"Cookie": "__Secure-civ-token=" + memorialized}, "/x", want{}},
+		{"memorialized, impersonated by a moderator", map[string]string{"Cookie": "__Secure-civ-token=" + impersonatingMemorialized}, "/x", want{id: 60}},
+		{"memorialized false", map[string]string{"Cookie": "__Secure-civ-token=" + notMemorialized}, "/x", want{id: 61}},
 		{"session miss", map[string]string{"Cookie": "__Secure-civ-token=" + unknownUser}, "/x", want{reason: "session-cache-miss"}},
 	}
 	for _, c := range cases {

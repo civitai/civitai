@@ -135,13 +135,20 @@ export async function getJudgeCommentForImage({
   judgeUserId,
   userId,
   isModerator,
+  ownerSeesHeld = false,
 }: {
   imageId: number;
   judgeUserId: number;
   userId?: number;
   isModerator?: boolean;
+  ownerSeesHeld?: boolean;
 }) {
-  const visible = await assertImageVisibleToViewer({ id: imageId, userId, isModerator }).then(
+  const visible = await assertImageVisibleToViewer({
+    id: imageId,
+    userId,
+    isModerator,
+    ownerSeesHeld,
+  }).then(
     () => true,
     (error: unknown) => {
       if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;

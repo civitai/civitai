@@ -178,6 +178,31 @@
       "nodeDeletion": null
     },
     {
+      "id": "POST /api/search/[...path]",
+      "kind": "rest",
+      "service": "feed-go",
+      "metricEndpoint": "site-search",
+      "status": "shadow",
+      "routes": ["/api/search/[...path]"],
+      "nodeEntry": {
+        "file": "src/pages/api/search/[...path].ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/sitesearch.go",
+        "apps/feed-go/internal/sitesearch/serve.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/sitesearch"],
+      "flags": {
+        "shadow": "feed-go-shadow-site-search",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
       "id": "POST /api/internal/ping",
       "kind": "rest",
       "service": "beacon-go",

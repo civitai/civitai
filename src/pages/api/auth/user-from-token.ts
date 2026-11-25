@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { readToken } from '~/server/integrations/integration-token';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -36,6 +37,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       ) as tier
     FROM "User" u
     WHERE u.id = ${userId}
+      AND u."deletedAt" IS NULL
+      AND u."bannedAt" IS NULL
+      AND (u.flags & ${UserFlag.Memorialized}) = 0
   `);
   if (!user) return res.status(403).send('Invalid user');
 

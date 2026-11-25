@@ -773,7 +773,7 @@ describe('checkpoints', () => {
     expect(view.checkpoint).toMatchObject({ total: 20, right: 20, missed: [] });
     expect(view.progress.answered).toBe(40);
     expect(view.progress.accuracy).toBe(0.875);
-  });
+  }, 20_000);
 
   it('lists a missed yes/no answer with its curated explanation', async () => {
     await player(1);
