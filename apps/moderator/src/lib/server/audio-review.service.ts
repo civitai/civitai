@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { playerSongCoverText, songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
 import { storedSongDurationSec } from '@civitai/shared';
-import { songNeverReviewable } from '@civitai/shared/rating-review';
+import { songNeverReviewable, songScanStateOf } from '@civitai/shared/rating-review';
 import {
   checkState,
   LYRICS_SOURCE_LABELS,
@@ -77,13 +77,9 @@ const SORTS: Record<ReportedSort, (a: SongGroup, b: SongGroup) => number> = {
   most: (a, b) => b.reportCount - a.reportCount || byWait(a, b),
 };
 
-/**
- * One page of reported songs, the total under the filters, and the chip counts under the search.
- * Every song with a Pending report is read and filtered here, not in SQL, because what a moderator
- * may search on depends on the media access rule: a song withheld from them matches only its exact
- * id, never its title or owner, and its reports' times count for no chip. The set is the songs
- * with open reports, which stays small.
- */
+/** One page of reported songs, the total under the filters, and the chip counts under the search.
+ *  Filtered here, not in SQL: what a moderator may search on depends on the media access rule (a
+ *  withheld song matches only its exact id, and its report times count for no chip). */
 export async function getReportedSongs({
   sort,
   filter,
@@ -440,8 +436,7 @@ export async function getSongDetails(
 
 /** Every browsing level, Blocked included: a removed song or cover is what an appeal is about. */
 const ALL_LEVELS = 0x7fffffff;
-/** The appeals read at once. Songs and covers under appeal stay few, as reported songs do; past this
- *  the oldest are listed and the rest wait for them to be decided. */
+/** The appeals read at once; past this the oldest are listed. */
 const APPEALS_READ = 500;
 
 /**
@@ -824,7 +819,7 @@ export async function flaggedCoverOf(songId: number, flag: string): Promise<numb
   return row?.id ?? null;
 }
 
-/** The disputes read at once; past this the oldest are listed and the rest wait, as appeals do. */
+/** The disputes read at once; past this the oldest are listed. */
 const DISPUTES_READ = 500;
 
 /**
@@ -867,18 +862,7 @@ export async function getSongDisputes({
       's.nsfwLevel',
       's.ingestion',
       sql<string | null>`s.metadata->>'title'`.as('title'),
-      // The resolver's own reads of whether the song can still be reviewed (`songNeverReviewable`).
-      sql<number | null>`(s."scanJobs"->>'retryCount')::int`.as('retryCount'),
-      sql<
-        string | null
-      >`COALESCE(s."scanJobs"->'error', s."scanJobs"->'lastFailure')->>'failureClass'`.as(
-        'failureClass'
-      ),
-      sql<
-        string | null
-      >`COALESCE(s."scanJobs"->'error', s."scanJobs"->'lastFailure')->>'reason'`.as(
-        'failureReason'
-      ),
+      's.scanJobs',
       'c.id as coverId',
       sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
         playerSongCoverText('c')
@@ -921,13 +905,7 @@ export async function getSongDisputes({
         ? 'higher'
         : null;
     const state: DisputeSongState =
-      d.foundId == null ||
-      songNeverReviewable({
-        ingestion: d.ingestion ?? '',
-        retryCount: d.retryCount,
-        failureClass: d.failureClass,
-        failureReason: d.failureReason,
-      })
+      d.foundId == null || songNeverReviewable(songScanStateOf(d.ingestion ?? '', d.scanJobs))
         ? 'gone'
         : d.ingestion === 'Scanned'
         ? 'reviewed'
