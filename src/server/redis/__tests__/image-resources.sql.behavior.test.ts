@@ -45,10 +45,7 @@ afterAll(async () => {
 type Row = { imageId: number; modelVersionId: number; modelType: string; baseModel: string };
 
 describe('imageResourcesQuery', () => {
-  // The rows' order is the image-resources cache's order: `modelVersionIds` on the public images
-  // endpoint and the image feed, and the first Checkpoint's `baseModel`. Unordered, it was whatever
-  // the plan returned, and the Node app and feed-go computed the same image's ids in different
-  // orders (and, for an image with two Checkpoints, different base models).
+  // The row order is the cached order: `modelVersionIds` and the first Checkpoint's `baseModel`.
   it('returns each image its resources ordered by model version', async () => {
     const rows = (await pgliteRaw(pg.db).queryRaw(imageResourcesQuery([2, 1]))) as Row[];
     expect(rows.map((r) => [r.imageId, r.modelVersionId])).toEqual([
@@ -57,14 +54,14 @@ describe('imageResourcesQuery', () => {
       [1, 30],
       [2, 15],
     ]);
-    // The first Checkpoint is now the lowest version's: 'Illustrious', not 'Pony'.
+    // The first Checkpoint is the lowest version's: 'Illustrious', not 'Pony'.
     expect(rows.find((r) => r.imageId === 1 && r.modelType === 'Checkpoint')?.baseModel).toBe(
       'Illustrious'
     );
   });
 
   // Cross-app parity pin: feed-go computes the same cache's misses with its own copy of this query
-  // (it cannot import it), and the two must order identically or their answers differ again.
+  // (it cannot import it), and the two must order identically or their answers differ.
   it('orders as feed-go sqlImageResources orders', () => {
     const goSource = fs.readFileSync(
       path.resolve(__dirname, '../../../../apps/feed-go/internal/hydrate/resources.go'),

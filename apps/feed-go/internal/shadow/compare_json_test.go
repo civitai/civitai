@@ -81,70 +81,23 @@ func TestCategoryOfTheEnvelopeStillStopsAtMetadata(t *testing.T) {
 	}
 }
 
-// CompareV1Images compares `items.*.modelVersionIds` as a multiset of numbers: the same ids in another
-// order match (image 79140094's ids as the two sides' image-resources lookups ordered them before
-// both carried an ORDER BY). A missing, extra, repeated or changed id still differs, under the same
-// category. CompareJSON, the other REST routes' comparator, keeps array order everywhere.
-func TestCompareV1ImagesModelVersionIDsAreAMultiset(t *testing.T) {
-	body := func(ids string) []byte {
-		return []byte(`{"items":[{"id":79140094,"modelVersionIds":` + ids + `,"baseModel":"Pony"}],"metadata":{}}`)
-	}
-	goIDs := body(`[331598,354657,454217,671164,1768080,1833157]`)
-	nodeIDs := body(`[1833157,1768080,671164,454217,354657,331598]`)
-	r, err := CompareV1Images(goIDs, nodeIDs)
+// CompareJSON keeps array order in `items.*.modelVersionIds`: the same ids permuted are a fields
+// diff, one value diff per index that moved.
+func TestCompareJSONPermutedModelVersionIDsAreAFieldsDiff(t *testing.T) {
+	g := []byte(`{"items":[{"id":3,"modelVersionIds":[5,7,9],"baseModel":"Pony"}],"metadata":{}}`)
+	n := []byte(`{"items":[{"id":3,"modelVersionIds":[9,7,5],"baseModel":"Pony"}],"metadata":{}}`)
+	r, err := CompareJSON(g, n)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Match || len(r.Diffs) != 0 {
-		t.Fatalf("permuted ids: want match, got %+v", r.Diffs)
+	want := []Diff{
+		{Path: "items.0.modelVersionIds.0", Category: "items.*.modelVersionIds.*", Kind: "value"},
+		{Path: "items.0.modelVersionIds.2", Category: "items.*.modelVersionIds.*", Kind: "value"},
 	}
-	if got := ClassifyJSON(r, goIDs, nodeIDs); got != "match" {
-		t.Fatalf("permuted ids: classify = %s, want match", got)
+	if r.Match || !reflect.DeepEqual(r.Diffs, want) {
+		t.Fatalf("diffs %+v, want %+v", r.Diffs, want)
 	}
-	// Control: the same bodies under CompareJSON differ, so the match above is CompareV1Images' own.
-	if r, _ := CompareJSON(goIDs, nodeIDs); r.Match {
-		t.Fatal("CompareJSON matched permuted ids; it must keep array order")
-	}
-
-	for _, c := range []struct {
-		name, g, n string
-		want       []Diff
-	}{
-		{"a changed id", `[5,1,3]`, `[3,1,6]`, []Diff{{Path: "items.0.modelVersionIds.2", Category: "items.*.modelVersionIds.*", Kind: "value"}}},
-		{"an extra id", `[2,1]`, `[1,2,2]`, []Diff{{Path: "items.0.modelVersionIds", Category: "items.*.modelVersionIds", Kind: "length"}}},
-		{"a repeated id", `[1,1,2]`, `[2,1,2]`, []Diff{{Path: "items.0.modelVersionIds.1", Category: "items.*.modelVersionIds.*", Kind: "value"}}},
-		{"not all numbers: compared in order", `[7,null]`, `[null,7]`, []Diff{
-			{Path: "items.0.modelVersionIds.0", Category: "items.*.modelVersionIds.*", Kind: "type"},
-			{Path: "items.0.modelVersionIds.1", Category: "items.*.modelVersionIds.*", Kind: "type"},
-		}},
-	} {
-		g, n := body(c.g), body(c.n)
-		r, err := CompareV1Images(g, n)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if r.Match || !reflect.DeepEqual(r.Diffs, c.want) {
-			t.Errorf("%s: diffs %+v, want %+v", c.name, r.Diffs, c.want)
-		}
-		if got := ClassifyJSON(r, g, n); got != "fields" {
-			t.Errorf("%s: classify = %s, want fields", c.name, got)
-		}
-	}
-
-	// Nothing else is unordered: another array of numbers, the items themselves, and baseModel.
-	for _, c := range []struct {
-		name, g, n, class string
-	}{
-		{"another number array", `{"items":[{"id":3,"tagIds":[41,42]}],"metadata":{}}`, `{"items":[{"id":3,"tagIds":[42,41]}],"metadata":{}}`, "fields"},
-		{"the items", `{"items":[{"id":3},{"id":4}],"metadata":{}}`, `{"items":[{"id":4},{"id":3}],"metadata":{}}`, "order"},
-		{"baseModel", `{"items":[{"id":3,"modelVersionIds":[8,9],"baseModel":"Pony"}],"metadata":{}}`, `{"items":[{"id":3,"modelVersionIds":[9,8],"baseModel":"SDXL 1.0"}],"metadata":{}}`, "fields"},
-	} {
-		r, err := CompareV1Images([]byte(c.g), []byte(c.n))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := ClassifyJSON(r, []byte(c.g), []byte(c.n)); r.Match || got != c.class {
-			t.Errorf("%s: match %v, classify %s; want a %s diff", c.name, r.Match, got, c.class)
-		}
+	if got := ClassifyJSON(r, g, n); got != "fields" {
+		t.Fatalf("classify = %s, want fields", got)
 	}
 }
