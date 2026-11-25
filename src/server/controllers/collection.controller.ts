@@ -329,6 +329,7 @@ export const saveItemHandler = async ({
         userId: user.id,
         isModerator: user.isModerator,
         canAccessUserChallenges: ctx.features.userChallenges,
+        canUseMusic: ctx.features?.music,
       },
     });
 
@@ -411,6 +412,7 @@ export const bulkSaveItemsHandler = async ({
         userId,
         isModerator,
         canAccessUserChallenges: ctx.features.userChallenges,
+        canUseMusic: ctx.features?.music,
       },
       permissions,
     });
@@ -448,6 +450,7 @@ export const upsertCollectionHandler = async ({
         userId: user.id,
         isModerator: user.isModerator,
         isMember: !!user.tier && user.tier !== 'free',
+        canUseMusic: ctx.features?.music,
       },
       // Read without the owner's view, the editor saw a hidden cover as none; an image: null keeps it.
       coverViewer: credentialViews(ctx).asOwner ? undefined : {},
@@ -767,6 +770,7 @@ export const addSimpleImagePostHandler = async ({
         userId,
         isModerator,
         canAccessUserChallenges: ctx.features.userChallenges,
+        canUseMusic: ctx.features?.music,
       },
       permissions,
     });

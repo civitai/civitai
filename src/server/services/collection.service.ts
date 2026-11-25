@@ -33,6 +33,7 @@ import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import {
   collectionItemLagId,
@@ -947,6 +948,11 @@ async function imageCollectionType(imageId: number) {
   return image?.type === MediaType.audio ? CollectionType.Music : CollectionType.Image;
 }
 
+/** Playlists and the songs in them are for `music` flag holders only. */
+function assertCanUseMusicCollections(canUseMusic: boolean | undefined) {
+  if (!canUseMusic) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
 /**
  * Apply a collection's configured `metadata.autoTagId` to the images just added to it.
  *
@@ -1088,6 +1094,7 @@ export const saveItemInCollections = async ({
     isModerator,
     removeFromCollectionIds,
     canAccessUserChallenges,
+    canUseMusic,
     ...input
   },
 }: {
@@ -1095,6 +1102,7 @@ export const saveItemInCollections = async ({
     userId: number;
     isModerator?: boolean;
     canAccessUserChallenges?: boolean;
+    canUseMusic?: boolean;
   };
 }) => {
   // By value, not key presence: `{ modelId: undefined, imageId: 5 }` passes the schema refine.
@@ -1118,6 +1126,7 @@ export const saveItemInCollections = async ({
       itemKey === 'imageId'
         ? await imageCollectionType(input.imageId as number)
         : inputToCollectionType[itemKey];
+    if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
     // check if all collections match the Model type
     const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
@@ -1130,6 +1139,8 @@ export const saveItemInCollections = async ({
   if (itemKey === 'model3dId' && collections.some((c) => c.mode === CollectionMode.Contest)) {
     throw throwBadRequestError('3D models cannot be entered into contest collections');
   }
+  if (collections.some((c) => c.type === CollectionType.Music))
+    assertCanUseMusicCollections(canUseMusic);
   // Playlists are plain lists of songs: no contest gates cover them.
   if (
     collections.some((c) => c.type === CollectionType.Music && c.mode === CollectionMode.Contest)
@@ -1568,7 +1579,12 @@ export const upsertCollection = async ({
   input,
   coverViewer,
 }: {
-  input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
+  input: UpsertCollectionInput & {
+    userId: number;
+    isModerator?: boolean;
+    isMember?: boolean;
+    canUseMusic?: boolean;
+  };
   /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
   coverViewer?: { id?: number; isModerator?: boolean };
 }) => {
@@ -1576,6 +1592,7 @@ export const upsertCollection = async ({
     userId,
     isModerator,
     isMember,
+    canUseMusic,
     id,
     name,
     description,
@@ -1639,10 +1656,12 @@ export const upsertCollection = async ({
         mode: true,
         metadata: true,
         userId: true,
+        type: true,
         image: { select: { id: true } },
       },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
+    if (currentCollection.type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
 
     // An editor shown no cover because it is hidden from them sends `image: null`; that leaves the
     // stored cover as it is rather than removing it.
@@ -1975,6 +1994,7 @@ export const upsertCollection = async ({
   if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
     throw throwBadRequestError('3D model collections cannot be contests');
   }
+  if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
   if (type === CollectionType.Music && mode === CollectionMode.Contest) {
     throw throwBadRequestError('Playlists cannot be contests');
   }
@@ -3817,6 +3837,7 @@ export const bulkSaveItems = async ({
     tagId,
     isModerator,
     canAccessUserChallenges,
+    canUseMusic,
   },
   permissions,
 }: {
@@ -3824,6 +3845,7 @@ export const bulkSaveItems = async ({
     userId: number;
     isModerator?: boolean;
     canAccessUserChallenges?: boolean;
+    canUseMusic?: boolean;
   };
   permissions: CollectionContributorPermissionFlags;
 }) => {
@@ -3833,6 +3855,7 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  if (collection.type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
   for (const [itemKey, ids] of [
     ['imageId', imageIds],
     ['postId', postIds],
