@@ -953,6 +953,8 @@ type ListedFile = {
   previewUrl: string | null;
   /** A ready preview this domain may not show; `previewUrl` is null. */
   previewOffDomain?: boolean;
+  /** A Final the viewer may have but this domain may not serve; `canDownload` is false. */
+  downloadOffDomain?: boolean;
   canDownload: boolean;
   /** Moderators only: when the uploader removed a file that was kept. */
   removedAt?: Date;
@@ -973,7 +975,7 @@ type FileRow = {
   watermarkedKey: string | null;
   removedAt: Date | null;
   nsfwLevel: number | null;
-};
+} & FinalLevelFacts;
 
 /**
  * A Final's own scan verdicts let the buyer have it. Checked at the gate as well as by
@@ -1036,7 +1038,7 @@ export async function listServiceDealFiles({
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
       f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey",
-      f."removedAt", f."nsfwLevel"
+      f."removedAt", f."nsfwLevel", ${finalLevelColumns}
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -1094,12 +1096,14 @@ export async function listServiceDealFiles({
     // A buyer sees a preview only once it is scanned, marked and published: never the original.
     if (buyerOnly && row.kind === 'Preview' && row.status !== 'Ready') return [];
 
-    const downloadable =
+    const allowed =
       row.kind === 'Final' &&
       row.status === 'Ready' &&
       (privileged ||
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
-    const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
+    const levelGate = allowed ? finalLevelGate(row, servableLevels, false) : 'refused';
+    const downloadable = levelGate === 'served';
+    const lockedFinal = buyerOnly && row.kind === 'Final' && !allowed;
     const offDomain =
       row.kind === 'Preview' && !!row.nsfwLevel && !Flags.intersects(row.nsfwLevel, servableLevels);
     const key = offDomain ? null : row.watermarkedKey;
@@ -1126,6 +1130,7 @@ export async function listServiceDealFiles({
               })
             : null,
         ...(offDomain && row.status === 'Ready' ? { previewOffDomain: true } : {}),
+        ...(levelGate === 'offDomain' ? { downloadOffDomain: true } : {}),
         canDownload: downloadable,
       },
     ];
@@ -1162,6 +1167,49 @@ export type ServiceDealFileDownload = {
  * and a zip without one is not downloadable by them at all. `delivered` asks a moderator for the
  * buyer's version instead of the original.
  */
+/** The columns `finalLevelGate` reads, over the file row `f`. */
+const finalLevelColumns = Prisma.sql`f."scannedEtag",
+      (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+        WHERE e."fileId" = f."id" AND (i."needsReview" IS NOT DISTINCT FROM 'csam'
+          OR i."blockedFor" IS NOT DISTINCT FROM 'CSAM' OR i.minor IS TRUE
+          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))) AS "csamHeld",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone"`;
+
+type FinalLevelFacts = {
+  scannedEtag: string | null;
+  /** The highest rating among the file's scanned images; null for a file with none. */
+  contentLevel: number | null;
+  csamHeld: boolean;
+  ratedImageGone: boolean;
+};
+
+/**
+ * Whether a Final's rating lets this domain serve it: a video, or a file whose images were rated (an
+ * image, or a zip of them), goes only where that rating may be shown. The list and the download read
+ * the same answer. `offDomain` is rated and refused here only for this domain's levels.
+ */
+function finalLevelGate(
+  row: { kind: ServiceDealFileKind; fileName: string } & FinalLevelFacts,
+  servableLevels: number,
+  disputeReview: boolean
+): 'served' | 'offDomain' | 'refused' {
+  const video = isFinalVideoName(row.fileName);
+  if (row.kind !== 'Final' || (!video && row.contentLevel === null)) return 'served';
+  // Held for CSAM or a minor, it goes only through the CSAM path, never this route.
+  if (row.csamHeld) return 'refused';
+  const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
+  // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold,
+  // but only while the scan image that shows it is not held is still there to say so.
+  if (!levelInDomain && !(disputeReview && !row.ratedImageGone))
+    return row.contentLevel ? 'offDomain' : 'refused';
+  // A video never stamped (refused, or not scanned yet) goes only to dispute review.
+  if (video && !row.scannedEtag && !disputeReview) return 'refused';
+  return 'served';
+}
+
 export async function resolveServiceDealFileDownload({
   fileId,
   userId,
@@ -1184,7 +1232,7 @@ export async function resolveServiceDealFileDownload({
   moderatorFetch?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
-    {
+    ({
       dealId: number;
       s3Key: string;
       deliveryKey: string | null;
@@ -1200,23 +1248,12 @@ export async function resolveServiceDealFileDownload({
       revisionsUsed: number;
       completedAt: Date | null;
       removedAt: Date | null;
-      scannedEtag: string | null;
       scannedVersionId: string | null;
-      contentLevel: number | null;
-      csamHeld: boolean;
-      ratedImageGone: boolean;
-    }[]
+    } & FinalLevelFacts)[]
   >`
     SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
-      f."malwareScanStatus", f."status", f."removedAt", f."scannedEtag", f."scannedVersionId",
-      (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
-      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
-        WHERE e."fileId" = f."id" AND (i."needsReview" IS NOT DISTINCT FROM 'csam'
-          OR i."blockedFor" IS NOT DISTINCT FROM 'CSAM' OR i.minor IS TRUE
-          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))) AS "csamHeld",
-      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-        WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
+      f."malwareScanStatus", f."status", f."removedAt", f."scannedVersionId",
+      ${finalLevelColumns},
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -1264,19 +1301,11 @@ export async function resolveServiceDealFileDownload({
   const role: ServiceDealAccessRole =
     row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
   const bucket = await getBucket();
-  if (row.kind === 'Final' && isFinalVideoName(row.fileName)) {
-    // A video is served only as the version its scan copy was made from, and only where its rating
-    // may be shown. One never stamped (refused, or not scanned yet) goes only to dispute review.
-    const disputeReview = isModerator && !!moderatorFetch;
-    // Held for CSAM or a minor, it goes only through the CSAM path, never this route.
-    if (row.csamHeld) return null;
-    const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
-    // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold,
-    // but only while the scan image that shows it is not held is still there to say so.
-    const levelShown = levelInDomain || (disputeReview && !row.ratedImageGone);
-    if (!levelShown || (!row.scannedEtag && !disputeReview)) return null;
-    if (row.scannedEtag && !(await stillScannedVersion(bucket, key, row))) return null;
-  }
+  if (finalLevelGate(row, servableLevels, isModerator && !!moderatorFetch) !== 'served')
+    return null;
+  // A video is served only as the version its scan copy was made from.
+  if (row.kind === 'Final' && row.scannedEtag && isFinalVideoName(row.fileName))
+    if (!(await stillScannedVersion(bucket, key, row))) return null;
   return {
     bucket,
     key,

@@ -1942,6 +1942,74 @@ describe('the finals malware scan flag', () => {
   });
 });
 
+describe('a Final rated outside the domain', () => {
+  /** A completed R deal whose one Final (`name`) passed, its one image rated R. */
+  async function completedRatedFinal(name: 'a.png' | 'result.zip') {
+    malwareScan.on.mockResolvedValue(false);
+    const dealId = await accepted();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 4`);
+    const fileId =
+      name === 'a.png'
+        ? await final(dealId, name, IMAGE_A)
+        : await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+    await unpack.unpackFinals();
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await verdict('Scanned', '', 4);
+    await unpack.settleEntryScans();
+    await q(
+      `UPDATE "ServiceDealFile" SET "repackedAt" = now(), "deliveryKey" = 'k/delivered',
+         "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [fileId]
+    );
+    await unpack.settleFinals();
+    expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Completed', "completedAt" = now(), "releaseAt" = now() WHERE id = $1`,
+      [dealId]
+    );
+    return { dealId, fileId };
+  }
+  const listed = async (dealId: number, fileId: number, servableLevels: number) =>
+    (
+      await files.listServiceDealFiles({
+        dealId,
+        userId: BUYER,
+        isModerator: false,
+        servableLevels,
+      })
+    ).find((row) => row.id === fileId);
+  const download = (fileId: number, servableLevels: number) =>
+    files.resolveServiceDealFileDownload({
+      fileId,
+      userId: BUYER,
+      isModerator: false,
+      servableLevels,
+    });
+
+  it.each(['a.png', 'result.zip'] as const)(
+    'is served, and listed downloadable, only where its rating may be shown (%s)',
+    async (name) => {
+      const { dealId, fileId } = await completedRatedFinal(name);
+      expect(await download(fileId, 31)).not.toBeNull();
+      expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: true });
+      expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
+      expect(await download(fileId, 3)).toBeNull();
+      expect(await listed(dealId, fileId, 3)).toMatchObject({
+        canDownload: false,
+        downloadOffDomain: true,
+        fileName: name,
+      });
+    }
+  );
+
+  it('a file with no rated image is served on any domain', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = NULL`);
+    expect(await download(fileId, 3)).not.toBeNull();
+    expect(await listed(dealId, fileId, 3)).toMatchObject({ canDownload: true });
+  });
+});
+
 describe('the finals malware scan', () => {
   /** What the orchestrator returned for a clean file: the count is only in the scanner's summary. */
   const CLEAN = {
@@ -2830,6 +2898,31 @@ describe('a video Final', () => {
     s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
     expect(await download(fileId, BUYER, 3)).toBeNull();
     expect(await download(fileId, 99)).toBeNull();
+  });
+
+  it('is listed as the download would serve it: off the domain, and unstamped', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    const listed = async (servableLevels: number) =>
+      (
+        await files.listServiceDealFiles({
+          dealId,
+          userId: BUYER,
+          isModerator: false,
+          servableLevels,
+        })
+      ).find((row) => row.id === fileId);
+    expect(await listed(31)).toMatchObject({ canDownload: true });
+    expect(await download(fileId, BUYER, 3)).toBeNull();
+    expect(await listed(3)).toMatchObject({ canDownload: false, downloadOffDomain: true });
+    await q(`UPDATE "ServiceDealFile" SET "scannedEtag" = NULL WHERE id = $1`, [fileId]);
+    expect(await download(fileId, BUYER)).toBeNull();
+    const unstamped = await listed(31);
+    expect(unstamped).toMatchObject({ canDownload: false });
+    expect(unstamped?.downloadOffDomain).toBeUndefined();
   });
 
   it('holds a moderator on the download route to the domain, and unscanned bytes to dispute review', async () => {
