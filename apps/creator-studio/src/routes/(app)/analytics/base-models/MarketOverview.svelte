@@ -164,7 +164,7 @@
 
     <p class="mt-3 text-xs text-dark-2">
       Figures are of the buckets shown: a bucket with fewer than 5 sellers is hidden and counted in
-      no total ({num(view.suppressed.paid + view.suppressed.free)} hidden). A model with any paid version
+      no total ({num(view.suppressed.paid + view.suppressed.free)} hidden across all of Civitai). A model with any paid version
       counts as paid, and its free versions aren't counted.
     </p>
   {:catch err}
