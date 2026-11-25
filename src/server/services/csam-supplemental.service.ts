@@ -127,7 +127,10 @@ export async function createSupplementalCsamReport({
 }: CreateCsamReportSchema & {
   reportedById: number;
   supplementalOf: number;
-  /** Blocks the listed images as CSAM in the same transaction, after every refusal. */
+  /**
+   * Blocks the listed images as CSAM in the report's own transaction, so a refused or failed filing
+   * blocks nothing.
+   */
   blockListedImages?: boolean;
 }) {
   if (type !== 'Image' || userId === -1)

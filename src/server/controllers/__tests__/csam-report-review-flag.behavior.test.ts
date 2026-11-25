@@ -42,17 +42,19 @@ const fileInTransaction = vi.hoisted(
       })
 );
 
-const { createCsamReport, createSupplementalCsamReport, softDeleteUser } = vi.hoisted(() => ({
-  // As the services do: the listed images are blocked in the report's own transaction.
-  createSupplementalCsamReport: vi.fn(async (input: FilingInput) => fileInTransaction(input)),
-  createCsamReport: vi.fn(async (input: FilingInput) => fileInTransaction(input)),
-  softDeleteUser: vi.fn(async ({ id }: { id: number }) => {
-    await holder.db.query(
-      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE "userId" = $1`,
-      [id]
-    );
-  }),
-}));
+const { createCsamReport, createSupplementalCsamReport, softDeleteUser, afterCsamImageBlock } =
+  vi.hoisted(() => ({
+    afterCsamImageBlock: vi.fn(async () => undefined),
+    // As the services do: the listed images are blocked in the report's own transaction.
+    createSupplementalCsamReport: vi.fn(async (input: FilingInput) => fileInTransaction(input)),
+    createCsamReport: vi.fn(async (input: FilingInput) => fileInTransaction(input)),
+    softDeleteUser: vi.fn(async ({ id }: { id: number }) => {
+      await holder.db.query(
+        `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE "userId" = $1`,
+        [id]
+      );
+    }),
+  }));
 vi.mock('~/server/services/csam.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CsamService>()),
   createCsamReport,
@@ -68,6 +70,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   bulkAddBlockedImages: vi.fn(async () => undefined),
+  afterCsamImageBlock,
 }));
 vi.mock('~/server/services/report.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReportService>()),
@@ -133,6 +136,7 @@ beforeEach(async () => {
   createCsamReport.mockClear();
   softDeleteUser.mockClear();
   createSupplementalCsamReport.mockClear();
+  afterCsamImageBlock.mockClear();
   await pg.exec(`
     TRUNCATE "Image", "CsamReport", "ImageDeferredBlockEffect", "Appeal";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
@@ -397,10 +401,14 @@ describe('fileCsamReport', () => {
     expect(await reports()).toBe(before);
     expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBeNull();
     expect(softDeleteUser).not.toHaveBeenCalled();
+    expect(afterCsamImageBlock).not.toHaveBeenCalled();
 
     await file();
     expect(await reports()).toBe(before + 1);
     expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
+    // Search and the documents showing the images drop them only through this.
+    expect(afterCsamImageBlock).toHaveBeenCalledTimes(1);
+    expect(afterCsamImageBlock).toHaveBeenCalledWith({ imageIds: [OTHER_OWNERS_SCANNED] });
   });
 
   it('passes a refusal through unchanged, blocking nothing', async () => {
@@ -412,6 +420,7 @@ describe('fileCsamReport', () => {
       message: 'refused',
     });
     expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBeNull();
+    expect(afterCsamImageBlock).not.toHaveBeenCalled();
   });
 
   it('fails loudly with the flag still on when removing the account fails', async () => {

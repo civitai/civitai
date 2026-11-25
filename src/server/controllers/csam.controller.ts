@@ -91,8 +91,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     contextText,
   };
   const filed = contextText.length ? { ...filing, details: withContext } : filing;
-  // The listed images are blocked as CSAM in the report's own transaction, after every refusal, so a
-  // refused filing blocks nothing and a failed one files and blocks nothing.
+  // Blocked in the report's own transaction, so a refused or failed filing blocks nothing.
   let report: { id: number };
   try {
     report = supplementalOf

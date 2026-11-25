@@ -263,12 +263,12 @@ export async function createCsamReport({
 
   // A filing's capture of text the report already holds, recorded once the fold commits.
   const identical: { capture: CsamContextText; reviewUpgrade?: CsamContextReview }[] = [];
-  // Only fold into a report of the same account AND type: internal reports belong to no account, and
-  // a different type is a different report.
   const blockListed = async (tx: Prisma.TransactionClient) => {
     if (blockListedImages && imageIds.length)
       await tx.image.updateMany({ where: { id: { in: imageIds } }, data: CSAM_IMAGE_BLOCK });
   };
+  // Only fold into a report of the same account AND type: internal reports belong to no account, and
+  // a different type is a different report.
   const report = isInternalReport
     ? await dbWrite.$transaction(async (tx) => {
         await blockListed(tx);

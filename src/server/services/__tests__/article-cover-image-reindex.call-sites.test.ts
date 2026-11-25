@@ -29,9 +29,16 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
 import {
   afterCsamImageBlock,
+  handleBlockImages,
   toggleImageFlag,
   updateImagesFlag,
 } from '~/server/services/image.service';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import * as searchIndex from '~/server/search-index';
+import * as accountDeletionMarkers from '~/server/services/account-deletion-image-markers';
+import * as nsfwLevels from '~/server/services/nsfwLevels.service';
+import * as postService from '~/server/services/post.service';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import {
   queueArticlesAndComicsForImages,
   queueDocumentsForBlockedImages,
@@ -156,5 +163,67 @@ describe('a CSAM block', () => {
   it('queues nothing for no images (control)', async () => {
     await afterCsamImageBlock({ imageIds: [] });
     expect(queueDocumentsForBlockedImages).not.toHaveBeenCalled();
+  });
+});
+
+describe('the steps every image block runs after its write', () => {
+  const POST_ID = 990000401;
+  let steps: {
+    search: ReturnType<typeof vi.spyOn>;
+    comics: ReturnType<typeof vi.spyOn>;
+    markers: ReturnType<typeof vi.spyOn>;
+    posts: ReturnType<typeof vi.spyOn>;
+  };
+  beforeEach(() => {
+    steps = {
+      search: vi
+        .spyOn(searchIndex.imagesMetricsSearchIndex, 'queueUpdate')
+        .mockResolvedValue(undefined as never),
+      comics: vi
+        .spyOn(nsfwLevels, 'queueComicsForPanelImages')
+        .mockResolvedValue(undefined as never),
+      markers: vi
+        .spyOn(accountDeletionMarkers, 'clearAccountDeletionImageMarkers')
+        .mockResolvedValue(undefined as never),
+      posts: vi.spyOn(postService, 'bustCachesForPosts').mockResolvedValue(undefined as never),
+    };
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: IMAGE_ID, userId: 990000402, postId: POST_ID, pHash: null, nsfwLevel: 1 },
+    ]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ id: IMAGE_ID, postId: POST_ID }]);
+  });
+  const expectEveryStep = (
+    markers: Parameters<typeof accountDeletionMarkers.clearAccountDeletionImageMarkers>[0] = {
+      ids: [IMAGE_ID],
+    }
+  ) => {
+    expect(steps.search).toHaveBeenCalledWith([
+      { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(redisMock.sysRedis.packed.set).toHaveBeenCalledWith(
+      expect.stringContaining(`:${IMAGE_ID}`),
+      'false',
+      expect.anything()
+    );
+    expect(steps.comics).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(steps.markers).toHaveBeenCalledWith(markers);
+    expect(steps.posts).toHaveBeenCalledWith([POST_ID]);
+    expect(queueDocumentsForBlockedImages).toHaveBeenCalledWith([IMAGE_ID]);
+  };
+
+  it('a moderator block runs each one', async () => {
+    await handleBlockImages({ ids: [IMAGE_ID], moderatorId: 990000403 });
+    expectEveryStep();
+  });
+
+  it('a CSAM block of listed images runs each one', async () => {
+    await afterCsamImageBlock({ imageIds: [IMAGE_ID] });
+    expectEveryStep();
+  });
+
+  it("a CSAM block of an account runs each one on the account's images", async () => {
+    await afterCsamImageBlock({ userId: 990000402 });
+    // Account-wide, before the walk: a restore must never un-block a CSAM block.
+    expectEveryStep({ userId: 990000402 });
   });
 });
