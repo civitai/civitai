@@ -399,8 +399,8 @@ export function shouldBatch(op: {
  *    (`isSignedOutBrowser`), THAT procedure's signed-out flag instead (`feedGoTransportSignedOut`,
  *    `feedGoTransportSignedOutModelGetAll`, `feedGoTransportSignedOutInfinite`). Each cohort reads
  *    only its own flags, so the two ramp independently. A signed-out answer is stored at the
- *    edge on both paths: an anonymous probe on 2026-11-25 saw a miss and then a hit on each, for
- *    `image.getInfinite` and `model.getAll` (both send the same public Cache-Control). Each path is
+ *    edge on both paths (both send the same public Cache-Control; measured: apps/feed-go/DESIGN.md,
+ *    "Edge caching of"). Each path is
  *    its own cache entry, so while the signed-out cohort is split the hits for one query are split
  *    between two entries,
  *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.

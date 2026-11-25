@@ -78,10 +78,10 @@ func (d *Deps) computeDataMisses(ctx context.Context, ids []int, entries map[int
 }
 
 // modelData is dataForModelsCache.fetch with its appendFn: each model's record, its `tags` replaced
-// by modelTagCache's (whose own appendFn names them from tagCache). A model-data or model-tags miss
-// falls back (DESIGN.md §16.7). A tag the tag cache does not hold is named by tagCache's own lookup on
-// the replica with Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back. With computeMiss a
-// model-data miss is computed (computeDataMisses).
+// by modelTagCache's (whose own appendFn names them from tagCache). A model-tags miss falls back; a
+// model-data miss falls back unless computeMiss, when it is computed (computeDataMisses; DESIGN.md
+// §16.7). A tag the tag cache does not hold is named by tagCache's own lookup on the replica with
+// Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back.
 func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[int]*modelData, error) {
 	ids = hydrate.Unique(ids)
 	b := hydrate.NewBatch()
