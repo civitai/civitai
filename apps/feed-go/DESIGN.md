@@ -809,9 +809,12 @@ it is never less correct than not routing it — only its share of fallbacks cha
   before the listener closes instead of having them refused. `/healthz` (liveness) stays 200
   throughout. Then, within one 15 s grace period: new shadow samples are dropped, the running ones are
   cancelled and waited for, then both listeners drain their in-flight requests, and only then are the
-  replica pool and both Redis clients closed. Set the delay above the readiness probe's period ×
-  failure threshold plus the router's endpoint propagation, and the pod's termination grace above the
-  delay + 15 s + a margin.
+  replica pool and both Redis clients closed. The 503 only takes the pod out of rotation early if the
+  readiness probe reads `/readyz` and its period × failure threshold fits inside the delay; with a
+  slower probe (or one still on `/healthz`) the readiness flip does nothing before the listeners
+  close, and the delay alone is the fix: the pod keeps answering for that long after SIGTERM. The
+  termination grace counts from the start of any pre-stop hook, so set it above the pre-stop hook's
+  duration + the delay + 15 s + a margin.
 
 ### 6.2 The API request policy
 

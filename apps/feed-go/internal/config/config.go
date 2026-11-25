@@ -178,8 +178,10 @@ type Config struct {
 	RequestBudget time.Duration
 	// ShutdownDelay is FEED_GO_SHUTDOWN_DELAY_MS (default 10 s; 0 = none, negative or junk = default):
 	// how long, after SIGTERM, /readyz answers 503 while every listener keeps serving, before the
-	// listeners close and drain. Size it above the readiness probe's period × failure threshold plus
-	// the time the router takes to drop a not-ready endpoint.
+	// listeners close and drain. The 503 removes the pod from rotation early only when the readiness
+	// probe reads /readyz with period × failure threshold inside this delay; otherwise the delay alone
+	// keeps the pod answering. The pod's termination grace must exceed any pre-stop hook + this + 15 s
+	// (DESIGN.md §6.1 Shutdown).
 	ShutdownDelay time.Duration
 	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT: the public requests one pod computes at once. Past it a
 	// request is not computed but proxied to the Node app (fallback reason `bulkhead`). 0 = not set
