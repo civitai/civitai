@@ -174,6 +174,42 @@ describe("the scan's report on a Feature Pages comment", () => {
     expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
   });
 
+  it('a push holds the comment: refused with why, and the report stays open', async () => {
+    await db.query(
+      `UPDATE "FeaturePageCommentMirror" SET "leaseUntil" = now() + interval '1 minute'
+       WHERE "commentId" = $1`,
+      [COMMENT]
+    );
+    expect(
+      await setReportStatus({
+        id: SCAN_REPORT,
+        status: 'Unactioned',
+        userId: MOD,
+        liftScanHide: true,
+      })
+    ).toEqual({ ok: false, error: expect.stringContaining('Try again in a minute') });
+    expect(
+      (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
+    ).toEqual({ status: 'Pending' });
+    expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
+  });
+
+  it('a banned author: the report closes and the comment stays hidden', async () => {
+    await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [AUTHOR]);
+    expect(
+      await setReportStatus({
+        id: SCAN_REPORT,
+        status: 'Unactioned',
+        userId: MOD,
+        liftScanHide: true,
+      })
+    ).toEqual({ ok: true, changed: true });
+    expect(
+      (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
+    ).toEqual({ status: 'Unactioned' });
+    expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
+  });
+
   it('ruled through the batch save, or by a caller that does not ask: it stays hidden', async () => {
     expect(
       await setReportStatuses([{ id: SCAN_REPORT, status: 'Unactioned' as never }], { userId: MOD })
