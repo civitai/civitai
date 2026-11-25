@@ -1,5 +1,9 @@
 import { sql } from '@civitai/db/kysely';
-import { blockMarkerText, songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
+import {
+  blockMarkerText,
+  songNoticeSubject as sharedSongNoticeSubject,
+  songsOwnCoverText,
+} from '@civitai/db-queries/profile-picture-clear';
 import { logAxiomError } from './axiom';
 import { dbRead } from './db';
 import { holdsCsamReview } from './held-media';
@@ -42,33 +46,8 @@ export async function getSongLinks(imageIds: number[]): Promise<Map<number, Song
 
 export const NO_SONG_LINKS: SongLinks = { songCoverId: null, coverOf: null };
 
-/** The song a removal notice names when `imageId` is a song or its own cover: the notice links to
- *  the song, the only page a cover has. */
-export async function songNoticeSubject(
-  imageId: number
-): Promise<{ kind: 'song' | 'cover'; songId: number; title: string } | null> {
-  const row = await dbRead
-    .selectFrom('Track as t')
-    .innerJoin('Image as s', 's.id', 't.imageId')
-    .leftJoin('Image as c', 'c.id', 't.coverImageId')
-    .select(['t.imageId as songId', sql<string | null>`s.metadata->>'title'`.as('title')])
-    .where((eb) =>
-      eb.or([
-        eb('t.imageId', '=', imageId),
-        eb.and([
-          eb('t.coverImageId', '=', imageId),
-          sql<boolean>`${sql.raw(songsOwnCoverText('c', 's'))}`,
-        ]),
-      ])
-    )
-    .executeTakeFirst();
-  if (!row) return null;
-  return {
-    kind: row.songId === imageId ? 'song' : 'cover',
-    songId: row.songId,
-    title: row.title ?? '',
-  };
-}
+/** The shared `songNoticeSubject`, on this app's replica. */
+export const songNoticeSubject = (imageId: number) => sharedSongNoticeSubject(dbRead, imageId);
 
 /** `getSongLinks` without a link to an image withheld from `user` (the card's own check does not
  *  cover the image a link names). A failed read leaves the cards without links rather than failing

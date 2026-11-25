@@ -91,6 +91,46 @@ export const playerSongCoverText = (cover: string) =>
     cover
   )} AND ${cover}."needsReview" IS NULL AND ${cover}."acceptableMinor" = false)`;
 
+/** What a ToS removal notice names when the removed image is a song or that song's own cover. */
+export type SongNoticeSubject = { kind: 'song' | 'cover'; songId: number; title: string };
+
+/** The song a removal notice names when `imageId` is a song or its own cover (`songsOwnCoverText`):
+ *  the notice links to the song, the only page a cover has. Null for any other image. */
+export async function songNoticeSubject(
+  db: Kysely<DB>,
+  imageId: number
+): Promise<SongNoticeSubject | null> {
+  const row = await db
+    .selectFrom('Track as t')
+    .innerJoin('Image as s', 's.id', 't.imageId')
+    .leftJoin('Image as c', 'c.id', 't.coverImageId')
+    .select(['t.imageId as songId', sql<string | null>`s.metadata->>'title'`.as('title')])
+    .where((eb) =>
+      eb.or([
+        eb('t.imageId', '=', imageId),
+        eb.and([
+          eb('t.coverImageId', '=', imageId),
+          sql<boolean>`${sql.raw(songsOwnCoverText('c', 's'))}`,
+        ]),
+      ])
+    )
+    .executeTakeFirst();
+  if (!row) return null;
+  return {
+    kind: row.songId === imageId ? 'song' : 'cover',
+    songId: row.songId,
+    title: row.title ?? '',
+  };
+}
+
+/** The `tos-violation` notice details for a removed song or cover: the template's "song" / "song
+ *  cover" wording, the song's title, and a link to the song. */
+export const songTosNoticeDetails = (song: SongNoticeSubject) => ({
+  modelName: song.title,
+  entity: song.kind === 'song' ? 'song' : 'song cover',
+  url: `/images/${song.songId}`,
+});
+
 const CLEAR_HELD_USER_IMAGES_SQL = `
   WITH held AS (
     SELECT u.id, (u.image IS NOT NULL AND ${userImageNamesPicture('picture')}) AS "namesPicture"

@@ -79,9 +79,18 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { songNoticeSubject, songTosNoticeDetails } from '@civitai/db-queries/profile-picture-clear';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import {
+  getSongCoverForRemoval,
+  HELD_SONG_COVER_MESSAGE,
+  NO_SONG_COVER_MESSAGE,
+} from '~/server/services/song-cover-removal.service';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   canViewImageMedia,
@@ -250,6 +259,7 @@ export const setTosViolationHandler = async ({
         nsfwLevel: true,
         userId: true,
         postId: true,
+        type: true,
         pHash: true,
         post: {
           select: {
@@ -305,20 +315,31 @@ export const setTosViolationHandler = async ({
         )
       );
 
-      if (!isFeedbackCaptureOwner(image.userId))
+      if (!isFeedbackCaptureOwner(image.userId)) {
+        // A song, or a postless image that may be a song's own cover, names the song; a lookup that
+        // fails sends the image wording rather than no notice.
+        const song =
+          image.type === MediaType.audio || (image.type === MediaType.image && !image.postId)
+            ? await songNoticeSubject(kyselyRead, id).catch(() => null)
+            : null;
         await createNotification({
           userId: image.userId,
           type: 'tos-violation',
           category: NotificationCategory.System,
           key: `tos-violation:image:${crypto.randomUUID()}`,
           details: {
-            modelName: image.post?.title ?? `post #${image.postId as number}`,
-            entity: 'image',
-            url: `/images/${id}`,
+            ...(song
+              ? songTosNoticeDetails(song)
+              : {
+                  modelName: image.post?.title ?? `post #${image.postId as number}`,
+                  entity: 'image',
+                  url: `/images/${id}`,
+                }),
             // Only the moderator's explicit pick; the inferred fallback below is for analytics, not the user.
             ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
           },
         }).catch();
+      }
     }
 
     await clearReviewFlagsOnBlock([id]);
@@ -395,6 +416,26 @@ const galleryOwnerId = (ctx: Context) =>
 /** Whether the request's model gallery is withheld from this viewer (see `isModelGalleryWithheld`). */
 const isGalleryWithheldFrom = (ctx: Context, input: Parameters<typeof isModelGalleryWithheld>[0]) =>
   moderatorView(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx));
+
+/**
+ * "Remove cover" on a song: the ToS removal of the song's own cover alone, with its own violation
+ * type and owner notice; the song stays public with the placeholder. Read on the primary, so a cover
+ * held moments ago is refused. A held cover is refused for every moderator: the main app has no
+ * CSAM-review grant.
+ */
+export const removeSongCoverHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetTosViolationSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (!ctx.user.isModerator) throw throwAuthorizationError('Only moderators can remove a cover');
+  const cover = await getSongCoverForRemoval(kyselyWrite, input.id);
+  if (!cover) throw throwBadRequestError(NO_SONG_COVER_MESSAGE);
+  if (cover.held) throw throwBadRequestError(HELD_SONG_COVER_MESSAGE);
+  return setTosViolationHandler({ input: { ...input, id: cover.coverId }, ctx });
+};
 
 export const getImagesForModelVersionHandler = async ({
   input,

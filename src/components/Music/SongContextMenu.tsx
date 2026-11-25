@@ -40,6 +40,7 @@ import {
 } from '~/shared/constants/moderator-app';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { RemoveSongCoverMenuItem } from '~/components/Music/RemoveSongCoverMenuItem';
 import { storedSongDurationSec } from '~/shared/utils/song-play';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -224,6 +225,7 @@ function SongMenuItems({ image, leadingMenuItems, additionalMenuItems }: SongCon
           >
             Remove as ToS violation
           </Menu.Item>
+          <RemoveSongCoverMenuItem songId={imageId} />
           <Menu.Item
             leftSection={<IconRadar2 size={16} stroke={1.5} />}
             onClick={() => rescanImage({ imageId })}

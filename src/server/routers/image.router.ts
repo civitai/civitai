@@ -7,10 +7,13 @@ import {
   handleUpdateImageNsfwLevel,
   moderateImageHandler,
   setTosViolationHandler,
+  removeSongCoverHandler,
   setVideoThumbnailController,
   updateImageAcceptableMinorHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
+import { getSongCoverForRemoval } from '~/server/services/song-cover-removal.service';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addImageTechniques,
@@ -123,6 +126,12 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: moderatorProcedure.input(setTosViolationSchema).mutation(setTosViolationHandler),
+  /** "Remove cover" on a song: `id` is the song's; only its own cover is removed. */
+  removeSongCover: moderatorProcedure.input(setTosViolationSchema).mutation(removeSongCoverHandler),
+  /** The song's own cover, while there is one to remove, and whether it is held (refused). */
+  getSongCoverRemoval: moderatorProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getSongCoverForRemoval(kyselyRead, input.id)),
   getApprovedAppeal: moderatorProcedure
     .input(getByIdSchema)
     .query(({ input }) => getApprovedImageAppeal(input.id)),
