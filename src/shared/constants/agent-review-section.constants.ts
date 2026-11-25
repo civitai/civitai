@@ -175,8 +175,8 @@ export function isAgentSectionFailureMarker(raw: unknown): boolean {
  * `Object.create(null)` base plus the `typeof` narrowing in {@link agentSectionErrorMessage}
  * are two independent closes on it; keep both.
  *
- * `truncated-response` and `upstream-error` are codes the review agent may write before or
- * after this build ships; an entry whose code never arrives simply never matches.
+ * `truncated-response` and `upstream-error`: the agent may not write these codes yet; an entry
+ * whose code never arrives never matches.
  *
  * They are separated because they call for different actions:
  *   · `non-json-response` — no structured result could be read. The agent writes it both when

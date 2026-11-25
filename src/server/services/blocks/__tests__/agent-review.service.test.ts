@@ -812,6 +812,7 @@ describe('startAgentReview — chosen model', () => {
     expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
   });
 
+  // Section-re-run model policy, decided in #10436 (agent review model picker).
   it('🔴 a section re-run of a chosen-model run runs on THAT model (the Job gets it)', async () => {
     // The latest run was written by model X with one analysis failed; re-running that one
     // analysis must use X, or the report mixes X's analyses with the default model's.

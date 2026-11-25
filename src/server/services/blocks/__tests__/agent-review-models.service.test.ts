@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getAgentReviewModelOptions,
+  getPickableAgentReviewModels,
   OPENROUTER_MODELS_URL,
   parseToolCapableModels,
   resolveAgentReviewModel,
@@ -117,6 +118,55 @@ describe('getAgentReviewModelOptions', () => {
     await expect(getAgentReviewModelOptions()).rejects.toThrow();
     await expect(getAgentReviewModelOptions()).resolves.toHaveLength(2);
   });
+});
+
+/**
+ * The input-price ceiling ($5 per million input tokens). A body with one model exactly AT it and
+ * one just above, so an off-by-one (`<` for `<=`) and a missing check both show.
+ */
+const CEILING_BODY = {
+  data: [
+    {
+      id: 'acme/at-ceiling',
+      name: 'Acme: At Ceiling',
+      pricing: { prompt: '0.000005', completion: '0.000025' },
+      supported_parameters: ['tools'],
+    },
+    {
+      id: 'acme/above-ceiling',
+      name: 'Acme: Above Ceiling',
+      pricing: { prompt: '0.00000501', completion: '0.000025' },
+      supported_parameters: ['tools'],
+    },
+    {
+      id: 'acme/premium',
+      name: 'Acme: Premium',
+      pricing: { prompt: '0.000015', completion: '0.000075' },
+      supported_parameters: ['tools'],
+    },
+  ],
+};
+
+describe('input-price ceiling', () => {
+  beforeEach(() => fetchMock.mockImplementation(async () => okResponse(CEILING_BODY)));
+
+  it('a model at exactly $5/M input is allowed (listed and accepted)', async () => {
+    await expect(resolveAgentReviewModel('acme/at-ceiling')).resolves.toMatchObject({
+      id: 'acme/at-ceiling',
+      promptPerM: 5,
+    });
+    expect((await getPickableAgentReviewModels()).map((m) => m.id)).toEqual(['acme/at-ceiling']);
+  });
+
+  it.each(['acme/above-ceiling', 'acme/premium'])(
+    '🔴 %s (input price above the ceiling) is refused at the server, naming the limit',
+    async (id) => {
+      await expect(resolveAgentReviewModel(id)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('above the $5 limit'),
+      });
+    }
+  );
 });
 
 describe('resolveAgentReviewModel', () => {

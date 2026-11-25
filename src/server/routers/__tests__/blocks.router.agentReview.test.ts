@@ -540,10 +540,17 @@ describe('blocks.getAgentReviewModels', () => {
         pricing: { prompt: '0.000001', completion: '0.000005' },
         supported_parameters: ['tools'],
       },
+      // Above the $5/M input-price ceiling: never offered.
+      {
+        id: 'acme/premium',
+        name: 'Acme: Premium',
+        pricing: { prompt: '0.000015', completion: '0.000075' },
+        supported_parameters: ['tools'],
+      },
     ],
   };
 
-  it('moderator + flags on: the tool-capable models with their prices', async () => {
+  it('moderator + flags on: the tool-capable models within the price ceiling, with their prices', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({ ok: true, status: 200, json: async () => MODELS_BODY }))

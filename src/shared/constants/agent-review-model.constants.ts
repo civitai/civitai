@@ -47,6 +47,22 @@ export function fromRunnerModelId(stored: string): string | null {
   return isAgentReviewModelId(id) ? id : null;
 }
 
+/**
+ * The dearest INPUT price (USD per million tokens) a moderator may run a review on.
+ *
+ * The per-run cost cap is checked between analyses, so it can stop a later analysis from starting
+ * but not the ones already running: a review's spend can overshoot the cap by whatever its first
+ * analyses cost. Input dominates that spend (an analysis reads the whole bundle), so a ceiling on
+ * the input price bounds the overshoot. $5/M admits the cheap models and the Haiku- and
+ * Sonnet-class ones.
+ */
+export const AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M = 5;
+
+/** Whether a model's input price is within {@link AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M}. */
+export function isWithinAgentReviewPriceCeiling(option: { promptPerM: number }): boolean {
+  return option.promptPerM <= AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M;
+}
+
 /** One entry of the moderator's model picker. Prices are USD per million tokens. */
 export type AgentReviewModelOption = {
   id: string;

@@ -3217,16 +3217,12 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(startAgentReviewSchema)
     .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { startAgentReview } = await import('~/server/services/blocks/agent-review.service');
       try {
         return await startAgentReview({
@@ -3265,16 +3261,12 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(getAgentReviewSchema)
     .query(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
       // `reportId` (the report picker) is looked up WITHIN this request, so the per-request
       // gate above still covers it.
@@ -3289,15 +3281,12 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(agentReviewRequestSchema)
     .query(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { listAgentReports } = await import(
         '~/server/services/blocks/app-review-report.service'
       );
@@ -3306,7 +3295,7 @@ export const blocksRouter = router({
 
   /**
    * AGENTIC MOD CODE-REVIEW — the models a re-run can be dispatched on: OpenRouter's
-   * tool-capable models with their prices (cached server-side). Gated IDENTICALLY to
+   * tool-capable models within the input-price ceiling, with their prices (cached server-side). Gated IDENTICALLY to
    * startAgentReview, on the request the moderator is reviewing. When OpenRouter cannot be
    * reached this answers `available: false` rather than failing, so the picker can say so; a
    * chosen model cannot be priced then, and startAgentReview refuses it (the default still runs).
@@ -3315,20 +3304,18 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(agentReviewRequestSchema)
     .query(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
-      const { getAgentReviewModelOptions } = await import(
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
+      const { getPickableAgentReviewModels } = await import(
         '~/server/services/blocks/agent-review-models.service'
       );
       try {
-        return { available: true, models: [...(await getAgentReviewModelOptions())] };
+        // Only models within the input-price ceiling (the start refuses the rest anyway).
+        return { available: true, models: await getPickableAgentReviewModels() };
       } catch (err) {
         logToAxiom({
           name: 'app-blocks.review.agent-models',
@@ -3358,16 +3345,12 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(agentReviewChatSchema)
     .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
       try {
         return await agentReviewChat({
