@@ -22,6 +22,7 @@ const {
   exclusionsFor,
   nextRevertBatch,
   nextUnlockBatch,
+  ratingChangedSinceUnlock,
   recordScans,
   revertLocks,
   runBackfill,
@@ -652,10 +653,13 @@ describe('model nsfw lock backfill: profanity locks', () => {
         status: 'failed-relocked',
         reason: 'not-active/shadow',
       });
-      // Never reverted while locked; a later run from the start picks both up again.
+      // Never reverted while locked.
       expect(await nextRevertBatch(PROFANITY, 0, 100)).not.toContain(ELIGIBLE);
       // A later run from the start picks both up again; the submitted ones stay unlocked.
       expect(await nextUnlockBatch(PROFANITY, 0, 100)).toEqual(failed);
+      // Nor reported as a revert skipped for its rating: it is locked, not waiting on a revert.
+      await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
+      expect((await ratingChangedSinceUnlock()).ids).not.toContain(ELIGIBLE);
     });
 
     it('counts unlocks a call left with no scan outcome', async () => {

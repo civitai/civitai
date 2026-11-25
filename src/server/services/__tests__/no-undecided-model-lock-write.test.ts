@@ -42,10 +42,10 @@ type Decision =
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
   'src/server/api-routes/admin/temp/model-nsfw-lock-backfill.ts': {
-    lockWrites: 2,
+    lockWrites: 3,
     decision: {
       kind: 'exempt',
-      why: 'scan locks: the unlock lifts only the nsfw lock under a text-scan marker and keeps the marker, which an unlocked scan rating carries too (markScanRating); the revert puts the lock back only while that marker is still there. Profanity locks: the unlock lifts the lock and clears the profanity marker in the same statement (parked in the record); the revert puts both back only while the rating is unchanged, the model is not minor, poi or SFW-only, no lock came since, and the marker is gone or is the text-scan marker the re-scan stamped',
+      why: 'scan locks: the unlock lifts only the nsfw lock under a text-scan marker and keeps the marker, which an unlocked scan rating carries too (markScanRating); the revert puts the lock back only while that marker is still there. Profanity locks: the unlock lifts the lock and clears the profanity marker in the same statement (parked in the record); the revert puts both back only while the rating is unchanged, the model is not minor, poi or SFW-only, no lock came since, and the marker is gone or is the text-scan marker the re-scan stamped. The relock of a profanity unlock whose forced scan was not submitted puts the prior locks and the parked profanity marker back in the same statement, only on an unreverted profanity-locks record that has both',
     },
   },
   'src/server/services/model.service.ts': {

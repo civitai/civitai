@@ -252,6 +252,7 @@ export async function ratingChangedSinceUnlock() {
     WHERE jsonb_typeof(m.meta) = 'object'
       AND m.meta->'nsfwLockBackfill'->>'bucket' = 'profanity-locks'
       AND (m.meta->'nsfwLockBackfill'->>'revertedAt') IS NULL
+      AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
       AND ${ratingChangedSql}
     ORDER BY m.id
   `;
@@ -341,10 +342,6 @@ export async function recordScans(outcomes: { id: number; status: string }[]) {
 }
 
 /**
- * Submits the forced scan of every model a profanity unlock changed, in the same call, since its owner
- * can untick mature once the lock and the filter's marker are gone and until a scan stamps its own.
- */
-/**
  * Locks again, in the same call, a profanity unlock whose forced scan was not submitted: nothing else
  * holds its rating (`assertScanRatingKept` needs the lock or a scan marker). The prior locks and the
  * filter's marker come back, and the record's `scan` says `failed-relocked` with the reason. A later
@@ -388,6 +385,10 @@ export async function countUnlockedUnscanned() {
   return row?.count ?? 0;
 }
 
+/**
+ * Submits the forced scan of every model a profanity unlock changed, in the same call, since its owner
+ * can untick mature once the lock and the filter's marker are gone and until a scan stamps its own.
+ */
 async function scanUnlocked(ids: number[], scan: (id: number) => Promise<string>) {
   const limit = pLimit(2);
   const outcomes = await Promise.all(
