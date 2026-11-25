@@ -162,7 +162,9 @@ default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). 
 reading the tier under the app's own `TIER_METADATA_KEY`. `image.getInfinite`'s
 `publishedOnly` input is computed only behind `FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY` (default
 off: the `input-publishedOnly` fallback; DESIGN.md §14.2.1), and its `postIds` input only behind `FEED_GO_INFINITE_SERVE_INPUT_POST_IDS`
-(default off: the `input-postIds` fallback; DESIGN.md §14.2.2). The `feed_endpoint`
+(default off: the `input-postIds` fallback; DESIGN.md §14.2.2), and its `hubId` input (a
+user-composed hub, read with the `user-hubs` flag per viewer from `FLIPT_URL`) only behind
+`FEED_GO_INFINITE_SERVE_INPUT_HUB_ID` (default off: the `input-hubId` fallback; DESIGN.md §14.2.3). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 

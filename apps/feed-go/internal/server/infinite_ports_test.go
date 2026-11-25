@@ -73,6 +73,30 @@ var goldenInfinitePorts = map[string]goldenInfinitePort{
 			"cold-gallery-settings-model-unheld":      "gallery-settings-miss",
 		},
 	},
+	"HubID": {
+		on: func(fx *goldenFixture) *bool { return &fx.Config.ServeHubID },
+		fixtures: map[string]string{
+			"hub-public-signed-out":               "input-hubId",
+			"hub-public-cursor":                   "input-hubId",
+			"hub-session-exclusions":              "input-hubId",
+			"hub-private-owner-version-expansion": "input-hubId",
+			"hub-private-moderator":               "input-hubId",
+			"hub-private-signed-out":              "input-hubId",
+			"hub-private-stranger":                "input-hubId",
+			"hub-held-and-capped":                 "input-hubId",
+			"hub-held-moderator":                  "input-hubId",
+			"hub-capped-to-nothing":               "input-hubId",
+			"hub-taken-down-stranger":             "input-hubId",
+			"hub-taken-down-owner":                "input-hubId",
+			"hub-no-source":                       "input-hubId",
+			"hub-not-found":                       "input-hubId",
+			"hub-route-not-a-union":               "input-hubId",
+			"hub-beside-user-id":                  "input-hubId",
+			"hub-index-feed-off":                  "input-hubId",
+			"hub-id-zero":                         "input-hubId",
+			"hub-excluded-sources-without-hub":    "input-hubExcludedSources",
+		},
+	},
 }
 
 // goldenInfinitePortCase is one fixture of one port.

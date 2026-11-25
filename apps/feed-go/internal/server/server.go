@@ -173,6 +173,9 @@ type Server struct {
 	// PersonalHotLead reads the `personal-hot-lead` flag per viewer (personal_lead.go); nil = every
 	// request that flag could lead is the model-getall-personal-hot-lead-unknown fallback.
 	PersonalHotLead UserFlagReader
+	// UserHubs reads the `user-hubs` flag per viewer (hubs.go) for an image.getInfinite `hubId`; nil =
+	// every such request is the infinite-hub-flag-unknown fallback.
+	UserHubs UserFlagReader
 	// FliptDeploymentID is FLIPT_DEPLOYMENT_ID: the `deploymentId` targeting property Node's
 	// buildFliptContext adds when it is set.
 	FliptDeploymentID string
@@ -459,6 +462,12 @@ func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (fe
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return feed.InfiniteRequest{}, nil, false, err
+	}
+	if in.HubID != 0 {
+		// getInfiniteImagesHandler's first step: the `userHubs` feature gate.
+		if err := s.userHubs(ctx, user); err != nil {
+			return feed.InfiniteRequest{}, nil, false, err
+		}
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
