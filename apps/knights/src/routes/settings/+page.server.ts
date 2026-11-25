@@ -31,13 +31,16 @@ export const load: PageServerLoad = async ({ locals }) => {
       tagGroups: { available: false as const },
       career,
     };
-  const { playerDefault } = await yesNoConfig();
+  const { playerDefault, share, tagReview } = await yesNoConfig();
   const [prefs, hidden] = await Promise.all([
     playerPrefs(db, locals.user.id, playerDefault),
     hiddenTagGroups(db, locals.user.id),
   ]);
+  // With both question sources off on the Config page nothing is served, so the switch would do nothing: the section goes,
+  // and the player's stored choice stays for when questions come back.
+  const questionsServed = share > 0 || tagReview;
   return {
-    questions: { available: true as const, on: prefs.yesNo },
+    questions: questionsServed ? { available: true as const, on: prefs.yesNo } : null,
     tagGroups: {
       available: true as const,
       groups: KNIGHTS_TAG_GROUPS.map((group) => ({

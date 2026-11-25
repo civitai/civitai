@@ -6,7 +6,7 @@ const playerPrefs = vi.hoisted(() => vi.fn());
 const setYesNoQuestions = vi.hoisted(() => vi.fn());
 const hiddenTagGroups = vi.hoisted(() => vi.fn());
 const setTagGroupHidden = vi.hoisted(() => vi.fn());
-const yesNo = vi.hoisted(() => ({ playerDefault: false }));
+const yesNo = vi.hoisted(() => ({ playerDefault: false, share: 0.7, tagReview: false }));
 const startAtRow = vi.hoisted(() => ({ value: undefined as { startAt: Date } | undefined }));
 const PRIMARY = vi.hoisted(() => ({
   client: 'primary',
@@ -66,6 +66,8 @@ beforeEach(() => {
   setTagGroupHidden.mockReset();
   setTagGroupHidden.mockResolvedValue(undefined);
   yesNo.playerDefault = false;
+  yesNo.share = 0.7;
+  yesNo.tagReview = false;
   startAtRow.value = { startAt: new Date('2026-03-14T00:00:00Z') };
 });
 
@@ -81,6 +83,13 @@ describe('settings load', () => {
 
     expect(await run()).toMatchObject({ questions: { available: true, on: false } });
     expect(playerPrefs).toHaveBeenCalledWith(PRIMARY, 7, true);
+  });
+
+  it('hides the questions switch while the Config page serves no questions, and shows it with tag review alone', async () => {
+    yesNo.share = 0;
+    expect((await run()).questions).toBeNull();
+    yesNo.tagReview = true;
+    expect((await run()).questions).toEqual({ available: true, on: true });
   });
 
   it('offers no switch to an Acolyte, whose practice questions are part of training', async () => {

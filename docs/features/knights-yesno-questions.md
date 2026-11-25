@@ -113,7 +113,8 @@ votes, never player rows.
   cache), the one place a queue yes/no becomes due, so it covers the generated questions, the Paladin tag review source and
   `GET /play/next` alike. A player who never touched it follows `yesNoPlayerDefault` on the Config page (off unless set), and a
   failed read serves no question. Items handed out before a change can still be answered. Acolytes get no switch: their practice
-  pairs (`KnightsYesNoReference`) are part of the apprenticeship.
+  pairs (`KnightsYesNoReference`) are part of the apprenticeship. While the Config page serves no questions at all (share 0 and tag
+  review off), the Questions section is hidden; the stored choice is kept for when they come back.
 - From Knight up, `/settings` also has "Hide content": one switch per preset tag group (`KNIGHTS_TAG_GROUPS` in
   `apps/knights/src/lib/server/knights-tag-groups.ts`: furry, male focus, feet, bondage, futanari, gore, picked from the open
   queue's tags and agreed with Moderation; separate from the main site's browsing categories; stored as keys in

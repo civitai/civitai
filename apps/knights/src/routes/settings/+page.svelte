@@ -34,49 +34,51 @@
     <p class="lede">Choose what Knights serves you. Changes apply from your next image.</p>
   </header>
 
-  <section aria-labelledby="questions-title">
-    <h2 id="questions-title">Questions</h2>
-    <div class="rows">
-      <div class="row">
-        <div class="text">
-          <p class="label">
-            <span id="questions-label">Yes/no questions</span>
-            <span class="beta">Beta</span>
-          </p>
+  {#if data.questions}
+    <section aria-labelledby="questions-title">
+      <h2 id="questions-title">Questions</h2>
+      <div class="rows">
+        <div class="row">
+          <div class="text">
+            <p class="label">
+              <span id="questions-label">Yes/no questions</span>
+              <span class="beta">Beta</span>
+            </p>
+            {#if data.questions.available}
+              <p class="description" id="questions-description">
+                Between ratings, some images ask a yes or no question. Turn this off to rate only.
+              </p>
+              <p class="note">
+                <Icon name="info" size={13} />Available while Knights is in beta. Questions may become part
+                of every Watch later.
+              </p>
+            {:else}
+              <p class="description">
+                Acolytes answer practice questions as part of their training. You can turn yes/no questions
+                off once you are a Knight.
+              </p>
+            {/if}
+          </div>
           {#if data.questions.available}
-            <p class="description" id="questions-description">
-              Between ratings, some images ask a yes or no question. Turn this off to rate only.
-            </p>
-            <p class="note">
-              <Icon name="info" size={13} />Available while Knights is in beta. Questions may become part
-              of every Watch later.
-            </p>
-          {:else}
-            <p class="description">
-              Acolytes answer practice questions as part of their training. You can turn yes/no questions
-              off once you are a Knight.
-            </p>
+            <SettingSwitch
+              action="?/questions"
+              field="questions"
+              on={data.questions.on}
+              labelledby="questions-label"
+              describedby="questions-description"
+              onsaved={(on) =>
+                (questionsStatus = {
+                  kind: 'saved',
+                  text: `Saved. Questions are ${on ? 'on' : 'off'} from your next image.`,
+                })}
+              onerror={(text) => (questionsStatus = { kind: 'error', text })}
+            />
           {/if}
         </div>
-        {#if data.questions.available}
-          <SettingSwitch
-            action="?/questions"
-            field="questions"
-            on={data.questions.on}
-            labelledby="questions-label"
-            describedby="questions-description"
-            onsaved={(on) =>
-              (questionsStatus = {
-                kind: 'saved',
-                text: `Saved. Questions are ${on ? 'on' : 'off'} from your next image.`,
-              })}
-            onerror={(text) => (questionsStatus = { kind: 'error', text })}
-          />
-        {/if}
       </div>
-    </div>
-    {@render status(questionsStatus)}
-  </section>
+      {@render status(questionsStatus)}
+    </section>
+  {/if}
 
   {#if data.tagGroups.available}
     <section aria-labelledby="groups-title">
