@@ -70,14 +70,9 @@ const LEDGER = {
     wipeAccount: 'exempt',
     purgeApp: 'exempt',
     migrateDocuments: 'exempt',
-    // The mark migration and the per-collection purge: moderator-run platform operations.
-    checkMarkMigration: 'read',
-    freezeMarks: 'exempt',
-    copyMarksToDocs: 'exempt',
-    verifyMarkMigration: 'exempt',
+    // What is left of the rollout step 4 tooling: its run records (read) and their retention.
     listMaintRuns: 'read',
     purgeDump: 'read',
-    purgeCollection: 'exempt',
     expireMaintDumps: 'exempt',
   },
   rater: {

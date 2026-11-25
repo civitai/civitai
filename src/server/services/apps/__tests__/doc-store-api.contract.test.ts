@@ -806,7 +806,7 @@ describe('the contract file', () => {
       stale_major:
         'raised only on the signed internal route, never the public one; doc-store-api.unchanged-writes.test.ts',
       removed:
-        'needs a mark migration run (a moderator maintenance op), which the request table cannot express; doc-store.mark-migration.pglite.test.ts',
+        'needs a frozen mark (a recorded mark migration run), which the request table cannot express; the tooling that froze marks is removed (rollout step 5)',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)
