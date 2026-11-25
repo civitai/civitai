@@ -148,11 +148,14 @@ function pruneBefore(timestamps: number[], cutoff: number) {
 }
 
 // Params that page or time-cut a feed; a query carrying any of them is not a first page.
-const PAGING_PARAMS = ['cursor', 'offset']; // PROBE MUTANT: before dropped
+const PAGING_PARAMS = ['cursor', 'offset', 'before'];
 
 /**
  * The cache key for a request, or undefined when its page must not be cached: a signed-in viewer,
  * or anything past the first page.
+ *
+ * apps/feed-go copies this condition (lastGoodUncacheable); both run the cases in
+ * apps/feed-go/internal/feed/testdata/last-good-key.json, so change the two together.
  */
 export function lastGoodKey(
   input: { currentUserId?: number | null },

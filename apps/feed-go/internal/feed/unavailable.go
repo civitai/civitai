@@ -50,7 +50,7 @@ func IsUnavailable(err error) bool {
 
 // lastGoodPagingParams are PAGING_PARAMS plus `viewerId`: the feed-query params that make lastGoodKey
 // undefined (feed-primary-degrade.ts).
-var lastGoodPagingParams = []string{"cursor", "offset", "before"} // PROBE MUTANT: viewerId dropped
+var lastGoodPagingParams = []string{"cursor", "offset", "before", "viewerId"}
 
 // lastGoodUncacheable is `lastGoodKey(input, query) === undefined`: a signed-in viewer, or a feed
 // query that pages, time-cuts or names a viewer, so no Node pod ever holds a last-good copy of its

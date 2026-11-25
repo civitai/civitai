@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"net/http"
+	"slices"
+	"strconv"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
@@ -27,10 +30,34 @@ var feedUnavailableError = trpc.Error{
 	Message:    "Image search is temporarily overloaded — please retry.",
 }
 
+// feedUnavailableCause is the reason and detail feed_go_feed_unavailable_total counts an answered 503
+// under: the fallback the request would have been handed back with (fallback.Reason) and its loggable
+// detail (fallback.SafeDetail), the pair a fallback records. Both are bounded here, whatever the
+// error carries: reason feed-unavailable with a detail among fallback.ErrorClasses (fallback.Wrap's
+// class of the failed call: deadline for the feed client's own timeout, conn_refused, json for a body
+// that is not JSON, ...), reason feed-status with a 5xx status (500..599, the only statuses
+// feed.UnavailableError marks), anything else `other`.
+func feedUnavailableCause(err error) (reason, detail string) {
+	reason, detail = fallback.Reason(err), fallback.SafeDetail(err)
+	switch reason {
+	case "feed-unavailable":
+		if !slices.Contains(fallback.ErrorClasses(), detail) {
+			detail = "other"
+		}
+	case "feed-status":
+		if n, perr := strconv.Atoi(detail); perr != nil || n < 500 || n > 599 || strconv.Itoa(n) != detail {
+			detail = "other"
+		}
+	default:
+		reason, detail = "other", "other"
+	}
+	return reason, detail
+}
+
 // answerFeedUnavailable writes the app's 503 for err on the image.getInfinite route when err is a
 // feed failure the app answers with it whatever feed-service-degrade says (feed.IsUnavailable) and
-// AnswerInfiniteFeedUnavailable is on, counts it (outcome feed_unavailable, no fallback reason) and
-// reports true; otherwise it does nothing and reports false, and the request is handed back as before
+// AnswerInfiniteFeedUnavailable is on, counts it (outcome feed_unavailable, no fallback reason; its
+// cause on feed_go_feed_unavailable_total and the span, feedUnavailableCause) and reports true; otherwise it does nothing and reports false, and the request is handed back as before
 // (`feed-unavailable` / `feed-status`). Only the public route calls it: the shadow and the Go-first
 // probe never write to a client, and keep counting the fallback. asDevalue is whether the request's
 // answer is written as devalue (trpc.DevalueWrite with no cache policy: an error is never
@@ -41,6 +68,12 @@ func (s *Server) answerFeedUnavailable(ctx context.Context, span trace.Span, sta
 	}
 	writeFeedUnavailable(w, procedure, asDevalue)
 	setOutcome(span, OutcomeFeedUnavailable)
+	reason, detail := feedUnavailableCause(err)
+	if span.IsRecording() {
+		span.SetAttributes(attrReason.String(reason))
+		span.AddEvent(OutcomeFeedUnavailable, trace.WithAttributes(attrReason.String(reason), attrDetail.String(detail)))
+	}
+	s.Metrics.FeedUnavailable.WithLabelValues(endpoint, reason, detail).Inc()
 	s.Metrics.Requests.WithLabelValues(endpoint, "serve", OutcomeFeedUnavailable).Inc()
 	tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", OutcomeFeedUnavailable), time.Since(start).Seconds())
 	return true

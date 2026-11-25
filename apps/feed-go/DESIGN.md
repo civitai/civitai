@@ -2298,7 +2298,16 @@ nor a fallback.
   anonymous first pages only: `lastGoodKey` is undefined for a signed-in viewer and for a feed query
   with `cursor`, `offset`, `before` or `viewerId`, and for those requests the failed call is the 503
   whether the flag is on or off. Only those are answered here (`feed.UnavailableError`, set in
-  `infiniteFromFeed`); an anonymous first page always falls back. The flag is not read.
+  `infiniteFromFeed`); an anonymous first page always falls back. The flag is not read. Both copies
+  of the `lastGoodKey` condition run one fixture, `internal/feed/testdata/last-good-key.json` (Go:
+  `unavailable_test.go`; Node: `feed-primary-degrade-last-good-key.test.ts`), so a change to either
+  fails a test until the other follows.
+- **Why it failed.** The 503 replaces a fallback, so it records what that fallback would have:
+  `feed_go_feed_unavailable_total{feed_endpoint, reason, detail}` and a `feed_unavailable` span event
+  with the same two values. `reason` is `feed-unavailable` (the call failed; `detail` is the error's
+  class, `fallback.ErrorClasses`: `deadline` for the feed client's own 5 s timeout, `conn_refused`,
+  `conn_reset`, `dns`, `json` for a body that is not JSON, ...) or `feed-status` (`detail` is the
+  5xx status); a value outside those sets is `other`. Lazy, like `feed_go_errors_total`.
 - **The answer.** The tRPC error envelope as the route writes it for one unbatched query in a
   production build (`trpc.WriteAppError`): status 503; body `{"error":<shape>}`, the shape
   `{message, code: -32603, data: {code: "SERVICE_UNAVAILABLE", httpStatus: 503, path: "image.getInfinite"}}`
