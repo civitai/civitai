@@ -10,6 +10,7 @@ import {
 } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
  * Filing a supplemental report: which images it may attach, and how many it says it left
@@ -75,7 +76,8 @@ const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "needsReview" TEXT,
-  "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "nsfwLevel" INTEGER, "blockedFor" TEXT
+  "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "nsfwLevel" INTEGER, "blockedFor" TEXT,
+  "metadata" JSONB
 );
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportedById" INTEGER NOT NULL DEFAULT ${MOD},
@@ -190,12 +192,23 @@ describe('a supplemental report', () => {
     await view(101);
     await image(102);
 
+    // As an account's self-deletion with the grace option leaves it.
+    await db.pg.query(
+      `UPDATE "Image" SET metadata = jsonb_build_object($1::text, 'Scanned') WHERE id IN (101, 102)`,
+      [PRIOR_INGESTION_KEY]
+    );
+
     await file([101]);
 
     const [row] = await filed();
     expect(row.images).toEqual([{ id: 101 }]);
-    // Only the listed image, in the report's own transaction.
+    // Only the listed image, in the report's own transaction, and its grace breadcrumb with it.
     expect(await blocked()).toEqual([101]);
+    const { rows: breadcrumbs } = await db.pg.query<{ id: number }>(
+      `SELECT id FROM "Image" WHERE metadata ? $1 ORDER BY id`,
+      [PRIOR_INGESTION_KEY]
+    );
+    expect(breadcrumbs).toEqual([{ id: 102 }]);
     expect(row.details).toEqual({
       minorDepiction: 'non-real',
       supplemental: {

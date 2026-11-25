@@ -1880,7 +1880,9 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
 export async function blockUserImagesAsCsam(userId: number) {
   await dbWrite.image.updateMany({ where: { userId }, data: CSAM_IMAGE_BLOCK });
   // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
-  // user owns, and the after-block steps (the marker clear first) take the block's scope.
+  // user owns, and the clear and the after-block steps take the block's scope. The clear is part of
+  // the block and throws: a grace breadcrumb left on would let an account restore un-block it.
+  await clearAccountDeletionImageMarkers({ userId });
   await afterCsamImageBlock({ userId });
 }
 

@@ -352,14 +352,6 @@ describe('fileCsamReport', () => {
     }
   );
 
-  const blockedFor = async (id: number) =>
-    (
-      await pg.query<{ blockedFor: string | null }>(
-        `SELECT "blockedFor" FROM "Image" WHERE id = $1`,
-        [id]
-      )
-    ).rows[0].blockedFor;
-
   // Search drops a listed image through its own row, so every path the filing takes must block it.
   // The services' own block is tested on PGlite in csam-report-send-append-only and
   // csam-supplemental-filing; here, that the controller asks for it on every path.
@@ -375,18 +367,22 @@ describe('fileCsamReport', () => {
     expect(createCsamReport).toHaveBeenCalledWith(
       expect.objectContaining({ imageIds: [imageId], blockListedImages: true })
     );
-    expect(await blockedFor(imageId)).toBe('CSAM');
   });
 
-  it('blocks the listed images even when removing the account fails', async () => {
+  it('files with the block before removing the account, so a failed removal leaves it', async () => {
     softDeleteUser.mockRejectedValueOnce(new Error('connection lost'));
 
     await expect(report(OWNER, [OTHER_OWNERS_SCANNED])).rejects.toThrow('connection lost');
 
-    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
+    expect(createCsamReport).toHaveBeenCalledWith(
+      expect.objectContaining({ imageIds: [OTHER_OWNERS_SCANNED], blockListedImages: true })
+    );
+    expect(createCsamReport.mock.invocationCallOrder[0]).toBeLessThan(
+      softDeleteUser.mock.invocationCallOrder[0]
+    );
   });
 
-  it('tells the moderator when filing fails, files and blocks nothing, and can be filed again', async () => {
+  it('tells the moderator when filing fails, and can be filed again', async () => {
     const { createCsamReportHandler, CSAM_LISTED_BLOCK_FAILED_MESSAGE } = await import(
       '~/server/controllers/csam.controller'
     );
@@ -407,19 +403,17 @@ describe('fileCsamReport', () => {
       message: CSAM_LISTED_BLOCK_FAILED_MESSAGE,
     });
     expect(await reports()).toBe(before);
-    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBeNull();
     expect(softDeleteUser).not.toHaveBeenCalled();
     expect(afterCsamImageBlock).not.toHaveBeenCalled();
 
     await file();
     expect(await reports()).toBe(before + 1);
-    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
     // Search and the documents showing the images drop them only through this.
     expect(afterCsamImageBlock).toHaveBeenCalledTimes(1);
     expect(afterCsamImageBlock).toHaveBeenCalledWith({ imageIds: [OTHER_OWNERS_SCANNED] });
   });
 
-  it('passes a refusal through unchanged, blocking nothing', async () => {
+  it('passes a refusal through unchanged, and runs no after-block steps', async () => {
     const { TRPCError } = await import('@trpc/server');
     createCsamReport.mockRejectedValueOnce(
       new TRPCError({ code: 'BAD_REQUEST', message: 'refused' })
@@ -429,7 +423,6 @@ describe('fileCsamReport', () => {
       code: 'BAD_REQUEST',
       message: 'refused',
     });
-    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBeNull();
     expect(afterCsamImageBlock).not.toHaveBeenCalled();
   });
 

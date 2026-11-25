@@ -38,6 +38,7 @@ import * as searchIndex from '~/server/search-index';
 import * as accountDeletionMarkers from '~/server/services/account-deletion-image-markers';
 import * as nsfwLevels from '~/server/services/nsfwLevels.service';
 import * as postService from '~/server/services/post.service';
+import { blockUserImagesAsCsam } from '~/server/services/user.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import {
   queueArticlesAndComicsForImages,
@@ -192,11 +193,7 @@ describe('the steps every image block runs after its write', () => {
     ]);
     dbMock.dbWrite.image.findMany.mockResolvedValue([{ id: IMAGE_ID, postId: POST_ID }]);
   });
-  const expectEveryStep = (
-    markers: Parameters<typeof accountDeletionMarkers.clearAccountDeletionImageMarkers>[0] = {
-      ids: [IMAGE_ID],
-    }
-  ) => {
+  const expectEveryStep = () => {
     expect(steps.search).toHaveBeenCalledWith([
       { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
     ]);
@@ -206,24 +203,30 @@ describe('the steps every image block runs after its write', () => {
       expect.anything()
     );
     expect(steps.comics).toHaveBeenCalledWith([IMAGE_ID]);
-    expect(steps.markers).toHaveBeenCalledWith(markers);
     expect(steps.posts).toHaveBeenCalledWith([POST_ID]);
     expect(queueDocumentsForBlockedImages).toHaveBeenCalledWith([IMAGE_ID]);
   };
 
-  it('a moderator block runs each one', async () => {
+  it('a moderator block runs each one, and clears the grace breadcrumbs', async () => {
     await handleBlockImages({ ids: [IMAGE_ID], moderatorId: 990000403 });
     expectEveryStep();
+    expect(steps.markers).toHaveBeenCalledWith({ ids: [IMAGE_ID] });
   });
 
+  // The filing services clear the breadcrumbs inside the block's transaction.
   it('a CSAM block of listed images runs each one', async () => {
     await afterCsamImageBlock({ imageIds: [IMAGE_ID] });
     expectEveryStep();
   });
 
-  it("a CSAM block of an account runs each one on the account's images", async () => {
-    await afterCsamImageBlock({ userId: 990000402 });
-    // Account-wide, before the walk: a restore must never un-block a CSAM block.
-    expectEveryStep({ userId: 990000402 });
+  it("a CSAM block of an account runs each one on the account's images, after the clear", async () => {
+    await blockUserImagesAsCsam(990000402);
+    expect(steps.markers).toHaveBeenCalledWith({ userId: 990000402 });
+    expectEveryStep();
+  });
+
+  it('a CSAM block of an account fails when the breadcrumb clear fails', async () => {
+    steps.markers.mockRejectedValueOnce(new Error('marker clear failed'));
+    await expect(blockUserImagesAsCsam(990000402)).rejects.toThrow('marker clear failed');
   });
 });

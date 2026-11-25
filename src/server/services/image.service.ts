@@ -1582,7 +1582,7 @@ function imageBlockSteps(ids: number[], run: BlockStepRunner = (_step, fn) => fn
       beforeDocuments,
     }: {
       postIds: number[];
-      /** The caller cleared the account-deletion markers of every one of `ids` already. */
+      /** The caller cleared the account-deletion markers of every one of `ids`, with the block. */
       markersCleared?: boolean;
       beforeDocuments?: () => Promise<void>;
     }) => {
@@ -1603,7 +1603,8 @@ function imageBlockSteps(ids: number[], run: BlockStepRunner = (_step, fn) => fn
 
 /**
  * Runs the block steps after a CSAM block commits, plus the home-block eviction a moderator block's
- * write does itself. Never throws: the block stands, so a failed step is logged.
+ * write does itself. The caller clears the account-deletion markers with the block, where a failure
+ * is the block's. Never throws: the block stands, so a failed step is logged.
  */
 export async function afterCsamImageBlock(target: { imageIds: number[] } | { userId: number }) {
   const run: BlockStepRunner = async (step, fn) => {
@@ -1621,8 +1622,6 @@ export async function afterCsamImageBlock(target: { imageIds: number[] } | { use
   };
   let imageIds: number[];
   if ('userId' in target) {
-    // First: a restore must not un-block a CSAM block.
-    await run('markers', () => clearAccountDeletionImageMarkers({ userId: target.userId }));
     await run('home-blocks', () => evictHomeBlocksForImages({ userId: target.userId }));
     const owned = (await run('owned-ids', () =>
       // primary: the ids of the block that just committed.
@@ -1646,7 +1645,7 @@ export async function afterCsamImageBlock(target: { imageIds: number[] } | { use
     )) as { postId: number | null }[] | undefined;
     await steps.after({
       postIds: uniq((posts ?? []).map((p) => p.postId).filter(isDefined)),
-      markersCleared: 'userId' in target,
+      markersCleared: true,
     });
   }
 }
@@ -1692,7 +1691,6 @@ export async function handleBlockImages({
         .then(() => keepPendingAppealFlags(ids)),
       steps.alongside(),
     ]);
-    // The blocklist requeue runs even when its write throws: the block has landed.
     await steps.after({
       postIds,
       beforeDocuments: async () => {
