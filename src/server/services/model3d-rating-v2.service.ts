@@ -3,6 +3,7 @@ import type { Model3dBlob, NsfwLevel } from '@civitai/orchestration-client';
 import { NsfwLevel as OrchestratorNsfwLevel } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { getPolyGenPostBlock } from '~/server/orchestrator/polygen/polygen-output';
 import {
@@ -30,7 +31,7 @@ export const MODEL3D_RATING_V2_GLOBAL_LIMIT = {
   windowSeconds: 24 * 60 * 60,
 };
 const WAIT_SECONDS = 20;
-/** The preview graph renders at most this many angles; more are never sent on the system token. */
+/** The preview graph renders at most this many angles; only the first this many are sent. */
 export const MAX_ANGLES = 4;
 /** How long a mature v2 verdict holds the gate for that workflow without asking again. */
 const REMEMBER_SECONDS = 30 * 24 * 60 * 60;
@@ -84,9 +85,13 @@ const defaultDeps: Model3dRatingV2Deps = {
   },
 };
 
-/** Whether the v2 rater calls this 3D result's preview renders mature. Off (flag), refused (limits),
- *  failed or partly rated is false: the post gate then decides on the current rating alone. */
-export async function isModel3DMatureByV2(
+/** The v2 rater's answer for a 3D result's preview renders. `unrateable`: the result's own preview set
+ *  can't be sent (none, or a URL that isn't an orchestrator-hosted image), which the user controls, so it
+ *  can't pass unrated. `clear` covers the flag being off and every system-side gap (a limit window,
+ *  a rater error, a timeout, a partial rating): the post then decides on its current rating alone. */
+export type Model3dV2Verdict = 'mature' | 'clear' | 'unrateable';
+
+export async function rateModel3DByV2(
   {
     user,
     req,
@@ -94,33 +99,44 @@ export async function isModel3DMatureByV2(
     workflowId,
   }: { user: SessionUser; req: NextApiRequest; previewUrls: string[]; workflowId: string },
   deps: Model3dRatingV2Deps = defaultDeps
-): Promise<boolean> {
-  if (!previewUrls.length || previewUrls.length > MAX_ANGLES) return false;
-  if (!previewUrls.every(isRateableMediaUrl)) return false;
-  // Each step failing open keeps the post on its current rating: this rater can only add the gate.
+): Promise<Model3dV2Verdict> {
+  // Each system-side step failing open keeps the post on its current rating: this rater can only add
+  // the gate.
   const matureLevel = await deps.matureLevel(user).catch(() => null);
-  if (matureLevel === null) return false;
-  if (await deps.remembered(workflowId).catch(() => false)) return true;
+  if (matureLevel === null) return 'clear';
+  if (await deps.remembered(workflowId).catch(() => false)) return 'mature';
+  const angles = previewUrls.slice(0, MAX_ANGLES);
+  if (!angles.length || !angles.every(isRateableMediaUrl)) {
+    logToAxiom({
+      name: 'model3d-rating-v2-unrateable',
+      type: 'info',
+      payload: { reason: angles.length ? 'url' : 'empty', angles: previewUrls.length },
+    });
+    return 'unrateable';
+  }
   // The user's own limit is theirs to spend, so its refusal blocks the post (try again shortly) rather
   // than letting it through unrated; a system-side refusal or failure keeps today's rating.
   const claimed = await deps.claim(user, req).catch((e) => {
     if (e instanceof TRPCError && e.code === 'TOO_MANY_REQUESTS') throw e;
     return false;
   });
-  if (!claimed) return false;
+  if (!claimed) return 'clear';
   const results = await deps
     .rate({
-      items: previewUrls.map((mediaUrl, i) => ({ key: `${i}`, mediaUrl })),
+      items: angles.map((mediaUrl, i) => ({ key: `${i}`, mediaUrl })),
       matureLevel,
       metadata: { kind: 'model3d-post-rating', userId: user.id, workflowId },
       tags: ['civitai', 'model3d', 'post-rating'],
       waitSeconds: WAIT_SECONDS,
     })
     .catch(() => null);
-  const mature = results ? anglesMature(results.map((r) => r.mature)) : false;
-  if (mature) await deps.remember(workflowId).catch(() => undefined);
-  return mature;
+  if (!results || !anglesMature(results.map((r) => r.mature))) return 'clear';
+  await deps.remember(workflowId).catch(() => undefined);
+  return 'mature';
 }
+
+export const MODEL3D_UNRATEABLE_PREVIEW =
+  "This 3D model's preview couldn't be rated. Render it again, then post.";
 
 /** The post gate with the v2 rater added: today's block, else a block when the v2 rater calls the
  *  result mature. It is asked only when the current rating would let a result without mature-content
@@ -144,7 +160,9 @@ export async function getModel3DPostBlock(
 ): Promise<string | undefined> {
   const block = getPolyGenPostBlock({ primaryModel, effectiveNsfwLevel, allowMatureContent });
   if (block || allowMatureContent !== false || isMature(effectiveNsfwLevel)) return block;
-  if (!(await isModel3DMatureByV2(rating, deps))) return undefined;
+  const verdict = await rateModel3DByV2(rating, deps);
+  if (verdict === 'unrateable') return MODEL3D_UNRATEABLE_PREVIEW;
+  if (verdict !== 'mature') return undefined;
   return getPolyGenPostBlock({
     primaryModel,
     effectiveNsfwLevel: OrchestratorNsfwLevel.R,

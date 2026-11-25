@@ -4,7 +4,7 @@ import type { NextApiRequest } from 'next';
 import {
   anglesMature,
   getModel3DPostBlock,
-  isModel3DMatureByV2,
+  rateModel3DByV2,
   MODEL3D_RATING_V2_GLOBAL_LIMIT,
   MODEL3D_RATING_V2_RATE_LIMIT,
   type Model3dRatingV2Deps,
@@ -99,8 +99,8 @@ describe('3D post gate with the v2 rater', () => {
       claim: async () => Promise.reject(new Error('redis down')),
     });
     expect(
-      await isModel3DMatureByV2({ user, req, previewUrls: [hosted(0)], workflowId: 'wf-1' }, d)
-    ).toBe(false);
+      await rateModel3DByV2({ user, req, previewUrls: [hosted(0)], workflowId: 'wf-1' }, d)
+    ).toBe('clear');
     expect(rate).not.toHaveBeenCalled();
     expect(
       await gate([true], [hosted(0)], { matureLevel: async () => Promise.reject(new Error('x')) })
@@ -123,13 +123,22 @@ describe('3D post gate with the v2 rater', () => {
     ).toBeUndefined();
   });
 
-  it('never sends more angles than the preview graph renders', async () => {
-    const { rate, deps: d } = deps([true, true, true, true, true]);
+  it('rates only the first four angles of a larger set', async () => {
+    const { rate, deps: d } = deps([false, false, false, true, true]);
     const five = [0, 1, 2, 3, 4].map(hosted);
-    expect(await isModel3DMatureByV2({ user, req, previewUrls: five, workflowId: 'wf-1' }, d)).toBe(
-      false
+    expect(await rateModel3DByV2({ user, req, previewUrls: five, workflowId: 'wf-1' }, d)).toBe(
+      'mature'
     );
-    expect(rate).not.toHaveBeenCalled();
+    expect(rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual(five.slice(0, 4));
+  });
+
+  it('a preview set the user controls and that cannot be rated refuses the post', async () => {
+    expect(await gate([false], [])).toMatch(/couldn't be rated/);
+    expect(await gate([false], [hosted(0), 'https://example.com/x.png'])).toMatch(
+      /couldn't be rated/
+    );
+    // Flag off: nothing changes.
+    expect(await gate([false], [], { matureLevel: async () => null })).toBeUndefined();
   });
 
   it("the user's own limit refusing blocks the post instead of letting it through", async () => {
@@ -165,7 +174,7 @@ describe('3D post gate with the v2 rater', () => {
 
   it('sends every angle once, keyed by position, at the flag level', async () => {
     const { rate, deps: d } = deps([false, false, false, false], { matureLevel: async () => 3 });
-    await isModel3DMatureByV2({ user, req, previewUrls: fourAngles, workflowId: 'wf-9' }, d);
+    await rateModel3DByV2({ user, req, previewUrls: fourAngles, workflowId: 'wf-9' }, d);
     expect(rate).toHaveBeenCalledTimes(1);
     const [args] = rate.mock.calls[0];
     expect(args.items.map((i) => i.key)).toEqual(['0', '1', '2', '3']);
@@ -195,11 +204,11 @@ describe('3D post gate with the v2 rater', () => {
   it('never sends media the orchestrator does not host', async () => {
     const { rate, deps: d } = deps([true]);
     expect(
-      await isModel3DMatureByV2(
+      await rateModel3DByV2(
         { user, req, previewUrls: [hosted(0), 'https://example.com/x.png'], workflowId: 'wf-1' },
         d
       )
-    ).toBe(false);
+    ).toBe('unrateable');
     expect(rate).not.toHaveBeenCalled();
   });
 

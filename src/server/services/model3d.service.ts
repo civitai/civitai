@@ -16,13 +16,12 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
-import type {
-  TagTarget} from '~/shared/utils/prisma/enums';
+import type { TagTarget } from '~/shared/utils/prisma/enums';
 import {
   EntityType,
   JobQueueType,
   MetricTimeframe,
-  Model3DStatus
+  Model3DStatus,
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
@@ -362,15 +361,21 @@ export const ensureModel3DFromWorkflow = async ({
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
+    const previewRenderUrls = (previewStep?.output?.images ?? []).flatMap((img) =>
+      img?.url ? [img.url] : []
+    );
     const postBlock = await getModel3DPostBlock({
       primaryModel,
       effectiveNsfwLevel,
       allowMatureContent: workflow.allowMatureContent,
       user,
       req: ctx.req,
-      previewUrls: (previewStep?.output?.images ?? []).flatMap((img) =>
-        img?.url ? [img.url] : []
-      ),
+      // A result with no preview render (FBX-only Tripo quad) is rated on its auto-thumbnail.
+      previewUrls: previewRenderUrls.length
+        ? previewRenderUrls
+        : polyGenStep.output.thumbnail?.url
+        ? [polyGenStep.output.thumbnail.url]
+        : [],
       workflowId: input.workflowId,
     });
     if (postBlock) throw throwBadRequestError(postBlock);
