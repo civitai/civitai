@@ -9,6 +9,7 @@ import {
   clearQueuedBanRevoke,
   drainPreviewRevokeQueue,
   PREVIEW_REVOKE_MAX_AGE_MS,
+  releaseHoldsForUnbannedUser,
   revokePreviewSession,
   revokePreviewsForBannedUser,
 } from '~/server/services/blocks/preview-revoke.service';
@@ -316,5 +317,66 @@ describe('unban', () => {
     await clearQueuedBanRevoke(USER);
     expect(Object.keys(queued()).sort()).toEqual([`${USER}:${PID}`, `${USER + 1}:*`]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// The sandbox service's hold release (HOLD_RELEASE_PATH): an unban lifts the hold the ban's "*"
+// revoke placed, signed and queued exactly like a revoke.
+describe('unban: the hold release', () => {
+  it('🔴 exact body bytes over its own path, and the independently computed signature', () => {
+    const req = buildPreviewRevokeRequest(
+      { userId: USER, previewId: '', reason: 'unban', op: 'release' },
+      SECRET,
+      NOW_MS
+    );
+    expect(req.body).toBe('{"userId":4101,"reason":"unban"}');
+    expect(req.headers['x-preview-revoke-timestamp']).toBe('1795046400');
+    // HMAC-SHA256 over "v1\nPOST\n/internal/v1/holds/release\n<ts>\n<sha256(body)>", computed
+    // independently (Python hmac/hashlib), so a revoke signature can never authorize a release.
+    expect(req.headers['x-preview-revoke-signature']).toBe(
+      'v1=02ae4841560da26de4cac5eec4c37090fd9e7a485be9fd9fb49ab492f0ce5c12'
+    );
+  });
+
+  it('🔴 is sent to the release path, and leaves nothing queued on a 200', async () => {
+    answer(200);
+    expect(await releaseHoldsForUnbannedUser(USER, NOW_MS)).toBe('sent');
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+    expect(sentBodies()).toEqual([{ userId: USER, reason: 'unban' }]);
+    expect(queued()).toEqual({});
+  });
+
+  it('🔴 fails safe: a 503 queues it (the hold stays meanwhile) and the reaper sends it to the release path', async () => {
+    answer(503);
+    expect(await releaseHoldsForUnbannedUser(USER, NOW_MS)).toBe('retry');
+    expect(Object.keys(queued())).toEqual([`${USER}:release`]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'app-assistant.preview-revoke.retry', status: 503 })
+    );
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(NOW_MS + 60_000)).toMatchObject({ sent: 1 });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+    expect(queued()).toEqual({});
+  });
+
+  it('🔴 a later BAN drops a release still queued, so it cannot lift the new hold', async () => {
+    answer(503);
+    await releaseHoldsForUnbannedUser(USER, NOW_MS);
+    await releaseHoldsForUnbannedUser(USER + 1, NOW_MS);
+    await revokePreviewsForBannedUser(USER, NOW_MS + 1_000);
+    expect(Object.keys(queued()).sort()).toEqual([`${USER}:*`, `${USER + 1}:release`]);
+  });
+
+  it('🔴 the unban clearer (toggleBan’s unban branch) sends it, even when its own block reads fail', async () => {
+    const { clearBlockInstancesForPublisher } = await import(
+      '~/server/services/blocks/publisher-ban-revocation.service'
+    );
+    answer(200);
+    await clearBlockInstancesForPublisher({ userId: USER }).catch(() => undefined);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(
+      `${BASE}/internal/v1/holds/release`
+    );
+    expect(sentBodies()).toContainEqual({ userId: USER, reason: 'unban' });
   });
 });

@@ -32,7 +32,10 @@ beforeEach(() => {
     expireClientTokens: vi.fn(async (id: string) => void order.push(`expire:${id}`)),
     revokeCivitaiUserTokens: vi.fn(async () => true),
     notifyModAlert: vi.fn(async () => 'delivered' as const),
-    markBanDisabledClients: vi.fn(async (ids: string[]) => void order.push(`mark:${ids}`)),
+    markBanDisabledClients: vi.fn(
+      async (cs: { id: string; priorMode: string }[]) =>
+        void order.push(`mark:${cs.map((c) => `${c.id}=${c.priorMode}`)}`)
+    ),
   };
   owned([{ id: ASSISTANT }, { id: DEV }, { id: THIRD_PARTY, name: 'Prompt Pal' }]);
   dbMock.dbWrite.apiKey.findMany.mockResolvedValue([{ userId: USER }, { userId: 99 }] as never);
@@ -58,7 +61,7 @@ describe('disableOauthForBannedUser', () => {
     // disable and never re-opens a client the ban did not actually disable.
     expect(order).toEqual([
       'disable',
-      `mark:${ASSISTANT},${DEV}`,
+      `mark:${ASSISTANT}=open,${DEV}=open`,
       `expire:${ASSISTANT}`,
       `expire:${DEV}`,
     ]);
@@ -81,6 +84,12 @@ describe('disableOauthForBannedUser', () => {
     expect(deps.notifyModAlert).toHaveBeenCalledTimes(1);
     // The app names are user-written.
     expect(deps.notifyModAlert.mock.calls[0][2]).toEqual({ noMentions: true });
+  });
+
+  it('🔴 the mark keeps each client’s mode from before the ban (testers stays testers on re-open)', async () => {
+    owned([{ id: DEV, accessMode: 'testers' }]);
+    await disableOauthForBannedUser(USER, deps);
+    expect(deps.markBanDisabledClients).toHaveBeenCalledWith([{ id: DEV, priorMode: 'testers' }]);
   });
 
   it('🔴 a disable that fails leaves no ban mark (so no later enable can re-open the client)', async () => {

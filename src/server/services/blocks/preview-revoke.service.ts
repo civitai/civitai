@@ -29,6 +29,12 @@ import { outboundFetch } from '~/server/utils/fetch-timeout';
  */
 
 export const PREVIEW_REVOKE_PATH = '/internal/v1/previews/revoke';
+/**
+ * The sandbox service's HOLD RELEASE: a ban's `"*"` revoke also holds the user's sandboxes (kept,
+ * not resumable), and an unban lifts that hold here. Same secret, headers and canonical scheme as
+ * the revoke, over its own path, and the same queue and retry. Body `{userId, reason}`.
+ */
+export const HOLD_RELEASE_PATH = '/internal/v1/holds/release';
 export const PREVIEW_REVOKE_HEADERS = {
   timestamp: 'x-preview-revoke-timestamp',
   signature: 'x-preview-revoke-signature',
@@ -56,6 +62,8 @@ export type PreviewRevoke = {
   /** Epoch milliseconds; required for "*", never sent otherwise. */
   issuedAt?: number;
   reason: string;
+  /** `release` lifts the user's sandbox holds (HOLD_RELEASE_PATH); absent, a preview revoke. */
+  op?: 'release';
 };
 
 type QueuedRevoke = PreviewRevoke & { queuedAt: number };
@@ -63,7 +71,8 @@ type QueuedRevoke = PreviewRevoke & { queuedAt: number };
 export type PreviewRevokeOutcome = 'sent' | 'retry' | 'drop';
 
 const QUEUE_KEY = `${REDIS_KEYS.BLOCKS.DEV_TUNNEL_USER}:preview-revoke-queue` as const;
-const fieldOf = (r: Pick<PreviewRevoke, 'userId' | 'previewId'>) => `${r.userId}:${r.previewId}`;
+const fieldOf = (r: Pick<PreviewRevoke, 'userId' | 'previewId' | 'op'>) =>
+  r.op === 'release' ? `${r.userId}:release` : `${r.userId}:${r.previewId}`;
 const cluster = <T>(fn: string, op: () => Promise<T>) =>
   boundedClusterCall(`previewRevoke.${fn}`, op);
 
@@ -79,18 +88,25 @@ const DEQUEUE_IF_UNCHANGED = `
   return 0
 `;
 
-/** The body (exact bytes) and headers of one signed revoke request at `nowMs`. */
+const pathOf = (r: Pick<PreviewRevoke, 'op'>) =>
+  r.op === 'release' ? HOLD_RELEASE_PATH : PREVIEW_REVOKE_PATH;
+
+/** The body (exact bytes) and headers of one signed revoke (or release) request at `nowMs`. */
 export function buildPreviewRevokeRequest(
   revoke: PreviewRevoke,
   secret: string,
   nowMs: number
 ): { body: string; headers: Record<string, string> } {
-  const body = JSON.stringify({
-    userId: revoke.userId,
-    previewId: revoke.previewId,
-    ...(revoke.previewId === '*' ? { issuedAt: revoke.issuedAt } : {}),
-    reason: revoke.reason.slice(0, 64),
-  });
+  const body = JSON.stringify(
+    revoke.op === 'release'
+      ? { userId: revoke.userId, reason: revoke.reason.slice(0, 64) }
+      : {
+          userId: revoke.userId,
+          previewId: revoke.previewId,
+          ...(revoke.previewId === '*' ? { issuedAt: revoke.issuedAt } : {}),
+          reason: revoke.reason.slice(0, 64),
+        }
+  );
   const timestamp = String(Math.floor(nowMs / 1000));
   return {
     body,
@@ -99,7 +115,7 @@ export function buildPreviewRevokeRequest(
       [PREVIEW_REVOKE_HEADERS.timestamp]: timestamp,
       [PREVIEW_REVOKE_HEADERS.signature]: signHibernationRequest(secret, {
         method: 'POST',
-        path: PREVIEW_REVOKE_PATH,
+        path: pathOf(revoke),
         timestamp,
         body: Buffer.from(body),
       }),
@@ -135,7 +151,7 @@ async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> 
   const { body, headers } = buildPreviewRevokeRequest(revoke, secret, nowMs);
   let attempt: Attempt;
   try {
-    const res = await outboundFetch(`${base.replace(/\/+$/, '')}${PREVIEW_REVOKE_PATH}`, {
+    const res = await outboundFetch(`${base.replace(/\/+$/, '')}${pathOf(revoke)}`, {
       method: 'POST',
       headers,
       body,
@@ -148,7 +164,9 @@ async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> 
   if (attempt.outcome === 'drop')
     logToAxiom({
       type: 'app-assistant.preview-revoke.refused',
-      message: `Preview revoke refused with ${attempt.status}; dropped`,
+      message: `${revoke.op === 'release' ? 'Hold release' : 'Preview revoke'} refused with ${
+        attempt.status
+      }; dropped`,
       userId: revoke.userId,
       status: attempt.status,
       reason: revoke.reason,
@@ -156,7 +174,9 @@ async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> 
   else if (attempt.outcome === 'retry' && attempt.status !== 404)
     logToAxiom({
       type: 'app-assistant.preview-revoke.retry',
-      message: `Preview revoke failed with ${attempt.status}; kept for retry`,
+      message: `${revoke.op === 'release' ? 'Hold release' : 'Preview revoke'} failed with ${
+        attempt.status
+      }; kept for retry`,
       userId: revoke.userId,
       status: attempt.status,
       reason: revoke.reason,
@@ -219,6 +239,10 @@ export async function revokePreviewsForBannedUser(
   nowMs: number = Date.now()
 ): Promise<PreviewRevokeOutcome> {
   try {
+    // A release still queued from an earlier unban must not lift the hold this ban places.
+    await cluster('clearRelease', () =>
+      redis.hDel(QUEUE_KEY, fieldOf({ userId, previewId: '', op: 'release' }))
+    ).catch(() => undefined);
     return await deliver(
       {
         userId,
@@ -228,6 +252,22 @@ export async function revokePreviewsForBannedUser(
       },
       nowMs
     );
+  } catch {
+    return 'retry';
+  }
+}
+
+/**
+ * On unban: lift the user's sandbox holds (HOLD_RELEASE_PATH), queued and retried like a revoke.
+ * Fails safe: until it is delivered the hold stays (the sandboxes are kept, not resumable), and a
+ * failure is logged. Never throws.
+ */
+export async function releaseHoldsForUnbannedUser(
+  userId: number,
+  nowMs: number = Date.now()
+): Promise<PreviewRevokeOutcome> {
+  try {
+    return await deliver({ userId, previewId: '', reason: 'unban', op: 'release' }, nowMs);
   } catch {
     return 'retry';
   }
@@ -246,6 +286,7 @@ function parseQueued(raw: unknown): QueuedRevoke | null {
     const v = JSON.parse(raw) as Partial<QueuedRevoke>;
     if (!Number.isSafeInteger(v.userId) || typeof v.previewId !== 'string') return null;
     if (typeof v.reason !== 'string' || !Number.isFinite(v.queuedAt)) return null;
+    if (v.op !== undefined && v.op !== 'release') return null;
     if (v.previewId === '*' && !Number.isSafeInteger(v.issuedAt)) return null;
     return v as QueuedRevoke;
   } catch {

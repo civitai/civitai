@@ -1,4 +1,4 @@
-import { appAssistantClientId } from './app-assistant-client';
+import { appAssistantClientId, isAppAssistantClientId } from './app-assistant-client';
 
 // SELF-ONLY OAuth clients: rows the platform creates for ONE user's own use, which no other user
 // ever consents to. App Assistant's `appassist-<userId>` and a dev tunnel's `appdev-<userId>-<slug>`.
@@ -15,4 +15,12 @@ export function isSelfOnlyClientFor(clientId: string, userId: number): boolean {
     clientId === appAssistantClientId(userId) ||
     clientId.startsWith(`${DEV_TUNNEL_CLIENT_PREFIX}${userId}-`)
   );
+}
+
+/**
+ * Whether `clientId` has the shape of ANY user's self-only client (owner not checked). Only these
+ * ids can carry a ban's mark, so the auth hub uses this to know which mode changes must clear one.
+ */
+export function isSelfOnlyClientId(clientId: string): boolean {
+  return isAppAssistantClientId(clientId) || clientId.startsWith(DEV_TUNNEL_CLIENT_PREFIX);
 }

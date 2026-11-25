@@ -21,7 +21,7 @@ export type BanCleanupDeps = {
   expireClientTokens: (clientId: string) => Promise<unknown>;
   revokeCivitaiUserTokens: (args: { userId: number }) => Promise<unknown>;
   notifyModAlert: typeof notifyModAlert;
-  markBanDisabledClients: (clientIds: string[]) => Promise<void>;
+  markBanDisabledClients: (clients: { id: string; priorMode: string }[]) => Promise<void>;
 };
 
 const defaultDeps: BanCleanupDeps = {
@@ -65,7 +65,8 @@ export async function disableOauthForBannedUser(
     select: { id: true, name: true, accessMode: true },
   });
   const selfOnly = owned.filter((c) => isSelfOnlyClientFor(c.id, userId));
-  const toDisable = selfOnly.filter((c) => c.accessMode !== 'disabled').map((c) => c.id);
+  const disabling = selfOnly.filter((c) => c.accessMode !== 'disabled');
+  const toDisable = disabling.map((c) => c.id);
   const others = owned.filter((c) => !isSelfOnlyClientFor(c.id, userId));
 
   const failed = (step: string) => (error: unknown) =>
@@ -90,7 +91,9 @@ export async function disableOauthForBannedUser(
       });
       // Only once the disable landed: a mark on a client still open would let a later enable undo
       // whatever disables it next. A mark that fails to write leaves the client disabled (closed).
-      await deps.markBanDisabledClients(toDisable).catch(failed('mark ban-disabled'));
+      await deps
+        .markBanDisabledClients(disabling.map((c) => ({ id: c.id, priorMode: c.accessMode })))
+        .catch(failed('mark ban-disabled'));
       for (const clientId of toDisable)
         await deps.expireClientTokens(clientId).catch(failed(`expire ${clientId}`));
       await Promise.all(

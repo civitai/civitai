@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   order: [] as string[],
   updated: [] as Record<string, unknown>[],
   del: vi.fn(),
+  noRedis: false,
 }));
 
 vi.mock('$lib/server/db/db', () => ({
@@ -26,7 +27,7 @@ vi.mock('$lib/server/db/db', () => ({
     },
   },
 }));
-vi.mock('$lib/server/redis', () => ({ getRedis: () => ({ del: h.del }) }));
+vi.mock('$lib/server/redis', () => ({ getRedis: () => (h.noRedis ? null : { del: h.del }) }));
 
 const { actions } = await import('../+page.server');
 
@@ -45,6 +46,7 @@ const setMode = (id: string, accessMode: string) => {
 beforeEach(() => {
   h.order.length = 0;
   h.updated.length = 0;
+  h.noRedis = false;
   h.del.mockReset();
   h.del.mockImplementation(async () => {
     h.order.push('clear-mark');
@@ -69,5 +71,24 @@ describe('admin access: setMode', () => {
     const result = await setMode('appassist-7', 'disabled');
     expect(result).toMatchObject({ status: 503 });
     expect(h.updated).toEqual([]);
+  });
+
+  it('🔴 a self-only client with no cache Redis configured saves nothing (503)', async () => {
+    h.noRedis = true;
+    const result = await setMode('appdev-7-pose-board', 'disabled');
+    expect(result).toMatchObject({ status: 503 });
+    expect(h.updated).toEqual([]);
+  });
+
+  it('🔴 a third-party client never touches Redis: staff can disable it with the cache down', async () => {
+    h.del.mockRejectedValue(new Error('cache down'));
+    const result = await setMode('b1e0c0de-0000-4000-8000-000000000001', 'disabled');
+    expect(result).toMatchObject({ success: true, accessMode: 'disabled' });
+    expect(h.del).not.toHaveBeenCalled();
+    expect(h.updated).toEqual([{ accessMode: 'disabled' }]);
+    h.noRedis = true;
+    expect(await setMode('b1e0c0de-0000-4000-8000-000000000001', 'open')).toMatchObject({
+      success: true,
+    });
   });
 });

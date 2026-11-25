@@ -134,19 +134,20 @@ describe('mintDevTunnelOauthToken', () => {
 
 describe('mintDevTunnelOauthToken on a client a ban disabled', () => {
   afterEach(() => {
-    redisMock.redis.exists.mockReset();
+    redisMock.redis.get.mockReset();
     redisMock.redis.del.mockReset();
   });
 
   it('🔴 re-opens it (the mint runs only past the dev-tunnel gates) and spends the mark', async () => {
-    const marked = new Set(['oauth:ban-disabled:appdev-42-my-app']);
-    redisMock.redis.exists.mockImplementation((async (key: string) =>
-      [...marked].some((m) => key.endsWith(m)) ? 1 : 0) as never);
+    const marked = new Map([['oauth:ban-disabled:appdev-42-my-app', 'testers']]);
+    redisMock.redis.get.mockImplementation(
+      (async (key: string) => [...marked].find(([m]) => key.endsWith(m))?.[1] ?? null) as never
+    );
     redisMock.redis.del.mockImplementation((async (key: string) => {
-      const hit = [...marked].find((m) => key.endsWith(m));
+      const hit = [...marked.keys()].find((m) => key.endsWith(m));
       return hit && marked.delete(hit) ? 1 : 0;
     }) as never);
-    dbMock.dbWrite.oauthClient.updateMany.mockResolvedValue({ count: 1 } as never);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
 
     await mintDevTunnelOauthToken({
       userId: USER_ID,
@@ -154,10 +155,19 @@ describe('mintDevTunnelOauthToken on a client a ban disabled', () => {
       scopes: ['user:read:self'],
       impersonatedBy: null,
     });
-    expect(dbMock.dbWrite.oauthClient.updateMany).toHaveBeenCalledWith({
-      where: { id: 'appdev-42-my-app', accessMode: 'disabled' },
-      data: { accessMode: 'open' },
-    });
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
     expect(marked.size).toBe(0);
+  });
+
+  it('🔴 a cache Redis error does not fail the mint: it still mints, re-opening nothing', async () => {
+    redisMock.redis.get.mockRejectedValue(new Error('cache down'));
+    const minted = await mintDevTunnelOauthToken({
+      userId: USER_ID,
+      clientId: 'appdev-42-my-app',
+      scopes: ['user:read:self'],
+      impersonatedBy: null,
+    });
+    expect(minted.token).toBe('civ_dev_oauth');
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,7 @@ import { subjectForUserId } from '~/server/services/block-token-subject';
 import { listActiveDevTunnelBlockIds } from '~/server/services/blocks/dev-tunnel.service';
 import {
   clearQueuedBanRevoke,
+  releaseHoldsForUnbannedUser,
   revokePreviewsForBannedUser,
 } from '~/server/services/blocks/preview-revoke.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -377,5 +378,8 @@ export async function clearBlockInstancesForPublisher({
     return global.length + subjectScoped.length;
   } finally {
     await clearQueuedBanRevoke(userId);
+    // The ban's "*" revoke held the user's sandboxes; the unban lifts the hold (queued and retried,
+    // never throws; until it lands the sandboxes stay kept).
+    await releaseHoldsForUnbannedUser(userId);
   }
 }
