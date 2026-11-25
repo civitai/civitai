@@ -1,4 +1,5 @@
 import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
+import { HOLD_REASON_MIN } from '~/shared/constants/publish-request-holds.constants';
 
 /**
  * App Block review BOOT CHECK — the shared half (server and moderator UI).
@@ -16,11 +17,13 @@ import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants
  *     (`BOOT_CHECK_HOLD_LABEL`); a later `passed` clears it. `unavailable` (the checker could not
  *     run) leaves the preview live and Approve enabled, with a notice to the moderator.
  *
- * 🔴 What refuses Approve is the HOLD, through the ordinary review-hold check of the approve path:
- * it lives on the app, not on the preview, so a teardown or a rebuild does not remove it, and a
- * moderator can override it with a written reason (the escape hatch when the checker is wrong).
- * The summary predicates below only choose what the moderator is told; they read the RECORDED
- * mode, so a shadow result never shows as a failure.
+ * 🔴 Approve is refused on EITHER of two records, and one written override reason passes both:
+ *   - the HOLD, through the ordinary review-hold check of the approve path. It lives on the app,
+ *     not on the preview, so a teardown or a rebuild does not remove it;
+ *   - the RECORDED enforced failure on the request's current preview detail
+ *     (`bootCheckOverrideMissing`), which covers a hold write that failed.
+ * Neither is a hard block: the override reason is the escape hatch when the checker is wrong.
+ * The predicates read the RECORDED mode, so a shadow result never refuses or shows as a failure.
  */
 
 /** The Flipt variant flag: `shadow` | `enforce`; any other answer, a missing flag included, is off. */
@@ -83,6 +86,23 @@ export function reviewBootCheckSummary(
 export function bootCheckFailed(summary: ReviewBootCheckSummary | null | undefined): boolean {
   return summary?.mode === 'enforce' && summary.result === 'failed';
 }
+
+/**
+ * 🔴 THE detail-based half of the approve gate, ONE predicate for the server refusal and the
+ * review action bar: the current preview records an ENFORCED failure and no override reason (of a
+ * hold's minimum length) was given. The same reason that overrides the app's holds passes it.
+ */
+export function bootCheckOverrideMissing(
+  summary: ReviewBootCheckSummary | null | undefined,
+  overrideReason: string | null | undefined
+): boolean {
+  return bootCheckFailed(summary) && (overrideReason ?? '').trim().length < HOLD_REASON_MIN;
+}
+
+/** The server's refusal when `bootCheckOverrideMissing` holds. */
+export const BOOT_CHECK_DETAIL_REFUSAL =
+  'The boot check found that this build never finishes loading (no BLOCK_READY). To approve ' +
+  'anyway, give an override reason.';
 
 /** An enforced boot check could not run. Approve stays enabled; the moderator is told. */
 export function bootCheckUnavailable(summary: ReviewBootCheckSummary | null | undefined): boolean {

@@ -3,12 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const { mockVariant } = vi.hoisted(() => ({
   mockVariant: vi.fn<(flag: string) => Promise<string | null>>(async () => null),
 }));
-vi.mock('~/env/server', () => ({ env: {} }));
 vi.mock('~/server/flipt/client', () => ({
   getFliptVariant: (flag: string) => mockVariant(flag),
   FLIPT_FEATURE_FLAGS: { APP_BLOCKS_REVIEW_BOOT_CHECK: 'app-blocks-review-boot-check' },
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 
 import {
   callBootChecker,

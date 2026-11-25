@@ -652,10 +652,14 @@ async function settlePublishedReview(
         url: args.baseDetail.url,
       })
     : null;
-  // Under enforce: a failure places the app's boot-check review hold (what refuses Approve, and
-  // survives a teardown or rebuild), a pass clears it. Before the state write, so the preview
-  // never reads as failed while its app is still approvable. Never throws.
-  if (boot) await syncBootCheckHold(args.publishRequestId, boot);
+  // Under enforce, a failure places the app's boot-check review hold and a pass clears it — but
+  // ONLY when this watcher's guarded state write below matched the row (it still owns the
+  // active preview), so a superseded watcher can never move the hold a newer build set. The
+  // written `preview-failed` detail itself refuses Approve in the meantime. Never throws.
+  const syncHold = async (marked: number) => {
+    if (boot && marked > 0)
+      await syncBootCheckHold(args.publishRequestId, boot, { expectedSha: args.sha });
+  };
   if (reachable && boot && !boot.live) {
     // The app never sent BLOCK_READY. Not an apply failure (the deploy worked) and not counted
     // as one; the replay mark is freed so a same-sha rebuild is not swallowed as a duplicate.
@@ -666,6 +670,7 @@ async function settlePublishedReview(
       { ...args.baseDetail, bootCheck: boot.bootCheck, error: boot.error },
       guard
     );
+    await syncHold(marked);
     if (marked === 0) await unpublishOrphan();
     await settled(args.publishRequestId, false);
   } else if (reachable) {
@@ -675,6 +680,7 @@ async function settlePublishedReview(
       boot ? { ...args.baseDetail, bootCheck: boot.bootCheck } : args.baseDetail,
       guard
     );
+    await syncHold(marked);
     // Live only if THIS preview was still the active one: a torn-down or superseded preview
     // (the guard matched no row) must not start an agent review, and is unpublished.
     if (marked === 0) await unpublishOrphan();

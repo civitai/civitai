@@ -3678,13 +3678,34 @@ async function approveRequestUnderClaim(
   // (`BOOT_CHECK_HOLD_LABEL`, placed by the build watcher): the holds are read from the primary,
   // and again under the app lock by claimApprove. Not from this row's preview detail, which a
   // teardown or rebuild replaces.
-  const { checkHoldsBeforeApprove, claimApprove } = await import('./publish-request-holds.service');
+  const { checkReviewGatesBeforeApprove, claimApprove } = await import(
+    './publish-request-holds.service'
+  );
   const holdDecision = {
     slug: request.slug,
     overrideReason: params.holdOverrideReason,
     shownHoldIds: params.holdOverrideIds,
   };
-  await checkHoldsBeforeApprove(dbWrite, holdDecision);
+  const { bootCheckOverridden } = await checkReviewGatesBeforeApprove(dbWrite, {
+    ...holdDecision,
+    publishRequestId: request.id,
+  });
+  if (bootCheckOverridden) {
+    // The audit record of approving past a recorded boot-check failure (a hold override is
+    // recorded on the hold itself; this one may have no hold to record it on).
+    const { logToAxiom } = await import('~/server/logging/client');
+    logToAxiom(
+      {
+        name: 'app-blocks.review.boot-check-override',
+        type: 'info',
+        publishRequestId: request.id,
+        slug: request.slug,
+        reviewerUserId: params.reviewerUserId,
+        overrideReason: params.holdOverrideReason ?? null,
+      },
+      'webhooks'
+    );
+  }
   // Captured BEFORE markRequestDeployState below flips deploy_state to a
   // production 'building' value — drives the end-of-flow review teardown.
   const hadReviewPreview =

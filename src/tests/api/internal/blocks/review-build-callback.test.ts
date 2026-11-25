@@ -110,6 +110,8 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   waitForApplyJob: mockWaitApply,
   waitForReviewHostReachable: mockWaitReachable,
   triggerReviewUnpublish: (...a: unknown[]) => mockReviewUnpublish(...a),
+  // The system user the probe's (and the boot check's) entry token is bound to.
+  SHARED_REVIEW_PROBE_MOD_USER_ID: -1,
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markReviewPreviewState: mockMarkPreview,

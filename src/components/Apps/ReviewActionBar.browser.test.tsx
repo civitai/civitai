@@ -419,6 +419,8 @@ describe('ReviewActionBar — review boot check', () => {
     const approve = page.getByRole('button', { name: 'Approve + build' });
     await expect.element(approve).toBeDisabled();
     await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeEnabled();
+    // One override field: the holds panel's (no second, boot-check-only field beside it).
+    expect(page.getByTestId('apps-review-boot-check-override-reason').elements()).toHaveLength(0);
     // The escape hatch: a written override reason.
     await page
       .getByTestId('apps-review-hold-override-reason')
@@ -429,6 +431,31 @@ describe('ReviewActionBar — review boot check', () => {
       publishRequestId: 'req-1',
       holdOverrideReason: 'checked by hand, the app loads fine',
       holdOverrideIds: [11],
+    });
+  });
+
+  test('🔴 enforce + failed with NO hold (its write failed): Approve needs the same override reason, then sends it', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'failed', mode: 'enforce' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeDisabled();
+    const reason = page.getByTestId('apps-review-boot-check-override-reason');
+    await reason.fill('too short');
+    await expect.element(approve).toBeDisabled();
+    await reason.fill('checked by hand, the app loads fine');
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      holdOverrideReason: 'checked by hand, the app loads fine',
+      holdOverrideIds: [],
     });
   });
 

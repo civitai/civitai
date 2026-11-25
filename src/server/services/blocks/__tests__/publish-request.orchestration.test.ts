@@ -3532,16 +3532,11 @@ describe('approveRequest', () => {
   });
 
   /**
-   * 🔴 THE REVIEW BOOT CHECK approve gate. An ENFORCED boot check that found the build never sends
-   * BLOCK_READY refuses Approve, before anything is written. A shadow result, an unavailable
-   * check and a non-preview row do not: each reaches the Forgejo commit (made to fail with a
-   * sentinel here, so "past the gate" is observable without a full approve).
-   */
-  /**
-   * 🔴 THE REVIEW BOOT CHECK at approve: the BLOCK is the app's boot-check review hold (placed by
-   * the build watcher; end to end in review-boot-check-hold.pglite.test.ts), read from the
-   * primary by the ordinary hold check. A failed result left only in the preview's detail is not
-   * the gate: a teardown or rebuild replaces the detail, and an override must be possible.
+   * 🔴 THE REVIEW BOOT CHECK at approve (`checkReviewGatesBeforeApprove`, read on the primary):
+   * refused on the app's boot-check HOLD (survives teardown and rebuild; end to end in
+   * review-boot-check-hold.pglite.test.ts) OR on an enforced failure RECORDED on the request's
+   * current preview detail (covers a hold write that failed). One written override reason passes
+   * both, so neither is a hard block.
    */
   describe('the review boot check at approve', () => {
     const bootHold = {
@@ -3555,19 +3550,42 @@ describe('approveRequest', () => {
       reason:
         'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold',
     };
-
-    it('🔴 an open boot-check hold refuses approve on the primary, before anything is committed', async () => {
-      const { approveRequest } = await import('../publish-request.service');
-      // A torn-down preview: no deploy state and no detail left on the row.
+    const DETAIL_REFUSAL =
+      'The boot check found that this build never finishes loading (no BLOCK_READY). To approve anyway, give an override reason.';
+    /** The primary's answers: the app's open holds, and the request's current preview columns. */
+    const primary = (
+      holds: unknown[],
+      preview: { deployState: string | null; bootCheck?: unknown }
+    ) =>
+      mockDbWrite.$queryRaw.mockImplementation((async (strings: unknown) => {
+        const sql = Array.isArray(strings) ? strings.join('?') : '';
+        if (sql.includes('FROM app_publish_request_holds')) return holds;
+        if (sql.includes('FROM app_block_publish_requests'))
+          return [
+            {
+              deployState: preview.deployState,
+              deployDetail:
+                preview.bootCheck === undefined
+                  ? null
+                  : JSON.stringify({ sha: 'b'.repeat(40), bootCheck: preview.bootCheck }),
+            },
+          ];
+        return [];
+      }) as never);
+    const approveFixture = async () => {
+      // The replica row carries nothing: the gate must read the primary.
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
         pendingRequest({ deployState: null, deployDetail: null })
       );
       mockDbRead.appBlock.findFirst.mockResolvedValue(null);
       mockBundleBuffer.current = await makeValidBundle();
-      mockDbWrite.$queryRaw.mockImplementation((async (strings: unknown) =>
-        Array.isArray(strings) && strings.join('?').includes('FROM app_publish_request_holds')
-          ? [bootHold]
-          : []) as never);
+      mockForgejo.commitFiles.mockRejectedValue(new Error('SENTINEL: past the gate'));
+    };
+
+    it('🔴 an open boot-check hold refuses approve, before anything is committed', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      await approveFixture();
+      primary([bootHold], { deployState: null });
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
       ).rejects.toThrow(
@@ -3577,20 +3595,48 @@ describe('approveRequest', () => {
       expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
     });
 
-    it('invariant: a failed result in the preview detail with NO hold is not itself the gate', async () => {
+    it('🔴 no hold (its write failed) but an enforced failure recorded on the primary: refused', async () => {
       const { approveRequest } = await import('../publish-request.service');
-      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
-        pendingRequest({
-          deployState: 'preview-failed',
-          deployDetail: JSON.stringify({ bootCheck: { result: 'failed', mode: 'enforce' } }),
-        })
-      );
-      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
-      mockBundleBuffer.current = await makeValidBundle();
-      mockForgejo.commitFiles.mockRejectedValue(new Error('SENTINEL: past the hold check'));
+      await approveFixture();
+      primary([], {
+        deployState: 'preview-failed',
+        bootCheck: { result: 'failed', mode: 'enforce' },
+      });
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
-      ).rejects.toThrow('SENTINEL: past the hold check');
+      ).rejects.toThrow(DETAIL_REFUSAL);
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    });
+
+    it('🔴 the same recorded failure WITH an override reason passes (never a hard block)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      await approveFixture();
+      primary([], {
+        deployState: 'preview-failed',
+        bootCheck: { result: 'failed', mode: 'enforce' },
+      });
+      await expect(
+        approveRequest({
+          publishRequestId: 'pubreq_1',
+          reviewerUserId: 999,
+          holdOverrideReason: 'checked by hand, the app loads fine',
+          holdOverrideIds: [],
+        })
+      ).rejects.toThrow('SENTINEL: past the gate');
+    });
+
+    it.each([
+      ['shadow + failed', 'preview-failed', { result: 'failed', mode: 'shadow' }],
+      ['enforce + unavailable', 'preview-live', { result: 'unavailable', mode: 'enforce' }],
+      ['enforce + passed', 'preview-live', { result: 'passed', mode: 'enforce' }],
+      ['a torn-down preview (no detail)', null, undefined],
+    ])('%s, no hold: not refused (reaches the commit)', async (_label, deployState, bootCheck) => {
+      const { approveRequest } = await import('../publish-request.service');
+      await approveFixture();
+      primary([], { deployState, bootCheck });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow('SENTINEL: past the gate');
     });
   });
 

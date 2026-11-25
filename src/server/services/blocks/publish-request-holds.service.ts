@@ -2,7 +2,12 @@ import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { BOOT_CHECK_HOLD_LABEL } from '~/shared/utils/review-boot-check';
+import {
+  BOOT_CHECK_DETAIL_REFUSAL,
+  BOOT_CHECK_HOLD_LABEL,
+  bootCheckOverrideMissing,
+  reviewBootCheckSummary,
+} from '~/shared/utils/review-boot-check';
 import {
   HOLD_LABEL_MAX,
   HOLD_REASON_MAX,
@@ -336,6 +341,34 @@ export async function checkHoldsBeforeApprove(db: RawClient, input: ApproveHoldI
     );
   }
   assertHoldsOverridable(holds, input);
+}
+
+/**
+ * The on-site approve's first check: the app's review holds ({@link checkHoldsBeforeApprove}),
+ * then the review boot check recorded on the request's CURRENT preview detail. An enforced failure
+ * there refuses unless an override reason is given, the same reason that passes the holds, so it
+ * is never a hard block. It covers a failed check whose hold write did not land; the hold covers
+ * a teardown or rebuild, which replace the detail. Read on whatever client the caller passes (the
+ * approve passes the primary). Returns whether the recorded failure was overridden.
+ */
+export async function checkReviewGatesBeforeApprove(
+  db: RawClient,
+  input: ApproveHoldInput & { publishRequestId: string }
+): Promise<{ bootCheckOverridden: boolean }> {
+  await checkHoldsBeforeApprove(db, input);
+  const [row] = await db.$queryRaw<{ deployState: string | null; deployDetail: string | null }[]>`
+    SELECT deploy_state AS "deployState", deploy_detail AS "deployDetail"
+    FROM app_block_publish_requests WHERE id = ${input.publishRequestId}`;
+  let detail: unknown = null;
+  try {
+    detail = row?.deployDetail ? JSON.parse(row.deployDetail) : null;
+  } catch {
+    detail = null;
+  }
+  const summary = reviewBootCheckSummary(row?.deployState, detail);
+  if (bootCheckOverrideMissing(summary, input.overrideReason))
+    throw new PublishRequestHeldError(BOOT_CHECK_DETAIL_REFUSAL, []);
+  return { bootCheckOverridden: summary?.mode === 'enforce' && summary.result === 'failed' };
 }
 
 /**

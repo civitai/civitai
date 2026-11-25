@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as FliptClient from '~/server/flipt/client';
+
 const { mockMode } = vi.hoisted(() => ({ mockMode: { value: 'off' as string } }));
-vi.mock('~/server/services/blocks/forgejo.service', () => ({
-  reviewRepoUrl: (slug: string) => `https://forgejo.example/review/${slug}`,
-  repoCommitUrl: (slug: string, ref: string) => `https://forgejo.example/${slug}/commit/${ref}`,
-}));
-vi.mock('~/server/services/blocks/review-boot-check.service', () => ({
-  readReviewBootCheckMode: async () => mockMode.value,
+// Only the flag store is faked (a process boundary): the real review-boot-check service reads the
+// rollout mode from it, and the real forgejo service builds the links.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  getFliptVariant: async (flag: string) =>
+    flag === 'app-blocks-review-boot-check' ? mockMode.value : null,
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';

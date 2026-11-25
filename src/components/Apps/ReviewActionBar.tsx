@@ -38,8 +38,13 @@ import {
   BOOT_CHECK_NOT_RUN_NOTICE,
   BOOT_CHECK_UNAVAILABLE_NOTICE,
   bootCheckFailed,
+  bootCheckOverrideMissing,
   bootCheckUnavailable,
 } from '~/shared/utils/review-boot-check';
+import {
+  HOLD_REASON_MAX,
+  HOLD_REASON_MIN,
+} from '~/shared/constants/publish-request-holds.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { trpcKeepalive } from '~/utils/trpc-keepalive';
@@ -185,7 +190,13 @@ export function ReviewActionBar({
   const [holdOverrideReason, setHoldOverrideReason] = useState('');
   const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
   // Every reason Approve (all three buttons) is disabled, in one place.
-  const approveGated = splitStateUnknown || floorBlocked || holdBlocked;
+  // The recorded enforced failure: the SAME predicate the server refuses on, and the same
+  // override reason that passes the holds passes it (never a hard block).
+  const bootOverrideMissing = bootCheckOverrideMissing(
+    request.previewBootCheck,
+    holdOverrideReason
+  );
+  const approveGated = splitStateUnknown || floorBlocked || holdBlocked || bootOverrideMissing;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async (result) => {
@@ -244,7 +255,7 @@ export function ReviewActionBar({
     publishRequestId: request.id,
     approvalNotes: approvalNotes.trim() || undefined,
     ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
-    ...(openHolds.length
+    ...(openHolds.length || bootFailed
       ? {
           holdOverrideReason: holdOverrideReason.trim(),
           holdOverrideIds: openHolds.map((h) => h.id),
@@ -375,6 +386,22 @@ export function ReviewActionBar({
           <Alert color="red" variant="light" data-testid="apps-review-approve-boot-check">
             {BOOT_CHECK_APPROVE_REFUSAL}
           </Alert>
+        )}
+        {bootFailed && openHolds.length === 0 && (
+          // No hold to carry the override field (its write may have failed): the recorded failure
+          // takes the same reason, sent the same way.
+          <ReasonGatedField
+            value={holdOverrideReason}
+            onChange={setHoldOverrideReason}
+            disabled={busy}
+            minLength={HOLD_REASON_MIN}
+            maxLength={HOLD_REASON_MAX}
+            label="Override reason (required to approve past the failed boot check)"
+            placeholder="Why it is safe to approve although the boot check failed. Not shown to the developer."
+            testId="apps-review-boot-check-override-reason"
+            minRows={2}
+            maxRows={6}
+          />
         )}
         {bootUnavailable && (
           <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-unavailable">

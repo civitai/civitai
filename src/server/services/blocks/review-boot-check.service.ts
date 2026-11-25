@@ -1,9 +1,10 @@
 import { clampReviewSandbox, intersectSandbox } from '~/components/AppBlocks/sandbox';
 import { env } from '~/env/server';
-import { constants } from '~/server/common/constants';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { recordReviewBootCheck } from '~/server/prom/app-block-boot-check.metrics';
+import { SHARED_REVIEW_PROBE_MOD_USER_ID } from '~/server/services/blocks/apps-pipeline.service';
 import { signReviewAccessToken } from '~/server/services/blocks/review-session';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import {
   BOOT_CHECK_HOLD_CLEAR_REASON,
@@ -51,12 +52,6 @@ export const BOOT_CHECK_CLIENT_TIMEOUT_MS = 35_000;
 export const BOOT_CHECK_RETRY_DELAY_MS = 2_000;
 /** Longest `firstError` stored on the detail (it is shown to moderators and the author). */
 const FIRST_ERROR_MAX_CHARS = 300;
-
-/**
- * The user the check's entry token is bound to: the system actor, as for the HTTP probe, so the
- * check is never attributed to a moderator.
- */
-const BOOT_CHECK_USER_ID = constants.system.user.id;
 
 /** The rollout mode. Any answer other than `shadow` / `enforce`, a read error included, is off. */
 export async function readReviewBootCheckMode(): Promise<ReviewBootCheckMode> {
@@ -177,7 +172,7 @@ export async function callBootChecker(
   }
 ): Promise<BootCheckAttempt> {
   const doFetch = deps.fetchImpl ?? fetch;
-  const signalFactory = deps.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
+  const signalFactory = deps.signalFactory ?? ((ms: number) => fetchTimeoutSignal(ms));
   let res: Response;
   try {
     res = await doFetch(`${deps.baseUrl.replace(/\/$/, '')}/v1/boot-check`, {
@@ -292,7 +287,9 @@ export async function runReviewBootCheck(
   if (!blockId) return unavailable('no-target', 'no slug for the preview');
   const mintToken =
     deps.mintToken ??
-    ((h: string) => signReviewAccessToken({ modUserId: BOOT_CHECK_USER_ID, host: h }));
+    // The HTTP probe's own entry-token user (the system actor), so the check is never
+    // attributed to a moderator.
+    ((h: string) => signReviewAccessToken({ modUserId: SHARED_REVIEW_PROBE_MOD_USER_ID, host: h }));
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   const attempt = async () => {
@@ -388,13 +385,21 @@ export async function evaluateReviewBootCheck(
 /**
  * Keep the app's boot-check REVIEW HOLD in step with an ENFORCED result: a `failed` check places
  * it (once: a second failure does not stack another), a `passed` one clears it. Shadow and
- * `unavailable` never touch it. Never throws: a hold write that fails is logged at error level,
- * and the preview state is written regardless.
+ * `unavailable` never touch it. Never throws: a hold write that fails is logged at error level
+ * (the recorded failure on the preview detail still refuses Approve, see
+ * `checkReviewGatesBeforeApprove`).
+ *
+ * 🔴 ONLY FOR THE BUILD THAT OWNS THE ACTIVE PREVIEW. The caller calls it only after its guarded
+ * state write matched the row, and the hold write re-checks that ownership in its own transaction
+ * (row locked: still pending, still a preview, still this build's sha), so a superseded watcher,
+ * an older sha or a withdrawn earlier request, can neither clear the hold a newer failed build
+ * placed nor place one over a newer pass.
  */
 export async function syncBootCheckHold(
   publishRequestId: string,
-  decision: BootCheckDecision
-): Promise<'placed' | 'exists' | 'cleared' | 'none'> {
+  decision: BootCheckDecision,
+  owner: { expectedSha: string }
+): Promise<'placed' | 'exists' | 'cleared' | 'stale' | 'none'> {
   const { bootCheck } = decision;
   if (bootCheck.mode !== 'enforce') return 'none';
   if (bootCheck.result !== 'failed' && bootCheck.result !== 'passed') return 'none';
@@ -403,18 +408,27 @@ export async function syncBootCheckHold(
       import('~/server/db/client'),
       import('~/server/services/blocks/publish-request-holds.service'),
     ]);
-    if (bootCheck.result === 'failed') {
-      return await dbWrite.$transaction((tx) =>
-        holds.placeBootCheckHold(tx, {
+    return await dbWrite.$transaction(async (tx) => {
+      // The sha is the callback-validated 40-hex build sha: a safe LIKE literal.
+      const owned = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM app_block_publish_requests
+        WHERE id = ${publishRequestId} AND status = 'pending'
+          AND deploy_state LIKE 'preview-%'
+          AND deploy_detail LIKE ${`%"sha":"${owner.expectedSha}"%`}
+        FOR UPDATE`;
+      if (owned.length === 0) return 'stale' as const;
+      if (bootCheck.result === 'failed') {
+        return holds.placeBootCheckHold(tx, {
           publishRequestId,
           reason: bootCheckHoldReason(bootCheck.firstError),
-        })
-      );
-    }
-    const cleared = await dbWrite.$transaction((tx) =>
-      holds.clearBootCheckHolds(tx, { publishRequestId, reason: BOOT_CHECK_HOLD_CLEAR_REASON })
-    );
-    return cleared > 0 ? 'cleared' : 'none';
+        });
+      }
+      const cleared = await holds.clearBootCheckHolds(tx, {
+        publishRequestId,
+        reason: BOOT_CHECK_HOLD_CLEAR_REASON,
+      });
+      return cleared > 0 ? ('cleared' as const) : ('none' as const);
+    });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(
