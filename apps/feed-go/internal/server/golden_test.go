@@ -51,7 +51,7 @@ const (
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
 	goldenMinInfinite = 87
-	goldenMinModels   = 49
+	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -111,6 +111,8 @@ type goldenFixture struct {
 		// (FEED_GO_GETALL_SERVE_INPUT_IDS / _FOLLOWED; absent: off, the fixture's shape falls back).
 		ServeInputIDs      bool `json:"serveInputIds"`
 		ServeInputFollowed bool `json:"serveInputFollowed"`
+		// ServeHidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID (absent: off, Hide Paid falls back).
+		ServeHidePaid bool `json:"serveHidePaid"`
 		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
 		// off, an owner's user-cosmetics miss falls back).
 		ServeUserCosmeticsMiss bool `json:"serveUserCosmeticsMiss"`
@@ -393,8 +395,9 @@ type goldenDB struct {
 		} `json:"contributors"`
 	} `json:"collections"`
 	PaidAccess []struct {
-		ModelID  int        `json:"modelId"`
-		Deadline goldenTime `json:"deadline"`
+		ModelID    int        `json:"modelId"`
+		Deadline   goldenTime `json:"deadline"`
+		VersionIDs []int      `json:"versionIds"`
 	} `json:"paidAccess"`
 	CoverImages []struct {
 		ID             int `json:"id"`
@@ -1906,10 +1909,10 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 			var rows [][]any
 			for _, p := range db.PaidAccess {
 				if goldenHas(goldenInts(args[0]), p.ModelID) {
-					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline)})
+					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline), p.VersionIDs})
 				}
 			}
-			return testkit.NewRows([]string{"modelId", "deadline"}, rows...), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}, rows...), nil
 		}},
 		{Match: `FROM "Image" i`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -2238,7 +2241,7 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
 			VisibleDecorationEvents: events,
-			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed},
+			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed, HidePaid: fx.Config.ServeHidePaid},
 			ServeUserCosmeticsMiss:  fx.Config.ServeUserCosmeticsMiss,
 			ServeMembershipMiss:     fx.Config.ServeMembershipMiss,
 		},

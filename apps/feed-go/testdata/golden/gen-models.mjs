@@ -341,6 +341,29 @@ const MODELS = {
     lastVersionAt: day(2),
     versions: [version(6015, 'Pony')],
   }),
+  // Hide Paid's models (hide-paid-*): a paid version (newest, holding the cover) and a free one; one
+  // paid version only; one free version only; a paid Public version and a free Private one.
+  5021: model(5021, 1001, {
+    coverImageId: 8301,
+    rank: rank(70, 60),
+    lastVersionAt: day(13),
+    versions: [version(6031, 'Pony'), version(6032, 'SDXL 1.0')],
+  }),
+  5022: model(5022, 1002, {
+    rank: rank(65, 55),
+    lastVersionAt: day(13),
+    versions: [version(6033, 'Flux.1 D')],
+  }),
+  5023: model(5023, 1002, {
+    rank: rank(60, 50),
+    lastVersionAt: day(13),
+    versions: [version(6034, 'Illustrious')],
+  }),
+  5024: model(5024, 1002, {
+    rank: rank(55, 45),
+    lastVersionAt: day(13),
+    versions: [version(6035, 'Pony'), version(6036, 'Pony', { availability: 'Private' })],
+  }),
 };
 // The lookup orders the versions by (modelId, index): the world lists 5010's out of that order, so a
 // cold read must sort them.
@@ -394,6 +417,12 @@ const VERSION_IMAGES = {
     showcase(8151, 1001, 4),
     showcase(8152, 1001, 2, { minor: true }),
   ],
+  6031: [showcase(8301, 1001, 1)],
+  6032: [showcase(8311, 1001, 1), showcase(8312, 1001, 2)],
+  6033: [showcase(8321, 1002, 1)],
+  6034: [showcase(8331, 1002, 1)],
+  6035: [showcase(8341, 1002, 1)],
+  6036: [showcase(8351, 1002, 1)],
 };
 for (const [vid, list] of Object.entries(VERSION_IMAGES))
   for (const i of list) i.modelVersionId = Number(vid);
@@ -416,7 +445,9 @@ const GALLERY = {
     sfwHeld: true,
   },
 };
-const PAID = { 5001: day(30), 5005: null };
+const PAID = { 5001: day(30), 5005: null, 5021: day(30), 5022: null, 5024: null };
+// getModelPaidAccessGates' `versionIds`: each gated model's versions behind a live gate.
+const PAID_VERSIONS = { 5001: [6001], 5005: [6008], 5021: [6031], 5022: [6033], 5024: [6035] };
 const PRIVACY = {
   1001: { hideModelBuzz: false, hideModelDownloads: false, hideModelGenerations: true },
 };
@@ -783,8 +814,13 @@ function getModelPaidAccessGates(modelIds) {
   const out = new Map();
   for (const id of modelIds) {
     if (id in PAID) {
-      T.db.paidAccess.set(id, PAID[id]);
-      out.set(id, { earlyAccessDeadline: PAID[id] ?? null, gated: true });
+      if (!PAID_VERSIONS[id]) throw new Error(`model ${id}: gated with no gated versions`);
+      T.db.paidAccess.set(id, { deadline: PAID[id], versionIds: PAID_VERSIONS[id] });
+      out.set(id, {
+        earlyAccessDeadline: PAID[id] ?? null,
+        gated: true,
+        versionIds: PAID_VERSIONS[id],
+      });
     }
   }
   return out;
@@ -897,12 +933,14 @@ function getModelsRaw({
     },
   });
   const cosmetics = include?.includes('cosmetics') ? getCosmeticsForEntity(modelIds) : {};
+  const { hidePaid } = input;
   const paidAccessGates = getModelPaidAccessGates(modelIds);
   const eventDecorations = include?.includes('cosmetics')
     ? getEventDecorationsForModels(modelIds)
     : undefined;
   for (const model of models) {
-    const gate = paidAccessGates.get(model.id);
+    // Under Hide Paid the card shows only free versions, so the model-level chip would contradict it.
+    const gate = hidePaid ? undefined : paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
     model.hasActivePaidAccess = gate?.gated ?? false;
   }
@@ -939,6 +977,10 @@ function getModelsRaw({
       );
       if (hidePrivateModels)
         modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
+      if (hidePaid) {
+        const gatedVersionIds = paidAccessGates.get(model.id)?.versionIds ?? [];
+        modelVersions = modelVersions.filter((mv) => !gatedVersionIds.includes(mv.id));
+      }
       const allBaseModels = [...new Set(modelVersions.map((mv) => mv.baseModel))];
       if (baseModels)
         modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
@@ -1252,7 +1294,7 @@ function getModelsWithImagesAndModelVersions({
       coverId: face.pickCoverImageId(m, showSfwFace),
     })),
     modelVersionImages,
-    sameVersionOnly: !!input.baseModels?.length,
+    sameVersionOnly: !!input.baseModels?.length || !!input.hidePaid,
   });
   const coverImages = holdExempt?.isModerator
     ? unheldCovers
@@ -1424,9 +1466,11 @@ function runModels(spec) {
     ...raw,
   };
   if (input.username !== undefined) input.username = postgresSlugify(input.username);
-  // The schema's own transforms of `ids` and `followed` (commaDelimitedNumberArray, booleanString).
+  // The schema's own transforms of `ids`, `followed` and `hidePaid` (commaDelimitedNumberArray,
+  // booleanString).
   if ('ids' in raw) input.ids = commaDelimitedNumberArray().optional().parse(raw.ids);
   if ('followed' in raw) input.followed = booleanString().optional().parse(raw.followed);
+  if ('hidePaid' in raw) input.hidePaid = booleanString().optional().parse(raw.hidePaid);
   const features = {
     getAllModelImagesSlim: spec.config.modelImagesSlim,
     coverageNext: spec.config.coverageNext,
@@ -1927,6 +1971,42 @@ const SPECS = [
     input: { sort: 'Highest Rated', limit: 1, browsingLevel: 31 },
     pages: [{ cursor: null, ids: [5012] }],
   })),
+  // Hide Paid (#9385's free-version rule), served only behind FEED_GO_GETALL_SERVE_HIDE_PAID; off, the
+  // input-hidePaid fallback.
+  {
+    name: 'fallback-hide-paid-off',
+    description: 'Hide Paid with its switch off: handed back to Node (input-hidePaid).',
+    host: HOST.green,
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, hidePaid: true },
+    fallback: 'input-hidePaid',
+  },
+  {
+    name: 'hide-paid-free-version-signed-out',
+    description:
+      'Hide Paid signed out: a model with a paid and a free version shows the free one (its own images; the cover on the paid version is not borrowed), its base models are the free version’s, and no chip or deadline; a free model is unchanged. The page query leaves out the model with only a paid version (pinned by the integration tests).',
+    host: HOST.green,
+    config: { serveHidePaid: true },
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, hidePaid: true },
+    pages: [{ cursor: null, ids: [5021, 5023] }],
+  },
+  {
+    name: 'hide-paid-off-same-world',
+    description:
+      'The same models with Hide Paid off: the paid version is shown with its chip and deadline, the paid-only model is listed with its chip.',
+    host: HOST.green,
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1 },
+    pages: [{ cursor: null, ids: [5021, 5022, 5023] }],
+  },
+  {
+    name: 'hide-paid-creator-private-free-version',
+    description:
+      'Hide Paid on a creator’s page (Private versions are listed there): a model whose only free version is Private shows it; a model with only a paid version, if the page query returned it, has no version left and is left out.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveHidePaid: true },
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, username: 'artist_two', hidePaid: 'true' },
+    pages: [{ cursor: null, ids: [5022, 5023, 5024] }],
+  },
 ];
 
 /** What Node writes on this fixture's cold misses, as the Go harness compares it. */
@@ -1954,7 +2034,9 @@ function dbTables() {
   const m2o = (map, f) => [...map.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(f);
   const tables = {
     modelPages: T.pagesOut,
-    paidAccess: m2o(T.db.paidAccess, ([modelId, deadline]) => mark({ modelId, deadline })),
+    paidAccess: m2o(T.db.paidAccess, ([modelId, { deadline, versionIds }]) =>
+      mark({ modelId, deadline, versionIds })
+    ),
     coverImages: m2o(
       T.db.coverImages,
       ([id, row]) => row ?? { id, userId: null, modelVersionId: null, modelId: null }

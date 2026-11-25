@@ -128,10 +128,11 @@ func newAssocEnv(rows ...testRow) *assocEnv {
 					if d != nil {
 						v = *d
 					}
-					out = append(out, []any{id, v})
+					// The gated version ids: read only under Hide Paid, which this procedure never sets.
+					out = append(out, []any{id, v, nil})
 				}
 			}
-			return testkit.NewRows([]string{"modelId", "deadline"}, out...), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}, out...), nil
 		}},
 		{Match: `AS full_mv(id)`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			e.mu.Lock()
