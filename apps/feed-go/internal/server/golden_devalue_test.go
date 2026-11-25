@@ -57,7 +57,7 @@ func TestGoldenDevalueInfinite(t *testing.T) {
 }
 
 func TestGoldenDevalueModelGetAll(t *testing.T) {
-	goldenDevalueRun(t, "model-getall", goldenMinModels, 27, goldenDevalueModels)
+	goldenDevalueRun(t, "model-getall", goldenMinModels, 39, goldenDevalueModels)
 }
 
 // goldenDevalueRun computes every served fixture of dir as a capable web client on a pool with

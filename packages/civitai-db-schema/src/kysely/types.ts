@@ -342,6 +342,11 @@ export type AppAccessRequest = {
   createdAt: Generated<Timestamp>;
   reviewedAt: Timestamp | null;
   reviewedById: number | null;
+  /**
+   * moderator | system (CHECK `AppAccessRequest_reviewSource_check`). Who decided the row, kept
+   * apart from `reviewedById`, which a deleted moderator account sets NULL. NULL while pending.
+   */
+  reviewSource: string | null;
 };
 export type AppAssistantSessionLink = {
   id: Generated<number>;

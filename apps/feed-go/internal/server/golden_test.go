@@ -50,8 +50,8 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 87
-	goldenMinModels   = 44
+	goldenMinInfinite = 99
+	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -111,6 +111,17 @@ type goldenFixture struct {
 		// (FEED_GO_GETALL_SERVE_INPUT_IDS / _FOLLOWED; absent: off, the fixture's shape falls back).
 		ServeInputIDs      bool `json:"serveInputIds"`
 		ServeInputFollowed bool `json:"serveInputFollowed"`
+		// ServeHidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID (absent: off, Hide Paid falls back).
+		ServeHidePaid bool `json:"serveHidePaid"`
+		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
+		// off, an owner's user-cosmetics miss falls back).
+		ServeUserCosmeticsMiss bool `json:"serveUserCosmeticsMiss"`
+		// ServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (model-getall/; absent: off, an
+		// owner's creator-membership miss falls back).
+		ServeMembershipMiss bool `json:"serveMembershipMiss"`
+		// ServePublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY (infinite/ fixtures; absent:
+		// off, the fixture's `publishedOnly` falls back).
+		ServePublishedOnly bool `json:"servePublishedOnly"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -358,6 +369,14 @@ type goldenDB struct {
 		ModelID int `json:"modelId"`
 		TagID   int `json:"tagId"`
 	} `json:"tagsOnModels"`
+	// Subscriptions are the CustomerSubscription rows (with their product's metadata, both as JSON
+	// text) getValidCreatorMembershipMap's origin read for a model-getall fixture's cold membership
+	// keys, after its status filter.
+	Subscriptions []struct {
+		UserID          int    `json:"userId"`
+		Metadata        string `json:"metadata"`
+		ProductMetadata string `json:"productMetadata"`
+	} `json:"subscriptions"`
 	// OfficialModels are the official, published models getOfficialModelIds' fetchFn reads (a fixture
 	// whose request reads the official-models entry).
 	OfficialModels []struct {
@@ -379,8 +398,9 @@ type goldenDB struct {
 		} `json:"contributors"`
 	} `json:"collections"`
 	PaidAccess []struct {
-		ModelID  int        `json:"modelId"`
-		Deadline goldenTime `json:"deadline"`
+		ModelID    int        `json:"modelId"`
+		Deadline   goldenTime `json:"deadline"`
+		VersionIDs []int      `json:"versionIds"`
 	} `json:"paidAccess"`
 	CoverImages []struct {
 		ID             int `json:"id"`
@@ -1534,7 +1554,8 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 		Now:            nowFn,
 	}
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
-		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn}}
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
+		Ports:       feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly}}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
@@ -1892,10 +1913,10 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 			var rows [][]any
 			for _, p := range db.PaidAccess {
 				if goldenHas(goldenInts(args[0]), p.ModelID) {
-					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline)})
+					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline), p.VersionIDs})
 				}
 			}
-			return testkit.NewRows([]string{"modelId", "deadline"}, rows...), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}, rows...), nil
 		}},
 		{Match: `FROM "Image" i`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -1912,6 +1933,24 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 		{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"modelId", "imageId"}), nil
 		}},
+		// userCosmeticCache's lookup (a cold-user-cosmetics fixture): the owners' equipped cosmetics not
+		// equipped to an entity, then the creator-made check of withheldCosmeticIDs (the fixtures'
+		// cosmetics have no creator, so its rows are none).
+		{Match: `FROM "UserCosmetic" WHERE "userId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.UserCosmetics {
+				if goldenHas(goldenInts(args[0]), r.UserID) && r.Equipped && r.EquippedToID == nil {
+					rows = append(rows, []any{r.UserID, r.CosmeticID, goldenPtr(r.Data)})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "cosmeticId", "data"}, rows...), nil
+		}},
+		{Match: `FROM "CosmeticShopItem" si`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"cosmeticId", "addedById", "status", "meta", "rejectionReason", "createdById"}), nil
+		}},
+		{Match: `SELECT id, flags FROM "Cosmetic"`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"id", "flags"}), nil
+		}},
 		// `followed`'s read of the viewer's Follow rows (hydrate.Sources.FollowedUserIDs).
 		{Match: `FROM "UserEngagement"`, Rows: func(args []any) (*testkit.Rows, error) {
 			g.mu.Lock()
@@ -1924,6 +1963,17 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 				}
 			}
 			return testkit.NewRows([]string{"userId", "targetUserId"}, rows...), nil
+		}},
+		// getValidCreatorMembershipMap's origin (a cold membership key): the fixture's subscription rows
+		// of the ids asked.
+		{Match: `FROM "CustomerSubscription" cs`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.Subscriptions {
+				if goldenHas(goldenInts(args[0]), r.UserID) {
+					rows = append(rows, []any{int64(r.UserID), r.Metadata, r.ProductMetadata})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "metadata", "productMetadata"}, rows...), nil
 		}},
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
@@ -2177,7 +2227,7 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 	blocked := &feed.BlockedTags{Cache: env.cache}
 	// As main: the model feed shares the miss computation.
 	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons),
-		WriteBack: goldenWrites(writeBack)}
+		WriteBack: goldenWrites(writeBack), TierMetadataKey: "tier"}
 	if writeBack {
 		compute.Primary = db
 	}
@@ -2195,7 +2245,9 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
 			VisibleDecorationEvents: events,
-			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed},
+			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed, HidePaid: fx.Config.ServeHidePaid},
+			ServeUserCosmeticsMiss:  fx.Config.ServeUserCosmeticsMiss,
+			ServeMembershipMiss:     fx.Config.ServeMembershipMiss,
 		},
 		Now: env.now,
 	}

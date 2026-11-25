@@ -107,6 +107,9 @@ type Query struct {
 	// `generation`); Pending is `pending: true` (UNSUPPORTED_FLAGS, after `requiringMeta`).
 	HasPrioritizedUserIDs bool
 	Pending               bool
+	// PublishedOnly is `publishedOnly: true` (UNSUPPORTED_FLAGS, after `pending`): image.getInfinite
+	// sends it only without a `userId` (beside one it routes to Postgres, or the handler withdrew it).
+	PublishedOnly bool
 	// Techniques is the input's `techniques` as sent; the positive ids are sent (after `tools`), in
 	// order and with repeats. Unlike `tags`, a list of only impossible ids is not refused: no
 	// `techniques` is sent.
@@ -248,6 +251,9 @@ func Map(q Query) (string, *Refusal) {
 	}
 	if q.Pending {
 		return skip("flag:pending")
+	}
+	if q.PublishedOnly {
+		return skip("flag:publishedOnly")
 	}
 	// `[...postIds, postId]`: the completion's list, then the input's own post.
 	postIDs := positive(append(append([]int(nil), q.PostIDs...), q.PostID))

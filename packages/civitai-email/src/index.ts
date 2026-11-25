@@ -13,7 +13,15 @@ export {
   emailSendRecord,
   MAIL_CLASSES,
   SEND_ID_HEADER,
+  resolveSendId,
+  isSendId,
 } from './client';
+export {
+  createRemoteSendRecorder,
+  EMAIL_EVENTS_INTERNAL_PATH,
+  REMOTE_RECORDER_TIMEOUT_MS,
+} from './remote-recorder';
+export type { RemoteSendRecorderOptions } from './remote-recorder';
 export type {
   SendEmailInput,
   SendEmailStrictInput,

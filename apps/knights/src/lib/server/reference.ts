@@ -1,6 +1,7 @@
 import type { Kysely, Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { REFERENCE_POOL, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
+import { REFERENCE_POOL, REFERENCE_STATUS } from '@civitai/db/knights';
+import { servableImage } from './image-gate';
 import { skillCheckEligible } from './skill-check/eligible';
 
 export type Pool = (typeof REFERENCE_POOL)[keyof typeof REFERENCE_POOL];

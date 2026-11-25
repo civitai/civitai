@@ -406,8 +406,8 @@ or "no row") is also kept in process for 10 s (at most 50 000 ids; expired ones 
 once a second, and while it is full of live ones a new id is not kept), so the same miss within seconds
 sends no query: without a write, Node's next fill is the only thing that would otherwise end the
 repeats. For a written-back cache nothing is kept (the written entry answers repeats). Every computed cache
-is kept but the image meta (§13) and the user follows (§14.2: the viewer's own follow set, read back
-after they change it): the tag ids, model frames, model decorations, model data, model
+is kept but the image meta (§13), the user follows (§14.2: the viewer's own follow set, read back
+after they change it) and the creator memberships (§15.2.6: Node keeps no per-pod copy): the tag ids, model frames, model decorations, model data, model
 tags and the official models too, as none depends on the viewer
 and Node already serves tag ids from a per-process copy for longer than 10 s. The kept answer is a
 §9 divergence.
@@ -1168,6 +1168,78 @@ read), the served share (2) and the DB reads per page (3) both step up at that d
 reclassification, not Go serving better or reading more: a window that spans the deploy mixes the two
 definitions, so read both figures over a window that begins after it.
 
+### 7.2 Serve-side parity (`FEED_GO_SERVE_PARITY_SAMPLE_RATE`, default 0 = off)
+
+The shadow comparison needs Node to serve the request. Once a tRPC route is served from Go for
+every user, Node answers only the fallbacks, and the body parity of what Go serves goes dark. The
+serve-side sampler (`internal/server/serveparity.go`) keeps it lit from the Go side: for a sampled
+fraction of the requests this service **served** (`served` / `served_empty`) on `as-posts`,
+`infinite` and `model-getall`, it replays the same request to the Node app and compares Node's body
+with what Go served.
+
+- **Off the latency path.** The sample is decided after `trpc.WriteResult`; it copies the served
+  superjson envelope (an answer written as devalue keeps its value, encoded as superjson in the
+  background, the format both the shadow compute and Node's replay answer use) and the request's
+  method, URL, host, client address and headers, before the answer's buffer is released. The replay
+  runs in its own goroutine after the handler has finished with the response and never touches it:
+  a replay that fails, times out or panics changes nothing the client received.
+- **Upstream and viewer.** The replay goes through the fallback proxy code to the same Node app as a
+  hand-back (`FEED_GO_FALLBACK_URL`), but its own instance, so its failures are counted as its
+  outcome, never in `feed_go_fallback_proxy_errors_total`. It carries the original's headers,
+  cookies included, so Node resolves the same session and computes for the same viewer; the
+  original `Accept-Encoding` is dropped so the transport negotiates (and decodes) its own
+  compression, and so are the client's `traceparent`, `tracestate` and `baggage` (the replay is not
+  part of the user's request, and the span-less background context would inject nothing over
+  them). A request with an API credential (an `Authorization` header or a `?token=`) is never
+  replayed (`skipped_credential`): Node would resolve the key's own viewer and scopes again.
+- **Marked.** The replay carries `X-Feed-Go-Parity-Replay: 1` (`ParityReplayHeader`). The Node app
+  (`src/server/trpc/feed-go-parity-replay.ts`) then does not shadow-sample it (it would be posted
+  back here as a second comparison of the same request), writes it as superjson, never devalue,
+  and leaves it out of its per-procedure metrics (`civitai_app_trpc_procedure_duration_seconds`,
+  the call-traffic and caller counters, `src/server/trpc.ts`): after a procedure moves to Go the
+  replays would otherwise be a large share of what reads as Node's calls and latency there. Its
+  slow-procedure log still names a slow replay. The replay's compute is still real Node CPU.
+- **Bounds** (constants, no setting): at most `DefaultServeParityWorkers` (4) replays in flight per
+  pod, taken without waiting: a replay past it is dropped (`dropped_queue`), never queued. Each
+  replay, Node's answer and the comparison included, has `DefaultServeParityTimeout` (10 s;
+  `timeout`). A pod holding three quarters or more of its serve slots (`FEED_GO_MAX_IN_FLIGHT`)
+  skips the replay (`skipped_bulkhead`). Node's body is read up to the shadow sample's bound
+  (32 MiB; past it `bad_body`). Shutdown stops new replays and cancels and waits for the running
+  ones with the shadow samples; both count `skipped_closing` (a rollout, never `timeout`). A replay in flight makes any overlapping shadow
+  phase non-solo (§10.1).
+- **Outcomes.** `feed_go_serve_parity_total{feed_endpoint,outcome}`, one per sampled served request:
+  `compared`, `dropped_queue`, `skipped_bulkhead`, `skipped_credential`, `skipped_closing`,
+  `upstream_error` (Node unreachable or the connection broken), `upstream_status` (a status other
+  than 200, e.g. Node's own bulkhead's 429), `timeout`, `bad_body` (not a tRPC result). A body
+  that is a tRPC result but not a superjson envelope (Node answered devalue: a web release without
+  the marker) is `compared` with result `bad_request`.
+- **Same comparator, same series.** A compared replay runs `compareAnswer`, the function the shadow
+  path runs (`shadow.Compare`, the route's classifier, the response headers of
+  `shadow.ComparedHeaders` picked as the Node sampler picks them), into the same families:
+  `feed_go_shadow_compare_total`, `feed_go_shadow_field_diffs_total` and
+  `feed_go_shadow_response_total`, each with a `source` label, `shadow` for a Node sample and
+  `serve-parity` for a replay. A query that sums by `feed_endpoint` (the recorded parity ratios)
+  reads both; `source` splits them. The replay results are seeded at 0 per endpoint (`match`,
+  `fields`, `order`, `membership`, `bad_request`, and `match_empty` where an answer can be trivial).
+
+**Time skew runs the other way.** A shadow sample is computed by Go milliseconds AFTER Node answered;
+a replay is computed by Node AFTER Go answered: the replay starts once the served answer is written,
+and Node then runs its whole compute (session, gates, feed service, page query, hydration), so the
+gap is Go's write plus Node's own latency, typically longer than shadow's. Within it a page can
+legitimately move: a newly published post or image enters page 1 (`membership`), a reaction count
+or metric hash changes (`stats.*` value diffs), a re-ranked feed reorders (`order`). The comparator
+hides none of it. Read the replay's `membership` / `order` / `stats.*` categories against the same
+categories under `source="shadow"` over the same window (the shadow sampler keeps running on the
+fallbacks): a replay-only excess on busy first pages is the skew; one on later pages or on a field
+that does not change with time is a difference to explain. Node's per-entity caches are warm for a
+replay (Go wrote back, or Node fills them as it answers), so the replay cannot see the cold-cache
+gap §7 describes either; that is the Go-first probe's (§7.1).
+
+**Sizing the rate.** A replay costs Node one compute of the request, so the rate is a share of the
+served volume Node answers again: 0.5% of a route's served requests is 0.5% extra Node load on that
+procedure. Pick it so each route gets a few hundred compares per hour (the parity alert's guard is
+100 per hour), and raise it on the route that falls short.
+
 ## 8. Flags the Node path reads, and what this service does with them
 
 This service evaluates one Flipt flag, `image-metrics-dedicated-clickhouse`, itself (`internal/flipt`,
@@ -1301,7 +1373,7 @@ creation of a series at 1 that it misses: every `feed_go_requests_total` outcome
 reasons every compute can end in (`deadline`, `canceled`, `panic`; serve's `error` and `bulkhead`).
 Serving, the reasons a request alone decides (its method, region, user agent, credential form, path,
 query or input: `RequestFallbackReasons`) are seeded too, per public route and only those that route
-can produce (172 series): a comparison of fallback rates between a new process and an old one
+can produce (200 series): a comparison of fallback rates between a new process and an old one
 subtracts them, and with `increase()` a series born inside the window loses its first event. The
 other endpoint-specific fallback reasons and `feed_go_errors_total` (its `class` label is a set of
 about 70) stay lazy.
@@ -1947,7 +2019,7 @@ domain cap.
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `baseModels` (below); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); `include` values Node never reads (`count`, `report`: answered as the list without them); `include` holding `tags` (below); `followed` (below); `collectionId` with `collectionTagId` and the Recently Added sort (below); `ids`, `reactions` and `newCreators` (below); the stripped keys of §5.1 (`view`, `section`, `query`, `similarTo`, `useIndex`, `search`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId` and every other key in §2's right-hand column but `baseModels`, `followed`, `collectionId`, `collectionTagId`, `ids`, `reactions` and `newCreators` (`input-<key>`); `include` holding `metaSelect` or any other value not listed here (`input-include`, the entry in the safe detail; the gallery still falls back on `tags` too); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `baseModels` (below); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); `include` values Node never reads (`count`, `report`: answered as the list without them); `include` holding `tags` (below); `followed` (below); `collectionId` with `collectionTagId` and the Recently Added sort (below); `ids`, `reactions` and `newCreators` (below); `publishedOnly`, only behind its own switch (§14.2.1); the stripped keys of §5.1 (`view`, `section`, `query`, `similarTo`, `useIndex`, `search`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId` and every other key in §2's right-hand column but `baseModels`, `followed`, `collectionId`, `collectionTagId`, `ids`, `reactions` and `newCreators` (`input-<key>`), `publishedOnly` included while its switch is off (§14.2.1); `include` holding `metaSelect` or any other value not listed here (`input-include`, the entry in the safe detail; the gallery still falls back on `tags` too); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
 | `baseModels` | `z.string().array()`, read as sent (no list of names is consulted: the schema has no enum, and the match is on `ModelVersion."baseModel"` text). Feed path: the non-empty names, in order with repeats, as the feed query's `baseModels` after the POI exclusion (`.map(String).filter(Boolean)`, written as URLSearchParams writes it); the hydrate, and every Postgres read, binds the whole list into getAllImages' `EXISTS (… "ModelVersion" mv RIGHT JOIN "ImageResourceNew" ir … WHERE mv."baseModel" = ANY(…))`; the cache policy is unchanged (Node does not mark it personalized). `image-resource-use-write` would send these reads to the primary in Node; it is not mirrored (§8) | not a list, or an entry that is not a string (`input-invalid`: Node's BAD_REQUEST) |
 | `prioritizedUserIds` (the model page's showcase carousel: `modelVersionId`, the owner's id, `pending`, `include: []`) | with a `modelId` or `modelVersionId`, the Postgres page of `getAllImages`' prioritizeUser branch with the version cache off: no `ImageResourceNew` join (`p."modelVersionId" = <version>` when there is one, no model scope at all for a model alone), `i."userId" = ANY(<ids>)`, ordered `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`, the cursor column still the sort's (`nextCursor` is the look-ahead row's id), never cached; without a model, the feed path's empty page (the mapper refuses `input:prioritizedUserIds`); `[-1]` alone (the system user) with a version: Node's `hasSystemPosts` read on the replica (`SELECT id FROM "Post" WHERE "userId" = -1 AND "modelVersionId" = <version> LIMIT 1`); with a post, the branch above; without one, no creator clause and `IIF(i."userId" IN (-1), i.index, 1000),  ` ahead of the sort's own order | a truthy cursor (`prioritized-cursor`: Node's BAD_REQUEST); `[-1]` alone on a model without a version (`prioritized-system-user-no-version`: Node reads no post and sorts every visible image on the site by the `IIF`, with no model or creator clause; that unbounded sort is left to Node); `FEED_GO_PRIORITIZED_VERSION_CACHE` on (`prioritized-version-cache`); with a `modelVersionId`, a curated version or a failed showcase read (`prioritized-curated-showcase`) or no showcase entry without the miss computation (`prioritized-showcase-miss`; with it, a replica lookup: a row is `prioritized-curated-showcase`, a failed read `prioritized-showcase-miss-failed`) or an uncurated one past the cache's hour (`prioritized-showcase-stale`): the curated carousel is not ported (§16.9) |
 | `ids` | `z.array(z.number()).max(200)`, as sent; non-empty, always the Postgres path (`requiresImageDbPath`): `i."id" = ANY(<ids>::int[])` first in the WHERE clause, the sort's own order and cursor, the scope's cache policy. The answered images are then held by their own post's model (the handler's `withoutHeldFromViewer`, not for a moderator): `getHeldLevelsByPost` over the post→version and version→model caches and the gallery settings, and for a held model its owner (`SELECT id, "userId" FROM "Model"` on the replica); an image on a held model's post is kept only at a level intersecting the hold, or for the model's owner. An empty list is no filter and no routing (`?.length`) | not a list, a null, an entry that is not a number, or more than 200 (`input-invalid`); an entry that is not an int4 integer (`ids-not-int4`: Postgres refuses the bind); a held model without a level (`held-level-unset`); the gallery still falls back (`input-ids`) |
@@ -1964,6 +2036,32 @@ domain cap.
 | Pages | the feed's page and cursor, the empty-page answers; the Postgres page for a post, a collection or a model alone | a feed failure or non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`), a feed cursor on the Postgres path (`input-cursor`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`), a username the replica does not hold (`username-miss`) |
 | Hydration | as §2 (the same `hydrate.Sources.Page`, profile pictures skipped without the include, the votable tags read only with it) | as §2 |
 | Config | | no `FEED_SERVICE_URL` with the index mirror on (`index-feed-unconfigured`) |
+
+### 14.2.1 `publishedOnly` (behind its own switch, default off)
+
+`FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY` (default off) ports `publishedOnly`, the flag the
+own-content submit pickers send beside the viewer's own `userId` (the remix gallery, a challenge, add
+to collection). Off, a truthy `publishedOnly` is the `input-publishedOnly` fallback it always was,
+checked in the same order; on, it is computed on the public route and in the shadow alike
+(`feed.ParseInfiniteWith`, `feed.InfinitePorts`). It changes nothing while `FEED_GO_SERVE_INFINITE`
+is off, except what the shadow computes.
+
+- **Schema.** `z.boolean().optional()`, not coerced: a boolean is read as sent; a null or any other
+  value is the schema's BAD_REQUEST (`input-invalid`). `false` is no flag (as before the port).
+- **Withdrawal** (getInfiniteImagesHandler's `scopedInput`). Beside a `userId` that is not the
+  viewer's own (`unhatted.userId !== user?.id`; signed out or banned there is no viewer, so any
+  `userId`), the flag is dropped before anything reads it: the request is the creator's feed as
+  without it. Only `userId` is compared: a `username` scope keeps the flag.
+- **Routing.** Kept beside a `userId` (so the viewer's own), `requiresImageDbPath` sends the request
+  to Postgres: the creator's page of `getAllImages`, the scope's order and cursor (`i."id" DESC` for
+  Newest, the look-ahead row's id as `nextCursor`), no feed call. On that path `publishedOnly` only
+  suppresses the owner's scheduled carve-out, which needs `scheduled` (unported: `input-scheduled`),
+  so it adds no clause here. Kept without a `userId` (none, or a `username`), the request stays on
+  the feed path, where the mapper refuses it (`flag:publishedOnly`, after `pending`): the empty page
+  `{ items: [], nextCursor: undefined, source: 'feed' }`, after the `username` lookup (an unknown name
+  is still `username-miss`).
+- **Cache policy.** Unchanged: `publishedOnly` is not one of `isViewerScopedInfiniteFeed`'s inputs, so a
+  signed-out request (whose flag is always withdrawn or refused) keeps the public TTL.
 
 ### 14.3 Flags
 
@@ -2124,12 +2222,12 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2); `ids` and `followed`, each only behind its own switch (§15.2.4) | `query` (Meilisearch), `hidden`, `followed` and `ids` with their switches off (§15.2.4), `newCreators`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included, with its switch off (`input-ids`); with it on, an id JS `Number` does not read as an int4 integer (`model-ids`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2); `ids` and `followed`, each only behind its own switch (§15.2.4) | `query` (Meilisearch), `hidden`, `followed` and `ids` with their switches off (§15.2.4), `newCreators`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); `hidePaid` true with its switch off, the default (`input-hidePaid`, §15.2.7); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included, with its switch off (`input-ids`); with it on, an id JS `Number` does not read as an int4 integer (`model-ids`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read); a viewer the `personal-hot-lead` flag is on for on any page of a Hot feed Node leads, or one it could not be read for (`model-getall-personal-hot-lead`, `model-getall-personal-hot-lead-unknown`; temporary, §15.2.3) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Covers | the owner's image on the shown version, or located on another of the model's versions (§15.1 step 4); a chosen cover neither finds and that has no featured community showcase row for the model (Node's `withCommunityCovers` finds nothing either) | a chosen cover neither finds that has a Community, not-removed `ModelVersionShowcaseItem` row on a version of the model (`model-community-cover`: Node may serve that community image as the cover, §16.9) |
-| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics and memberships (`user-cosmetics-miss`, `membership-miss`), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics (`user-cosmetics-miss`; with its switch on, computed: §15.2.5) and memberships (`membership-miss`; with its switch on, computed: §15.2.6), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
 
 ### 15.2.1 Collections
 
@@ -2251,6 +2349,71 @@ changes anything while `FEED_GO_SERVE_MODEL_GETALL` is off, except what the shad
   it (§15.2.3).
 - **Cache policy.** Unchanged: a signed-in `followed` sets Node's `isPrivate`, which no header reads
   on this procedure (§15.2.1); a signed-in answer is never edge-cached either way.
+
+### 15.2.5 User-cosmetics misses (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off). Off, an owner whose `user-cosmetics`
+entry is absent (or undecodable) falls back (`user-cosmetics-miss`), as it always has here. On, the
+model page computes it as the image pages do (`hydrate.Sources.ModelPage` with
+`ComputeUserCosmetics`, `fillUserCosmetics`): `userCosmeticCache`'s lookup on the replica, one query
+for every owner the page misses, the creator-made cosmetics no holder may show dropped, each answer
+packed as Node's fetch packs it (`{userId, cosmetics, cachedAt}`, or a notFound marker for an owner
+with none equipped), single-flighted across concurrent requests and, when not written back, kept in
+process for 10 s (§3.1), and written back (SET NX, a day) only when `FEED_GO_CACHE_WRITEBACK` lists `user-cosmetics` and only for a miss Node
+would write too. It needs the miss computation (`FEED_GO_COMPUTE_MISSES`, default on); without it the
+miss still falls back. Under the Go-first probe the miss is recorded as one Go computes, as for the
+other computed caches. The switch decides the public route and the shadow alike.
+
+### 15.2.6 Creator-membership misses (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off). The metric-privacy step reads, for every owner
+a viewer would see a hidden count for, `getValidCreatorMembershipMap`
+(`src/server/services/creator-membership.service.ts`). Off, an owner whose packed boolean
+(`packed:caches:creator-membership-valid:<id>`) is absent falls back (`membership-miss`), as it
+always has here. On, the page runs the whole function (`hydrate.Sources.CreatorMembershipsComputed`):
+
+- **Misses.** An absent key, a value that is not a packed boolean, or, when the read fails, every
+  owner (Node's `mGet` is one command, so a failed read answers no owner from the cache).
+- **The origin** (`queryValidCreatorMembership`): one read of the owners' `CustomerSubscription` rows
+  whose status is none of `canceled`, `incomplete_expired`, `past_due`, `unpaid`, joined to their
+  `Product`, on the replica (Node's `dbRead`). A subscription whose metadata has a truthy
+  `renewalEmailSent` is skipped. Each product metadata goes through `subscriptionProductMetadataSchema`
+  and a Buzz purchase (`buzzPurchase`) is skipped. The tier is read under `TIER_METADATA_KEY` (the
+  app's own variable, from the same shared config, read as its `z.string().default('tier')` reads it:
+  `tier` only when unset; set empty, it is the empty key, so every tier is free), and the user's highest
+  tier by `constants.memberships.tierOrder` is kept. Valid is a tier that is neither free nor founder;
+  an owner with no row is not valid.
+- **The schema.** The metadata must be an object with `tier` one of the product tiers. Each optional
+  coerced number must be absent, a JSON number or a plain decimal string, within its bound. The
+  strings must be strings, the enums in their sets, and the boolean strings a boolean, a number or a
+  `z.stringbool` word. Anything else is `membership-shape`, and Node answers it. That covers what
+  Node's parse throws on (its 500), and the values Node would coerce (null, a boolean, a blank
+  string, an exponent), which are left to Node rather than coerced here. A `TIER_METADATA_KEY`
+  naming another schema field, or a non-string value under another key, is `membership-shape` too.
+- **Writes.** Each computed answer is written back with a plain `SET` (not NX) for 10 minutes
+  (`MEMBERSHIP_CACHE_TTL`), as Node's best-effort `redis.packed.set`. That happens only when
+  `FEED_GO_CACHE_WRITEBACK` lists `creator-memberships`. With write-back off, nothing is kept in
+  process either (unlike the other caches not written back, §3.1): Node keeps no per-pod copy, so
+  every miss reads the origin, and a membership busted by a subscription change is read anew.
+- **Failures.** A failed origin read is `membership-miss-failed`.
+- **Probe and shadow.** Under the Go-first probe a miss is recorded as computed and looked up on the
+  replica, never written. The switch decides the public route and the shadow alike. It needs the
+  miss computation (`FEED_GO_COMPUTE_MISSES`, default on); without it the miss still falls back. The
+  v1 models routes and `model.getAssociatedResourcesCardData` keep their own membership reads,
+  unchanged.
+
+### 15.2.7 Hide Paid (behind a switch, default off)
+
+Since civitai#9385 `getModelsRaw` keeps a gated model under Hide Paid when it has a Published version
+with no live gate (`freePublishedVersionExistsSql`; that version must also be Public when private
+models are hidden), drops the gated versions before it picks the card's version, and leaves the paid
+chip and deadline off. The port (`PageQuery.HidePaid` / `HidePrivate`, the `versionIds` column of
+`paidAccessGates`, `buildFeedItem`) is computed only with `FEED_GO_GETALL_SERVE_HIDE_PAID` on
+(`Ports.HidePaid`; serve, shadow and probe alike); off, a Hide Paid request is the `input-hidePaid`
+fallback (`ParseWith`, after every other input check). The gate read is getModelPaidAccessGates' one
+statement with its `array_agg(pa."entityId")`, read on every page. The SQL arm runs against Postgres in
+`TestIntegrationModelHidePaidFreeVersion`; the card is held to Node by the `hide-paid-*` golden
+fixtures.
 
 ### 15.3 Flags
 

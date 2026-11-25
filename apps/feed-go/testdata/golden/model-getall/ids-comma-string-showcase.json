@@ -545,7 +545,10 @@
     "paidAccess": [
       {
         "modelId": 5005,
-        "deadline": null
+        "deadline": null,
+        "versionIds": [
+          6008
+        ]
       }
     ],
     "coverImages": [
