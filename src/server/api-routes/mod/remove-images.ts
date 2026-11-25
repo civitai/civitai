@@ -6,7 +6,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
-import { handleBlockImages } from '~/server/services/image.service';
+import { getOpenImageReportIdsByImage, handleBlockImages } from '~/server/services/image.service';
+import { ReportReason } from '~/shared/utils/prisma/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -47,8 +48,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     let ids = imageIds;
     let held: ReturnType<typeof heldRemovalSummary> = [];
     if (imageIds?.length && !canConfirmReRemoval) {
+      // The image's open TOS reports ride on the hold, so a confirm actions them (as setTosViolation).
+      const reportIds = await getOpenImageReportIdsByImage(imageIds, ReportReason.TOSViolation);
       const hold = await holdRemovals(
-        imageIds.map((imageId) => ({ imageId, violationType, violationDetails })),
+        imageIds.map((imageId) => ({
+          imageId,
+          violationType,
+          violationDetails,
+          reportIds: reportIds.get(imageId) ?? [],
+        })),
         moderatorId ?? 0,
         'api.removeImages'
       );
