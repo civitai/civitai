@@ -43,6 +43,18 @@ var goldenInfinitePorts = map[string]goldenInfinitePort{
 			"published-only-own-username":      "input-publishedOnly",
 		},
 	},
+	"PostIDs": {
+		on: func(fx *goldenFixture) *bool { return &fx.Config.ServePostIDs },
+		fixtures: map[string]string{
+			"post-ids-signed-out":          "input-postIds",
+			"post-ids-cursor":              "input-postIds",
+			"post-ids-signed-in-oldest":    "input-postIds",
+			"post-ids-beside-post-id":      "input-postIds",
+			"post-ids-held-model":          "input-postIds",
+			"post-ids-taken-down-stranger": "input-postIds",
+			"post-ids-taken-down-owner":    "input-postIds",
+		},
+	},
 }
 
 // goldenInfinitePortCase is one fixture of one port.

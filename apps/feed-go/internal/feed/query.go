@@ -39,7 +39,8 @@ type ImagesQuery struct {
 	IsModerator    bool
 	// IDs is the feed-service hydrate (feedHydrateQuery): exactly these images, whatever their order.
 	IDs []int
-	// PostIDs is the gallery's post completion: only these posts' images.
+	// PostIDs is the gallery's post completion, or image.getInfinite's own `postIds`: only these
+	// posts' images.
 	PostIDs []int
 	// PostID is the input's own `postId` (the REST endpoint): `i."postId" = <postId>`.
 	PostID int

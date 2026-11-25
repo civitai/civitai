@@ -129,7 +129,7 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 	// A minor or SFW-only model's images are served only at its gallery's held level, and a taken-down
 	// model's not at all (its owner and moderators included, on this route).
 	if in.ModelID != 0 || in.ModelVersionID != 0 || in.PostID != 0 {
-		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID)
+		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -884,19 +884,25 @@ func SkipValue(metadata json.RawMessage) *float64 {
 // resolveImageModelIDs is resolveImageModelIds for a model, a version and a post: the named model, the
 // version's model and the post's version's model. ok is false when the named version or post cannot be
 // found (Node: null — withheld, and held at nothing).
-func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int) ([]int, bool, error) {
+func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int, postIDs []int) ([]int, bool, error) {
 	var listed []int
-	if postID != 0 {
-		posts, err := s.PostVersions(ctx, []int{postID})
+	if postID != 0 || len(postIDs) > 0 {
+		// `new Set(postIds)` then the `postId`: every listed post's version counts; only a `postId` the
+		// cache does not hold makes the selector unresolvable. (Unique drops a 0, which no post has.)
+		ids := hydrate.Unique(append(append([]int(nil), postIDs...), postID))
+		posts, err := s.PostVersions(ctx, ids)
 		if err != nil {
 			return nil, false, err
 		}
-		v, found := posts[postID]
-		if !found {
-			return nil, false, nil
+		if postID != 0 {
+			if _, found := posts[postID]; !found {
+				return nil, false, nil
+			}
 		}
-		if v != 0 {
-			listed = append(listed, v)
+		for _, id := range ids {
+			if v := posts[id]; v != 0 {
+				listed = append(listed, v)
+			}
 		}
 	}
 	var required []int
