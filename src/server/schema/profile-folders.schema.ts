@@ -7,6 +7,8 @@ export const profileFolderLimits = {
   rowName: 60,
   foldersPerRow: 12,
   showcase: 8,
+  /** The most items the owner's folder editor lists. */
+  editorItems: 1000,
   name: 30,
   description: 300,
 } as const;
@@ -48,6 +50,15 @@ export type SetFolderRowsInput = z.infer<typeof setFolderRowsInput>;
 
 export const getProfileFoldersInput = z.object({ userId: z.number().int().positive() });
 export type GetProfileFoldersInput = z.infer<typeof getProfileFoldersInput>;
+
+export const getProfileFolderInput = z.object({
+  userId: z.number().int().positive(),
+  folderId: z.number().int().positive(),
+});
+export type GetProfileFolderInput = z.infer<typeof getProfileFolderInput>;
+
+export const getFolderItemsInput = z.object({ folderId: z.number().int().positive() });
+export type GetFolderItemsInput = z.infer<typeof getFolderItemsInput>;
 
 export const folderRowsText = (rows: unknown) =>
   ((rows ?? []) as FolderRowSchema[])

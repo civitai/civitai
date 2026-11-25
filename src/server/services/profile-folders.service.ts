@@ -7,19 +7,15 @@ import type {
 } from '~/server/schema/profile-folders.schema';
 import { profileFolderLimits } from '~/server/schema/profile-folders.schema';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import type { FolderItemType } from '~/server/services/profile-folder-guard';
+import type { FolderCounts, FolderItemRef } from '~/server/services/profile-folder-reads.service';
+import { getFolderSummaries } from '~/server/services/profile-folder-reads.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwConflictError,
 } from '~/server/utils/errorHandling';
-import {
-  CollectionItemStatus,
-  CollectionMode,
-  CollectionReadConfiguration,
-  CollectionType,
-} from '~/shared/utils/prisma/enums';
+import { CollectionMode, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 
 /** Saves the caller's folder rows whole. Every folder in them must be one of the caller's. */
 export async function setFolderRows({
@@ -70,8 +66,9 @@ export type ProfileFolder = {
   description: string | null;
   read: CollectionReadConfiguration;
   hidden: boolean;
-  /** Up to the showcase cap, oldest first; the client hydrates them through the gated feeds. */
-  showcase: { type: FolderItemType; id: number }[];
+  counts: FolderCounts;
+  /** What its card shows: the showcased items, else the newest; hydrated through the gated feeds. */
+  preview: FolderItemRef[];
 };
 export type ProfileFolderRow = { id: string | null; name: string; folders: ProfileFolder[] };
 
@@ -80,11 +77,14 @@ export type ProfileFolderRow = { id: string | null; name: string; folders: Profi
  * folders open by link but are not listed. The owner and moderators get all of them. Folders in no
  * row come last, in an untitled row.
  */
-export async function getProfileFolders({
-  userId,
-  viewerId,
-  isModerator,
-}: GetProfileFoldersInput & { viewerId?: number; isModerator?: boolean }) {
+export async function getProfileFolders(
+  {
+    userId,
+    viewerId,
+    isModerator,
+  }: GetProfileFoldersInput & { viewerId?: number; isModerator?: boolean },
+  loadSummaries = getFolderSummaries
+) {
   const seesAll = viewerId === userId || !!isModerator;
   const [folders, profile] = await Promise.all([
     dbRead.collection.findMany({
@@ -100,31 +100,7 @@ export async function getProfileFolders({
     dbRead.userProfile.findUnique({ where: { userId }, select: { folderRows: true } }),
   ]);
 
-  const showcased = folders.length
-    ? await dbRead.collectionItem.findMany({
-        where: {
-          collectionId: { in: folders.map((folder) => folder.id) },
-          showcasedAt: { not: null },
-          status: CollectionItemStatus.ACCEPTED,
-        },
-        select: { collectionId: true, modelId: true, imageId: true, articleId: true },
-        orderBy: { showcasedAt: 'asc' },
-      })
-    : [];
-  const showcaseByFolder = new Map<number, ProfileFolder['showcase']>();
-  for (const item of showcased) {
-    const ref = item.modelId
-      ? { type: CollectionType.Model, id: item.modelId }
-      : item.imageId
-      ? { type: CollectionType.Image, id: item.imageId }
-      : item.articleId
-      ? { type: CollectionType.Article, id: item.articleId }
-      : null;
-    if (!ref) continue;
-    const list = showcaseByFolder.get(item.collectionId) ?? [];
-    if (list.length < profileFolderLimits.showcase) list.push(ref as ProfileFolder['showcase'][0]);
-    showcaseByFolder.set(item.collectionId, list);
-  }
+  const summaries = await loadSummaries(folders.map((folder) => folder.id));
 
   const storedRows = (profile?.folderRows ?? []) as FolderRowSchema[];
   const hiddenIds = new Set(
@@ -136,7 +112,8 @@ export async function getProfileFolders({
         (folder): ProfileFolder => ({
           ...folder,
           hidden: hiddenIds.has(folder.id),
-          showcase: showcaseByFolder.get(folder.id) ?? [],
+          counts: summaries.get(folder.id)?.counts ?? { Model: 0, Image: 0, Article: 0, total: 0 },
+          preview: summaries.get(folder.id)?.preview ?? [],
         })
       )
       .filter((folder) => seesAll || !folder.hidden)
@@ -157,5 +134,10 @@ export async function getProfileFolders({
   const unplaced = [...byId.values()].filter((folder) => !placed.has(folder.id));
   if (unplaced.length) rows.push({ id: null, name: '', folders: unplaced });
 
-  return { rows: rows.filter((row) => row.folders.length || seesAll) };
+  return {
+    rows: rows.filter((row) => row.folders.length || seesAll),
+    // The owner's editor saves over exactly these, so a save over newer rows is refused.
+    storedRows:
+      viewerId === userId ? (profile?.folderRows as FolderRowSchema[] | null) ?? null : null,
+  };
 }

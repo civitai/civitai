@@ -20,7 +20,6 @@ type CollectionRow = { id: number; userId: number; mode: string | null; read: st
 let collections: CollectionRow[];
 let models: { id: number; userId: number }[];
 let folderRows: unknown;
-let showcased: { collectionId: number; modelId: number }[];
 
 const matches = (row: Record<string, unknown>, where: Record<string, unknown> = {}) =>
   Object.entries(where).every(([key, condition]) => {
@@ -46,7 +45,6 @@ beforeEach(() => {
     { id: 2, userId: STRANGER },
   ];
   folderRows = null;
-  showcased = [];
   const findCollections = async ({ where }: { where: Record<string, unknown> }) =>
     collections
       .filter((c) => matches(c, where))
@@ -63,8 +61,6 @@ beforeEach(() => {
     folderRows = (data as { folderRows: unknown }).folderRows;
     return {};
   }) as never);
-  dbMock.dbRead.collectionItem.findMany.mockImplementation((async () =>
-    showcased.map((s) => ({ ...s, imageId: null, articleId: null }))) as never);
 });
 
 describe('assertFolderWriteAllowed', () => {
@@ -174,19 +170,29 @@ describe('setFolderRows', () => {
 describe('getProfileFolders', () => {
   beforeEach(() => {
     folderRows = [{ id: 'r1', name: 'Styles', folders: [{ id: 10 }, { id: 12, hidden: true }] }];
-    showcased = [{ collectionId: 10, modelId: 1 }];
   });
+  // Counts and card items come from SQL, covered in profile-folders.pglite.test.ts.
+  const summaries = async (ids: number[]) =>
+    new Map(
+      ids.map((id) => [
+        id,
+        {
+          counts: { Model: 1, Image: 0, Article: 0, total: 1 },
+          preview: [{ type: 'Model' as const, id: 1 }],
+        },
+      ])
+    );
   const folderIds = (result: Awaited<ReturnType<typeof getProfileFolders>>) =>
     result.rows.flatMap((row) => row.folders.map((folder) => folder.id));
 
   it('shows a visitor public folders that are not hidden', async () => {
-    const result = await getProfileFolders({ userId: OWNER, viewerId: STRANGER });
+    const result = await getProfileFolders({ userId: OWNER, viewerId: STRANGER }, summaries);
     expect(folderIds(result)).toEqual([10]);
-    expect(result.rows[0].folders[0].showcase).toEqual([{ type: 'Model', id: 1 }]);
+    expect(result.rows[0].folders[0].preview).toEqual([{ type: 'Model', id: 1 }]);
   });
 
   it('shows the owner every folder, unplaced ones in a trailing untitled row', async () => {
-    const result = await getProfileFolders({ userId: OWNER, viewerId: OWNER });
+    const result = await getProfileFolders({ userId: OWNER, viewerId: OWNER }, summaries);
     expect(folderIds(result)).toEqual([10, 12, 11]);
     expect(result.rows.at(-1)).toMatchObject({ id: null, name: '' });
   });
