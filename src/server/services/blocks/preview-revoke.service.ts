@@ -44,8 +44,10 @@ export const PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS = 120_000;
 /**
  * A queued revoke or hold release older than this (7 days) is dropped unsent. Longer than the
  * session cap on purpose: a ban's hold and an unban's hold release do not expire with a session,
- * so they must survive a long sandbox service outage. A late per-session revoke is harmless
- * (idempotent). The queue key's TTL is floored at the same bound.
+ * so they must survive a long sandbox service outage. A late per-session revoke cannot end a
+ * newer session: its preview id is never opened again while the id's `used` marker lives, and
+ * that marker outlives this bound (DIRECT_USED_MARKER_SECONDS, dev-tunnel.service.ts). The queue
+ * key's TTL is floored at the same bound.
  */
 export const PREVIEW_REVOKE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SEND_TIMEOUT_MS = 5_000;
