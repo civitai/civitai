@@ -817,20 +817,25 @@ export async function emailAppealResolution(input: {
   username: string;
   approved: boolean;
   imageIds: number[];
+  /** The appellant's user id, carried by the email's tracked links. */
+  userId?: number;
 }): Promise<void> {
   if (!input.imageIds.length) return;
   try {
     const comSafe = await comServableImageIds(input.imageIds);
     const base = (id: number) => (comSafe.has(id) ? civitaiAppUrl() : civitaiLinkUrl());
-    await appealResolutionEmail.send({
-      to: input.to,
-      username: input.username,
-      approved: input.approved,
-      items: input.imageIds.map((id) => ({
-        url: `${base(id)}/images/${id}`,
-        label: `Image #${id}`,
-      })),
-    });
+    await appealResolutionEmail.send(
+      {
+        to: input.to,
+        username: input.username,
+        approved: input.approved,
+        items: input.imageIds.map((id) => ({
+          url: `${base(id)}/images/${id}`,
+          label: `Image #${id}`,
+        })),
+      },
+      { userId: input.userId }
+    );
   } catch (e) {
     console.error('emailAppealResolution failed', {
       imageIds: input.imageIds,

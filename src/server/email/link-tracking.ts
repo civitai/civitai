@@ -1,6 +1,6 @@
 import { decode as decodeHtml, escape as escapeHtml } from 'he';
 import { safeReturnPath } from '@civitai/auth/client';
-import { isSendId, MAIL_CLASSES, type MailClass } from '@civitai/email';
+import { EMAIL_CLICK_PATH, isSendId, MAIL_CLASSES, type MailClass } from '@civitai/email';
 import { signEmailLink, verifyEmailLinkSignature } from '~/server/email/link-signing';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
@@ -22,7 +22,8 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
  * The plain-text part keeps its links as they are.
  */
 
-export const EMAIL_CLICK_PATH = '/api/email/click';
+// Declared in @civitai/email, whose link tracker accepts only a link rewritten to it.
+export { EMAIL_CLICK_PATH };
 /** Where a click with a broken or tampered link lands. */
 export const EMAIL_CLICK_FALLBACK_PATH = '/';
 
@@ -199,10 +200,38 @@ export function trackEmailLinks(html: string, ctx: EmailLinkContext, firstPositi
   if (!verifiable(ctx)) return html;
   let position = firstPosition - 1;
   return html.replace(ANCHOR_HREF, (whole, open: string, href: string, close: string) => {
-    // As a browser reads an attribute: a legacy entity with no `;` (`&not`, `&reg`) stays literal.
-    const to = sitePathOf(decodeHtml(href, { isAttributeValue: true }));
-    if (!to || isNeverWrapped(to) || position >= MAX_POSITION) return whole;
+    const tracked = trackedHref(href, ctx, position + 1);
+    if (tracked === null) return whole;
     position++;
-    return `${open}${escapeHtml(getEmailClickUrl({ ...ctx, position, to }))}${close}`;
+    return `${open}${escapeHtml(tracked)}${close}`;
+  });
+}
+
+/**
+ * The tracked link for one href as written in an HTML attribute, at `position`, or null when it
+ * cannot be tracked (off the site, `mailto:`, one of NEVER_WRAPPED_PATHS, too long to sign, or
+ * past the last position). The one rule trackEmailLinks and trackEmailHrefs both apply.
+ */
+function trackedHref(href: string, ctx: EmailLinkContext, position: number): string | null {
+  // As a browser reads an attribute: a legacy entity with no `;` (`&not`, `&reg`) stays literal.
+  const to = sitePathOf(decodeHtml(href, { isAttributeValue: true }));
+  if (!to || isNeverWrapped(to) || position > MAX_POSITION) return null;
+  return getEmailClickUrl({ ...ctx, position, to });
+}
+
+/**
+ * trackEmailLinks for another app's email (the moderator app signs nothing itself): `hrefs` as
+ * written in its HTML attributes, in document order, each returned as its tracked link (not
+ * HTML-escaped) or exactly as given, numbered from 1 among the tracked ones. All come back as given
+ * when the send's own tags would not verify.
+ */
+export function trackEmailHrefs(hrefs: readonly string[], ctx: EmailLinkContext): string[] {
+  if (!verifiable(ctx)) return [...hrefs];
+  let position = 0;
+  return hrefs.map((href) => {
+    const tracked = trackedHref(href, ctx, position + 1);
+    if (tracked === null) return href;
+    position++;
+    return tracked;
   });
 }

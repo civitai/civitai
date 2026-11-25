@@ -963,6 +963,7 @@ async function runAppealCascade(
         username: appellant.username ?? 'User',
         approved,
         imageIds: [imageId],
+        userId: appeal.userId,
       });
   }
 }
@@ -1003,6 +1004,7 @@ export async function sendBulkAppealEmails(
         username: u.username ?? 'User',
         approved,
         imageIds,
+        userId,
       });
   }
 }
