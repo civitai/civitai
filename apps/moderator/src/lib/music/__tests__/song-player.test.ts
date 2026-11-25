@@ -123,6 +123,29 @@ describe('the moderator song player', () => {
     expect([first.paused, second.paused, second.currentTime]).toEqual([true, false, 30]);
   });
 
+  it('playAt tells the card it asked for play at that time, and plays nothing on a card that refuses', () => {
+    const player = createSongPlayer(memoryStore());
+    const media = fakeMedia(player);
+    const asked: number[] = [];
+    let failed = false;
+    player.register(7, media, 'card', {
+      wantPlay: (at) => {
+        if (failed) return false;
+        asked.push(at);
+        return true;
+      },
+    });
+    expect(player.playAt(7, 42)).toBe(true);
+    expect(asked).toEqual([42]);
+    expect(media.plays).toBe(1);
+
+    failed = true;
+    media.pause();
+    expect(player.playAt(7, 10)).toBe(false);
+    expect(media.plays).toBe(1);
+    expect(media.currentTime).toBe(42);
+  });
+
   it('stops a song whose card leaves the page', () => {
     const player = createSongPlayer(memoryStore());
     const a = fakeMedia(player);
@@ -149,6 +172,21 @@ describe('createPlayIntent', () => {
     intent.requested();
     intent.paused();
     expect(intent.resumeAfterSwap()).toBe(false);
+  });
+
+  // A report's time or a lyric line asked for play at a time the CDN copy never reached: the stored
+  // copy starts there, not at 0:00. Once the song is playing, a later swap goes on from wherever.
+  it('resumes at the time asked for until the song has started', () => {
+    const intent = createPlayIntent();
+    intent.requested(84);
+    expect(intent.resumeAt()).toBe(84);
+    intent.started();
+    expect(intent.resumeAt()).toBeNull();
+    intent.requested();
+    expect(intent.resumeAt()).toBeNull();
+    intent.requested(30);
+    intent.paused();
+    expect(intent.resumeAt()).toBeNull();
   });
 });
 
@@ -243,6 +281,12 @@ describe('report markers on the seek bar', () => {
       200
     );
     expect(marks).toEqual([{ timeSec: 200, percent: 100, title: 'Report at 3:20: Spam' }]);
+  });
+
+  it("keeps a report filed at the stored length on the bar's end when the file is a little shorter", () => {
+    expect(seekMarkers([{ timeSec: 200, label: 'Spam' }], 199.4)).toEqual([
+      { timeSec: 200, percent: 100, title: 'Report at 3:20: Spam' },
+    ]);
   });
 
   it('draws nothing while the song length is unknown', () => {

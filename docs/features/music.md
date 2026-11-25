@@ -202,8 +202,11 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   "Lyrics · click a line to seek"), and its length, genre, post, rating and remix setting. On the right:
   each report (reason, reporter, time in the song when it has one, the reporter's words); a report's
   time is a chip that plays the song from there, and each reported time is a red marker on the seek
-  bar (hover names the reasons, a click plays from it; a report without a time has no chip or marker,
-  and a time past the song's length draws none). Then the cover
+  bar (hover names the reasons, a click on the dot above the track plays from it, and the thumb still
+  drags across a marker; a report without a time has no chip or marker, and one at the stored length
+  stays at the end when the file reads a little shorter). A chip or marker asks the song's card to
+  play: a card whose file failed plays nothing, and a song that falls back to the stored copy starts
+  there at the time asked for. Then the cover
   with its rating and scan state, the automated checks as states only (passed, held, blocked, not
   finished, failed), the generation details the song stored (model, seed, prompt, music description,
   lyrics source) and the owner (account age, removed songs, active strikes, other reported songs).

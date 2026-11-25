@@ -88,7 +88,13 @@
   );
 
   function register(el: HTMLAudioElement) {
-    const unregister = songPlayer.register(item.id, el, ownKey);
+    const unregister = songPlayer.register(item.id, el, ownKey, {
+      wantPlay: (at) => {
+        if (mode === 'failed') return false;
+        intent.requested(at);
+        return true;
+      },
+    });
     volume = el.volume;
     return unregister;
   }
@@ -97,10 +103,12 @@
     const id = item.id;
     if (mode === 'cdn') {
       const resume = intent.resumeAfterSwap();
+      const at = intent.resumeAt();
       fallback = { id, mode: 'retracted' };
       if (!resume) return;
       await tick();
-      intent.requested();
+      intent.requested(at ?? undefined);
+      if (audio && at != null) audio.currentTime = at;
       audio?.play().catch(() => undefined);
       return;
     }
@@ -189,10 +197,7 @@
           i === playing && 'bg-blue-500/10 font-medium text-white'
         )}
         title="Play from {formatPlaybackTime(at)}"
-        onclick={() => {
-          intent.requested();
-          playSongAt(item.id, at, ownKey);
-        }}
+        onclick={() => playSongAt(item.id, at, ownKey)}
       >
         <span
           class={cn(
@@ -264,19 +269,21 @@
         />
         {#if mode !== 'failed'}
           {#each seekMarkers(reports, lengthOf(song)) as mark (mark.timeSec)}
-            <!-- A wider hit area than the 3px line it draws. -->
+            <!-- The line lets pointer events through to the slider, so the thumb still drags across
+                 a marker; the marker is clicked by the cap above the track. -->
+            <span
+              class="pointer-events-none absolute top-1/2 h-4 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-sm bg-red-500"
+              style:left="{mark.percent}%"
+            ></span>
             <button
               type="button"
-              class="group absolute top-1/2 flex h-4 w-2.5 -translate-x-1/2 -translate-y-1/2 justify-center"
+              class="group absolute -top-1 flex h-2.5 w-3 -translate-x-1/2 justify-center"
               style:left="{mark.percent}%"
               title={mark.title}
               aria-label={mark.title}
-              onclick={() => {
-                intent.requested();
-                playSongAt(item.id, mark.timeSec, ownKey);
-              }}
+              onclick={() => playSongAt(item.id, mark.timeSec, ownKey)}
             >
-              <span class="h-full w-[3px] rounded-sm bg-red-500 group-hover:bg-red-400"></span>
+              <span class="size-2 rounded-full bg-red-500 group-hover:bg-red-400"></span>
             </button>
           {/each}
         {/if}
@@ -336,7 +343,10 @@
         intent.paused();
       }}
       onwaiting={() => loadEvent('waiting')}
-      onplaying={() => loadEvent('playing')}
+      onplaying={() => {
+        loadEvent('playing');
+        intent.started();
+      }}
       oncanplay={() => loadEvent('canplay')}
       onvolumechange={(e) => {
         volume = e.currentTarget.volume;
