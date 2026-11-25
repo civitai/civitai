@@ -16,10 +16,12 @@
  * - `scan-locks`: the text scan's locks. The lock goes; the scan's marker stays, as on any unlocked
  *   scan rating, so the owner still cannot untick mature while the text stands.
  * - `profanity-locks`: the save-time profanity filter's locks. The lock and the filter's marker go
- *   (the marker is parked in the record), and the caller then re-scans the changed ids with
- *   `text-scan-rescan` (`force: true`, as the scan's earlier verdict was skipped under the lock). An
- *   R+ read stamps the scan's own marker; a clean read leaves the rating as it is. A model not rated
- *   mature keeps its lock: a re-scan would rate it.
+ *   (the marker is parked in the record), and the same call submits a forced text scan of each changed
+ *   id (the scan's earlier verdict was skipped under the lock), at most 200 a call. An R+ read stamps
+ *   the scan's own marker; a clean read leaves the rating as it is. Each scan's outcome is recorded on
+ *   the row (`meta.nsfwLockBackfill.scan`) and any id not submitted is listed in `scans.notSubmitted`.
+ *   A model not rated mature keeps its lock: a re-scan would rate it. A revert skips a model whose
+ *   rating changed since the unlock, and reports it in `skippedRatingChanged`.
  *
  * Excluded, and left locked: a model a moderator ruled on since the lock, one with a pending lock
  * review, a minor or poi model, one with a real-person or minor detection still pending, one already
@@ -27,15 +29,17 @@
  * hold or a SexualMinor ban.
  */
 import { Prisma } from '@prisma/client';
+import pLimit from 'p-limit';
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { modelDetectionHeldSql } from '~/server/services/lock-review.service';
 import { pendingMinorHashMatchIdsSql } from '~/server/services/minor-hash.service';
-import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { bustPublicModelResponseCache } from '~/server/services/public-model-response-cache';
 import { MODERATOR_NSFW_LOCK_ACTIVITIES } from '~/server/services/rating-review.entities';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { scanEntity } from '~/server/services/text-scan/submit';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { SCAN_RATING_SOURCES } from '~/server/utils/minor-flag-meta';
 
@@ -194,15 +198,24 @@ export async function unlockLocks(bucket: Bucket, ids: number[]) {
 }
 
 /**
+ * A profanity unlock whose model has a different rating now. A moderator who changes only the rating
+ * logs no ModActivity, so a change since the unlock, by anyone, wins over a revert: such a model is
+ * left as it is and reported (`ratingChangedSinceUnlock`). Compared as jsonb, so an unreadable
+ * `priorNsfw` counts as changed and never throws.
+ */
+const ratingChangedSql = Prisma.sql`(m.meta->'nsfwLockBackfill'->'priorNsfw') IS DISTINCT FROM to_jsonb(m.nsfw)`;
+
+/**
  * What a revert of the bucket still finds as the unlock left it. A scan lock: its scan marker is
- * there. A profanity lock: no nsfw lock since, and no marker but the one the re-scan stamped after the
- * unlock (an unreadable time counts as not).
+ * there. A profanity lock: the rating it had, no nsfw lock since, and no marker but the one the
+ * re-scan stamped after the unlock (an unreadable time counts as not).
  */
 const unlockedStateSql = (bucket: Bucket) =>
   bucket === 'scan-locks'
     ? Prisma.sql`m.meta->'systemNsfwLock'->>'source' = ANY(${[...SCAN_RATING_SOURCES]}::text[])`
     : Prisma.sql`
-      NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+      NOT ${ratingChangedSql}
+      AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
       AND jsonb_typeof(m.meta->'nsfwLockBackfill'->'priorSystemNsfwLock') = 'object'
       AND (
         m.meta->'systemNsfwLock' IS NULL
@@ -229,6 +242,19 @@ const revertableSql = (bucket: Bucket) => Prisma.sql`
   AND NOT ${moderatorRuledSinceSql(Prisma.sql`m.meta->'nsfwLockBackfill'->>'at'`)}
 `;
 
+/** Profanity unlocks a revert skips because the rating changed since: the count, and the first ids. */
+export async function ratingChangedSinceUnlock() {
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT m.id FROM "Model" m
+    WHERE jsonb_typeof(m.meta) = 'object'
+      AND m.meta->'nsfwLockBackfill'->>'bucket' = 'profanity-locks'
+      AND (m.meta->'nsfwLockBackfill'->>'revertedAt') IS NULL
+      AND ${ratingChangedSql}
+    ORDER BY m.id
+  `;
+  return { count: rows.length, ids: rows.slice(0, 100).map((r) => r.id) };
+}
+
 export async function nextRevertBatch(bucket: Bucket, afterId: number, limit: number) {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT m.id FROM "Model" m
@@ -241,18 +267,15 @@ export async function nextRevertBatch(bucket: Bucket, afterId: number, limit: nu
 
 /**
  * Puts back what the unlock lifted: the prior locks, in their order, then any lock set since. A
- * profanity lock also gets back its exact marker and its prior rating. Marks the record reverted, so
- * neither a second revert nor a later unlock run touches the model.
+ * profanity lock also gets back its exact marker; its rating is the prior one, or it is not reverted.
+ * Marks the record reverted, so neither a second revert nor a later unlock run touches the model.
  */
 export async function revertLocks(bucket: Bucket, ids: number[]) {
   if (!ids.length) return [];
-  const restoresMarker = bucket === 'profanity-locks';
-  const nsfw = restoresMarker
-    ? Prisma.sql`COALESCE((m.meta->'nsfwLockBackfill'->>'priorNsfw')::boolean, m.nsfw)`
-    : Prisma.sql`m.nsfw`;
-  const meta = restoresMarker
-    ? Prisma.sql`(m.meta || jsonb_build_object('systemNsfwLock', m.meta->'nsfwLockBackfill'->'priorSystemNsfwLock'))`
-    : Prisma.sql`m.meta`;
+  const meta =
+    bucket === 'profanity-locks'
+      ? Prisma.sql`(m.meta || jsonb_build_object('systemNsfwLock', m.meta->'nsfwLockBackfill'->'priorSystemNsfwLock'))`
+      : Prisma.sql`m.meta`;
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     UPDATE "Model" m
     SET "lockedProperties" = ARRAY(
@@ -264,7 +287,6 @@ export async function revertLocks(bucket: Bucket, ids: number[]) {
             GROUP BY p
           ) merged ORDER BY o
         ),
-        nsfw = ${nsfw},
         meta = jsonb_set(${meta}, '{nsfwLockBackfill,revertedAt}', to_jsonb(now()))
     WHERE m.id = ANY(${ids}::int[]) AND ${revertableSql(bucket)}
     RETURNING m.id
@@ -272,50 +294,142 @@ export async function revertLocks(bucket: Bucket, ids: number[]) {
   return rows.map((r) => r.id);
 }
 
-const writeEffects = { updateModelNsfwLevels, bustPublicModelResponseCache };
+/** The profanity-locks batch: one forced scan per changed id, as many as one text-scan-rescan call. */
+export const PROFANITY_BATCH_LIMIT = 200;
+
+/**
+ * A forced text scan of model `id`, as `text-scan-rescan` submits it: `submitted`, or why not. Only
+ * an `active` model is submitted; elsewhere the save-time profanity filter still runs on each save.
+ */
+async function scanModelText(id: number): Promise<string> {
+  const mode = await getTextScanMode('Model', id);
+  if (mode !== 'active') return `not-active/${mode}`;
+  try {
+    const scan = await scanEntity({ entityType: 'Model', entityId: id, force: true });
+    return scan.status === 'skipped' ? `skipped/${scan.reason}` : scan.status;
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-nsfw-lock-backfill',
+      message: 'scan submit threw',
+      payload: { id, error: (e as Error).message },
+    });
+    return 'threw';
+  }
+}
+
+/**
+ * Records each scan outcome on the unlock's record (`meta.nsfwLockBackfill.scan`), so a model whose
+ * scan was not submitted shows on the row as well as in the response.
+ */
+export async function recordScans(outcomes: { id: number; status: string }[]) {
+  if (!outcomes.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = jsonb_set(m.meta, '{nsfwLockBackfill,scan}',
+      jsonb_build_object('status', o.status, 'at', now()))
+    FROM unnest(${outcomes.map((o) => o.id)}::int[], ${outcomes.map((o) => o.status)}::text[])
+      AS o(id, status)
+    WHERE m.id = o.id AND jsonb_typeof(m.meta->'nsfwLockBackfill') = 'object'
+  `;
+}
+
+/**
+ * Submits the forced scan of every model a profanity unlock changed, in the same call, since its owner
+ * can untick mature once the lock and the filter's marker are gone and until a scan stamps its own.
+ */
+async function scanUnlocked(ids: number[], scan: (id: number) => Promise<string>) {
+  const limit = pLimit(2);
+  const outcomes = await Promise.all(
+    ids.map((id) => limit(async () => ({ id, status: await scan(id).catch(() => 'threw') })))
+  );
+  await recordScans(outcomes);
+  const byStatus = outcomes.reduce<Record<string, number>>((acc, o) => {
+    acc[o.status] = (acc[o.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const notSubmitted = outcomes.filter((o) => o.status !== 'submitted').map((o) => o.id);
+  return { byStatus, notSubmitted };
+}
+
+const writeEffects = { bustPublicModelResponseCache, scanModelText };
 
 /** The endpoint's work, apart from auth and parsing. `effects` are what follows a write. */
 export async function runBackfill(
   input: z.infer<typeof backfillSchema>,
   effects: typeof writeEffects = writeEffects
 ) {
-  const { updateModelNsfwLevels, bustPublicModelResponseCache } = effects;
-  const { bucket, action, dryRun, afterId, limit } = input;
+  const { bustPublicModelResponseCache, scanModelText } = effects;
+  const { bucket, action, dryRun, afterId } = input;
+  const profanity = bucket === 'profanity-locks';
+  const limit = profanity ? Math.min(input.limit, PROFANITY_BATCH_LIMIT) : input.limit;
   const ids =
     action === 'revert'
       ? await nextRevertBatch(bucket, afterId, limit)
       : await nextUnlockBatch(bucket, afterId, limit);
   const nextAfterId = ids.length ? ids[ids.length - 1] : afterId;
+  const skippedRatingChanged =
+    profanity && action === 'revert' ? await ratingChangedSinceUnlock() : undefined;
   // The bucket count scans every locked model of the bucket, so only an unlock dry run pays for it.
   if (dryRun) {
     const counts = action === 'unlock' ? await countLocks(bucket) : undefined;
-    return { bucket, action, dryRun: true as const, counts, ids, nextAfterId };
+    return {
+      bucket,
+      action,
+      dryRun: true as const,
+      limit,
+      counts,
+      skippedRatingChanged,
+      ids,
+      nextAfterId,
+    };
   }
 
   const changed =
     action === 'revert' ? await revertLocks(bucket, ids) : await unlockLocks(bucket, ids);
-  // A profanity revert can put back a rating the owner changed since the unlock.
-  if (changed.length && action === 'revert' && bucket === 'profanity-locks')
-    await updateModelNsfwLevels(changed);
+  const scans =
+    profanity && action === 'unlock' && changed.length
+      ? await scanUnlocked(changed, scanModelText)
+      : undefined;
   if (changed.length) await bustPublicModelResponseCache(changed);
   logToAxiom({
-    type: 'info',
+    type: scans?.notSubmitted.length ? 'error' : 'info',
     name: 'model-nsfw-lock-backfill',
     message: action === 'revert' ? 'reverted' : 'unlocked',
-    payload: { bucket, action, requested: ids.length, changed: changed.length, ids: changed },
+    payload: {
+      bucket,
+      action,
+      requested: ids.length,
+      changed: changed.length,
+      ids: changed,
+      scans,
+      skippedRatingChanged,
+    },
   });
-  return { bucket, action, dryRun: false as const, ids, changed, nextAfterId };
+  return {
+    bucket,
+    action,
+    dryRun: false as const,
+    limit,
+    ids,
+    changed,
+    scans,
+    skippedRatingChanged,
+    nextAfterId,
+  };
 }
 
 export default defineModeratorEndpoint('model.nsfwLockBackfill', {
   summary:
     'One-off: lift the nsfw lock the text scan or the profanity filter set on models, keeping the rating; or revert it.',
-  returns: '{ bucket, action, dryRun, counts?, ids, changed?, nextAfterId }',
+  returns:
+    '{ bucket, action, dryRun, limit, counts?, ids, changed?, scans?, skippedRatingChanged?, nextAfterId }',
   notes: [
     'dryRun defaults to true: the next batch of ids (and, for unlock, the counts), no writes.',
     'A write run re-checks every id in the UPDATE, so a row that changed since the dry run is skipped.',
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
-    'profanity-locks: re-scan `changed` with text-scan-rescan (entityType Model, force true, 200 ids a call) after each unlock run.',
+    'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id and lists any not submitted in scans.notSubmitted.',
+    'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
   input: backfillSchema,

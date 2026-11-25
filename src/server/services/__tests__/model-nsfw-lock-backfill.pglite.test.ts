@@ -12,9 +12,9 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-/** What follows a write run, passed in: the level recompute and the cache bust. */
-const updateModelNsfwLevels = vi.fn();
-const effects = { updateModelNsfwLevels, bustPublicModelResponseCache: vi.fn() };
+/** What follows a write run, passed in: the cache bust and a profanity unlock's forced text scan. */
+const scanModelText = vi.fn<(id: number) => Promise<string>>(async () => 'submitted');
+const effects = { bustPublicModelResponseCache: vi.fn(), scanModelText };
 
 const {
   backfillSchema,
@@ -22,6 +22,7 @@ const {
   exclusionsFor,
   nextRevertBatch,
   nextUnlockBatch,
+  PROFANITY_BATCH_LIMIT,
   revertLocks,
   runBackfill,
   unlockLocks,
@@ -406,7 +407,8 @@ describe('model nsfw lock backfill: profanity locks', () => {
        WHERE meta->'systemNsfwLock'->>'source' IN ('text-scan', 'profanity-filter')`,
       [JSON.stringify(profanityMarker)]
     );
-    updateModelNsfwLevels.mockClear();
+    scanModelText.mockReset();
+    scanModelText.mockResolvedValue('submitted');
   });
 
   it('selects only profanity-locked models no exclusion applies to', async () => {
@@ -480,9 +482,8 @@ describe('model nsfw lock backfill: profanity locks', () => {
   });
 
   describe('revert', () => {
-    it('puts back the lock, the exact marker and the rating, after the owner unticked mature', async () => {
+    it('puts back the lock and the exact marker', async () => {
       await unlockLocks(PROFANITY, [ELIGIBLE]);
-      await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
       expect(await nextRevertBatch(PROFANITY, 0, 100)).toEqual([ELIGIBLE]);
       expect(await nextRevertBatch(SCAN, 0, 100)).toEqual([]);
 
@@ -490,16 +491,31 @@ describe('model nsfw lock backfill: profanity locks', () => {
         backfillSchema.parse({ bucket: PROFANITY, action: 'revert', dryRun: false }),
         effects
       );
-      expect(result).toMatchObject({ changed: [ELIGIBLE] });
+      expect(result).toMatchObject({ changed: [ELIGIBLE], skippedRatingChanged: { count: 0 } });
       const after = await row(ELIGIBLE);
       expect(after.nsfw).toBe(true);
       expect(after.lockedProperties).toEqual(['nsfw', 'tags']);
       expect(after.meta.systemNsfwLock).toEqual(profanityMarker);
       expect(after.meta.nsfwLockBackfill).toMatchObject({ revertedAt: expect.any(String) });
-      // The rating moved back, so the level follows it.
-      expect(updateModelNsfwLevels).toHaveBeenCalledWith([ELIGIBLE]);
       expect(await nextUnlockBatch(PROFANITY, 0, 100)).not.toContain(ELIGIBLE);
       expect(await revertLocks(PROFANITY, [ELIGIBLE])).toEqual([]);
+    });
+
+    // A moderator who changes only the rating logs no ModActivity, so any change since the unlock wins.
+    it('leaves a model whose rating changed since the unlock, and reports it', async () => {
+      await unlockLocks(PROFANITY, [ELIGIBLE]);
+      await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
+      const before = await row(ELIGIBLE);
+      const result = await runBackfill(
+        backfillSchema.parse({ bucket: PROFANITY, action: 'revert', dryRun: false }),
+        effects
+      );
+      expect(result).toMatchObject({
+        changed: [],
+        skippedRatingChanged: { count: 1, ids: [ELIGIBLE] },
+      });
+      expect(await revertLocks(PROFANITY, [ELIGIBLE])).toEqual([]);
+      expect(await row(ELIGIBLE)).toEqual(before);
     });
 
     it("reverts over the text scan's marker its re-scan stamped after the unlock", async () => {
@@ -542,6 +558,59 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(await nextRevertBatch(PROFANITY, 0, 100)).toEqual([]);
       expect(await revertLocks(PROFANITY, [ELIGIBLE])).toEqual([]);
       expect(await row(ELIGIBLE)).toEqual(before);
+    });
+  });
+
+  describe('the forced scan in the unlock call', () => {
+    const unlockRun = (limit?: number) =>
+      runBackfill(
+        backfillSchema.parse({ bucket: PROFANITY, dryRun: false, ...(limit ? { limit } : {}) }),
+        effects
+      );
+
+    it('submits one forced scan per changed id and records each on the row', async () => {
+      const result = await unlockRun();
+      expect(result.changed).toEqual(ALL_ELIGIBLE);
+      expect(scanModelText.mock.calls.map(([id]) => id).sort()).toEqual([...ALL_ELIGIBLE].sort());
+      expect(result.scans).toEqual({
+        byStatus: { submitted: ALL_ELIGIBLE.length },
+        notSubmitted: [],
+      });
+      for (const id of ALL_ELIGIBLE)
+        expect((await row(id)).meta.nsfwLockBackfill.scan).toMatchObject({ status: 'submitted' });
+    });
+
+    it('marks and lists a changed id whose scan was not submitted, never skipping it silently', async () => {
+      scanModelText.mockImplementation(async (id: number) => {
+        if (id === ELIGIBLE) throw new Error('orchestrator down');
+        if (id === ELIGIBLE_TRANSFERRED) return 'not-active/shadow';
+        return 'submitted';
+      });
+      const result = await unlockRun();
+      expect(result.changed).toEqual(ALL_ELIGIBLE);
+      expect(result.scans?.notSubmitted.sort()).toEqual([ELIGIBLE, ELIGIBLE_TRANSFERRED].sort());
+      expect((await row(ELIGIBLE)).meta.nsfwLockBackfill.scan).toMatchObject({ status: 'threw' });
+      expect((await row(ELIGIBLE_TRANSFERRED)).meta.nsfwLockBackfill.scan).toMatchObject({
+        status: 'not-active/shadow',
+      });
+    });
+
+    it('scans nothing on a scan-locks unlock or a dry run', async () => {
+      await runBackfill(backfillSchema.parse({ bucket: SCAN, dryRun: false }), effects);
+      await runBackfill(backfillSchema.parse({ bucket: PROFANITY }), effects);
+      expect(scanModelText).not.toHaveBeenCalled();
+    });
+
+    it('takes at most 200 ids a call', async () => {
+      expect(PROFANITY_BATCH_LIMIT).toBe(200);
+      const result = await runBackfill(
+        backfillSchema.parse({ bucket: PROFANITY, limit: 500 }),
+        effects
+      );
+      expect(result.limit).toBe(200);
+      expect(
+        (await runBackfill(backfillSchema.parse({ bucket: SCAN, limit: 500 }), effects)).limit
+      ).toBe(500);
     });
   });
 });
