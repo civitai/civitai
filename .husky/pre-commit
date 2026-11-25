@@ -47,4 +47,14 @@ else
   echo "DEBUG: No ToS files found, skipping lastmod update"
 fi
 
+# Secret scan of the staged changes, only when gitleaks is installed locally
+# (CI runs the same rules on every PR: .github/workflows/secret-scan.yml).
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks git --pre-commit --staged --redact --no-banner --log-level warn --config .gitleaks.toml .; then
+    echo "gitleaks flagged a possible secret in the staged changes — commit blocked."
+    echo "Not a real credential? See .gitleaks.toml for how to allowlist it."
+    exit 1
+  fi
+fi
+
 exit 0
