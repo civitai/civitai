@@ -1207,6 +1207,16 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // known); here we only assert they pass every cap/magic-byte/name gate.
   await extractScreenshots(bundleBuffer);
 
+  // MODULE-GRAPH LINT — REFUSED HERE, before any upload, build or review: a no-build bundle whose
+  // page imports a module the app server would not send as JavaScript (`./main.ts`, `./App.jsx`),
+  // or one it never shipped, loads and never starts. The refusal names the importing file and the
+  // specifier (`ModuleGraphRefusal`, returned as `moduleGraphErrors`). A bundle the platform
+  // builds (`buildCommand`) ships source and is not linted. See `bundle-module-graph.ts`.
+  {
+    const { assertBundleModuleGraphLoads } = await import('./bundle-module-graph');
+    await assertBundleModuleGraphLoads(bundleBuffer, manifest);
+  }
+
   // iframe.src is PLATFORM-OWNED, not developer-authored. The only valid value
   // is the canonical per-app subdomain root (`https://<slug>.<APPS_DOMAIN>/`),
   // so we DERIVE + stamp it here instead of making the developer hand-type a
