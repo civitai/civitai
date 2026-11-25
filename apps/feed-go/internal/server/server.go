@@ -422,7 +422,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	if err != nil {
 		return feed.InfiniteRequest{}, false, fallback.Wrap("input-envelope", err)
 	}
-	in, err := feed.ParseInfinite(raw)
+	in, err := feed.ParseInfiniteWith(raw, s.Infinite.Ports)
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err
 	}

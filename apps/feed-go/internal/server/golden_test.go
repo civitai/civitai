@@ -50,7 +50,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 87
+	goldenMinInfinite = 99
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -119,6 +119,9 @@ type goldenFixture struct {
 		// ServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (model-getall/; absent: off, an
 		// owner's creator-membership miss falls back).
 		ServeMembershipMiss bool `json:"serveMembershipMiss"`
+		// ServePublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY (infinite/ fixtures; absent:
+		// off, the fixture's `publishedOnly` falls back).
+		ServePublishedOnly bool `json:"servePublishedOnly"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -1551,7 +1554,8 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 		Now:            nowFn,
 	}
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
-		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn}}
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
+		Ports:       feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly}}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
