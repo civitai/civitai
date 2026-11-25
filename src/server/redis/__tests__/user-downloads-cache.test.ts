@@ -146,9 +146,8 @@ describe('userDownloadsCache: users with no downloads', () => {
 // 2 minutes late, plus margin. The 145/170/181/301 s probes below derive from it; retune them
 // together with the debounce in bustUserDownloadsCache (user.service.ts).
 describe('userDownloadsCache: the bust window follows user-downloads-dedicated-clickhouse', () => {
-  // With the flag on, the row can land about two minutes after the download on the dedicated
-  // replica, so the bust window (180 s) must outlast that. Here the row lands 150 s after the
-  // bust, and a lookup 145 s after it runs before the row is there: far past the cache's default
+  // Here the row lands 150 s after the bust, and a lookup 145 s after it runs before the row is
+  // there: far past the cache's default
   // 10 s window, which re-cached the pre-download answer at that lookup. With the flag off the bust
   // keeps that 10 s default, as before.
   beforeEach(() => {
