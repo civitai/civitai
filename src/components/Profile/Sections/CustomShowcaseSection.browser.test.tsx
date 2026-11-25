@@ -5,6 +5,11 @@ import { requiresImageDbPath } from '~/server/schema/image.schema';
 import type * as ArticleUtils from '~/components/Article/article.utils';
 import type * as ImageUtils from '~/components/Image/image.utils';
 import type * as ModelUtils from '~/components/Model/model.utils';
+import {
+  FixedSessionProvider,
+  SignedOutSessionProvider,
+} from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CustomShowcaseSection } from './CustomShowcaseSection';
 
 // The feeds are mocked: these pin what the section asks for and does with the answer, not the feeds' own filtering.
@@ -61,7 +66,9 @@ const cards = () =>
   [...document.querySelectorAll('[data-testid="card"]')].map((c) => c.textContent);
 const renderSection = async (type: 'Model' | 'Article' | 'Image' = 'Model') => {
   const screen = await renderWithProviders(
-    <CustomShowcaseSection section={sectionOf(type)} user={user} />
+    <SignedOutSessionProvider>
+      <CustomShowcaseSection section={sectionOf(type)} user={user} />
+    </SignedOutSessionProvider>
   );
   await vi.waitFor(() =>
     expect(
@@ -80,6 +87,21 @@ beforeEach(() => {
 });
 
 describe('CustomShowcaseSection', () => {
+  test("on the owner's own profile, its edit button opens this section's editor", async () => {
+    feedReturns(items);
+    const section = sectionOf('Model');
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined);
+    const owner = { id: 7, username: 'creator', profile: { showcaseSections: [section] } } as never;
+    const screen = await renderWithProviders(
+      <FixedSessionProvider user={{ id: 7, username: 'creator' }}>
+        <CustomShowcaseSection section={section} user={owner} />
+      </FixedSessionProvider>
+    );
+    await screen.getByRole('button', { name: 'Edit section' }).click();
+    expect(trigger.mock.calls[0][0].props).toEqual({ sections: [section], sectionId: 'abc' });
+    trigger.mockRestore();
+  });
+
   test.each([
     ['Model', useQueryModels, { ids: items, username: 'creator' }],
     ['Article', useQueryArticles, { ids: items, username: 'creator' }],
@@ -127,9 +149,11 @@ describe('CustomShowcaseSection', () => {
     const renderWide = async (ids: number[]) => {
       feedReturns(ids);
       const screen = await renderWithProviders(
-        <div style={{ width: 1200 }}>
-          <CustomShowcaseSection section={{ ...sectionOf('Model'), items: ids }} user={user} />
-        </div>
+        <SignedOutSessionProvider>
+          <div style={{ width: 1200 }}>
+            <CustomShowcaseSection section={{ ...sectionOf('Model'), items: ids }} user={user} />
+          </div>
+        </SignedOutSessionProvider>
       );
       await vi.waitFor(() => expect(cards()).toHaveLength(ids.length));
       return screen;
@@ -154,12 +178,17 @@ describe('CustomShowcaseSection', () => {
     test('offers View all for 13 items at a 1440px desktop width', async () => {
       feedReturns(Array.from({ length: 13 }, (_, i) => i + 1));
       await renderWithProviders(
-        <div style={{ width: 1440 }}>
-          <CustomShowcaseSection
-            section={{ ...sectionOf('Model'), items: Array.from({ length: 13 }, (_, i) => i + 1) }}
-            user={user}
-          />
-        </div>
+        <SignedOutSessionProvider>
+          <div style={{ width: 1440 }}>
+            <CustomShowcaseSection
+              section={{
+                ...sectionOf('Model'),
+                items: Array.from({ length: 13 }, (_, i) => i + 1),
+              }}
+              user={user}
+            />
+          </div>
+        </SignedOutSessionProvider>
       );
       await vi.waitFor(() => expect(document.body.textContent).toContain('View all 13'));
     });
