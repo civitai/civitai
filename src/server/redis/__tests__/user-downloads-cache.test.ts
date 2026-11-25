@@ -143,7 +143,7 @@ describe('userDownloadsCache: users with no downloads', () => {
 });
 
 // The 180 s window comes from civitai#10352: the dedicated downloads replica lands rows up to about
-// 2 minutes late, plus margin. The 145/170/181 s probes below are derived from it; retune them
+// 2 minutes late, plus margin. The 145/170/181/301 s probes below derive from it; retune them
 // together with the debounce in bustUserDownloadsCache (user.service.ts).
 describe('userDownloadsCache: the bust window follows user-downloads-dedicated-clickhouse', () => {
   // With the flag on, the row can land about two minutes after the download on the dedicated
