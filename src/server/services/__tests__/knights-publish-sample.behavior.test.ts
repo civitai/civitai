@@ -78,7 +78,7 @@ beforeAll(async () => {
        poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
        "userId" integer NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false
      );
-     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER;
+     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER, ADD COLUMN IF NOT EXISTS url TEXT;
      ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" INTEGER;
      CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
      CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);

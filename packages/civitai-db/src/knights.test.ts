@@ -74,7 +74,7 @@ describe('servableImage', () => {
         ingestion TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "needsReview" TEXT,
         "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, poi BOOLEAN NOT NULL DEFAULT false,
         minor BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER NOT NULL,
-        "tosViolation" BOOLEAN NOT NULL DEFAULT false, "userId" INTEGER NOT NULL DEFAULT 1
+        "tosViolation" BOOLEAN NOT NULL DEFAULT false, "userId" INTEGER NOT NULL DEFAULT 1, url TEXT
       );
       CREATE TABLE "Post" (
         id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP, availability TEXT NOT NULL DEFAULT 'Public',
