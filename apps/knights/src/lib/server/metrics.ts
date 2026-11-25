@@ -1,6 +1,7 @@
 // Prometheus metrics for Knights, scraped from `/metrics`. Labels are bounded enums only: never a user, image or
 // item id. Every counter is seeded with its full label set so each series exports 0 before its first event.
 import { Counter, Registry, collectDefaultMetrics } from 'prom-client';
+import type { RevocationOutcome } from '@civitai/auth';
 import {
   KNIGHTS_ESCALATION_REASONS,
   KNIGHTS_STAGE_RANKS,
@@ -113,6 +114,17 @@ const sessionCookieSlot = counter(
   'Authenticated requests by the session cookie slot they were read from (host | shared).',
   { slot: ['host', 'shared'] }
 );
+const REVOCATION_OUTCOMES = [
+  'hit',
+  'timeout',
+  'breaker-open',
+  'error',
+] as const satisfies readonly RevocationOutcome[];
+const revocationChecks = counter(
+  'knights_revocation_checks_total',
+  'Session revocation reads by outcome (hit: the store answered).',
+  { outcome: REVOCATION_OUTCOMES }
+);
 const votes = counter('knights_votes_total', 'Votes written to the ledger, by kind.', {
   kind: VOTE_KINDS,
 });
@@ -214,6 +226,8 @@ function safely(record: () => void) {
 
 export const metrics = {
   sessionCookieSlot: (slot: 'host' | 'shared') => safely(() => sessionCookieSlot.inc({ slot })),
+  revocationCheck: (outcome: RevocationOutcome) =>
+    safely(() => revocationChecks.inc({ outcome: bounded(outcome, REVOCATION_OUTCOMES) })),
   vote: (kind: VoteKind) => safely(() => votes.inc({ kind })),
   harvestSkipped: (count: number) =>
     safely(() => {

@@ -4,7 +4,15 @@ import { getSysRedis } from './redis';
 
 export const isRevoked = createRevocationCheck({
   redis: () => getSysRedis() as unknown as SessionRegistryRedis,
-  onError: (err) => console.warn('[knights] sysredis-fail-open', err),
+  // One line per failed read, with why and the verdict given. Only the error's name: a Redis error message
+  // can carry key names.
+  onError: (err, reason, _claims, verdict) =>
+    console.warn('[knights] sysredis-fail-open', {
+      reason,
+      verdict,
+      error: err instanceof Error ? err.name : typeof err,
+    }),
+  onOutcome: (outcome) => metrics.revocationCheck(outcome),
 });
 
 export const guard = createSpokeGuard({

@@ -1,4 +1,4 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { accessFor } from '$lib/server/access';
@@ -7,6 +7,8 @@ import { closedPageHtml } from '$lib/server/closed-page';
 import { db } from '$lib/server/db';
 import { JOB_PATHS } from '$lib/server/jobs-auth';
 import { metrics } from '$lib/server/metrics';
+import { readiness } from '$lib/server/readiness';
+import { getCacheRedis, getSysRedis } from '$lib/server/redis';
 import { getStanding } from '$lib/server/standing';
 import { isWelcomeRequest, safeNext, showsNotFound, signedOutLocation } from '$lib/welcome';
 
@@ -18,11 +20,17 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/callback',
 ]);
 
-// The liveness/readiness probe. Not a job and not a sign-in route: exempt on its own, before any
-// session, access or standing lookup, so a probe never depends on the hub, Flipt or the database.
-const HEALTH_PATH = '/healthz';
-// Prometheus scrapes, exempt for the same reason; the route itself serves in-cluster scrapes only.
-const METRICS_PATH = '/metrics';
+// The probes (liveness, readiness) and Prometheus scrapes: exempt before any session, access or standing
+// lookup, so a probe never depends on the hub, Flipt or the database.
+const PROBE_PATHS = new Set(['/healthz', '/readyz', '/metrics']);
+
+// Open both Redis connections at boot instead of on the first request that needs one. Not awaited: a
+// connect that hangs must not hold up serving, and a failed connect is logged and retried by the client.
+export const init: ServerInit = () => {
+  getSysRedis();
+  getCacheRedis();
+  void readiness.check();
+};
 
 const FORBIDDEN_REDIRECT = 'https://civitai.com';
 
@@ -36,7 +44,7 @@ const closedPage = (user: { username?: string }, reason: 'closed' | 'banned' = '
   );
 
 export const handle: Handle = async ({ event, resolve }) => {
-  if (event.url.pathname === HEALTH_PATH || event.url.pathname === METRICS_PATH) {
+  if (PROBE_PATHS.has(event.url.pathname)) {
     return resolve(event);
   }
   if (PUBLIC_PATHS.has(event.url.pathname) || JOB_PATHS.has(event.url.pathname)) {
