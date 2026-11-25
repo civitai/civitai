@@ -16,14 +16,17 @@ const DEAL = Prisma.sql`"ServiceDeal"`;
  */
 export const liveFile = (f: Prisma.Sql) => Prisma.sql`${f}."removedAt" IS NULL`;
 
+/** The entry `e` still points at an image that is gone. */
+export const entryImageGone = (e: Prisma.Sql) => Prisma.sql`(${e}."imageId" IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = ${e}."imageId"))`;
+
 /**
  * An entry of the file still points at an image that is gone, so nothing shows the image was not
  * held: the file is refused to everyone and does not count as clear. `f` names the file row.
  */
 export const fileImageGone = (f: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "ServiceDealFileEntry" e
-  WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")
+  WHERE e."fileId" = ${f}."id" AND ${entryImageGone(Prisma.sql`e`)}
 )`;
 
 /**

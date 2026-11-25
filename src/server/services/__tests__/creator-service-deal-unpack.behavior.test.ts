@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { crc32, deflateSync } from 'zlib';
@@ -163,6 +164,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
 const files = await import('~/server/services/creator-service-deal-file.service');
 const deals = await import('~/server/services/creator-service-deal.service');
 const unpack = await import('~/server/services/creator-service-deal-unpack.service');
+const escrow = await import('~/server/services/creator-service-escrow.service');
 const scan = await import('~/server/services/creator-service-deal-file-scan');
 const orchestrator = await import('@civitai/orchestration-client');
 const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
@@ -198,6 +200,7 @@ const MIGRATIONS = [
   '20271120100100_service_deal_reviews',
   '20271125130000_service_deal_buyer_disclosure',
   '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -1844,12 +1847,15 @@ describe('copies of scanned images', () => {
     const { fileId } = await settled();
     const hour = 60 * 60_000;
     const at = Date.now() + 1000 * hour;
-    expect(await unpack.countDanglingScanCopies({ now: at })).toBe(0);
+    expect(await unpack.countDanglingScanCopies({ now: at })).toEqual({ marked: 0, unmarked: 0 });
     await q(`DELETE FROM "Image" WHERE id = 1`);
     expect(await unpack.deleteEntryScanCopies()).toBe(0);
     expect((await entries(fileId))[0]).toMatchObject({ imageId: 1, scanKey: 'scan-key-1' });
     expect(await unpack.countDanglingScanCopies({ now: at + hour - 1 })).toBeNull();
-    expect(await unpack.countDanglingScanCopies({ now: at + hour })).toBe(1);
+    expect(await unpack.countDanglingScanCopies({ now: at + hour })).toEqual({
+      marked: 0,
+      unmarked: 1,
+    });
   });
 
   it('keeps the copy of an image still being scanned, however old and whatever becomes of its file', async () => {
@@ -2411,6 +2417,60 @@ describe('a Final rated outside the domain', () => {
         buyer: refused,
         disputeTool: refused,
       });
+    });
+
+    const finalsClear = async (dealId: number) => {
+      const sql = Prisma.sql`SELECT ${escrow.dealFinalsClear(
+        Prisma.sql`d`
+      )} AS clear FROM "ServiceDeal" d WHERE d.id = ${dealId}::int`;
+      return (await q<{ clear: boolean }>(sql.text, sql.values as unknown[]))[0].clear;
+    };
+    const marker = async (fileId: number) =>
+      (
+        await q<{ copyDeleteStartedAt: Date | null }>(
+          `SELECT "copyDeleteStartedAt" FROM "ServiceDealFileEntry" WHERE "fileId" = $1`,
+          [fileId]
+        )
+      )[0].copyDeleteStartedAt;
+
+    it('settles our own copy delete that stopped before its clear on the next run, and the finals clear again', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      expect(await finalsClear(dealId)).toBe(true);
+      images.deleteImages.mockImplementationOnce(async (ids: number[]) => {
+        await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
+        throw new Error('stopped after the delete');
+      });
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await marker(fileId)).not.toBeNull();
+      expect(await finalsClear(dealId)).toBe(false);
+      expect((await everyoneSees(dealId, fileId)).buyer).toEqual(refused);
+
+      expect(await unpack.deleteEntryScanCopies()).toBe(1);
+      expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
+      expect(await finalsClear(dealId)).toBe(true);
+      expect((await everyoneSees(dealId, fileId)).buyer).toEqual(served);
+    });
+
+    it('keeps a copy gone without our delete pointed, so the finals stay not clear', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`DELETE FROM "Image"`);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await marker(fileId)).toBeNull();
+      expect(await finalsClear(dealId)).toBe(false);
+    });
+
+    it('keeps a copy kept for its case pointed and unmarked, so a later outside delete stays refused', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      images.deleteImages.mockResolvedValue([]);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await marker(fileId)).toBeNull();
+      expect(await finalsClear(dealId)).toBe(true);
+      await q(`DELETE FROM "Image"`);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await finalsClear(dealId)).toBe(false);
     });
 
     it('serves a file whose passed image copy was let go', async () => {

@@ -7406,6 +7406,7 @@ export interface ServiceDealFileEntry {
   scanStatus: ServiceDealFileScanStatus;
   failReason: string | null;
   createdAt: Date;
+  copyDeleteStartedAt: Date | null;
 }
 
 export interface ServiceDealTransaction {

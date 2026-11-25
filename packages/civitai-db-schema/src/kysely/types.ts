@@ -5991,6 +5991,10 @@ export type ServiceDealFileEntry = {
   scanStatus: Generated<ServiceDealFileScanStatus>;
   failReason: string | null;
   createdAt: Generated<Timestamp>;
+  /**
+   * Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+   */
+  copyDeleteStartedAt: Timestamp | null;
 };
 export type ServiceDealFilePurge = {
   id: Generated<number>;

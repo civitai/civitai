@@ -26,6 +26,7 @@ import { holdServiceDealForReview } from '~/server/services/creator-service-escr
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import {
   dealReadyToDeliver,
+  entryImageGone,
   fileImageGone,
   liveFile,
   SCANNED_FILE_KINDS,
@@ -534,8 +535,8 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     await tx.$queryRaw`
       SELECT 1 FROM "ServiceDealFileEntry" e WHERE e."fileId" = ${fileId}::int FOR UPDATE OF e`;
     // An image that passed has no more use for its copy.
-    const copies = await tx.$queryRaw<{ imageId: number }[]>`
-      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+    const copies = await tx.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT e."id", e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
         AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
     // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below must depend
@@ -550,10 +551,7 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
   });
 
   const { file } = removed;
-  await clearDeletedCopies(
-    await deleteImages(removed.copies.map(({ imageId }) => imageId)),
-    file.id
-  );
+  await deleteEntryCopies(removed.copies);
   // An upload never completed still sits at the uploader's key, which they can write to: the
   // server keeps its own copy instead.
   if (isUploaderKey(file.s3Key)) await keepServerCopy(await getBucket(), file.id, file.s3Key);
@@ -585,14 +583,52 @@ async function deleteImages(imageIds: number[]) {
 }
 
 /**
- * Entries stop pointing at the copies this delete removed. An image gone some other way keeps its
- * pointer, which refuses and keeps the file (`imageGone`).
+ * Marks entries whose copies a delete is about to remove, so a retry can tell its own delete from one
+ * made elsewhere. Only a copy still there is marked: one already gone was not this delete's.
  */
-export function clearDeletedCopies(imageIds: number[], fileId: number) {
-  if (!imageIds.length) return Promise.resolve(0);
-  return dbWrite.$executeRaw`
-    UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
-    WHERE e."fileId" = ${fileId}::int AND e."imageId" IN (${Prisma.join(imageIds)})`;
+export async function markCopyDeletes(entryIds: number[]) {
+  if (!entryIds.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFileEntry" e SET "copyDeleteStartedAt" = now()
+    WHERE e."id" IN (${Prisma.join(entryIds)})
+      AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
+}
+
+/**
+ * Settles the marked entries a delete was asked for; returns the ids let go. An entry lets go of its
+ * copy when this delete removed it or an earlier try did (marked, and the image is gone); one no file
+ * owns goes with it. One whose copy still exists (kept for its case, or the delete failed) stays
+ * pointed and unmarked. An unmarked entry whose image is gone stays pointed (`fileImageGone`).
+ */
+export async function settleCopyDeletes(entryIds: number[], goneImageIds: number[]) {
+  if (!entryIds.length) return [];
+  const released = await dbWrite.$queryRaw<{ id: number }[]>`
+    WITH released AS (
+      SELECT e."id", e."fileId" FROM "ServiceDealFileEntry" e
+      WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."imageId" IS NOT NULL
+        AND (e."imageId" IN (${Prisma.join(goneImageIds.length ? goneImageIds : [-1])})
+          OR (e."copyDeleteStartedAt" IS NOT NULL AND ${entryImageGone(Prisma.sql`e`)}))
+    ), dropped AS (
+      DELETE FROM "ServiceDealFileEntry" e USING released r
+      WHERE e."id" = r."id" AND r."fileId" IS NULL RETURNING e."id"
+    ), cleared AS (
+      UPDATE "ServiceDealFileEntry" e
+      SET "imageId" = NULL, "scanKey" = NULL, "copyDeleteStartedAt" = NULL
+      FROM released r WHERE e."id" = r."id" AND r."fileId" IS NOT NULL RETURNING e."id"
+    )
+    SELECT "id" FROM dropped UNION ALL SELECT "id" FROM cleared`;
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFileEntry" e SET "copyDeleteStartedAt" = NULL
+    WHERE e."id" IN (${Prisma.join(entryIds)}) AND e."copyDeleteStartedAt" IS NOT NULL
+      AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
+  return released.map(({ id }) => id);
+}
+
+/** Marks, deletes and settles these entries' scan copies; returns the entry ids let go. */
+async function deleteEntryCopies(entries: { id: number; imageId: number }[]) {
+  const ids = entries.map(({ id }) => id);
+  await markCopyDeletes(ids);
+  return settleCopyDeletes(ids, await deleteImages(entries.map(({ imageId }) => imageId)));
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
@@ -819,16 +855,13 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
     if (!deleted) continue;
     // A copy of an image refused only for its rating goes with its file. One that stays (kept for
     // its case) keeps the row, for the next run to judge again.
-    const copies = await dbWrite.$queryRaw<{ imageId: number }[]>`
-      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+    const copies = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
+      SELECT e."id", e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${file.id}::int AND e."imageId" IS NOT NULL
         AND ${entryOnlyOverLevel(Prisma.sql`e`)}`;
     if (copies.length) {
       if (!(await stillDeletable())) continue;
-      const ids = copies.map(({ imageId }) => imageId);
-      const gone = await deleteImages(ids);
-      await clearDeletedCopies(gone, file.id);
-      if (gone.length !== ids.length) continue;
+      if ((await deleteEntryCopies(copies)).length !== copies.length) continue;
     }
     const done = await dbWrite.$transaction(async (tx) => {
       await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
@@ -1222,6 +1255,7 @@ const finalLevelColumns = Prisma.sql`f."scannedEtag",
           OR ${toPrismaSql(childSafetyImageCase('i'))} IS TRUE)) AS "csamHeld",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
         WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
+      -- Not entryImageGone: a rated entry whose copy was let go (imageId cleared) counts here too.
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",

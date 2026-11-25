@@ -3,7 +3,10 @@ import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
+import {
+  entryImageGone,
+  SCANNED_FILE_KINDS,
+} from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   acceptedAsVideo,
@@ -18,6 +21,8 @@ import {
   isFinalVideoName,
   readObject,
   recordFinalScanResult,
+  markCopyDeletes,
+  settleCopyDeletes,
 } from '~/server/services/creator-service-deal-file.service';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { readVideoLengths } from '~/server/utils/video-lengths';
@@ -900,16 +905,22 @@ let danglingCountedAt = 0;
 
 /**
  * Counts and logs entries pointing at a gone image, at most hourly. Each refuses and keeps its file
- * (`imageGone`), so a growing count is a backlog. Null when it did not count this run.
+ * (`imageGone`), so a growing count is a backlog; `marked` ones are our own delete, which the next
+ * copy run settles. Null when it did not count this run.
  */
 export async function countDanglingScanCopies({ now = Date.now() } = {}) {
   if (now - danglingCountedAt < 60 * 60_000) return null;
   danglingCountedAt = now;
-  const [{ dangling }] = await dbWrite.$queryRaw<{ dangling: number }[]>`
-    SELECT count(*)::int AS dangling FROM "ServiceDealFileEntry" e
-    WHERE e."imageId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
-  logUnpack('entries pointing at a gone image', { count: dangling }, dangling ? 'warning' : 'info');
-  return dangling;
+  const [counts] = await dbWrite.$queryRaw<{ marked: number; unmarked: number }[]>`
+    SELECT count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NOT NULL)::int AS marked,
+      count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NULL)::int AS unmarked
+    FROM "ServiceDealFileEntry" e WHERE ${entryImageGone(Prisma.sql`e`)}`;
+  logUnpack(
+    'entries pointing at a gone image',
+    { count: counts.unmarked, total: counts.marked + counts.unmarked },
+    counts.unmarked ? 'warning' : 'info'
+  );
+  return counts;
 }
 
 /** The last entry `deleteEntryScanCopies` tried. Kept in memory: a restart only starts it over. */
@@ -936,18 +947,17 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   let deleted = 0;
   for (const row of rows) {
     try {
+      await markCopyDeletes([row.id]);
       const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
       });
-      // A copy kept for its case stays pointed at, and so does one gone without this delete.
-      if (!gone?.some(({ id }) => id === row.imageId)) continue;
-      if (row.fileId === null)
-        await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
-      else
-        await dbWrite.$executeRaw`
-          UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
-      deleted++;
+      // A copy kept for its case stays pointed at, and so does one gone without our delete.
+      const settled = await settleCopyDeletes(
+        [row.id],
+        (gone ?? []).map(({ id }) => id)
+      );
+      if (settled.length) deleted++;
     } catch (error) {
       logUnpack(
         'scan copy delete failed; it will be retried',
