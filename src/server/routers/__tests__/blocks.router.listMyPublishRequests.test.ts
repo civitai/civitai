@@ -573,6 +573,53 @@ describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure
     expect(args.select.deployDetail).toBe(true);
     expect(args.select.reviewedAt).toBe(true); // the STRANDED-detection anchor
   });
+
+  /**
+   * 🔴 Authors should not see raw boot-check output: a pending row's review preview detail keeps
+   * only the fixed author reason. The marker is a value no constant can equal.
+   */
+  it('a pending row’s boot check reaches the author as a fixed reason, never the app’s output', async () => {
+    const MARKER = 'zq-bootcheck-marker-5e1d0a7c93';
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-p',
+        appBlockId: null,
+        slug: 'pending-app',
+        version: '1.0.0',
+        status: 'pending',
+        submittedAt: new Date('2026-01-01'),
+        reviewedAt: null,
+        rejectionReason: null,
+        approvalNotes: null,
+        deployState: 'preview-live',
+        deployDetail: JSON.stringify({
+          sha: 'b'.repeat(40),
+          bootCheck: {
+            result: 'failed',
+            ms: 4000,
+            messagesSeen: [`${MARKER}-msg`],
+            firstError: `${MARKER}-err`,
+            checkedAt: '2026-01-01T00:00:00.000Z',
+            mode: 'shadow',
+          },
+        }),
+        deployUpdatedAt: new Date('2026-01-02'),
+        fileSummary: null,
+        manifestDiffSummary: null,
+        appBlock: null,
+      },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(JSON.stringify(rows)).not.toContain(MARKER);
+    expect(JSON.parse(rows[0].deployDetail as string).bootCheck).toEqual({
+      result: 'failed',
+      mode: 'shadow',
+      reason: 'page-error',
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

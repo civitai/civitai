@@ -108,7 +108,11 @@ export function bootCheckUnavailable(summary: ReviewBootCheckSummary | null | un
 
 const READY_WINDOW_SECONDS = Math.round(BLOCK_READY_TIMEOUT_MS / 1000);
 
-/** The `detail.error` of a preview an enforced boot check failed: shown to moderators and authors. */
+/**
+ * The `detail.error` of a preview an enforced boot check failed, as STORED and as moderators see
+ * it. Authors never see this string (it quotes `firstError`): every author-facing exit replaces it
+ * through `redactDeployDetailForAuthor`.
+ */
 export function bootCheckFailureError(firstError: string | null): string {
   // A browser error usually ends in its own full stop; drop it so the sentence ends in one.
   const cause = firstError
@@ -144,6 +148,117 @@ export function bootCheckHoldReason(firstError: string | null): string {
 
 /** The clear reason recorded when a passed boot check lifts the hold. */
 export const BOOT_CHECK_HOLD_CLEAR_REASON = 'A later build of this app passed the boot check.';
+
+/**
+ * 🔴 AUTHOR VIEW OF A BOOT CHECK. The stored record carries text the app itself produced while it
+ * ran in the checker's browser (`messagesSeen`, `firstError`, and `firstError` quoted in the failed
+ * preview's `error`). Authors should not see raw boot-check output, so an author is given only a
+ * FIXED reason, derived from the recorded `result` and from whether an error was recorded at all;
+ * moderators keep the full record. `ms` is dropped too: the app can influence how long the check
+ * takes.
+ *
+ *   - `passed`: the app sent BLOCK_READY within the window.
+ *   - `no-ready-signal`: it did not, and no error was recorded.
+ *   - `page-error`: it did not, and an error was recorded (a console error, or a script served
+ *     with a non-JavaScript type).
+ *   - `unavailable`: the checker could not run.
+ */
+export const REVIEW_BOOT_CHECK_AUTHOR_REASONS = [
+  'passed',
+  'no-ready-signal',
+  'page-error',
+  'unavailable',
+] as const;
+export type ReviewBootCheckAuthorReason = (typeof REVIEW_BOOT_CHECK_AUTHOR_REASONS)[number];
+
+/** What an author is shown of a boot check, in place of the stored record. */
+export type ReviewBootCheckAuthorView = {
+  result: ReviewBootCheckResult;
+  mode: ReviewBootCheckRecordedMode;
+  reason: ReviewBootCheckAuthorReason;
+  checkedAt: string | null;
+};
+
+/** The fixed author reason of a recorded result. */
+export function bootCheckAuthorReason(
+  result: ReviewBootCheckResult,
+  firstError: unknown
+): ReviewBootCheckAuthorReason {
+  if (result === 'passed') return 'passed';
+  if (result === 'unavailable') return 'unavailable';
+  return typeof firstError === 'string' && firstError.trim().length > 0
+    ? 'page-error'
+    : 'no-ready-signal';
+}
+
+/** The author view of a stored record, or null when the record is malformed. */
+export function bootCheckAuthorView(raw: unknown): ReviewBootCheckAuthorView | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { result, mode, firstError, checkedAt } = raw as {
+    result?: unknown;
+    mode?: unknown;
+    firstError?: unknown;
+    checkedAt?: unknown;
+  };
+  if (!isResult(result)) return null;
+  if (mode !== 'shadow' && mode !== 'enforce') return null;
+  // Re-serialised, so the field can only ever be a timestamp the server formatted.
+  const at = typeof checkedAt === 'string' ? new Date(checkedAt) : null;
+  return {
+    result,
+    mode,
+    reason: bootCheckAuthorReason(result, firstError),
+    checkedAt: at && !Number.isNaN(at.getTime()) ? at.toISOString() : null,
+  };
+}
+
+/** The failed preview's `error` as an author sees it: fixed text per reason, no app output. */
+export function bootCheckAuthorError(reason: 'no-ready-signal' | 'page-error'): string {
+  const cause =
+    reason === 'page-error'
+      ? 'An error was reported while it loaded (a console error, or a script served with a non-JavaScript type): open the app and check the browser console.'
+      : 'No console error was reported: check that the app completes the SDK handshake when it loads.';
+  return `Boot check: the app loaded but never sent BLOCK_READY within ${READY_WINDOW_SECONDS}s. ${cause} Fix and resubmit.`;
+}
+
+/**
+ * 🔴 THE ONE author-facing redaction of a publish request's `deploy_detail`, applied at every exit
+ * that returns the column to its author (GET /api/v1/blocks/submissions,
+ * `blocks.listMyPublishRequests`, the listing History tab). A detail carrying a `bootCheck` record
+ * (a review preview's JSON detail) has the record replaced by its author view and, when the check
+ * failed, the boot-check `error` replaced by fixed text. Any other detail (a plain-text build
+ * failure, a detail with no boot check) is returned unchanged. Moderator reads never call this.
+ */
+export function redactDeployDetailForAuthor(deployDetail: string | null): string | null {
+  if (!deployDetail) return deployDetail;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(deployDetail);
+  } catch {
+    return deployDetail;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return deployDetail;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'bootCheck')) return deployDetail;
+  const { bootCheck, ...rest } = parsed as Record<string, unknown>;
+  const view = bootCheckAuthorView(bootCheck);
+  const out: Record<string, unknown> = { ...rest };
+  if (view) {
+    out.bootCheck = view;
+    // The watcher sets `error` beside a failed boot check only from the check itself
+    // (`bootCheckFailureError`, which quotes `firstError`).
+    if (
+      (view.reason === 'no-ready-signal' || view.reason === 'page-error') &&
+      typeof out.error === 'string'
+    ) {
+      out.error = bootCheckAuthorError(view.reason);
+    }
+  } else if (typeof out.error === 'string') {
+    // A record this module cannot read: its `error` cannot be told apart from one quoting the
+    // app's output, so it is not shown.
+    out.error = 'Boot check: the preview failed. Fix and resubmit.';
+  }
+  return JSON.stringify(out);
+}
 
 /**
  * Under a CURRENT `enforce` flag: this pending request has no enforced `passed` check, so nobody
