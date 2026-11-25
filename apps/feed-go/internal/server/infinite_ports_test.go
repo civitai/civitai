@@ -65,6 +65,14 @@ var goldenInfinitePorts = map[string]goldenInfinitePort{
 			"collection-random-cursor-zero-seed": "input-sort",
 		},
 	},
+	"GallerySettingsMiss": {
+		on: func(fx *goldenFixture) *bool { return &fx.Config.ServeGallerySettingsMiss },
+		fixtures: map[string]string{
+			"cold-gallery-settings-version-held":      "gallery-settings-miss",
+			"cold-gallery-settings-ids-held-stranger": "gallery-settings-miss",
+			"cold-gallery-settings-model-unheld":      "gallery-settings-miss",
+		},
+	},
 }
 
 // goldenInfinitePortCase is one fixture of one port.
@@ -121,6 +129,21 @@ func TestInfinitePortsTable(t *testing.T) {
 				t.Errorf("%s fixture switched %v: InfinitePorts.%s = %v in goldenSetupMode", name, on, field, got)
 			}
 		}
+	}
+}
+
+// With the gallery-settings-miss switch on but no hold computation configured
+// (InfiniteDeps.GalleryHolds nil), the miss still falls back.
+func TestInfiniteGallerySettingsMissNeedsComputation(t *testing.T) {
+	fx := goldenLoad(t, filepath.Join(goldenDir, "infinite", "cold-gallery-settings-version-held.json"))
+	env := goldenSetup(t, fx)
+	env.server.Infinite.GalleryHolds = nil
+	r, err := SyntheticInfiniteRequest(context.Background(), ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.server.computeInfinite(context.Background(), r); fallback.Reason(err) != "gallery-settings-miss" {
+		t.Fatalf("no computation: %v (reason %q), want gallery-settings-miss", err, fallback.Reason(err))
 	}
 }
 
