@@ -5,8 +5,9 @@ import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { IMAGE_REVIEW_PRECEDENCE } from '@civitai/shared/image-review-types';
 import { IMAGE_SAFETY_CONDITION } from '~/server/services/personal-data-export/sources/postgres';
 
-// feed-go (Go) cannot import @civitai/shared, and the personal-data export is plain SQL text, so their
-// copies of the owner-hidden review list are pinned to it here.
+// feed-go (Go) cannot import @civitai/shared, so its copies of the owner-hidden review list are pinned
+// to it here. The personal-data export builds its list from the constant; its check below fails if
+// that is ever replaced by a hand-written list.
 const ROOT = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const sorted = (values: string[]) => [...values].sort();

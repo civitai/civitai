@@ -173,7 +173,7 @@ describe('getReactors page', () => {
     const q = pageQuery();
     expect(q?.text).toContain('"needsReview" <> ALL($1::text[])');
     expect(q?.params[0]).toEqual([...OWNER_HIDDEN_REVIEWS]);
-    expect(q?.text).not.toMatch(/'{[^}]*}'::text[]/);
+    expect(q?.text).not.toContain("'{");
   });
 
   it('pages older accounts with userId < cursor, descending', async () => {
