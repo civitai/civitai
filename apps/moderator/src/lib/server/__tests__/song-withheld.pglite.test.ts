@@ -38,8 +38,8 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 const { GET } = await import('../../../routes/api/song-card/[imageId]/+server');
 const removedAppeals = await import('../../../routes/images/removed-appeals/+page.server');
 
-// A routine block reason, kept by the other row on its url, which has not finished its scan: the
-// rule withholds it from a moderator without the grant.
+// A routine block reason on a song whose url has another row blocked for CSAM: the rule withholds it
+// from a moderator without the grant.
 const WITHHELD = 501;
 const OPEN = 502;
 const PICTURE = 504;
