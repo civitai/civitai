@@ -839,7 +839,6 @@ function AppPage(props: AppRunProps) {
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}
           effectiveBrowsingLevel={effectiveBrowsingLevel}
-          appData={appData}
           tokenError={error != null}
           tokenTerminal={terminal}
           viewer={viewer}
