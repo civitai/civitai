@@ -36,7 +36,7 @@ import {
 } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
-import { isSearchRefusedError, type SearchRefusal } from '~/components/Search/search-refusal';
+import { shownRefusalOf, type SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import { MoreLikeThisPrefer } from '~/components/Image/Infinite/MoreLikeThisPrefer';
 import {
@@ -340,17 +340,8 @@ function ImagesFeed({
     />
   );
 
-  const shownRefusal =
-    refusal ??
-    (isSearchRefusedError(search.error)
-      ? 'profanity'
-      : search.serverRefusal
-      ? 'policy'
-      : undefined);
-  if (shownRefusal)
-    return (
-      <SearchRefusalNotice refusal={shownRefusal} refusedBy={search.serverRefusal?.refusedBy} />
-    );
+  const shown = shownRefusalOf(refusal, search.error, search.serverRefusal);
+  if (shown) return <SearchRefusalNotice {...shown} />;
 
   return (
     <>

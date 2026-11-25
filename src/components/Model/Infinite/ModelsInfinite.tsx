@@ -19,7 +19,7 @@ import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-searc
 import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
-import { isSearchRefusedError } from '~/components/Search/search-refusal';
+import { shownRefusalOf } from '~/components/Search/search-refusal';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -74,17 +74,8 @@ function SearchableModelsFeed(props: InfiniteModelsProps) {
   const { refusal } = useSearchRefusal(text, 'models_semantic', 'semantic');
   const search = useSemanticModelFeed({ ...filters, browsingLevel }, refusal ? undefined : text);
   useScrollToTopOnChange(search.searchKey);
-  const shownRefusal =
-    refusal ??
-    (isSearchRefusedError(search.error)
-      ? 'profanity'
-      : search.serverRefusal
-      ? 'policy'
-      : undefined);
-  if (shownRefusal)
-    return (
-      <SearchRefusalNotice refusal={shownRefusal} refusedBy={search.serverRefusal?.refusedBy} />
-    );
+  const shown = shownRefusalOf(refusal, search.error, search.serverRefusal);
+  if (shown) return <SearchRefusalNotice {...shown} />;
   return <ModelsFeed {...props} feedSearch={text ? { text, search } : undefined} />;
 }
 

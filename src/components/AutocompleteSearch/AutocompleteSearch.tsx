@@ -86,17 +86,15 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   SEARCH_POLICY_MESSAGE,
   searchRefusedByLine,
-  type SearchRefusedBy,
 } from '~/shared/constants/search-refusal.constants';
 
-/** The dropdown's refusal items that show the policy message, and the check each names to a moderator. */
-const REFUSAL_ITEM_CHECKS: Record<string, SearchRefusedBy> = {
-  profanity: 'profanity',
-  disabled: 'real people',
-  'blocked-words': 'blocked words',
-};
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { browserChecksProfanity, getSearchRefusal } from '~/components/Search/search-refusal';
+import {
+  browserChecksProfanity,
+  getSearchRefusal,
+  refusedByOf,
+  type SearchRefusal,
+} from '~/components/Search/search-refusal';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
@@ -113,6 +111,13 @@ import {
   setPendingSearchUpload,
 } from '~/components/Search/ImageSearchUpload/pending-search-upload';
 import { moreLikeThisHref, offersMoreLikeThis } from '~/components/Image/MoreLikeThisButton';
+
+/** The dropdown's refusal items that show the policy message, as the refusal each one is. */
+const REFUSAL_ITEMS: Record<string, SearchRefusal> = {
+  profanity: 'profanity',
+  disabled: 'poi',
+  'blocked-words': 'blocked-words',
+};
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
@@ -794,8 +799,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             );
           }
           // Every refusal but the minors one: the policy message, naming no term or rule.
-          const refusedBy = Object.hasOwn(REFUSAL_ITEM_CHECKS, key)
-            ? REFUSAL_ITEM_CHECKS[key]
+          const refusedBy = Object.hasOwn(REFUSAL_ITEMS, key)
+            ? refusedByOf(REFUSAL_ITEMS[key])
             : undefined;
           if (refusedBy) {
             return (

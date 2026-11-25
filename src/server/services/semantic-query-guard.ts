@@ -395,8 +395,9 @@ export function beginSemanticAudit({
             searchPath ?? (wordVerdict ? 'narrowed' : 'served')
           )
         );
-      // A page refused on its way (own images narrowed, a refused query by image) names its
-      // verdict; a served page is refused only when the search service refused its text.
+      // A refused_ path (own images narrowed, a refused query by image) names its word verdict,
+      // except refused_upload_level (an upload above the viewer's level), which is not marked
+      // refused; a served page is refused only when the search service refused its text.
       const path = searchPath ?? 'served';
       const by =
         path === 'refused_upload_level'

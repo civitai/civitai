@@ -30,6 +30,22 @@ export function throwIfRefused<T extends object>(page: T): T {
   return page;
 }
 
+/**
+ * What a searched feed shows in place of results: the browser's own refusal first, then the
+ * server's profanity refusal (an error), then a page the server refused. `refusedBy` is the
+ * server's moderator view, and only for the server's page.
+ */
+export function shownRefusalOf(
+  refusal: SearchRefusal | undefined,
+  error: unknown,
+  serverRefusal: { refusedBy?: SearchRefusedBy } | undefined
+): { refusal: SearchRefusal; refusedBy?: SearchRefusedBy } | undefined {
+  if (refusal) return { refusal };
+  if (isSearchRefusedError(error)) return { refusal: 'profanity' };
+  if (serverRefusal) return { refusal: 'policy', refusedBy: serverRefusal.refusedBy };
+  return undefined;
+}
+
 /** The check a refusal decided in the browser names, for a moderator's line. */
 export function refusedByOf(refusal: SearchRefusal): SearchRefusedBy | undefined {
   switch (refusal) {

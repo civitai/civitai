@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { SemanticAuditEntry } from '~/server/services/semantic-search-audit.service';
 import type { CandidateSource, GuardRead } from '~/server/services/semantic-search-client';
-import { SEARCH_REFUSED_BY } from '~/shared/constants/search-refusal.constants';
 import type { SessionUser } from '~/types/session';
 
 /** The keys a semantic search procedure may hand the browser, besides the router's latencyMs. */
@@ -18,7 +17,7 @@ type Run = (args: {
 /**
  * The audit contract every semantic search service keeps, run against that service's own test
  * harness. `ids` must be ids the harness hydrates for AUDIT_VIEWER; `narrowToMinor` and `refuse`
- * set the harness's word audit to a minor verdict and to a refusal. A refusal hands the audit its
+ * set the harness's word audit to a minor verdict and to a real-people refusal. A refusal hands the audit its
  * deferred run as the second argument of `recorded`.
  */
 export function describeSemanticAuditContract({
@@ -112,7 +111,8 @@ export function describeSemanticAuditContract({
       refuse();
       const page = await run({ source: source(pass), user: MOD });
       expect(page).toMatchObject({ refused: true });
-      expect(SEARCH_REFUSED_BY).toContain((page as { refusedBy?: string }).refusedBy);
+      // Every harness's `refuse` is a real-people verdict.
+      expect(page).toMatchObject({ refusedBy: 'real people' });
     });
 
     it('names a guard that could not complete as fail-closed, not as a verdict', async () => {
