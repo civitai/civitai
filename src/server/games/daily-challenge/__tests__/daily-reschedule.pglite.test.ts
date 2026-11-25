@@ -71,6 +71,13 @@ describe('eligibleRows', () => {
     expect(ids(await eligibleRows({}, true))).toEqual([2, 1, 7]);
   });
 
+  it('limits to the from/to range by start date', async () => {
+    const day = (offset: number) =>
+      new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    // Row 1 starts in 5 days, row 7 in 6.
+    expect(ids(await eligibleRows({ from: day(6), to: day(6) }, false))).toEqual([7]);
+  });
+
   it('never widens past the guard when ids are given', async () => {
     expect(ids(await eligibleRows({ ids: [2, 3, 4, 5, 6] }, false))).toEqual([]);
   });
@@ -146,6 +153,55 @@ describe('writeReschedule', () => {
 
     expect(await write(7, hash)).toBe('row changed since the dry run');
     expect((await fetchRow(7)).title).toBe('edited by a mod');
+  });
+
+  it('rubricOnly keeps the published article and changes only rubric and judge', async () => {
+    await db.query(
+      `INSERT INTO "Challenge" (id, source, status, "startsAt", "visibleAt", "collectionId", title, theme, metadata)
+       VALUES (8, 'System', 'Scheduled', now() + interval '1 day', now() - interval '1 day', 80, 'Live title',
+               'Live theme', '{"themeElements": ["kept"]}')`
+    );
+    const [row] = await eligibleRows({ ids: [8] }, true);
+
+    const result = await writeReschedule({
+      challengeId: 8,
+      preImageHash: hashOf(preImage(row)),
+      rubricOnly: true,
+      article,
+      judgeId: 9,
+      judgingEngine: 'legacy-absolute',
+      judgingCategories: [{ key: 'theme', weight: 100 }],
+      dailyPlan: { setKey: 'cute', source: 'schedule', judgeName: 'Jolly CivBot' },
+    });
+
+    expect(result).toBe('updated');
+    const after = await fetchRow(8);
+    expect([after.title, after.theme]).toEqual(['Live title', 'Live theme']);
+    expect(after.judgingCategories).toEqual([{ key: 'theme', weight: 100 }]);
+    expect(after.metadata).toMatchObject({ themeElements: ['kept'] });
+  });
+
+  it('dailyPlan null removes the stored plan and keeps other metadata', async () => {
+    await db.query(
+      `INSERT INTO "Challenge" (id, source, status, "startsAt", "visibleAt", "collectionId", metadata)
+       VALUES (9, 'System', 'Scheduled', now() + interval '8 days', now() + interval '5 days', 90,
+               '{"themeElements": ["kept"], "dailyPlan": {"setKey": "story", "source": "schedule", "judgeName": "x"}}')`
+    );
+    const [row] = await eligibleRows({ ids: [9] }, true);
+
+    const result = await writeReschedule({
+      challengeId: 9,
+      preImageHash: hashOf(preImage(row)),
+      rubricOnly: true,
+      judgeId: 1,
+      judgingEngine: 'legacy-absolute',
+      judgingCategories: [{ key: 'theme', weight: 100 }],
+      dailyPlan: null,
+    });
+
+    expect(result).toBe('updated');
+    const { metadata } = await fetchRow(9);
+    expect(metadata).toEqual({ themeElements: ['kept'] });
   });
 
   it.each([

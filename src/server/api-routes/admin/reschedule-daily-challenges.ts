@@ -201,8 +201,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return res.status(409).json({ error: 'both daily-challenge plan flags are off' });
 
   const eligible = await eligibleRows({ from, to }, rubricOnly);
-  // A row whose stored plan already matches what the date resolves to now drops out, so the next
-  // dry run is the next page; one planned while its judge was missing does not match, so it stays.
+  // A row whose stored plan matches what its date resolves to now drops out, so the next dry run is
+  // the next page. A row stored with judgeName 'default' stays once its judge exists.
   const candidates: { row: Row; plan?: ResolvedDailyPlan }[] = [];
   for (const row of eligible) {
     if (mode === 'defaults') {

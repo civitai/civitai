@@ -73,7 +73,6 @@ export async function challengeJudgingEngineForCreate(
   return engine === DEFAULT_JUDGING_ENGINE ? {} : { judgingEngine: engine };
 }
 
-// Null when no active judge has the name.
 export async function findActiveJudgeIdByName(name: string): Promise<number | null> {
   const { dbRead } = await import('~/server/db/client');
   const judge = await dbRead.challengeJudge.findFirst({
