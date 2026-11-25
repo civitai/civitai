@@ -34,13 +34,8 @@
     type SongCardKey,
   } from '$lib/music/song-player';
 
-  // A song in a moderator view: cover, play/pause, a seek bar with the time, the title and the lyrics.
-  // Nothing plays until the moderator clicks; `song-player.ts` keeps one song playing at a time, at
-  // the last volume. Like `CdnOrRetractedMedia`, the public CDN first, then storage through
-  // `/api/retracted-media` for a song the CDN will not serve (a removed one).
-  //
-  // One instance plays one song: its time, length and play state are the instance's, so a caller that
-  // swaps `item` on the same instance (Image lookup) wraps the card in `{#key item.id}`.
+  // Like CdnOrRetractedMedia: the public CDN first, then storage via /api/retracted-media for a song
+  // the CDN refuses (a removed one).
   let {
     item,
     cardKey,
@@ -51,10 +46,7 @@
     item: { id: number; url: string };
     /** Which card this is where the same song shows twice (the grid's item key); see `playSongAt`. */
     cardKey?: SongCardKey;
-    /** `card` fits a queue tile, its lyrics scrolling inside it. `detail` is a triage pane's middle
-     *  column: the player and the lyrics as two panels at reading size, the column scrolling. */
     variant?: 'card' | 'detail';
-    /** Reports on this song: each timed one is a marker on the seek bar that plays from its time. */
     reports?: readonly { timeSec: number | null; label: string }[];
     class?: string;
   } = $props();
@@ -76,10 +68,8 @@
   let fallback = $state<{ id: number; mode: 'retracted' | 'failed' } | null>(null);
   const mode = $derived(fallback?.id === item.id ? fallback.mode : 'cdn');
   let reason = $state(RETRACTED_REFUSED);
-  // A song playing when the CDN refused it goes on from the stored copy; a paused one stays paused.
   const intent = createPlayIntent();
-  // The key this card registers under and its own controls target, so they never drive another card
-  // showing the same song.
+  // So this card's controls never drive another card showing the same song.
   const fallbackKey = uniqueCardKey();
   const ownKey = $derived(cardKey ?? fallbackKey);
 
@@ -137,7 +127,6 @@
     if (audio) audio.volume = value;
   }
 
-  /** The file's own length once it has loaded, else the upload's. */
   function lengthOf(song: SongCard | null) {
     return Number.isFinite(duration) && duration > 0 ? duration : (song?.durationSec ?? 0);
   }
@@ -214,7 +203,6 @@
   {/each}
 {/snippet}
 
-<!-- `phase`: the card's details are loading, came back, or could not be read (the song still plays). -->
 {#snippet player(song: SongCard | null, phase: 'loading' | 'loaded' | 'failed')}
   {@const cover = shownCover(song?.cover ?? null, removedCovers)}
   <div
@@ -289,7 +277,6 @@
         {/if}
       </div>
       {#if detail}
-        <!-- The design's controls row: play, the time beside it, the volume at the far end. -->
         <div class="flex items-center gap-3">
           {@render playButton('size-9 bg-blue-600 text-white hover:bg-blue-700')}
           <span class="text-[13px] font-medium tabular-nums text-white">{@render clock(song)}</span>
@@ -315,7 +302,6 @@
     {:else if song}
       <p class="text-xs text-dark-2">No lyrics.</p>
     {:else if phase === 'failed'}
-      <!-- The song still plays; only its title, cover and lyrics are missing. -->
       <p class="text-xs text-dark-2">Couldn't load this song's cover and lyrics.</p>
     {/if}
   </div>

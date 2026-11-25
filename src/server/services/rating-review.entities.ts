@@ -3,10 +3,10 @@ import {
   collectionRatingLevel,
   modelRatingLevel,
   songNeverReviewable,
+  songScanStateOf,
   textScanNsfwReason,
   textScanResultTextHash,
   type RatingReviewEntityType,
-  type SongScanState,
 } from '@civitai/shared/rating-review';
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
 import { constants } from '~/server/common/constants';
@@ -53,27 +53,10 @@ export const SONG_UNREVIEWABLE_MESSAGE =
   "This song's scans could not review it, so its rating can't be disputed.";
 const REMOVED_SONG_STATES: string[] = [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound];
 
-// The cron's own reads of the retry count and failure class (src/server/jobs/image-ingestion.ts).
-function songScanState(ingestion: string, scanJobs: unknown): SongScanState {
-  const jobs = (scanJobs ?? {}) as {
-    retryCount?: unknown;
-    error?: { failureClass?: unknown; reason?: unknown };
-    lastFailure?: { failureClass?: unknown; reason?: unknown };
-  };
-  const failure = jobs.error ?? jobs.lastFailure;
-  const text = (v: unknown) => (typeof v === 'string' ? v : null);
-  return {
-    ingestion,
-    retryCount: typeof jobs.retryCount === 'number' ? jobs.retryCount : null,
-    failureClass: text(failure?.failureClass),
-    failureReason: text(failure?.reason),
-  };
-}
-
 function songDisputeRestriction(ingestion: string, scanJobs: unknown): string | undefined {
   if (ingestion === ImageIngestionStatus.Scanned) return undefined;
   if (REMOVED_SONG_STATES.includes(ingestion)) return SONG_REMOVED_MESSAGE;
-  return songNeverReviewable(songScanState(ingestion, scanJobs))
+  return songNeverReviewable(songScanStateOf(ingestion, scanJobs))
     ? SONG_UNREVIEWABLE_MESSAGE
     : SONG_UNREVIEWED_MESSAGE;
 }

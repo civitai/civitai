@@ -2,6 +2,7 @@ import { CompiledQuery, sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
+import { NSFW_LEVEL_BLOCKED } from './pending-deletes.db';
 
 const userIdsParameter = (userIds: number[]) => [...new Set(userIds)].filter(Number.isInteger);
 
@@ -58,13 +59,8 @@ export const ownImageNamedByUserImage = (alias: string, user = 'u') =>
 export const blockMarkerText = (alias: string) =>
   `(${alias}.ingestion::text = 'Blocked' OR ${alias}."nsfwLevel" = 32 OR ${alias}."blockedFor" IS NOT NULL)`;
 
-/**
- * The cover a song's public player shows, one rule in two forms: the main app's
- * `getSongCoversForPlayer` filters fetched rows with `isSongsOwnCover` and `isPlayerSongCover`, the
- * moderator's song card reads `songsOwnCoverText` and `playerSongCoverText`. A cover is the song
- * owner's own image outside any post, scanned, with no block marker, not held for review and not
- * flagged as showing a minor. The viewer's browsing level is the caller's to add.
- */
+/** The cover a song's public player shows: one rule in two forms. Keep in step with the main app's
+ *  isSongsOwnCover/isPlayerSongCover and the moderator's songsOwnCoverText/playerSongCoverText. */
 export const isSongsOwnCover = (
   cover: { userId: number; postId: number | null } | null | undefined,
   song: { userId: number }
@@ -84,7 +80,7 @@ export const isPlayerSongCover = (cover: {
 }) =>
   cover.ingestion === 'Scanned' &&
   // The rest of the block marker: Scanned already rules out Blocked ingestion.
-  cover.nsfwLevel !== 32 &&
+  cover.nsfwLevel !== NSFW_LEVEL_BLOCKED &&
   cover.blockedFor == null &&
   cover.needsReview == null &&
   cover.acceptableMinor === false;

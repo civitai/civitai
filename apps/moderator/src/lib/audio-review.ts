@@ -17,9 +17,6 @@ export const AUDIO_TAB_LABELS: Record<AudioTab, string> = {
   disputes: 'Disputes',
 };
 
-/** The tabs that work on this page; the rest render disabled. */
-export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported', 'appeals', 'held', 'disputes'];
-
 export const REPORTED_SORTS = ['oldest', 'newest', 'most'] as const;
 export type ReportedSort = (typeof REPORTED_SORTS)[number];
 export const REPORTED_SORT_LABELS: Record<ReportedSort, string> = {
@@ -61,9 +58,7 @@ export function reportTimeSec(details: unknown): number | null {
 export type SongReport = {
   id: number;
   reason: string;
-  /** The violation or stated reason the reporter picked (`reportReasonLabel`). */
   label: string;
-  /** The reporter's own words. */
   comment: string | null;
   timeSec: number | null;
   createdAt: Date;
@@ -79,14 +74,11 @@ export type ReportedSongRow = {
    *  text, only the id and what is waiting. */
   withheld: boolean;
   title: string | null;
-  /** The song's storage key; null when withheld. */
   url: string | null;
   coverUrl: string | null;
-  /** Null when withheld. */
   nsfwLevel: number | null;
-  /** Removed (`ingestion` Blocked); kept on a withheld song for its Removed chip. */
+  /** Kept on a withheld song for its Removed chip. */
   removed: boolean;
-  /** How it was removed, which decides what a verdict does to it; null when live or withheld. */
   removal: RemovedState | null;
   owner: { id: number; username: string | null } | null;
   /** When the oldest pending report was filed. */
@@ -94,8 +86,7 @@ export type ReportedSongRow = {
   /** Reporters, merged ones included. */
   reportCount: number;
   reports: SongReport[];
-  /** The song's own cover while there is one to remove: not removed, not withheld from this
-   *  moderator (`visibleSongLinks`). Null when withheld. */
+  /** The song's own cover while there is one to remove (`visibleSongLinks`). */
   removableCoverId: number | null;
 };
 
@@ -113,14 +104,7 @@ type DecisionRow = Pick<ReportedSongRow, 'withheld' | 'removed' | 'removal'> &
   Partial<Pick<ReportedSongRow, 'removableCoverId'>>;
 const SONG_VERBS = { restore: 'Restore and dismiss', remove: 'Remove song' };
 
-/**
- * Which decision keys a song takes, as Image reports rules on a removed image: a live song takes
- * Dismiss, Remove and Set rating; a rule-blocked or otherwise blocked one is restored by its
- * dismissal and can be made a moderator removal; a moderator-removed one can only have its reports
- * closed; one removed for CSAM, or under CSAM review, takes nothing here. Remove cover is offered
- * beside any of those while the song has its own cover to remove (`removableCoverId`). A withheld
- * song takes nothing.
- */
+/** A CSAM-removed or CSAM-review song takes nothing: the CSAM queue owns it. */
 export function reportedDecisionsEnabled(row: DecisionRow, canAct: boolean): boolean[] {
   if (!canAct || row.withheld) return REPORTED_DECISIONS.map(() => false);
   const cover = row.removableCoverId != null;
@@ -176,7 +160,6 @@ export const LYRICS_SOURCE_LABELS: Record<string, string> = {
 /** A scan's state as a pill: what it decided, never why. */
 export type CheckState = 'passed' | 'blocked' | 'held' | 'pending' | 'failed';
 
-/** The pill for a song or cover from its `ingestion`, `needsReview` and `blockedFor`. */
 export function checkState(media: {
   ingestion: string;
   needsReview: string | null;
@@ -239,18 +222,15 @@ export type SongAppealRow = {
   kind: 'song' | 'cover';
   /** Withheld from this moderator by the media access rule: only the id, the kind and the wait. */
   withheld: boolean;
-  /** The song: itself on a song appeal, the song it is the cover of on a cover appeal (null when that
-   *  song is withheld from this moderator). */
+  /** On a cover appeal, the song it is the cover of; null when that song is withheld. */
   song: { id: number; title: string | null } | null;
-  /** The appealed image's storage key: the song's audio, or the cover's picture. Null when withheld. */
   url: string | null;
-  /** The list thumbnail: a song's cover as the public player shows it. */
   coverUrl: string | null;
   owner: { id: number; username: string | null } | null;
   waitingSince: Date;
   message: string | null;
   removal: { reason: string | null; by: string | null; at: Date | null } | null;
-  /** This image's appeals so far, this one included: 2 or more is a repeat. */
+  /** This image's appeals so far, this one included. */
   appeals: number;
   nsfwLevel: number | null;
 };
@@ -273,10 +253,13 @@ export function removalReasonLabel(tosReason: string | null, blockedFor: string 
   );
 }
 
-/** How an appeal row reads in the list. */
+/** How a song reads in a list or a detail header. */
+export const songTitle = (song: { id: number; withheld: boolean; title: string | null }) =>
+  song.withheld ? `Withheld song #${song.id}` : song.title || `Untitled song #${song.id}`;
+
 export const appealRowTitle = (row: Pick<SongAppealRow, 'id' | 'kind' | 'withheld' | 'song'>) => {
   if (row.withheld) return `Withheld ${row.kind} #${row.id}`;
-  const title = row.song?.title || (row.song ? `Untitled song #${row.song.id}` : null);
+  const title = row.song ? songTitle({ ...row.song, withheld: false }) : null;
   return row.kind === 'song' ? title ?? `Song #${row.id}` : `Cover: ${title ?? `image #${row.id}`}`;
 };
 
@@ -305,14 +288,12 @@ export type HeldSongRow = {
   id: number;
   kind: HeldKind;
   withheld: boolean;
-  /** The lyrics hold, on a lyrics row. */
   holdId: number | null;
   /** Since the hold was written (lyrics), or the flagged image was uploaded. */
   waitingSince: Date;
   title: string | null;
-  /** The song's storage key. */
   url: string | null;
-  /** The list thumbnail: the cover as the public player shows it, so never a flagged one. */
+  /** The cover as the public player shows it, so never a flagged one. */
   coverUrl: string | null;
   /** The flagged cover under review, on a cover row. */
   cover: { id: number; url: string; flag: string; nsfwLevel: number } | null;
@@ -320,9 +301,7 @@ export type HeldSongRow = {
   flag: string | null;
   nsfwLevel: number | null;
   owner: { id: number; username: string | null } | null;
-  /** The song is removed (`ingestion` Blocked). */
   removed: boolean;
-  /** The song's own cover while there is one to remove (`visibleSongLinks`). */
   removableCoverId: number | null;
 };
 
@@ -332,21 +311,12 @@ const HELD_DECISIONS = {
   song: ['approveSong', 'removeSong', 'removeCover', 'rate'],
 } as const satisfies Record<HeldKind, readonly string[]>;
 
-/** The decisions in key order for a held row: a lyrics hold only links to CSAM holds; a flagged
- *  cover is approved or removed first; a flagged song takes the Reported tab's decisions with
- *  Approve song in place of Dismiss. */
 export const heldDecisions = (kind: HeldKind): readonly string[] => HELD_DECISIONS[kind];
 
 type HeldDecisionRow = Pick<HeldSongRow, 'kind' | 'withheld' | 'removed' | 'removableCoverId'> & {
   cover: unknown;
 };
 
-/**
- * Which decision keys a held row takes. A lyrics hold's one key opens it in CSAM holds, for a
- * moderator who can open that page (`canOpenHolds`), whatever their image grant. A withheld cover or
- * song takes nothing; otherwise each needs the image grant (`canAct`), Approve cover a cover still
- * under review, Remove cover a cover to remove, and Remove song and Set rating a song not removed.
- */
 export function heldDecisionsEnabled(
   row: HeldDecisionRow,
   canAct: boolean,
@@ -365,21 +335,14 @@ export function heldDecisionsEnabled(
 export const lyricsHoldHref = (songId: number) =>
   `/csam/text-holds?entityType=TrackLyrics&q=${songId}`;
 
-export const heldRowTitle = (row: Pick<HeldSongRow, 'id' | 'withheld' | 'title'>) =>
-  row.withheld ? `Withheld song #${row.id}` : row.title || `Untitled song #${row.id}`;
-
 /** Disputes tab chips: every dispute, or those asking for a lower or a higher rating. */
 export const DISPUTE_FILTERS = ['all', 'lower', 'higher'] as const;
 export type DisputeFilter = (typeof DISPUTE_FILTERS)[number];
 export const DISPUTE_SORTS = ['oldest', 'newest'] as const;
 export type DisputeSort = (typeof DISPUTE_SORTS)[number];
 
-/**
- * Whether a disputed song can take a level: `reviewed` once its own scans reviewed it; `unreviewed`
- * while they are running or will be retried (the resolver refuses a level until then); `gone` when
- * it was deleted, removed or will never be reviewed, so a ruling closes the dispute and applies
- * nothing (the resolver's missing-entity path).
- */
+/** `gone`: deleted, removed or never to be reviewed, so a ruling closes the dispute and applies
+ *  nothing (the resolver's missing-entity path). */
 export type DisputeSongState = 'reviewed' | 'unreviewed' | 'gone';
 
 /** An owner's Pending rating dispute on a song (`RatingReview` entity type `Song`), one row each. */
@@ -391,22 +354,16 @@ export type SongDisputeRow = {
   withheld: boolean;
   waitingSince: Date;
   title: string | null;
-  /** The song's storage key. */
   url: string | null;
-  /** The list thumbnail: the cover as the public player shows it. */
   coverUrl: string | null;
   owner: { id: number; username: string | null } | null;
   /** The level the owner saw when they disputed it; the ruling is judged on `songLevel`. */
   currentLevel: number | null;
-  /** The level they ask for. */
   suggestedLevel: number | null;
-  /** The song's level now. */
   songLevel: number | null;
-  /** The owner's words. */
   message: string | null;
-  /** Null when withheld. */
   state: DisputeSongState | null;
-  /** This song's disputes so far, this one included: 2 or more is a repeat. Null when withheld. */
+  /** This song's disputes so far, this one included. */
   disputes: number | null;
   /** The last ruling on an earlier dispute of this song. */
   earlier: { status: string; appliedLevel: number | null; resolvedAt: Date | null } | null;
@@ -420,4 +377,4 @@ export const disputeKeysEnabled = (
 ) => SONG_RATING_LEVELS.map(() => canAct && !row.withheld && row.state !== 'unreviewed');
 
 export const disputeRowTitle = (row: Pick<SongDisputeRow, 'songId' | 'withheld' | 'title'>) =>
-  row.withheld ? `Withheld song #${row.songId}` : row.title || `Untitled song #${row.songId}`;
+  songTitle({ ...row, id: row.songId });

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { IconExternalLink, IconSearch, IconUser } from '@tabler/icons-svelte';
@@ -18,17 +17,15 @@
   import {
     appealDecisionsEnabled,
     appealRowTitle,
-    songDetailsUrl,
     type SongAppealRow,
-    type SongDetails,
   } from '$lib/audio-review';
   import { entityUrl, imageLookupUrl, userUrl } from '$lib/entity-url';
-  import { fetchJson } from '$lib/fetch-json';
   import { dateTime, LINK_BUTTON, LINK_CLASS, shortAge, shortDate } from '$lib/format';
-  import { SSR_PENDING } from '$lib/ssr-pending';
+  import { songDetails } from '$lib/music/song-details.svelte';
   import { decisionReasonOptions, decisionReasonProblem } from '$lib/triage/decision-reasons';
   import type { Outcome } from '$lib/triage/queue';
   import SongSideCards from './SongSideCards.svelte';
+  import SongWithheldNotice from './SongWithheldNotice.svelte';
 
   let {
     row,
@@ -51,10 +48,8 @@
   const song = $derived(row.song);
   const isSong = $derived(row.kind === 'song');
   const enabled = $derived(appealDecisionsEnabled(row, canAct));
-  // The song's side cards: the song appealed, or the song a cover belongs to. Client only.
-  const details = $derived(
-    browser && song && !row.withheld ? fetchJson<SongDetails>(songDetailsUrl(song.id)) : SSR_PENDING
-  );
+  // The song appealed, or the song a cover belongs to.
+  const details = songDetails(() => (song && !row.withheld ? song.id : null));
 
   const RULINGS = [
     { action: 'approveAppeal', verdict: 'Approved', label: 'Approve appeal' },
@@ -143,7 +138,6 @@
       {fields}
       {problem}
     />
-    <!-- Under the reason line and above the hint, which the bar would otherwise end with. -->
     <Input
       name="resolvedMessage"
       bind:value={message}
@@ -219,12 +213,7 @@
   {#snippet evidence()}
     <div class="flex flex-col gap-4">
       {#if row.withheld}
-        <div class="space-y-2 rounded-lg border border-dark-4 bg-dark-7 p-3.5 text-sm text-dark-0">
-          <p class="m-0">
-            This {subject} is withheld from you: its media, owner and appeal are not shown here.
-          </p>
-          <a href="/images/csam" class={LINK_CLASS}>Open the CSAM image queue</a>
-        </div>
+        <SongWithheldNotice {subject} hidden="its media, owner and appeal" />
       {:else if isSong}
         <p class="m-0 rounded-lg border border-blue-500/35 bg-blue-500/10 px-3.5 py-2 text-[13px] text-blue-200">
           This song is removed. It plays from storage for moderators only.
@@ -253,7 +242,7 @@
         {/if}
       {/if}
       {#if !row.withheld && song}
-        {#await details}
+        {#await details.current}
           <p class="m-0 text-sm text-dark-2">Loading the song's details…</p>
         {:then d}
           <TriageCard title="Song" dense>
@@ -312,7 +301,7 @@
     {/if}
 
     {#if !row.withheld && song}
-      {#await details}
+      {#await details.current}
         <p class="m-0 text-sm text-dark-2">Loading the cover, checks and owner…</p>
       {:then d}
         <SongSideCards

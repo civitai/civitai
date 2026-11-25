@@ -3,10 +3,7 @@ import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player
 
 const SONG_TIME = /^(\d+):([0-5]\d)$/;
 
-/**
- * The report form's "Time in the song" field: `m:ss` text in, whole seconds out, within the song's
- * length when it is known. The server checks the same bound (`assertSongReportTime`).
- */
+/** The server checks the same bound (assertSongReportTime). */
 export const songReportTimeSchema = (durationSec: number | null) =>
   z
     .string({ error: 'Say when in the song this happens.' })

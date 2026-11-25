@@ -37,7 +37,7 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { getHeldSongs } = await import('../audio-review.service');
-const { countHeldSongs } = await import('../audio-review-count');
+const { countHeldSongs, songTabCounts } = await import('../audio-review-count');
 const { getImageReviewQueue, getImageReviewCounts } = await import('../image-review.service');
 const page = await import('../../../routes/audio-review/+page.server');
 
@@ -245,6 +245,17 @@ describe('the Held tab', () => {
 
   it('counts the songs decided here for the sidebar, and the lyrics holds apart', async () => {
     expect(await countHeldSongs()).toEqual({ lyrics: 1, actionable: 3 });
+  });
+
+  it('gives the Held tab the badge its list totals, whichever tab is open', async () => {
+    const counts = await songTabCounts();
+    for (const tab of ['held', 'reported'] as const) {
+      const loaded = (await page.load({
+        url: new URL(`https://mod.example/audio-review?tab=${tab}`),
+        locals: { user: WITH_GRANT, grants: GRANTS },
+      } as never)) as { counts: Record<string, number> };
+      expect(loaded.counts, tab).toEqual(counts);
+    }
   });
 });
 

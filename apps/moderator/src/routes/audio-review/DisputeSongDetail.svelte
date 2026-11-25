@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { IconExternalLink, IconSearch, IconUser } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -10,20 +9,18 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import {
     disputeRowTitle,
-    songDetailsUrl,
     songRatingLabel,
     SONG_RATING_LEVELS,
-    type SongDetails,
     type SongDisputeRow,
   } from '$lib/audio-review';
   import { entityUrl, userUrl } from '$lib/entity-url';
-  import { fetchJson } from '$lib/fetch-json';
   import { dateTime, LINK_BUTTON, LINK_CLASS, ordinal, shortAge, shortDate } from '$lib/format';
   import { SONG_ENTITY_TYPE } from '$lib/rating-review';
-  import { SSR_PENDING } from '$lib/ssr-pending';
+  import { songDetails } from '$lib/music/song-details.svelte';
   import type { Outcome } from '$lib/triage/queue';
   import RatingDecisionForm from '../ratings/RatingDecisionForm.svelte';
   import SongSideCards from './SongSideCards.svelte';
+  import SongWithheldNotice from './SongWithheldNotice.svelte';
 
   let {
     row,
@@ -45,16 +42,10 @@
     chosen: number | null;
   } = $props();
 
-  // The song's side cards. Client only, and never for a withheld song or one that is gone.
-  const details = $derived(
-    browser && !row.withheld && row.state !== 'gone'
-      ? fetchJson<SongDetails>(songDetailsUrl(row.songId))
-      : SSR_PENDING
-  );
+  const details = songDetails(() => (row.withheld || row.state === 'gone' ? null : row.songId));
 
-  // The dispute as /ratings' decision form reads it, its "current" the song's live level (what the
-  // resolver keeps or changes, which may differ from what the owner saw): a song that is gone is a
-  // deleted entity, whose ruling closes the dispute and applies nothing.
+  // Judged on the song's live level, which may differ from what the owner saw. A gone song is a
+  // deleted entity: its ruling applies nothing.
   const dispute = $derived(
     row.currentLevel != null && row.suggestedLevel != null
       ? {
@@ -161,12 +152,7 @@
   {#snippet evidence()}
     <div class="flex flex-col gap-4">
       {#if row.withheld}
-        <div class="space-y-2 rounded-lg border border-dark-4 bg-dark-7 p-3.5 text-sm text-dark-0">
-          <p class="m-0">
-            This song is withheld from you: its media, owner and dispute are not shown here.
-          </p>
-          <a href="/images/csam" class={LINK_CLASS}>Open the CSAM image queue</a>
-        </div>
+        <SongWithheldNotice subject="song" hidden="its media, owner and dispute" />
       {:else}
         {#if row.state === 'unreviewed'}
           <p
@@ -187,7 +173,7 @@
           <SongCard item={{ id: row.songId, url: row.url }} variant="detail" />
         {/if}
         {#if row.state !== 'gone'}
-          {#await details}
+          {#await details.current}
             <p class="m-0 text-sm text-dark-2">Loading the song's details…</p>
           {:then d}
             <TriageCard title="Song" dense>
@@ -258,7 +244,7 @@
     </TriageCard>
 
     {#if !row.withheld && row.state !== 'gone'}
-      {#await details}
+      {#await details.current}
         <p class="m-0 text-sm text-dark-2">Loading the cover, checks and owner…</p>
       {:then d}
         <SongSideCards

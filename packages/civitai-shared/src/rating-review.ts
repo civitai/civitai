@@ -210,7 +210,7 @@ export function effectiveScanFailureClass(
 // The ingest cron's scan retry ceilings, by stored failure class; the main app's
 // `image-scan-failure.ts` exports these as its own. Here because a song's rating dispute also
 // reads them: past its ceiling a song's scan is never re-sent, so it can never be reviewed.
-export const IMAGE_SCAN_TRANSIENT_RETRY_LIMIT = 30; // bounded, but well above the old 9-cap
+export const IMAGE_SCAN_TRANSIENT_RETRY_LIMIT = 30;
 export const IMAGE_SCAN_UNKNOWN_RETRY_LIMIT = 9; // historical flood-protection cap
 // Give up on the first failure: markImageScanError already bumped retryCount to 1, so
 // `retryCount < 1` is false on the next cron pass and the image is never re-queued.
@@ -238,6 +238,24 @@ export type SongScanState = {
   failureClass: string | null;
   failureReason: string | null;
 };
+
+/** A song's `SongScanState` from its `scanJobs`, as the ingest cron reads them: the current error's
+ *  class and reason, else the last failure's. */
+export function songScanStateOf(ingestion: string, scanJobs: unknown): SongScanState {
+  const jobs = (scanJobs ?? {}) as {
+    retryCount?: unknown;
+    error?: { failureClass?: unknown; reason?: unknown };
+    lastFailure?: { failureClass?: unknown; reason?: unknown };
+  };
+  const failure = jobs.error ?? jobs.lastFailure;
+  const text = (v: unknown) => (typeof v === 'string' ? v : null);
+  return {
+    ingestion,
+    retryCount: typeof jobs.retryCount === 'number' ? jobs.retryCount : null,
+    failureClass: text(failure?.failureClass),
+    failureReason: text(failure?.reason),
+  };
+}
 
 /** A removed song, a lost file, or a scan past its retry ceiling: its own scans will never review it. */
 export function songNeverReviewable({

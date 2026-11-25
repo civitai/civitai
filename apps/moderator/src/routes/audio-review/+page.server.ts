@@ -10,18 +10,12 @@ import {
   HELD_FILTERS,
   type HeldSort,
   isSongRatingLevel,
-  LIVE_AUDIO_TABS,
   type AppealSort,
   REPORTED_FILTERS,
   REPORTED_SORTS,
 } from '$lib/audio-review';
 import { canAccess, denied } from '$lib/server/access';
-import {
-  countHeldSongs,
-  countReportedSongs,
-  countSongAppeals,
-  countSongDisputes,
-} from '$lib/server/audio-review-count';
+import { songTabCounts } from '$lib/server/audio-review-count';
 import {
   boundSongReports,
   flaggedCoverOf,
@@ -39,24 +33,19 @@ import {
   APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
 } from '$lib/server/image-moderation.service';
-import { dbRead } from '$lib/server/db';
 import {
   acceptImagesWithReports,
   parseResolutionReason,
   rateImages,
   removeImagesWithReports,
 } from '$lib/server/image-queue';
-import { withheldRefusal } from '$lib/server/retracted-media';
 import { logAxiomError } from '$lib/server/axiom';
 import { resolveRatingReviewAction } from '$lib/server/rating-review-actions';
 import { getSongLinks } from '$lib/server/song-links.service';
 import { int4Id, parseForm, parseIdList, parseQueryKeys } from '$lib/server/query';
-import { violationInputSchema } from '$lib/violations';
+import { isSong } from '$lib/server/songs';
+import { keyed, parseViolation, refuseWithheld } from './actions';
 
-// Audio review: songs on the shared triage shell (docs/features/music.md "Moderating songs"). The
-// Reported tab works on Image reports' data, so its decisions are Image reports' own writers
-// (`$lib/server/image-queue.ts`) on one song and the reports shown for it, behind the same
-// `image.moderate` action grant. Reaching the page is its own page grant.
 const ACT = 'image.moderate';
 // A lyrics hold is decided in CSAM holds, whose page refuses to load without this grant.
 const CSAM_HOLDS = '/csam/text-holds';
@@ -76,102 +65,65 @@ const querySchema = z.object({
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const parsed = parseQueryKeys(url, querySchema);
-  // A tab not yet live on this page opens the Reported tab.
-  const tab = LIVE_AUDIO_TABS.includes(parsed.tab) ? parsed.tab : DEFAULT_AUDIO_TAB;
-  const { sort, has: filter, q, page, selected } = parsed;
-  const canAct = !!locals.grants[ACT];
-  // Every held row, lyrics holds included, as the tab lists them.
-  const heldCount = () => countHeldSongs().then(({ lyrics, actionable }) => lyrics + actionable);
+  const { tab, sort, has: filter, q, page, selected, ...parsed } = parseQueryKeys(url, querySchema);
+  const user = locals.user;
+  const shared = { q, page, canAct: !!locals.grants[ACT], fullBleed: true, headerInline: true };
+  // The open tab's badge is its list's own total, under the search.
   if (tab === 'held') {
     const heldSort: HeldSort = sort === 'newest' ? 'newest' : 'oldest';
-    const [held, reported, appealCount, disputes] = await Promise.all([
-      getHeldSongs({ sort: heldSort, filter: parsed.held, q, page, user: locals.user }),
-      countReportedSongs(),
-      countSongAppeals(),
-      countSongDisputes(),
+    const [held, counts] = await Promise.all([
+      getHeldSongs({ sort: heldSort, filter: parsed.held, q, page, user }),
+      songTabCounts(),
     ]);
     return {
       tab,
       held: { ...held, filters: { sort: heldSort, kind: parsed.held } },
-      counts: { reported: reported.songs, appeals: appealCount, held: held.facets.all, disputes },
-      canOpenHolds: canAccess(locals.user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT],
-      q,
-      page,
-      canAct,
-      fullBleed: true,
-      headerInline: true,
+      counts: { ...counts, held: held.facets.all },
+      canOpenHolds: canAccess(user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT],
+      ...shared,
     };
   }
   if (tab === 'appeals') {
     const appealSort: AppealSort = sort === 'newest' ? 'newest' : 'oldest';
-    const [appeals, reported, held, disputes] = await Promise.all([
-      getSongAppeals({ sort: appealSort, filter: parsed.kind, q, page, user: locals.user }),
-      countReportedSongs(),
-      heldCount(),
-      countSongDisputes(),
+    const [appeals, counts] = await Promise.all([
+      getSongAppeals({ sort: appealSort, filter: parsed.kind, q, page, user }),
+      songTabCounts(),
     ]);
     return {
       tab,
       appeals: { ...appeals, filters: { sort: appealSort, kind: parsed.kind } },
-      counts: { reported: reported.songs, appeals: appeals.facets.all, held, disputes },
-      q,
-      page,
-      canAct,
-      fullBleed: true,
-      headerInline: true,
+      counts: { ...counts, appeals: appeals.facets.all },
+      ...shared,
     };
   }
   if (tab === 'disputes') {
     const disputeSort: DisputeSort = sort === 'newest' ? 'newest' : 'oldest';
-    const [disputes, reported, appealCount, held] = await Promise.all([
-      getSongDisputes({ sort: disputeSort, filter: parsed.ask, q, page, user: locals.user }),
-      countReportedSongs(),
-      countSongAppeals(),
-      heldCount(),
+    const [disputes, counts] = await Promise.all([
+      getSongDisputes({ sort: disputeSort, filter: parsed.ask, q, page, user }),
+      songTabCounts(),
     ]);
     return {
       tab,
       disputes: { ...disputes, filters: { sort: disputeSort, ask: parsed.ask } },
-      counts: {
-        reported: reported.songs,
-        appeals: appealCount,
-        held,
-        disputes: disputes.facets.all,
-      },
-      q,
-      page,
-      canAct,
-      fullBleed: true,
-      headerInline: true,
+      counts: { ...counts, disputes: disputes.facets.all },
+      ...shared,
     };
   }
-  const [result, appealCount, heldTotal, disputeCount] = await Promise.all([
-    getReportedSongs({ sort, filter, q, page, user: locals.user }),
-    countSongAppeals(),
-    heldCount(),
-    countSongDisputes(),
+  const [result, counts] = await Promise.all([
+    getReportedSongs({ sort, filter, q, page, user }),
+    songTabCounts(),
   ]);
   // A deep link opens its song even when the filters or paging leave it off this page.
   const pinned =
     selected && !result.items.some((r) => r.id === selected)
-      ? (await getReportedSongRows([selected], locals.user))[0] ?? null
+      ? (await getReportedSongRows([selected], user))[0] ?? null
       : null;
   return {
     tab,
     reported: { ...result, pinned },
-    counts: {
-      reported: result.facets.all,
-      appeals: appealCount,
-      held: heldTotal,
-      disputes: disputeCount,
-    },
+    counts: { ...counts, reported: result.facets.all },
     filters: { tab, sort, filter },
-    q,
-    page,
-    canAct,
-    fullBleed: true,
-    headerInline: true,
+    ...shared,
   };
 };
 
@@ -205,7 +157,6 @@ const writerForm = (fields: Record<string, string | number | undefined>) => {
 };
 
 export const actions: Actions = {
-  // Image reports' Unaction: the song accepted, its reports closed as Unactioned.
   dismiss: gated(async (event) => {
     const decision = await songDecision(await event.request.formData());
     if ('status' in decision) return decision;
@@ -215,16 +166,12 @@ export const actions: Actions = {
     );
   }),
 
-  // Image reports' removal, with its violation type, required here: the owner is told why.
   remove: gated(async (event) => {
     const form = await event.request.formData();
     const decision = await songDecision(form);
     if ('status' in decision) return decision;
-    const violation = parseForm(violationInputSchema, form);
-    if (typeof violation === 'string')
-      return fail(400, { error: violation, key: decision.imageId });
-    if (!violation.violationType)
-      return fail(400, { error: 'Pick a violation type.', key: decision.imageId });
+    const violation = parseViolation(form, decision.imageId);
+    if ('status' in violation) return violation;
     return removeImagesWithReports(
       writerForm({
         imageIds: decision.imageId,
@@ -236,8 +183,7 @@ export const actions: Actions = {
     );
   }),
 
-  // A correction, not a verdict: the reports stay open. The writer refuses a song its own scans have
-  // not reviewed (`updateImageNsfwLevel`).
+  // A correction, not a verdict: the reports stay open.
   setRating: gated(async (event) => {
     const input = parseForm(
       z.object({ imageId: int4Id, nsfwLevel: z.coerce.number().int() }),
@@ -247,15 +193,11 @@ export const actions: Actions = {
     const { imageId, nsfwLevel } = input;
     if (!isSongRatingLevel(nsfwLevel))
       return fail(400, { error: 'A song is rated PG to XXX.', key: imageId });
-    const song = await dbRead
-      .selectFrom('Image')
-      .select('id')
-      .where('id', '=', imageId)
-      .where('type', '=', 'audio')
-      .executeTakeFirst();
-    if (!song) return fail(404, { error: 'Not a song.', key: imageId });
-    const result = await rateImages(writerForm({ imageIds: imageId, nsfwLevel }), event.locals);
-    return 'status' in result ? fail(result.status, { ...result.data, key: imageId }) : result;
+    if (!(await isSong(imageId))) return fail(404, { error: 'Not a song.', key: imageId });
+    return keyed(
+      await rateImages(writerForm({ imageIds: imageId, nsfwLevel }), event.locals),
+      imageId
+    );
   }),
 
   // Removes only the song's own cover, with its own violation type: the song stays public with the
@@ -266,12 +208,10 @@ export const actions: Actions = {
     const input = parseForm(z.object({ imageId: int4Id, coverId: int4Id }), form);
     if (typeof input === 'string') return fail(400, { error: input });
     const songId = input.imageId;
-    const violation = parseForm(violationInputSchema, form);
-    if (typeof violation === 'string') return fail(400, { error: violation, key: songId });
-    if (!violation.violationType)
-      return fail(400, { error: 'Pick a violation type.', key: songId });
-    const withheld = await withheldRefusal(event.locals.user, [songId]);
-    if (withheld) return fail(403, { error: withheld, key: songId });
+    const violation = parseViolation(form, songId);
+    if ('status' in violation) return violation;
+    const withheld = await refuseWithheld(event.locals.user, songId, songId);
+    if (withheld) return withheld;
     // Read here, not through `visibleSongLinks`, which turns a failed read or a withheld cover into
     // "no cover": each gets its own answer (a withheld cover is refused by the removal writer).
     let coverId: number | null | undefined;
@@ -285,11 +225,7 @@ export const actions: Actions = {
       return fail(409, { error: 'This song has no cover to remove. Reload.', key: songId });
     if (coverId !== input.coverId) return fail(409, { error: NEW_COVER, key: songId });
     const result = await removeImagesWithReports(
-      writerForm({
-        imageIds: coverId,
-        violationType: violation.violationType,
-        violationDetails: violation.violationDetails,
-      }),
+      writerForm({ imageIds: coverId, ...violation }),
       event
     );
     return 'status' in result
@@ -297,47 +233,28 @@ export const actions: Actions = {
       : { ...result, coverId, key: songId };
   }),
 
-  // Held tab: a song removed with its violation type, with no reports to close (Image reports'
-  // removal writer, as Remove song on the Reported tab).
   removeSong: gated(async (event) => {
     const form = await event.request.formData();
     const input = parseForm(z.object({ imageId: int4Id }), form);
     if (typeof input === 'string') return fail(400, { error: input });
     const songId = input.imageId;
-    const violation = parseForm(violationInputSchema, form);
-    if (typeof violation === 'string') return fail(400, { error: violation, key: songId });
-    if (!violation.violationType)
-      return fail(400, { error: 'Pick a violation type.', key: songId });
+    const violation = parseViolation(form, songId);
+    if ('status' in violation) return violation;
     if (!(await isSong(songId))) return fail(404, { error: 'Not a song.', key: songId });
-    const result = await removeImagesWithReports(
-      writerForm({
-        imageIds: songId,
-        violationType: violation.violationType,
-        violationDetails: violation.violationDetails,
-      }),
-      event
+    return keyed(
+      await removeImagesWithReports(writerForm({ imageIds: songId, ...violation }), event),
+      songId
     );
-    return 'status' in result
-      ? fail(result.status, { ...result.data, key: songId })
-      : { ...result, key: songId };
   }),
 
-  // Held tab: the song's own cover accepted from its review flag, through the review queues' accept
-  // writer on the cover's row alone. The song is not touched.
   approveCover: gated((event) => approveHeld(event, 'cover')),
-  // Held tab: a song flagged for review itself, accepted from that flag the same way.
   approveSong: gated((event) => approveHeld(event, 'song')),
 
-  // An owner's appeal of a removed song or cover, through the image appeal resolver: approving
-  // restores only the image appealed (a cover leaves its song alone and the reverse), rejecting keeps
-  // it removed with the reason recorded and the owner told.
   approveAppeal: gated((event) => decideAppeal(event, 'Approved')),
   rejectAppeal: gated((event) => decideAppeal(event, 'Rejected')),
 
-  // An owner's rating dispute on a song, ruled through the moderator rating-review resolver (the one
-  // /ratings uses, which leaves song disputes to this page): applying the owner's ask approves it and
-  // anything else rejects it, keeping the rating needs a reason, the level is written only to a song
-  // its own scans reviewed, and the owner is told.
+  // Rules through the rating-review resolver with songs: true, the only caller allowed to resolve a
+  // song dispute.
   resolveDispute: gated(async (event) => {
     const input = parseForm(disputeSchema, await event.request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
@@ -348,8 +265,8 @@ export const actions: Actions = {
         error: 'This dispute was already decided, or is not on a song. Reload.',
         key: reviewId,
       });
-    const withheld = await withheldRefusal(event.locals.user, [songId]);
-    if (withheld) return fail(403, { error: withheld, key: reviewId });
+    const withheld = await refuseWithheld(event.locals.user, songId, reviewId);
+    if (withheld) return withheld;
     const result = await resolveRatingReviewAction({
       ...input,
       userId: event.locals.user.id,
@@ -370,16 +287,6 @@ const disputeSchema = z.object({
     .optional()
     .transform((v) => v || undefined),
 });
-
-async function isSong(imageId: number) {
-  const song = await dbRead
-    .selectFrom('Image')
-    .select('id')
-    .where('id', '=', imageId)
-    .where('type', '=', 'audio')
-    .executeTakeFirst();
-  return !!song;
-}
 
 const NEW_COVER = 'This song has a new cover since this page loaded. Nothing was changed. Reload.';
 
@@ -403,8 +310,8 @@ async function approveHeld(event: RequestEvent, kind: 'cover' | 'song') {
   );
   if (typeof input === 'string') return fail(400, { error: input });
   const { imageId: songId, needsReview } = input;
-  const withheld = await withheldRefusal(event.locals.user, [songId]);
-  if (withheld) return fail(403, { error: withheld, key: songId });
+  const withheld = await refuseWithheld(event.locals.user, songId, songId);
+  if (withheld) return withheld;
   const target =
     kind === 'cover'
       ? await flaggedCoverOf(songId, needsReview)
@@ -414,13 +321,16 @@ async function approveHeld(event: RequestEvent, kind: 'cover' | 'song') {
   if (target == null) return fail(409, { error: NOT_HELD[kind], key: songId });
   if (kind === 'cover' && target !== input.coverId)
     return fail(409, { error: NEW_COVER, key: songId });
-  const result = await acceptImagesWithReports(
-    writerForm({ imageIds: target, needsReviewByImage: JSON.stringify({ [target]: needsReview }) }),
-    event.locals
+  return keyed(
+    await acceptImagesWithReports(
+      writerForm({
+        imageIds: target,
+        needsReviewByImage: JSON.stringify({ [target]: needsReview }),
+      }),
+      event.locals
+    ),
+    songId
   );
-  return 'status' in result
-    ? fail(result.status, { ...result.data, key: songId })
-    : { ...result, key: songId };
 }
 
 async function decideAppeal(event: RequestEvent, status: 'Approved' | 'Rejected') {
@@ -430,8 +340,8 @@ async function decideAppeal(event: RequestEvent, status: 'Approved' | 'Rejected'
   const { imageId } = input;
   const reason = parseResolutionReason(form, status);
   if (typeof reason === 'string') return fail(400, { error: reason, key: imageId });
-  const withheld = await withheldRefusal(event.locals.user, [imageId]);
-  if (withheld) return fail(403, { error: withheld, key: imageId });
+  const withheld = await refuseWithheld(event.locals.user, imageId, imageId);
+  if (withheld) return withheld;
   if (!(await isSongAppeal(imageId)))
     return fail(409, {
       error: 'This appeal was already decided, or is not on a song or its cover. Reload.',

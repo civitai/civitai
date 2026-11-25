@@ -1,8 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
-  import { IconLock, IconMusic, IconZoomCancel } from '@tabler/icons-svelte';
-  import { page as pageState } from '$app/state';
+  import { IconLock, IconMusic } from '@tabler/icons-svelte';
   import TriageFilterChips, {
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
@@ -13,24 +12,22 @@
     HELD_FILTERS,
     heldDecisions,
     heldDecisionsEnabled,
-    heldRowTitle,
     ratingKeysEnabled,
     reportedOutcome,
     SONG_RATING_LEVELS,
+    songTitle,
     type HeldFilter,
     type HeldSongRow,
     type HeldSort,
   } from '$lib/audio-review';
-  import { LINK_CLASS, shortAge } from '$lib/format';
+  import { waitingMeta } from '$lib/format';
   import { removedCovers } from '$lib/music/removed-covers';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
-  import { urlWith } from '$lib/url';
   import HeldSongDetail from './HeldSongDetail.svelte';
+  import QueueEmpty from './QueueEmpty.svelte';
+  import { oldestNewestSort } from './queue';
 
-  // Audio review's Held tab: songs whose lyrics are under a CSAM text hold (decided in CSAM holds),
-  // songs whose own cover is flagged for review, and songs flagged themselves
-  // (docs/features/music.md "Moderating songs").
   let {
     held,
     filters,
@@ -62,8 +59,6 @@
 
   const SELECTION = 'selected';
 
-  // Set rating opens the rating row for the open song; the next digit picks its level. Moving to
-  // another song closes it.
   let current = $state<number | null>(null);
   let ratingOpen = $state(false);
   const closeRating = () => (ratingOpen = false);
@@ -74,7 +69,6 @@
   // A rating is a correction: the song stays in the queue, so the level given here is kept.
   const rated = new SvelteMap<number, number>();
   const levelOf = (row: HeldSongRow) => rated.get(row.id) ?? row.nsfwLevel;
-  // A cover removed on this page is no longer there to approve or remove.
   const live = (row: HeldSongRow): HeldSongRow =>
     row.removableCoverId != null && removedCovers.has(row.removableCoverId)
       ? { ...row, removableCoverId: null, coverUrl: null, cover: null }
@@ -89,15 +83,7 @@
       page: page > 1 ? page : undefined,
     });
 
-  const sortGroup = $derived({
-    key: 'sort',
-    label: 'Sort',
-    values: ['oldest', 'newest'] as const,
-    labels: { oldest: 'Oldest first', newest: 'Newest first' },
-    active: filters.sort,
-    defaultValue: 'oldest',
-    pill: true,
-  } satisfies ChipGroup);
+  const sortGroup = $derived(oldestNewestSort(filters.sort));
   const kindGroup = $derived({
     key: 'held',
     label: 'Show',
@@ -108,14 +94,6 @@
     counts: held.facets,
     compact: true,
   } satisfies ChipGroup);
-
-  const clearSearchHref = $derived(
-    urlWith(pageState.url, { q: null, page: null, [SELECTION]: null })
-  );
-  // Amber once a song has waited a day, as the other triage queues mark someone waiting.
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const waitedLong = (row: HeldSongRow) =>
-    Date.now() - new Date(row.waitingSince).getTime() >= DAY_MS;
 
   const picking = (row: HeldSongRow) => ratingOpen && row.id === current;
   const rateIndex = (row: HeldSongRow) => heldDecisions(row.kind).indexOf('rate');
@@ -170,19 +148,7 @@
 {/snippet}
 
 {#snippet empty()}
-  <div
-    class="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-sm text-dark-0 in-[section]:hidden"
-  >
-    <IconZoomCancel class="mb-1.5 size-5 text-dark-2" aria-hidden="true" />
-    <p class="m-0 font-medium text-white">
-      No held songs{q ? ` match "${q}"` : ''}
-    </p>
-    <p class="m-0 text-xs text-dark-2">Search matches a song title, an owner username or an ID.</p>
-    {#if q}
-      <a href={clearSearchHref} class="text-xs {LINK_CLASS}">Clear search</a>
-    {/if}
-  </div>
-  <p class="m-0 hidden text-sm text-dark-2 in-[section]:block">Select a song to review it.</p>
+  <QueueEmpty nothing="No held songs" q={q} pick="Select a song to review it." />
 {/snippet}
 
 <TriageShell
@@ -215,9 +181,8 @@
       id={state.id}
       href={state.href}
       selected={state.selected}
-      title={heldRowTitle(row)}
-      meta={waitedLong(row) ? `held ${shortAge(row.waitingSince)}` : shortAge(row.waitingSince)}
-      metaClass={waitedLong(row) ? 'text-amber-300' : 'text-dark-2'}
+      title={songTitle(row)}
+      {...waitingMeta(row.waitingSince, 'held')}
       coverUrl={live(row).coverUrl ?? undefined}
       verdict={state.verdict}
       error={state.error}

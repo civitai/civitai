@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dateTime, ordinal, plural, timeSince } from '../format';
+import { DAY_MS, dateTime, ordinal, plural, timeSince, waitingMeta } from '../format';
 
 /**
  * These call `Intl` for real rather than asserting a rendered string: the defect they cover is a
@@ -102,5 +102,27 @@ describe('timeSince', () => {
   it('reads anything under a day as under a day, and nothing as unknown', () => {
     expect(timeSince(ago(3_600_000), now)).toBe('less than a day');
     expect(timeSince(null, now)).toBe('unknown');
+  });
+});
+
+describe('waitingMeta', () => {
+  const now = Date.UTC(2026, 10, 24, 12);
+
+  it('turns amber, with the word, once the row has waited a day', () => {
+    expect(waitingMeta(new Date(now - DAY_MS), 'waiting', now)).toEqual({
+      meta: 'waiting 24h',
+      metaClass: 'text-amber-300',
+    });
+    expect(waitingMeta(new Date(now - 3 * DAY_MS), 'held', now)).toEqual({
+      meta: 'held 3d',
+      metaClass: 'text-amber-300',
+    });
+  });
+
+  it('shows the bare age, muted, under a day', () => {
+    expect(waitingMeta(new Date(now - DAY_MS + 60_000), 'waiting', now)).toEqual({
+      meta: '23h',
+      metaClass: 'text-dark-2',
+    });
   });
 });

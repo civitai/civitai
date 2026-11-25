@@ -49,6 +49,7 @@ import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
 import { responseMayHaveLanded, restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
+import { songIds } from './songs';
 import { PROFILE_FIELD_KEYS, alwaysRemovesMedia, type ProfileField } from '$lib/enforcement';
 import type { HeldSummary } from './removal-hold';
 
@@ -1783,16 +1784,11 @@ export async function setImageFlag(input: {
   if (!input.imageIds.length) return { ok: false, error: 'Select at least one image.' };
   // A song shows no person, so neither flag may be set on one; clearing one stays possible.
   if (input.value) {
-    const songs = await dbRead
-      .selectFrom('Image')
-      .select('id')
-      .where('id', 'in', input.imageIds)
-      .where('type', '=', 'audio')
-      .execute();
+    const songs = await songIds(input.imageIds);
     if (songs.length)
       return {
         ok: false,
-        error: `${SONG_FLAG_REFUSED} Nothing was changed: ${songs.map((s) => s.id).join(', ')}.`,
+        error: `${SONG_FLAG_REFUSED} Nothing was changed: ${songs.join(', ')}.`,
       };
   }
 

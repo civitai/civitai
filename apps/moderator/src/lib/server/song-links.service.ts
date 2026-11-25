@@ -5,7 +5,6 @@ import { dbRead } from './db';
 import { holdsCsamReview } from './held-media';
 import { restrictedImageIds } from './retracted-media';
 
-/** What a queue card knows of the song it belongs to (docs/features/music.md "Moderating songs"). */
 export type SongLinks = {
   /** On a song: its cover, while there is one to remove. */
   songCoverId: number | null;
@@ -13,12 +12,8 @@ export type SongLinks = {
   coverOf: { songId: number; title: string | null } | null;
 };
 
-/**
- * The song links of these images: a song's cover (`Track.coverImageId`) and a cover's song. Only the
- * song's own cover counts (`songsOwnCoverText`, the public player's rule), so an image that only
- * happens to be named as a cover, in a post or another user's, links nothing. A cover already
- * removed is not offered for removal again; it still links to its song. Ids with no link are absent.
- */
+/** Only the song's own cover links (`songsOwnCoverText`): an image merely named as a cover, in a post
+ *  or another user's, links nothing. A removed cover still links to its song. */
 export async function getSongLinks(imageIds: number[]): Promise<Map<number, SongLinks>> {
   const links = new Map<number, SongLinks>();
   if (!imageIds.length) return links;
@@ -45,14 +40,10 @@ export async function getSongLinks(imageIds: number[]): Promise<Map<number, Song
   return links;
 }
 
-/** A card with no song link, and a withheld card, whose song links are not shown. */
 export const NO_SONG_LINKS: SongLinks = { songCoverId: null, coverOf: null };
 
-/**
- * The song a removal notice names when `imageId` is a song or its own cover, else null: the notice
- * then says "Your song …" or "The cover of your song …" and links to the song, which is the only
- * page a cover has.
- */
+/** The song a removal notice names when `imageId` is a song or its own cover: the notice links to
+ *  the song, the only page a cover has. */
 export async function songNoticeSubject(
   imageId: number
 ): Promise<{ kind: 'song' | 'cover'; songId: number; title: string } | null> {
@@ -79,12 +70,9 @@ export async function songNoticeSubject(
   };
 }
 
-/**
- * `getSongLinks`, without a link to an image withheld from `user`: a link names another image than
- * the card's own, so the card's own check does not cover it. A withheld cover is not offered for
- * removal (the removal would be refused) and a withheld song is not named. A failed read leaves the
- * cards without song links rather than failing the queue.
- */
+/** `getSongLinks` without a link to an image withheld from `user` (the card's own check does not
+ *  cover the image a link names). A failed read leaves the cards without links rather than failing
+ *  the queue. */
 export async function visibleSongLinks(ids: number[], user?: App.Locals['user']) {
   try {
     const links = await getSongLinks(ids);

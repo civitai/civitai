@@ -41,7 +41,7 @@ const { getReportedSongs, getReportedSongRows, boundSongReports, getSongAppeals 
 );
 const { getAppealImageQueue } = await import('../image-review.service');
 const { loadImageQueue } = await import('../image-queue');
-const { countReportedSongs, withSongBadges } = await import('../audio-review-count');
+const { countReportedSongs, songTabCounts, withSongBadges } = await import('../audio-review-count');
 const page = await import('../../../routes/audio-review/+page.server');
 const details = await import('../../../routes/audio-review/details/[imageId]/+server');
 const { setImageFlag, SONG_FLAG_REFUSED } = await import('../user-actions.service');
@@ -606,6 +606,20 @@ describe('the Appeals tab (S2)', () => {
 
   const appeals = (user = WITH_GRANT, opts: Partial<Parameters<typeof getSongAppeals>[0]> = {}) =>
     getSongAppeals({ sort: 'oldest', filter: 'all', q: '', page: 1, user: user as never, ...opts });
+
+  it('gives the Reported and Appeals tabs the badge their lists total, whichever tab is open', async () => {
+    await db.exec(
+      `CREATE TABLE "RatingReview" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, status TEXT NOT NULL);`
+    );
+    const counts = await songTabCounts();
+    for (const tab of ['reported', 'appeals'] as const) {
+      const loaded = (await page.load({
+        url: new URL(`https://mod.example/audio-review?tab=${tab}`),
+        locals: { user: WITH_GRANT, grants: GRANTS },
+      } as never)) as { counts: Record<string, number> };
+      expect(loaded.counts, tab).toEqual(counts);
+    }
+  });
 
   it('lists only Pending appeals of a song or a song’s own cover', async () => {
     const { items, facets } = await appeals();

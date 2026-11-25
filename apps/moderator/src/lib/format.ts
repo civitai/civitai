@@ -124,6 +124,16 @@ export const shortAge = (value: Date | string, now = Date.now()): string => {
   return `${Math.floor(hours / 24)}d`;
 };
 
+export const DAY_MS = 86_400_000;
+
+/** A queue row's wait, in amber once it has waited a day, as the triage queues mark someone waiting. */
+export function waitingMeta(since: Date | string, word = 'waiting', now = Date.now()) {
+  const age = shortAge(since, now);
+  return now - new Date(since).getTime() >= DAY_MS
+    ? { meta: `${word} ${age}`, metaClass: 'text-amber-300' }
+    : { meta: age, metaClass: 'text-dark-2' };
+}
+
 /**
  * User-authored rich text (review `details`, comment bodies) is stored as HTML. Svelte escapes it, so
  * rendering it raw shows a moderator the markup — and any filter matching on it matches the tags, which

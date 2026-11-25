@@ -6,6 +6,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
 import { applyGrants } from '../access';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
+import { TEXT_SCAN_HOLD_TABLE_SQL } from '../../../test/held-image-tables';
 
 /**
  * Pins the media access rule (`restrictedImageIds` in retracted-media.ts, civitai/civitai#10170). Image actions refuse a batch with an image the media access rule withholds from this moderator,
@@ -1131,7 +1132,12 @@ describe('the reported and review queues, without the grant', () => {
         INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview", metadata) VALUES
           (${SONG}, 'song-key', 'audio', 'Scanned', 9, 'minor', '{"title": "Night drive"}'),
           (${WITHHELD_SONG}, 'queue-key', 'audio', 'Scanned', 9, NULL, '{"title": "Hidden"}');
-        INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${SONG}, ${KEPT}), (${WITHHELD_SONG}, ${CLEAN});`)
+        INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${SONG}, ${KEPT}), (${WITHHELD_SONG}, ${CLEAN});
+        ${TEXT_SCAN_HOLD_TABLE_SQL}
+        -- Under a Pending lyrics hold, a flagged song and its flagged own cover stay in the generic
+        -- queues (the Held tab shows the song only as its hold).
+        INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES
+          ('TrackLyrics', ${SONG}, 'csam', 'Pending'), ('TrackLyrics', ${WITHHELD_SONG}, 'csam', 'Pending');`)
     );
 
     it('offers no "Remove cover" for a cover withheld from the moderator, and offers it to a grant holder', async () => {
@@ -1146,16 +1152,16 @@ describe('the reported and review queues, without the grant', () => {
       });
     });
 
-    it('still loads the queue when the song links cannot be read, with none on its cards', async () => {
+    // The minor queue's own SQL reads "Track" (its Held-tab exclusion), so only the reported queue
+    // can lose the song links alone.
+    it('still loads the reported queue when the song links cannot be read, with none on its cards', async () => {
       await db.exec(`DROP TABLE "Track"`);
-      for (const read of [minor, reported]) {
-        const cards = await read(WITH_GRANT);
-        expect(cards.get(CLEAN)).toMatchObject({
-          restricted: false,
-          songCoverId: null,
-          coverOf: null,
-        });
-      }
+      const cards = await reported(WITH_GRANT);
+      expect(cards.get(CLEAN)).toMatchObject({
+        restricted: false,
+        songCoverId: null,
+        coverOf: null,
+      });
     });
   });
 

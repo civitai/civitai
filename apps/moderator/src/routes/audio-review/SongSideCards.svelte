@@ -8,8 +8,6 @@
   import { LINK_CLASS, plural, timeSince } from '$lib/format';
   import { removedCovers } from '$lib/music/removed-covers';
 
-  // The open song's side cards on Audio review, under its reports or its appeal: the cover, the
-  // automated checks, the generation details and the owner (`SongDetails`).
   let {
     details: d,
     civitaiUrl,
@@ -40,7 +38,6 @@
     failed: 'Scan failed',
   };
 
-  // The design's fact rows: a fixed label column, values left-aligned beside it.
   const FACT_ROW = 'grid grid-cols-[104px_1fr] gap-3 py-0.5';
 </script>
 

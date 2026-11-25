@@ -1,8 +1,6 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { tick } from 'svelte';
   import {
     IconExternalLink,
     IconFlag,
@@ -12,8 +10,6 @@
   } from '@tabler/icons-svelte';
   import { formatPlaybackTime, getBrowsingLevelLabel } from '@civitai/shared';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import SongBadge from '$lib/components/SongBadge.svelte';
   import SongCard from '$lib/components/SongCard.svelte';
@@ -25,23 +21,22 @@
   import {
     dismissDecision,
     reportedDecisionsEnabled,
-    songDetailsUrl,
     songRemovedTitle,
     songRatingLabel,
     SONG_RATING_LEVELS,
     type ReportedSongRow,
-    type SongDetails,
   } from '$lib/audio-review';
   import { entityUrl, userUrl } from '$lib/entity-url';
-  import { fetchJson } from '$lib/fetch-json';
   import { dateTime, LINK_BUTTON, LINK_CLASS, plural, shortAge, shortDate } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
-  import { SSR_PENDING } from '$lib/ssr-pending';
   import type { Outcome } from '$lib/triage/queue';
-  import { VIOLATION_LABELS, VIOLATION_TYPES } from '$lib/violations';
   import { removedCovers } from '$lib/music/removed-covers';
+  import { songDetails } from '$lib/music/song-details.svelte';
   import { playSongAt } from '$lib/music/song-player';
   import SongSideCards from './SongSideCards.svelte';
+  import SongWithheldNotice from './SongWithheldNotice.svelte';
+  import { createViolationGate } from './violation-gate.svelte';
+  import ViolationPicker, { violationInputs } from './ViolationPicker.svelte';
 
   let {
     row,
@@ -72,50 +67,28 @@
     onrated: (level: number | null) => void;
   } = $props();
 
-  // Client only, one read per song.
-  const details = $derived(browser ? fetchJson<SongDetails>(songDetailsUrl(row.id)) : SSR_PENDING);
+  const details = songDetails(() => (row.withheld ? null : row.id));
 
   const enabled = $derived(reportedDecisionsEnabled(row, canAct));
   const reportIds = $derived(row.reports.map((r) => r.id).join(','));
   const owner = $derived(row.owner);
   const songHref = $derived(entityUrl(civitaiUrl, 'image', row.id));
   const dismiss = $derived(dismissDecision(row));
-  // A report's time plays from there on the song card; there is none for a withheld song.
   const playable = $derived(!row.withheld && !!row.url);
 
-  // Remove song asks for a violation type before it submits.
-  let violationType = $state('');
-  let violationSelect = $state<HTMLElement | null>(null);
-  let problem = $state<string | null>(null);
+  const violation = createViolationGate();
   const removeSubmit: SubmitFunction = async (input) => {
-    if (!violationType) {
-      input.cancel();
-      problem = 'Pick a violation type first.';
-      await tick();
-      violationSelect?.focus();
-      return;
-    }
-    problem = null;
-    return submit('Song removed')(input);
+    if (await violation.gate(input)) return submit('Song removed')(input);
   };
 
-  // Remove cover, key 3: the cover alone, with the bar's violation type and note. Not a verdict on
-  // the song, whose reports stay open, so the song stays open too; the cover drops to the
-  // placeholder on every card showing it (`removedCovers`). A held removal leaves the cover up.
-  let note = $state('');
+  // Not a verdict on the song, whose reports stay open, so the song stays open too. A held removal
+  // leaves the cover up.
   const removeCoverSubmit: SubmitFunction = async (input) => {
-    if (!violationType) {
-      input.cancel();
-      problem = 'Pick a violation type first.';
-      await tick();
-      violationSelect?.focus();
-      return;
-    }
-    problem = null;
+    if (!(await violation.gate(input))) return;
     return async ({ result, update }) => {
       if (result.type === 'success') {
         const held = result.data?.held;
-        if (typeof held === 'string') problem = held;
+        if (typeof held === 'string') violation.problem = held;
         else if (typeof result.data?.coverId === 'number') removedCovers.add(result.data.coverId);
       }
       await update({ invalidateAll: false });
@@ -128,7 +101,6 @@
     return () => onrated(null);
   });
 
-  // The design's fact rows: a fixed label column, values left-aligned beside it.
   const FACT_ROW = 'grid grid-cols-[104px_1fr] gap-3 py-0.5';
   const SONG_FACT_ROW = 'grid grid-cols-[92px_1fr] gap-3 py-0.5';
 
@@ -168,8 +140,7 @@
   >
     <input type="hidden" name="imageId" value={row.id} />
     <input type="hidden" name="reportIds" value={reportIds} />
-    <input type="hidden" name="violationType" value={violationType} />
-    <input type="hidden" name="violationDetails" value={note} />
+    {@render violationInputs(violation)}
   </form>
   <form
     class="contents"
@@ -181,12 +152,11 @@
   >
     <input type="hidden" name="imageId" value={row.id} />
     <input type="hidden" name="coverId" value={row.removableCoverId ?? ''} />
-    <input type="hidden" name="violationType" value={violationType} />
-    <input type="hidden" name="violationDetails" value={note} />
+    {@render violationInputs(violation)}
   </form>
   <TriageDecisionBar
     compact
-    {problem}
+    problem={violation.problem}
     hint={ratingOpen
       ? 'Rating: 1 to 5 picks the level · Esc cancels. A rating leaves the reports open.'
       : 'J/K to move · 1 to 4 decide. Remove song and Remove cover ask for a violation type; ' +
@@ -264,31 +234,7 @@
       </form>
     {/snippet}
     {#snippet fields()}
-      <Select.Root type="single" bind:value={violationType}>
-        <Select.Trigger
-          bind:ref={violationSelect}
-          aria-label="Violation type"
-          class="h-[30px] w-[140px] flex-none justify-between border-dark-4 bg-dark-7 text-[13px] text-dark-0 dark:bg-dark-7"
-        >
-          <span class="truncate">
-            {violationType
-              ? VIOLATION_LABELS[violationType as keyof typeof VIOLATION_LABELS]
-              : 'Violation type'}
-          </span>
-        </Select.Trigger>
-        <Select.Content>
-          {#each VIOLATION_TYPES as v (v)}
-            <Select.Item value={v} label={VIOLATION_LABELS[v]}>{VIOLATION_LABELS[v]}</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
-      <Input
-        bind:value={note}
-        maxlength={1000}
-        aria-label="Note for the owner"
-        placeholder="Note for the owner (optional)"
-        class="h-[30px] min-w-0 flex-1 basis-0 border-dark-4 bg-dark-7 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
-      />
+      <ViolationPicker gate={violation} />
     {/snippet}
   </TriageDecisionBar>
 {/snippet}
@@ -356,12 +302,7 @@
   {#snippet evidence()}
     <div class="space-y-3">
       {#if row.withheld}
-        <div class="space-y-2 rounded-lg border border-dark-4 bg-dark-7 p-3.5 text-sm text-dark-0">
-          <p class="m-0">
-            This song is withheld from you: its audio, lyrics, cover and owner are not shown here.
-          </p>
-          <a href="/images/csam" class={LINK_CLASS}>Open the CSAM image queue</a>
-        </div>
+        <SongWithheldNotice subject="song" hidden="its audio, lyrics, cover and owner" />
       {:else if !row.url}
         <p class="m-0 text-sm text-dark-2">No audio file.</p>
       {:else}
@@ -369,7 +310,7 @@
       {/if}
       {#if !row.withheld}
         <!-- The one place a failed read is reported; the sidebar's cards just stay away. -->
-        {#await details}
+        {#await details.current}
           <p class="m-0 text-sm text-dark-2">Loading the song's details…</p>
         {:then d}
           <TriageCard title="Song" dense>
@@ -434,8 +375,7 @@
     </TriageCard>
 
     {#if !row.withheld}
-      <!-- A failed read is reported once, in the middle column. -->
-      {#await details}
+      {#await details.current}
         <p class="m-0 text-sm text-dark-2">Loading the cover, checks and owner…</p>
       {:then d}
         <SongSideCards details={d} {civitaiUrl} />

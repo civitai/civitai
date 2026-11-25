@@ -5,11 +5,8 @@ import { ReportStatus, SONG_ENTITY_TYPE } from '$lib/rating-review';
 import { DEFAULT_REPORT_REASONS, reportCountKey } from '$lib/reports';
 import { dbRead } from './db';
 
-/**
- * Pending reports on songs (`Image` type audio), the Reported tab of Audio review. The reasons are
- * the ones Image reports counts (`DEFAULT_REPORT_REASONS`), so a report is in exactly one of the two
- * queues. Kept apart from `audio-review.service.ts` so the sidebar counts import no more than this.
- */
+/** Image reports' reasons (`DEFAULT_REPORT_REASONS`), so a report is in exactly one of the two
+ *  queues. Kept apart from `audio-review.service.ts` so the sidebar counts import no more than this. */
 export const pendingSongReports = () =>
   dbRead
     .selectFrom('Report as r')
@@ -19,8 +16,7 @@ export const pendingSongReports = () =>
     .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
     .where('i.type', '=', 'audio');
 
-/** The sidebar badge: songs with a Pending report, and those reports (Image reports' badge drops
- *  them, as its queue does). */
+/** Image reports' badge drops these reports, as its queue does. */
 export async function countReportedSongs(): Promise<{ songs: number; reports: number }> {
   const row = await pendingSongReports()
     .select([
@@ -42,11 +38,8 @@ export function withSongBadges(
   return { ...reports, [image]: (reports[image] ?? 0) - songs.reports, audioReview: songs.songs };
 }
 
-/**
- * Whether the `Image` aliased `image` is a song or a song's own cover (`songsOwnCoverText`, the public
- * player's rule): what Audio review's Appeals tab decides, and what the image Appeals queue leaves
- * out, so an appeal is in exactly one of the two.
- */
+/** A song or its own cover: what the Appeals tab decides and the image Appeals queue leaves out, so
+ *  an appeal is in exactly one of the two. */
 export const songOrOwnCoverText = (image: string) =>
   `(${image}.type::text = 'audio' OR EXISTS (
     SELECT 1 FROM "Track" song_track JOIN "Image" song_image ON song_image.id = song_track."imageId"
@@ -71,7 +64,6 @@ export const songAppealImages = () =>
       )
     );
 
-/** The Appeals tab's badge: songs and covers with a Pending appeal. */
 export async function countSongAppeals(): Promise<number> {
   const row = await songAppealImages()
     .select(sql<number>`count(*)::int`.as('n'))
@@ -91,13 +83,9 @@ export const pendingLyricsHoldText = (song: string) =>
     WHERE lyrics_hold."entityType" = 'TrackLyrics' AND lyrics_hold."entityId" = ${song}.id
       AND lyrics_hold.label = 'csam' AND lyrics_hold.status = 'Pending')`;
 
-/**
- * Whether the `Image` aliased `image` is decided on the Held tab when it carries a review flag: a
- * song not under a lyrics hold, or the own cover (`songsOwnCoverText`) of such a song. The flag
- * itself is the caller's to check (`HELD_REVIEW_FLAGS`). The generic review queues leave these out,
- * so a flag is decided in one place; the flagged cover of a lyrics-held song stays in them, since
- * the Held tab shows that song only as its hold.
- */
+/** Whether the Held tab, not the generic review queues, decides this image's review flag (a flag is
+ *  decided in one place). The flagged cover of a lyrics-held song stays in the generic queues: the
+ *  Held tab shows that song only as its hold. */
 export const onHeldTabText = (image: string) =>
   `((${image}.type = 'audio' AND NOT ${pendingLyricsHoldText(image)}) OR EXISTS (
     SELECT 1 FROM "Track" held_track JOIN "Image" held_song ON held_song.id = held_track."imageId"
@@ -119,8 +107,7 @@ export const flaggedCoverText = (cover: string, song: string) =>
     AND ${cover}."needsReview" IN (${heldFlagsSql}) AND ${cover}.ingestion = 'Scanned'
     AND NOT ${pendingLyricsHoldText(song)} AND NOT COALESCE(${flaggedSongsText(song)}, false))`;
 
-/** The Held tab's counts: songs under a lyrics hold (decided in CSAM holds, so not in the sidebar
- *  badge), and the flagged songs and covers decided here. */
+/** Lyrics holds apart: they are decided in CSAM holds, so not in the sidebar badge. */
 export async function countHeldSongs(): Promise<{ lyrics: number; actionable: number }> {
   const { rows } = await sql<{ lyrics: number; actionable: number }>`
     SELECT
@@ -144,10 +131,20 @@ export const pendingSongDisputes = () =>
     .where('rr.entityType', '=', SONG_ENTITY_TYPE)
     .where('rr.status', '=', ReportStatus.Pending);
 
-/** The Disputes tab's badge. */
 export async function countSongDisputes(): Promise<number> {
   const row = await pendingSongDisputes()
     .select(sql<number>`count(*)::int`.as('n'))
     .executeTakeFirst();
   return row?.n ?? 0;
+}
+
+/** The four tab badges, before any search. */
+export async function songTabCounts() {
+  const [reported, appeals, held, disputes] = await Promise.all([
+    countReportedSongs(),
+    countSongAppeals(),
+    countHeldSongs(),
+    countSongDisputes(),
+  ]);
+  return { reported: reported.songs, appeals, held: held.lyrics + held.actionable, disputes };
 }
