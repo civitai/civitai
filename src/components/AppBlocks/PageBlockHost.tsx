@@ -24,6 +24,7 @@ import {
 import type { GuestFrameCounts, GuestFrameEvent } from './devTunnelGuestReload';
 import {
   blockInitFragmentEnabled,
+  blockInitAppData,
   blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
   BLOCK_HOST_SITE_NAVIGATION,
@@ -778,6 +779,10 @@ export interface PageBlockHostProps {
    *  `projectBlockInitMaturity`). Absent → the block falls back to
    *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
   effectiveBrowsingLevel?: number;
+  /** The app-data service this app's document store moved to, as the token mint decided it
+   *  (server-side, per app). Forwarded as BLOCK_INIT.appData through `blockInitAppData`, which
+   *  drops it on any surface but `page-run`. Absent on every other caller. */
+  appData?: { url: string; slug: string };
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -979,6 +984,7 @@ export function PageBlockHost({
   domain,
   maxBrowsingLevel,
   effectiveBrowsingLevel,
+  appData,
   viewer,
   theme,
   onConsentGranted,
@@ -1552,6 +1558,9 @@ export function PageBlockHost({
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
       // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
       ...blockInitStorageMode(surface),
+      // The mint's per-app decision, forwarded only on `page-run` with a block token; the key is
+      // ABSENT otherwise. See `blockInitAppData`.
+      ...blockInitAppData({ surface, tokenKind, blockId, appData }),
       // Keyed on `surface` too: `blockErrors:v1` only where the host collects non-fatal errors.
       capabilities: pageHostCapabilities(surface),
     }),
@@ -1570,6 +1579,7 @@ export function PageBlockHost({
       domain,
       maxBrowsingLevel,
       effectiveBrowsingLevel,
+      appData,
     ]
   );
   buildInitPayloadRef.current = buildInitPayload;

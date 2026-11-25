@@ -11,6 +11,7 @@ import {
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
 import { isClusterLocalServiceUrl } from './cluster-local-url';
+import { isPlainHttpsUrl } from './plain-https-url';
 
 // Strict integer env values: digits only, so '', ' 3', '2.5' and '-1' are rejected instead of being
 // coerced (z.coerce turns '' into 0). Mirrors packages/civitai-db/src/env.ts — both schemas are
@@ -694,6 +695,16 @@ export const serverSchema = z
       .string()
       .optional()
       .transform((raw) => (raw !== undefined && isClusterLocalServiceUrl(raw) ? raw : undefined))
+      .catch(undefined),
+    // The app-data service's PUBLIC base URL, as an app's frame reaches it: sent to the app as
+    // `BLOCK_INIT.appData.url` when the `app-data-writes-via-service` flag is on for that app
+    // (`app-data-writes-routing.ts`). Unset = never sent, whatever the flag says. Only a plain
+    // https URL with no credentials, query or fragment is taken (the SDK's own rule for that field,
+    // `plain-https-url.ts`); anything else reads as UNSET rather than failing the env parse.
+    APP_DATA_SERVICE_PUBLIC_URL: z
+      .string()
+      .optional()
+      .transform((raw) => (raw !== undefined && isPlainHttpsUrl(raw) ? raw : undefined))
       .catch(undefined),
     // The fraction (0-1) of eligible lists, of apps the flag is on for, also asked of app-data-go;
     // the most such reads in flight per process (more are dropped, not queued); each read's timeout.
