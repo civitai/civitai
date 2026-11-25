@@ -7,7 +7,7 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { getLogger } from '$lib/server/logger';
 import { modFallbackFlagEnabled } from '$lib/server/main-app-flags';
-import { paidAccessFilter, shownOnSomeSiteSql } from '$lib/server/models';
+import { shownOnSomeSiteSql } from '$lib/server/models';
 import {
   buildMarketSnapshot,
   displayEcosystem,
@@ -55,22 +55,26 @@ export async function readFreeCells(
   const namedTypes = sql.join(NAMED_TYPES.map((t) => sql.lit(t)));
   const { rows } = await sql<FreeCellRow>`
     with eco(base, ecosystem) as (values ${ecoMap}),
+    -- One pass over public versions instead of per-model subqueries: the newest version's base model, the version
+    -- count, and whether any of them is under an active gate.
+    v as (
+      select mv."modelId",
+        count(*)::int as versions,
+        (array_agg(mv."baseModel" order by mv."publishedAt" desc nulls last, mv.id desc))[1] as base,
+        bool_or(pa."entityId" is not null) as gated
+      from "ModelVersion" mv
+      left join "PaidAccess" pa on pa."entityType" = 'ModelVersion' and pa."entityId" = mv.id
+        and (pa."endsAt" is null or pa."endsAt" > now())
+      where ${PUBLIC_VERSION}
+      group by mv."modelId"
+    ),
     fm as (
-      select m.id, m."userId",
+      select m.id, m."userId", v.base, v.versions,
         case when (m."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0 then 'sfw' else 'nsfw' end as rating,
-        case when m.type::text in (${namedTypes}) then m.type::text else 'Other' end as type,
-        (select mv."baseModel" from "ModelVersion" mv where mv."modelId" = m.id and ${PUBLIC_VERSION}
-          order by mv."publishedAt" desc nulls last, mv.id desc limit 1) as base,
-        (select count(*) from "ModelVersion" mv where mv."modelId" = m.id and ${PUBLIC_VERSION})::int as versions
-      from "Model" m
+        case when m.type::text in (${namedTypes}) then m.type::text else 'Other' end as type
+      from v join "Model" m on m.id = v."modelId"
       where m."deletedAt" is null and ${shownOnSomeSiteSql('m')}
-        and (
-          m.id = any(${gatedFree}::int[])
-          or not exists (
-            select 1 from "ModelVersion" mv
-            where mv."modelId" = m.id and ${PUBLIC_VERSION} and ${paidAccessFilter('mv')}
-          )
-        )
+        and (not v.gated or m.id = any(${gatedFree}::int[]))
     )
     select fm.rating, fm.type, coalesce(eco.ecosystem, 'Other') as ecosystem,
       count(*)::int as models, sum(fm.versions)::int as versions,

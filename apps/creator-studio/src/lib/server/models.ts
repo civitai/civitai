@@ -21,7 +21,7 @@ import {
 import { siteListing, type SiteFilter, type SiteListing } from '$lib/site-listing';
 
 // "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
-export function paidAccessFilter(alias: string) {
+function paidAccessFilter(alias: string) {
   const p = sql.raw(`${alias}.`);
   return sql<boolean>`exists (select 1 from "PaidAccess" pa where pa."entityType" = 'ModelVersion' and pa."entityId" = ${p}"id" and (pa."endsAt" is null or pa."endsAt" > now()))`;
 }
