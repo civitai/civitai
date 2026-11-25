@@ -15,9 +15,11 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 const { load } = await import('../+page.server');
 
+const VIEWER = { id: 5, roles: [] };
 const run = (qs: string) =>
   (load as unknown as (e: unknown) => Promise<{ filters: { modelId: string } }>)({
     url: new URL(`https://moderator.example/audit/training-models${qs}`),
+    locals: { user: VIEWER },
   });
 
 beforeEach(() => {
@@ -26,6 +28,11 @@ beforeEach(() => {
 });
 
 describe('training audit load: modelId', () => {
+  it('reads the feed as the moderator viewing it', async () => {
+    await run('');
+    expect(getTrainingModelsFeed).toHaveBeenCalledWith(expect.objectContaining({ viewer: VIEWER }));
+  });
+
   it('passes a model id through to the feed', async () => {
     await run('?modelId=4821');
     expect(getTrainingModelsFeed.mock.calls[0][0].modelId).toBe(4821);
