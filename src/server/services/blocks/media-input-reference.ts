@@ -7,11 +7,13 @@ import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted
 
 // An orchestrator AIR the AIR grammar cannot read is still one to the orchestrator.
 const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
-// A URL only as http(s):// or a media data URI; any other scheme is held to the AIR rule.
-const URL_VALUE_RE = /^(https?:\/\/|data:(image|video|audio)\/[a-z0-9.+-]+(;[^,]*)?,)/i;
+// A URL only as http(s):// or a media data URI; any other scheme is held to the AIR rule. Stricter
+// than app-step-positions' URL_VALUE_RE, which decides what counts as a URL off media keys.
+const MEDIA_URL_RE = /^(https?:\/\/|data:(image|video|audio)\/[a-z0-9.+-]+(;[^,]*)?,)/i;
 // An orchestrator blob key, with or without a file extension, and a training blob key.
 export const BLOB_KEY_RE = /^([0-9a-z]{26}(\.[0-9a-z]{1,10})?|[0-9a-f]{32}(\.[0-9a-z]{1,10})?)$/i;
-// The orchestrator reads a blob from this path on any host.
+// The orchestrator reads a blob from this path on any host. Looser than isConsumerBlobUrl: it is
+// matched anywhere in an already-decoded path, whatever the host.
 const BLOB_PATH_RE = /\/consumer\/blobs\//i;
 const BARE_ID_RE = /^\d+$/;
 
@@ -60,8 +62,9 @@ export function mediaReferenceRefusal(raw: string, viewerId: number): MediaRefer
   const value = raw.trim();
   if (BARE_ID_RE.test(value)) return 'bare-id';
   if (BLOB_KEY_RE.test(value)) return 'blob-key';
-  if (URL_VALUE_RE.test(value)) return isForeignHostBlobUrl(value) ? 'blob-url' : null;
-  // Anything else naming a scheme or source (an AIR in any spelling) is refused.
-  if (value.includes(':')) return isOwnOrchestratorFile(value, viewerId) ? null : 'air';
+  if (MEDIA_URL_RE.test(value)) return isForeignHostBlobUrl(value) ? 'blob-url' : null;
+  // Anything else naming a scheme, a source or a file of a job (`<jobId>@<file>`) is refused.
+  if (value.includes(':') || value.includes('@'))
+    return isOwnOrchestratorFile(value, viewerId) ? null : 'air';
   return null;
 }
