@@ -91,7 +91,7 @@ Transitions are date/job-driven and enforced at the application layer only (no D
 **Daily plan** (`src/server/games/daily-challenge/daily-schedule.ts`, `daily-plan.ts`) — what each System daily is
 generated and judged with, resolved at creation by `resolveDailyPlan`:
 - **Schedule:** `DAILY_CHALLENGE_SCHEDULE` maps a UTC start date to an occasion, a one-line brief, a rubric set and a
-  judge (by name; ids differ per environment). The occasion goes to the article writer as the creative angle on top
+  judge (by name; ids differ per environment). December 2026 is filled in, with comedy once a week. The occasion goes to the article writer as the creative angle on top
   of the featured resource; the theme rules still anchor the theme to the resource. A missing judge name falls back
   to the default judge.
 - **Rotation:** an unscheduled date gets `pickDailyRubricSet(date)`, a pure function of the date: comedy on

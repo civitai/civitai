@@ -225,8 +225,7 @@ export enum FLIPT_FEATURE_FLAGS {
   CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
   // Daily challenge plan (daily-plan.ts). Both default-off: off/unknown/unreachable gives the fixed
   // rubric and default judge. SCHEDULE enables calendar entries; ROTATION picks a rubric set by
-  // date for any day without an applied entry. Read by daily creation and by the reschedule route;
-  // rows already written change only when the route rewrites them.
+  // date for any day without an applied entry.
   DAILY_CHALLENGE_SCHEDULE = 'daily-challenge-schedule',
   DAILY_CHALLENGE_RUBRIC_ROTATION = 'daily-challenge-rubric-rotation',
   // Streams the two large evidence archives straight to object storage instead of staging them

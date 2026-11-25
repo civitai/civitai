@@ -61,6 +61,7 @@ describe('getDailyPlan', () => {
     });
   });
 
+  // docs/features/challenge-platform.md §3 Daily plan: comedy once a week.
   it('schedules comedy once in each December week', () => {
     const comedyByWeek = new Map<number, number>();
     for (const [date, entry] of Object.entries(DAILY_CHALLENGE_SCHEDULE)) {
