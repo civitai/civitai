@@ -292,7 +292,10 @@
       {:then d}
         {#if d.rating}
           <TriageCard title="Current rating" dense>
-            {@render fact('Set by', setBy(d.rating))}
+            {@render fact(
+              d.rating.source === 'moderator' && !d.rating.recorded ? 'Last rated by' : 'Set by',
+              setBy(d.rating)
+            )}
             {@render fact('Set on', d.rating.at ? shortDate(d.rating.at) : '—')}
             {@render fact('Before', d.rating.before != null ? level(d.rating.before) : 'Not recorded')}
           </TriageCard>

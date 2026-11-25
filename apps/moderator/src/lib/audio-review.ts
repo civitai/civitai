@@ -205,14 +205,17 @@ export type SongDetails = {
     /** Their rating disputes on songs by outcome; read on the Disputes tab only. */
     disputes: { total: number; pending: number; approved: number; rejected: number } | null;
   } | null;
-  /** Who set the song's current level and when; read on the Disputes tab only. `before` is known
-   *  only when that was a dispute ruling (the level the owner disputed): no writer stores the level
-   *  a direct rating replaced. */
+  /** Who set the song's current level and when, from the rating writer's `setNsfwLevel` rows
+   *  (`details: { from, to }`); read on the Disputes tab only. A write that kept the level credits
+   *  no one; rows from before `details` know no `before`. */
   rating: {
     source: 'scan' | 'moderator' | 'unknown';
     by: string | null;
     at: Date | null;
     before: number | null;
+    /** False for a moderator rating recorded before ratings stored their levels: `by` is then
+     *  the last moderator to rate it, whether or not that changed the level. */
+    recorded: boolean;
   } | null;
   /** All-time plays, Like reactions and comments (the site's image metrics); null when unread. */
   activity: { plays: number; likes: number; comments: number } | null;
@@ -332,6 +335,20 @@ export const HELD_FILTER_LABELS: Record<HeldFilter, string> = {
   song: 'Song',
 };
 export const HELD_SORTS = ['oldest', 'newest'] as const;
+/** Held tab status: Pending (decided here), Resolved (decided on this tab, read-only) or both. */
+export const HELD_STATUSES = ['pending', 'resolved', 'all'] as const;
+export type HeldStatus = (typeof HELD_STATUSES)[number];
+export const HELD_STATUS_LABELS: Record<HeldStatus, string> = {
+  pending: 'Pending',
+  resolved: 'Resolved',
+  all: 'All',
+};
+export const HELD_DECISION_LABELS: Record<string, string> = {
+  approveCover: 'Cover approved',
+  approveSong: 'Song approved',
+  removeCover: 'Cover removed',
+  removeSong: 'Song removed',
+};
 export type HeldSort = (typeof HELD_SORTS)[number];
 
 /** One held song. A lyrics hold is withheld from every moderator on this page: its song, cover,
@@ -357,6 +374,10 @@ export type HeldSongRow = {
   owner: { id: number; username: string | null } | null;
   removed: boolean;
   removableCoverId: number | null;
+  /** Decided on this tab (Resolved): it takes no decision. */
+  resolved: boolean;
+  /** What was decided, by whom and when; null while pending and on a withheld row. */
+  decision: { decision: string; flag: string; at: Date; by: string | null } | null;
 };
 
 const HELD_DECISIONS = {
@@ -369,6 +390,7 @@ export const heldDecisions = (kind: HeldKind): readonly string[] => HELD_DECISIO
 
 type HeldDecisionRow = Pick<HeldSongRow, 'kind' | 'withheld' | 'removed' | 'removableCoverId'> & {
   cover: unknown;
+  resolved?: boolean;
 };
 
 export function heldDecisionsEnabled(
@@ -377,7 +399,7 @@ export function heldDecisionsEnabled(
   canOpenHolds: boolean
 ): boolean[] {
   if (row.kind === 'lyrics') return [canOpenHolds];
-  const on = canAct && !row.withheld;
+  const on = canAct && !row.withheld && !row.resolved;
   const live = on && !row.removed;
   const cover = on && row.removableCoverId != null;
   return row.kind === 'cover'

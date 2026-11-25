@@ -483,6 +483,7 @@ describe("the open dispute's details", () => {
       by: null,
       at: '2026-11-01T10:00:00.000Z',
       before: null,
+      recorded: true,
     });
     await resolve({ reviewId: String(DISPUTE), appliedLevel: '1' });
     await flush();
@@ -490,12 +491,24 @@ describe("the open dispute's details", () => {
       source: 'moderator',
       by: 'mod',
       before: 2,
+      recorded: true,
     });
   });
 
-  it('names the moderator of a direct rating, with no level before it on record', async () => {
+  it('credits no one for a write that kept the level', async () => {
+    await resolve({ reviewId: String(DISPUTE), appliedLevel: '2', modComment: 'Fits PG-13.' });
+    await flush();
+    expect((await get(SONG)).body.rating).toEqual({
+      source: 'unknown',
+      by: null,
+      at: null,
+      before: null,
+      recorded: false,
+    });
+  });
+
+  it('names the last moderator of a rating recorded before its levels were, with no level before it', async () => {
     await db.exec(`
-      UPDATE "RatingReview" SET "appliedLevel" = NULL WHERE id = ${EARLIER};
       UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = ${SONG};
       INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity, "createdAt")
         VALUES (${MOD}, 'image', ${SONG}, 'setNsfwLevel', '2026-10-28');
@@ -505,6 +518,7 @@ describe("the open dispute's details", () => {
       by: 'mod',
       at: '2026-10-28T00:00:00.000Z',
       before: null,
+      recorded: false,
     });
   });
 

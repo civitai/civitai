@@ -21,6 +21,7 @@ import {
   type HeldKind,
   type HeldSongRow,
   type HeldSort,
+  type HeldStatus,
   type ReportedFilter,
   type SongAppealRow,
   type ReportedSongRow,
@@ -531,60 +532,51 @@ async function songDisputeTally(ownerId: number, user: App.Locals['user'] | unde
   };
 }
 
-// The rating writer records its activity after the ruling commits: a ruling this close before the
-// latest rating activity is that same change.
-const RULING_ACTIVITY_SLACK_MS = 60_000;
+/** The rating rows read back for the card; past this many no-op writes, it says "Not recorded". */
+const RATING_ROWS_READ = 20;
 
-/** Who set the song's current level: its scans while it is unlocked, else the moderator rating
- *  writer's latest `setNsfwLevel` activity or a dispute ruling that applied a level. */
+/**
+ * Who set the song's current level: its scans while it is unlocked, else the moderator of the
+ * latest `setNsfwLevel` row that changed it (`details.from` to `details.to`), with the level it
+ * replaced. A write that kept the level (a keep ruling, a same-level rating) credits no one; a row
+ * written before `details` existed names its moderator as the last to rate it, with no `before`.
+ */
 async function songRatingSource(
   songId: number,
   song: { locked: boolean; scannedAt: Date | null }
 ): Promise<NonNullable<SongDetails['rating']>> {
-  if (!song.locked) return { source: 'scan', by: null, at: song.scannedAt, before: null };
-  const [activity, ruling] = await Promise.all([
-    dbRead
-      .selectFrom('ModActivity as a')
-      .leftJoin('User as u', 'u.id', 'a.userId')
-      .select(['u.username', 'a.createdAt'])
-      .where('a.entityType', '=', 'image')
-      .where('a.entityId', '=', songId)
-      .where('a.activity', '=', 'setNsfwLevel')
-      .orderBy('a.createdAt', 'desc')
-      .limit(1)
-      .executeTakeFirst(),
-    dbRead
-      .selectFrom('RatingReview as rr')
-      .leftJoin('User as u', 'u.id', 'rr.resolvedBy')
-      .select(['u.username', 'rr.resolvedAt', 'rr.currentLevel'])
-      .where('rr.entityType', '=', SONG_ENTITY_TYPE)
-      .where('rr.entityId', '=', songId)
-      .where('rr.appliedLevel', 'is not', null)
-      .where('rr.resolvedAt', 'is not', null)
-      .orderBy('rr.resolvedAt', 'desc')
-      .limit(1)
-      .executeTakeFirst(),
-  ]);
-  const rulingAt = ruling?.resolvedAt ? new Date(ruling.resolvedAt).getTime() : null;
-  if (
-    ruling &&
-    rulingAt != null &&
-    (!activity || rulingAt >= new Date(activity.createdAt).getTime() - RULING_ACTIVITY_SLACK_MS)
-  )
+  if (!song.locked)
+    return { source: 'scan', by: null, at: song.scannedAt, before: null, recorded: true };
+  const rows = await dbRead
+    .selectFrom('ModActivity as a')
+    .leftJoin('User as u', 'u.id', 'a.userId')
+    .select(['u.username', 'a.createdAt', 'a.details'])
+    .where('a.entityType', '=', 'image')
+    .where('a.entityId', '=', songId)
+    .where('a.activity', '=', 'setNsfwLevel')
+    .orderBy('a.createdAt', 'desc')
+    .limit(RATING_ROWS_READ)
+    .execute();
+  for (const row of rows) {
+    const change = levelChange(row.details);
+    if (change === 'none') continue;
     return {
       source: 'moderator',
-      by: ruling.username ?? null,
-      at: ruling.resolvedAt,
-      before: ruling.currentLevel,
+      by: row.username ?? null,
+      at: row.createdAt,
+      before: change === 'unrecorded' ? null : change.from,
+      recorded: change !== 'unrecorded',
     };
-  if (activity)
-    return {
-      source: 'moderator',
-      by: activity.username ?? null,
-      at: activity.createdAt,
-      before: null,
-    };
-  return { source: 'unknown', by: null, at: null, before: null };
+  }
+  return { source: 'unknown', by: null, at: null, before: null, recorded: false };
+}
+
+/** A `setNsfwLevel` row's `{ from, to }`: the change, `none` when it kept the level, or
+ *  `unrecorded` on a row written before ratings stored their levels. */
+function levelChange(details: unknown): { from: number; to: number } | 'none' | 'unrecorded' {
+  const d = details as { from?: unknown; to?: unknown } | null;
+  if (!d || typeof d.from !== 'number' || typeof d.to !== 'number') return 'unrecorded';
+  return d.from === d.to ? 'none' : { from: d.from, to: d.to };
 }
 
 /** All-time plays, Like reactions and comments of one song from the image metrics the site counts
@@ -765,7 +757,15 @@ export async function isSongAppeal(imageId: number): Promise<boolean> {
 }
 
 /** What holds a song, before the access rule: its kind, since when, and the hold or flagged cover. */
-type HeldEntry = { id: number; kind: HeldKind; waitingSince: Date; holdId: number | null };
+type HeldEntry = {
+  id: number;
+  kind: HeldKind;
+  waitingSince: Date;
+  holdId: number | null;
+  /** On a Resolved entry: its last Held decision, and the cover it decided. */
+  decision?: NonNullable<HeldSongRow['decision']>;
+  decidedCoverId?: number | null;
+};
 
 /** Every held song, one entry each: a lyrics hold first, then the song's own flag, then its cover's.
  *  With `ownerId`, only that owner's songs. */
@@ -835,6 +835,8 @@ const withheldHeldRow = (entry: HeldEntry): HeldSongRow => ({
   owner: null,
   removed: false,
   removableCoverId: null,
+  resolved: !!entry.decision,
+  decision: null,
 });
 
 /** The rows of these held entries, one each in their order. A lyrics row reads nothing of its song,
@@ -875,12 +877,12 @@ async function heldRows(
       ])
     : [[], new Map()];
   const byId = new Map(songs.map((s) => [s.id, s]));
-  // A cover row is withheld when its song or its flagged cover is: the detail shows both.
+  // A cover row is withheld when its song or its flagged (or decided) cover is: the detail shows both.
   const checked = [
     ...ids,
     ...open.flatMap((e) => {
       const coverId = e.kind === 'cover' ? byId.get(e.id)?.coverId : null;
-      return coverId != null ? [coverId] : [];
+      return [coverId, e.decidedCoverId].filter((id): id is number => id != null);
     }),
   ];
   const withheld = new Set(checked.length ? await withheldImageIds(user, checked) : []);
@@ -896,7 +898,11 @@ async function heldRows(
             nsfwLevel: song.coverNsfwLevel ?? 0,
           }
         : null;
-    if (withheld.has(entry.id) || (flaggedCover && withheld.has(flaggedCover.id)))
+    if (
+      withheld.has(entry.id) ||
+      (flaggedCover && withheld.has(flaggedCover.id)) ||
+      (entry.decidedCoverId != null && withheld.has(entry.decidedCoverId))
+    )
       return withheldHeldRow(entry);
     return {
       ...withheldHeldRow(entry),
@@ -910,7 +916,47 @@ async function heldRows(
       owner: { id: song.ownerId, username: song.ownerUsername },
       removed: song.ingestion === 'Blocked',
       removableCoverId: links.get(entry.id)?.songCoverId ?? null,
+      decision: entry.decision ?? null,
     };
+  });
+}
+
+/** The songs decided on the Held tab and not held again since, one entry each at its last decision
+ *  (`recordHeldDecision`'s rows). With `ownerId`, only that owner's songs. */
+async function resolvedHeldEntries(pending: HeldEntry[], ownerId?: number): Promise<HeldEntry[]> {
+  const rows = await dbRead
+    .selectFrom('ModActivity as a')
+    .innerJoin('Image as s', 's.id', 'a.entityId')
+    .leftJoin('User as u', 'u.id', 'a.userId')
+    .select(['a.entityId as id', 'a.createdAt', 'a.details', 'u.username'])
+    .distinctOn('a.entityId')
+    .where('a.activity', '=', HELD_DECISION_ACTIVITY)
+    .where('a.entityType', '=', 'image')
+    .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
+    .orderBy('a.entityId')
+    .orderBy('a.createdAt', 'desc')
+    .execute();
+  const held = new Set(pending.map((e) => e.id));
+  return rows.flatMap((r): HeldEntry[] => {
+    if (r.id == null || held.has(r.id)) return [];
+    const details = (r.details ?? {}) as Record<string, unknown>;
+    const kind = details.kind === 'song' ? 'song' : 'cover';
+    const at = new Date(r.createdAt);
+    return [
+      {
+        id: r.id,
+        kind,
+        waitingSince: at,
+        holdId: null,
+        decidedCoverId: typeof details.coverId === 'number' ? details.coverId : null,
+        decision: {
+          decision: String(details.decision ?? ''),
+          flag: String(details.flag ?? ''),
+          at,
+          by: r.username ?? null,
+        },
+      },
+    ];
   });
 }
 
@@ -927,6 +973,7 @@ export async function getHeldSongs({
   page,
   user,
   owner,
+  status = 'pending',
 }: {
   sort: HeldSort;
   filter: HeldFilter;
@@ -934,8 +981,11 @@ export async function getHeldSongs({
   page: number;
   user: App.Locals['user'] | undefined;
   owner?: number;
+  status?: HeldStatus;
 }) {
-  const entries = (await heldEntries(owner)).sort(
+  const pending = await heldEntries(owner);
+  const resolved = status === 'pending' ? [] : await resolvedHeldEntries(pending, owner);
+  const entries = (status === 'resolved' ? resolved : [...pending, ...resolved]).sort(
     (a, b) => a.waitingSince.getTime() - b.waitingSince.getTime() || a.id - b.id
   );
   if (sort === 'newest') entries.reverse();

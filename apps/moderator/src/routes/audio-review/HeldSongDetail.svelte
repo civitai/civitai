@@ -14,6 +14,7 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import {
+    HELD_DECISION_LABELS,
     heldDecisions,
     heldDecisionsEnabled,
     lyricsHoldHref,
@@ -300,13 +301,21 @@
 <TriageColumns
   {verdict}
   {error}
-  decision={isLyrics ? lyricsDecision : open ? decision : undefined}
+  decision={isLyrics ? lyricsDecision : open && !row.resolved ? decision : undefined}
 >
   {#snippet header()}
     <TriageDetailHeader title={songTitle(row)} reference="#{row.id}">
       {#snippet chips()}
         <SongBadge class="h-[17px] px-1.5 text-[11px]" />
-        {@render chip('Held', 'bg-amber-500/15 text-amber-300')}
+        {#if row.resolved}
+          {@render chip(
+            row.decision
+              ? `Resolved: ${HELD_DECISION_LABELS[row.decision.decision] ?? row.decision.decision}`
+              : 'Resolved'
+          )}
+        {:else}
+          {@render chip('Held', 'bg-amber-500/15 text-amber-300')}
+        {/if}
         <span
           class="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-px text-[11px] font-medium text-amber-300"
         >
@@ -357,6 +366,13 @@
         {/if}
       {/snippet}
     </TriageDetailHeader>
+    {#if row.decision}
+      <p class="m-0 mt-1 text-[13px] text-dark-2" title={dateTime(row.decision.at)}>
+        {HELD_DECISION_LABELS[row.decision.decision] ?? row.decision.decision}
+        {row.decision.by ? `by ${row.decision.by}` : ''} · {shortDate(row.decision.at)} · flag
+        {row.decision.flag || 'unknown'}
+      </p>
+    {/if}
   {/snippet}
 
   {#snippet evidence()}

@@ -60,6 +60,7 @@ const querySchema = z.object({
   kind: z.enum(APPEAL_FILTERS).catch('all'),
   held: z.enum(HELD_FILTERS).catch('all'),
   ask: z.enum(DISPUTE_FILTERS).catch('all'),
+  // Held and Disputes: Pending, Resolved or All (the same values on both).
   status: z.enum(DISPUTE_STATUSES).catch('pending'),
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
@@ -76,16 +77,30 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   if (tab === 'held') {
     const heldSort: HeldSort = sort === 'newest' ? 'newest' : 'oldest';
     const [held, counts] = await Promise.all([
-      getHeldSongs({ sort: heldSort, filter: parsed.held, q, page, user, owner: parsed.owner }),
+      getHeldSongs({
+        sort: heldSort,
+        filter: parsed.held,
+        q,
+        page,
+        user,
+        owner: parsed.owner,
+        status: parsed.status,
+      }),
       songTabCounts(),
     ]);
     return {
       tab,
       held: {
         ...held,
-        filters: { sort: heldSort, kind: parsed.held, owner: parsed.owner ?? null },
+        filters: {
+          sort: heldSort,
+          kind: parsed.held,
+          owner: parsed.owner ?? null,
+          status: parsed.status,
+        },
       },
-      counts: { ...counts, held: held.facets.all },
+      // The badge counts what is waiting: a Resolved list is not.
+      counts: { ...counts, held: parsed.status === 'pending' ? held.facets.all : counts.held },
       canOpenHolds: canOpenCsamHolds(locals),
       ...shared,
     };

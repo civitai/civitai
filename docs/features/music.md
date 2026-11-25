@@ -261,7 +261,14 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   by oldest or newest; search by title, owner or id; `owner=<userId>` lists one owner's rows, shown as
   a removable "Owner:" chip, and like a text search never matches a lyrics hold or a withheld row).
   The open song's owner card adds "Other held": the owner's other rows that filter lists, by kind
-  ("1 song, 2 covers"), with View linking to it; it is read on this tab only:
+  ("1 song, 2 covers"), with View linking to it; it is read on this tab only. Status Pending (the
+  default, and the tab's badge), Resolved or All: each decision on this tab (Approve cover or song,
+  Remove cover or song, not one held for a second moderator) writes a `ModActivity` row
+  `audioHeldDecision` with `details` `{ decision, kind, flag, songId, coverId }`, beside the writers'
+  own `review` rows, and Resolved lists each song at its last such decision unless it is held again:
+  what was decided, by whom, when and the flag, read-only with no keys. A decided song or cover
+  withheld from the moderator shows only its id. Decisions made before that column existed are not
+  listed:
   - **Lyrics held:** the song's lyrics are under a Pending CSAM text hold (`TrackLyrics`). The row
     shows "Withheld song #id", "Song withheld" and when it was held, with no audio, cover, lyrics,
     title or owner for anyone on this page, whatever their grants; search finds it only by its exact
@@ -298,10 +305,10 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   (Current, Owner asks, and Scan default: PG, the level a song's own scans give every clean song,
   which nothing stores per song), the owner's comment, "This dispute" (when it was filed, its
   ruling once resolved, and the last ruling on a dispute of the song filed before it: "Ruled Oct 30:
-  kept PG-13"), "Current rating" (set by its scans while unlocked, else the moderator from the
-  rating writer's latest `setNsfwLevel` activity or the dispute ruling that applied it; set on; and
-  the level before it, known only after a ruling, since no writer stores what a direct rating
-  replaced) and the song's side cards, whose owner card adds "Rating disputes" (the owner's song
+  kept PG-13"), "Current rating" (set by its scans while unlocked, else the moderator of the latest
+  `setNsfwLevel` row whose `details` `{ from, to }` changed the level, with when and the level
+  before it (`from`); a write that kept the level, such as a keep ruling, credits no one, and a row
+  from before `details` existed reads "Last rated by" with the level before "Not recorded") and the song's side cards, whose owner card adds "Rating disputes" (the owner's song
   disputes by outcome). The tallies and the rating card are read on this tab only, for the open song. Keys 1 to 5 pick PG to XXX, then a
   note and Enter apply it, as on `/ratings` (the same decision form): applying the owner's ask
   approves the dispute, any other level rejects it, and keeping the current level needs a reason.
