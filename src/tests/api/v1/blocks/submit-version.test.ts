@@ -688,7 +688,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({
       message:
-        'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship that module as .js or .mjs (build the app first, or set buildCommand and outputDir in the manifest so the platform builds it).',
+        'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or add a package.json whose build script produces them (the platform builds every bundle that has one).',
       moduleGraphErrors: problems,
     });
   });

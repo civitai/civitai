@@ -215,19 +215,23 @@ describe('checkModuleGraph', () => {
     });
   });
 
-  it('a path that climbs out of the bundle is reported missing', async () => {
+  it('a `..` above the root is clamped to the root, as the browser resolves the URL', async () => {
+    // Loads: `../../lib/x.js` from main.js is `/lib/x.js`.
+    expect(
+      await lint({
+        'index.html': page('<script type="module" src="./main.js"></script>'),
+        'main.js': "import '../../lib/x.js';",
+        'lib/x.js': 'export {}',
+      })
+    ).toEqual([]);
+    // And is still checked there: absent → missing, at the clamped path.
     expect(
       await lint({
         'index.html': page('<script type="module" src="./main.js"></script>'),
         'main.js': "import '../../etc/x.js';",
       })
     ).toEqual([
-      {
-        kind: 'missing',
-        importer: 'main.js',
-        specifier: '../../etc/x.js',
-        resolved: '(outside the bundle)',
-      },
+      { kind: 'missing', importer: 'main.js', specifier: '../../etc/x.js', resolved: 'etc/x.js' },
     ]);
   });
 
@@ -242,13 +246,26 @@ describe('resolveBundlePath', () => {
     ['src/app.js', '../lib/b.mjs', 'lib/b.mjs'],
     ['src/app.js', '/root.js?v=2#x', 'root.js'],
     ['src/app.js', './my%20file.js', 'src/my file.js'],
-    ['a.js', '../x.js', null],
+    ['a.js', '../x.js', 'x.js'],
+    ['src/app.js', '../../../x.js', 'x.js'],
   ])('%s + %s → %s', (importer, spec, out) => {
     expect(resolveBundlePath(importer, spec)).toBe(out);
   });
 });
 
 describe('the refusal the author reads', () => {
+  it('a bare specifier: the whole message', () => {
+    expect(
+      describeModuleGraphProblem({
+        kind: 'bare-specifier',
+        importer: 'main.js',
+        specifier: 'react',
+      })
+    ).toBe(
+      'main.js imports "react", a bare package name that a browser cannot load without an import map. Add a package.json whose build script bundles it (the platform builds every bundle that has one), map it in an import map, or import it by a relative path or full URL.'
+    );
+  });
+
   it('names the file, the specifier and the fix', () => {
     expect(
       describeModuleGraphProblem({
@@ -258,10 +275,32 @@ describe('the refusal the author reads', () => {
         resolved: 'x.ts',
       })
     ).toBe(
-      'main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship that module as .js or .mjs (build the app first, or set buildCommand and outputDir in the manifest so the platform builds it).'
+      'main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or add a package.json whose build script produces them (the platform builds every bundle that has one).'
     );
   });
 });
+
+/** The public block starter's shape (its entry page and imports, trimmed). */
+const STARTER: Record<string, string> = {
+  'block.manifest.json': JSON.stringify({
+    blockId: 'my-block',
+    version: '0.1.0',
+    name: 'My Block',
+  }),
+  'package.json': JSON.stringify({
+    name: 'civitai-block-starter',
+    type: 'module',
+    scripts: { build: 'vite build' },
+  }),
+  'index.html': page(
+    '<script>document.documentElement.dataset.theme = "dark";</script>' +
+      '<script type="module" src="/src/main.ts"></script>'
+  ),
+  'src/main.ts':
+    "import '@civitai/sdk/safe-storage';\nimport '@civitai/theme/styles.css';\nimport './index.css';\nimport { startBlock } from './block.js';\nstartBlock();",
+  'src/block.ts': 'export function startBlock(): void {}',
+  'src/index.css': '',
+};
 
 describe('assertBundleModuleGraphLoads (a submitted ZIP)', () => {
   async function zip(files: Record<string, string>): Promise<Buffer> {
@@ -277,13 +316,13 @@ describe('assertBundleModuleGraphLoads (a submitted ZIP)', () => {
       'main.js': "import './x.ts';",
       'x.ts': '',
     });
-    const err = await assertBundleModuleGraphLoads(buf, {}).catch((e: unknown) => e);
+    const err = await assertBundleModuleGraphLoads(buf).catch((e: unknown) => e);
     expect(isModuleGraphRefusal(err)).toBe(true);
     expect((err as ModuleGraphRefusal).problems).toEqual([
       { kind: 'non-js-extension', importer: 'main.js', specifier: './x.ts', resolved: 'x.ts' },
     ]);
     expect((err as Error).message).toBe(
-      'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship that module as .js or .mjs (build the app first, or set buildCommand and outputDir in the manifest so the platform builds it).'
+      'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or add a package.json whose build script produces them (the platform builds every bundle that has one).'
     );
   });
 
@@ -293,21 +332,58 @@ describe('assertBundleModuleGraphLoads (a submitted ZIP)', () => {
       'a.js': "import './b.mjs';",
       'b.mjs': '',
     });
-    expect((await assertBundleModuleGraphLoads(buf, {})).status).toBe('checked');
+    expect((await assertBundleModuleGraphLoads(buf)).status).toBe('checked');
   });
 
-  it('a bundle the platform builds (buildCommand) is not linted: its files are source', async () => {
-    const buf = await zip({
-      'index.html': page('<script type="module" src="/src/main.tsx"></script>'),
-      'src/main.tsx': "import React from 'react';",
-    });
-    expect(
-      await assertBundleModuleGraphLoads(buf, { buildCommand: 'vite build', outputDir: 'dist' })
-    ).toEqual({
+  /**
+   * 🔴 THE PIPELINE'S RULE: a root package.json means the platform builds the bundle (with the
+   * default `npm run build` when the manifest names no buildCommand). This is the public block
+   * starter's exact shape: package.json, NO buildCommand, `src="/src/main.ts"`. It must pass.
+   */
+  it('🔴 the block starter shape (package.json, no buildCommand, /src/main.ts) is not linted', async () => {
+    const buf = await zip(STARTER);
+    expect(await assertBundleModuleGraphLoads(buf)).toEqual({
       status: 'skipped',
-      reason: 'the platform builds this bundle (buildCommand)',
+      reason: 'the platform builds this bundle (package.json)',
       problems: [],
     });
+  });
+
+  it('control: the same files WITHOUT package.json are served as shipped, so linted and refused', async () => {
+    const files: Record<string, string> = { ...STARTER };
+    delete files['package.json'];
+    const err = await assertBundleModuleGraphLoads(await zip(files)).catch((e: unknown) => e);
+    expect((err as ModuleGraphRefusal).problems).toEqual([
+      {
+        kind: 'non-js-extension',
+        importer: 'index.html',
+        specifier: '/src/main.ts',
+        resolved: 'src/main.ts',
+      },
+    ]);
+  });
+
+  it('only a ROOT package.json counts: a nested one (vendor/lib/package.json) is still linted', async () => {
+    const files: Record<string, string> = { ...STARTER, 'vendor/lib/package.json': '{}' };
+    delete files['package.json'];
+    expect(
+      isModuleGraphRefusal(await assertBundleModuleGraphLoads(await zip(files)).catch((e) => e))
+    ).toBe(true);
+  });
+
+  it('a buildCommand without package.json does NOT exempt it: the pipeline serves it as shipped', async () => {
+    const files: Record<string, string> = {
+      ...STARTER,
+      'block.manifest.json': JSON.stringify({
+        blockId: 'my-block',
+        buildCommand: 'vite build',
+        outputDir: 'dist',
+      }),
+    };
+    delete files['package.json'];
+    expect(
+      isModuleGraphRefusal(await assertBundleModuleGraphLoads(await zip(files)).catch((e) => e))
+    ).toBe(true);
   });
 
   it('more than three problems: the message shows three and counts the rest', async () => {
@@ -321,7 +397,7 @@ describe('assertBundleModuleGraphLoads (a submitted ZIP)', () => {
       'd.ts': '',
       'e.ts': '',
     });
-    const err = (await assertBundleModuleGraphLoads(buf, {}).catch(
+    const err = (await assertBundleModuleGraphLoads(buf).catch(
       (e: unknown) => e
     )) as ModuleGraphRefusal;
     expect(err.problems).toHaveLength(5);

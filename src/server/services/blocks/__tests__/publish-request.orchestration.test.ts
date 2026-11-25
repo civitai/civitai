@@ -581,6 +581,24 @@ describe('submitVersion', () => {
       expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
     });
 
+    it('🔴 the block starter shape (package.json, no buildCommand, /src/main.ts) is accepted: the platform builds it', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      const bundleBuffer = await makeBundle({
+        [MANIFEST_PATH]: JSON.stringify(manifest()),
+        'package.json': JSON.stringify({
+          name: 'starter',
+          type: 'module',
+          scripts: { build: 'vite build' },
+        }),
+        'index.html': '<!doctype html><script type="module" src="/src/main.ts"></script>',
+        'src/main.ts':
+          "import '@civitai/sdk/safe-storage';\nimport { startBlock } from './block.js';",
+        'src/block.ts': 'export function startBlock(): void {}',
+      });
+      await submitVersion({ bundleBuffer, submittedByUserId: 42 });
+      expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+    });
+
     it('control: the same bundle importing ./x.mjs is accepted', async () => {
       const { submitVersion } = await import('../publish-request.service');
       await submitVersion({ bundleBuffer: await bundleImporting('x.mjs'), submittedByUserId: 42 });

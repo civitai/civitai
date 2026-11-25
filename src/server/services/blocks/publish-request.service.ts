@@ -1211,10 +1211,10 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // page imports a module the app server would not send as JavaScript (`./main.ts`, `./App.jsx`),
   // or one it never shipped, loads and never starts. The refusal names the importing file and the
   // specifier (`ModuleGraphRefusal`, returned as `moduleGraphErrors`). A bundle the platform
-  // builds (`buildCommand`) ships source and is not linted. See `bundle-module-graph.ts`.
+  // builds (a root package.json) ships source and is not linted. See `bundle-module-graph.ts`.
   {
     const { assertBundleModuleGraphLoads } = await import('./bundle-module-graph');
-    await assertBundleModuleGraphLoads(bundleBuffer, manifest);
+    await assertBundleModuleGraphLoads(bundleBuffer);
   }
 
   // iframe.src is PLATFORM-OWNED, not developer-authored. The only valid value

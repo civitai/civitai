@@ -24,10 +24,10 @@ import { APP_STATIC_SERVER_JS_EXTENSIONS } from '~/shared/constants/app-static-s
  * Files the page never loads (build scripts, tests, tooling) are NOT checked: Node tooling in
  * a bundle can import `.ts` or `node:fs` legitimately.
  *
- * WHEN: only for a NO-BUILD bundle (no `buildCommand`), whose files are served as shipped. A
- * bundle with a `buildCommand` ships its source, and the served output does not exist until the
- * platform builds it: its source graph (`./main.tsx`, `'react'`) is what a bundler consumes, so
- * linting it would refuse every bundled app. The review boot check covers built apps.
+ * WHEN: only for a bundle the platform serves AS SHIPPED, i.e. one with no `package.json` at its
+ * root (`bundleIsBuilt`). A bundle with one is built, whatever its manifest says, and its source
+ * graph (`/src/main.ts`, `'react'`) is what the bundler consumes, so linting it would refuse
+ * every built app. The review boot check covers built apps.
  *
  * FAIL-OPEN on anything it cannot read: a module that does not parse is skipped, never refused.
  */
@@ -79,11 +79,11 @@ function dirOf(path: string): string {
 }
 
 /**
- * Resolve a path-like specifier against the importing file to a bundle-root-relative path, or
- * null when it climbs out of the bundle. The query and fragment are dropped (the server ignores
- * them).
+ * Resolve a path-like specifier against the importing file to a bundle-root-relative path, as
+ * the browser resolves the URL. A `..` above the root stays at the root (URL resolution clamps
+ * it). The query and fragment are dropped (the server ignores them).
  */
-export function resolveBundlePath(importer: string, specifier: string): string | null {
+export function resolveBundlePath(importer: string, specifier: string): string {
   let spec = specifier.replace(/[?#].*$/, '');
   try {
     spec = decodeURIComponent(spec);
@@ -94,10 +94,8 @@ export function resolveBundlePath(importer: string, specifier: string): string |
   const out: string[] = [];
   for (const seg of joined.split('/')) {
     if (seg === '' || seg === '.') continue;
-    if (seg === '..') {
-      if (out.length === 0) return null;
-      out.pop();
-    } else out.push(seg);
+    if (seg === '..') out.pop(); // a no-op at the root: browsers clamp `..` there
+    else out.push(seg);
   }
   return out.join('/');
 }
@@ -284,16 +282,6 @@ export async function checkModuleGraph(source: ModuleGraphSource): Promise<Modul
     }
     if (kind === 'external') return;
     const resolved = resolveBundlePath(base, spec);
-    if (resolved === null) {
-      if (!ref.dynamic)
-        problems.push({
-          kind: 'missing',
-          importer,
-          specifier: ref.specifier,
-          resolved: '(outside the bundle)',
-        });
-      return;
-    }
     if (!(await source.exists(resolved))) {
       if (!ref.dynamic)
         problems.push({ kind: 'missing', importer, specifier: ref.specifier, resolved });
@@ -346,11 +334,11 @@ const SERVED_CHOICE = SERVED_EXTS.join(' or ');
 export function describeModuleGraphProblem(p: ModuleGraphProblem): string {
   switch (p.kind) {
     case 'non-js-extension':
-      return `${p.importer} imports "${p.specifier}" (${p.resolved}), but the app server sends only ${SERVED_TYPES} files as JavaScript, so the browser will not run it. Ship that module as ${SERVED_CHOICE} (build the app first, or set buildCommand and outputDir in the manifest so the platform builds it).`;
+      return `${p.importer} imports "${p.specifier}" (${p.resolved}), but the app server sends only ${SERVED_TYPES} files as JavaScript, so the browser will not run it. Ship browser-ready ${SERVED_CHOICE} files, or add a package.json whose build script produces them (the platform builds every bundle that has one).`;
     case 'missing':
       return `${p.importer} imports "${p.specifier}", but ${p.resolved} is not in the bundle. Add the file or fix the import path.`;
     case 'bare-specifier':
-      return `${p.importer} imports "${p.specifier}", a bare package name that a browser cannot load without an import map. Bundle the app (set buildCommand and outputDir in the manifest), map it in an import map, or import it by a relative path or full URL.`;
+      return `${p.importer} imports "${p.specifier}", a bare package name that a browser cannot load without an import map. Add a package.json whose build script bundles it (the platform builds every bundle that has one), map it in an import map, or import it by a relative path or full URL.`;
   }
 }
 
@@ -376,9 +364,17 @@ export function isModuleGraphRefusal(err: unknown): err is ModuleGraphRefusal {
   return err instanceof ModuleGraphRefusal;
 }
 
-/** Whether the manifest asks the platform to build the bundle (so its files are source). */
-export function bundleIsBuilt(manifest: Record<string, unknown>): boolean {
-  return typeof manifest.buildCommand === 'string' && manifest.buildCommand.trim().length > 0;
+/**
+ * Whether the platform BUILDS this bundle (so its files are source, not what is served). 🔴 The
+ * build pipeline's own rule, mirrored exactly: it builds when a `package.json` is at the root of
+ * the bundle (`if [ -f package.json ]`, the build step of the App Blocks build pipeline) and
+ * otherwise serves the files as shipped; a manifest without `buildCommand` is built with the
+ * default `npm run build` (its build-command resolver). `buildCommand` / `outputDir` therefore
+ * do NOT decide it: a bundle without `package.json` is served as shipped even when it sets them.
+ */
+export function bundleIsBuilt(paths: Iterable<string>): boolean {
+  for (const path of paths) if (path === 'package.json') return true;
+  return false;
 }
 
 /**
@@ -386,16 +382,8 @@ export function bundleIsBuilt(manifest: Record<string, unknown>): boolean {
  * Call after the bundle passed `extractBundleMetadata`, which caps its file count and sizes.
  */
 export async function assertBundleModuleGraphLoads(
-  bundleBuffer: Buffer,
-  manifest: Record<string, unknown>
+  bundleBuffer: Buffer
 ): Promise<ModuleGraphResult> {
-  if (bundleIsBuilt(manifest)) {
-    return {
-      status: 'skipped',
-      reason: 'the platform builds this bundle (buildCommand)',
-      problems: [],
-    };
-  }
   const JSZip = (await import('jszip')).default;
   const zip = await JSZip.loadAsync(bundleBuffer);
   const files = new Map(
@@ -403,6 +391,13 @@ export async function assertBundleModuleGraphLoads(
       .filter(([, entry]) => !entry.dir)
       .map(([path, entry]) => [path, entry] as const)
   );
+  if (bundleIsBuilt(files.keys())) {
+    return {
+      status: 'skipped',
+      reason: 'the platform builds this bundle (package.json)',
+      problems: [],
+    };
+  }
   const result = await checkModuleGraph({
     exists: async (path) => files.has(path),
     read: async (path) => {
