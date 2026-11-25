@@ -1,4 +1,6 @@
+import type { Kysely, Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
@@ -30,22 +32,36 @@ export class SongRatingRefusedError extends Error {
   }
 }
 
-// Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
-// change.
-export async function updateImageNsfwLevel({
-  id,
-  nsfwLevel,
-  status,
-  reason,
-  userId,
-}: {
+/** One piece of the work that follows a committed rating, named for its log line. */
+export type AfterCommitStep = { name: string; run: () => Promise<unknown> };
+
+type ImageNsfwLevelInput = {
   id: number;
   nsfwLevel: number;
   status?: ReportStatus;
   reason?: string;
   userId: number;
-}): Promise<void> {
-  const image = await dbWrite
+};
+
+// Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
+// change.
+export async function updateImageNsfwLevel(input: ImageNsfwLevelInput): Promise<void> {
+  // One transaction, so the level never lands without its rating-request and Model3D writes, and the
+  // busts run only after a level has landed.
+  const steps = await dbWrite.transaction().execute((trx) => writeImageNsfwLevel(trx, input));
+  for (const step of steps) await step.run();
+}
+
+/**
+ * `updateImageNsfwLevel`'s writes, on `db`: pass a transaction to commit the rating with the caller's
+ * own writes. Returns the cache, activity and search work, in order, for the caller to run once that
+ * commits.
+ */
+export async function writeImageNsfwLevel(
+  db: Kysely<DB> | Transaction<DB>,
+  { id, nsfwLevel, status, reason, userId }: ImageNsfwLevelInput
+): Promise<AfterCommitStep[]> {
+  const image = await db
     .selectFrom('Image')
     .select(['type', 'ingestion', 'metadata', 'postId', thumbnailParentId.as('parentId')])
     .where('id', '=', id)
@@ -69,7 +85,7 @@ export async function updateImageNsfwLevel({
     ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
-  const updated = await dbWrite
+  const updated = await db
     .updateTable('Image')
     .set({
       nsfwLevel,
@@ -84,11 +100,9 @@ export async function updateImageNsfwLevel({
     if (image.type === 'audio') throw new SongRatingRefusedError(id, 'changed');
     throw new Error('Image not found');
   }
-  await invalidateThumbnails(id, [image.parentId]);
-  await bustProfilePictures({ imageIds: [id] });
 
   if (status) {
-    await dbWrite
+    await db
       .updateTable('ImageRatingRequest')
       .set({ status })
       .where('imageId', '=', id)
@@ -116,18 +130,39 @@ export async function updateImageNsfwLevel({
       SET "nsfwLevel" = level."nsfwLevel"
       FROM level
       WHERE mm."model3dId" = level.id AND mm."nsfwLevel" != level."nsfwLevel"
-    `.execute(dbWrite);
+    `.execute(db);
   }
 
-  await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
-
-  await bustAfterWrite('image-nsfw-level-cache-bust', () =>
-    Promise.all([
-      bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
-      // The version showcase is cached for a day and filtered by level when it is built.
-      bustPostGalleryCaches(image.postId != null ? [image.postId] : []),
-    ])
-  );
-
-  if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
+  const postId = image.postId;
+  return [
+    { name: 'image-nsfw-level-thumbnails', run: () => invalidateThumbnails(id, [image.parentId]) },
+    {
+      name: 'image-nsfw-level-profile-pictures',
+      run: () => bustProfilePictures({ imageIds: [id] }),
+    },
+    {
+      name: 'image-nsfw-level-activity',
+      run: () =>
+        recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' }),
+    },
+    {
+      name: 'image-nsfw-level-cache-bust',
+      run: () =>
+        bustAfterWrite('image-nsfw-level-cache-bust', () =>
+          Promise.all([
+            bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
+            // The version showcase is cached for a day and filtered by level when it is built.
+            bustPostGalleryCaches(postId != null ? [postId] : []),
+          ])
+        ),
+    },
+    ...(postId != null
+      ? [
+          {
+            name: 'image-nsfw-level-search',
+            run: () => queueDocumentsForImageMinorChanges({ levelImageIds: [id] }),
+          },
+        ]
+      : []),
+  ];
 }

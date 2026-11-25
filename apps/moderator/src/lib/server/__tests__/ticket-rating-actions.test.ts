@@ -104,6 +104,11 @@ describe('ratingDisputeResolve', () => {
       409,
     ],
     [
+      'a song dispute, decided on the Audio review page',
+      () => reviewOf.mockResolvedValue(row({ entityType: 'Song' })),
+      409,
+    ],
+    [
       'a ticket that no longer qualifies',
       () => linkedUser.mockResolvedValue({ status: 'refused', code: 409, message: 'moved' }),
       409,

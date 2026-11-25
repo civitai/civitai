@@ -153,4 +153,50 @@ describe("a moderator's rating", () => {
       metadata: { nsfwLevelReason: 'mod' },
     });
   });
+
+  // Regression for every caller that rates outside a transaction (queues, lookup, Inquisitor).
+  it('called on its own, writes and then runs its cache, activity and search work, as before', async () => {
+    const { invalidateThumbnails } = await import('../thumbnail-cache');
+    const { bustProfilePictures } = await import('../profile-picture-cache');
+    const { recordModActivity } = await import('../mod-activity');
+    const { bustCachedObject } = await import('../cache');
+    const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+
+    await updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 4 });
+
+    expect((await row(REVIEWED_SONG)).nsfwLevelLocked).toBe(true);
+    expect(invalidateThumbnails).toHaveBeenCalledWith(REVIEWED_SONG, [null]);
+    expect(bustProfilePictures).toHaveBeenCalledWith({ imageIds: [REVIEWED_SONG] });
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: 4,
+      entityType: 'image',
+      entityId: REVIEWED_SONG,
+      activity: 'setNsfwLevel',
+    });
+    expect(bustCachedObject).toHaveBeenCalledWith(expect.any(String), REVIEWED_SONG);
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({
+      levelImageIds: [REVIEWED_SONG],
+    });
+  });
+
+  it('commits the level with its rating-request write or not at all, and busts only a landed level', async () => {
+    const { invalidateThumbnails } = await import('../thumbnail-cache');
+    const { bustProfilePictures } = await import('../profile-picture-cache');
+    await db.exec(`ALTER TABLE "ImageRatingRequest" RENAME TO "ImageRatingRequestGone"`);
+    try {
+      await expect(
+        updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 4, status: 'Actioned' })
+      ).rejects.toThrow(/ImageRatingRequest/);
+    } finally {
+      await db.exec(`ALTER TABLE "ImageRatingRequestGone" RENAME TO "ImageRatingRequest"`);
+    }
+
+    expect(await row(REVIEWED_SONG)).toEqual({
+      nsfwLevel: 1,
+      nsfwLevelLocked: false,
+      metadata: {},
+    });
+    expect(invalidateThumbnails).not.toHaveBeenCalled();
+    expect(bustProfilePictures).not.toHaveBeenCalled();
+  });
 });

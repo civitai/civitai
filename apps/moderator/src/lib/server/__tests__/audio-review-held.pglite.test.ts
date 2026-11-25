@@ -93,6 +93,7 @@ beforeEach(async () => {
     CREATE TABLE IF NOT EXISTS "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), images JSONB NOT NULL DEFAULT '[]', details JSONB);
     ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'Image';
     CREATE TABLE "UserStrike" ("userId" INTEGER, points INTEGER, status TEXT, "voidedAt" TIMESTAMP, "expiresAt" TIMESTAMP);
+    CREATE TABLE "RatingReview" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, status TEXT NOT NULL);
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner'), (${OTHER}, 'other');
     INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview", "nsfwLevel", metadata, "createdAt") VALUES
       (${LYRICS_SONG}, 'lyrics-key', 'audio', 'Scanned', ${OWNER}, 'csam', 1, '{"title": "Hush"}', '2026-11-01'),

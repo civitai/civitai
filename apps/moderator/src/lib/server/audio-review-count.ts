@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
 import { IMAGE_REVIEW_SLUGS } from '$lib/image-review';
+import { ReportStatus, SONG_ENTITY_TYPE } from '$lib/rating-review';
 import { DEFAULT_REPORT_REASONS, reportCountKey } from '$lib/reports';
 import { dbRead } from './db';
 
@@ -133,4 +134,20 @@ export async function countHeldSongs(): Promise<{ lyrics: number; actionable: nu
           )}) AS actionable
   `.execute(dbRead);
   return { lyrics: rows[0]?.lyrics ?? 0, actionable: rows[0]?.actionable ?? 0 };
+}
+
+/** Owners' Pending rating disputes on songs: the Disputes tab, the only place they are decided
+ *  (/ratings and tickets leave them out). */
+export const pendingSongDisputes = () =>
+  dbRead
+    .selectFrom('RatingReview as rr')
+    .where('rr.entityType', '=', SONG_ENTITY_TYPE)
+    .where('rr.status', '=', ReportStatus.Pending);
+
+/** The Disputes tab's badge. */
+export async function countSongDisputes(): Promise<number> {
+  const row = await pendingSongDisputes()
+    .select(sql<number>`count(*)::int`.as('n'))
+    .executeTakeFirst();
+  return row?.n ?? 0;
 }

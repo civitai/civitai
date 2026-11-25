@@ -247,6 +247,23 @@ describe('ratingDisputeTriageLoad ordering and paging', () => {
   });
 });
 
+describe('ratingDisputeTriageLoad and song disputes', () => {
+  it('lists, counts and pins no song dispute: they are decided on the Audio review page', async () => {
+    const post = await fileReview();
+    const song = await fileReview({ entityType: 'Song', currentLevel: 8, suggestedLevel: 4 });
+
+    for (const tab of ['posts', 'models', 'articles', 'other']) {
+      const data = await load(`?tab=${tab}`);
+      expect(ids(data)).not.toContain(song);
+    }
+    const data = await load(`?selected=${song}`);
+    expect(ids(data)).toEqual([post]);
+    expect(data.facets?.tabs).toEqual({ posts: 1, models: 0, articles: 0, other: 0 });
+    expect(data.pinned).toBeNull();
+    expect(data.selectedMissing).toBe(song);
+  });
+});
+
 describe('ratingDisputeTriageLoad selection', () => {
   it('returns the selected review as pinned when a filter leaves it off the page', async () => {
     await fileReview();

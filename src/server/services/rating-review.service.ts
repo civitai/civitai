@@ -87,12 +87,19 @@ async function readReviewState(entityType: RatingReviewEntityType, entityId: num
         entityId,
         status: { in: [ReportStatus.Actioned, ReportStatus.Unactioned] },
         resolvedAt: { not: null },
+        // A song's dispute closed with nothing applied (its scans could not review it) ruled on
+        // nothing, so once a rescan reviews the song it must not block a new one.
+        ...(entityType === 'Song' && { appliedLevel: { not: null } }),
       },
       orderBy: { resolvedAt: 'desc' },
       select: { resolvedAt: true, resolvedTextHash: true },
     }),
   ]);
 }
+
+// A song's level comes from its own media and lyrics scans, not from a text-scan raise.
+const disputableWithoutScan = (entityType: RatingReviewEntityType) =>
+  entityType === 'Article' || entityType === 'Song';
 
 function assertOwner(ownerId: number | null, userId: number) {
   if (ownerId == null || ownerId !== userId)
@@ -326,7 +333,12 @@ export async function createRatingReview({
   if (subject.disputeRestriction) throw throwBadRequestError(subject.disputeRestriction);
   // Before eligibility: a clean re-scan after filing would otherwise answer with the wrong reason.
   if (existingPending) throw throwBadRequestError(PENDING_MESSAGE);
-  if (entityType !== 'Article' && !scan?.raised && !lastResolved && !subject.systemNsfwLock)
+  if (
+    !disputableWithoutScan(entityType) &&
+    !scan?.raised &&
+    !lastResolved &&
+    !subject.systemNsfwLock
+  )
     throw throwBadRequestError('Only a rating raised by our text scan can be disputed.');
   if (entityType !== 'Article' && !subject.currentLevel)
     throw throwBadRequestError('This has no rating to dispute yet.');
@@ -455,7 +467,7 @@ export async function getRatingReviewForOwner({
     canResubmit,
     canDispute:
       !subject.disputeRestriction &&
-      (entityType === 'Article' || !!scan?.raised || !!latest || !!subject.systemNsfwLock),
+      (disputableWithoutScan(entityType) || !!scan?.raised || !!latest || !!subject.systemNsfwLock),
     currentLevel: subject.currentLevel,
     scanReason: scan?.reason ?? null,
     scanLevel: scan?.level ?? null,

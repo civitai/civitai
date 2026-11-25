@@ -34,6 +34,7 @@
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import AppealsQueue from './AppealsQueue.svelte';
+  import DisputesQueue from './DisputesQueue.svelte';
   import HeldQueue from './HeldQueue.svelte';
   import ReportedSongDetail from './ReportedSongDetail.svelte';
   import type { ActionData, PageData } from './$types';
@@ -184,16 +185,29 @@
 <div class="flex flex-col lg:h-svh">
   <TriagePageHeader
     title="Audio review"
-    subtitle="Songs and their covers: reports, appeals and holds. Decide on the song, its cover and its rating together."
+    subtitle="Songs and their covers: reports, appeals, holds and rating disputes. Decide on the song, its cover and its rating together."
     placeholder="Song, owner or ID"
     searchLabel={data.tab === 'appeals'
       ? 'Search appealed songs and covers'
       : data.tab === 'held'
       ? 'Search held songs'
+      : data.tab === 'disputes'
+      ? 'Search disputed songs'
       : 'Search reported songs'}
   />
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-    {#if data.tab === 'held'}
+    {#if data.tab === 'disputes'}
+      <DisputesQueue
+        disputes={data.disputes}
+        filters={data.disputes.filters}
+        q={data.q}
+        page={data.page}
+        canAct={data.canAct}
+        civitaiUrl={data.civitaiUrl}
+        {form}
+        {tabsBar}
+      />
+    {:else if data.tab === 'held'}
       <HeldQueue
         held={data.held}
         filters={data.held.filters}

@@ -16,11 +16,20 @@
     row,
     submit,
     actionHref,
+    action = 'resolve',
+    hint = "Applying the owner's rating approves the dispute; any other rating rejects it. The owner sees the note.",
     chosen = $bindable(),
   }: {
-    row: RatingDisputeRow;
+    /** A dispute: /ratings' row, or a song's on Audio review. `entity` is null once the item is gone. */
+    row: Pick<
+      RatingDisputeRow,
+      'id' | 'entityType' | 'currentLevel' | 'suggestedLevel' | 'levelOptions'
+    > & { entity: unknown };
     submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
+    /** The page's form action that resolves the dispute. */
+    action?: string;
+    hint?: string;
     chosen: number | null;
   } = $props();
 
@@ -156,7 +165,7 @@
 <form
   bind:this={formEl}
   method="POST"
-  action={actionHref('resolve')}
+  action={actionHref(action)}
   use:enhance={decide}
   class="w-full"
 >
@@ -166,6 +175,6 @@
     compact
     buttons={levelButtons}
     fields={chosen !== null ? confirmFields : undefined}
-    hint="Applying the owner's rating approves the dispute; any other rating rejects it. The owner sees the note."
+    {hint}
   />
 </form>

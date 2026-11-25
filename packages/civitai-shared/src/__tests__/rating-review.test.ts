@@ -11,6 +11,8 @@ import {
   ratingReviewLevels,
   ratingReviewModeratorLevels,
   ratingReviewOwnerLevels,
+  effectiveScanFailureClass,
+  songNeverReviewable,
   textScanNsfwReason,
   textScanResultTextHash,
 } from '../rating-review';
@@ -60,6 +62,16 @@ describe('rating-review constants', () => {
     expect(ratingReviewModeratorLevels('Challenge', NsfwLevel.R)).toEqual([1, 2, 4]);
     expect(ratingReviewOwnerLevels('Article', NsfwLevel.R)).toEqual([1, 2, 4, 8, 16]);
     expect(ratingReviewModeratorLevels('Article', NsfwLevel.R)).toEqual([1, 2, 4, 8, 16]);
+  });
+
+  it('rates a song like a post, offers its owner every level, and links its own page', () => {
+    expect(isRatingReviewEntityType('Song')).toBe(true);
+    expect(ratingReviewEntityLabels.Song).toBe('Song');
+    expect(ratingReviewLevels('Song')).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewOwnerLevels('Song', NsfwLevel.R)).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewModeratorLevels('Song', NsfwLevel.R)).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewLevelLabel('Song', NsfwLevel.R)).toBe('R');
+    expect(ratingReviewEntityPath('Song', 3)).toBe('/images/3');
   });
 
   it('builds each entity path, and none for an entry without its bounty', () => {
@@ -117,5 +129,62 @@ describe('rating-review constants', () => {
         modComment: 'text is explicit',
       },
     });
+  });
+});
+
+describe('songNeverReviewable', () => {
+  const state = (
+    ingestion: string,
+    retryCount: number | null = null,
+    failureClass: string | null = null,
+    failureReason: string | null = null
+  ) => songNeverReviewable({ ingestion, retryCount, failureClass, failureReason });
+
+  it('is true for a removed song, a lost file, and a scan past its retry ceiling', () => {
+    expect(state('Blocked')).toBe(true);
+    expect(state('NotFound')).toBe(true);
+    expect(state('Error', 9)).toBe(true);
+    expect(state('Error', 1, 'permanent')).toBe(true);
+    expect(state('Error', 30, 'transient')).toBe(true);
+    expect(state('Rescan', 9)).toBe(true);
+  });
+
+  it('is false for a reviewed song and one whose scans are running or due a retry', () => {
+    expect(state('Scanned')).toBe(false);
+    expect(state('Pending')).toBe(false);
+    expect(state('Error', 8)).toBe(false);
+    expect(state('Error', 29, 'transient')).toBe(false);
+    expect(state('Rescan', 8)).toBe(false);
+  });
+});
+
+describe('the effective scan failure class, as the ingest cron reads it', () => {
+  it('re-reads an unknown or missing class from the failure reason, and keeps a known one', () => {
+    expect(effectiveScanFailureClass('unknown', 'Failed to create container')).toBe('transient');
+    expect(effectiveScanFailureClass(null, 'could not decode the file')).toBe('permanent');
+    expect(effectiveScanFailureClass('permanent', 'gateway timeout')).toBe('permanent');
+    expect(effectiveScanFailureClass('unknown', 'something odd')).toBe('unknown');
+    expect(effectiveScanFailureClass(null, null)).toBeNull();
+  });
+
+  it("decides a song's dispute by the class the cron retries it under", () => {
+    // Stored unknown, but the reason reads transient: the cron retries it up to 30 times.
+    expect(
+      songNeverReviewable({
+        ingestion: 'Error',
+        retryCount: 12,
+        failureClass: 'unknown',
+        failureReason: 'Failed to create container',
+      })
+    ).toBe(false);
+    // A reason that reads permanent: the cron gave up after the first failure.
+    expect(
+      songNeverReviewable({
+        ingestion: 'Error',
+        retryCount: 2,
+        failureClass: null,
+        failureReason: 'could not decode the file',
+      })
+    ).toBe(true);
   });
 });

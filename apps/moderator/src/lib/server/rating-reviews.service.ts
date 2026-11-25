@@ -15,10 +15,12 @@ import {
   ratingReviewEntityPath,
   ratingReviewLevelLabel,
   ratingReviewModeratorLevels,
+  songNeverReviewable,
   SYSTEM_NSFW_LOCK_META_KEY,
   textScanNsfwReason,
   textScanResultTextHash,
   type RatingReviewEntityType,
+  type SongScanState,
 } from '@civitai/shared/rating-review';
 import { dbRead, dbWrite } from './db';
 import { loadComFaces, type ComFaceSource } from './com-face';
@@ -27,7 +29,13 @@ import { modelCoverCount, modelCoverImages, MODEL_COVER_ORDER } from './model-co
 import { postCoverRows } from './post-covers';
 import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
-import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review';
+import { bustAfterWrite } from './bust-after-write';
+import {
+  SongRatingRefusedError,
+  writeImageNsfwLevel,
+  type AfterCommitStep,
+} from './image-nsfw-level';
+import { ReportStatus, SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
 import type { MediaType } from '$lib/media/edge-url';
 import type { ComFace } from '$lib/com-face';
 
@@ -81,7 +89,9 @@ function moderatorLevelsFor(
 }
 
 // The owner's notice compares labels against the snapshot (two NSFW levels on a model both read NSFW),
-// and a challenge or crucible can already sit at the applied level live.
+// and a challenge or crucible can already sit at the applied level live. A song is judged on its live
+// level alone: a moderator may have rated it since the owner disputed it, and its snapshot is then
+// a change, not a keep.
 function keepsRating(
   entityType: RatingReviewEntityType,
   snapshotLevel: number,
@@ -89,7 +99,8 @@ function keepsRating(
   appliedLevel: number
 ): boolean {
   const label = ratingReviewLevelLabel(entityType, appliedLevel);
-  if (label === ratingReviewLevelLabel(entityType, snapshotLevel)) return true;
+  if (entityType !== 'Song' && label === ratingReviewLevelLabel(entityType, snapshotLevel))
+    return true;
   return liveLevel != null && getHighestBrowsingLevelBit(ratingBits(liveLevel)) === appliedLevel;
 }
 
@@ -290,6 +301,23 @@ async function loadSummaries(
         });
       break;
     }
+    case 'Song': {
+      const found = await dbRead
+        .selectFrom('Image')
+        .select(['id', 'nsfwLevel', sql<string | null>`"metadata"->>'title'`.as('title')])
+        .where('id', 'in', ids)
+        .where('type', '=', 'audio')
+        .execute();
+      for (const r of found)
+        put({
+          ...base,
+          id: r.id,
+          title: r.title?.trim() || `Song #${r.id}`,
+          nsfwLevel: r.nsfwLevel,
+          override: null,
+        });
+      break;
+    }
   }
   return out;
 }
@@ -419,6 +447,9 @@ async function loadImagesForType(
       await single(new Map(found.map((r) => [r.id, r.imageId])));
       return out;
     }
+    // A song is ruled from the song itself, on the Audio review page, not from a preview strip.
+    case 'Song':
+      return out;
   }
 }
 
@@ -610,6 +641,9 @@ async function loadScannedTextForType(
         ]);
       return out;
     }
+    // No text scan rates a song; its lyrics are shown on the Audio review page.
+    case 'Song':
+      return out;
   }
 }
 
@@ -742,7 +776,10 @@ export async function getRatingReviewCounts(
     .selectFrom('RatingReview')
     .select((eb) => ['status', eb.fn.countAll<number>().as('count')])
     .groupBy('status');
-  if (entityType) q = q.where('entityType', '=', entityType);
+  // Song disputes are decided on the Audio review page, so the /ratings badge leaves them out.
+  q = entityType
+    ? q.where('entityType', '=', entityType)
+    : q.where('entityType', '<>', SONG_ENTITY_TYPE);
   const counts: Record<RatingReviewStatusFilter, number> = {
     Pending: 0,
     Actioned: 0,
@@ -800,7 +837,7 @@ type LiveCrucible = { nsfwLevel: number; status: string; startAt: Date | null };
 
 // Their level is an allowed-entry mask read live under a row lock, not the review's snapshot.
 type MaskEntityType = 'Challenge' | 'Crucible';
-type OverrideEntityType = Exclude<RatingReviewEntityType, MaskEntityType>;
+type OverrideEntityType = Exclude<RatingReviewEntityType, MaskEntityType | 'Song'>;
 
 async function applyOverride(
   trx: Transaction<DB>,
@@ -981,6 +1018,30 @@ async function entityExists(
   return !!(await q.executeTakeFirst());
 }
 
+const SONG_UNREVIEWED =
+  "This song's own scans have not reviewed it yet; they are running or will be retried. Rule on its dispute once they have.";
+
+// A ruling is the moderator rating writer's own: a locked level counts as the song's review, so it
+// refuses a song its scans have not reviewed, re-checked in its write. It writes on the claim's
+// transaction, so the level and the ruling commit together; its cache work runs after commit.
+async function applySongRating(
+  trx: Transaction<DB>,
+  songId: number,
+  appliedLevel: number,
+  moderatorId: number
+): Promise<AfterCommitStep[]> {
+  try {
+    return await writeImageNsfwLevel(trx, {
+      id: songId,
+      nsfwLevel: appliedLevel,
+      userId: moderatorId,
+    });
+  } catch (err) {
+    if (err instanceof SongRatingRefusedError) throw new RatingReviewResolveError(err.message);
+    throw err;
+  }
+}
+
 // Locked so an escalation cannot raise the level between the check below and the write.
 const readLiveChallenge = (trx: Transaction<DB>, entityId: number) =>
   trx
@@ -998,14 +1059,22 @@ const readLiveCrucible = (trx: Transaction<DB>, entityId: number) =>
     .forUpdate()
     .executeTakeFirst();
 
+const SONG_DISPUTE_ELSEWHERE =
+  "A song's rating dispute is decided on the Audio review page's Disputes tab.";
+const NOT_A_SONG_DISPUTE = 'This dispute is not on a song. Reload.';
+
 export async function resolveRatingReview(input: {
   reviewId: number;
   appliedLevel: number;
   modComment?: string;
   moderatorId: number;
+  /** Set by the Audio review page, the one place a song's dispute is decided: it resolves only
+   *  those, and every other caller resolves anything but those. */
+  songs?: boolean;
 }): Promise<ResolveResult> {
   const { reviewId, appliedLevel, modComment, moderatorId } = input;
 
+  let afterSongRating: AfterCommitStep[] = [];
   const core = await dbWrite.transaction().execute(async (trx) => {
     const review = await trx
       .selectFrom('RatingReview')
@@ -1018,12 +1087,42 @@ export async function resolveRatingReview(input: {
       throw new RatingReviewResolveError(`Unknown entity type ${review.entityType}`);
     const entityType = review.entityType;
     const entityId = review.entityId;
+    if ((entityType === SONG_ENTITY_TYPE) !== !!input.songs)
+      throw new RatingReviewResolveError(input.songs ? NOT_A_SONG_DISPUTE : SONG_DISPUTE_ELSEWHERE);
 
     let exists: boolean;
     let challenge: LiveChallenge | undefined;
     let crucible: LiveCrucible | undefined;
+    let song: SongScanState | undefined;
     let liveLevel: number | undefined;
-    if (entityType === 'Challenge') {
+    if (entityType === 'Song') {
+      // The cron's own reads of the retry count and failure class (src/server/jobs/image-ingestion.ts).
+      const found = await trx
+        .selectFrom('Image')
+        .select([
+          'ingestion',
+          'nsfwLevel',
+          sql<number | null>`("scanJobs"->>'retryCount')::int`.as('retryCount'),
+          sql<
+            string | null
+          >`COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')->>'failureClass'`.as(
+            'failureClass'
+          ),
+          sql<
+            string | null
+          >`COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')->>'reason'`.as(
+            'failureReason'
+          ),
+        ])
+        .where('id', '=', entityId)
+        .where('type', '=', 'audio')
+        // Locked so another rating cannot land between the keep check below and the write.
+        .forUpdate()
+        .executeTakeFirst();
+      song = found && !songNeverReviewable(found) ? found : undefined;
+      exists = !!song;
+      liveLevel = song ? found?.nsfwLevel : undefined;
+    } else if (entityType === 'Challenge') {
       challenge = await readLiveChallenge(trx, entityId);
       exists = !!challenge;
       liveLevel = challenge?.nsfwLevel;
@@ -1036,6 +1135,7 @@ export async function resolveRatingReview(input: {
     }
     if (!moderatorLevelsFor(entityType, review.currentLevel, liveLevel).includes(appliedLevel))
       throw notApplicable();
+    if (song && song.ingestion !== 'Scanned') throw new RatingReviewResolveError(SONG_UNREVIEWED);
     // The main app lets even a moderator change a crucible's levels only before it starts. Resolving
     // at the current level (a decline) leaves the mask as it is, so it stays available.
     if (
@@ -1059,7 +1159,8 @@ export async function resolveRatingReview(input: {
       entityType !== 'Model' &&
       entityType !== 'Challenge' &&
       entityType !== 'Crucible' &&
-      entityType !== 'Collection'
+      entityType !== 'Collection' &&
+      entityType !== 'Song'
         ? (await computeRatedEntityDerivedNsfwLevel(trx, entityType, entityId)) ?? 0
         : 0;
     const scanRow = exists
@@ -1093,7 +1194,14 @@ export async function resolveRatingReview(input: {
 
     if (challenge) await applyChallengeOverride(trx, entityId, challenge, appliedLevel);
     else if (crucible) await applyCrucibleOverride(trx, entityId, crucible, appliedLevel);
-    else if (exists && entityType !== 'Challenge' && entityType !== 'Crucible')
+    else if (song)
+      afterSongRating = await applySongRating(trx, entityId, appliedLevel, moderatorId);
+    else if (
+      exists &&
+      entityType !== 'Challenge' &&
+      entityType !== 'Crucible' &&
+      entityType !== 'Song'
+    )
       await applyOverride(trx, entityType, entityId, appliedLevel, basis);
 
     return {
@@ -1105,6 +1213,10 @@ export async function resolveRatingReview(input: {
       exists,
     };
   });
+
+  // The ruling has committed, so a failure here is logged, not reported as a failed ruling, and each
+  // step runs whatever an earlier one did.
+  for (const step of afterSongRating) await bustAfterWrite(step.name, step.run);
 
   const summary = core.exists
     ? (await loadSummaries(core.entityType, [core.entityId])).get(core.entityId)

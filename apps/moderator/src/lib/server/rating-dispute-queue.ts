@@ -31,7 +31,7 @@ import {
   type DisputeTab,
   type OtherKind,
 } from '$lib/rating-dispute';
-import type { RatingReviewStatusFilter } from '$lib/rating-review';
+import { SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
 
 const PAGE_SIZE = 50;
 
@@ -254,7 +254,11 @@ export async function ratingDisputeTriageLoad(url: URL) {
   let selectedMissing: number | null = null;
   if (selected && !pageRows.some((r) => r.id === selected)) {
     pinnedRows = await hydrateRatingReviews(
-      await ratingReviewRowQuery().where('rr.id', '=', selected).execute()
+      await ratingReviewRowQuery()
+        .where('rr.id', '=', selected)
+        // Song disputes are decided on the Audio review page; no tab lists them here either.
+        .where('rr.entityType', '<>', SONG_ENTITY_TYPE)
+        .execute()
     );
     if (!pinnedRows.length) selectedMissing = selected;
   }
