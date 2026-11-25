@@ -132,9 +132,9 @@ const USER_ID = 5501;
 const ACTOR_ID = 5502;
 const ALREADY_BANNED_AT = new Date('2026-01-02T03:04:05.000Z');
 
-// `getUserById` reads the REPLICA; `updateUserById` writes the PRIMARY. Named separately so a
-// write cannot satisfy a read assertion.
-const userFindUnique = dbMock.dbRead.user.findUnique;
+// The direction read and `updateUserById` both use the PRIMARY. Named separately so a write cannot
+// satisfy a read assertion.
+const userFindUnique = dbMock.dbWrite.user.findUnique;
 const userUpdate = dbMock.dbWrite.user.update;
 const userFindFirst = dbMock.dbWrite.user.findFirst;
 // The ban branch fans out to these and chains `.catch` on each; the canonical mock has no
@@ -633,7 +633,7 @@ describe('toggleBan onlyBan', () => {
   });
 
   it('bans from the primary even while the replica still shows a lifted ban', async () => {
-    userFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
 
     await banOnly('chargeback:dp_1:banned');
 
@@ -732,5 +732,32 @@ describe('toggleBan -> version showcases', () => {
     });
     await call();
     expect(showcaseReads()).toEqual([[USER_ID]]);
+  });
+});
+
+// The toggle's direction comes from the primary: a replica that has not seen the last ban or unban
+// would otherwise reverse it, or ban twice and run the ban's side effects again.
+describe('toggleBan when the replica lags the primary', () => {
+  const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
+  const writtenBannedAt = () =>
+    (userUpdate.mock.calls.at(-1)?.[0] as { data: { bannedAt: Date | null } } | undefined)?.data
+      .bannedAt;
+
+  it('bans an account the primary shows unbanned, though the replica still shows it banned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(row(ALREADY_BANNED_AT));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row(null));
+
+    await call();
+
+    expect(writtenBannedAt()).toBeInstanceOf(Date);
+  });
+
+  it('unbans an account the primary shows banned, though the replica shows it unbanned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(row(null));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row(ALREADY_BANNED_AT));
+
+    await call();
+
+    expect(writtenBannedAt()).toBeNull();
   });
 });

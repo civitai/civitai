@@ -1336,7 +1336,8 @@ export const toggleMuteHandler = async ({
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
   const { id } = input;
-  const user = await getUserById({ id, select: { muted: true } });
+  // The primary decides the direction: a replica behind the last mute or unmute would flip it back.
+  const user = await getUserById({ id, select: { muted: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const updatedUser = user.muted

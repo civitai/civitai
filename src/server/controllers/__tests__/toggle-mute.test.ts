@@ -40,7 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // `clearAllMocks` keeps a `mockRejectedValue` from an earlier test.
   m.invalidateSession.mockResolvedValue(undefined);
-  dbMock.dbRead.user.findUnique.mockResolvedValue({ muted: false } as never);
+  dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: false, mutedAt: null } as never);
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: true } as never);
 });
 
@@ -84,5 +84,36 @@ describe('setUserMuted when the account is already muted', () => {
     const before = Date.now();
     await setUserMuted({ userId: USER, muted: true, expiresAt: null });
     expect(writtenMutedAt()?.getTime()).toBeGreaterThanOrEqual(before);
+  });
+});
+
+// The toggle's direction comes from the primary: a replica that has not seen the last mute or unmute
+// would otherwise flip it back.
+describe('toggleMute when the replica lags the primary', () => {
+  const muteWrites = () =>
+    dbMock.dbWrite.user.update.mock.calls.filter(
+      ([args]) => (args as { data?: { muted?: boolean } }).data?.muted === true
+    );
+
+  it('mutes an account the primary shows unmuted, though the replica still shows it muted', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ muted: true } as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: false, mutedAt: null } as never);
+
+    await toggleMuteHandler({ input: { id: USER }, ctx: ctx() });
+
+    expect(muteWrites()).toHaveLength(1);
+  });
+
+  it('does not mute again an account the primary shows muted, though the replica shows it unmuted', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ muted: false } as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      muted: true,
+      mutedAt: new Date(0),
+    } as never);
+
+    // The unmute runs in a transaction this mock does not model; only its direction is asserted.
+    await toggleMuteHandler({ input: { id: USER }, ctx: ctx() }).catch(() => undefined);
+
+    expect(muteWrites()).toHaveLength(0);
   });
 });

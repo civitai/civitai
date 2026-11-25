@@ -180,7 +180,7 @@ const APP_ID = 'app_618';
 /** The in-memory Redis the marker is written into and read back out of. */
 const store = new Map<string, string>();
 
-const userFindUnique = dbMock.dbRead.user.findUnique;
+const userFindUnique = dbMock.dbWrite.user.findUnique;
 const userUpdate = dbMock.dbWrite.user.update;
 const userFindFirst = dbMock.dbWrite.user.findFirst;
 const subscriptionFindMany = dbMock.dbWrite.blockUserSubscription.findMany;
