@@ -557,7 +557,6 @@ describe('blocks.getAgentReviewModels', () => {
           name: 'Anthropic: Claude Haiku 4.5',
           promptPerM: 1,
           completionPerM: 5,
-          contextLength: 200000,
         },
       ],
     });

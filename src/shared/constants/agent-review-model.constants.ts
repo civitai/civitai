@@ -37,13 +37,22 @@ export function toRunnerModelId(openRouterId: string): string {
   return `${AGENT_REVIEW_RUNNER_MODEL_PREFIX}${openRouterId}`;
 }
 
+/**
+ * The OpenRouter id inside a stored `openrouter/<id>` model, or `null` when the stored value is
+ * not in that form or the id is not one this surface accepts.
+ */
+export function fromRunnerModelId(stored: string): string | null {
+  if (!stored.startsWith(AGENT_REVIEW_RUNNER_MODEL_PREFIX)) return null;
+  const id = stored.slice(AGENT_REVIEW_RUNNER_MODEL_PREFIX.length);
+  return isAgentReviewModelId(id) ? id : null;
+}
+
 /** One entry of the moderator's model picker. Prices are USD per million tokens. */
 export type AgentReviewModelOption = {
   id: string;
   name: string;
   promptPerM: number;
   completionPerM: number;
-  contextLength: number | null;
 };
 
 /** `$0.14 / $0.28 per M` — the picker's price label. */

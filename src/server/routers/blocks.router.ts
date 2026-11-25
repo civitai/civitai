@@ -3307,8 +3307,8 @@ export const blocksRouter = router({
    * AGENTIC MOD CODE-REVIEW — the models a re-run can be dispatched on: OpenRouter's
    * tool-capable models with their prices (cached server-side). Gated IDENTICALLY to
    * startAgentReview, on the request the moderator is reviewing. When OpenRouter cannot be
-   * reached this answers `available: false` rather than failing: the picker still takes a typed
-   * id, and startAgentReview re-checks it.
+   * reached this answers `available: false` rather than failing, so the picker can say so; a
+   * chosen model cannot be priced then, and startAgentReview refuses it (the default still runs).
    */
   getAgentReviewModels: moderatorProcedure
     .use(enforceAppBlocksFlag)

@@ -1033,6 +1033,21 @@ describe('AgentReviewPanel — re-run on a chosen model', () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
+  test('when OpenRouter is unreachable, the field says to leave it blank (not to type an id)', async () => {
+    mocks.agentReport = FULL_REPORT;
+    mocks.agentModels = { available: false, models: [] };
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await expect
+      .element(
+        page.getByText(
+          "OpenRouter's model list is unavailable right now, so other models can't be used. Leave this blank to run on the default model."
+        )
+      )
+      .toBeInTheDocument();
+  });
+
   test('the picker lists OpenRouter models with their price', async () => {
     mocks.agentReport = FULL_REPORT;
     mocks.agentModels = {
@@ -1043,7 +1058,6 @@ describe('AgentReviewPanel — re-run on a chosen model', () => {
           name: 'Anthropic: Claude Haiku 4.5',
           promptPerM: 1,
           completionPerM: 5,
-          contextLength: 200000,
         },
       ],
     };

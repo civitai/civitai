@@ -78,7 +78,6 @@ describe('parseToolCapableModels', () => {
         name: 'Alpha: Also Tools (free)',
         promptPerM: 0,
         completionPerM: 0,
-        contextLength: 32_000,
       },
       {
         id: 'zeta/tool-model',
@@ -86,7 +85,6 @@ describe('parseToolCapableModels', () => {
         // Per token → per million, without float noise (0.13999999999999999).
         promptPerM: 0.14,
         completionPerM: 0.28,
-        contextLength: 1_048_576,
       },
     ]);
   });

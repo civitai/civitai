@@ -323,6 +323,20 @@ describe('re-running ONE analysis instead of all three', () => {
     });
   });
 
+  test('🔴 the targeted retry runs on the model that wrote the rest of the report', async () => {
+    // The carried analyses came from this run's model; retrying one on the default model would
+    // mix two models' work in one report. The run's stored `openrouter/<id>` is sent as `<id>`.
+    mocks.report = { ...PARTIAL_REPORT, model: 'openrouter/anthropic/claude-x' };
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await page.getByTestId('apps-report-section-rerun').click();
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      publishRequestId: 'pubreq_01HZX',
+      sections: ['codeReview'],
+      model: 'anthropic/claude-x',
+    });
+  });
+
   test('🔴 a dispatch in flight disables EVERY re-run button, not just the one clicked', async () => {
     // The money path, and the likelier one: a moderator looking at TWO broken analyses
     // clicks both. Each dispatches the same job — a second ephemeral agent and a second

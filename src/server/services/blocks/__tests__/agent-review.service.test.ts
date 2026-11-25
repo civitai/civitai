@@ -585,11 +585,14 @@ describe('agentReviewName', () => {
  * surviving sections are CARRIED FORWARD onto the new row so the retry cannot destroy the
  * analyses the mod was keeping.
  */
+/** The model the latest run used: a targeted re-run must name it (see the chosen-model block). */
+const LATEST_MODEL_ID = 'anthropic/claude-haiku-4.5';
+
 describe('startAgentReview — targeted re-run', () => {
   /** A prior report with two good sections and one broken one — the live failure shape. */
   const latestPartial = {
     id: 'arar_PREV',
-    model: 'some/model',
+    model: `openrouter/${LATEST_MODEL_ID}`,
     scopeVerdicts: { scopes: [{ declared: 'models:read:self' }], overBroad: [] },
     securityAudit: { findings: [{ severity: 'low' }], manifestUnexpectedKeys: [] },
     codeReview: { error: 'non-json-response' },
@@ -602,6 +605,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview'],
     });
 
@@ -618,12 +622,13 @@ describe('startAgentReview — targeted re-run', () => {
     return startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview'],
     }).then(() => {
       const created = createdRow();
       expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);
       expect(created.securityAudit).toEqual(latestPartial.securityAudit);
-      expect(created.model).toBe('some/model');
+      expect(created.model).toBe(`openrouter/${LATEST_MODEL_ID}`);
       // 🔴 AND THE FAILED ONE IS **NOT** SEEDED. Carrying an `{ error }` forward would
       // re-report the OLD failure as if it were this run's, and the panel would show a
       // failure for an analysis that is currently running.
@@ -646,7 +651,12 @@ describe('startAgentReview — targeted re-run', () => {
       },
     });
 
-    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, sections: ['codeReview'] });
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview'],
+      model: LATEST_MODEL_ID,
+    });
 
     expect(createdRow().securityAudit).toEqual({ findings: [{ severity: 'low' }] });
   });
@@ -661,6 +671,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['scopeVerdicts'],
     });
 
@@ -726,6 +737,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview', 'codeReview'],
     });
 
@@ -743,6 +755,7 @@ describe('startAgentReview — targeted re-run', () => {
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
+      model: LATEST_MODEL_ID,
       sections: ['codeReview', 'securityAudit'],
     });
 
@@ -799,21 +812,90 @@ describe('startAgentReview — chosen model', () => {
     expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
   });
 
-  it("🔴 refuses a model on a TARGETED re-run: one report would mix two models' analyses", async () => {
+  it('🔴 a section re-run of a chosen-model run runs on THAT model (the Job gets it)', async () => {
+    // The latest run was written by model X with one analysis failed; re-running that one
+    // analysis must use X, or the report mixes X's analyses with the default model's.
     mockFindUnique.mockResolvedValue(pendingRequest());
-    mockGetLatest.mockResolvedValue({ id: 'arar_PREV', model: 'openrouter/x/y' });
+    mockGetLatest.mockResolvedValue({
+      id: 'arar_PREV',
+      model: 'openrouter/anthropic/claude-haiku-4.5',
+      scopeVerdicts: { scopes: [] },
+      securityAudit: { findings: [] },
+      codeReview: { error: 'upstream-error' },
+    });
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview'],
+      model: 'anthropic/claude-haiku-4.5',
+    });
+
+    expect(jobEnv().ANALYSIS_MODEL).toBe('openrouter/anthropic/claude-haiku-4.5');
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
+    expect(createdRow().model).toBe('openrouter/anthropic/claude-haiku-4.5');
+  });
+
+  it.each([
+    ['another model', 'acme/other-model'],
+    ['no model (the default)', undefined],
+  ])(
+    '🔴 a section re-run naming %s, when the latest run used X, is refused before any row or Job',
+    async (_why, model) => {
+      mockFindUnique.mockResolvedValue(pendingRequest());
+      mockGetLatest.mockResolvedValue({
+        id: 'arar_PREV',
+        model: 'openrouter/anthropic/claude-haiku-4.5',
+      });
+
+      await expect(
+        startAgentReview({
+          publishRequestId: PUBREQ,
+          modUserId: 7,
+          sections: ['codeReview'],
+          model,
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('Re-run all analyses'),
+      });
+
+      expect(mockCreate).not.toHaveBeenCalled();
+      expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+    }
+  );
+
+  it('a section re-run of a run whose model can no longer be used is refused, pointing to Re-run all', async () => {
+    // e.g. the model was retired: OpenRouter no longer lists it as tool-capable.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({ id: 'arar_PREV', model: 'openrouter/acme/retired-model' });
 
     await expect(
       startAgentReview({
         publishRequestId: PUBREQ,
         modUserId: 7,
         sections: ['codeReview'],
-        model: 'anthropic/claude-haiku-4.5',
+        model: 'acme/retired-model',
       })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('Re-run all analyses'),
+    });
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  it('a section re-run of a run with no recorded model still runs on the default', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({
+      id: 'arar_PREV',
+      model: null,
+      scopeVerdicts: { scopes: [] },
+    });
+
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, sections: ['codeReview'] });
+
+    expect(jobEnv().ANALYSIS_MODEL).toBeUndefined();
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
   });
 
   it('a model with ALL THREE sections is a full run, so it is accepted', async () => {

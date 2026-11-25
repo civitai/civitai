@@ -26,7 +26,8 @@ export function isDispatchableModelInput(value: string): boolean {
 /**
  * The model for a whole-report re-run: an autocomplete over OpenRouter's tool-capable models
  * (name plus price per million tokens), that also accepts a typed id. Blank means the review
- * agent's default model. If the list cannot be loaded the field still takes a typed id.
+ * agent's default model. Without the list a chosen model cannot be priced, so the field then only
+ * says to leave it blank.
  */
 export function AgentReviewModelInput({
   publishRequestId,
@@ -48,7 +49,9 @@ export function AgentReviewModelInput({
     [modelsQuery.data]
   );
   const byId = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
-  const listUnavailable = modelsQuery.isError || modelsQuery.data?.available === false;
+  // OpenRouter could not be reached: a chosen model cannot be priced, so the server refuses every
+  // id until it can. (A query that ERRORED — e.g. refused — gets a generic line instead.)
+  const listUnavailable = modelsQuery.data?.available === false;
   const invalid = !isDispatchableModelInput(value);
   const chosen = byId.get(value.trim());
 
@@ -69,7 +72,9 @@ export function AgentReviewModelInput({
         chosen
           ? `${chosen.name} · ${formatModelPricePerM(chosen)}`
           : listUnavailable
-          ? "OpenRouter's model list is unavailable; you can still type a model id."
+          ? "OpenRouter's model list is unavailable right now, so other models can't be used. Leave this blank to run on the default model."
+          : modelsQuery.isError
+          ? 'Could not load the model list. Leave this blank to run on the default model.'
           : 'Blank uses the default model. The per-run cost cap applies to any model.'
       }
       renderOption={({ option }) => {

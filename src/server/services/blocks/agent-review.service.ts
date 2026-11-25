@@ -20,7 +20,11 @@ import {
   agentReviewLaneFor,
   type AgentReviewLane,
 } from '~/shared/constants/connect-agent-review.constants';
-import { toRunnerModelId } from '~/shared/constants/agent-review-model.constants';
+import {
+  fromRunnerModelId,
+  toRunnerModelId,
+  type AgentReviewModelOption,
+} from '~/shared/constants/agent-review-model.constants';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
@@ -92,12 +96,13 @@ export type StartAgentReviewArgs = {
   sections?: readonly AgentReviewSection[];
   /**
    * Run on this OpenRouter model instead of the review agent's default (a second opinion, or a
-   * way round a default model that stopped working). Omitted ⇒ the default, and the Job is
-   * exactly what it was before this field existed.
+   * way round a default model that stopped working). Omitted on a full run ⇒ the default, and
+   * the Job sets no model values, so it behaves exactly as before this field existed.
    *
-   * Only on a FULL run. A targeted re-run carries the other analyses forward from the latest
-   * report, and a report row names one model, so mixing two models' analyses in one report would
-   * attribute some of them to a model that did not write them. The service refuses the mix.
+   * 🔴 ON A TARGETED RE-RUN IT MUST BE THE LATEST RUN'S OWN MODEL. A targeted re-run carries the
+   * other analyses forward from the latest report, and a report row names one model, so the
+   * re-run analysis has to come from the model that wrote the carried ones. The service refuses
+   * any other model (including none, when the latest run named one).
    */
   model?: string;
 };
@@ -137,17 +142,25 @@ export async function startAgentReview(
   // nothing to carry) nor stamp a pointless env var on the Job.
   const requested = args.sections ? Array.from(new Set(args.sections)) : [];
   const targeted = requested.length > 0 && requested.length < AGENT_REVIEW_SECTIONS.length;
-  if (args.model && targeted) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message:
-        'A different model can only be chosen for a full re-run: a single re-run analysis would be mixed into a report written by another model.',
-    });
-  }
-  // Resolved (and priced) before anything is staged or written, so an unknown model costs nothing.
-  const analysisModel = args.model
-    ? await (await import('./agent-review-models.service')).resolveAgentReviewModel(args.model)
+  // (d'') A targeted re-run is only allowed on the model of the run it carries from — checked
+  // before anything is staged or written.
+  const latest = targeted
+    ? await (await import('./app-review-report.service')).getAgentReport(publishRequestId)
     : null;
+  if (targeted) assertSameModelAsLatest(args.model, latest?.model ?? null);
+  // Resolved (and priced) before anything is staged or written, so an unknown model costs nothing.
+  let analysisModel: AgentReviewModelOption | null = null;
+  if (args.model) {
+    const { resolveAgentReviewModel } = await import('./agent-review-models.service');
+    try {
+      analysisModel = await resolveAgentReviewModel(args.model);
+    } catch (err) {
+      // On a targeted re-run the model was not the moderator's choice but the latest run's, and
+      // it can no longer be used (retired, unlisted, or the list is unreachable).
+      if (targeted) throw cannotRerunOnLatestModel(args.model);
+      throw err;
+    }
+  }
   const { dbRead, dbWrite } = await import('~/server/db/client');
 
   // ONE DISPATCHER, TWO LANES. The id says which publish request this is: an on-site
@@ -192,8 +205,6 @@ export async function startAgentReview(
   // must not inherit stale verdicts from the run it replaces.
   const carried: Record<string, unknown> = {};
   if (targeted) {
-    const { getAgentReport } = await import('./app-review-report.service');
-    const latest = await getAgentReport(publishRequestId);
     if (latest) {
       const keep = AGENT_REVIEW_SECTIONS.filter((s) => !requested.includes(s));
       for (const section of keep) {
@@ -260,6 +271,34 @@ export async function startAgentReview(
         }
       : undefined,
   });
+}
+
+const RERUN_ALL_HINT =
+  'Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.';
+
+function cannotRerunOnLatestModel(id: string): TRPCError {
+  return new TRPCError({
+    code: 'BAD_REQUEST',
+    message: `This analysis can only be re-run on the model that wrote the rest of the report (${id}), and that model cannot be used now. ${RERUN_ALL_HINT}`,
+  });
+}
+
+/**
+ * A targeted re-run must name exactly the latest run's model (`null` when that run named none):
+ * the carried analyses came from it, and a report row names one model. A stored model that is not
+ * in the `openrouter/<id>` form cannot be re-run on at all.
+ */
+function assertSameModelAsLatest(requested: string | undefined, latestModel: string | null) {
+  const required = latestModel == null ? null : fromRunnerModelId(latestModel);
+  if (latestModel != null && required == null) throw cannotRerunOnLatestModel(latestModel);
+  if ((requested ?? null) !== required) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `A single analysis has to be re-run on the model that wrote the rest of the report (${
+        required ?? 'the default model'
+      }), so its result is not mixed with another model's. ${RERUN_ALL_HINT}`,
+    });
+  }
 }
 
 type OnsiteSubject = {
@@ -503,7 +542,7 @@ async function provisionAndRecordStart(opts: {
       sections: opts.sections,
       // Only on the connect lane, for the same reason: an on-site Job body is unchanged.
       reviewKind: opts.lane === 'connect' ? 'connect' : undefined,
-      // Only when a moderator chose a model: a default-model Job body is unchanged.
+      // Only when a model was named: a default-model Job sets no model values.
       analysisModel: opts.analysisModel,
     });
   } catch (err) {
@@ -582,7 +621,8 @@ type ProvisionAgentReviewJobArgs = {
   reviewKind?: 'connect';
   /**
    * A moderator-chosen model ⇒ `ANALYSIS_MODEL` plus its `PRICE_IN_PER_M` / `PRICE_OUT_PER_M`;
-   * omitted for the default model, so that Job body is unchanged. The price travels with the
+   * omitted for the default model, so that Job sets no model values (its apply script's fallback
+   * renders them empty, which the agent reads as its defaults). The price travels with the
    * model because the agent estimates its spend (and enforces `COST_CAP_USD`) from token counts
    * times a per-model price: without it a dearer model would be costed at the default's rate.
    *

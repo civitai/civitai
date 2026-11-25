@@ -29,6 +29,7 @@ import {
   showSuccessNotification,
   showWarningNotification,
 } from '~/utils/notifications';
+import { fromRunnerModelId } from '~/shared/constants/agent-review-model.constants';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -252,10 +253,19 @@ export function AgentReviewPanel({
    * run would merge that run's retry into a different report than the one the moderator read.
    */
   const viewingLatest = selectedReportId == null || runs[0]?.id === selectedReportId;
+  // 🔴 …AND ON THE MODEL THAT WROTE IT. The carried analyses came from the latest run's model, so
+  // the re-run one must too, or the report mixes two models' work. The server enforces this; the
+  // client sends that run's model (in the id form the input takes). A stored model this client
+  // cannot read is sent as nothing, and the server refuses it with a pointer to "Re-run all".
+  const latestRunModel = report?.model ? fromRunnerModelId(report.model) : null;
   const rerunSection = viewingLatest
     ? (section: AgentReportSection) => {
         setRerunningSection(section);
-        startMut.mutate({ publishRequestId, sections: [section] });
+        startMut.mutate({
+          publishRequestId,
+          sections: [section],
+          ...(latestRunModel ? { model: latestRunModel } : {}),
+        });
       }
     : undefined;
 

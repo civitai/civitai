@@ -50,16 +50,11 @@ export function parseToolCapableModels(body: unknown): AgentReviewModelOption[] 
     const promptPerM = perMillion(pricing.prompt);
     const completionPerM = perMillion(pricing.completion);
     if (promptPerM == null || completionPerM == null) continue;
-    const contextLength =
-      typeof m.context_length === 'number' && Number.isFinite(m.context_length)
-        ? m.context_length
-        : null;
     out.push({
       id: m.id,
       name: typeof m.name === 'string' && m.name.trim() ? m.name.trim().slice(0, 200) : m.id,
       promptPerM,
       completionPerM,
-      contextLength,
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
