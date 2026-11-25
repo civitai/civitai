@@ -2992,6 +2992,8 @@ export const earlyAccessPurchase = async ({
       meta: {
         [buzzTransactionKey]: buzzTransactionId,
         [purchase.purchasedAtKey]: new Date().toISOString(),
+        [purchase.amountKey]: amount,
+        [purchase.buzzTypeKey]: buzzType,
       },
       addedById: userId,
     });
