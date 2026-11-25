@@ -50,15 +50,18 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user and
 //                block token exchanges (one budget per client), charged after client auth. One relay exchanges
 //                for many users from one IP, so the per-IP `token` limit never applies to it. A USER exchange
-//                is charged only once its subject token resolves (exists, unexpired, exchangeable): a client
-//                whose budget is spent is still refused before any lookup, but a subject nobody holds never
-//                spends it, so a flood of made-up tokens sent through a relay cannot exhaust the relay's
-//                budget for every real user.
+//                is charged only once its subject token resolves (exists, unexpired, exchangeable) and the
+//                exchange is allowed (the token's app is listed for the resource, the caller is that app or
+//                a relay): a client whose budget is spent is still refused before any lookup, but a refused
+//                subject never spends it, so a flood of made-up tokens (or of real tokens minted for an
+//                unlisted app) sent through a relay cannot exhaust the relay's budget for every real user.
 //   - token-exchange-miss: per-(client, caller IP) (30/min) — user-exchange subject tokens that did NOT
-//                resolve. Checked before the lookup and charged after a miss, so a flood of garbage costs at
-//                most this many lookups per key. The IP is getClientIp's: a relay that sends the viewer's IP
-//                as x-forwarded-for on the internal path gets one bucket per viewer, so a flood from one
-//                viewer is refused without refusing the others; with no IP it is one bucket per client.
+//                resolve, or whose app the resource does not list. Charged after the lookup, and only on a
+//                miss; a miss past the limit is answered 429. A subject that resolves never reads it, so a
+//                full bucket refuses only callers that keep sending bad tokens, never a valid one. The IP is
+//                getClientIp's: a relay that sends the viewer's IP as x-forwarded-for on the internal path
+//                gets one bucket per viewer, so a flood from one viewer is refused without refusing the
+//                others; with no IP it is one bucket per client.
 //   - token-exchange-ip: per-IP (120/min) — FAILED client-secret checks on the user token exchange. A request
 //                whose secret checks out is never charged or refused by it. With no resolvable IP the
 //                failures share one bucket, never one keyed on the claimed client id.
@@ -227,21 +230,12 @@ function tokenExchangeMissKey(clientId: string, ip: string | null): string {
   return `${clientId}:${ip ?? 'no-ip'}`;
 }
 
-/** Whether a (client, IP) has used up its `token-exchange-miss` budget (counts nothing). */
-export async function tokenExchangeMissesExhausted(
+/** Count one user-exchange miss against its (client, IP); false once that key is past its limit. */
+export async function chargeTokenExchangeMiss(
   clientId: string,
   ip: string | null
 ): Promise<boolean> {
-  return isRateLimited(
-    'oauth:token-exchange-miss',
-    tokenExchangeMissKey(clientId, ip),
-    OAUTH_RATE_LIMITS['token-exchange-miss'].limit
-  );
-}
-
-/** Count one user-exchange subject token that did not resolve, against its (client, IP). */
-export async function chargeTokenExchangeMiss(clientId: string, ip: string | null): Promise<void> {
-  await checkOAuthRateLimit('token-exchange-miss', tokenExchangeMissKey(clientId, ip));
+  return checkOAuthRateLimit('token-exchange-miss', tokenExchangeMissKey(clientId, ip));
 }
 
 /** Count one failed client-secret check on the user token exchange; false once the IP is past its limit. */

@@ -16,7 +16,6 @@ import {
   oauthRetryAfter,
   rateLimitedResponse,
   tokenExchangeExhausted,
-  tokenExchangeMissesExhausted,
   type OAuthRateLimitBucket,
 } from './rate-limit';
 import { parseScopeRequest } from './scope';
@@ -169,7 +168,8 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     if (!caller) return unauthenticated('client authentication failed');
     ctx.caller = caller.id;
     // A client whose budget is spent is refused before any lookup; the budget itself is charged only
-    // once the subject resolves (step 5), so a subject nobody holds never spends it.
+    // once the subject resolves and the exchange is allowed (after step 7), so a subject nobody holds,
+    // or one the resource does not accept, never spends it.
     if (await tokenExchangeExhausted(caller.id, caller.tokenRateLimit)) {
       return refuse('rate_limited', 'client limit', undefined, 'token-exchange');
     }
@@ -184,33 +184,28 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
       return refuse('unauthorized_client', 'caller not listed for resource');
     }
 
-    // 5. The subject token. A (client, caller IP) that has sent too many subjects that did not resolve
-    // is refused before the lookup; each that does not resolve (unknown, revoked, expired, or not an
-    // exchangeable token) is charged to it and to nothing else. Only a subject that resolves spends the
-    // client's budget.
-    if (await tokenExchangeMissesExhausted(caller.id, input.clientIp)) {
-      return refuse('rate_limited', 'subject miss limit', undefined, 'token-exchange-miss');
-    }
+    // 5. The subject token, always looked up. A subject that does not resolve (unknown, revoked,
+    // expired, or not an exchangeable token), or whose app the resource does not list (step 6), is a
+    // miss: charged to the (client, caller IP) and to nothing else, and once that key is past its limit
+    // answered 429 instead. A subject that resolves never reads the miss limit, so a key flooded with
+    // bad tokens still exchanges every valid one.
+    const miss = async (error: 'invalid_grant' | 'unauthorized_client', reason: string) => {
+      if (!(await chargeTokenExchangeMiss(caller.id, input.clientIp))) {
+        return refuse('rate_limited', 'subject miss limit', undefined, 'token-exchange-miss');
+      }
+      return refuse(error, reason);
+    };
     const now = new Date();
     const subject = await findSubjectTokenByHash(generateSecretHash(subjectToken), now);
-    if (!subject) {
-      await chargeTokenExchangeMiss(caller.id, input.clientIp);
-      return refuse('invalid_grant', 'subject token not found');
-    }
+    if (!subject) return miss('invalid_grant', 'subject token not found');
     ctx.app = subject.clientId;
     ctx.userId = subject.userId;
     const subjectRefusal = await subjectTokenRefusal(subject);
-    if (subjectRefusal) {
-      await chargeTokenExchangeMiss(caller.id, input.clientIp);
-      return refuse('invalid_grant', subjectRefusal);
-    }
-    if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
-      return refuse('rate_limited', 'client limit', undefined, 'token-exchange');
-    }
+    if (subjectRefusal) return miss('invalid_grant', subjectRefusal);
 
     // 6. The app the token was issued to is allowed for this resource.
     if (!resource.apps.includes(subject.clientId)) {
-      return refuse('unauthorized_client', 'app not listed for resource');
+      return miss('unauthorized_client', 'app not listed for resource');
     }
 
     // 7. A direct exchange by the app, or a relay acting for it.
@@ -221,6 +216,11 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
       }
       actor = caller.id;
       ctx.actor = actor;
+    }
+
+    // Only an exchange the resource allows spends the client's budget.
+    if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
+      return refuse('rate_limited', 'client limit', undefined, 'token-exchange');
     }
 
     const app = await findExchangeClient(subject.clientId);
