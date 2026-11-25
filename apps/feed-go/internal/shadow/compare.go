@@ -36,6 +36,8 @@ type Report struct {
 	Truncated bool
 	// opaque is the key set a category stops at (nil = the superjson envelope's).
 	opaque map[string]bool
+	// unordered is the categories whose arrays of numbers are compared as multisets (nil = none).
+	unordered map[string]bool
 }
 
 // MaxDiffs bounds the differences collected per comparison.
@@ -44,6 +46,15 @@ const MaxDiffs = 64
 // opaque keys: their subtrees are free-form JSON (image metadata, cosmetic data), so a category stops
 // there and metric label cardinality stays bounded by the response schema.
 var opaque = map[string]bool{"metadata": true, "data": true, "remixOfId": true}
+
+// v1ImagesUnordered is CompareV1Images' multiset categories. `modelVersionIds` is an image's detected
+// model versions in the image-resources cache's order, which the public images endpoint never
+// promised. A miss each side computes for itself came out in whatever order its plan returned until
+// both lookups carried the same ORDER BY, and does again while the two sides run different releases
+// of it, so the same ids came out permuted. The ids themselves are still compared, as a multiset (a
+// missing, extra or repeated id is a difference). Nothing else is compared unordered: `baseModel` (the
+// first Checkpoint in cached order) keeps its exact compare.
+var v1ImagesUnordered = map[string]bool{"items.*.modelVersionIds": true}
 
 // jsonOpaque is the opaque set of the plain-JSON REST responses (CompareJSON). Their `metadata` is the
 // page's paging object (nextCursor, nextPage, …), not free-form, so it is walked; `meta` (image
@@ -226,11 +237,15 @@ func add(r *Report, path []string, kind string) {
 		r.Truncated = true
 		return
 	}
-	set := r.opaque
-	if set == nil {
-		set = opaque
+	r.Diffs = append(r.Diffs, Diff{Path: strings.Join(path, "."), Category: category(path, r.opaqueSet()), Kind: kind})
+}
+
+// opaqueSet is the key set r's categories stop at.
+func (r *Report) opaqueSet() map[string]bool {
+	if r.opaque == nil {
+		return opaque
 	}
-	r.Diffs = append(r.Diffs, Diff{Path: strings.Join(path, "."), Category: category(path, set), Kind: kind})
+	return r.opaque
 }
 
 // Category folds array indices to `*` and truncates at the first opaque key.
@@ -296,6 +311,15 @@ func walk(r *Report, g, n any, path []string) {
 			add(r, path, "type")
 			return
 		}
+		if len(r.unordered) > 0 && r.unordered[category(path, r.opaqueSet())] {
+			// A multiset compare: both sides sorted, then walked by index as usual, so a differing
+			// id still reports a value (or length) difference under the same category.
+			if gs, ok := sortedNumbers(gt); ok {
+				if ns, ok := sortedNumbers(nt); ok {
+					gt, nt = gs, ns
+				}
+			}
+		}
 		if len(gt) != len(nt) {
 			add(r, path, "length")
 		}
@@ -320,6 +344,32 @@ func walk(r *Report, g, n any, path []string) {
 			add(r, path, "value")
 		}
 	}
+}
+
+// sortedNumbers returns a copy of a sorted numerically, or false when a holds anything but numbers.
+func sortedNumbers(a []any) ([]any, bool) {
+	keys := make([]*big.Rat, len(a))
+	for i, v := range a {
+		n, ok := v.(json.Number)
+		if !ok {
+			return nil, false
+		}
+		k, ok := new(big.Rat).SetString(string(n))
+		if !ok {
+			return nil, false
+		}
+		keys[i] = k
+	}
+	idx := make([]int, len(a))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(x, y int) bool { return keys[idx[x]].Cmp(keys[idx[y]]) < 0 })
+	out := make([]any, len(a))
+	for i, j := range idx {
+		out[i] = a[j]
+	}
+	return out, true
 }
 
 // sameNumber compares numerically, so 1 and 1.0 (jsonb vs JS formatting) are equal. Two integer
@@ -442,6 +492,16 @@ func ClassifyFlat(r *Report, goEnv, nodeEnv []byte) string {
 // and an undefined member is absent on both (JSON.stringify drops it). The same structural walk as
 // Compare: object key order ignored, array order kept, numbers compared numerically.
 func CompareJSON(goBody, nodeBody []byte) (*Report, error) {
+	return compareJSON(goBody, nodeBody, nil)
+}
+
+// CompareV1Images is CompareJSON for GET /api/v1/images: the same walk, with `items.*.modelVersionIds`
+// compared as a multiset of numbers (v1ImagesUnordered).
+func CompareV1Images(goBody, nodeBody []byte) (*Report, error) {
+	return compareJSON(goBody, nodeBody, v1ImagesUnordered)
+}
+
+func compareJSON(goBody, nodeBody []byte, unordered map[string]bool) (*Report, error) {
 	gv, err := decode(goBody)
 	if err != nil {
 		return nil, fmt.Errorf("go body: %w", err)
@@ -453,7 +513,7 @@ func CompareJSON(goBody, nodeBody []byte) (*Report, error) {
 	if _, ok := nv.(map[string]any); !ok {
 		return nil, errors.New("node body: not an object")
 	}
-	r := &Report{opaque: jsonOpaque}
+	r := &Report{opaque: jsonOpaque, unordered: unordered}
 	walk(r, gv, nv, nil)
 	r.Match = len(r.Diffs) == 0 && !r.Truncated
 	return r, nil

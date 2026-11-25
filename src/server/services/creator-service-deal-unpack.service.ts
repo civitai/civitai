@@ -3,7 +3,10 @@ import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
+import {
+  entryImageGone,
+  SCANNED_FILE_KINDS,
+} from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   acceptedAsVideo,
@@ -18,6 +21,8 @@ import {
   isFinalVideoName,
   readObject,
   recordFinalScanResult,
+  markCopyDeletes,
+  settleCopyDeletes,
 } from '~/server/services/creator-service-deal-file.service';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { readVideoLengths } from '~/server/utils/video-lengths';
@@ -895,6 +900,29 @@ export async function settleFinals() {
   return { finalsFailed: failed, finalsPassed: passed };
 }
 
+/** When `countDanglingScanCopies` last counted. Kept in memory: a restart only counts sooner. */
+let danglingCountedAt = 0;
+
+/**
+ * Counts and logs entries pointing at a gone image, at most hourly. Each refuses and keeps its file
+ * (`imageGone`), so a growing count is a backlog; `marked` ones are our own delete, which the next
+ * copy run settles. Null when it did not count this run.
+ */
+export async function countDanglingScanCopies({ now = Date.now() } = {}) {
+  if (now - danglingCountedAt < 60 * 60_000) return null;
+  danglingCountedAt = now;
+  const [counts] = await dbWrite.$queryRaw<{ marked: number; unmarked: number }[]>`
+    SELECT count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NOT NULL)::int AS marked,
+      count(*) FILTER (WHERE e."copyDeleteStartedAt" IS NULL)::int AS unmarked
+    FROM "ServiceDealFileEntry" e WHERE ${entryImageGone(Prisma.sql`e`)}`;
+  logUnpack(
+    'entries pointing at a gone image',
+    { count: counts.unmarked, total: counts.marked + counts.unmarked },
+    counts.unmarked ? 'warning' : 'info'
+  );
+  return counts;
+}
+
 /** The last entry `deleteEntryScanCopies` tried. Kept in memory: a restart only starts it over. */
 let copiesCursor = 0;
 
@@ -902,9 +930,9 @@ let copiesCursor = 0;
  * Step 5: the copy of an image that passed has done its job. This step KEEPS the copy of an image
  * whose scan has not finished, or that was refused, even after its file was deleted: its Image row
  * is what the moderation tooling reads, and deleting it would take the evidence with it. Only
- * purgeRemovedFiles takes one, an over-level copy, with its file. A copy whose
- * file is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
- * passes. A delete that fails stays pointed at and is retried.
+ * purgeRemovedFiles deletes such a copy, and only an over-level one, together with its file. A copy
+ * whose file is gone is judged like any other (see `settleEntryScans`) and its row goes with it once
+ * it passes. A delete that fails stays pointed at and is retried.
  */
 export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   // Each run starts after the last one's final row and wraps to the start, so copies kept for
@@ -919,23 +947,17 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   let deleted = 0;
   for (const row of rows) {
     try {
+      await markCopyDeletes([row.id]);
       const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
       });
-      // A copy kept for its case stays pointed at; one an earlier run deleted is let go.
-      const went =
-        gone?.some(({ id }) => id === row.imageId) ||
-        !(
-          await dbWrite.$queryRaw<unknown[]>`SELECT 1 FROM "Image" WHERE "id" = ${row.imageId}::int`
-        ).length;
-      if (!went) continue;
-      if (row.fileId === null)
-        await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
-      else
-        await dbWrite.$executeRaw`
-          UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL WHERE "id" = ${row.id}::int`;
-      deleted++;
+      // A copy kept for its case stays pointed at, and so does one gone without our delete.
+      const settled = await settleCopyDeletes(
+        [row.id],
+        (gone ?? []).map(({ id }) => id)
+      );
+      if (settled.length) deleted++;
     } catch (error) {
       logUnpack(
         'scan copy delete failed; it will be retried',

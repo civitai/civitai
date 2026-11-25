@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import type { ImageReferenceInput, ImageSchema } from '~/server/schema/image.schema';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { createImage } from '~/server/services/image.service';
 import {
   assertClientImageUrlsUsable,
@@ -127,8 +128,8 @@ export type CoverImageDeps = {
    * no-op measurable.
    */
   logExistenceUnknown: (args: { userId: number }) => void;
-  /** Throws {@link RESTRICTED_COVER_IMAGE_MESSAGE} for an image restricted by its base model. */
-  assertNotRestricted: (id: number) => Promise<void>;
+  /** Refuses an image no cover may use: one its base model restricts, or a deal file's scan copy. */
+  assertUsableAsCover: (id: number) => Promise<void>;
 };
 
 export const RESTRICTED_COVER_IMAGE_MESSAGE = `This image can't be used as a cover: ${RESTRICTED_IMAGE_REASON}.`;
@@ -137,13 +138,14 @@ const restrictedCoverError = () =>
   new TRPCError({ code: 'BAD_REQUEST', message: RESTRICTED_COVER_IMAGE_MESSAGE });
 
 /** A missing id passes. */
-async function assertNotRestricted(id: number) {
+async function assertUsableAsCover(id: number) {
   // primary: guards the cover write, so a just-flagged image is seen.
   const image = await dbWrite.image.findUnique({
     where: { id },
     select: { nsfwLevel: true, modelRestricted: true },
   });
   if (image && isRestrictedImage(image)) throw restrictedCoverError();
+  await assertNotDealFileImages([id], 'used here');
 }
 
 /** Reused rows must belong to the caller — see `findReusableImageId` below for why. */
@@ -245,7 +247,7 @@ export const productionCoverImageDeps: CoverImageDeps = {
     await assertClientKeysIssuedToCaller({ urls: [url], userId, alsoIssuedTo: uploaderId });
   },
   logExistenceUnknown,
-  assertNotRestricted,
+  assertUsableAsCover,
   // 🔴 Wrapped, not referenced directly. Reading `createImage` here would read it at MODULE
   // LOAD, and this module is now in the import graph of the article + challenge services —
   // so every existing test that wholesale-`vi.mock`s `image.service` without re-stubbing
@@ -280,13 +282,16 @@ export async function resolveCoverImageId(
   if (id != null) {
     await assertOwnership?.(id);
     // Keeping the cover already set (`currentCoverId`) is not choosing it, so a later flag doesn't block other edits.
-    if (id !== currentCoverId) await deps.assertNotRestricted(id);
+    if (id !== currentCoverId) await deps.assertUsableAsCover(id);
     return id;
   }
 
   const reusable = await deps.findReusableImageId({ url: image.url, userId, currentCoverId });
   if (reusable) {
-    if (reusable.restricted && reusable.id !== currentCoverId) throw restrictedCoverError();
+    if (reusable.id !== currentCoverId) {
+      if (reusable.restricted) throw restrictedCoverError();
+      await deps.assertUsableAsCover(reusable.id);
+    }
     return reusable.id;
   }
 

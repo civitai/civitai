@@ -51,7 +51,7 @@ Highest risk first. Full list and what to watch for: [detail](retool-migration-h
 
 **Local dev fires at two different places — know which before reading a result.** `DATABASE_URL` is the
 dev clone, so mute, force-logout and the cosmetic paths write there; but `callMainApp` targets
-`CIVITAI_APP_URL`, so **ban, unban, purge and image removal hit production**. The consequence when
+`CIVITAI_INTERNAL_URL` (unset in dev: `CIVITAI_APP_URL`), so **ban, unban, purge and image removal hit production**. The consequence when
 exercising: the app *reads* identity from the clone, so a prod ban does not change the button, and a
 green form is not evidence. Verify against the real target, not the page.
 

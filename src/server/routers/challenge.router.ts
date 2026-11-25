@@ -91,6 +91,7 @@ import {
 import { getJudgeCommentForImage } from '~/server/services/challenge-judge-review.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 
 /**
  * A text query gets the semantic search's audit: 'refuse', or the level to search at, which is the
@@ -443,6 +444,7 @@ export const challengeRouter = router({
         ...input,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
       })
     ),
 

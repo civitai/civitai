@@ -833,8 +833,8 @@ jobs:
     # which is why the shard pick lives in the matrix expression instead.
     #
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
-    # draft too).
-    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
+    # draft too). Fork PRs don't run the gated unit job.
+    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'full-ci'))) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
     # ── SHARDED ACROSS 6 RUNNERS ────────────────────────────────────────────
     #
     # Vitest's `--shard` cuts a path-hash-ordered list into equal file COUNTS. Fixed
@@ -885,28 +885,38 @@ jobs:
     # heaviest hash shard hit 20m on slow runners. Left at 25m when N went to 6 (shards
     # 8-15m at N=6 on 2026-11-17): the headroom is for slow runners, which do not shard.
     timeout-minutes: 25
-    # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
-    # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
-    # itself without its URL, so a shard that does not hold it pays only the container start.
-    # Anchored: `unit-verify` re-runs failed files and bisects with the same services and env.
-    services: &unit-services
+    # On civitai-dc the images come from the private ghcr mirror (mirror-ci-images.yml), because
+    # Docker Hub rate-limits those runners' anonymous pulls, and the job logs in to ghcr with its own
+    # read-only token. Each image and its credentials use the runs-on condition above, so a hosted
+    # run (a bot, or the kill switch) pulls the same digest from Docker Hub with no login. The whole
+    # credentials mapping switches, not each field: the workflow schema rejects an empty username or
+    # password at job setup, while an empty mapping leaves both unset and the runner skips the login.
+    permissions:
+      contents: read
+      packages: read
+    services:
+      # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
+      # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
+      # itself without its URL, so a shard that does not hold it pays only the container start.
       redis:
-        image: redis:7
+        image: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'ghcr.io/civitai/ci-redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90' || 'redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90' }}
+        credentials: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && fromJSON(format('{{"username":"{0}","password":"{1}"}}', github.actor, github.token)) || fromJSON('{}') }}
         ports:
           - 6379:6379
-        options: >-
+        options: &unit-redis-options >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
       # A real Postgres for the App Blocks document store's concurrency tests (quota under racing
       # writers, concurrent marks/counters, lock timeout — doc-store.pg.test.ts). Same pattern as
       # Redis above: the file skips itself without its URL, so other shards pay only the container
       # start. The suite creates and drops its own databases on this throwaway server.
       postgres:
-        image: postgres:18
+        image: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'ghcr.io/civitai/ci-postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a' || 'postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a' }}
+        credentials: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && fromJSON(format('{{"username":"{0}","password":"{1}"}}', github.actor, github.token)) || fromJSON('{}') }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
-        options: >-
+        options: &unit-postgres-options >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
     env: &unit-env
       ROSTER_REDIS_URL: redis://localhost:6379/15
@@ -939,6 +949,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
+          # Defense in depth: keeps the job token out of .git/config.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 
@@ -2190,7 +2202,21 @@ jobs:
       actions: read
       contents: read
       statuses: write
-    services: *unit-services
+    # Re-runs `unit`'s failed files and bisects, so the same images, by digest. From Docker Hub with no
+    # registry token: this job is hosted and holds statuses: write.
+    services:
+      redis:
+        image: redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+        ports:
+          - 6379:6379
+        options: *unit-redis-options
+      postgres:
+        image: postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: *unit-postgres-options
     env: *unit-env
     steps:
       - id: checkout

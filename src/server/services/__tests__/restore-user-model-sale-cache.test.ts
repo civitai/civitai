@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { recordedOwnership } from './model-ownership-db';
 import type * as AccountDeletionImages from '~/server/services/account-deletion-images';
@@ -25,7 +25,6 @@ vi.mock('~/server/services/user-restriction.service', async (importOriginal) => 
 }));
 vi.mock('~/server/services/account-deletion-images', async (importOriginal) => ({
   ...(await importOriginal<typeof AccountDeletionImages>()),
-  disarmAccountDeletionImagePurge: vi.fn(() => 'disarm-statement'),
   releaseAccountDeletionPendingDeletes: vi.fn(() => 'release-statement'),
   recordPendingImageRestore: vi.fn(async () => true),
   countPendingAccountDeletionImageRestores: vi.fn(async () => 0),
@@ -168,5 +167,46 @@ describe("restoreUser -> which orphaned models are the account's", () => {
     }) as never);
 
     await expect(restore()).resolves.toMatchObject({ modelIds: [1, 3, 4] });
+  });
+});
+
+describe('restoreUser -> the purge it disarms', () => {
+  afterEach(() => {
+    dbMock.dbWrite.$executeRaw.mockReset();
+    dbMock.dbWrite.$transaction.mockReset();
+  });
+
+  // The real restore, with the real disarm against Postgres: catches the disarm dropped from the
+  // restore, reverted to every image of the account, or preceded by a breadcrumb strip in the restore.
+  it('drops the grace purge and keeps the purge of a block written during the grace period', async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, metadata jsonb);
+      CREATE TABLE "JobQueue" (
+        "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+        UNIQUE ("entityType", "entityId", type)
+      );
+      INSERT INTO "Image" VALUES
+        (1, ${USER_ID}, '{"accountDeletionPriorIngestion": "Scanned"}'),
+        (2, ${USER_ID}, '{}');
+      INSERT INTO "JobQueue" VALUES (1, 'Image', 'BlockedImageDelete'), (2, 'Image', 'BlockedImageDelete');
+    `);
+    dbMock.dbWrite.$executeRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+    }) as never);
+    dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown) =>
+      Array.isArray(ops) ? Promise.all(ops) : undefined) as never);
+
+    await restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: false });
+
+    const { rows } = await db.query<{ entityId: number }>(`SELECT "entityId" FROM "JobQueue"`);
+    expect(rows.map((r) => r.entityId)).toEqual([2]);
+    await db.close();
   });
 });

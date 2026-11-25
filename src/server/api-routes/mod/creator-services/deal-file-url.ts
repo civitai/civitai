@@ -15,6 +15,7 @@ export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
   returns: '{ url, expiresAt }',
   notes: [
     'The original file, whatever its status or scan result: this is for dispute review. With delivered=true, the file as the buyer receives it.',
+    "deal-files' `canDownload` answers for the original. With delivered=true a file it offers can still be not-found: a zip with no delivery copy, or a held file the caller uploaded, since an uploader gets back only their own original.",
     'The URL is an attachment download and stops working after about five minutes. Do not store it; ask again.',
     "Each call is recorded as a moderator fetch (kind ModeratorFetch, never Download), under the caller's own role on the deal.",
   ],
