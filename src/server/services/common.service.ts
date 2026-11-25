@@ -43,12 +43,15 @@ export const hasEntityAccess = async ({
   isModerator,
   userId,
   permissions,
+  ignorePaidAccess,
 }: {
   entityType: SupportedAvailabilityResources;
   entityIds: number[];
   userId?: number;
   isModerator?: boolean;
   permissions?: number;
+  /** Treat a paid version as open: for acts the purchase does not gate (reviews), never downloads. */
+  ignorePaidAccess?: boolean;
 }): Promise<UserEntityAccessStatus[]> => {
   if (!entityIds.length) {
     return [];
@@ -155,7 +158,7 @@ export const hasEntityAccess = async ({
   // Gated-ness for model versions comes from PaidAccess, not `availability`. No model version carries
   // availability='EarlyAccess' any more, so the availability test below only ever excludes Private.
   const paidGatedIds = new Set<number>();
-  if (entityType === 'ModelVersion') {
+  if (entityType === 'ModelVersion' && !ignorePaidAccess) {
     const paid = await getPaidAccess('ModelVersion', entityIds);
     const now = new Date();
     for (const id of entityIds) {

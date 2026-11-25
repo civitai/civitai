@@ -104,3 +104,21 @@ describe('resource review handlers — who the guard is told is acting', () => {
       expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
   });
 });
+
+describe('resource review handlers — paid versions', () => {
+  it('ask for access without the paid-access gate', async () => {
+    await upsertResourceReviewHandler({ input: createInput, ctx: ctx() });
+    await createResourceReviewHandler({ input: createInput, ctx: ctx() });
+    expect(mockHasEntityAccess).toHaveBeenCalledTimes(2);
+    for (const [args] of mockHasEntityAccess.mock.calls)
+      expect(args).toMatchObject({ entityIds: [20], ignorePaidAccess: true });
+  });
+
+  it('still refuse when access is denied (a Private version)', async () => {
+    mockHasEntityAccess.mockResolvedValue([{ hasAccess: false }]);
+    await expect(upsertResourceReviewHandler({ input: createInput, ctx: ctx() })).rejects.toThrow(
+      'You do not have access to this model version.'
+    );
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+});

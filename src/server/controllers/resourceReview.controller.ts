@@ -43,6 +43,8 @@ export const upsertResourceReviewHandler = async ({
       entityIds: [input.modelVersionId],
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      // Reviews are not gated by purchase.
+      ignorePaidAccess: true,
     });
 
     if (!access?.hasAccess) {
@@ -72,6 +74,8 @@ export const createResourceReviewHandler = async ({
       entityIds: [input.modelVersionId],
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      // Reviews are not gated by purchase.
+      ignorePaidAccess: true,
     });
 
     if (!access?.hasAccess) {
