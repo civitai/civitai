@@ -284,7 +284,10 @@ describe('load', () => {
     const data = await open('?day=2026-10-12&version=control-sample%402026-10-17');
 
     expect(isControlFlaggerVersion).toHaveBeenCalledWith('control-sample@2026-10-17');
-    expect(claimNext).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
+    expect(claimNext).toHaveBeenCalledWith(
+      { userId: 7, csamReview: false },
+      { day: '2026-10-12', flaggerVersion: undefined }
+    );
     expect(getCounters).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
     expect(data.version).toBe('');
   });
@@ -323,7 +326,10 @@ describe('load', () => {
 
     const data = await open('?version=scan%401');
 
-    expect(claimNext).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: 'scan@1' });
+    expect(claimNext).toHaveBeenCalledWith(
+      { userId: 7, csamReview: false },
+      { day: undefined, flaggerVersion: 'scan@1' }
+    );
     expect(data.version).toBe('scan@1');
   });
 });

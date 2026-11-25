@@ -25,7 +25,11 @@ const {
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('../hold-context.server', () => ({ getHoldContexts }));
+// The withhold pass has its own pglite test (report-withheld-media); here it passes holds through.
+vi.mock('../hold-context.server', () => ({
+  getHoldContexts,
+  withheldHoldMedia: async (holds: unknown[]) => holds,
+}));
 vi.mock('$lib/server/csam-holds.service', async () => ({
   // The real search parser: what a `q` becomes is part of what the load hands the query.
   csamHoldSearch: (

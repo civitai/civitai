@@ -29,6 +29,7 @@
   import { entityUrl, modelLookupUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
   import { clearPaging, selectionKey } from '$lib/paging';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import type { ReportActionGrants } from '$lib/report-queue';
 
   let {
@@ -227,7 +228,13 @@
               rel="noreferrer"
               class="block"
             >
-              {#if m.coverUrl}
+              {#if m.coverRestricted}
+                <div
+                  class="flex aspect-[4/5] w-full items-center justify-center p-2 text-center text-xs text-dark-2"
+                >
+                  {RETRACTED_REFUSED}
+                </div>
+              {:else if m.coverUrl}
                 <EdgeMedia
                   src={m.coverUrl}
                   type={m.coverType === 'video' ? 'video' : 'image'}
@@ -325,7 +332,7 @@
         <ImageActionBar
           bare
           {selected}
-          selectable={suspect.items.map((i) => i.id)}
+          selectable={suspect.items.filter((i) => !i.restricted).map((i) => i.id)}
           onSubmit={onSubmit.enhance}
           submitting={onSubmit.submitting}
           notify={false}

@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { withheldRows } from './retracted-media';
 
 export type ReportedAccountModel = {
   id: number;
@@ -14,8 +15,11 @@ export type ReportedAccountModel = {
   tosViolation: boolean;
   deletedAt: Date | null;
   createdAt: Date;
+  coverId: number | null;
   coverUrl: string | null;
   coverType: string | null;
+  /** The cover is withheld from this moderator: no key and no type. */
+  coverRestricted: boolean;
 };
 
 const MODELS = 60;
@@ -29,9 +33,10 @@ const MODELS = 60;
  * at the first hit instead of reading every image of a 400-image model.
  */
 export async function getReportedAccountModels(
-  userId: number
+  userId: number,
+  viewer: App.Locals['user'] | undefined
 ): Promise<{ items: ReportedAccountModel[]; truncated: boolean }> {
-  const cover = (column: 'url' | 'type') =>
+  const cover = (column: 'id' | 'url' | 'type') =>
     sql<string | null>`(
       select i.${sql.ref(column)}::text
       from "ModelVersion" mv
@@ -58,6 +63,7 @@ export async function getReportedAccountModels(
       'deletedAt',
       'createdAt',
     ])
+    .select(sql<number | null>`(${cover('id')})::int`.as('coverId'))
     .select(cover('url').as('coverUrl'))
     .select(cover('type').as('coverType'))
     .where('userId', '=', userId)
@@ -65,5 +71,15 @@ export async function getReportedAccountModels(
     .limit(MODELS + 1)
     .execute();
 
-  return { items: rows.slice(0, MODELS) as ReportedAccountModel[], truncated: rows.length > MODELS };
+  const items = await withheldRows(
+    (rows.slice(0, MODELS) as Omit<ReportedAccountModel, 'coverRestricted'>[]).map((m) => ({
+      ...m,
+      coverRestricted: false,
+    })),
+    viewer,
+    'reported-account-models',
+    (m) => m.coverId,
+    (m) => ({ ...m, coverUrl: null, coverType: null, coverRestricted: true })
+  );
+  return { items, truncated: rows.length > MODELS };
 }

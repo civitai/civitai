@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
@@ -35,7 +36,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : parsed;
   const filters = toFilters(query);
   const userId = locals.user.id;
-  const card = await claimNext(userId, filters);
+  const card = await claimNext({ userId, csamReview: holdsCsamReview(locals.user) }, filters);
   const [counters, versions] = await Promise.all([
     getCounters(userId, filters),
     getOpenFlaggerVersions(),

@@ -99,7 +99,10 @@ describe('which account opens', () => {
   it('the path names one, and its tab', async () => {
     const data = await runAccount({ userId: '5', tab: 'images' });
     expect(data.account).toMatchObject({ suspectId: 5, tab: 'images' });
-    expect(getSuspectImages).toHaveBeenCalledWith(5, expect.anything(), { page: 1 });
+    expect(getSuspectImages).toHaveBeenCalledWith(5, expect.anything(), {
+      page: 1,
+      viewer: { id: 1, username: 'mod' },
+    });
   });
 
   it('a path that is not a user id is a 404', async () => {

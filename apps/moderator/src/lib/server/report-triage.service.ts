@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
 import { isReviewImageSql } from './review-image';
+import { withheldRow, withheldRows } from './retracted-media';
 
 // The suspect's own content, for reviewing a report against an account without leaving the queue
 // (Retool's TOSImages + GetImageCount).
@@ -12,6 +13,8 @@ import { isReviewImageSql } from './review-image';
 
 export type SuspectImage = {
   id: number;
+  /** Withheld from this moderator (`withheldRow`): no key, prompt or reason. */
+  restricted?: boolean;
   url: string;
   /** `type` and `name` both feed media-type inference. Without them every video renders through the
    *  image pipeline, in a grid whose whole purpose is judging what this account posted. */
@@ -88,9 +91,13 @@ export const EMPTY_SUSPECT_FILTERS: SuspectImageFilters = {
 export async function getSuspectImages(
   userId: number,
   filters: SuspectImageFilters = EMPTY_SUSPECT_FILTERS,
-  { limit = 60, page = 1 }: { limit?: number; page?: number } = {}
+  {
+    limit = 60,
+    page = 1,
+    viewer,
+  }: { limit?: number; page?: number; viewer: App.Locals['user'] | undefined }
 ): Promise<{
-  items: SuspectImage[];
+  items: (SuspectImage | ReturnType<typeof withheldRow<SuspectImage>>)[];
   page: number;
   perPage: number;
   total: number;
@@ -164,7 +171,13 @@ export async function getSuspectImages(
   ]);
 
   return {
-    items: rows as unknown as SuspectImage[],
+    items: await withheldRows(
+      rows as unknown as SuspectImage[],
+      viewer,
+      'reported-account-images',
+      (i) => i.id,
+      withheldRow
+    ),
     page,
     perPage: limit,
     total: Number(counts?.total ?? 0),

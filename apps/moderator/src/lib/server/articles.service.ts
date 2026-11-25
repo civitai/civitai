@@ -1,4 +1,5 @@
 import { dbRead } from './db';
+import { withheldRows } from './retracted-media';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -15,8 +16,11 @@ export type ModeratorArticleRow = {
   createdAt: Date | null;
   publishedAt: Date | null;
   metadata: ArticleMetadata;
+  coverId: number | null;
   coverUrl: string | null;
   coverType: MediaType | null;
+  /** The cover is withheld from this moderator: no key and no type. */
+  coverRestricted: boolean;
   username: string | null;
   userImage: string | null;
 };
@@ -26,11 +30,13 @@ export async function getModeratorArticles({
   limit = 20,
   username,
   status,
+  viewer,
 }: {
   page?: number;
   limit?: number;
   username?: string;
   status?: ArticleStatus;
+  viewer: App.Locals['user'] | undefined;
 }): Promise<{ items: ModeratorArticleRow[]; totalItems: number; page: number; limit: number }> {
   const offset = (page - 1) * limit;
 
@@ -54,6 +60,7 @@ export async function getModeratorArticles({
       'Article.createdAt',
       'Article.publishedAt',
       'Article.metadata',
+      'Article.coverId',
       'Image.url as coverUrl',
       'Image.type as coverType',
       'User.username',
@@ -62,9 +69,20 @@ export async function getModeratorArticles({
     .orderBy('Article.createdAt', 'desc')
     .limit(limit)
     .offset(offset)
-    .execute()) as ModeratorArticleRow[];
+    .execute()) as Omit<ModeratorArticleRow, 'coverRestricted'>[];
 
-  return { items, totalItems, page, limit };
+  return {
+    items: await withheldRows(
+      items.map((row) => ({ ...row, coverRestricted: false })),
+      viewer,
+      'articles-unpublished',
+      (row) => row.coverId,
+      (row) => ({ ...row, coverUrl: null, coverType: null, coverRestricted: true })
+    ),
+    totalItems,
+    page,
+    limit,
+  };
 }
 
 export async function countModeratorArticles(): Promise<number> {

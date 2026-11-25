@@ -1,6 +1,8 @@
 import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { dbRead, dbWrite } from './db';
+import { listWithheldIds } from './retracted-media';
 import {
   BLOCK_MAJORITY,
   CSAM_HOLD_REASON,
@@ -171,10 +173,22 @@ async function voteRefusal(
 
 export type CardMedia = { url: string; type: string; name: string | null };
 
-/** The media of a card, served exactly while the moderator's vote on it would still land. */
+/** Who claims or views a card, and whether they hold the CSAM review grant. */
+export type Claimer = { userId: number; csamReview: boolean };
+
+/** Items whose image is not withheld from this claimer (`moderatorWithheldSql`). */
+const notWithheld = (csamReview: boolean) =>
+  sql<boolean>`NOT EXISTS (
+    SELECT 1 FROM "Image" wi WHERE wi.id = i."imageId" AND ${sql.raw(
+      moderatorWithheldSql('wi', { csamReview })
+    )}
+  )`;
+
+/** The media of a card, served exactly while the moderator's vote on it would still land, and
+ *  never when its image is withheld from them. */
 export async function mediaForToken(
   token: string,
-  userId: number,
+  { userId, csamReview }: Claimer,
   now = new Date()
 ): Promise<CardMedia | null> {
   const itemId = await itemForToken(token, userId);
@@ -188,10 +202,12 @@ export async function mediaForToken(
   const row = await dbWrite
     .selectFrom('ScanLabelItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .select(['img.url', 'img.type', 'img.name'])
+    .select(['img.id', 'img.url', 'img.type', 'img.name'])
     .where('i.id', '=', itemId)
     .executeTakeFirst();
-  return row ? { url: row.url, type: String(row.type), name: row.name } : null;
+  if (!row) return null;
+  const withheld = await listWithheldIds([row.id], { csamReview }, 'scan-label-media');
+  return withheld.has(row.id) ? null : { url: row.url, type: String(row.type), name: row.name };
 }
 
 const MAX_CLAIM_ATTEMPTS = 20;
@@ -245,7 +261,7 @@ export function sourceOrder(rng: () => number): QueueSource[] {
  * source, and each empty source would walk the whole queue.
  */
 export async function claimNext(
-  userId: number,
+  { userId, csamReview }: Claimer,
   filters: ScanLabelFilters,
   now: Date = new Date(),
   rng: () => number = Math.random
@@ -265,6 +281,7 @@ export async function claimNext(
         .select('i.id')
         .where('i.id', '=', lease.itemId)
         .where(notVotedBy(userId))
+        .where(notWithheld(csamReview))
         .executeTakeFirst();
       if (open) return toCard(trx, lease.itemId, userId, lease.expiresAt);
     }
@@ -278,6 +295,7 @@ export async function claimNext(
         let q = openItems(trx, filters)
           .select(['i.id', 'i.votes'])
           .where(notVotedBy(userId))
+          .where(notWithheld(csamReview))
           .where(
             (eb) =>
               eb(

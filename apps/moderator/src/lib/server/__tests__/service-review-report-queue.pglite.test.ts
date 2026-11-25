@@ -33,6 +33,8 @@ vi.mock('../redis', () => ({
 const { getReports, getReportCounts } = await import('../reports.service');
 const { getReportedServiceReviews } = await import('../service-review-reports.service');
 
+/** A moderator with the CSAM review grant, for whom no image is withheld. */
+const GRANTED = { id: 1, roles: ['moderator:admin'] } as never;
 const SELLER = 990000010;
 const REPORTER = 990000099;
 const OFFERING = 990000005;
@@ -130,7 +132,7 @@ describe('the service-offering queue', () => {
 
 describe('getReportedServiceReviews', () => {
   it('shows the review as it is now and as reported, with its images', async () => {
-    const reviews = await getReportedServiceReviews([OFFERING_REPORT, REVIEW_REPORT]);
+    const reviews = await getReportedServiceReviews([OFFERING_REPORT, REVIEW_REPORT], GRANTED);
     expect(reviews.has(OFFERING_REPORT)).toBe(false);
     expect(reviews.get(REVIEW_REPORT)).toEqual({
       reviewId: REVIEW,
@@ -157,7 +159,9 @@ describe('getReportedServiceReviews', () => {
       INSERT INTO "TextScanHold" ("entityType", "entityId", label, status)
         VALUES ('ServiceDealReviewReply', ${REVIEW}, 'csam', 'Pending');
     `);
-    expect((await getReportedServiceReviews([REVIEW_REPORT])).get(REVIEW_REPORT)).toMatchObject({
+    expect(
+      (await getReportedServiceReviews([REVIEW_REPORT], GRANTED)).get(REVIEW_REPORT)
+    ).toMatchObject({
       shown: false,
       hidden: true,
       commentHeld: false,
