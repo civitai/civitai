@@ -58,12 +58,12 @@ export const GET: RequestHandler = async ({ request, url, cookies }) => {
   return json(user);
 };
 
+type PostBody = { userId?: unknown; refresh?: unknown; scope?: unknown };
+
 // WRITE side — service-authed cache invalidation (createSessionClient). Targets an ARBITRARY userId
 // (a mod banning user X, a subscription webhook), so it's authed by the shared `AUTH_INTERNAL_TOKEN`, NOT a
 // user session token. Body: { userId, refresh? } per-user; or { scope: 'all', asOf? } mass. Default busts
 // the cache (lazy — next read re-produces); `refresh: true` also re-produces now and returns the fresh user.
-type PostBody = { userId?: unknown; refresh?: unknown; scope?: unknown };
-
 export const POST: RequestHandler = async ({ request, platform }) => {
   const internal = isInternalRequest(request);
   let body: PostBody;

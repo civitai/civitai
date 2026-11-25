@@ -123,6 +123,8 @@ describe('admin endpoint audit record', () => {
     });
     const serialized = JSON.stringify(record);
     expect(serialized).not.toContain(WRONG);
+    expect(serialized).not.toContain(CURRENT);
+    expect(serialized).not.toContain(PREVIOUS);
   });
 
   it('records the previous slot and the body of refresh-user-sessions', async () => {
