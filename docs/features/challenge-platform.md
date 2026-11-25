@@ -182,9 +182,12 @@ so, so the Judging panel tells entrants.
 
 **Judge-model shadow.** `reviewShadow` in the daily config (`{ model, sampleRate, provider? }`) reviews a
 sample with a second model and logs both to Axiom; only production scores reach users. It runs only on
-SFW System dailies and only for entries the scan has cleared at an SFW level (`shadowSendable`).
-`provider` pins the OpenRouter route, e.g. `{ order: ['wafer/us'], allowFallbacks: false,
-dataCollection: 'deny' }`.
+SFW System dailies, only for entries the scan has cleared at an SFW level, and only with a `provider`
+pin that denies data collection, e.g. `{ order: ['wafer/us'], allowFallbacks: false, dataCollection:
+'deny' }` (`shadowFor`). The shadow call carries `entry <imageId>` instead of the entrant's username,
+and its log records OpenRouter's generation id, which OpenRouter's generation API resolves to the host
+that served it. Recent-winner ideas on an SFW daily come only from SFW dailies whose winning image is
+still scanned SFW and not blocked or held.
 
 **Stopping a judge mid-challenge.** Each review tick loads a non-default judge fresh from the DB, so editing its
 prompts in the judge panel takes effect on the next tick; Re-judge Entries re-scores what it already judged.

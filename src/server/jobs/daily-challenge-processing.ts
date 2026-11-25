@@ -98,7 +98,11 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { reviewWithFallback } from '~/server/games/daily-challenge/review-fallback';
-import { reviewWithShadow, shadowSendable } from '~/server/games/daily-challenge/review-shadow';
+import {
+  reviewWithShadow,
+  shadowCreatorLabel,
+  shadowFor,
+} from '~/server/games/daily-challenge/review-shadow';
 import type { OpenRouterProvider } from '~/server/services/ai/openrouter';
 import {
   getRecentWinnerIdeas,
@@ -771,7 +775,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
   const recentWinnerIdeas =
     challengeRecord?.source === ChallengeSource.System && hasFreshnessCategory(userCategories)
-      ? await getRecentWinnerIdeas(currentChallenge.challengeId).catch((e) => {
+      ? await getRecentWinnerIdeas(currentChallenge.challengeId, {
+          sfwOnly: !usesNsfwRubrics(allowedNsfwLevel),
+        }).catch((e) => {
           log('Recent winner ideas unavailable:', (e as Error).message);
           return undefined;
         })
@@ -1142,12 +1148,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         imageId: entry.imageId,
         nsfwLevel: entry.nsfwLevel,
       };
-      const runReview = (model?: string, provider?: OpenRouterProvider) =>
+      const runReview = (model?: string, provider?: OpenRouterProvider, forShadow = false) =>
         generateReview({
           theme: currentChallenge.theme,
           themeElements,
           resourceConcept,
-          creator: entry.username,
+          creator: forShadow ? shadowCreatorLabel(entry.imageId) : entry.username,
           imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
           config: judgingConfig,
           categories: userCategories?.map((c) => ({
@@ -1161,17 +1167,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           provider,
         });
       const review = await reviewWithShadow({
-        shadow: shadowSendable({
+        shadow: shadowFor(config.reviewShadow, {
           source: challengeRecord?.source,
           allowedNsfwLevel,
           entry,
-        })
-          ? config.reviewShadow
-          : null,
+        }),
         context: reviewContext,
         run: (model, provider) =>
           model
-            ? runReview(model, provider)
+            ? runReview(model, provider, true)
             : reviewWithFallback({
                 run: runReview,
                 fallbackModel: REVIEW_FALLBACK_MODEL,

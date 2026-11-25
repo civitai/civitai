@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { reviewWithShadow, shadowSendable } from './review-shadow';
+import { reviewWithShadow, shadowFor, shadowSendable } from './review-shadow';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -110,6 +110,7 @@ describe('reviewWithShadow provider', () => {
   });
 });
 
+// The send rules are in docs/features/challenge-platform.md §5, Judge-model shadow.
 describe('shadowSendable', () => {
   const sendable = {
     source: ChallengeSource.System,
@@ -135,5 +136,34 @@ describe('shadowSendable', () => {
     ['an unrated entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: 0 } }],
   ])('never sends %s', (_, input) => {
     expect(shadowSendable(input)).toBe(false);
+  });
+});
+
+describe('shadowFor', () => {
+  const input = {
+    source: ChallengeSource.System,
+    allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.PG13,
+    entry: { nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned', blockedFor: null },
+  };
+  const deny = { order: ['wafer/us'], allowFallbacks: false, dataCollection: 'deny' as const };
+
+  it('runs a pinned shadow that denies data collection on a sendable entry', () => {
+    const shadow = { model: 'm', sampleRate: 1, provider: deny };
+    expect(shadowFor(shadow, input)).toBe(shadow);
+  });
+
+  it.each([
+    ['no provider pin', { model: 'm', sampleRate: 1 }],
+    [
+      'a pin that allows data collection',
+      { model: 'm', sampleRate: 1, provider: { ...deny, dataCollection: 'allow' as const } },
+    ],
+  ])('never runs with %s', (_, shadow) => {
+    expect(shadowFor(shadow, input)).toBeNull();
+  });
+
+  it('never runs on an unsendable entry, pin or not', () => {
+    const shadow = { model: 'm', sampleRate: 1, provider: deny };
+    expect(shadowFor(shadow, { ...input, source: ChallengeSource.User })).toBeNull();
   });
 });

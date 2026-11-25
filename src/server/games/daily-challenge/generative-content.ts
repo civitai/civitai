@@ -133,7 +133,7 @@ export async function getCompletionWithUsage<T>(
   messages: SimpleMessage[],
   retries: number,
   provider?: OpenRouterProvider
-): Promise<{ content: T; usage: TokenUsage }> {
+): Promise<{ content: T; usage: TokenUsage; generationId?: string }> {
   if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     const content = await civitaiLLM.getJsonCompletion<T>({ retries, model, messages });
@@ -449,7 +449,7 @@ ${scoreLines}
 
 export async function generateReview(
   input: GenerateReviewInput
-): Promise<GeneratedReview & { usage: TokenUsage; model: AIModel }> {
+): Promise<GeneratedReview & { usage: TokenUsage; model: AIModel; generationId?: string }> {
   // Resolve the rubric block up front (it needs the DB-backed category library): the REAL
   // categories when present, else the canonical defaults so a migrated prompt with no categories
   // still gets the default blocks instead of a literal {{SCORING_RUBRICS}}. injectRubrics is a
@@ -472,7 +472,11 @@ export async function generateReview(
   }
 
   const model = input.model ?? DEFAULT_REVIEW_MODEL;
-  const { content: result, usage } = await getCompletionWithUsage<GeneratedReview>(
+  const {
+    content: result,
+    usage,
+    generationId,
+  } = await getCompletionWithUsage<GeneratedReview>(
     model,
     messages,
     3,
@@ -487,6 +491,7 @@ export async function generateReview(
     aestheticFlaws: result.aestheticFlaws,
     usage,
     model,
+    generationId,
   };
 }
 
@@ -847,17 +852,17 @@ const RESOURCE_FIDELITY_CLAUSE =
   "Every entry was required to use the featured resource named above. When the theme or its elements point somewhere the featured resource does not go, the resource wins: an image that faithfully renders the featured resource's subject satisfies the theme, and must not be scored down for missing theme elements that contradict it. Do not reward an image that matches the theme wording while ignoring the featured resource.";
 
 /** Splice the fidelity clause onto a review task, or return it unchanged when there is no concept. */
+export function appendResourceFidelityClause(reviewPrompt: string, resourceConcept?: string) {
+  if (!resourceConcept?.trim()) return reviewPrompt;
+  return `${reviewPrompt}\n\n${RESOURCE_FIDELITY_CLAUSE}`;
+}
+
 const FRESHNESS_CLAUSE =
   'FRESHNESS: the entry fields list recent winning ideas. On Creativity and Wordplay only, score an entry lower when its central idea repeats one of them; a similar subject or style alone is not a repeat. Never lower any other category for it.';
 
 export function appendFreshnessClause(reviewPrompt: string, recentWinnerIdeas?: string[]) {
   if (!recentWinnerIdeas?.length) return reviewPrompt;
   return `${reviewPrompt}\n\n${FRESHNESS_CLAUSE}`;
-}
-
-export function appendResourceFidelityClause(reviewPrompt: string, resourceConcept?: string) {
-  if (!resourceConcept?.trim()) return reviewPrompt;
-  return `${reviewPrompt}\n\n${RESOURCE_FIDELITY_CLAUSE}`;
 }
 
 function prepareSystemMessage(

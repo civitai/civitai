@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-engine-registry';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
@@ -91,6 +91,7 @@ vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
 const { getJudgedEntries, reviewEntries } = await import(
   '~/server/jobs/daily-challenge-processing'
 );
+const { getChallengeConfig } = await import('~/server/games/daily-challenge/daily-challenge.utils');
 
 const CLEAN = 10;
 const BANNED = 20;
@@ -501,5 +502,61 @@ describe('entries whose featured resource cannot run on their checkpoint', () =>
       { imageId: NO_CHECKPOINT, status: 'ACCEPTED' },
       { imageId: ON_KREA_SDXL_CREDITED, status: 'ACCEPTED' },
     ]);
+  });
+});
+
+describe('the judge-model shadow', () => {
+  const SHADOW_MODEL = 'shadow/model';
+  const shadowConfig = (provider?: object) => ({
+    judgedTagId: JUDGED_TAG,
+    reviewMeTagId: REVIEW_ME_TAG,
+    reviewAmount: { min: 6, max: 12 },
+    maxScoredPerUser: 5,
+    defaultJudgeId: 1,
+    defaultJudge: null,
+    reviewShadow: { model: SHADOW_MODEL, sampleRate: 1, provider },
+  });
+  const pinned = { order: ['wafer/us'], allowFallbacks: false, dataCollection: 'deny' };
+
+  async function shadowedImageIds() {
+    await reviewedImageIds();
+    return mockGenerateReview.mock.calls
+      .filter(([args]) => (args as { model?: string }).model === SHADOW_MODEL)
+      .map(([args]) => Number(/img-(\d+)/.exec((args as { imageUrl: string }).imageUrl)?.[1]))
+      .sort();
+  }
+
+  beforeEach(async () => {
+    await setBanned(null);
+    await db.query(
+      `UPDATE "Image" SET "nsfwLevel" = 1, "modelRestricted" = false, ingestion = 'Scanned'`
+    );
+  });
+  // Back to a config that never shadows, for any case after this block.
+  afterEach(() => vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig() as never));
+
+  it('never gets a mature or unscanned entry; gets the scanned SFW ones', async () => {
+    vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig(pinned) as never);
+    await db.query(`UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 4`);
+    await db.query(`UPDATE "Image" SET ingestion = 'Pending' WHERE id = 6`);
+
+    expect(await shadowedImageIds()).toEqual([3, 5, 7, 8]);
+  });
+
+  it('never runs without a pin that denies data collection', async () => {
+    vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig() as never);
+
+    expect(await shadowedImageIds()).toEqual([]);
+  });
+
+  it('never sees the entrant username', async () => {
+    vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig(pinned) as never);
+    await shadowedImageIds();
+
+    const creators = mockGenerateReview.mock.calls
+      .filter(([args]) => (args as { model?: string }).model === SHADOW_MODEL)
+      .map(([args]) => (args as { creator: string }).creator);
+    expect(creators.length).toBeGreaterThan(0);
+    expect(creators.every((c) => /^entry \d+$/.test(c))).toBe(true);
   });
 });

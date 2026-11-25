@@ -213,7 +213,7 @@ type CustomOpenRouter = OpenRouter & {
   // every existing `getJsonCompletion<T>()` caller depends on.
   getJsonCompletionWithUsage: <T>(
     params: GetJsonCompletionInput
-  ) => Promise<{ content: T; usage: TokenUsage }>;
+  ) => Promise<{ content: T; usage: TokenUsage; generationId?: string }>;
   // Free-TEXT sibling of getJsonCompletion — a single non-streaming completion
   // that returns the assistant's plain text (NOT parsed as JSON). For grounded
   // Q&A / chat turns where the reply is prose citing evidence, not a JSON object.
@@ -254,7 +254,7 @@ function createOpenRouterClient() {
     retries = 0,
     timeoutMs,
     provider,
-  }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage }> => {
+  }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage; generationId?: string }> => {
     const sdkMessages = messages.map(toSDKMessage);
 
     const response = await client.chat.send(
@@ -285,20 +285,20 @@ function createOpenRouterClient() {
           timeoutMs,
           provider,
         });
-        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
+        return { ...retried, usage: sumUsage(usage, retried.usage) };
       }
       throw new Error(APP_ERROR_MESSAGES.no_content);
     }
 
     try {
       // Try to parse as JSON directly
-      return { content: JSON.parse(content) as T, usage };
+      return { content: JSON.parse(content) as T, usage, generationId: response.id };
     } catch {
       // Try to extract JSON from markdown code block
       const jsonBlockMatch = content.match(/```json\n(.*?)\n```/s)?.[1];
       if (jsonBlockMatch) {
         try {
-          return { content: JSON.parse(jsonBlockMatch) as T, usage };
+          return { content: JSON.parse(jsonBlockMatch) as T, usage, generationId: response.id };
         } catch {
           // Fall through to retry/error
         }
@@ -314,7 +314,7 @@ function createOpenRouterClient() {
           timeoutMs,
           provider,
         });
-        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
+        return { ...retried, usage: sumUsage(usage, retried.usage) };
       }
       // Never the content: a model can be led to repeat the prompts it was sent.
       console.error('Failed to parse JSON from completion', {
