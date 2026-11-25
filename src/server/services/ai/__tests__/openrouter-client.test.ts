@@ -68,3 +68,28 @@ describe('an unparseable completion', () => {
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain('PROMPT_ECHO');
   });
 });
+
+describe('getJsonCompletionWithUsage provider', () => {
+  const pin = { order: ['wafer/us'], allowFallbacks: false, dataCollection: 'deny' as const };
+  const messages = [{ role: 'user' as const, content: 'x' }];
+
+  it('sends the pin over the default, and keeps it on both retry paths', async () => {
+    send
+      .mockResolvedValueOnce(replyWith(''))
+      .mockResolvedValueOnce(replyWith('not json'))
+      .mockResolvedValueOnce(replyWith('{}'));
+
+    await openrouter!.getJsonCompletionWithUsage({ messages, retries: 2, provider: pin });
+
+    expect(send).toHaveBeenCalledTimes(3);
+    for (const call of send.mock.calls) expect(call[0].provider).toEqual(pin);
+  });
+
+  it('keeps the default when no pin is given', async () => {
+    send.mockResolvedValueOnce(replyWith('{}'));
+
+    await openrouter!.getJsonCompletionWithUsage({ messages });
+
+    expect(send.mock.calls[0][0].provider).toEqual({ allowFallbacks: true });
+  });
+});

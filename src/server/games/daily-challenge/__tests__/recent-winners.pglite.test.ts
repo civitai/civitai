@@ -44,11 +44,12 @@ describe('getRecentWinnerIdeas', () => {
       CREATE TABLE "Challenge" (id int, source text, "allowedNsfwLevel" int);
       CREATE TABLE "Image" (id int, "nsfwLevel" int, ingestion text, "blockedFor" text, "needsReview" text);
       CREATE TABLE "ChallengeWinner" ("challengeId" int, "imageId" int, reason text, "createdAt" timestamp);
-      INSERT INTO "Challenge" VALUES (1, 'System', 3), (2, 'System', 28), (3, 'User', 3), (9, 'System', 3);
+      INSERT INTO "Challenge" VALUES (1, 'System', 3), (2, 'System', 28), (3, 'User', 3), (9, 'System', 3), (4, 'System', 0);
       INSERT INTO "Image" VALUES
         (10, 1, 'Scanned', NULL, NULL), (11, 1, 'Scanned', NULL, NULL), (12, 4, 'Scanned', NULL, NULL),
         (13, 1, 'Scanned', 'tos', NULL), (14, 1, 'Scanned', NULL, 'minor'), (15, 1, 'Scanned', NULL, NULL),
-        (16, 1, 'Scanned', NULL, NULL);
+        (16, 1, 'Scanned', NULL, NULL),
+        (17, 1, 'Pending', NULL, NULL), (18, 0, 'Scanned', NULL, NULL), (19, 1, 'Scanned', NULL, NULL);
       INSERT INTO "ChallengeWinner" VALUES
         (1, 10, 'clean sfw winner', now()),
         (2, 11, 'mature challenge winner', now()),
@@ -56,7 +57,10 @@ describe('getRecentWinnerIdeas', () => {
         (1, 13, 'blocked since it won', now()),
         (1, 14, 'held for review', now()),
         (3, 15, 'user challenge winner', now()),
-        (9, 16, 'the challenge being judged', now());
+        (9, 16, 'the challenge being judged', now()),
+        (1, 17, 'image not scanned yet', now()),
+        (1, 18, 'image unrated', now()),
+        (4, 19, 'challenge level unset', now());
     `);
     vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation((async (
       strings: TemplateStringsArray,
@@ -68,7 +72,10 @@ describe('getRecentWinnerIdeas', () => {
 
     expect(await getRecentWinnerIdeas(9, { sfwOnly: true })).toEqual(['clean sfw winner']);
     expect((await getRecentWinnerIdeas(9, { sfwOnly: false })).sort()).toEqual([
+      'challenge level unset',
       'clean sfw winner',
+      'image not scanned yet',
+      'image unrated',
       'mature challenge winner',
       're-rated R since it won',
     ]);

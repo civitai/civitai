@@ -92,6 +92,7 @@ const { getJudgedEntries, reviewEntries } = await import(
   '~/server/jobs/daily-challenge-processing'
 );
 const { getChallengeConfig } = await import('~/server/games/daily-challenge/daily-challenge.utils');
+const { withFreshnessCriteria } = await import('~/server/games/daily-challenge/recent-winners');
 
 const CLEAN = 10;
 const BANNED = 20;
@@ -149,6 +150,9 @@ async function runOnPglite(strings: TemplateStringsArray, ...values: unknown[]) 
   return rows;
 }
 
+let challengeRecordOverrides: Record<string, unknown> = {};
+const winnerQueries: string[] = [];
+
 /** Entry reads (every one joins User) go to PGlite; the job's other reads get inert answers. */
 function routeQueries() {
   vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation((async (
@@ -165,8 +169,13 @@ function routeQueries() {
           source: ChallengeSource.System,
           entryFee: 0,
           prizeMode: 'Fixed',
+          ...challengeRecordOverrides,
         },
       ];
+    if (sql.includes('"ChallengeWinner"')) {
+      winnerQueries.push(Prisma.sql(strings, ...(values as never[])).text);
+      return [{ reason: 'a past winning idea' }];
+    }
     if (sql.includes('JOIN "User" u') || sql.includes('"ImageResourceNew"'))
       return runOnPglite(strings, ...values);
     return [];
@@ -558,5 +567,65 @@ describe('the judge-model shadow', () => {
       .map(([args]) => (args as { creator: string }).creator);
     expect(creators.length).toBeGreaterThan(0);
     expect(creators.every((c) => /^entry \d+$/.test(c))).toBe(true);
+    const primaryCreators = mockGenerateReview.mock.calls
+      .filter(([args]) => (args as { model?: string }).model !== SHADOW_MODEL)
+      .map(([args]) => (args as { creator: string }).creator);
+    expect(primaryCreators.length).toBeGreaterThan(0);
+    expect(primaryCreators.every((c) => c === 'clean' || c === 'banned')).toBe(true);
+  });
+});
+
+describe('recent winner ideas', () => {
+  const disclosedRubric = withFreshnessCriteria([
+    { key: 'theme', label: 'Theme', criteria: 'On theme.', weight: 50 },
+    { key: 'wordplay', label: 'Wordplay', criteria: 'A visual pun.', weight: 50 },
+  ]);
+  const ideasSent = () =>
+    mockGenerateReview.mock.calls.map(
+      ([args]) => (args as { recentWinnerIdeas?: string[] }).recentWinnerIdeas
+    );
+
+  beforeEach(async () => {
+    await setBanned(null);
+    await db.query(
+      `UPDATE "Image" SET "nsfwLevel" = 1, "modelRestricted" = false, ingestion = 'Scanned'`
+    );
+    winnerQueries.length = 0;
+  });
+  afterEach(() => {
+    challengeRecordOverrides = {};
+  });
+
+  it('reach the judge on an SFW System daily whose rubric discloses them, from SFW winners only', async () => {
+    challengeRecordOverrides = { judgingCategories: disclosedRubric };
+    await reviewedImageIds();
+
+    expect(ideasSent().length).toBeGreaterThan(0);
+    expect(ideasSent().every((ideas) => ideas?.[0] === 'a past winning idea')).toBe(true);
+    expect(winnerQueries).toHaveLength(1);
+    expect(winnerQueries[0]).toContain('"allowedNsfwLevel" <> 0');
+  });
+
+  it('read every System winner on a mature daily', async () => {
+    challengeRecordOverrides = { judgingCategories: disclosedRubric, allowedNsfwLevel: 1 | 4 };
+    await reviewedImageIds();
+
+    expect(winnerQueries[0]).not.toContain('"allowedNsfwLevel" <> 0');
+  });
+
+  it.each([
+    ['a user challenge', { judgingCategories: disclosedRubric, source: ChallengeSource.User }],
+    [
+      'a rubric that does not disclose them',
+      { judgingCategories: disclosedRubric.map((c) => ({ ...c, criteria: 'x' })) },
+    ],
+    ['no rubric', {}],
+  ])('never reach the judge for %s', async (_, overrides) => {
+    challengeRecordOverrides = overrides;
+    await reviewedImageIds();
+
+    expect(ideasSent().length).toBeGreaterThan(0);
+    expect(ideasSent().every((ideas) => ideas === undefined)).toBe(true);
+    expect(winnerQueries).toHaveLength(0);
   });
 });

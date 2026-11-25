@@ -17,7 +17,6 @@ export function hasFreshnessCategory(categories: { key: string; criteria: string
   );
 }
 
-/** The rubric a System daily stores and shows: freshness categories say that repeats score lower. */
 export function withFreshnessCriteria(categories: ChallengeJudgingCategory[]) {
   return categories.map((c) =>
     FRESHNESS_CATEGORY_KEYS.has(c.key) && !c.criteria.endsWith(FRESHNESS_CRITERIA_SUFFIX)
@@ -27,17 +26,16 @@ export function withFreshnessCriteria(categories: ChallengeJudgingCategory[]) {
 }
 
 /**
- * Why the latest System daily winners won, as one-line data for the review prompt. The reasons
- * were written by the judge from entrants' images, so they are capped and flattened here and
- * presented under the untrusted-fields preamble. An SFW challenge reads only winners of SFW
- * challenges whose image is still scanned SFW today (it may have been re-rated since it won), since
- * the description would reach an SFW prompt; a winner whose image is gone, blocked or held for
- * review is always skipped.
+ * Why the latest System daily winners won, for the review prompt. The reasons are judge-written
+ * from entrants' images, so they are capped and flattened and go under the untrusted-fields
+ * preamble. An SFW challenge re-checks the winning image's scan today, since it may have been
+ * re-rated since it won.
  */
 export async function getRecentWinnerIdeas(
   excludeChallengeId: number,
   { sfwOnly }: { sfwOnly: boolean }
 ): Promise<string[]> {
+  // getIsSafeBrowsingLevel (browsingLevel.constants.ts) in SQL, for the challenge and the image.
   const sfwFilter = sfwOnly
     ? Prisma.sql`AND c."allowedNsfwLevel" <> 0 AND (c."allowedNsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
       AND i."nsfwLevel" <> 0 AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
