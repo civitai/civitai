@@ -5,6 +5,8 @@ import {
   APPEAL_FILTERS,
   AUDIO_TABS,
   DEFAULT_AUDIO_TAB,
+  DISPUTE_FILTERS,
+  type DisputeSort,
   HELD_FILTERS,
   type HeldSort,
   isSongRatingLevel,
@@ -18,6 +20,7 @@ import {
   countHeldSongs,
   countReportedSongs,
   countSongAppeals,
+  countSongDisputes,
 } from '$lib/server/audio-review-count';
 import {
   boundSongReports,
@@ -26,8 +29,10 @@ import {
   getReportedSongRows,
   getReportedSongs,
   getSongAppeals,
+  getSongDisputes,
   isFlaggedSong,
   isSongAppeal,
+  songOfDispute,
 } from '$lib/server/audio-review.service';
 import {
   AppealRestoreRefusedError,
@@ -43,6 +48,7 @@ import {
 } from '$lib/server/image-queue';
 import { withheldRefusal } from '$lib/server/retracted-media';
 import { logAxiomError } from '$lib/server/axiom';
+import { resolveRatingReviewAction } from '$lib/server/rating-review-actions';
 import { getSongLinks } from '$lib/server/song-links.service';
 import { int4Id, parseForm, parseIdList, parseQueryKeys } from '$lib/server/query';
 import { violationInputSchema } from '$lib/violations';
@@ -63,6 +69,7 @@ const querySchema = z.object({
   has: z.enum(REPORTED_FILTERS).catch('all'),
   kind: z.enum(APPEAL_FILTERS).catch('all'),
   held: z.enum(HELD_FILTERS).catch('all'),
+  ask: z.enum(DISPUTE_FILTERS).catch('all'),
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   selected: int4Id.optional().catch(undefined),
@@ -70,7 +77,7 @@ const querySchema = z.object({
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   const parsed = parseQueryKeys(url, querySchema);
-  // The other tabs arrive later on this page; until then they open the Reported tab.
+  // A tab not yet live on this page opens the Reported tab.
   const tab = LIVE_AUDIO_TABS.includes(parsed.tab) ? parsed.tab : DEFAULT_AUDIO_TAB;
   const { sort, has: filter, q, page, selected } = parsed;
   const canAct = !!locals.grants[ACT];
@@ -78,15 +85,16 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const heldCount = () => countHeldSongs().then(({ lyrics, actionable }) => lyrics + actionable);
   if (tab === 'held') {
     const heldSort: HeldSort = sort === 'newest' ? 'newest' : 'oldest';
-    const [held, reported, appealCount] = await Promise.all([
+    const [held, reported, appealCount, disputes] = await Promise.all([
       getHeldSongs({ sort: heldSort, filter: parsed.held, q, page, user: locals.user }),
       countReportedSongs(),
       countSongAppeals(),
+      countSongDisputes(),
     ]);
     return {
       tab,
       held: { ...held, filters: { sort: heldSort, kind: parsed.held } },
-      counts: { reported: reported.songs, appeals: appealCount, held: held.facets.all },
+      counts: { reported: reported.songs, appeals: appealCount, held: held.facets.all, disputes },
       canOpenHolds: canAccess(locals.user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT],
       q,
       page,
@@ -97,15 +105,16 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   }
   if (tab === 'appeals') {
     const appealSort: AppealSort = sort === 'newest' ? 'newest' : 'oldest';
-    const [appeals, reported, held] = await Promise.all([
+    const [appeals, reported, held, disputes] = await Promise.all([
       getSongAppeals({ sort: appealSort, filter: parsed.kind, q, page, user: locals.user }),
       countReportedSongs(),
       heldCount(),
+      countSongDisputes(),
     ]);
     return {
       tab,
       appeals: { ...appeals, filters: { sort: appealSort, kind: parsed.kind } },
-      counts: { reported: reported.songs, appeals: appeals.facets.all, held },
+      counts: { reported: reported.songs, appeals: appeals.facets.all, held, disputes },
       q,
       page,
       canAct,
@@ -113,10 +122,35 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       headerInline: true,
     };
   }
-  const [result, appealCount, heldTotal] = await Promise.all([
+  if (tab === 'disputes') {
+    const disputeSort: DisputeSort = sort === 'newest' ? 'newest' : 'oldest';
+    const [disputes, reported, appealCount, held] = await Promise.all([
+      getSongDisputes({ sort: disputeSort, filter: parsed.ask, q, page, user: locals.user }),
+      countReportedSongs(),
+      countSongAppeals(),
+      heldCount(),
+    ]);
+    return {
+      tab,
+      disputes: { ...disputes, filters: { sort: disputeSort, ask: parsed.ask } },
+      counts: {
+        reported: reported.songs,
+        appeals: appealCount,
+        held,
+        disputes: disputes.facets.all,
+      },
+      q,
+      page,
+      canAct,
+      fullBleed: true,
+      headerInline: true,
+    };
+  }
+  const [result, appealCount, heldTotal, disputeCount] = await Promise.all([
     getReportedSongs({ sort, filter, q, page, user: locals.user }),
     countSongAppeals(),
     heldCount(),
+    countSongDisputes(),
   ]);
   // A deep link opens its song even when the filters or paging leave it off this page.
   const pinned =
@@ -126,7 +160,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   return {
     tab,
     reported: { ...result, pinned },
-    counts: { reported: result.facets.all, appeals: appealCount, held: heldTotal },
+    counts: {
+      reported: result.facets.all,
+      appeals: appealCount,
+      held: heldTotal,
+      disputes: disputeCount,
+    },
     filters: { tab, sort, filter },
     q,
     page,
@@ -294,7 +333,43 @@ export const actions: Actions = {
   // it removed with the reason recorded and the owner told.
   approveAppeal: gated((event) => decideAppeal(event, 'Approved')),
   rejectAppeal: gated((event) => decideAppeal(event, 'Rejected')),
+
+  // An owner's rating dispute on a song, ruled through the moderator rating-review resolver (the one
+  // /ratings uses, which leaves song disputes to this page): applying the owner's ask approves it and
+  // anything else rejects it, keeping the rating needs a reason, the level is written only to a song
+  // its own scans reviewed, and the owner is told.
+  resolveDispute: gated(async (event) => {
+    const input = parseForm(disputeSchema, await event.request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const { reviewId } = input;
+    const songId = await songOfDispute(reviewId);
+    if (songId == null)
+      return fail(409, {
+        error: 'This dispute was already decided, or is not on a song. Reload.',
+        key: reviewId,
+      });
+    const withheld = await withheldRefusal(event.locals.user, [songId]);
+    if (withheld) return fail(403, { error: withheld, key: reviewId });
+    const result = await resolveRatingReviewAction({
+      ...input,
+      userId: event.locals.user.id,
+      songs: true,
+    });
+    if (!result.ok) return fail(409, { error: result.error, key: reviewId });
+    return { success: true, status: result.status, key: reviewId };
+  }),
 };
+
+const disputeSchema = z.object({
+  reviewId: int4Id,
+  appliedLevel: z.coerce.number().int().positive(),
+  modComment: z
+    .string()
+    .trim()
+    .max(1000)
+    .optional()
+    .transform((v) => v || undefined),
+});
 
 async function isSong(imageId: number) {
   const song = await dbRead

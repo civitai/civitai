@@ -16,6 +16,7 @@ import {
   countHeldSongs,
   countReportedSongs,
   countSongAppeals,
+  countSongDisputes,
   songAppealImages,
   withSongBadges,
 } from './audio-review-count';
@@ -199,6 +200,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     reportedSongs,
     songAppeals,
     heldSongs,
+    songDisputes,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Waited on for 3 seconds at most, and at most one scan runs across all servers: it can take
@@ -271,6 +273,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSongAppeals),
     // The Held tab's songs and covers decided there; lyrics holds are CSAM holds' badge.
     bounded(countHeldSongs),
+    bounded(countSongDisputes),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -291,8 +294,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     imageTags,
     trainingDataReview,
     audioReview:
-      reportedSongs && songAppeals != null && heldSongs
-        ? reportedSongs.songs + songAppeals + heldSongs.actionable
+      reportedSongs && songAppeals != null && heldSongs && songDisputes != null
+        ? reportedSongs.songs + songAppeals + heldSongs.actionable + songDisputes
         : null,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);

@@ -1056,11 +1056,18 @@ const readLiveCrucible = (trx: Transaction<DB>, entityId: number) =>
     .forUpdate()
     .executeTakeFirst();
 
+const SONG_DISPUTE_ELSEWHERE =
+  "A song's rating dispute is decided on the Audio review page's Disputes tab.";
+const NOT_A_SONG_DISPUTE = 'This dispute is not on a song. Reload.';
+
 export async function resolveRatingReview(input: {
   reviewId: number;
   appliedLevel: number;
   modComment?: string;
   moderatorId: number;
+  /** Set by the Audio review page, the one place a song's dispute is decided: it resolves only
+   *  those, and every other caller resolves anything but those. */
+  songs?: boolean;
 }): Promise<ResolveResult> {
   const { reviewId, appliedLevel, modComment, moderatorId } = input;
 
@@ -1077,6 +1084,8 @@ export async function resolveRatingReview(input: {
       throw new RatingReviewResolveError(`Unknown entity type ${review.entityType}`);
     const entityType = review.entityType;
     const entityId = review.entityId;
+    if ((entityType === SONG_ENTITY_TYPE) !== !!input.songs)
+      throw new RatingReviewResolveError(input.songs ? NOT_A_SONG_DISPUTE : SONG_DISPUTE_ELSEWHERE);
 
     let exists: boolean;
     let challenge: LiveChallenge | undefined;

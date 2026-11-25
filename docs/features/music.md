@@ -189,13 +189,12 @@ song card (see Moderating songs).
 
 In the moderator app (`apps/moderator`), songs have their own page, **Audio review**
 (`/audio-review`, under Audio in the sidebar, with the number of reported songs, pending
-appeals and held songs and covers decided there). It is built on the shared triage shell: the queue on the left, the open song in the
+appeals, held songs and covers decided there, and pending rating disputes). It is built on the shared triage shell: the queue on the left, the open song in the
 middle, its reports, cover, checks, generation details and owner on the right with the decision bar
 pinned under them. J/K move, number
 keys decide, and a decided song dims and the next one opens. Desktop widths only.
 
-- **Tabs:** Reported, Appeals, Held and Disputes. Reported, Appeals and Held work today; Disputes
-  shows as "Soon" and arrives on this page later.
+- **Tabs:** Reported, Appeals, Held and Disputes.
 - **Reported** lists songs with Pending reports (the reasons Image reports counts), one row per song:
   cover, title, how long it has waited, the most reported reason, the number of reporters and the
   owner. Sort by oldest, newest or most reports; chips for All, "Has a time" (a report with
@@ -267,6 +266,21 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   song withheld from the moderator (`withheldImageIds`) carries only its id and kind, and takes no
   decision. Every decision needs `image.moderate`. The sidebar badge counts the flagged songs and
   covers decided here, not lyrics holds, which CSAM holds counts; the tab's own count includes them.
+- **Disputes** lists owners' Pending rating disputes on songs (`RatingReview` entity type `Song`, see
+  "Rating disputes" below), one row per dispute: the level the owner saw and the level they ask
+  for, "Repeat ×n" from the second dispute on the same song, and the owner with whether they
+  commented. Chips for All, Asks lower and Asks higher; sort by oldest or newest; search by title,
+  owner, the song's id or the dispute's. The open dispute has the song card (player and lyrics), its
+  facts, the two levels, the owner's comment, "This dispute" (when it was filed and the last ruling
+  on an earlier dispute of the song) and the song's side cards. Keys 1 to 5 pick PG to XXX, then a
+  note and Enter apply it, as on `/ratings` (the same decision form): applying the owner's ask
+  approves the dispute, any other level rejects it, and keeping the current level needs a reason.
+  The ruling goes through the moderator rating-review resolver (`resolveRatingReview`, with
+  `songs: true`), which writes the level to the song and tells the owner (see "Rating disputes").
+  A song its scans have not reviewed yet shows that and takes no level; one that can never be
+  reviewed says so, and any level closes its dispute with nothing applied. A dispute on a song
+  withheld from the moderator shows only the ids and the wait, takes no decision and links to the
+  CSAM image queue. Every decision needs `image.moderate`.
 - **The image review queues** (`/images/minor`, `/images/poi`, `/images/tag` and the rest, not the
   CSAM queue) and their badges leave out songs and songs' own covers under those flags
   (`onHeldTabText`), since the Held tab decides each of them. The one case it does not take stays
@@ -347,8 +361,10 @@ retry ceilings, under the failure class the cron itself resolves, `effectiveScan
 cannot be disputed, each with its own message. A dispute closed with nothing applied does not stop
 the owner filing again once a rescan has reviewed the song.
 
-Moderators decide song disputes on the moderator app's Audio review page, not in `/ratings`, whose
-tabs, deep links and sidebar badge leave songs out, nor from a ticket's rating disputes. A ruling goes through the moderator rating writer
+Moderators decide song disputes on the moderator app's Audio review page (its Disputes tab), not in
+`/ratings`, whose tabs, deep links and sidebar badge leave songs out, nor from a ticket's rating
+disputes: the resolver refuses a song dispute from any caller but that tab, and refuses anything
+else from it. A ruling goes through the moderator rating writer
 (`writeImageNsfwLevel`, on the ruling's own transaction, with each of its cache, activity and search
 steps run after commit, a failing one not skipping the rest): it sets and locks the song's level, and since a locked level counts as the
 song's review, it is refused, with nothing written, while the song's scans are running or due a retry,

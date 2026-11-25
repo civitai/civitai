@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { playerSongCoverText, songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
 import { storedSongDurationSec } from '@civitai/shared';
+import { songNeverReviewable } from '@civitai/shared/rating-review';
 import {
   checkState,
   LYRICS_SOURCE_LABELS,
@@ -9,6 +10,9 @@ import {
   removalReasonLabel,
   type AppealFilter,
   type AppealSort,
+  type DisputeFilter,
+  type DisputeSongState,
+  type DisputeSort,
   type HeldFilter,
   type HeldKind,
   type HeldSongRow,
@@ -18,12 +22,15 @@ import {
   type ReportedSongRow,
   type ReportedSort,
   type SongDetails,
+  type SongDisputeRow,
   type SongReport,
 } from '$lib/audio-review';
+import { ReportStatus, SONG_ENTITY_TYPE } from '$lib/rating-review';
 import { reportDetail, reportReasonLabel } from '$lib/reports';
 import {
   flaggedCoverText,
   flaggedSongsText,
+  pendingSongDisputes,
   pendingSongReports,
   songAppealImages,
 } from './audio-review-count';
@@ -815,4 +822,194 @@ export async function flaggedCoverOf(songId: number, flag: string): Promise<numb
     .where(sql<boolean>`${sql.raw(flaggedCoverText('c', 's'))}`)
     .executeTakeFirst();
   return row?.id ?? null;
+}
+
+/** The disputes read at once; past this the oldest are listed and the rest wait, as appeals do. */
+const DISPUTES_READ = 500;
+
+/**
+ * One page of the Disputes tab: owners' Pending rating disputes on songs, each with its song, the
+ * owner's ask and words, and the last ruling on an earlier dispute of the same song. Filtered here
+ * like the other tabs, since a dispute on a song withheld from this moderator matches only its exact
+ * id (the dispute's or the song's), never its title or owner.
+ */
+export async function getSongDisputes({
+  sort,
+  filter,
+  q,
+  page,
+  user,
+}: {
+  sort: DisputeSort;
+  filter: DisputeFilter;
+  q: string;
+  page: number;
+  user: App.Locals['user'] | undefined;
+}) {
+  const disputes = await pendingSongDisputes()
+    .innerJoin('User as owner', 'owner.id', 'rr.userId')
+    .leftJoin('Image as s', (join) =>
+      join.onRef('s.id', '=', 'rr.entityId').on('s.type', '=', 'audio')
+    )
+    .leftJoin('Track as t', 't.imageId', 's.id')
+    .leftJoin('Image as c', 'c.id', 't.coverImageId')
+    .select([
+      'rr.id',
+      'rr.entityId as songId',
+      'rr.createdAt',
+      'rr.currentLevel',
+      'rr.suggestedLevel',
+      'rr.userComment',
+      'owner.id as ownerId',
+      'owner.username as ownerUsername',
+      's.id as foundId',
+      's.url',
+      's.nsfwLevel',
+      's.ingestion',
+      sql<string | null>`s.metadata->>'title'`.as('title'),
+      // The resolver's own reads of whether the song can still be reviewed (`songNeverReviewable`).
+      sql<number | null>`(s."scanJobs"->>'retryCount')::int`.as('retryCount'),
+      sql<
+        string | null
+      >`COALESCE(s."scanJobs"->'error', s."scanJobs"->'lastFailure')->>'failureClass'`.as(
+        'failureClass'
+      ),
+      sql<
+        string | null
+      >`COALESCE(s."scanJobs"->'error', s."scanJobs"->'lastFailure')->>'reason'`.as(
+        'failureReason'
+      ),
+      'c.id as coverId',
+      sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
+        playerSongCoverText('c')
+      )} THEN c.url END`.as('coverUrl'),
+    ])
+    .orderBy('rr.createdAt')
+    .orderBy('rr.id')
+    .limit(DISPUTES_READ)
+    .execute();
+
+  const songIds = [...new Set(disputes.map((d) => d.songId))];
+  const [history, withheldList, coversWithheld] = await Promise.all([
+    songIds.length
+      ? dbRead
+          .selectFrom('RatingReview')
+          .select(['entityId', 'status', 'appliedLevel', 'resolvedAt'])
+          .where('entityType', '=', SONG_ENTITY_TYPE)
+          .where('entityId', 'in', songIds)
+          .where('status', '<>', ReportStatus.Pending)
+          .orderBy('createdAt', 'desc')
+          .execute()
+      : [],
+    songIds.length ? withheldImageIds(user, songIds) : [],
+    withheldCovers(disputes, user),
+  ]);
+  const withheld = new Set(withheldList);
+  // Newest first, so the first ruling seen per song is its last.
+  const earlierOf = new Map<number, (typeof history)[number]>();
+  const decidedOf = new Map<number, number>();
+  for (const h of history) {
+    if (!earlierOf.has(h.entityId)) earlierOf.set(h.entityId, h);
+    decidedOf.set(h.entityId, (decidedOf.get(h.entityId) ?? 0) + 1);
+  }
+
+  const rows = disputes.map((d): SongDisputeRow & { asks: 'lower' | 'higher' | null } => {
+    const asks: 'lower' | 'higher' | null =
+      d.suggestedLevel < d.currentLevel
+        ? 'lower'
+        : d.suggestedLevel > d.currentLevel
+        ? 'higher'
+        : null;
+    const state: DisputeSongState =
+      d.foundId == null ||
+      songNeverReviewable({
+        ingestion: d.ingestion ?? '',
+        retryCount: d.retryCount,
+        failureClass: d.failureClass,
+        failureReason: d.failureReason,
+      })
+        ? 'gone'
+        : d.ingestion === 'Scanned'
+        ? 'reviewed'
+        : 'unreviewed';
+    const base = {
+      id: d.id,
+      songId: d.songId,
+      waitingSince: d.createdAt,
+      state,
+      disputes: (decidedOf.get(d.songId) ?? 0) + 1,
+      asks,
+    };
+    if (withheld.has(d.songId))
+      return {
+        ...base,
+        withheld: true,
+        title: null,
+        url: null,
+        coverUrl: null,
+        owner: null,
+        currentLevel: null,
+        suggestedLevel: null,
+        songLevel: null,
+        message: null,
+        earlier: null,
+      };
+    const earlier = earlierOf.get(d.songId);
+    return {
+      ...base,
+      withheld: false,
+      title: d.title || null,
+      url: d.url,
+      coverUrl: shownThumb(d, coversWithheld),
+      owner: { id: d.ownerId, username: d.ownerUsername },
+      currentLevel: d.currentLevel,
+      suggestedLevel: d.suggestedLevel,
+      songLevel: d.nsfwLevel,
+      message: d.userComment || null,
+      earlier: earlier
+        ? {
+            status: earlier.status,
+            appliedLevel: earlier.appliedLevel,
+            resolvedAt: earlier.resolvedAt,
+          }
+        : null,
+    };
+  });
+
+  const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
+  const term = q.toLowerCase();
+  const searched = !q
+    ? rows
+    : rows.filter((r) =>
+        asId?.success
+          ? r.id === asId.data || r.songId === asId.data
+          : !r.withheld &&
+            (!!r.title?.toLowerCase().includes(term) ||
+              !!r.owner?.username?.toLowerCase().startsWith(term))
+      );
+  const facets = {
+    all: searched.length,
+    lower: searched.filter((r) => r.asks === 'lower').length,
+    higher: searched.filter((r) => r.asks === 'higher').length,
+  };
+  const filtered = searched.filter((r) => filter === 'all' || r.asks === filter);
+  if (sort === 'newest') filtered.reverse();
+  const offset = (page - 1) * PAGE_SIZE;
+  return {
+    items: filtered.slice(offset, offset + PAGE_SIZE).map(({ asks: _, ...row }) => row),
+    hasMore: filtered.length > offset + PAGE_SIZE,
+    total: facets[filter],
+    facets,
+    offset,
+    pageSize: PAGE_SIZE,
+  };
+}
+
+/** The song of a Pending song dispute, or null when the dispute was decided or is not on a song. */
+export async function songOfDispute(reviewId: number): Promise<number | null> {
+  const row = await pendingSongDisputes()
+    .select('rr.entityId')
+    .where('rr.id', '=', reviewId)
+    .executeTakeFirst();
+  return row?.entityId ?? null;
 }

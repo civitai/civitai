@@ -3,8 +3,8 @@ import { removedKind, removedTitle, type RemovedState } from '$lib/image-review'
 import { VIOLATION_LABELS } from '$lib/violations';
 
 /**
- * Audio review (`/audio-review`): songs and their covers, on the shared triage shell. Reported,
- * Appeals and Held work today; Disputes is shown and arrives later on this page.
+ * Audio review (`/audio-review`): songs and their covers, on the shared triage shell: reports,
+ * appeals, holds and owners' rating disputes.
  */
 export const AUDIO_TABS = ['reported', 'appeals', 'held', 'disputes'] as const;
 export type AudioTab = (typeof AUDIO_TABS)[number];
@@ -18,7 +18,7 @@ export const AUDIO_TAB_LABELS: Record<AudioTab, string> = {
 };
 
 /** The tabs that work on this page; the rest render disabled. */
-export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported', 'appeals', 'held'];
+export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported', 'appeals', 'held', 'disputes'];
 
 export const REPORTED_SORTS = ['oldest', 'newest', 'most'] as const;
 export type ReportedSort = (typeof REPORTED_SORTS)[number];
@@ -367,3 +367,56 @@ export const lyricsHoldHref = (songId: number) =>
 
 export const heldRowTitle = (row: Pick<HeldSongRow, 'id' | 'withheld' | 'title'>) =>
   row.withheld ? `Withheld song #${row.id}` : row.title || `Untitled song #${row.id}`;
+
+/** Disputes tab chips: every dispute, or those asking for a lower or a higher rating. */
+export const DISPUTE_FILTERS = ['all', 'lower', 'higher'] as const;
+export type DisputeFilter = (typeof DISPUTE_FILTERS)[number];
+export const DISPUTE_SORTS = ['oldest', 'newest'] as const;
+export type DisputeSort = (typeof DISPUTE_SORTS)[number];
+
+/**
+ * Whether a disputed song can take a level: `reviewed` once its own scans reviewed it; `unreviewed`
+ * while they are running or will be retried (the resolver refuses a level until then); `gone` when
+ * it was deleted, removed or will never be reviewed, so a ruling closes the dispute and applies
+ * nothing (the resolver's missing-entity path).
+ */
+export type DisputeSongState = 'reviewed' | 'unreviewed' | 'gone';
+
+/** An owner's Pending rating dispute on a song (`RatingReview` entity type `Song`), one row each. */
+export type SongDisputeRow = {
+  /** The dispute (`RatingReview.id`). */
+  id: number;
+  songId: number;
+  /** Withheld from this moderator by the media access rule: only the ids and the wait. */
+  withheld: boolean;
+  waitingSince: Date;
+  title: string | null;
+  /** The song's storage key. */
+  url: string | null;
+  /** The list thumbnail: the cover as the public player shows it. */
+  coverUrl: string | null;
+  owner: { id: number; username: string | null } | null;
+  /** The level the owner saw when they disputed it. */
+  currentLevel: number | null;
+  /** The level they ask for. */
+  suggestedLevel: number | null;
+  /** The song's level now. */
+  songLevel: number | null;
+  /** The owner's words. */
+  message: string | null;
+  state: DisputeSongState;
+  /** This song's disputes so far, this one included: 2 or more is a repeat. */
+  disputes: number;
+  /** The last ruling on an earlier dispute of this song. */
+  earlier: { status: string; appliedLevel: number | null; resolvedAt: Date | null } | null;
+};
+
+/** The rating keys: 1 to 5 apply PG to XXX. None on a withheld song, a song its scans have not
+ *  reviewed, or without the grant. */
+export const disputeKeysEnabled = (
+  row: Pick<SongDisputeRow, 'withheld' | 'state'>,
+  canAct: boolean
+) => SONG_RATING_LEVELS.map(() => canAct && !row.withheld && row.state !== 'unreviewed');
+
+export const disputeRowTitle = (row: Pick<SongDisputeRow, 'songId' | 'withheld' | 'title'>) =>
+  row.withheld ? `Withheld song #${row.songId}` : row.title || `Untitled song #${row.songId}`;

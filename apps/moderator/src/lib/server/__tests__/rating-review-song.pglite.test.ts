@@ -141,6 +141,7 @@ describe('a song rating dispute', () => {
       reviewId: id,
       appliedLevel: 4,
       moderatorId: mod,
+      songs: true,
     });
 
     expect(res).toMatchObject({
@@ -168,7 +169,7 @@ describe('a song rating dispute', () => {
     vi.mocked(queueDocumentsForImageMinorChanges).mockRejectedValueOnce(new Error('search down'));
 
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod, songs: true })
     ).resolves.toMatchObject({ status: 'Actioned' });
 
     // Run once the ruling committed; its failure is logged, not turned into a failed ruling.
@@ -191,7 +192,7 @@ describe('a song rating dispute', () => {
     vi.mocked(invalidateThumbnails).mockRejectedValueOnce(new Error('main app down'));
 
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod, songs: true })
     ).resolves.toMatchObject({ status: 'Actioned' });
 
     expect(bustProfilePictures).toHaveBeenCalledWith({ imageIds: [song] });
@@ -225,7 +226,12 @@ describe('a song rating dispute', () => {
       dialect: pgliteDialect(tracing, { onQuery: (c) => (connection = c) }),
     });
 
-    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+    await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 4,
+      moderatorId: mod,
+      songs: true,
+    });
 
     dbHandle.current = ratingReviewKysely(db);
     const begin = ran.find((r) => r.text === 'begin');
@@ -254,7 +260,12 @@ describe('a song rating dispute', () => {
       const id = await fileSongReview(song);
 
       await expect(
-        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+        service.resolveRatingReview({
+          reviewId: id,
+          appliedLevel: 4,
+          moderatorId: mod,
+          songs: true,
+        })
       ).rejects.toThrow(
         "This song's own scans have not reviewed it yet; they are running or will be retried. Rule on its dispute once they have."
       );
@@ -288,7 +299,7 @@ describe('a song rating dispute', () => {
     dbHandle.current = new Kysely({ dialect: pgliteDialect(racing) });
 
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod, songs: true })
     ).rejects.toThrow('This song changed while it was being rated. Reload.');
 
     dbHandle.current = ratingReviewKysely(db);
@@ -317,7 +328,12 @@ describe('a song rating dispute', () => {
       const id = await fileSongReview(song);
 
       await expect(
-        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+        service.resolveRatingReview({
+          reviewId: id,
+          appliedLevel: 4,
+          moderatorId: mod,
+          songs: true,
+        })
       ).resolves.toMatchObject({ entityMissing: true, status: 'Unactioned' });
 
       expect(await image(song)).toEqual({ nsfwLevel: 8, nsfwLevelLocked: false });
@@ -336,7 +352,12 @@ describe('a song rating dispute', () => {
 
     for (const id of [gone, onPicture])
       await expect(
-        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+        service.resolveRatingReview({
+          reviewId: id,
+          appliedLevel: 4,
+          moderatorId: mod,
+          songs: true,
+        })
       ).resolves.toMatchObject({ entityMissing: true, status: 'Unactioned' });
 
     expect(await image(picture)).toEqual({ nsfwLevel: 8, nsfwLevelLocked: false });
