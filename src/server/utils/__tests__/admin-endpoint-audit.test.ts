@@ -180,7 +180,8 @@ describe('admin endpoint audit record', () => {
   });
 
   it('leaves no fragment of a configured token that straddles the cap', async () => {
-    // `{"query":{},"body":{"padding":"` + padding + `","t":"` puts the token at char 1990.
+    // `{"query":{},"body":{"padding":"` + padding + `","t":"` puts the token at index 1991,
+    // so a cut alone would keep 9 of its chars.
     const padding = 'a'.repeat(1953);
     await call(audited, {
       path: '/api/admin/test-action',
