@@ -10,8 +10,7 @@
 
   // The public CDN first. Media it will not serve (a blocked image or video) is tried once more from
   // storage through `/api/retracted-media`, which decides on the server whether this moderator may see
-  // it; an `unprocessed` upload is not, as storage has no file for it either. Storage has the original
-  // only, so that copy is full size.
+  // it. Storage has the original only, so that copy is full size.
   let {
     item,
     width = 450,

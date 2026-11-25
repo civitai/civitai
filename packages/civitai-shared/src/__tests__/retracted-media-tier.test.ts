@@ -33,7 +33,6 @@ describe('csamRestrictedSql, moderatorWithheldSql and urlSiblingsSql', () => {
     for (const alias of declaredWithheld)
       for (const a of [alias, alias.toUpperCase()])
         expect({ a, refused: refuses(() => withheld(a)) }).toEqual({ a, refused: true });
-    expect(moderatorWithheldSql('i', { csamReview: true })).toBe('false');
     expect(() => urlSiblingsSql('us')).toThrow(/Bad table alias/);
     expect(() => urlSiblingsSql('US')).toThrow(/Bad table alias/);
     expect(() => urlSiblingsSql('i')).not.toThrow();

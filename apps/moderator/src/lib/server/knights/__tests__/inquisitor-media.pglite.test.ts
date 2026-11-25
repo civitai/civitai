@@ -182,7 +182,7 @@ describe('getInquisitorQueue media, by viewer', () => {
   });
 
   // The moderator-view rule reads Postgres only.
-  it("sends an image the scanner's CSAM label marks to the route, as any blocked image", async () => {
+  it("sends an image the scanner's CSAM label marks to the route, as any blocked image (civitai/civitai#10377)", async () => {
     await queued({});
     scanner.verdict = 'hit';
     expect(await media()).toBe('retracted');

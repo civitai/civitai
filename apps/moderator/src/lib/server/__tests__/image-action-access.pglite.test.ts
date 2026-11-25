@@ -737,7 +737,7 @@ describe('a live image sharing its url, without the grant', () => {
   );
 
   // A block reason is not a CSAM mark unless it is CSAM itself.
-  it('is acted on when a sibling on its url carries an unrecognised block reason', async () => {
+  it('is acted on when a sibling on its url carries an unrecognised block reason (civitai/civitai#10377)', async () => {
     await queuePage.actions.accept(event(WITHOUT_GRANT, { imageId: String(SIGNAL_SHARED) }));
     expect(acceptImage).toHaveBeenCalledOnce();
   });
@@ -1151,15 +1151,18 @@ describe('the reported and review queues, without the grant', () => {
   it.each([
     ['minor review', minor],
     ['reported', reported],
-  ] as const)('%s shows a card whose label item is on a csam hold', async (_, read) => {
-    await db.exec(
-      `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (990000091, ${CLEAN}, 'csam-hold')`
-    );
-    expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
-      url: 'queue-clean-key',
-      restricted: false,
-    });
-  });
+  ] as const)(
+    '%s shows a card whose label item is on a csam hold (civitai/civitai#10377)',
+    async (_, read) => {
+      await db.exec(
+        `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (990000091, ${CLEAN}, 'csam-hold')`
+      );
+      expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
+        url: 'queue-clean-key',
+        restricted: false,
+      });
+    }
+  );
 
   it('sends no report reason or details on a withheld reported card, and both to a grant holder', async () => {
     expect((await reported(WITHOUT_GRANT)).get(KEPT)).toMatchObject({

@@ -186,6 +186,7 @@ export async function rescanStuckImages({
 }
 
 /** Shared by the queue and its badge: a divergence here is a count that never reaches zero. */
+// "createdAt" is a timestamp without time zone holding UTC; a bare now() would compare in the session zone.
 const ingestionErrorWhere = sql`
   i."createdAt" > (now() AT TIME ZONE 'UTC') - INTERVAL '2 days'
   AND i."createdAt" < (now() AT TIME ZONE 'UTC') - INTERVAL '1 hour'

@@ -191,7 +191,7 @@ describe('card load, without the grant', () => {
 
   // The moderator-view rule reads Postgres only, and none of these is a CSAM mark of a row: a url
   // sibling still scanning, or the scanner's label on the row or a sibling.
-  it('serves a row only the scanner or an unscanned sibling would have kept', async () => {
+  it('serves a row only the scanner or an unscanned sibling would have kept (civitai/civitai#10377)', async () => {
     for (const id of [SHARED_URL, SCANNER_HIT, SCANNER_SIBLING])
       expect({ id, card: await card(WITHOUT_GRANT, id) }).toMatchObject({
         id,
