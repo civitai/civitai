@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { IconMusic, IconPhoto, IconZoomCancel } from '@tabler/icons-svelte';
-  import { page as pageState } from '$app/state';
+  import { IconMusic, IconPhoto } from '@tabler/icons-svelte';
   import TriageFilterChips, {
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
@@ -17,14 +16,13 @@
     type AppealSort,
     type SongAppealRow,
   } from '$lib/audio-review';
-  import { LINK_CLASS, shortAge } from '$lib/format';
+  import { waitingMeta } from '$lib/format';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
-  import { urlWith } from '$lib/url';
   import AppealSongDetail from './AppealSongDetail.svelte';
+  import QueueEmpty from './QueueEmpty.svelte';
+  import { oldestNewestSort } from './queue';
 
-  // Audio review's Appeals tab: owners' Pending appeals of a removed song or of a song's removed
-  // cover, decided with the image appeal resolver (docs/features/music.md "Moderating songs").
   let {
     appeals,
     filters,
@@ -63,15 +61,7 @@
       page: page > 1 ? page : undefined,
     });
 
-  const sortGroup = $derived({
-    key: 'sort',
-    label: 'Sort',
-    values: ['oldest', 'newest'] as const,
-    labels: { oldest: 'Oldest first', newest: 'Newest first' },
-    active: filters.sort,
-    defaultValue: 'oldest',
-    pill: true,
-  } satisfies ChipGroup);
+  const sortGroup = $derived(oldestNewestSort(filters.sort));
   const kindGroup = $derived({
     key: 'kind',
     label: 'Show',
@@ -82,14 +72,6 @@
     counts: appeals.facets,
     compact: true,
   } satisfies ChipGroup);
-
-  const clearSearchHref = $derived(
-    urlWith(pageState.url, { q: null, page: null, [SELECTION]: null })
-  );
-  // Amber once an appeal has waited a day, as the other triage queues mark someone waiting.
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const waitedLong = (row: SongAppealRow) =>
-    Date.now() - new Date(row.waitingSince).getTime() >= DAY_MS;
 
   const decisionsFor = (row: SongAppealRow) => appealDecisionsEnabled(row, canAct);
 </script>
@@ -105,19 +87,7 @@
 {/snippet}
 
 {#snippet empty()}
-  <div
-    class="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-sm text-dark-0 in-[section]:hidden"
-  >
-    <IconZoomCancel class="mb-1.5 size-5 text-dark-2" aria-hidden="true" />
-    <p class="m-0 font-medium text-white">
-      No pending appeals{q ? ` match "${q}"` : ''}
-    </p>
-    <p class="m-0 text-xs text-dark-2">Search matches a song title, an owner username or an ID.</p>
-    {#if q}
-      <a href={clearSearchHref} class="text-xs {LINK_CLASS}">Clear search</a>
-    {/if}
-  </div>
-  <p class="m-0 hidden text-sm text-dark-2 in-[section]:block">Select an appeal to review it.</p>
+  <QueueEmpty nothing="No pending appeals" q={q} pick="Select an appeal to review it." />
 {/snippet}
 
 <TriageShell
@@ -145,8 +115,7 @@
       href={state.href}
       selected={state.selected}
       title={appealRowTitle(row)}
-      meta={waitedLong(row) ? `waiting ${shortAge(row.waitingSince)}` : shortAge(row.waitingSince)}
-      metaClass={waitedLong(row) ? 'text-amber-300' : 'text-dark-2'}
+      {...waitingMeta(row.waitingSince)}
       coverUrl={row.kind === 'song' ? row.coverUrl ?? undefined : undefined}
       verdict={state.verdict}
       error={state.error}

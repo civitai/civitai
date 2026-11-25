@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { IconMusic, IconPlayerPlay, IconZoomCancel } from '@tabler/icons-svelte';
+  import { IconMusic, IconPlayerPlay } from '@tabler/icons-svelte';
   import { formatPlaybackTime } from '@civitai/shared';
   import { SvelteMap } from 'svelte/reactivity';
-  import { page } from '$app/state';
   import TriageFilterChips, {
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
@@ -14,7 +13,6 @@
     AUDIO_TAB_LABELS,
     AUDIO_TABS,
     DEFAULT_AUDIO_TAB,
-    LIVE_AUDIO_TABS,
     REPORTED_DECISIONS,
     REPORTED_FILTER_LABELS,
     REPORTED_FILTERS,
@@ -26,28 +24,26 @@
     songRemovedTitle,
     songReportReasons,
     SONG_RATING_LEVELS,
+    songTitle,
     type ReportedSongRow,
   } from '$lib/audio-review';
-  import { LINK_CLASS, plural, shortAge } from '$lib/format';
+  import { plural, waitingMeta } from '$lib/format';
   import { removedCovers } from '$lib/music/removed-covers';
   import { submitDecisionForm } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
-  import { urlWith } from '$lib/url';
   import AppealsQueue from './AppealsQueue.svelte';
   import DisputesQueue from './DisputesQueue.svelte';
   import HeldQueue from './HeldQueue.svelte';
+  import QueueEmpty from './QueueEmpty.svelte';
   import ReportedSongDetail from './ReportedSongDetail.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const SELECTION = 'selected';
-  // The Reported tab's data; the Appeals tab has its own queue (`AppealsQueue`).
   const reported = $derived(data.tab === 'reported' ? data.reported : null);
   const f = $derived(data.tab === 'reported' ? data.filters : { sort: 'oldest', filter: 'all' });
 
-  // Key 4 opens the rating row for the open song; the next digit picks its level. Moving to another
-  // song closes it.
   let current = $state<number | null>(null);
   let ratingOpen = $state(false);
   const closeRating = () => (ratingOpen = false);
@@ -55,12 +51,10 @@
     if (key !== current) ratingOpen = false;
     current = key;
   };
-  // A rating is a correction, not a decision: the song stays in the queue and the page does not
-  // reload, so the level each song was given here is kept for when the moderator comes back to it.
+  // A rating leaves the song in the queue without a reload, so the level given here is kept.
   const rated = new SvelteMap<number, number>();
   const levelOf = (row: ReportedSongRow) => rated.get(row.id) ?? row.nsfwLevel;
-  // A cover removed on this page is no longer there to remove: key 3 goes off, and the thumbnail
-  // drops to the placeholder, without reading the queue again.
+  // A cover removed on this page, without reading the queue again.
   const live = (row: ReportedSongRow): ReportedSongRow =>
     row.removableCoverId != null && removedCovers.has(row.removableCoverId)
       ? { ...row, removableCoverId: null, coverUrl: null }
@@ -74,12 +68,7 @@
       page: data.page > 1 ? data.page : undefined,
     });
 
-  const tabs = AUDIO_TABS.map((value) => ({
-    value,
-    label: AUDIO_TAB_LABELS[value],
-    disabled: !LIVE_AUDIO_TABS.includes(value),
-    hint: LIVE_AUDIO_TABS.includes(value) ? undefined : 'Coming soon on this page',
-  }));
+  const tabs = AUDIO_TABS.map((value) => ({ value, label: AUDIO_TAB_LABELS[value] }));
 
   const sortGroup = $derived({
     key: 'sort',
@@ -101,14 +90,7 @@
     compact: true,
   } satisfies ChipGroup);
 
-  const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, [SELECTION]: null }));
-  // Amber once a song has waited a day, as the other triage queues mark someone waiting.
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const waitedLong = (row: ReportedSongRow) =>
-    Date.now() - new Date(row.waitingSince).getTime() >= DAY_MS;
   const firstTime = (row: ReportedSongRow) => row.reports.find((r) => r.timeSec != null)?.timeSec;
-  const rowTitle = (row: ReportedSongRow) =>
-    row.withheld ? `Withheld song #${row.id}` : row.title || `Untitled song #${row.id}`;
 
   const picking = (row: ReportedSongRow) => ratingOpen && row.id === current;
   const decisionsFor = (row: ReportedSongRow) => {
@@ -167,19 +149,7 @@
 {/snippet}
 
 {#snippet empty()}
-  <div
-    class="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-sm text-dark-0 in-[section]:hidden"
-  >
-    <IconZoomCancel class="mb-1.5 size-5 text-dark-2" aria-hidden="true" />
-    <p class="m-0 font-medium text-white">
-      No reported songs{data.q ? ` match "${data.q}"` : ''}
-    </p>
-    <p class="m-0 text-xs text-dark-2">Search matches a song title, an owner username or an ID.</p>
-    {#if data.q}
-      <a href={clearSearchHref} class="text-xs {LINK_CLASS}">Clear search</a>
-    {/if}
-  </div>
-  <p class="m-0 hidden text-sm text-dark-2 in-[section]:block">Select a song to review it.</p>
+  <QueueEmpty nothing="No reported songs" q={data.q} pick="Select a song to review it." />
 {/snippet}
 
 <div class="flex flex-col lg:h-svh">
@@ -263,9 +233,8 @@
             id={state.id}
             href={state.href}
             selected={state.selected}
-            title={rowTitle(row)}
-            meta={waitedLong(row) ? `waiting ${shortAge(row.waitingSince)}` : shortAge(row.waitingSince)}
-            metaClass={waitedLong(row) ? 'text-amber-300' : 'text-dark-2'}
+            title={songTitle(row)}
+            {...waitingMeta(row.waitingSince)}
             coverUrl={live(row).coverUrl ?? undefined}
             verdict={state.verdict}
             error={state.error}

@@ -1,5 +1,6 @@
 import type { ScanLabelCard } from '$lib/server/scan-label.service';
 import { z } from 'zod';
+import { DAY_MS } from '$lib/format';
 
 export const VOTES_PER_ITEM = 3;
 /** Block votes that make a block the majority; voting still runs to `VOTES_PER_ITEM`. */
@@ -97,7 +98,7 @@ export const toFilters = (q: z.infer<typeof scanLabelFiltersSchema>): ScanLabelF
   flaggerVersion: q.version,
 });
 
-export const DAY_MS = 86_400_000;
+export { DAY_MS };
 
 /** `YYYY-MM-DD` of a UTC instant. */
 export const isoDay = (d: Date) => d.toISOString().slice(0, 10);

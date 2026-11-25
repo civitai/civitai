@@ -1,13 +1,9 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { tick } from 'svelte';
   import { IconExternalLink, IconFlag, IconLock, IconSearch, IconUser } from '@tabler/icons-svelte';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import SongBadge from '$lib/components/SongBadge.svelte';
@@ -20,27 +16,25 @@
   import {
     heldDecisions,
     heldDecisionsEnabled,
-    heldRowTitle,
     lyricsHoldHref,
-    songDetailsUrl,
     songRatingLabel,
     SONG_RATING_LEVELS,
+    songTitle,
     type HeldSongRow,
-    type SongDetails,
   } from '$lib/audio-review';
   import { entityUrl, userUrl } from '$lib/entity-url';
-  import { fetchJson } from '$lib/fetch-json';
   import { dateTime, LINK_BUTTON, LINK_CLASS, shortAge, shortDate } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
   import { reviewReasonText } from '$lib/image-review';
   import { removedCovers } from '$lib/music/removed-covers';
-  import { SSR_PENDING } from '$lib/ssr-pending';
+  import { songDetails } from '$lib/music/song-details.svelte';
   import type { Outcome } from '$lib/triage/queue';
-  import { VIOLATION_LABELS, VIOLATION_TYPES } from '$lib/violations';
   import SongSideCards from './SongSideCards.svelte';
+  import SongWithheldNotice from './SongWithheldNotice.svelte';
+  import { createViolationGate } from './violation-gate.svelte';
+  import ViolationPicker, { violationInputs } from './ViolationPicker.svelte';
 
-  // The open row of Audio review's Held tab. A lyrics hold shows nothing of its song and links to
-  // CSAM holds; a flagged cover or song shows the song and takes its decisions here.
+  // A lyrics hold shows nothing of its song: it is decided in CSAM holds.
   let {
     row,
     civitaiUrl,
@@ -75,10 +69,7 @@
 
   const isLyrics = $derived(row.kind === 'lyrics');
   const open = $derived(!row.withheld);
-  // Client only, one read per song; never for a withheld row.
-  const details = $derived(
-    browser && open ? fetchJson<SongDetails>(songDetailsUrl(row.id)) : SSR_PENDING
-  );
+  const details = songDetails(() => (open ? row.id : null));
   const actions = $derived(heldDecisions(row.kind));
   const enabled = $derived(heldDecisionsEnabled(row, canAct, canOpenHolds));
   const on = (action: string) => enabled[actions.indexOf(action)] ?? false;
@@ -97,34 +88,19 @@
       : `The song is held for review: ${flag ? reviewReasonText(flag) : 'flagged.'}`
   );
 
-  // Remove song and Remove cover ask for a violation type before they submit.
-  let violationType = $state('');
-  let note = $state('');
-  let violationSelect = $state<HTMLElement | null>(null);
-  let problem = $state<string | null>(null);
-  const needsViolation = async (input: Parameters<SubmitFunction>[0]) => {
-    if (violationType) {
-      problem = null;
-      return true;
-    }
-    input.cancel();
-    problem = 'Pick a violation type first.';
-    await tick();
-    violationSelect?.focus();
-    return false;
-  };
+  const violation = createViolationGate();
   const removeSongSubmit: SubmitFunction = async (input) => {
-    if (await needsViolation(input)) return submit('Song removed')(input);
+    if (await violation.gate(input)) return submit('Song removed')(input);
   };
   // Not a verdict on a song row (its flag is still to decide), so the row stays open there; on a
   // cover row removing the cover settles what held it.
   const removeCoverSubmit: SubmitFunction = async (input) => {
-    if (!(await needsViolation(input))) return;
+    if (!(await violation.gate(input))) return;
     if (row.kind === 'cover') return submit('Cover removed')(input);
     return async ({ result, update }) => {
       if (result.type === 'success') {
         const held = result.data?.held;
-        if (typeof held === 'string') problem = held;
+        if (typeof held === 'string') violation.problem = held;
         else if (typeof result.data?.coverId === 'number') removedCovers.add(result.data.coverId);
       }
       await update({ invalidateAll: false });
@@ -246,8 +222,7 @@
     use:enhance={removeSongSubmit}
   >
     <input type="hidden" name="imageId" value={row.id} />
-    <input type="hidden" name="violationType" value={violationType} />
-    <input type="hidden" name="violationDetails" value={note} />
+    {@render violationInputs(violation)}
   </form>
   <form
     class="contents"
@@ -259,12 +234,11 @@
   >
     <input type="hidden" name="imageId" value={row.id} />
     <input type="hidden" name="coverId" value={row.removableCoverId ?? ''} />
-    <input type="hidden" name="violationType" value={violationType} />
-    <input type="hidden" name="violationDetails" value={note} />
+    {@render violationInputs(violation)}
   </form>
   <TriageDecisionBar
     compact
-    {problem}
+    problem={violation.problem}
     hint={ratingOpen
       ? 'Rating: 1 to 5 picks the level · Esc cancels.'
       : row.kind === 'cover'
@@ -318,31 +292,7 @@
       </form>
     {/snippet}
     {#snippet fields()}
-      <Select.Root type="single" bind:value={violationType}>
-        <Select.Trigger
-          bind:ref={violationSelect}
-          aria-label="Violation type"
-          class="h-[30px] w-[140px] flex-none justify-between border-dark-4 bg-dark-7 text-[13px] text-dark-0 dark:bg-dark-7"
-        >
-          <span class="truncate">
-            {violationType
-              ? VIOLATION_LABELS[violationType as keyof typeof VIOLATION_LABELS]
-              : 'Violation type'}
-          </span>
-        </Select.Trigger>
-        <Select.Content>
-          {#each VIOLATION_TYPES as v (v)}
-            <Select.Item value={v} label={VIOLATION_LABELS[v]}>{VIOLATION_LABELS[v]}</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
-      <Input
-        bind:value={note}
-        maxlength={1000}
-        aria-label="Note for the owner"
-        placeholder="Note for the owner (optional)"
-        class="h-[30px] min-w-0 flex-1 basis-0 border-dark-4 bg-dark-7 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
-      />
+      <ViolationPicker gate={violation} />
     {/snippet}
   </TriageDecisionBar>
 {/snippet}
@@ -353,7 +303,7 @@
   decision={isLyrics ? lyricsDecision : open ? decision : undefined}
 >
   {#snippet header()}
-    <TriageDetailHeader title={heldRowTitle(row)} reference="#{row.id}">
+    <TriageDetailHeader title={songTitle(row)} reference="#{row.id}">
       {#snippet chips()}
         <SongBadge class="h-[17px] px-1.5 text-[11px]" />
         {@render chip('Held', 'bg-amber-500/15 text-amber-300')}
@@ -426,13 +376,10 @@
           {@render fact('Held since', `${shortDate(row.waitingSince)} · ${shortAge(row.waitingSince)} ago`)}
         </TriageCard>
       {:else if row.withheld}
-        <div class="space-y-2 rounded-lg border border-dark-4 bg-dark-7 p-3.5 text-sm text-dark-0">
-          <p class="m-0">
-            This song or its cover is withheld from you: its audio, lyrics, cover and owner are not
-            shown here.
-          </p>
-          <a href="/images/csam" class={LINK_CLASS}>Open the CSAM image queue</a>
-        </div>
+        <SongWithheldNotice
+          subject="song or its cover"
+          hidden="its audio, lyrics, cover and owner"
+        />
       {:else}
         {#if row.cover}
           <TriageCard title="Cover under review" dense>
@@ -459,7 +406,7 @@
           <p class="m-0 text-sm text-dark-2">No audio file.</p>
         {/if}
         <!-- The one place a failed read is reported; the sidebar's cards just stay away. -->
-        {#await details}
+        {#await details.current}
           <p class="m-0 text-sm text-dark-2">Loading the song's details…</p>
         {:then d}
           <TriageCard title="Song" dense>
@@ -498,7 +445,7 @@
         <p class="m-0 text-dark-0">Owner details are shown in CSAM holds.</p>
       </TriageCard>
     {:else if open}
-      {#await details}
+      {#await details.current}
         <p class="m-0 text-sm text-dark-2">Loading the cover, checks and owner…</p>
       {:then d}
         <SongSideCards details={d} {civitaiUrl} />
