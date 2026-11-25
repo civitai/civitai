@@ -65,33 +65,44 @@ describe('postgres-query target guard', () => {
   });
 });
 
+// Async spawn: PGlite answers on this process's event loop, which spawnSync would block.
+const explainOnPglite = async (flag: string, sql: string) => {
+  const db = await PGlite.create();
+  const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: 0 });
+  await server.start();
+  const { port } = (server as unknown as { server: { address(): AddressInfo } }).server.address();
+  writeFileSync(
+    join(skillDir, '.env'),
+    `DEV_DATABASE_URL=postgres://postgres@127.0.0.1:${port}/postgres?sslmode=disable\n`
+  );
+
+  const started = Date.now();
+  const child = spawn(process.execPath, [join(skillDir, 'query.mjs'), '--dev', flag, sql], {
+    env: envWithoutDatabases(),
+  });
+  let stdout = '';
+  child.stdout.on('data', (chunk) => (stdout += chunk));
+  const status = await new Promise((done) => child.on('exit', done));
+  const elapsed = Date.now() - started;
+  await server.stop();
+  await db.close();
+  return { status, stdout, elapsed };
+};
+
 describe('postgres-query --explain', () => {
   it('shows the plan without running the query', async () => {
-    const db = await PGlite.create();
-    const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: 0 });
-    await server.start();
-    const { port } = (server as unknown as { server: { address(): AddressInfo } }).server.address();
-    writeFileSync(
-      join(skillDir, '.env'),
-      `DEV_DATABASE_URL=postgres://postgres@127.0.0.1:${port}/postgres?sslmode=disable\n`
-    );
-
-    const started = Date.now();
-    // Async spawn: PGlite answers on this process's event loop, which spawnSync would block.
-    const child = spawn(
-      process.execPath,
-      [join(skillDir, 'query.mjs'), '--dev', '--explain', 'SELECT pg_sleep(3)'],
-      { env: envWithoutDatabases() }
-    );
-    let stdout = '';
-    child.stdout.on('data', (chunk) => (stdout += chunk));
-    const status = await new Promise((done) => child.on('exit', done));
-    await server.stop();
-    await db.close();
+    const { status, stdout, elapsed } = await explainOnPglite('--explain', 'SELECT pg_sleep(10)');
 
     expect(status).toBe(0);
     expect(stdout).toContain('Result');
     expect(stdout).not.toContain('actual time');
-    expect(Date.now() - started).toBeLessThan(3000);
-  }, 20_000);
+    expect(elapsed).toBeLessThan(8000);
+  }, 30_000);
+
+  it('--explain-analyze runs the query and reports actual timings', async () => {
+    const { status, stdout } = await explainOnPglite('--explain-analyze', 'SELECT pg_sleep(0)');
+
+    expect(status).toBe(0);
+    expect(stdout).toContain('actual time');
+  }, 30_000);
 });
