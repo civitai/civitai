@@ -335,7 +335,13 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
       entityType: ReportEntity.Image,
       entityId: image.id,
       // A song report carries a time in the song, which the server requires.
-      ...(isSong && { song: { durationSec: storedSongDurationSec(image.metadata?.duration) } }),
+      ...(isSong && {
+        song: {
+          durationSec: storedSongDurationSec(
+            image.metadata && 'duration' in image.metadata ? image.metadata.duration : undefined
+          ),
+        },
+      }),
     });
   };
 

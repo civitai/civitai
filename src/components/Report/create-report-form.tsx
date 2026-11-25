@@ -1,7 +1,7 @@
 import { Stack } from '@mantine/core';
 import type { Dispatch, SetStateAction } from 'react';
 import { useMemo, useState } from 'react';
-import type { UseFormReturn } from 'react-hook-form';
+import type { DefaultValues, UseFormReturn } from 'react-hook-form';
 import type * as z from 'zod';
 import { useReportTarget } from '~/components/Report/report-target.context';
 import { songReportStartSec, songReportTimeSchema } from '~/components/Report/song-report-time';
@@ -56,7 +56,7 @@ export const createReportForm = <TSchema extends z.ZodObject>({
       schema: formSchema,
       shouldUnregister: false,
       defaultValues: song
-        ? ({ timestampSec: formatPlaybackTime(startSec) } as z.input<TSchema>)
+        ? ({ timestampSec: formatPlaybackTime(startSec) } as DefaultValues<z.input<TSchema>>)
         : undefined,
     });
 
