@@ -2,6 +2,7 @@ package hydrate
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -38,5 +39,13 @@ func TestWithoutHiddenSongs(t *testing.T) {
 		if got := songsIDs(WithoutHiddenSongs(byVersion, c.viewerID, c.canSeeSongs)[9]); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// The showcase cache is read by every viewer, so its lookup (getImagesForModelVersion with no user)
+// fills it with no song, as Node's does: both write the same key.
+func TestVersionImagesHoldNoSongs(t *testing.T) {
+	if !strings.Contains(sqlVersionImages, `AND i."type" != 'audio'`) {
+		t.Fatalf("the showcase lookup does not leave songs out:\n%s", sqlVersionImages)
 	}
 }
