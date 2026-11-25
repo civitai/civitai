@@ -3,6 +3,7 @@
 // transport. Every template names its key and mail class, which tag each of its sends.
 import {
   emailSendRecord,
+  isEmailConfigured,
   resolveSendId,
   sendEmail,
   type EmailTags,
@@ -52,9 +53,15 @@ export function createEmail<T, T2>(email: {
   const send = async (data: T, tags?: EmailSendTags) => {
     // Minted here so the tracked links and the send row carry the same send id.
     const sendId = resolveSendId(undefined);
+    const header = email.header(data);
+    // A message that will not go out (no recipient, or no transport) never calls the tracker.
+    const html =
+      header.to && isEmailConfigured()
+        ? await getTrackedHtml(data, sendId, tags)
+        : email.html(data);
     await sendEmail({
-      ...email.header(data),
-      html: await getTrackedHtml(data, sendId, tags),
+      ...header,
+      html,
       text: email.text?.(data),
       sendId,
       tags: { ...tags, ...templateTags },

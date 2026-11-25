@@ -11,6 +11,12 @@ export const EMAIL_LINKS_INTERNAL_PATH = '/api/internal/email-links';
 export const EMAIL_CLICK_PATH = '/api/email/click';
 /** How long the call may run before the email goes out with its links as they were. */
 export const LINK_TRACKER_TIMEOUT_MS = 2000;
+/**
+ * After a call times out or cannot connect, the next calls are skipped (their links go out as
+ * written) for this long, so a run of sends (a bulk appeal action) waits out one timeout, not one
+ * each.
+ */
+export const LINK_TRACKER_PAUSE_MS = 30_000;
 /** At most this many links in one call; the route refuses more. */
 export const EMAIL_LINKS_MAX = 50;
 /** The longest href sent; the route refuses longer. */
@@ -41,15 +47,15 @@ export interface RemoteLinkTrackerOptions {
   /** Told why a call's links went out untracked (a status or an error name). Never an address. */
   onError?: (reason: string) => void;
   timeoutMs?: number;
+  pauseMs?: number;
   fetch?: typeof fetch;
+  now?: () => number;
 }
 
 const isClickUrl = (value: string) => {
   try {
     const url = new URL(value);
-    return (
-      (url.protocol === 'https:' || url.protocol === 'http:') && url.pathname === EMAIL_CLICK_PATH
-    );
+    return url.protocol === 'https:' && url.pathname === EMAIL_CLICK_PATH;
   } catch {
     return false;
   }
@@ -64,13 +70,16 @@ export function createRemoteLinkTracker({
   token,
   onError,
   timeoutMs = LINK_TRACKER_TIMEOUT_MS,
+  pauseMs = LINK_TRACKER_PAUSE_MS,
   fetch: fetchImpl = globalThis.fetch,
+  now = Date.now,
 }: RemoteLinkTrackerOptions): EmailLinkTracker | null {
   const base = baseUrl?.trim().replace(/\/+$/, '');
   if (!base || !token?.trim()) return null;
   const url = `${base}${EMAIL_LINKS_INTERNAL_PATH}`;
+  let pausedUntil = 0;
   return async (send, hrefs) => {
-    if (!hrefs.length) return hrefs;
+    if (!hrefs.length || now() < pausedUntil) return hrefs;
     try {
       const res = await fetchImpl(url, {
         method: 'POST',
@@ -96,7 +105,11 @@ export function createRemoteLinkTracker({
       }
       return links as string[];
     } catch (err) {
-      onError?.((err as Error)?.name ?? 'error');
+      const reason = (err as Error)?.name ?? 'error';
+      // A timeout or a failed connection: the main app is slow or unreachable, so stop asking for
+      // a while. A refusal or a bad answer comes back fast and pauses nothing.
+      if (reason === 'TimeoutError' || reason === 'TypeError') pausedUntil = now() + pauseMs;
+      onError?.(reason);
       return hrefs;
     }
   };

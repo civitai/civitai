@@ -33,6 +33,7 @@ export {
   EMAIL_LINKS_MAX,
   EMAIL_LINK_MAX_LENGTH,
   LINK_TRACKER_TIMEOUT_MS,
+  LINK_TRACKER_PAUSE_MS,
 } from './link-tracker';
 export type { EmailLinkSend, EmailLinkTracker, RemoteLinkTrackerOptions } from './link-tracker';
 export type {

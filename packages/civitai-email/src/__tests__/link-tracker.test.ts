@@ -3,6 +3,7 @@ import type { EmailSendRecord } from '../client';
 import {
   createRemoteLinkTracker,
   EMAIL_LINKS_INTERNAL_PATH,
+  LINK_TRACKER_PAUSE_MS,
   LINK_TRACKER_TIMEOUT_MS,
   trackableHrefs,
   trackLinksVia,
@@ -118,6 +119,40 @@ describe('createRemoteLinkTracker', () => {
     expect(Date.now() - started).toBeLessThan(1500);
     expect(onError).toHaveBeenCalledWith('TimeoutError');
   });
+
+  it('after a timeout or a failed connection, skips the main app for a while, then asks again', async () => {
+    expect(LINK_TRACKER_PAUSE_MS).toBe(30_000);
+    let clock = 1_000_000;
+    let down = true;
+    const fetch = vi.fn(async (u: string, init: RequestInit) => {
+      if (down) throw new TypeError('fetch failed');
+      return routeFetch()(u, init);
+    });
+    const t = tracker(fetch, { pauseMs: 30_000, now: () => clock });
+    expect(await t(send, hrefs)).toEqual(hrefs);
+    clock += 29_999;
+    down = false;
+    // Paused: a second send in the run does not call out (and so waits on nothing).
+    expect(await t(send, hrefs)).toEqual(hrefs);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    clock += 1;
+    expect(await t(send, hrefs)).toEqual([CLICK(1), CLICK(2)]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refusal pauses nothing', async () => {
+    const fetch = vi.fn(async () => new Response(null, { status: 401 }));
+    const t = tracker(fetch, { now: () => 5 });
+    await t(send, hrefs);
+    await t(send, hrefs);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts a rewritten link only as an https click redirect', async () => {
+    const plain = async () =>
+      Response.json({ links: ['http://main.test/api/email/click?p=1', hrefs[1]] });
+    expect(await tracker(vi.fn(plain))(send, hrefs)).toEqual(hrefs);
+  });
 });
 
 describe('trackLinksVia', () => {
@@ -212,6 +247,16 @@ describe('createEmail with a link tracker', () => {
     await email.send('a@example.test');
     expect(tracked).not.toHaveBeenCalled();
     expect(h.mails[0]!.html).toBe('<a href="https://civitai.com/images/1">one</a>');
+  });
+
+  it('never calls the tracker for a message that will not go out', async () => {
+    delete process.env.EMAIL_HOST;
+    const { email, setTracker } = await load();
+    const tracked = vi.fn<EmailLinkTracker>(async (_, hrefs) => hrefs);
+    setTracker(tracked);
+    await email.send('a@example.test');
+    expect(tracked).not.toHaveBeenCalled();
+    expect(h.mails).toHaveLength(0);
   });
 
   it('still sends, with the links as written, when the main app is down', async () => {
