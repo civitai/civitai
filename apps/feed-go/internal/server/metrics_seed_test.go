@@ -135,9 +135,9 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	// serve: 6 routes x (bulkhead, error, deadline, canceled, panic); shadow: 7 x 3; probe: 4 x 3;
-	// and the 200 request-determined serve series.
-	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+200 {
-		t.Fatalf("feed_go_fallback_total has %d series at construction, want 263", n)
+	// and the 201 request-determined serve series.
+	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+201 {
+		t.Fatalf("feed_go_fallback_total has %d series at construction, want 264", n)
 	}
 	cases := map[string]struct {
 		endpoints, reasons []string
@@ -203,7 +203,7 @@ var wantRequestFallbackReasons = map[string][]string{
 		"input-envelope", "input-invalid", "input-unknown-key", "input-sort", "input-include",
 		"input-cursor", "input-tools", "input-techniques",
 		"input-collectionTagId", "ids-not-int4", "collection-id", "collection-tag-id",
-		"infinite-user-zero", "prioritized-cursor",
+		"infinite-user-zero", "prioritized-cursor", "collection-random-cursor",
 		"input-postIds", "input-hubId", "input-hubExcludedSources", "input-imageId", "input-reviewId",
 		"input-skip", "input-hidden", "input-includeBaseModel", "input-pendingReviewOnly",
 		"input-poiOnly", "input-minorOnly", "input-withTags", "input-jumpTo", "input-notPublished",
@@ -266,8 +266,8 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 		}
 		total += len(want)
 	}
-	if total != 200 {
-		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 200", total)
+	if total != 201 {
+		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 201", total)
 	}
 
 	reg := prometheus.NewRegistry()
@@ -314,7 +314,7 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 // It mirrors the reason set an external consumer of feed_go_fallback_total subtracts as
 // request-determined (plus `bearer-token`, seeded here on the REST model routes): a change to either
 // list must be made to both, and to unservedRequestReasons below.
-var requestDeterminedRe = regexp.MustCompile(`^(?:input-.+|method|region-blocked|crawler-user-agent|verified-bot|bearer-token|bearer-malformed|bearer-multiple-headers|bearer-query-token|model-cursor|model-sort-recently-added|model-collection-id|model-ids|collection-id|collection-tag-id|ids-not-int4|infinite-user-zero|prioritized-cursor|v1-images-(?:conditional|session-cookie)|v1-models-(?:origin|session-cookie|conditional|etag|host|path|id|ids|query|query-encoding|authed-only|sort|limit|page-limit|cursor|input-enum|input-number|input-bool|input-duplicate|tagname|user|rating|favorites|hidden|checkpointType|needsReview|paidAccess|hidePaid|onSale|modelVersionIds|supportsGeneration|fromPlatform|followed|newCreators|collectionId|collectionItemStatus|fileFormats|pending|collectionTagId|availability|disablePoi|disableMinor|isFeatured|poiOnly|minorOnly|allowNoCredit|allowCommercialUse|allowDerivatives|allowDifferentLicense|browsingLevel|excludedModelIds|excludedUserIds|excludedTagIds|excludedImageIds)|v1-(?:host|path|query-encoding|input-duplicate|input-number|input-username|input-period|input-type|input-ids|input-bool|image-id|tags|base-models|user-zero|model-only|sort|with-tags|cursor|legacy-cursor|page-limit))$`)
+var requestDeterminedRe = regexp.MustCompile(`^(?:input-.+|method|region-blocked|crawler-user-agent|verified-bot|bearer-token|bearer-malformed|bearer-multiple-headers|bearer-query-token|model-cursor|model-sort-recently-added|model-collection-id|model-ids|collection-id|collection-tag-id|collection-random-cursor|ids-not-int4|infinite-user-zero|prioritized-cursor|v1-images-(?:conditional|session-cookie)|v1-models-(?:origin|session-cookie|conditional|etag|host|path|id|ids|query|query-encoding|authed-only|sort|limit|page-limit|cursor|input-enum|input-number|input-bool|input-duplicate|tagname|user|rating|favorites|hidden|checkpointType|needsReview|paidAccess|hidePaid|onSale|modelVersionIds|supportsGeneration|fromPlatform|followed|newCreators|collectionId|collectionItemStatus|fileFormats|pending|collectionTagId|availability|disablePoi|disableMinor|isFeatured|poiOnly|minorOnly|allowNoCredit|allowCommercialUse|allowDerivatives|allowDifferentLicense|browsingLevel|excludedModelIds|excludedUserIds|excludedTagIds|excludedImageIds)|v1-(?:host|path|query-encoding|input-duplicate|input-number|input-username|input-period|input-type|input-ids|input-bool|image-id|tags|base-models|user-zero|model-only|sort|with-tags|cursor|legacy-cursor|page-limit))$`)
 
 // unservedRequestReasons are the request-determined reasons no public route produces: `v1-path`
 // (feed.ServeV1's nextPage on a path other than the images route's, which a shadow sample can carry

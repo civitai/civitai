@@ -50,7 +50,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 110
+	goldenMinInfinite = 120
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -107,6 +107,9 @@ type goldenFixture struct {
 		// ComputeMissesOff runs the model harness with FEED_GO_COMPUTE_MISSES off (a fixture of a
 		// fallback only that state still has).
 		ComputeMissesOff bool `json:"computeMissesOff"`
+		// ServeSortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM (feed.InfinitePorts.SortRandom; absent:
+		// off, a collection's Random sort falls back).
+		ServeSortRandom bool `json:"serveSortRandom"`
 		// ServeInputIDs / ServeInputFollowed are the model.getAll input ports' switches
 		// (FEED_GO_GETALL_SERVE_INPUT_IDS / _FOLLOWED; absent: off, the fixture's shape falls back).
 		ServeInputIDs      bool `json:"serveInputIds"`
@@ -455,6 +458,9 @@ type goldenCollectionItem struct {
 	AddedByID    *int    `json:"addedById"`
 	Note         *string `json:"note"`
 	TagID        *int    `json:"tagId"`
+	// SortKeys is the item's Random sort key by seed, as Postgres computes it
+	// (`abs(mod(hashtext(concat(<id>::text, '<seed>')), 1000000000))`; a Random fixture only).
+	SortKeys map[string]int `json:"sortKeys"`
 }
 
 // goldenModelRow is one row of model.getAll's page query (getModelsRaw's SELECT).
@@ -654,6 +660,9 @@ var (
 	goldenReCollection = regexp.MustCompile(`ci\."collectionId" = \$(\d+)`)
 	goldenReCollTag    = regexp.MustCompile(`ci\."tagId" = \$(\d+)`)
 	goldenReCollOwner  = regexp.MustCompile(`ci\."status" <> 'REJECTED' AND ci\."addedById" = \$(\d+)`)
+	// A collection page's Random order: the seed the CTE hashes with, and its cursor clause.
+	goldenReCollSeed   = regexp.MustCompile(`hashtext\(concat\(ci\.id::text, \$(\d+)::text\)\)`)
+	goldenReCollRandom = regexp.MustCompile(`WHERE \(\s*"sortKey" < \$(\d+)\s*OR \(\s*"sortKey" = \$(\d+)\s*AND "imageId" < \$(\d+)\s*\)\s*\)`)
 	goldenReMinorOwner = regexp.MustCompile(`\(i\."acceptableMinor" = FALSE OR i\."userId" = \$(\d+)\)`)
 	// The minor content rule (minorMatureImageVisibleSql): a minor-flagged image rated NULL, 0 or at
 	// least the captured level is kept only for the bound owner (none bound: for nobody).
@@ -1035,6 +1044,65 @@ func goldenCollectionRows(sql string, args []any, kept []goldenImage, itemOf map
 	}
 	byItem := strings.Contains(sql, `ORDER BY ct."collectionItemId" DESC`)
 	asc := strings.Contains(sql, `ORDER BY i."id" ASC`)
+	// The Random order: each item's sort key under the bound seed (the fixture's, from Postgres), the
+	// CTE's own cursor clause, then `ct."sortKey" DESC, i."id" DESC`.
+	seedArg, random := goldenArg(args, goldenReCollSeed, sql)
+	if random != strings.Contains(sql, `ORDER BY ct."sortKey" DESC, i."id" DESC`) {
+		return nil, errors.New("golden: a seeded sort key without the Random order, or the order without the seed")
+	}
+	if random {
+		seed, ok := seedArg.(string)
+		if !ok {
+			return nil, fmt.Errorf("golden: the Random seed is bound as %T, want text", seedArg)
+		}
+		keyOf := func(r joined) (int, error) {
+			k, ok := r.item.SortKeys[seed]
+			if !ok {
+				return 0, fmt.Errorf("golden: item %d has no sort key for seed %q", r.item.ID, seed)
+			}
+			return k, nil
+		}
+		keys := make(map[int]int, len(rows))
+		for _, r := range rows {
+			k, err := keyOf(r)
+			if err != nil {
+				return nil, err
+			}
+			keys[r.item.ID] = k
+		}
+		if m := goldenReCollRandom.FindStringSubmatch(sql); m != nil {
+			at := func(s string) int { n, _ := strconv.Atoi(s); return goldenInt(args[n-1]) }
+			if m[1] != m[2] {
+				return nil, errors.New("golden: the Random cursor compares two different sort keys")
+			}
+			ck, cid := at(m[1]), at(m[3])
+			var paged []joined
+			for _, r := range rows {
+				if k := keys[r.item.ID]; k < ck || (k == ck && r.img.ID < cid) {
+					paged = append(paged, r)
+				}
+			}
+			rows = paged
+		}
+		if goldenReCursor.MatchString(sql) {
+			return nil, errors.New("golden: a Random page with a getCursor clause")
+		}
+		sort.SliceStable(rows, func(a, b int) bool {
+			if ka, kb := keys[rows[a].item.ID], keys[rows[b].item.ID]; ka != kb {
+				return ka > kb
+			}
+			return rows[a].img.ID > rows[b].img.ID
+		})
+		if limit, ok := goldenArg(args, goldenReLimit, sql); ok && len(rows) > goldenInt(limit) {
+			rows = rows[:goldenInt(limit)]
+		}
+		cols := append(append([]string(nil), goldenImageColumns...), "collectionItemNote", "collectionItemStatus", "collectionItemAddedById")
+		out := make([][]any, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, append(r.img.row(keys[r.item.ID]), goldenPtr(r.item.Note), r.item.Status, goldenPtr(r.item.AddedByID)))
+		}
+		return testkit.NewRows(cols, out...), nil
+	}
 	if !byItem && !asc && !strings.Contains(sql, `ORDER BY i."id" DESC`) {
 		return nil, errors.New("golden: a collection page in an order the fake does not evaluate")
 	}
@@ -1558,7 +1626,9 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 	}
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
-		Ports:       feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly, PostIDs: fx.Config.ServePostIDs}}
+		Ports: feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly, PostIDs: fx.Config.ServePostIDs,
+			SortRandom: fx.Config.ServeSortRandom},
+		RandomSeed: &feed.RandomSeed{Sys: sys}}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}

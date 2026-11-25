@@ -1,6 +1,6 @@
 {
   "name": "fallback-collection-random",
-  "description": "A collection’s Random sort (the hourly seed, the seed:sortKey:id cursor): not ported.",
+  "description": "A collection’s Random sort with FEED_GO_INFINITE_SERVE_SORT_RANDOM off: the input-sort fallback, as before the port.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageIndexFeed": true,
@@ -21,6 +21,9 @@
   "sysRedis": {
     "system:browsing-setting-addons": {
       "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    },
+    "collection:random-seed": {
+      "raw": "494868"
     }
   },
   "db": {

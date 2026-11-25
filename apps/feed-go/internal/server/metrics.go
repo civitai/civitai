@@ -389,7 +389,7 @@ func RequestFallbackReasons() map[string][]string {
 		prefixed("input-", feed.UnsupportedInputKeys()))
 	infinite := sortedUnion(policy, bearer, imagesInput, []string{
 		"input-collectionTagId", "ids-not-int4", "collection-id", "collection-tag-id",
-		"infinite-user-zero", "prioritized-cursor",
+		"infinite-user-zero", "prioritized-cursor", "collection-random-cursor",
 	}, prefixed("input-", feed.InfiniteUnsupportedInputKeys()))
 	modelGetAll := sortedUnion(policy, bearer, []string{
 		"verified-bot", "input-envelope", "input-invalid", "input-unknown-key", "input-ids",

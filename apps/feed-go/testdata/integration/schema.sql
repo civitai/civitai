@@ -353,6 +353,9 @@ CREATE TABLE "CollectionItem" (
   id             integer PRIMARY KEY,
   "collectionId" integer NOT NULL,
   "modelId"      integer,
+  -- image.getInfinite's collection page (the `ct` CTE, collectionCTE in internal/feed/query.go).
+  "imageId"      integer,
+  note           text,
   "addedById"    integer,
   status         "CollectionItemStatus" NOT NULL DEFAULT 'ACCEPTED',
   "tagId"        integer
