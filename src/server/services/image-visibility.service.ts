@@ -65,9 +65,8 @@ export const countableImageSql = () =>
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
  * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
  * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
- * the owner's alone. Images listed on a CsamReport, as the bounty search index excludes them, are
- * the uploader's (`ownerSeesReportListed`) and `seesReportListed` viewers' alone, moderators
- * included: required, so no caller serves them by leaving it out.
+ * the owner's alone. Images listed on a CsamReport are the uploader's (`ownerSeesReportListed`) and
+ * `seesReportListed` viewers' alone, moderators included.
  */
 export function entityImageVisibilityConditions({
   userId,

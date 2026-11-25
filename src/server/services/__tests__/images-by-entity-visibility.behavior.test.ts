@@ -180,6 +180,7 @@ describe('getImagesByEntity', () => {
     expect(await imageOf(8, viewers.owner)).toEqual([OTHER_REVIEW]);
   });
 
+  // Report-listed images follow the bounty search index's exclusion (#10483).
   it.each(['anonymous', 'stranger', 'ownerOnScopedKey', 'moderator'] as const)(
     'withholds an image listed on a report from the %s',
     async (who) => {
