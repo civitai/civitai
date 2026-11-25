@@ -46,7 +46,6 @@ export function yesNoSettings(
       read(env.KNIGHTS_YESNO_MAX_AGE_DAYS, DEFAULT_YESNO.maxAgeDays, (n) => n > 0),
     // No environment fallback: turning it on is the moderators' call, made and audited on the Config page.
     tagReview: stored.modTagReview === true,
-    // Off unless turned on: the Moderation Lead's condition for default-on (a working report path) is not met yet.
     playerDefault:
       stored.yesNoPlayerDefault ?? env.KNIGHTS_YESNO_PLAYER_DEFAULT?.trim().toLowerCase() === 'on',
   };

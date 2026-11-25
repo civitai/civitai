@@ -7,7 +7,7 @@ import { unit } from '../hidden/hidden.service';
 type Executor = Kysely<DB> | Transaction<DB>;
 
 /**
- * The feed's rhythm for Knights and above: a gap of ratings (15, 18 or 20), then a burst of yes/no questions (5 to 10), each
+ * The feed's rhythm for Knights and above: a gap of ratings, then a burst of yes/no questions, each
  * length rolled anew.
  */
 export const BURSTS = { gaps: [15, 18, 20], burst: { min: 5, max: 10 } } as const;
@@ -15,7 +15,7 @@ export const BURSTS = { gaps: [15, 18, 20], burst: { min: 5, max: 10 } } as cons
 /** One thing the player was served, oldest first: a yes/no question or not (a rating or a hidden check), and a stable key. */
 export type Served = { yesno: boolean; key: string };
 
-/** Enough history to see the longest run (a gap of 20) and the item that ended the run before it. */
+/** Enough history to see the longest run and the item that ended the run before it. */
 const HISTORY = Math.max(...BURSTS.gaps, BURSTS.burst.max) + 1;
 
 /**
@@ -74,14 +74,21 @@ export async function servedHistory(
       .limit(HISTORY)
       .execute()
       .catch((error) => {
-        // Serving must not stop over it: without the "Not sure" rows the cadence counts votes only, as it did before them.
-        console.error('knights: could not read Not sure answers for the cadence', { userId, error });
+        // Best effort: serving must not stop over it. Without these rows the cadence counts votes only.
+        console.error('knights: could not read Not sure answers for the cadence', {
+          userId,
+          error,
+        });
         return [];
       }),
   ]);
   const recent = [
     ...votes.map((row) => ({ at: row.createdAt.getTime(), yesno: row.yesno, itemId: row.itemId })),
-    ...unsure.map((row) => ({ at: row.createdAt.getTime(), yesno: true, itemId: row.itemId as number })),
+    ...unsure.map((row) => ({
+      at: row.createdAt.getTime(),
+      yesno: true,
+      itemId: row.itemId as number,
+    })),
   ]
     .sort((a, b) => b.at - a.at)
     .slice(0, HISTORY)

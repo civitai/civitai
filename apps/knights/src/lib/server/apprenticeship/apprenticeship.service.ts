@@ -132,8 +132,7 @@ async function progressOf(db: Executor, playerId: number): Promise<ApprenticePro
 }
 
 /**
- * The player's progress, and whether a checkpoint recap waits for them, in one query: every answer and every page load
- * reads both.
+ * The player's progress, and whether a checkpoint recap waits for them, in one query.
  */
 async function standingOf(
   db: Executor,
@@ -150,7 +149,6 @@ async function standingOf(
       answersOf(db, playerId)
         .select(sql<string>`count(*)`.as('n'))
         .as('answered'),
-      // Null when the player has no answer yet.
       answersOf(db, playerId)
         .select(sql<boolean>`a."checkpointSeenAt" IS NULL`.as('open'))
         .orderBy('a.id', 'desc')

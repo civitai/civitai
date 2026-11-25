@@ -110,8 +110,8 @@ export async function getPlayerStatus(
     .executeTakeFirst();
   if (!player) return null;
   const next = nextLadderEntry(player.rankType);
-  // One read at a time on purpose: the pool has 20 connections and the live stats broadcast reads this for several voters
-  // at once, so a fan-out here would starve the votes for a few milliseconds saved.
+  // Sequential on purpose: the pool has 20 connections and the live stats broadcast reads this for several voters at
+  // once, so a fan-out would starve the votes.
   return statusFrom(player.rankType, player.exp, {
     ...player,
     goldSpendable: (await getGoldBalance(db, userId)).convertible,
@@ -125,22 +125,24 @@ export async function getPlayerStatus(
 }
 
 /**
- * Rank and hearts only, in two reads at once, for a caller that only gates on them (the `/play/next` refill): the full
- * status is eight reads. Null when the user has no player row.
+ * Rank and hearts only, in two reads, for a caller that only gates on them (the `/play/next` refill). Null when
+ * the user has no player row.
  */
 export async function getRankAndSmites(
   db: Kysely<DB>,
   userId: number
 ): Promise<{ rank: string; smites: number; maxSmites: number } | null> {
-  const [player, smites] = await Promise.all([
-    db
-      .selectFrom('NewOrderPlayer')
-      .select('rankType')
-      .where('userId', '=', userId)
-      .executeTakeFirst(),
-    activeSmiteCount(db, userId),
-  ]);
-  return player ? { rank: player.rankType, smites, maxSmites: SMITES.max } : null;
+  const player = await db
+    .selectFrom('NewOrderPlayer')
+    .select('rankType')
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  if (!player) return null;
+  return {
+    rank: player.rankType,
+    smites: await activeSmiteCount(db, userId),
+    maxSmites: SMITES.max,
+  };
 }
 
 /** A player with no row yet is an Acolyte at level 1. */

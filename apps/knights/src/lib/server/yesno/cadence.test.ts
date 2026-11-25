@@ -23,7 +23,7 @@ const runs = (served: Served[]) => {
 
 describe('burstDue', () => {
   it('serves ratings until the rolled gap is reached, then starts a burst', () => {
-    // The lowest roll: a gap of 15 and a burst of 5.
+    // The lowest roll.
     const low = always(0);
     const ratings = (n: number) => Array.from({ length: n }, (_, i) => r(i));
     expect(burstDue([], low)).toBe(false);
@@ -32,7 +32,7 @@ describe('burstDue', () => {
   });
 
   it('keeps the burst going for its rolled length, then goes back to ratings', () => {
-    // The highest roll: a gap of 20 and a burst of 10.
+    // The highest roll.
     const high = always(0.999);
     const gap = Array.from({ length: 20 }, (_, i) => r(i));
     const burst = (n: number) => Array.from({ length: n }, (_, i) => y(i));

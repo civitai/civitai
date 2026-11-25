@@ -4,12 +4,10 @@ import { memberOrRedirect } from './membership';
 import { getPlayerStatus, type PlayerStatus } from './player-status';
 import { getStanding, type Standing } from './standing';
 
-/**
- * Reads made once per request and shared by everything that serves it. Keep them to reads nothing in the request changes
- * first: an action that writes reads `getPlayerStatus` itself, after its write.
- */
+// Reads made once per request and shared by everything that serves it. Keep them to reads nothing in the request changes
+// first: an action that writes reads `getPlayerStatus` itself, after its write.
 
-/** The signed-in user's ban and mute: the hooks read it to turn a banned account away, and every load and action reuses it. */
+/** The signed-in user's ban and mute, read once per request. */
 export function requestStanding(db: Kysely<DB>, locals: App.Locals): Promise<Standing> {
   locals.standing ??= getStanding(db, locals.user.id);
   return locals.standing;

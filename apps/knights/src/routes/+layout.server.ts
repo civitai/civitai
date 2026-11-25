@@ -73,10 +73,8 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
   depends('knights:header');
   const civitaiUrl = civitaiSiteUrl();
   const user = locals.user;
-  // An Inquisitor's header shows neither the recap nor the player stats, so those reads are skipped.
   const inquisitor = await inquisitorQueueOpen(user);
-  // Independent reads, sent together: this runs on every page load and after every form action.
-  // Only a player has a career to restart (the account menu offers it) or header stats.
+  // Also gates header stats: only a player has a career or stats.
   const playerRow = user
     ? db
         .selectFrom('NewOrderPlayer')
@@ -88,7 +86,6 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     playerRow,
     shopEnabled(),
     user ? feedbackOpen(user, locals) : false,
-    // A signed-out visitor (the welcome page, a 404) wears no badge, so the cosmetics are not read for them.
     user ? rankBadgeUrls(db) : NO_BADGES,
     inquisitor ? false : recapUnseen(user?.id),
     user && !inquisitor ? playerRow.then((row) => (row ? headerStats(locals) : null)) : null,

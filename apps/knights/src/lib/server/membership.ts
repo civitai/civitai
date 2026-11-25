@@ -11,8 +11,8 @@ export async function requireMember(db: Kysely<DB>, userId: number): Promise<Pla
 }
 
 /**
- * The player's rank alone, or the redirect to the home page: one primary-key read, for an action that only checks what
- * the rank allows (the full status is several reads).
+ * The player's rank alone, or the redirect to the home page. Cheaper than the full status for an action that only checks
+ * the rank.
  */
 export async function requireMemberRank(db: Kysely<DB>, userId: number): Promise<string> {
   const player = await db
