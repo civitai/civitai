@@ -175,6 +175,17 @@ Duplicate action does not copy `collectionPrompt`; copy it by hand. To change on
 (a new Duplicate gets a new id that already-planned rows do not point at). Deactivating a judge does not stop it
 judging rows that reference it (`getJudgingConfig` does not filter on `active`).
 
+**Recent winners (anti-sameness).** On a System daily whose rubric has Creativity or Wordplay, the review
+prompt lists why the last 10 System winners won, as data, and the judge scores a repeat of one of those
+ideas lower on those categories only (`recent-winners.ts`). The stored criteria of those categories say
+so, so the Judging panel tells entrants.
+
+**Judge-model shadow.** `reviewShadow` in the daily config (`{ model, sampleRate, provider? }`) reviews a
+sample with a second model and logs both to Axiom; only production scores reach users. It runs only on
+SFW System dailies and only for entries the scan has cleared at an SFW level (`shadowSendable`).
+`provider` pins the OpenRouter route, e.g. `{ order: ['wafer/us'], allowFallbacks: false,
+dataCollection: 'deny' }`.
+
 **Stopping a judge mid-challenge.** Each review tick loads a non-default judge fresh from the DB, so editing its
 prompts in the judge panel takes effect on the next tick; Re-judge Entries re-scores what it already judged.
 

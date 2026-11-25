@@ -6,7 +6,12 @@ import type {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { logToAxiom } from '~/server/logging/client';
 import { civitaiLLM } from '~/server/services/ai/civitai-llm';
-import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
+import {
+  openrouter,
+  AI_MODELS,
+  type AIModel,
+  type OpenRouterProvider,
+} from '~/server/services/ai/openrouter';
 import type { SimpleMessage, TokenUsage } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
@@ -126,7 +131,8 @@ export function estimateBuzzCost(model: string, usage: TokenUsage): number {
 export async function getCompletionWithUsage<T>(
   model: AIModel,
   messages: SimpleMessage[],
-  retries: number
+  retries: number,
+  provider?: OpenRouterProvider
 ): Promise<{ content: T; usage: TokenUsage }> {
   if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
@@ -134,7 +140,7 @@ export async function getCompletionWithUsage<T>(
     return { content, usage: { promptTokens: 0, completionTokens: 0 } };
   }
   if (!openrouter) throw new Error('OpenRouter not connected');
-  return openrouter.getJsonCompletionWithUsage<T>({ retries, model, messages });
+  return openrouter.getJsonCompletionWithUsage<T>({ retries, model, messages, provider });
 }
 
 type GenerateCollectionDetailsInput = {
@@ -383,12 +389,16 @@ type GenerateReviewInput = {
   imageUrl: string;
   config: JudgingConfig;
   model?: AIModel;
+  /** OpenRouter routing for `model`; ignored for Civitai-hosted models. */
+  provider?: OpenRouterProvider;
   // Creator/mod-defined judging categories. When present the review JSON schema is built from
   // these instead of the fixed theme/wittiness/humor/aesthetic set, and `key` selects each
   // category's rich scoring rubric for `{{SCORING_RUBRICS}}` injection (resolveRubricBlock).
   categories?: { key: string; name: string; criteria: string }[];
   // Selects NSFW rubric variants (ChallengeCategory.rubricNsfw, falling back to the SFW rubric).
   nsfw?: boolean;
+  /** Why recent winners won (recent-winners.ts). Present only where the page says repeats score lower. */
+  recentWinnerIdeas?: string[];
 };
 type GeneratedReview = {
   score: Score;
@@ -465,7 +475,8 @@ export async function generateReview(
   const { content: result, usage } = await getCompletionWithUsage<GeneratedReview>(
     model,
     messages,
-    3
+    3,
+    input.provider
   );
 
   return {
@@ -559,7 +570,10 @@ export function buildFallbackMessages(
 ): SimpleMessage[] {
   const themeElementsLine = formatThemeElementsLine(input.themeElements);
   const conceptLine = formatResourceConceptLine(input.resourceConcept);
-  const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${input.theme}${themeElementsLine}${conceptLine}\nCreator: ${input.creator}`;
+  const winnersLine = input.recentWinnerIdeas?.length
+    ? `\nRecent winning ideas: ${JSON.stringify(input.recentWinnerIdeas)}`
+    : '';
+  const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${input.theme}${themeElementsLine}${conceptLine}\nCreator: ${input.creator}${winnersLine}`;
   // Response schema keys on the REAL categories: a null/empty-category challenge keeps the fixed
   // RESPONSE_SCHEMA (lowercase theme/wittiness/humor/aesthetic). The rubric block was resolved by
   // the caller (generateReview) — defaults included — so sentinel replacement never leaves a
@@ -567,9 +581,12 @@ export function buildFallbackMessages(
   const responseSchema = input.categories?.length
     ? buildCategoryReviewSchema(input.categories)
     : RESPONSE_SCHEMA;
-  const reviewText = appendResourceFidelityClause(
-    injectRubrics(input.config.prompts.review, rubricBlock),
-    input.resourceConcept
+  const reviewText = appendFreshnessClause(
+    appendResourceFidelityClause(
+      injectRubrics(input.config.prompts.review, rubricBlock),
+      input.resourceConcept
+    ),
+    input.recentWinnerIdeas
   );
 
   return [
@@ -830,6 +847,14 @@ const RESOURCE_FIDELITY_CLAUSE =
   "Every entry was required to use the featured resource named above. When the theme or its elements point somewhere the featured resource does not go, the resource wins: an image that faithfully renders the featured resource's subject satisfies the theme, and must not be scored down for missing theme elements that contradict it. Do not reward an image that matches the theme wording while ignoring the featured resource.";
 
 /** Splice the fidelity clause onto a review task, or return it unchanged when there is no concept. */
+const FRESHNESS_CLAUSE =
+  'FRESHNESS: the entry fields list recent winning ideas. On Creativity and Wordplay only, score an entry lower when its central idea repeats one of them; a similar subject or style alone is not a repeat. Never lower any other category for it.';
+
+export function appendFreshnessClause(reviewPrompt: string, recentWinnerIdeas?: string[]) {
+  if (!recentWinnerIdeas?.length) return reviewPrompt;
+  return `${reviewPrompt}\n\n${FRESHNESS_CLAUSE}`;
+}
+
 export function appendResourceFidelityClause(reviewPrompt: string, resourceConcept?: string) {
   if (!resourceConcept?.trim()) return reviewPrompt;
   return `${reviewPrompt}\n\n${RESOURCE_FIDELITY_CLAUSE}`;

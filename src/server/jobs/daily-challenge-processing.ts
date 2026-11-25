@@ -98,7 +98,12 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { reviewWithFallback } from '~/server/games/daily-challenge/review-fallback';
-import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
+import { reviewWithShadow, shadowSendable } from '~/server/games/daily-challenge/review-shadow';
+import type { OpenRouterProvider } from '~/server/services/ai/openrouter';
+import {
+  getRecentWinnerIdeas,
+  hasFreshnessCategory,
+} from '~/server/games/daily-challenge/recent-winners';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeCompleted,
@@ -764,6 +769,13 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     challengeRecord?.judgingCategories
   );
   const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+  const recentWinnerIdeas =
+    challengeRecord?.source === ChallengeSource.System && hasFreshnessCategory(userCategories)
+      ? await getRecentWinnerIdeas(currentChallenge.challengeId).catch((e) => {
+          log('Recent winner ideas unavailable:', (e as Error).message);
+          return undefined;
+        })
+      : undefined;
 
   const judgingEngine = await resolveJudgingEngine(challengeRecord?.judgingEngine);
   const engineContext = buildJudgingEngineContext({
@@ -990,7 +1002,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."userId",
       u."username",
       i."url",
-      i."nsfwLevel"
+      i."nsfwLevel",
+      i."ingestion",
+      i."blockedFor"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1039,7 +1053,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."userId",
       u."username",
       i."url",
-      i."nsfwLevel"
+      i."nsfwLevel",
+      i."ingestion",
+      i."blockedFor"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1060,7 +1076,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           i."userId",
           u."username",
           i."url",
-          i."nsfwLevel"
+          i."nsfwLevel",
+          i."ingestion",
+          i."blockedFor"
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "User" u ON u.id = i."userId"
@@ -1124,7 +1142,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         imageId: entry.imageId,
         nsfwLevel: entry.nsfwLevel,
       };
-      const runReview = (model?: string) =>
+      const runReview = (model?: string, provider?: OpenRouterProvider) =>
         generateReview({
           theme: currentChallenge.theme,
           themeElements,
@@ -1138,14 +1156,22 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
             criteria: c.criteria,
           })),
           nsfw: usesNsfwRubrics(allowedNsfwLevel),
+          recentWinnerIdeas,
           model,
+          provider,
         });
       const review = await reviewWithShadow({
-        shadow: config.reviewShadow,
+        shadow: shadowSendable({
+          source: challengeRecord?.source,
+          allowedNsfwLevel,
+          entry,
+        })
+          ? config.reviewShadow
+          : null,
         context: reviewContext,
-        run: (model) =>
+        run: (model, provider) =>
           model
-            ? runReview(model)
+            ? runReview(model, provider)
             : reviewWithFallback({
                 run: runReview,
                 fallbackModel: REVIEW_FALLBACK_MODEL,

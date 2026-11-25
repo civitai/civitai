@@ -1,5 +1,6 @@
 import { OpenRouter } from '@openrouter/sdk';
 import type {
+  ChatGenerationParamsProvider,
   ChatMessageToolCall,
   Message,
   SystemMessage,
@@ -56,6 +57,8 @@ export type SimpleMessage = {
   content: string | ContentItem[];
 };
 
+export type OpenRouterProvider = ChatGenerationParamsProvider;
+
 type GetJsonCompletionInput = {
   model?: AIModel;
   messages: SimpleMessage[];
@@ -64,6 +67,8 @@ type GetJsonCompletionInput = {
   retries?: number;
   // Per request. The client has no timeout of its own, so a hung provider call never returns.
   timeoutMs?: number;
+  /** Merged over the default `{ allowFallbacks: true }`, e.g. to pin a provider. */
+  provider?: OpenRouterProvider;
 };
 
 /**
@@ -248,6 +253,7 @@ function createOpenRouterClient() {
     maxTokens = 2048,
     retries = 0,
     timeoutMs,
+    provider,
   }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage }> => {
     const sdkMessages = messages.map(toSDKMessage);
 
@@ -260,6 +266,7 @@ function createOpenRouterClient() {
         responseFormat: { type: 'json_object' },
         provider: {
           allowFallbacks: true,
+          ...provider,
         },
       },
       timeoutMs ? { timeoutMs } : undefined
@@ -276,6 +283,7 @@ function createOpenRouterClient() {
           maxTokens,
           retries: retries - 1,
           timeoutMs,
+          provider,
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
@@ -304,6 +312,7 @@ function createOpenRouterClient() {
           maxTokens,
           retries: retries - 1,
           timeoutMs,
+          provider,
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }

@@ -107,7 +107,8 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, url text, "nsfwLevel" int,
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false,
+      ingestion text DEFAULT 'Scanned', "blockedFor" text
     );
     CREATE TABLE "CollectionItem" (
       "collectionId" int, "imageId" int, "tagId" int, note text, status text,

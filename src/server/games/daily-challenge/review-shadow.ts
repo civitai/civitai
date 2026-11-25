@@ -1,6 +1,12 @@
 import { logToAxiom } from '~/server/logging/client';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 
-export type ReviewShadowConfig = { model: string; sampleRate: number };
+export type ReviewShadowConfig = {
+  model: string;
+  sampleRate: number;
+  provider?: { order: string[]; allowFallbacks: boolean; dataCollection: 'deny' | 'allow' };
+};
 
 type ShadowableReview = {
   model: string;
@@ -9,6 +15,28 @@ type ShadowableReview = {
   comment: string;
   summary: string;
 };
+
+/**
+ * Whether an entry may go to the shadow model, a third party outside production judging: only
+ * a System daily that is SFW, and only an image the scan has cleared at an SFW level.
+ */
+export function shadowSendable({
+  source,
+  allowedNsfwLevel,
+  entry,
+}: {
+  source: ChallengeSource | undefined;
+  allowedNsfwLevel: number;
+  entry: { nsfwLevel: number; ingestion?: string; blockedFor?: string | null };
+}) {
+  return (
+    source === ChallengeSource.System &&
+    getIsSafeBrowsingLevel(allowedNsfwLevel) &&
+    entry.ingestion === 'Scanned' &&
+    !entry.blockedFor &&
+    getIsSafeBrowsingLevel(entry.nsfwLevel)
+  );
+}
 
 type ShadowContext = { challengeId: number; imageId: number; nsfwLevel: number };
 
@@ -39,14 +67,14 @@ export async function reviewWithShadow<T extends ShadowableReview>({
   shadow,
   context,
 }: {
-  run: (model?: string) => Promise<T>;
+  run: (model?: string, provider?: ReviewShadowConfig['provider']) => Promise<T>;
   shadow: ReviewShadowConfig | null | undefined;
   context: ShadowContext;
 }): Promise<T> {
   const primary = run(undefined);
   if (!shadow || Math.random() >= shadow.sampleRate) return primary;
 
-  void Promise.all([timed(() => primary), timed(() => run(shadow.model))])
+  void Promise.all([timed(() => primary), timed(() => run(shadow.model, shadow.provider))])
     .then(([primaryOutcome, shadowOutcome]) =>
       logToAxiom({
         type: 'daily-challenge-review-shadow',

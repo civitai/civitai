@@ -9,6 +9,7 @@ import type { DailyOccasion } from '~/server/games/daily-challenge/generative-co
 import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { findActiveJudgeIdByName } from '~/server/services/challenge-judge.service';
+import { withFreshnessCriteria } from '~/server/games/daily-challenge/recent-winners';
 import { dailyRubricSetRows } from '~/shared/constants/challenge.constants';
 import { createLogger } from '~/utils/logging';
 
@@ -46,14 +47,14 @@ function planFor(date: Date, flags: DailyPlanFlags): DailyPlan | null {
 }
 
 // A library read failing at cron time must not fail the day: the set's preset rows carry the same
-// keys, labels and criteria (challenge-helpers.ts createChallengeRecord makes the same trade).
+// keys, labels and criteria.
 async function categoriesFor(setKey: DailyPlan['setKey']) {
   const rows = dailyRubricSetRows(setKey);
   try {
-    return await resolveJudgingCategories(rows);
+    return withFreshnessCriteria(await resolveJudgingCategories(rows));
   } catch (e) {
     log(`category library read failed for set ${setKey}, using preset rows:`, (e as Error).message);
-    return rows;
+    return withFreshnessCriteria(rows);
   }
 }
 

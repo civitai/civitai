@@ -13,6 +13,7 @@ const { dailyRubricSetRows } = await import('~/shared/constants/challenge.consta
 const { clearChallengeCategoryCache } = await import(
   '~/server/services/challenge-category.service'
 );
+const { FRESHNESS_CRITERIA_SUFFIX } = await import('~/server/games/daily-challenge/recent-winners');
 
 const defaultJudge = {
   judgeId: 1,
@@ -56,6 +57,15 @@ describe('resolveDailyPlan', () => {
     expect(plan.judgeId).toBe(7);
     expect(plan.judgingConfig.prompts.systemMessage).toBe('jolly');
     expect(plan.judgingCategories?.map((c) => [c.key, c.weight])).toEqual(setRows());
+    expect(
+      plan.judgingCategories
+        ?.filter((c) => c.criteria.endsWith(FRESHNESS_CRITERIA_SUFFIX))
+        .map((c) => c.key)
+    ).toEqual(
+      setRows()
+        .map(([key]) => key)
+        .filter((key) => key === 'creativity' || key === 'wordplay')
+    );
     expect(plan.occasion?.name).toBe(entry.occasion);
     expect(plan.occasion?.judgedOn).not.toContain('Theme');
     expect(plan.record).toEqual({

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { reviewWithShadow } from './review-shadow';
+import { reviewWithShadow, shadowSendable } from './review-shadow';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 
 const { logToAxiom } = loggingMock;
 
@@ -32,7 +34,7 @@ describe('reviewWithShadow', () => {
     });
 
     expect(result.summary).toBe('primary');
-    expect(run).toHaveBeenCalledWith('civitai/qwen3.8');
+    expect(run).toHaveBeenCalledWith('civitai/qwen3.8', undefined);
     const event = await loggedEvent();
     expect(event).toMatchObject({
       type: 'daily-challenge-review-shadow',
@@ -85,4 +87,53 @@ describe('reviewWithShadow', () => {
       expect(logToAxiom).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('reviewWithShadow provider', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("passes the shadow's provider pin to the shadow run only", async () => {
+    const provider = {
+      order: ['wafer/us'],
+      allowFallbacks: false,
+      dataCollection: 'deny' as const,
+    };
+    const run = vi.fn(async (model?: string) =>
+      model ? review('shadow', model) : review('primary')
+    );
+
+    await reviewWithShadow({ run, shadow: { model: 'm', sampleRate: 1, provider }, context });
+    await loggedEvent();
+
+    expect(run).toHaveBeenCalledWith(undefined);
+    expect(run).toHaveBeenCalledWith('m', provider);
+  });
+});
+
+describe('shadowSendable', () => {
+  const sendable = {
+    source: ChallengeSource.System,
+    allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.PG13,
+    entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', blockedFor: null },
+  };
+
+  it('sends a scanned SFW entry of an SFW System daily', () => {
+    expect(shadowSendable(sendable)).toBe(true);
+  });
+
+  it.each([
+    ['a user challenge', { ...sendable, source: ChallengeSource.User }],
+    ['a mod challenge', { ...sendable, source: ChallengeSource.Mod }],
+    [
+      'a challenge that allows mature levels',
+      { ...sendable, allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.R },
+    ],
+    ['an unscanned entry', { ...sendable, entry: { ...sendable.entry, ingestion: 'Pending' } }],
+    ['an entry with no scan state', { ...sendable, entry: { nsfwLevel: NsfwLevel.PG } }],
+    ['a blocked entry', { ...sendable, entry: { ...sendable.entry, blockedFor: 'tos' } }],
+    ['a mature entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: NsfwLevel.R } }],
+    ['an unrated entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: 0 } }],
+  ])('never sends %s', (_, input) => {
+    expect(shadowSendable(input)).toBe(false);
+  });
 });

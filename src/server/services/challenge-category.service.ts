@@ -145,8 +145,8 @@ export function pickCategoryRubric(
 }
 
 /**
- * Whether a challenge is judged on the NSFW rubric variants: only when it allows a level above
- * PG-13. Decided per challenge, never per entry, so an SFW daily always reads `rubric`.
+ * Whether a challenge is judged on the NSFW rubric variants: unless every level it allows is SFW.
+ * Decided per challenge, never per entry, so an SFW daily always reads `rubric`.
  */
 export function usesNsfwRubrics(allowedNsfwLevel: number) {
   return !getIsSafeBrowsingLevel(allowedNsfwLevel);
