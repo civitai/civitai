@@ -213,7 +213,6 @@ src/server/search-index/__tests__/models-index-insight-projection.test.ts
 src/server/search-index/__tests__/models-index-pricing-signals.test.ts
 src/server/services/app-assistant/__tests__/assistant-runner-tokens.test.ts
 src/server/services/apps/__tests__/doc-store-api.contract.test.ts
-src/server/services/apps/__tests__/doc-store-api.tally-operators.test.ts
 src/server/services/apps/__tests__/doc-store-internal-route.test.ts
 src/server/services/apps/__tests__/doc-store.levels-ledger.test.ts
 src/server/services/apps/__tests__/doc-store.sql-isolation.test.ts

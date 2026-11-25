@@ -2528,14 +2528,14 @@ function buildDocStore(deps: DocStoreDeps) {
       params.push(v);
       return `$${params.length}`;
     };
-    const viewerParam = `${p(ctx.viewerUid)}::int`;
     const joins: string[] = [];
     const conds: string[] = [];
-    // The levels gate, next to `VISIBLE` (in `listBase`).
+    // The levels gate, next to `VISIBLE` (in `listBase`). The viewer is a parameter only there:
+    // an unreferenced parameter is an untyped one, which Postgres refuses (42P18).
     if (ctx.levels) {
       conds.push(
         sharedDocLevelVisible(
-          viewerParam,
+          `${p(ctx.viewerUid)}::int`,
           `${p(ctx.levels.viewerLevel)}::int`,
           `${p(ctx.levels.domainLevel ?? ctx.levels.viewerLevel)}::int`
         )

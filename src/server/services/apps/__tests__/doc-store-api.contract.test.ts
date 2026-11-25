@@ -83,6 +83,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
     if (flag === DOC_LEVELS_FLAG) return h.docLevels;
     if (flag === UNCHANGED_WRITES_FLAG) return h.unchangedWritesApps.has(entityId ?? '');
+    // The removed publish routes' old flag, ON: they must be unknown routes whatever it says.
+    if (flag === 'app-blocks-storage-publish') return true;
     if (flag === 'app-blocks-storage-viewer-keyed-open') {
       return (
         h.vkOpen.get((context as { collection?: string } | undefined)?.collection ?? '') ?? false
@@ -209,6 +211,7 @@ import {
   signDevScopedPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import {
+  APP_STORAGE_ALL_FEATURES_ON,
   APP_STORAGE_COLLECTION_NAME_RE,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
@@ -896,12 +899,12 @@ describe('reserved path segments cannot collide with a collection name or a docu
         expect(get.body).toMatchObject({ key, data: { at: `${coll}/${key}` } });
         // The removed per-tally paths under it are no route at all.
         const mark = await call({ token, method: 'PUT', path: `/${coll}/${key}/marks/vote` });
-        expect({ status: mark.status, code: mark.body.code }).toEqual({
+        expect({ status: mark.status, code: (mark.body as { code?: unknown }).code }).toEqual({
           status: 404,
           code: 'not_found',
         });
         const inc = await call({ token, method: 'POST', path: `/${coll}/${key}/counters/views` });
-        expect({ status: inc.status, code: inc.body.code }).toEqual({
+        expect({ status: inc.status, code: (inc.body as { code?: unknown }).code }).toEqual({
           status: 404,
           code: 'not_found',
         });
@@ -1453,7 +1456,7 @@ describe('a removed tally path is no route, before any budget or trust lookup', 
       ['POST', '/posts/w/counters/views'],
     ] as const) {
       const r = await call({ token: newbie, method, path });
-      expect({ path, status: r.status, code: r.body.code }).toEqual({
+      expect({ path, status: r.status, code: (r.body as { code?: unknown }).code }).toEqual({
         path,
         status: 404,
         code: 'not_found',
@@ -4172,7 +4175,11 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     ];
     for (const t of removed) {
       const r = await call({ token: c, ...t, query: { from: S.blockId } });
-      expect({ at: `${t.method} ${t.path}`, status: r.status, code: r.body.code }).toEqual({
+      expect({
+        at: `${t.method} ${t.path}`,
+        status: r.status,
+        code: (r.body as { code?: unknown }).code,
+      }).toEqual({
         at: `${t.method} ${t.path}`,
         status: 404,
         code: 'not_found',
@@ -4187,7 +4194,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       body: { data: {} },
       query: { from: S.blockId },
     });
-    expect({ status: none.status, code: none.body.code }).toEqual({
+    expect({ status: none.status, code: (none.body as { code?: unknown }).code }).toEqual({
       status: 403,
       code: 'write_policy',
     });
@@ -5494,7 +5501,11 @@ describe('viewer-keyed documents', () => {
       }
       // The tally PATCH: the path exists, the method does not.
       const patch = await vkCall(t1, 'PATCH', ['votes', key], { body: { $mark: 'vote' } });
-      expect({ status: patch.status, allow: patch.headers.allow, code: patch.body.code }).toEqual({
+      expect({
+        status: patch.status,
+        allow: patch.headers.allow,
+        code: (patch.body as { code?: unknown }).code,
+      }).toEqual({
         status: 405,
         allow: 'GET, PUT, DELETE',
         code: 'method_not_allowed',
@@ -5527,5 +5538,436 @@ describe('viewer-keyed documents', () => {
       const key = `${VK_P2}:${'c'.repeat(26)}`;
       expect(await reasonOf(liveStore.report(ctx, keyed, key))).toBe('not_found:undefined');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rollout step 5 (docs/app-storage-generic-core.md): marks, counters, their tallies, counter
+// documents and server-side publish are REMOVED. Pinned here:
+//   (a) every document reply still carries `counters: {}`, `marks: {}` and `viewer`, because
+//       `@civitai/sdk` up to 0.30 refuses a document without them (its `toDocument`, ported below
+//       as `sdk030ToDocument` and checked against a reply that lacks them);
+//   (b) approved manifests that still DECLARE marks, counters or `write: "none"` (the shapes two
+//       approved apps hold) keep parsing and serving: their plain documents work, the
+//       declarations are inert, and `write: "none"` is read-only, never `own`;
+//   (c) every removed route answers exactly as an unknown route does, with no deprecation
+//       header, and writes nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * A LITERAL PORT of `toDocument` (and the `toCounts` / `toAuthor` / `toDate` it calls) from
+ * `@civitai/sdk` 0.30.1, `dist/doc-store/index.js`: what every app bundle built on 0.30 does with
+ * each document a storage call answers. It throws "malformed" on a reply without `counters` /
+ * `marks` objects of numbers, or without `viewer` (null, or `{ marks: string[] }`). Kept as the
+ * SDK wrote it, so a reply that passes here passes there.
+ */
+function sdk030ToDocument(reply: unknown, op: string): unknown {
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    v != null && typeof v === 'object' && !Array.isArray(v);
+  const fail = (what: string) => new Error(`storage ${op}: ${what}`);
+  const toDate = (value: unknown, field: string) => {
+    const at = typeof value === 'string' ? new Date(value) : new Date(Number.NaN);
+    if (Number.isNaN(at.getTime())) throw fail(`malformed \`${field}\``);
+    return at;
+  };
+  const toAuthor = (value: unknown) => {
+    if (isRecord(value)) {
+      if (value.kind === 'app' || value.kind === 'counter') return { kind: value.kind };
+      if (value.kind === 'user' && typeof value.isViewer === 'boolean') {
+        return { kind: 'user', isViewer: value.isViewer };
+      }
+    }
+    throw fail('malformed `author`');
+  };
+  const toCounts = (value: unknown, field: string) => {
+    if (!isRecord(value) || Object.values(value).some((n) => typeof n !== 'number')) {
+      throw fail(`malformed \`${field}\``);
+    }
+    return { ...value };
+  };
+  if (
+    !isRecord(reply) ||
+    typeof reply.key !== 'string' ||
+    !isRecord(reply.data) ||
+    typeof reply.version !== 'number'
+  ) {
+    throw fail('reply is not a document');
+  }
+  const viewer = reply.viewer;
+  if (
+    viewer !== null &&
+    !(
+      isRecord(viewer) &&
+      Array.isArray(viewer.marks) &&
+      viewer.marks.every((m) => typeof m === 'string')
+    )
+  ) {
+    throw fail('malformed `viewer`');
+  }
+  return {
+    key: reply.key,
+    data: reply.data,
+    version: reply.version,
+    createdAt: toDate(reply.createdAt, 'createdAt'),
+    updatedAt: toDate(reply.updatedAt, 'updatedAt'),
+    author: toAuthor(reply.author),
+    counters: toCounts(reply.counters, 'counters'),
+    marks: toCounts(reply.marks, 'marks'),
+    viewer: viewer === null ? null : { marks: [...(viewer as { marks: string[] }).marks] },
+  };
+}
+
+const GONE_SCOPES = ['apps:storage', 'apps:storage:publish'];
+
+/** A manifest exercising every shape: a private and a shared collection declaring nothing, and
+ *  a shared one that still declares marks and counters. */
+const GONE_MANIFEST = {
+  scopes: GONE_SCOPES,
+  storage: {
+    collections: {
+      prefs: { visibility: 'private' },
+      board: { visibility: 'shared', write: 'own' },
+      posts: { visibility: 'shared', write: 'own', marks: ['vote'], counters: ['views'] },
+    },
+  },
+};
+
+/**
+ * The declarations the two approved apps that still declare removed primitives hold
+ * (docs/app-storage-generic-core.md, "Inventory"): a counter-only `write: "none"` collection
+ * (`plays`, counter `plays`) and a shared collection with a `vote` mark (`picks`). Each beside a
+ * plain collection, as an app's manifest has.
+ */
+const COUNTER_APP_MANIFEST = {
+  scopes: GONE_SCOPES,
+  storage: {
+    collections: {
+      plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+      saves: { visibility: 'private' },
+    },
+  },
+};
+const MARK_APP_MANIFEST = {
+  scopes: GONE_SCOPES,
+  storage: {
+    collections: {
+      picks: { visibility: 'shared', write: 'own', marks: ['vote'] },
+      prefs: { visibility: 'private' },
+    },
+  },
+};
+
+const goneMint = (app: AppRow, uid: number | null) => mint({ app, uid, scopes: GONE_SCOPES });
+const goneBody = (r: Reply) => r.body as Record<string, unknown>;
+
+async function goneOk(p: Promise<Reply>, status = 200): Promise<Reply> {
+  const r = await p;
+  expect(r.status, JSON.stringify(r.body)).toBe(status);
+  return r;
+}
+
+/** Every row any removed primitive could have written for one app, by table. */
+async function goneTallyRows(app: AppRow) {
+  const count = async (table: string) =>
+    Number(
+      (
+        await harness.raw(`SELECT count(*)::int AS n FROM appdata.${table} WHERE app_id = $1`, [
+          app.id,
+        ])
+      )[0].n
+    );
+  return {
+    doc_tally: await count('doc_tally'),
+    doc_mark: await count('doc_mark'),
+    mark_head: await count('mark_head'),
+  };
+}
+
+const NO_TALLY_ROWS = { doc_tally: 0, doc_mark: 0, mark_head: 0 };
+
+// ---------------------------------------------------------------------------
+// (a) The SDK compatibility fields
+// ---------------------------------------------------------------------------
+
+describe('(a) every document reply carries empty counters, marks and viewer (SDK 0.30 compatibility)', () => {
+  it('the port of the SDK parse refuses a reply without them (instrument control)', () => {
+    const doc = {
+      key: 'k',
+      data: {},
+      version: 1,
+      createdAt: '2026-11-24T00:00:00.000Z',
+      updatedAt: '2026-11-24T00:00:00.000Z',
+      author: { kind: 'user', isViewer: true },
+    };
+    expect(() => sdk030ToDocument(doc, 'get')).toThrow('malformed `viewer`');
+    expect(() => sdk030ToDocument({ ...doc, viewer: null }, 'get')).toThrow('malformed `counters`');
+    expect(() => sdk030ToDocument({ ...doc, viewer: null, counters: {} }, 'get')).toThrow(
+      'malformed `marks`'
+    );
+    // Positive control: with the three fields empty it parses.
+    expect(
+      sdk030ToDocument({ ...doc, viewer: null, counters: {}, marks: {} }, 'get')
+    ).toMatchObject({ key: 'k', counters: {}, marks: {}, viewer: null });
+  });
+
+  it('put, get, list and get-many answer counters {}, marks {} and viewer {marks: []} on every collection, a declaring one included; anonymous reads answer viewer null', async () => {
+    const app = freshApps('approved', GONE_MANIFEST).A;
+    const t = await goneMint(app, VIEWER_IDS.v1);
+    const anon = await goneMint(app, null);
+    const written = [
+      await goneOk(call({ token: t, method: 'PUT', path: '/prefs/p1', body: { data: { n: 1 } } })),
+      await goneOk(call({ token: t, method: 'PUT', path: '/board/b1', body: { data: { n: 2 } } })),
+      await goneOk(call({ token: t, method: 'PUT', path: '/posts/s1', body: { data: { n: 3 } } })),
+    ];
+    const signedIn = [
+      ...written,
+      await goneOk(call({ token: t, method: 'GET', path: '/posts/s1' })),
+      await goneOk(call({ token: t, method: 'GET', path: '/prefs/p1' })),
+    ];
+    for (const r of signedIn) {
+      expect({
+        counters: goneBody(r).counters,
+        marks: goneBody(r).marks,
+        viewer: goneBody(r).viewer,
+      }).toEqual({
+        counters: {},
+        marks: {},
+        viewer: { marks: [] },
+      });
+      expect(() => sdk030ToDocument(goneBody(r), 'get')).not.toThrow();
+    }
+    const list = await goneOk(call({ token: t, method: 'GET', path: '/posts' }));
+    const many = await goneOk(
+      call({ token: t, method: 'POST', path: '/_get/posts', body: { keys: ['s1'] } })
+    );
+    for (const items of [goneBody(list).items, goneBody(many).items] as Record<
+      string,
+      unknown
+    >[][]) {
+      expect(items.map((d) => [d.key, d.counters, d.marks, d.viewer])).toEqual([
+        ['s1', {}, {}, { marks: [] }],
+      ]);
+    }
+    // An anonymous reader of the shared collections: viewer null, the rest the same.
+    for (const path of ['/posts/s1', '/board/b1']) {
+      const r = await goneOk(call({ token: anon, method: 'GET', path }));
+      expect({
+        counters: goneBody(r).counters,
+        marks: goneBody(r).marks,
+        viewer: goneBody(r).viewer,
+      }).toEqual({
+        counters: {},
+        marks: {},
+        viewer: null,
+      });
+      expect(() => sdk030ToDocument(goneBody(r), 'get')).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (b) Approved manifests that still declare the removed primitives
+// ---------------------------------------------------------------------------
+
+describe('(b) an approved manifest declaring marks, counters or write "none" keeps parsing and serving', () => {
+  it('both manifests parse on the serving path (every feature on), with their declarations kept', () => {
+    for (const manifest of [COUNTER_APP_MANIFEST, MARK_APP_MANIFEST]) {
+      expect(parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON).errors).toEqual([]);
+    }
+    const plays = parseManifestStorage(
+      COUNTER_APP_MANIFEST,
+      APP_STORAGE_ALL_FEATURES_ON
+    ).collections.get('plays');
+    expect([plays?.write, plays?.counters]).toEqual(['none', ['plays']]);
+  });
+
+  it('the mark app: its plain documents serve, info lists no marks, and the declared mark is not a route', async () => {
+    const app = freshApps('approved', MARK_APP_MANIFEST).A;
+    const t = await goneMint(app, VIEWER_IDS.v1);
+    const info = await goneOk(call({ token: t, method: 'GET', path: '' }));
+    const collections = goneBody(info).collections as Record<string, Record<string, unknown>>;
+    expect(collections.picks).toEqual({
+      kind: 'docs',
+      visibility: 'shared',
+      write: 'own',
+      counters: [],
+      marks: [],
+      indexes: {},
+      showAuthor: false,
+    });
+    expect((goneBody(info).limits as { rate: Record<string, unknown> }).rate).not.toHaveProperty(
+      'marksAndCountersPerMinute'
+    );
+    const put = await goneOk(
+      call({ token: t, method: 'PUT', path: '/picks/pick-1', body: { data: { choice: 'b' } } })
+    );
+    expect([goneBody(put).key, goneBody(put).data, goneBody(put).marks]).toEqual([
+      'pick-1',
+      { choice: 'b' },
+      {},
+    ]);
+    await goneOk(call({ token: t, method: 'PUT', path: '/prefs/me', body: { data: { a: 1 } } }));
+    const listed = await goneOk(call({ token: t, method: 'GET', path: '/picks' }));
+    expect((goneBody(listed).items as { key: string }[]).map((d) => d.key)).toEqual(['pick-1']);
+    const vote = await call({ token: t, method: 'PUT', path: '/picks/pick-1/marks/vote' });
+    expect([vote.status, goneBody(vote).code]).toEqual([404, 'not_found']);
+    expect(await goneTallyRows(app)).toEqual(NO_TALLY_ROWS);
+  });
+
+  it('🔴 the counter app: write "none" stays read-only (never own), its private collection serves, and the counter is not a route', async () => {
+    const app = freshApps('approved', COUNTER_APP_MANIFEST).A;
+    const t = await goneMint(app, VIEWER_IDS.v1);
+    const info = await goneOk(call({ token: t, method: 'GET', path: '' }));
+    const plays = (goneBody(info).collections as Record<string, Record<string, unknown>>).plays;
+    expect([plays.write, plays.counters, plays.marks]).toEqual(['none', [], []]);
+    for (const [method, path, body] of [
+      ['PUT', '/plays/song-1', { data: { n: 1 } }],
+      ['POST', '/plays', { data: { n: 1 } }],
+      ['DELETE', '/plays/song-1', undefined],
+    ] as const) {
+      const r = await call({ token: t, method, path, body });
+      expect({ method, status: r.status, code: goneBody(r).code }).toEqual({
+        method,
+        status: 403,
+        code: 'write_policy',
+      });
+    }
+    const inc = await call({
+      token: t,
+      method: 'POST',
+      path: '/plays/song-1/counters/plays',
+      body: { by: 1 },
+    });
+    expect([inc.status, goneBody(inc).code]).toEqual([404, 'not_found']);
+    // Reads of the read-only collection answer as an empty collection does.
+    expect(goneBody(await goneOk(call({ token: t, method: 'GET', path: '/plays' }))).items).toEqual(
+      []
+    );
+    const miss = await call({ token: t, method: 'GET', path: '/plays/song-1' });
+    expect([miss.status, goneBody(miss).code]).toEqual([404, 'not_found']);
+    // Control: the app's plain collection takes writes.
+    await goneOk(call({ token: t, method: 'PUT', path: '/saves/s1', body: { data: { a: 1 } } }));
+    expect(
+      Number(
+        (
+          await harness.raw(`SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1`, [
+            app.id,
+          ])
+        )[0].n
+      )
+    ).toBe(1);
+    expect(await goneTallyRows(app)).toEqual(NO_TALLY_ROWS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (c) The removed routes are unknown routes
+// ---------------------------------------------------------------------------
+
+describe('(c) every removed route answers exactly as an unknown route does', () => {
+  it('the per-tally paths, the publish paths and the tally PATCH: the unknown-route answers, no deprecation header, nothing written', async () => {
+    const app = freshApps('approved', GONE_MANIFEST).A;
+    const t = await goneMint(app, VIEWER_IDS.v1);
+    await goneOk(call({ token: t, method: 'PUT', path: '/posts/k1', body: { data: { n: 1 } } }));
+    await goneOk(call({ token: t, method: 'PUT', path: '/prefs/k1', body: { data: { n: 1 } } }));
+    const before = await harness.raw(
+      `SELECT coll, key, version, seq FROM appdata.doc WHERE app_id = $1 ORDER BY coll, key`,
+      [app.id]
+    );
+
+    // The controls: a path that never existed (404), and a method the key path never had (405).
+    const unknownPath = await call({ token: t, method: 'GET', path: '/posts/k1/nothing/here' });
+    expect([unknownPath.status, goneBody(unknownPath)]).toEqual([
+      404,
+      { code: 'not_found', message: 'no such storage route', error: 'no such storage route' },
+    ]);
+    const unknownMethod = await call({ token: t, method: 'POST', path: '/posts/k1' });
+    expect([
+      unknownMethod.status,
+      unknownMethod.headers.allow,
+      goneBody(unknownMethod).code,
+    ]).toEqual([405, 'GET, PUT, DELETE', 'method_not_allowed']);
+
+    const asUnknownPath = [
+      ['POST', '/posts/k1/counters/views', { by: 1 }],
+      ['PUT', '/posts/k1/marks/vote', undefined],
+      ['DELETE', '/posts/k1/marks/vote', undefined],
+      ['PUT', '/posts/k1/marks/report', undefined],
+      ['POST', '/_publish/posts', { from: 'prefs', keys: ['k1'] }],
+      ['POST', '/_unpublish/posts', { keys: ['k1'] }],
+    ] as const;
+    for (const [method, path, body] of asUnknownPath) {
+      const r = await call({ token: t, method, path, body });
+      expect({ method, path, status: r.status, body: goneBody(r) }).toEqual({
+        method,
+        path,
+        status: unknownPath.status,
+        body: goneBody(unknownPath),
+      });
+      expect([r.headers.deprecation, r.headers.link, r.headers.sunset]).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    }
+    const asUnknownMethod = [{ $mark: 'vote' }, { $unmark: 'vote' }, { $inc: { views: 1 } }];
+    for (const body of asUnknownMethod) {
+      const r = await call({ token: t, method: 'PATCH', path: '/posts/k1', body });
+      expect({ body, status: r.status, allow: r.headers.allow, reply: goneBody(r) }).toEqual({
+        body,
+        status: unknownMethod.status,
+        allow: unknownMethod.headers.allow,
+        reply: goneBody(unknownMethod),
+      });
+      expect(r.headers.deprecation).toBeUndefined();
+    }
+
+    // Nothing was written: no tally, mark or mark-head row, and every document as it was.
+    expect(await goneTallyRows(app)).toEqual(NO_TALLY_ROWS);
+    expect(
+      await harness.raw(
+        `SELECT coll, key, version, seq FROM appdata.doc WHERE app_id = $1 ORDER BY coll, key`,
+        [app.id]
+      )
+    ).toEqual(before);
+    expect(before.map((d) => `${d.coll}/${d.key}`)).toEqual(['posts/k1', 'prefs/k1']);
+  });
+
+  it('a list naming a removed parameter is refused like any unknown parameter or undeclared sort', async () => {
+    const app = freshApps('approved', GONE_MANIFEST).A;
+    const t = await goneMint(app, VIEWER_IDS.v1);
+    await goneOk(call({ token: t, method: 'PUT', path: '/posts/k1', body: { data: { n: 1 } } }));
+    const unknownParam = await call({
+      token: t,
+      method: 'GET',
+      path: '/posts',
+      query: { nonsense: 'me' },
+    });
+    expect([unknownParam.status, goneBody(unknownParam).code]).toEqual([400, 'invalid_request']);
+    for (const [name, value] of [
+      ['markedBy', 'me'],
+      ['mark', 'vote'],
+    ] as const) {
+      const r = await call({ token: t, method: 'GET', path: '/posts', query: { [name]: value } });
+      expect({ name, status: r.status, body: goneBody(r) }).toEqual({
+        name,
+        status: 400,
+        body: {
+          code: 'invalid_request',
+          message: `unknown query parameter ${name}`,
+          error: `unknown query parameter ${name}`,
+        },
+      });
+      expect(r.headers.deprecation).toBeUndefined();
+    }
+    for (const sort of ['counter:views', '-counter:views', 'mark:vote', '-mark:vote']) {
+      const r = await call({ token: t, method: 'GET', path: '/posts', query: { sort } });
+      expect({ sort, status: r.status, code: goneBody(r).code }).toEqual({
+        sort,
+        status: 400,
+        code: 'index_not_declared',
+      });
+      expect(r.headers.deprecation).toBeUndefined();
+    }
   });
 });

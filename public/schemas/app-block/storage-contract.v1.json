@@ -1401,6 +1401,59 @@
       ]
     },
     {
+      "name": "rate limits: private document writes per minute",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {
+              "n": 1
+            }
+          },
+          "repeat": 120,
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {
+              "n": 2
+            }
+          },
+          "expect": {
+            "status": 429,
+            "code": "rate_limited",
+            "body": {
+              "details": {
+                "bucket": "write",
+                "retryAfter": "$number"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "Per (app, viewer): another viewer's bucket is untouched.",
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {
+              "n": 3
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
       "name": "isolation: two apps, two viewers, two namespaces",
       "steps": [
         {

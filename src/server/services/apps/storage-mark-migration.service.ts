@@ -7,7 +7,7 @@
 //   - `storagePurgeDump`: one purge's dump (every row it deleted), while its retention lasts;
 // and the retention job's sweep (`expireStorageMaintenanceDumps`). The account wipe scrubs a
 // deleted user out of the runs and dumps in the store itself (`scrubMaintRuns` in `doc-store.ts`).
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import type { DocStoreMaintenance, MaintRun, PurgeDump } from '~/server/services/apps/doc-store';
 import { getDocStoreMaintenance } from '~/server/services/apps/doc-store-maintenance.instance';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
@@ -21,9 +21,9 @@ export class StorageMaintenanceError extends Error {
 
 type Deps = { store?: DocStoreMaintenance };
 
-/** The app block, from the primary; refused when it does not exist. */
+/** The app block (an existence check, from the replica); refused when it does not exist. */
 async function loadApp(appBlockId: string): Promise<{ appBlockId: string }> {
-  const block = await dbWrite.appBlock.findUnique({
+  const block = await dbRead.appBlock.findUnique({
     where: { id: appBlockId },
     select: { id: true },
   });

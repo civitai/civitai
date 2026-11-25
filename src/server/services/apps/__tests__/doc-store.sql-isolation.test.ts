@@ -460,8 +460,6 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
     // The permission-hooks suite rates a document Blocked and reads back what a hooked write left.
     'server/services/apps/__tests__/doc-store-api.hooks.test.ts',
-    // The removed-primitives suite reads back that a removed route wrote no row.
-    'server/services/apps/__tests__/doc-store-api.removed-primitives.test.ts',
     // The unchanged-writes suite reads back the row, seq and rating an unchanged put must not move.
     'server/services/apps/__tests__/doc-store-api.unchanged-writes.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
