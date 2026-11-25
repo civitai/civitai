@@ -1147,6 +1147,8 @@ function imageSql(q) {
     const p = POSTS[i.postId];
     if (without !== 'ids' && q.ids?.length && !q.ids.includes(i.id)) return false;
     if (q.types?.length && !q.types.includes(i.type)) return false;
+    // `(p."publishedAt" < now())`: the owner's scheduled carve-out needs `scheduled` (and no
+    // `publishedOnly`), which no fixture sends, so `publishedOnly` changes nothing here.
     if (!(p.publishedAt < NOW)) return false;
     if (!isModerator) {
       if (!((i.availability !== 'Private' && i.ingestion !== 'Blocked') || p.userId === userId)) return false;
@@ -1801,7 +1803,8 @@ const requiresImageDbPath = (input) =>
   !!input.reactions?.length ||
   !!input.ids?.length ||
   (!!input.modelId && !input.modelVersionId) ||
-  (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+  (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
+  (!!input.publishedOnly && !!input.userId);
 
 /** The handler's withoutHeldFromViewer over getHeldLevelsByPost (withOwners): an image on a held
  *  model's post only at a level intersecting the hold, or to the model's owner (a session); a
@@ -1842,7 +1845,12 @@ function withoutHeldFromViewer(user, images) {
 function infiniteHandler({ input, ctx }) {
   const { user, features } = ctx;
   const { hatSort: _s, hatTeams: _t, hatTurfMine: _m, hideTurfHats: _h, hideWornHats: _w, ...unhatted } = input;
-  let scopedInput = unhatted;
+  // `publishedOnly` beside a `userId` that is not the caller's own is withdrawn (the own-content
+  // submit pickers only ever send their own id): it neither pins the DB path nor reaches the mapper.
+  let scopedInput =
+    unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
+      ? { ...unhatted, publishedOnly: undefined }
+      : unhatted;
   const useIndex = features.imageIndexFeed && !requiresImageDbPath(scopedInput);
   const moderatorView = !!user?.isModerator;
   const heldLevel = moderatorView ? undefined : getHeldGalleryLevel(scopedInput);
@@ -3048,7 +3056,90 @@ const INFINITE = [
     host: HOST.green,
     input: { collectionId: 88, browsingLevel: 1, limit: 10 },
   },
+  // `publishedOnly` (FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY): the own-content submit pickers.
+  {
+    name: 'published-only-own-picker',
+    description: '`publishedOnly` beside the viewer’s own `userId` (the submit pickers): requiresImageDbPath, so the Postgres page of the creator’s images, Newest (i."id" DESC), the look-ahead row’s id as the cursor; no feed call.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'published-only-own-picker-cursor',
+    description: 'The next page of the own picker: the numeric cursor is an image id, inclusive.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', cursor: 8004, browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'published-only-foreign-creator',
+    description: '`publishedOnly` beside another creator’s `userId`: the handler withdraws the flag, so the creator’s feed on the index (userIds=1001) as without it.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'published-only-signed-out',
+    description: '`publishedOnly` with a `userId` signed out: no caller id to match, so withdrawn; the creator’s feed, edge-cacheable.',
+    goConfig: { servePublishedOnly: true },
+    viewer: null,
+    host: HOST.green,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 1, limit: 5 },
+    replies: {
+      'levels=1&excludedTags=9901&userIds=1001&excludePoi=1&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'published-only-without-creator',
+    description: '`publishedOnly` without a `userId`: no DB routing, and the mapper refuses the flag (flag:publishedOnly), an empty page; no feed call.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
+  },
+  {
+    name: 'published-only-own-username',
+    description: '`publishedOnly` beside the viewer’s own `username` and no `userId`: only `userId` is compared, so the flag stays and does not route to Postgres; the name resolves, then the mapper’s empty page.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { username: 'artist_one', publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
+  },
+  {
+    name: 'published-only-false',
+    description: '`publishedOnly: false` beside the viewer’s own `userId`: no routing, the creator’s own feed on the index.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: false, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
   // Fallbacks.
+  {
+    name: 'fallback-published-only-off',
+    description: 'The own picker with FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY off: the shape falls back, as before the port.',
+    fallback: 'input-publishedOnly',
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'fallback-published-only-null',
+    description: '`publishedOnly: null`: z.boolean().optional() refuses a null, Node’s BAD_REQUEST, which it answers itself.',
+    fallback: 'input-invalid',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: null, sort: 'Newest', browsingLevel: 31, limit: 2 },
+  },
   {
     name: 'fallback-followed-not-a-boolean',
     description: '`followed: "true"`: z.boolean() is not coerced, so the schema’s BAD_REQUEST, which Node answers itself.',

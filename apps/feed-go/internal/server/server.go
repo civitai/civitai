@@ -422,7 +422,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	if err != nil {
 		return feed.InfiniteRequest{}, false, fallback.Wrap("input-envelope", err)
 	}
-	in, err := feed.ParseInfinite(raw)
+	in, err := feed.ParseInfiniteWith(raw, s.Infinite.Ports)
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err
 	}
@@ -502,11 +502,6 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 	in, err := modelfeed.ParseWith(raw, s.Models.Config.Ports)
 	if err != nil {
 		return modelfeed.Request{}, nil, err
-	}
-	if in.HidePaid {
-		// Node keeps a gated model that has a free Published version and shows that version; the
-		// port hides every gated model, so a Hide Paid page would lose those models.
-		return modelfeed.Request{}, nil, errModelGetAllHidePaid
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
 		return modelfeed.Request{}, nil, fallback.New("verified-bot")
@@ -858,10 +853,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // errModelGetAllOff is the `model-getall-off` fallback: the public model.getAll route with
 // ServeModelGetAll off.
 var errModelGetAllOff = fallback.New("model-getall-off")
-
-// errModelGetAllHidePaid is the `input-hidePaid` fallback: a model.getAll request with Hide Paid on,
-// in every mode (prepareModelGetAllViewer).
-var errModelGetAllHidePaid = fallback.New("input-hidePaid")
 
 // ServeModelGetAllHTTP is the public route of `model.getAll`. With ServeModelGetAll off (the default)
 // every request is the `model-getall-off` fallback: nothing is computed and no serve slot is taken,

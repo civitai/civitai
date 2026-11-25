@@ -253,7 +253,7 @@ func assocGoldenDeps(t *testing.T, fx *assocFixture) *AssocDeps {
 			return testkit.NewRows(modelColumns, rows...), nil
 		}},
 		{Match: `GROUP BY mv."modelId"`, Rows: func(_ []any) (*testkit.Rows, error) {
-			return testkit.NewRows([]string{"modelId", "deadline"}), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}), nil
 		}},
 		{Match: `AS full_mv(id)`, Rows: func(args []any) (*testkit.Rows, error) {
 			if fx.Binds == nil || !sameInts(args[0], fx.Binds.ImageVersionIDs) {

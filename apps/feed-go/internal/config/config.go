@@ -82,6 +82,10 @@ type Config struct {
 	// before; they change nothing while ServeModelGetAll is off, except in the shadow.
 	GetAllServeInputIDs      bool
 	GetAllServeInputFollowed bool
+	// GetAllServeHidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID (default off): compute a model.getAll
+	// request with Hide Paid on, with the port of the free-version rule (DESIGN.md §15.2.7). Off, it
+	// is the `input-hidePaid` fallback.
+	GetAllServeHidePaid bool
 	// GetAllServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): on, a
 	// model.getAll page computes its owners' user-cosmetics misses (the image pages' lookup) instead
 	// of falling back (`user-cosmetics-miss`); written back only as FEED_GO_CACHE_WRITEBACK lists
@@ -102,6 +106,10 @@ type Config struct {
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
+	// InfiniteServeInputPublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY (default off):
+	// compute an `image.getInfinite` request with `publishedOnly` (feed.InfinitePorts). Off, such a
+	// request is the `input-publishedOnly` fallback, as before the port.
+	InfiniteServeInputPublishedOnly bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
 	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
@@ -282,11 +290,13 @@ func Load() (*Config, error) {
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
-		GetAllServeInputIDs:          boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
-		GetAllServeInputFollowed:     boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
-		GetAllServeUserCosmeticsMiss: boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
-		GetAllServeMembershipMiss:    boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
-		TierMetadataKey:              tierMetadataKey(),
+		GetAllServeInputIDs:             boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
+		GetAllServeInputFollowed:        boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
+		GetAllServeHidePaid:             boolEnv("FEED_GO_GETALL_SERVE_HIDE_PAID", false),
+		GetAllServeUserCosmeticsMiss:    boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
+		GetAllServeMembershipMiss:       boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
+		TierMetadataKey:                 tierMetadataKey(),
+		InfiniteServeInputPublishedOnly: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", false),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),

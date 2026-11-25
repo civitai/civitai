@@ -479,6 +479,7 @@ func run(log *slog.Logger) error {
 		Blocked: blocked,
 		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
+		Ports:       feed.InfinitePorts{PublishedOnly: cfg.InfiniteServeInputPublishedOnly},
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -494,7 +495,7 @@ func run(log *slog.Logger) error {
 			CoverageNext:            cfg.CoverageNext,
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
-			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed},
+			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed, HidePaid: cfg.GetAllServeHidePaid},
 			ServeUserCosmeticsMiss:  cfg.GetAllServeUserCosmeticsMiss,
 			ServeMembershipMiss:     cfg.GetAllServeMembershipMiss,
 		},
@@ -623,9 +624,11 @@ func run(log *slog.Logger) error {
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
 		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed,
+		"FEED_GO_GETALL_SERVE_HIDE_PAID", cfg.GetAllServeHidePaid,
 		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss,
 		"FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", cfg.GetAllServeMembershipMiss)
-	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
+	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite,
+		"FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", cfg.InfiniteServeInputPublishedOnly)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,

@@ -277,6 +277,27 @@ describe('send rows', () => {
     ]);
   });
 
+  it.each(['sendEmail', 'sendEmailStrict'] as const)(
+    '%s sends with the send id the sender rendered into the message, when it is a UUID',
+    async (fn) => {
+      const mod = await load();
+      const rows: EmailSendRecord[] = [];
+      mod.setEmailSendRecorder((r) => void rows.push(r));
+      const mine = '6F1C2B3A-4D5E-4F60-8A7B-9C0D1E2F3A4B';
+      await mod[fn]({ ...input, sendId: mine });
+      expect(headerOf(seen.messages[0])).toBe(mine.toLowerCase());
+      expect(rows.map((r) => r.sendId)).toEqual([mine.toLowerCase()]);
+      // The one validity rule: lowercase only, which is what resolveSendId produced above.
+      expect(mod.isSendId(mine.toLowerCase())).toBe(true);
+      expect(mod.isSendId(mine)).toBe(false);
+      expect(mod.isSendId('not-a-uuid')).toBe(false);
+      // Anything else is replaced by a fresh one, never sent as given.
+      await mod[fn]({ ...input, sendId: 'not-a-uuid' });
+      expect(headerOf(seen.messages[1])).toMatch(UUID);
+      expect(headerOf(seen.messages[1])).not.toBe('not-a-uuid');
+    }
+  );
+
   it('defaults what a send does not say: no campaign or variant, user 0', async () => {
     const mod = await load();
     const rows: EmailSendRecord[] = [];
