@@ -18,8 +18,7 @@ import {
   notReviewImageSql,
   shownReviewImageSql,
 } from '~/server/services/creator-service-review-image-sql';
-import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { songsHiddenSql } from '~/server/services/song-visibility-sql';
+import { canSeeSongs, songsHiddenSql } from '~/server/services/song-visibility-sql';
 import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -239,17 +238,7 @@ export function imageVisibilityConditions({
   ];
 }
 
-export { songsHiddenSql };
-
-/**
- * Whether generic image reads serve songs to `user`: the `music` flag, or a moderator (a Flipt answer
- * overrides the flag's role check, so a moderator outside its segment would otherwise lose them).
- */
-export const canSeeSongs = (
-  user: SessionUser | undefined,
-  /** The caller's moderator view where it is narrower than the user's (`feedViewer`). */
-  isModerator = !!user?.isModerator
-) => isModerator || !!getFeatureFlagsLazy({ user }).music;
+export { canSeeSongs, songsHiddenSql };
 
 /**
  * `songsHiddenSql` over rows already read, for a cache filled for every viewer: `rows` without the

@@ -5046,9 +5046,9 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(...reviewedGalleryImageConditions(browsingLevel || allBrowsingLevelsFlag));
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
-  // A read without a viewer fills the shared cache: its readers drop songs per viewer
-  // (withoutHiddenSongs).
-  const songsHidden = user && songsHiddenSql({ music: canSeeSongs(user), ownerId: userId });
+  // A read without a viewer fills the shared cache, which every viewer reads: it holds no song (the
+  // model-version carousel never shows one; owners see theirs in the gallery).
+  const songsHidden = songsHiddenSql({ music: !!user && canSeeSongs(user), ownerId: userId });
   if (songsHidden) imageWhere.push(songsHidden);
 
   const query = Prisma.sql`

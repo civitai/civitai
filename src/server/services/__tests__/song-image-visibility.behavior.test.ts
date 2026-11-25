@@ -57,6 +57,7 @@ import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   getImagesForPosts,
+  imagesForModelVersionsCache,
 } from '../image.service';
 import { getCollectionCoverImages } from '~/server/services/collection.service';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
@@ -292,9 +293,22 @@ describe('model version images (getImagesForModelVersion)', () => {
       })
     );
 
-  // The shared cache is filled with no viewer; its readers drop songs per viewer (below).
-  it('keeps the song when read with no viewer, as the shared cache is filled', async () => {
-    expect(await read()).toEqual([...NO_SONGS, SONG]);
+  // A read with no viewer fills the shared cache every viewer reads, so it holds no song.
+  it('serves no song when read with no viewer, as the shared cache is filled', async () => {
+    expect(await read()).toEqual(NO_SONGS);
+  });
+
+  it('fills the shared cache with no song, read directly', async () => {
+    installFakeCacheRedis();
+    const write = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    // A miss may read the primary right after a write; both answer from the rows above here.
+    (dbMock.dbWrite.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      dbMock.dbRead.$queryRaw.getMockImplementation()!
+    );
+    const cached = await imagesForModelVersionsCache
+      .fetch([1])
+      .finally(() => dbMock.dbWrite.$queryRaw.mockImplementation(write as never));
+    expect(ids(cached[1].images)).toEqual(NO_SONGS);
   });
 
   // The showcase holds the model owner's posts only, so STRANGERS_SONG is never in it.
