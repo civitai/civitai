@@ -1,8 +1,6 @@
 // App Assistant's per-user OAuth client: one row per user, id `appassist-<userId>`, created and kept
-// in shape only by the main app's `enableAppAssistant`. The id is the client's whole identity, so
-// every place that must treat it specially (the OAuth-apps router refusing edits, the hub's
-// `app-token` mint refusing another user's client) reads it through THESE functions, never by
-// re-spelling the prefix.
+// in shape only by the main app's `enableAppAssistant`. Every place that treats this id specially uses
+// these functions, never re-spells the prefix.
 //
 // Not `firstparty-`: the hub reserves that prefix for its own trusted clients.
 export const APP_ASSISTANT_CLIENT_PREFIX = 'appassist-';

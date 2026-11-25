@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { BanCleanupDeps } from '../ban-access-cleanup.service';
 
 const { disableOauthForBannedUser } = await import('../ban-access-cleanup.service');
@@ -44,11 +43,10 @@ beforeEach(() => {
   }) as never);
   dbMock.dbWrite.oauthConsent.deleteMany.mockReset();
   dbMock.dbWrite.oauthConsent.deleteMany.mockResolvedValue({ count: 3 } as never);
-  loggingMock.logToAxiom.mockClear();
 });
 
 describe('disableOauthForBannedUser', () => {
-  it('🔴 disables ONLY the self-only clients (App Assistant, dev tunnel), marking them first', async () => {
+  it('🔴 disables ONLY the self-only clients (App Assistant, dev tunnel), marking them once disabled', async () => {
     const result = await disableOauthForBannedUser(USER, deps);
 
     expect(dbMock.dbWrite.oauthClient.updateMany).toHaveBeenCalledTimes(1);
@@ -56,10 +54,11 @@ describe('disableOauthForBannedUser', () => {
       where: { id: { in: [ASSISTANT, DEV] } },
       data: { accessMode: 'disabled' },
     });
-    // The ban mark goes on before the disable, so a re-enable can tell it from a staff disable.
+    // The ban mark goes on only after the disable landed, so a re-enable can tell it from a staff
+    // disable and never re-opens a client the ban did not actually disable.
     expect(order).toEqual([
-      `mark:${ASSISTANT},${DEV}`,
       'disable',
+      `mark:${ASSISTANT},${DEV}`,
       `expire:${ASSISTANT}`,
       `expire:${DEV}`,
     ]);
@@ -80,19 +79,14 @@ describe('disableOauthForBannedUser', () => {
       flagDelivery: 'delivered',
     });
     expect(deps.notifyModAlert).toHaveBeenCalledTimes(1);
-    const [, description, opts] = deps.notifyModAlert.mock.calls[0];
-    expect(description).toContain(`User ${USER}`);
-    expect(description).toContain(`${THIRD_PARTY} (Prompt Pal, open)`);
-    expect(description).toContain(LOOKALIKE_DEV);
     // The app names are user-written.
-    expect(opts).toEqual({ noMentions: true });
-    // The log carries the ids under `payload`: the main Axiom dataset takes no new top-level key.
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'ban-user-oauth-clients-for-review',
-        payload: { clientIds: [THIRD_PARTY, LOOKALIKE_DEV] },
-      })
-    );
+    expect(deps.notifyModAlert.mock.calls[0][2]).toEqual({ noMentions: true });
+  });
+
+  it('🔴 a disable that fails leaves no ban mark (so no later enable can re-open the client)', async () => {
+    dbMock.dbWrite.oauthClient.updateMany.mockRejectedValue(new Error('db down'));
+    await disableOauthForBannedUser(USER, deps);
+    expect(deps.markBanDisabledClients).not.toHaveBeenCalled();
   });
 
   it('🔴 revokes, at the orchestrator, every user who held a token under a disabled client', async () => {

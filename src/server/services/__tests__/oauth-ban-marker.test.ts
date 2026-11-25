@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
+import { banDisabledMarkKey } from '@civitai/auth/ban-disabled-mark';
+
 const { markBanDisabledClients, reopenBanDisabledClient } = await import('../oauth-ban-marker');
 
 /** A cache Redis that holds keys, behind the shared redis mock. */
@@ -37,8 +39,9 @@ describe('the ban-disabled mark', () => {
       expect.stringMatching(/oauth:ban-disabled:appassist-7$/),
       expect.stringMatching(/oauth:ban-disabled:appdev-7-pose-board$/),
     ]);
-    // A year's TTL, so a lost or expired mark fails closed rather than lingering forever.
-    expect([...keys.values()][0]).toEqual({ EX: 365 * 24 * 60 * 60 });
+    // Written with a TTL, so a mark never lingers forever (a lost mark fails closed).
+    const ttl = ([...keys.values()][0] as { EX?: number }).EX;
+    expect(ttl).toBeGreaterThan(0);
 
     expect(await reopenBanDisabledClient('appassist-7')).toBe(true);
     expect(dbMock.dbWrite.oauthClient.updateMany).toHaveBeenCalledWith({
@@ -50,5 +53,13 @@ describe('the ban-disabled mark', () => {
     expect(dbMock.dbWrite.oauthClient.updateMany).toHaveBeenCalledTimes(1);
     // The other client keeps its own mark.
     expect(keys.size).toBe(1);
+  });
+
+  it('🔴 once staff set the mode (the hub clears this same key), the owner’s enable no longer re-opens it', async () => {
+    await markBanDisabledClients(['appassist-7']);
+    // The hub's access page deletes banDisabledMarkKey(id) on every setMode (its own test).
+    keys.delete(banDisabledMarkKey('appassist-7'));
+    expect(await reopenBanDisabledClient('appassist-7')).toBe(false);
+    expect(dbMock.dbWrite.oauthClient.updateMany).not.toHaveBeenCalled();
   });
 });

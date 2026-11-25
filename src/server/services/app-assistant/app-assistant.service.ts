@@ -221,32 +221,27 @@ export async function enableAppAssistant(userId: number): Promise<void> {
   const clientId = appAssistantClientId(userId);
   const scope = appAssistantTokenScope('chat');
 
-  const client = await dbWrite.oauthClient.findUnique({
+  // The client's canonical shape, restored on every call: a row edited before the OAuth-apps router
+  // refused App Assistant edits (a rename, redirect URIs, wider scopes) is put back. `accessMode` is
+  // not part of it: see below.
+  const shape = {
+    secret: null,
+    name: 'App Assistant',
+    description: 'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
+    redirectUris: [],
+    allowedOrigins: [],
+    isConfidential: false,
+    grants: [],
+    allowedScopes: scope,
+  };
+  await dbWrite.oauthClient.upsert({
     where: { id: clientId },
-    select: { allowedScopes: true },
+    create: { id: clientId, ...shape, userId },
+    update: shape,
+    select: { id: true },
   });
-  if (client?.allowedScopes !== scope)
-    await dbWrite.oauthClient.upsert({
-      where: { id: clientId },
-      create: {
-        id: clientId,
-        secret: null,
-        name: 'App Assistant',
-        description:
-          'The Civitai App Assistant, building apps in your sandbox. Only you can use it.',
-        redirectUris: [],
-        allowedOrigins: [],
-        isConfidential: false,
-        grants: [],
-        allowedScopes: scope,
-        userId,
-      },
-      update: { allowedScopes: scope },
-      select: { id: true },
-    });
 
-  // A ban disables this client and an unban leaves it so; turning App Assistant on again (past the
-  // gate, approval included) re-opens it. Only a ban's disable: one by staff stays.
+  // Re-opens only a client a ban disabled; staff-disabled ones stay disabled.
   await reopenBanDisabledClient(clientId);
 
   const existing = await dbWrite.oauthConsent.findUnique({

@@ -13,8 +13,7 @@ import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '~/shared/constants/block-scope
  * What a BAN takes away from the account's OAuth apps and app access, called by `toggleBan`.
  *
  * `user.service` imports this and sits in the image.service import cycle, so nothing imported here
- * may lead back into that cycle; `api-key.service` is the deepest dependency. Pinned by
- * `no-image-service-import-cycle.test.ts`.
+ * may lead back into it (`no-image-service-import-cycle.test.ts`).
  */
 
 /** The boundaries the OAuth leg calls; tests pass their own. */
@@ -49,12 +48,11 @@ export type OauthBanCleanup = {
  * Only the account's SELF-ONLY clients (`isSelfOnlyClientFor`: its App Assistant and dev-tunnel
  * clients, which nobody else uses) are disabled, with their tokens expired and every holder revoked
  * at the orchestrator. Any other client it owns is a third-party app other people rely on, so it is
- * left working for them and flagged for a moderator to decide. App Block clients, and the consents
- * the account gave to them, are left to the App Blocks ban handling; every other consent it gave is
- * deleted.
+ * left working for them and flagged for a moderator to decide. This leg skips App Block (`appblk-`)
+ * clients, and the consents the account gave to them; every other consent it gave is deleted.
  *
- * An unban leaves the self-only clients disabled. Each is marked as ban-disabled first, and its
- * re-enable path (`enableAppAssistant`, the dev-tunnel mint) re-opens only a marked client, so a
+ * An unban leaves the self-only clients disabled. Each is marked as ban-disabled once disabled, and
+ * its re-enable path (`enableAppAssistant`, the dev-tunnel mint) re-opens only a marked client, so a
  * client staff disabled stays disabled.
  */
 export async function disableOauthForBannedUser(
@@ -86,11 +84,13 @@ export async function disableOauthForBannedUser(
         select: { userId: true },
         distinct: ['userId'],
       });
-      await deps.markBanDisabledClients(toDisable);
       await dbWrite.oauthClient.updateMany({
         where: { id: { in: toDisable } },
         data: { accessMode: 'disabled' },
       });
+      // Only once the disable landed: a mark on a client still open would let a later enable undo
+      // whatever disables it next. A mark that fails to write leaves the client disabled (closed).
+      await deps.markBanDisabledClients(toDisable).catch(failed('mark ban-disabled'));
       for (const clientId of toDisable)
         await deps.expireClientTokens(clientId).catch(failed(`expire ${clientId}`));
       await Promise.all(

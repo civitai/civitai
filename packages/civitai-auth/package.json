@@ -10,6 +10,7 @@
     "./token-scope": "./src/token-scope.ts",
     "./app-assistant-client": "./src/app-assistant-client.ts",
     "./self-only-client": "./src/self-only-client.ts",
+    "./ban-disabled-mark": "./src/ban-disabled-mark.ts",
     "./buzz-limit": "./src/buzz-limit.ts",
     "./secret-hash": "./src/secret-hash.ts",
     "./plain-email": "./src/plain-email.ts",

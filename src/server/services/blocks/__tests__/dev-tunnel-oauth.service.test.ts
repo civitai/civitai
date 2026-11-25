@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/setup';
 
 const { mintAppTokenMock } = vi.hoisted(() => ({
@@ -133,6 +133,11 @@ describe('mintDevTunnelOauthToken', () => {
 });
 
 describe('mintDevTunnelOauthToken on a client a ban disabled', () => {
+  afterEach(() => {
+    redisMock.redis.exists.mockReset();
+    redisMock.redis.del.mockReset();
+  });
+
   it('🔴 re-opens it (the mint runs only past the dev-tunnel gates) and spends the mark', async () => {
     const marked = new Set(['oauth:ban-disabled:appdev-42-my-app']);
     redisMock.redis.exists.mockImplementation((async (key: string) =>
@@ -154,7 +159,5 @@ describe('mintDevTunnelOauthToken on a client a ban disabled', () => {
       data: { accessMode: 'open' },
     });
     expect(marked.size).toBe(0);
-    redisMock.redis.exists.mockReset();
-    redisMock.redis.del.mockReset();
   });
 });

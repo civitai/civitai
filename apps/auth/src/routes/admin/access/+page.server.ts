@@ -1,6 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { TokenScope } from '@civitai/auth/token-scope';
+import { banDisabledMarkKey } from '@civitai/auth/ban-disabled-mark';
+import { getRedis } from '$lib/server/redis';
 import { db } from '$lib/server/db/db';
 import type { AccessMode } from '$lib/server/oauth/access';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
@@ -111,6 +113,17 @@ export const actions: Actions = {
     if (!id) return fail(400, { action: 'setMode', error: 'Missing client id.' });
     if (!isAccessMode(accessMode)) {
       return fail(400, { action: 'setMode', id, error: 'Invalid access mode.' });
+    }
+    // A staff decision replaces a ban's: drop the ban-disabled mark first, so the owner's next App
+    // Assistant enable or dev-tunnel mint cannot re-open what staff set. Not cleared means not saved.
+    try {
+      await getRedis()?.del(banDisabledMarkKey(id));
+    } catch {
+      return fail(503, {
+        action: 'setMode',
+        id,
+        error: 'Could not save right now (cache unavailable). Try again.',
+      });
     }
     const missing = await updateClient('setMode', id, { accessMode });
     if (missing) return missing;

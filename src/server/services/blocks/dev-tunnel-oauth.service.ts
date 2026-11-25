@@ -69,8 +69,7 @@ export async function mintDevTunnelOauthToken(opts: {
       update: { allowedScopes: scope },
       select: { id: true },
     });
-    // A ban disables this self-only client; this mint runs only past the dev-tunnel gates, so it is
-    // the way back. Only a ban's disable is undone: any other mode (staff, testers) is left alone.
+    // Re-opens only a client a ban disabled; staff-disabled ones stay disabled.
     await reopenBanDisabledClient(clientId);
   }
 

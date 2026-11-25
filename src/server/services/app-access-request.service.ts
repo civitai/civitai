@@ -103,17 +103,22 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
 }
 
 /**
- * The basic account checks an instant approval needs: the account exists and is not deleted, is
- * not banned, is not muted, and does not still owe the site's email check — the same rule the rest
- * of the site applies, {@link requiresEmailVerification}: only an account stamped at onboarding as
- * having to prove its email fails it until it does; an older account with no verified email
- * passes; the person has no declined request, so a moderator's decline or revoke is never undone by
- * the next submit; and the account is in good standing by its active strikes, the same {@link
- * accountStandingFromPoints} rule the profile and the moderator tools show; and the account is at
- * least {@link APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS} days old, by the database's clock. Every
- * field is read from the PRIMARY at submit time rather than from the session, which can be hours
- * old: a ban, a mute or a verification since must count. A person who fails any check still gets a
- * request, pending, for a moderator to decide.
+ * The account checks an instant approval needs, in the order the code applies them:
+ * - the account exists and is not deleted;
+ * - it is not banned;
+ * - it is not muted;
+ * - it is at least {@link APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS} days old, by the database's
+ *   clock;
+ * - the person has no declined request, so a moderator's decline or revoke (or a ban) is never
+ *   undone by the next submit;
+ * - it does not still owe the site's email check, the rule the rest of the site applies
+ *   ({@link requiresEmailVerification}): only an account stamped at onboarding as having to prove
+ *   its email fails it until it does;
+ * - it is in good standing by its active strikes ({@link accountStandingFromPoints}).
+ *
+ * Every field is read from the PRIMARY at submit time rather than from the session, which can be
+ * hours old: a ban, a mute or a verification since must count. A failing check yields a pending
+ * request, for a moderator to decide.
  */
 async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
   const [row] = await dbWrite.$queryRaw<

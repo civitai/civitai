@@ -3271,10 +3271,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
     // src/lib/server/oauth/offline-grant.ts.
     REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
-    // `oauth:ban-disabled:${clientId}` → '1': a ban disabled this self-only client (App Assistant,
-    // dev tunnel), so its re-enable path may re-open it; a client disabled any other way (staff, on
-    // the hub's access page) has no mark and stays as it is. TTL a year; a lost mark fails closed
-    // (the client stays disabled until staff re-open it). src/server/services/oauth-ban-marker.ts.
+    // A ban's mark on a self-only client it disabled: see src/server/services/oauth-ban-marker.ts.
     BAN_DISABLED: 'oauth:ban-disabled',
   },
   SYSTEM: {
