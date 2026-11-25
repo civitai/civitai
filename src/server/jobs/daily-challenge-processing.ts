@@ -33,6 +33,11 @@ import {
   refundBannedEntrantReviews,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import {
+  getDailyPlanFlags,
+  resolveDailyPlan,
+  type DailyPlanFlags,
+} from '~/server/games/daily-challenge/daily-plan';
 import { getIncompatibleEntryImageIds } from '~/server/games/daily-challenge/challenge-resource-compat';
 import {
   buildJudgingEngineContext,
@@ -80,10 +85,8 @@ import {
   FIXED_JUDGING_CATEGORIES,
   normalizeJudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge-scoring';
-import {
-  getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { usesNsfwRubrics } from '~/server/services/challenge-category.service';
 import {
   DEFAULT_REVIEW_MODEL,
   REVIEW_FALLBACK_MODEL,
@@ -161,6 +164,8 @@ async function getJudgingConfigForChallenge(
 // ----------------------------------------------
 type ChallengeCreationContext = {
   config: ChallengeConfig;
+  /** Read once per batch so one batch never mixes two flag states. */
+  planFlags: DailyPlanFlags;
   judgingConfig: JudgingConfig;
   sourceCollectionId: number;
   availableUsers: { userId: number }[];
@@ -237,6 +242,7 @@ async function preComputeContext(): Promise<ChallengeCreationContext> {
 
   return {
     config,
+    planFlags: await getDailyPlanFlags(),
     judgingConfig,
     sourceCollectionId,
     availableUsers,
@@ -247,6 +253,24 @@ async function preComputeContext(): Promise<ChallengeCreationContext> {
       entryPrizeRequirement: config.entryPrizeRequirement,
     },
   };
+}
+
+/** The featured model as the content steps describe it: name, creator, description. */
+export async function getChallengeResource(
+  modelId: number
+): Promise<SelectedResource | undefined> {
+  const [resource] = await dbRead.$queryRaw<SelectedResource[]>`
+    SELECT
+      m.id as "modelId",
+      u."username" as creator,
+      m.name as title,
+      m.description
+    FROM "Model" m
+    JOIN "User" u ON u.id = m."userId"
+    WHERE m.id = ${modelId}
+    LIMIT 1
+  `;
+  return resource;
 }
 
 // Select a resource for a specific date, respecting cooldowns + batch exclusions
@@ -295,17 +319,7 @@ async function selectResourceForDate(
     if (!resourceIds.length) continue;
 
     const randomResourceId = getRandom(resourceIds);
-    [resource] = await dbRead.$queryRaw<SelectedResource[]>`
-      SELECT
-        m.id as "modelId",
-        u."username" as creator,
-        m.name as title,
-        m.description
-      FROM "Model" m
-      JOIN "User" u ON u.id = m."userId"
-      WHERE m.id = ${randomResourceId.id}
-      LIMIT 1
-    `;
+    resource = await getChallengeResource(randomResourceId.id);
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
@@ -343,8 +357,13 @@ async function createChallengeFromSelection(
 ): Promise<number> {
   const { resource, image, showcaseImages, challengeDate, modelVersionIds, resourceUserId } =
     selection;
-  const { judgingConfig, config, prizeConfig } = ctx;
+  const { config, prizeConfig } = ctx;
   const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+  const plan = await resolveDailyPlan(challengeDate, {
+    defaultJudge: ctx.judgingConfig,
+    flags: ctx.planFlags,
+  });
+  const { judgingConfig } = plan;
 
   // Sequenced before the article on purpose: the article's theme and themeElements ARE the judge's
   // scoring anchor, and this is the only step that knows what the resource depicts.
@@ -362,6 +381,7 @@ async function createChallengeFromSelection(
     generateArticle({
       resource,
       resourceConcept,
+      occasion: plan.occasion,
       image,
       challengeDate: endsAt,
       allowedNsfwLevel: sfwBrowsingLevelsFlag,
@@ -428,13 +448,15 @@ async function createChallengeFromSelection(
     createdById: judgingConfig.userId,
     source: ChallengeSource.System,
     status: ChallengeStatus.Scheduled,
-    judgeId: config.defaultJudgeId,
+    judgeId: plan.judgeId,
+    judgingCategories: plan.judgingCategories,
     metadata: {
       challengeType: config.challengeType,
       resourceUserId,
       resourceModelId: resource.modelId,
       themeElements: challengeContent.themeElements,
       resourceConcept,
+      ...(plan.record ? { dailyPlan: plan.record } : {}),
     },
   });
 
@@ -1115,7 +1137,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
             name: c.label,
             criteria: c.criteria,
           })),
-          nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+          nsfw: usesNsfwRubrics(allowedNsfwLevel),
           model,
         });
       const review = await reviewWithShadow({
