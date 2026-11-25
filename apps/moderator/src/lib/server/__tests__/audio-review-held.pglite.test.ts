@@ -37,9 +37,11 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { getHeldSongs } = await import('../audio-review.service');
+const { heldDecisionsEnabled } = await import('../../audio-review');
 const { countHeldSongs, songTabCounts } = await import('../audio-review-count');
 const { getImageReviewQueue, getImageReviewCounts } = await import('../image-review.service');
 const page = await import('../../../routes/audio-review/+page.server');
+const details = await import('../../../routes/audio-review/details/[imageId]/+server');
 
 const OWNER = 7;
 const OTHER = 1;
@@ -203,6 +205,8 @@ describe('the Held tab', () => {
         owner: null,
         removed: false,
         removableCoverId: null,
+        resolved: false,
+        decision: null,
       });
       // Its title and owner do not find it; its exact id does.
       expect((await held(user, { q: 'Hush' })).items).toEqual([]);
@@ -256,6 +260,153 @@ describe('the Held tab', () => {
       } as never)) as { counts: Record<string, number> };
       expect(loaded.counts, tab).toEqual(counts);
     }
+  });
+});
+
+describe("an owner's held songs", () => {
+  const load = (user: { id: number; roles: string[] }, query: string) =>
+    page.load({
+      url: new URL(`https://mod.example/audio-review?tab=held&${query}`),
+      locals: { user, grants: GRANTS },
+    } as never) as Promise<{
+      held: Awaited<ReturnType<typeof getHeldSongs>> & { filters: object };
+    }>;
+
+  it('filters the tab to one owner, leaving out lyrics holds and what is withheld', async () => {
+    expect((await held(WITH_GRANT, { owner: OWNER })).items.map((r) => r.id)).toEqual([
+      COVER_SONG,
+      FLAGGED_SONG,
+      WITHHELD_SONG,
+    ]);
+    const loaded = await load(WITHOUT_GRANT, `owner=${OWNER}`);
+    expect(loaded.held.items.map((r) => r.id)).toEqual([COVER_SONG, FLAGGED_SONG]);
+    expect(loaded.held.facets).toEqual({ all: 2, lyrics: 0, cover: 1, song: 1 });
+    expect(loaded.held.filters).toMatchObject({ owner: OWNER });
+    expect((await load(WITH_GRANT, `owner=${OTHER}`)).held.items).toEqual([]);
+  });
+
+  it("counts the owner's other held songs and covers on the open song's owner card", async () => {
+    const get = async (user: { id: number; roles: string[] }, tab: string) => {
+      const res = await details.GET({
+        params: { imageId: String(COVER_SONG) },
+        url: new URL(`https://mod.example/audio-review/details/${COVER_SONG}?tab=${tab}`),
+        locals: { user, grants: {} },
+      } as never);
+      return (await res.json()).owner;
+    };
+    expect(await get(WITHOUT_GRANT, 'held')).toMatchObject({ otherHeld: { songs: 1, covers: 0 } });
+    expect(await get(WITH_GRANT, 'held')).toMatchObject({ otherHeld: { songs: 1, covers: 1 } });
+    // Read on the Held tab only.
+    expect((await get(WITH_GRANT, 'reported')).otherHeld).toBeNull();
+  });
+});
+
+const heldDecisions = async () =>
+  (
+    await db.query<{ entityId: number; userId: number; details: unknown }>(
+      `SELECT "entityId", "userId", details FROM "ModActivity" WHERE activity = 'audioHeldDecision' ORDER BY "createdAt", id`
+    )
+  ).rows;
+
+describe('a Held decision record', () => {
+  it('records what was decided on the held song: the decision, its flag, song and cover', async () => {
+    await pageAction('approveCover', {
+      imageId: String(COVER_SONG),
+      coverId: String(FLAGGED_COVER),
+      needsReview: 'tag',
+    });
+    await pageAction('removeSong', { imageId: String(FLAGGED_SONG), violationType: 'hate' });
+    expect(await heldDecisions()).toEqual([
+      {
+        entityId: COVER_SONG,
+        userId: WITH_GRANT.id,
+        details: {
+          decision: 'approveCover',
+          kind: 'cover',
+          flag: 'tag',
+          songId: COVER_SONG,
+          coverId: FLAGGED_COVER,
+        },
+      },
+      {
+        entityId: FLAGGED_SONG,
+        userId: WITH_GRANT.id,
+        details: {
+          decision: 'removeSong',
+          kind: 'song',
+          flag: 'modRule',
+          songId: FLAGGED_SONG,
+          coverId: null,
+        },
+      },
+    ]);
+  });
+
+  it('records nothing for a refused decision, or one made on another tab', async () => {
+    await pageAction('approveSong', { imageId: String(COVER_SONG), needsReview: 'tag' });
+    await page.actions.removeSong({
+      request: new Request('https://mod.example/audio-review', {
+        method: 'POST',
+        body: formOf({ imageId: String(FLAGGED_SONG), violationType: 'hate' }),
+      }),
+      locals: { user: WITH_GRANT, grants: GRANTS },
+      getClientAddress: () => '127.0.0.1',
+      url: new URL('https://mod.example/audio-review'),
+    } as never);
+    expect(await heldDecisions()).toEqual([]);
+  });
+});
+
+describe('the Held tab by status', () => {
+  const load = (user: { id: number; roles: string[] }, query: string) =>
+    page.load({
+      url: new URL(`https://mod.example/audio-review?tab=held&${query}`),
+      locals: { user, grants: GRANTS },
+    } as never) as Promise<{
+      held: Awaited<ReturnType<typeof getHeldSongs>> & { filters: object };
+      counts: Record<string, number>;
+    }>;
+  const approveCover = (songId: number, coverId: number) =>
+    pageAction('approveCover', {
+      imageId: String(songId),
+      coverId: String(coverId),
+      needsReview: 'tag',
+    });
+
+  it('lists the songs decided here, read-only, and keeps the badge on the pending ones', async () => {
+    await db.exec(`INSERT INTO "User" (id, username) VALUES (${WITH_GRANT.id}, 'mod')`);
+    await approveCover(COVER_SONG, FLAGGED_COVER);
+    const resolved = await load(WITH_GRANT, 'status=resolved');
+    expect(resolved.held.items.map((r) => r.id)).toEqual([COVER_SONG]);
+    const [row] = resolved.held.items;
+    expect(row).toMatchObject({
+      kind: 'cover',
+      resolved: true,
+      decision: { decision: 'approveCover', flag: 'tag', by: 'mod', at: expect.any(Date) },
+    });
+    expect(heldDecisionsEnabled(row, true, true)).toEqual([false, false, false, false]);
+    expect(resolved.held.filters).toMatchObject({ status: 'resolved' });
+    expect(resolved.counts.held).toBe(3);
+    expect((await load(WITH_GRANT, 'status=all')).held.items.map((r) => r.id)).toEqual([
+      LYRICS_SONG,
+      FLAGGED_SONG,
+      WITHHELD_SONG,
+      COVER_SONG,
+    ]);
+    expect((await load(WITH_GRANT, '')).held.items.map((r) => r.id)).not.toContain(COVER_SONG);
+  });
+
+  it('sends a decided song withheld from this moderator with nothing but its id', async () => {
+    await approveCover(WITHHELD_SONG, WITHHELD_COVER);
+    const [row] = (await load(WITHOUT_GRANT, 'status=resolved')).held.items;
+    expect(row).toMatchObject({
+      id: WITHHELD_SONG,
+      withheld: true,
+      resolved: true,
+      decision: null,
+      title: null,
+      owner: null,
+    });
   });
 });
 

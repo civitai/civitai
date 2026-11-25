@@ -27,6 +27,8 @@ type ModActivityInsert = {
   credential?: 'sheet' | 'web';
   /** The review batch a view was served from, by its hash: the id itself is the link's secret. */
   review?: { batchHash: string; tier: ReviewTier; declared: boolean };
+  /** What the action decided (`ModActivity.details`): `setNsfwLevel` is `{ from, to }`. */
+  details?: Record<string, unknown>;
 };
 
 /** The same row, throwing when it is not written: for a caller that must not go on without it. */
@@ -43,6 +45,7 @@ export async function insertModActivity(
       activity: input.activity,
       // Named only when set, so no other writer depends on the column.
       ...(input.credential ? { credential: input.credential } : {}),
+      ...(input.details ? { details: JSON.stringify(input.details) } : {}),
       ...(input.review
         ? {
             reviewBatchId: input.review.batchHash,

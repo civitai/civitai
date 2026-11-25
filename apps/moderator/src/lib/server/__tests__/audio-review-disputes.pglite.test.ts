@@ -15,9 +15,11 @@ import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle, notify } = vi.hoisted(() => ({
+const { dbHandle, notify, metricRows, metricQueries } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   notify: vi.fn(async () => undefined),
+  metricRows: { current: [] as { metricType: string; value: string }[] },
+  metricQueries: [] as unknown[],
 }));
 vi.mock('../db', () => ({
   get dbRead() {
@@ -32,7 +34,12 @@ vi.mock('../db', () => ({
 // Past the process: ClickHouse (the scanner has no rows), the notifications service, Redis and the
 // main app's cache-bust endpoints the rating writer calls after commit.
 vi.mock('../clickhouse', () => ({
-  getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
+  getClickhouse: () => ({
+    query: async ({ query_params }: { query_params?: unknown }) => {
+      metricQueries.push(query_params);
+      return { json: async () => metricRows.current };
+    },
+  }),
 }));
 vi.mock('../notifications', () => ({ getNotifications: () => ({ createNotification: notify }) }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
@@ -51,6 +58,8 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { getSongDisputes } = await import('../audio-review.service');
+const { disputeKeysEnabled } = await import('../../audio-review');
+const details = await import('../../../routes/audio-review/details/[imageId]/+server');
 const { countSongDisputes } = await import('../audio-review-count');
 const page = await import('../../../routes/audio-review/+page.server');
 const ratingsPage = await import('../../../routes/ratings/+page.server');
@@ -80,6 +89,8 @@ let db: PGlite;
 
 beforeEach(async () => {
   notify.mockClear();
+  metricRows.current = [];
+  metricQueries.length = 0;
   db = await freshPglite();
   await db.exec(IMAGE_PAGES_SCHEMA);
   await db.exec(`
@@ -97,6 +108,9 @@ beforeEach(async () => {
       "status" TEXT NOT NULL DEFAULT 'Pending', "resolvedBy" INTEGER, "resolvedAt" TIMESTAMP(3),
       "resolvedTextHash" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    ALTER TABLE "EntityModeration" ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending',
+      ADD COLUMN IF NOT EXISTS blocked BOOLEAN;
+    CREATE TABLE IF NOT EXISTS "UserStrike" ("userId" INTEGER, points INTEGER, status TEXT, "voidedAt" TIMESTAMP, "expiresAt" TIMESTAMP);
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner'), (${OTHER}, 'other'), (${MOD}, 'mod');
     INSERT INTO "Image" (id, url, type, ingestion, "userId", "nsfwLevel", "postId", metadata, "createdAt") VALUES
       (${SONG}, 'song-key', 'audio', 'Scanned', ${OWNER}, 2, 5, '{"title": "Salt Flats at Dawn"}', '2026-11-01'),
@@ -259,6 +273,15 @@ describe('the Disputes tab', () => {
 });
 
 describe('ruling a song dispute', () => {
+  it('records the rating it applied with the level it replaced', async () => {
+    await resolve({ reviewId: String(DISPUTE), appliedLevel: '1' });
+    await flush();
+    const { rows } = await db.query<{ details: unknown }>(
+      `SELECT details FROM "ModActivity" WHERE activity = 'setNsfwLevel' AND "entityId" = ${SONG}`
+    );
+    expect(rows.map((r) => r.details)).toEqual([{ from: 2, to: 1 }]);
+  });
+
   it("applies the owner's ask to the reviewed song, locks it, closes the dispute and tells the owner", async () => {
     expect(
       await resolve({ reviewId: String(DISPUTE), appliedLevel: '1', modComment: 'Agreed.' })
@@ -359,5 +382,180 @@ describe('ruling a song dispute', () => {
     ).toMatchObject({ status: 409 });
     expect(await review(DISPUTE)).toMatchObject({ status: 'Pending' });
     expect(await song(SONG)).toEqual({ nsfwLevel: 2, nsfwLevelLocked: false });
+  });
+});
+
+describe('the Disputes tab by status and owner', () => {
+  const load = (user: { id: number; roles: string[] }, query: string) =>
+    page.load({
+      url: new URL(`https://mod.example/audio-review?tab=disputes&${query}`),
+      locals: { user, grants: GRANTS },
+    } as never) as Promise<{
+      disputes: Awaited<ReturnType<typeof getSongDisputes>> & { filters: object };
+      counts: Record<string, number>;
+    }>;
+
+  it('lists resolved disputes with their ruling, read-only, and keeps the badge on the pending ones', async () => {
+    const loaded = await load(WITH_GRANT, 'status=resolved');
+    expect(loaded.disputes.items.map((r) => r.id)).toEqual([EARLIER]);
+    const [row] = loaded.disputes.items;
+    expect(row).toMatchObject({
+      status: 'Unactioned',
+      disputes: 1,
+      earlier: null,
+      ruling: { appliedLevel: 2, by: 'mod', resolvedAt: expect.any(Date) },
+    });
+    expect(disputeKeysEnabled(row, true)).toEqual([false, false, false, false, false]);
+    expect(loaded.disputes.filters).toMatchObject({ status: 'resolved' });
+    expect(loaded.counts.disputes).toBe(3);
+    expect((await load(WITH_GRANT, 'status=all')).disputes.items.map((r) => r.id)).toEqual([
+      EARLIER,
+      DISPUTE,
+      SCANNING_DISPUTE,
+      WITHHELD_DISPUTE,
+    ]);
+    const [pending] = (await disputes(WITH_GRANT)).items;
+    expect(pending).toMatchObject({ status: 'Pending', ruling: null, disputes: 2 });
+    expect(pending.earlier).toMatchObject({
+      status: 'Unactioned',
+      appliedLevel: 2,
+      currentLevel: 2,
+    });
+  });
+
+  it('lists one owner, never a withheld song, and sends a withheld song no ruling or history', async () => {
+    await db.exec(`
+      INSERT INTO "RatingReview" (id, "entityType", "entityId", "userId", "currentLevel", "suggestedLevel",
+        "appliedLevel", status, "resolvedBy", "resolvedAt", "createdAt") VALUES
+        (15, 'Song', ${WITHHELD_SONG}, ${OWNER}, 1, 2, 1, 'Unactioned', ${MOD}, '2026-10-20', '2026-10-19');
+    `);
+    expect(
+      (await load(WITHOUT_GRANT, `owner=${OWNER}&status=all`)).disputes.items.map((r) => r.id)
+    ).toEqual([EARLIER, DISPUTE, SCANNING_DISPUTE]);
+    expect((await load(WITH_GRANT, `owner=${OTHER}`)).disputes.items).toEqual([]);
+    const all = (await disputes(WITHOUT_GRANT, { status: 'all' })).items;
+    expect(all.find((r) => r.id === 15)).toMatchObject({ status: 'Resolved' });
+    expect(all.find((r) => r.id === WITHHELD_DISPUTE)).toMatchObject({ status: 'Pending' });
+    for (const id of [15, WITHHELD_DISPUTE])
+      expect(all.find((r) => r.id === id)).toMatchObject({
+        withheld: true,
+        ruling: null,
+        earlier: null,
+        disputes: null,
+      });
+  });
+});
+
+describe("the open dispute's details", () => {
+  const get = async (
+    imageId: number,
+    tab = 'disputes',
+    user = WITH_GRANT,
+    grants: Record<string, boolean> = GRANTS
+  ) => {
+    const res = await details.GET({
+      params: { imageId: String(imageId) },
+      url: new URL(`https://mod.example/audio-review/details/${imageId}?tab=${tab}`),
+      locals: { user, grants },
+    } as never);
+    return { status: res.status, body: await res.json() };
+  };
+
+  it("tallies the owner's song disputes, none on a song withheld from this moderator", async () => {
+    expect((await get(SONG)).body.owner.disputes).toEqual({
+      total: 4,
+      pending: 3,
+      approved: 0,
+      rejected: 1,
+    });
+    expect((await get(SONG, 'disputes', WITHOUT_GRANT)).body.owner.disputes).toEqual({
+      total: 3,
+      pending: 2,
+      approved: 0,
+      rejected: 1,
+    });
+  });
+
+  it('says who set the current rating, when, and what it was before a ruling', async () => {
+    await db.exec(`UPDATE "Image" SET "scannedAt" = '2026-11-01T10:00:00Z' WHERE id = ${SONG}`);
+    expect((await get(SONG)).body.rating).toEqual({
+      source: 'scan',
+      by: null,
+      at: '2026-11-01T10:00:00.000Z',
+      before: null,
+      recorded: true,
+    });
+    await resolve({ reviewId: String(DISPUTE), appliedLevel: '1' });
+    await flush();
+    expect((await get(SONG)).body.rating).toMatchObject({
+      source: 'moderator',
+      by: 'mod',
+      before: 2,
+      recorded: true,
+    });
+  });
+
+  it('credits no one for a write that kept the level', async () => {
+    await resolve({ reviewId: String(DISPUTE), appliedLevel: '2', modComment: 'Fits PG-13.' });
+    await flush();
+    expect((await get(SONG)).body.rating).toEqual({
+      source: 'unknown',
+      by: null,
+      at: null,
+      before: null,
+      recorded: false,
+    });
+  });
+
+  it('names the last moderator of a rating recorded before its levels were, with no level before it', async () => {
+    await db.exec(`
+      UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = ${SONG};
+      INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity, "createdAt")
+        VALUES (${MOD}, 'image', ${SONG}, 'setNsfwLevel', '2026-10-28');
+    `);
+    expect((await get(SONG)).body.rating).toEqual({
+      source: 'moderator',
+      by: 'mod',
+      at: '2026-10-28T00:00:00.000Z',
+      before: null,
+      recorded: false,
+    });
+  });
+
+  it("reads the song's plays, likes and comments for that song alone", async () => {
+    metricRows.current = [
+      { metricType: 'Play', value: '742' },
+      { metricType: 'Like', value: '40' },
+      { metricType: 'Heart', value: '3' },
+      { metricType: 'commentCount', value: '6' },
+    ];
+    expect((await get(SONG)).body.activity).toEqual({ plays: 742, likes: 40, comments: 6 });
+    expect(metricQueries).toEqual([{ songId: SONG }]);
+  });
+
+  it('names the lyrics scan by its verdict, and none for a song without lyrics', async () => {
+    expect((await get(SONG)).body.checks).toMatchObject({ song: 'passed', lyrics: null });
+    await db.exec(`
+      INSERT INTO "TrackLyrics" ("imageId", text, lines, source) VALUES (${SONG}, 'words', '[]', 'user');
+      INSERT INTO "EntityModeration" ("entityType", "entityId", status, blocked) VALUES ('TrackLyrics', ${SONG}, 'Succeeded', false);
+    `);
+    expect((await get(SONG)).body.checks).toMatchObject({ lyrics: 'passed' });
+  });
+
+  it('shows a CSAM lyrics hold as held only to a moderator who can open CSAM holds', async () => {
+    await db.exec(`
+      INSERT INTO "TrackLyrics" ("imageId", text, lines, source) VALUES (${SONG}, 'words', '[]', 'user');
+      INSERT INTO "TextScanHold" (id, "entityType", "entityId", label, status) VALUES (1, 'TrackLyrics', ${SONG}, 'csam', 'Pending');
+    `);
+    const holds = { ...GRANTS, 'csam.report.file': true };
+    expect((await get(SONG, 'disputes', WITH_GRANT, holds)).body.checks.lyrics).toBe('held');
+    expect((await get(SONG)).body.checks.lyrics).toBe('pending');
+  });
+
+  it('reads the tallies and rating on the Disputes tab only, and nothing for a withheld song', async () => {
+    const reported = (await get(SONG, 'reported')).body;
+    expect(reported.owner.disputes).toBeNull();
+    expect(reported.rating).toBeNull();
+    expect((await get(WITHHELD_SONG, 'disputes', WITHOUT_GRANT)).status).toBe(404);
   });
 });

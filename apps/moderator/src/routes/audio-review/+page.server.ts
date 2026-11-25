@@ -6,6 +6,7 @@ import {
   AUDIO_TABS,
   DEFAULT_AUDIO_TAB,
   DISPUTE_FILTERS,
+  DISPUTE_STATUSES,
   type DisputeSort,
   HELD_FILTERS,
   type HeldSort,
@@ -14,16 +15,19 @@ import {
   REPORTED_FILTERS,
   REPORTED_SORTS,
 } from '$lib/audio-review';
-import { canAccess, denied } from '$lib/server/access';
+import { denied } from '$lib/server/access';
 import { songTabCounts } from '$lib/server/audio-review-count';
 import {
   boundSongReports,
+  canOpenCsamHolds,
   flaggedCoverOf,
   getHeldSongs,
   getReportedSongRows,
   getReportedSongs,
   getSongAppeals,
   getSongDisputes,
+  heldStateOf,
+  recordHeldDecision,
   isFlaggedSong,
   isSongAppeal,
   songOfDispute,
@@ -47,9 +51,6 @@ import { isSong } from '$lib/server/songs';
 import { keyed, parseViolation, refuseWithheld } from './actions';
 
 const ACT = 'image.moderate';
-// A lyrics hold is decided in CSAM holds, whose page refuses to load without this grant.
-const CSAM_HOLDS = '/csam/text-holds';
-const CSAM_HOLDS_GRANT = 'csam.report.file';
 
 // Read key by key: `parseQuery` walks every param, which reruns the load on the selection.
 const querySchema = z.object({
@@ -59,9 +60,13 @@ const querySchema = z.object({
   kind: z.enum(APPEAL_FILTERS).catch('all'),
   held: z.enum(HELD_FILTERS).catch('all'),
   ask: z.enum(DISPUTE_FILTERS).catch('all'),
+  // Held and Disputes: Pending, Resolved or All (the same values on both).
+  status: z.enum(DISPUTE_STATUSES).catch('pending'),
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   selected: int4Id.optional().catch(undefined),
+  // Held and Disputes: one owner's rows (the owner card's links).
+  owner: int4Id.optional().catch(undefined),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -72,14 +77,31 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   if (tab === 'held') {
     const heldSort: HeldSort = sort === 'newest' ? 'newest' : 'oldest';
     const [held, counts] = await Promise.all([
-      getHeldSongs({ sort: heldSort, filter: parsed.held, q, page, user }),
+      getHeldSongs({
+        sort: heldSort,
+        filter: parsed.held,
+        q,
+        page,
+        user,
+        owner: parsed.owner,
+        status: parsed.status,
+      }),
       songTabCounts(),
     ]);
     return {
       tab,
-      held: { ...held, filters: { sort: heldSort, kind: parsed.held } },
-      counts: { ...counts, held: held.facets.all },
-      canOpenHolds: canAccess(user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT],
+      held: {
+        ...held,
+        filters: {
+          sort: heldSort,
+          kind: parsed.held,
+          owner: parsed.owner ?? null,
+          status: parsed.status,
+        },
+      },
+      // The badge counts what is waiting: a Resolved list is not.
+      counts: { ...counts, held: parsed.status === 'pending' ? held.facets.all : counts.held },
+      canOpenHolds: canOpenCsamHolds(locals),
       ...shared,
     };
   }
@@ -99,13 +121,33 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   if (tab === 'disputes') {
     const disputeSort: DisputeSort = sort === 'newest' ? 'newest' : 'oldest';
     const [disputes, counts] = await Promise.all([
-      getSongDisputes({ sort: disputeSort, filter: parsed.ask, q, page, user }),
+      getSongDisputes({
+        sort: disputeSort,
+        filter: parsed.ask,
+        status: parsed.status,
+        q,
+        page,
+        user,
+        owner: parsed.owner,
+      }),
       songTabCounts(),
     ]);
     return {
       tab,
-      disputes: { ...disputes, filters: { sort: disputeSort, ask: parsed.ask } },
-      counts: { ...counts, disputes: disputes.facets.all },
+      disputes: {
+        ...disputes,
+        filters: {
+          sort: disputeSort,
+          ask: parsed.ask,
+          status: parsed.status,
+          owner: parsed.owner ?? null,
+        },
+      },
+      // The badge counts what is waiting: a Resolved list is not.
+      counts: {
+        ...counts,
+        disputes: parsed.status === 'pending' ? disputes.facets.all : counts.disputes,
+      },
       ...shared,
     };
   }
@@ -212,6 +254,7 @@ export const actions: Actions = {
     if ('status' in violation) return violation;
     const withheld = await refuseWithheld(event.locals.user, songId, songId);
     if (withheld) return withheld;
+    const held = await heldBefore(event, songId);
     // Read here, not through `visibleSongLinks`, which turns a failed read or a withheld cover into
     // "no cover": each gets its own answer (a withheld cover is refused by the removal writer).
     let coverId: number | null | undefined;
@@ -228,9 +271,9 @@ export const actions: Actions = {
       writerForm({ imageIds: coverId, ...violation }),
       event
     );
-    return 'status' in result
-      ? fail(result.status, { ...result.data, key: songId })
-      : { ...result, coverId, key: songId };
+    if ('status' in result) return fail(result.status, { ...result.data, key: songId });
+    await recordHeldRemoval(event, songId, held, 'removeCover', result, coverId);
+    return { ...result, coverId, key: songId };
   }),
 
   removeSong: gated(async (event) => {
@@ -241,10 +284,14 @@ export const actions: Actions = {
     const violation = parseViolation(form, songId);
     if ('status' in violation) return violation;
     if (!(await isSong(songId))) return fail(404, { error: 'Not a song.', key: songId });
-    return keyed(
-      await removeImagesWithReports(writerForm({ imageIds: songId, ...violation }), event),
-      songId
+    const held = await heldBefore(event, songId);
+    const result = await removeImagesWithReports(
+      writerForm({ imageIds: songId, ...violation }),
+      event
     );
+    if (!('status' in result))
+      await recordHeldRemoval(event, songId, held, 'removeSong', result, held?.coverId ?? null);
+    return keyed(result, songId);
   }),
 
   approveCover: gated((event) => approveHeld(event, 'cover')),
@@ -321,16 +368,39 @@ async function approveHeld(event: RequestEvent, kind: 'cover' | 'song') {
   if (target == null) return fail(409, { error: NOT_HELD[kind], key: songId });
   if (kind === 'cover' && target !== input.coverId)
     return fail(409, { error: NEW_COVER, key: songId });
-  return keyed(
-    await acceptImagesWithReports(
-      writerForm({
-        imageIds: target,
-        needsReviewByImage: JSON.stringify({ [target]: needsReview }),
-      }),
-      event.locals
-    ),
-    songId
+  const result = await acceptImagesWithReports(
+    writerForm({
+      imageIds: target,
+      needsReviewByImage: JSON.stringify({ [target]: needsReview }),
+    }),
+    event.locals
   );
+  if (!('status' in result))
+    await recordHeldDecision({
+      userId: event.locals.user.id,
+      songId,
+      decision: kind === 'cover' ? 'approveCover' : 'approveSong',
+      held: { kind, flag: needsReview },
+      coverId: kind === 'cover' ? target : null,
+    });
+  return keyed(result, songId);
+}
+
+/** What holds the song, read before a removal posted from the Held tab; null from any other tab. */
+const heldBefore = (event: RequestEvent, songId: number) =>
+  event.url.searchParams.get('tab') === 'held' ? heldStateOf(songId) : Promise.resolve(null);
+
+/** A removal on the Held tab, once it went through: not one held for a second moderator. */
+async function recordHeldRemoval(
+  event: RequestEvent,
+  songId: number,
+  held: Awaited<ReturnType<typeof heldStateOf>>,
+  decision: 'removeCover' | 'removeSong',
+  result: { held?: unknown },
+  coverId: number | null
+) {
+  if (!held || typeof result.held === 'string') return;
+  await recordHeldDecision({ userId: event.locals.user.id, songId, decision, held, coverId });
 }
 
 async function decideAppeal(event: RequestEvent, status: 'Approved' | 'Rejected') {

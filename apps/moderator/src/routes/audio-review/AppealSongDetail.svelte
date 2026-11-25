@@ -49,7 +49,7 @@
   const isSong = $derived(row.kind === 'song');
   const enabled = $derived(appealDecisionsEnabled(row, canAct));
   // The song appealed, or the song a cover belongs to.
-  const details = songDetails(() => (song && !row.withheld ? song.id : null));
+  const details = songDetails(() => (song && !row.withheld ? song.id : null), 'appeals');
 
   const RULINGS = [
     { action: 'approveAppeal', verdict: 'Approved', label: 'Approve appeal' },

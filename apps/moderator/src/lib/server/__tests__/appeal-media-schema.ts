@@ -16,7 +16,8 @@ CREATE TABLE "Appeal" (
 );
 CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER, "removalLabel" TEXT);
 CREATE TABLE "ModActivity" (
-  "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT, "createdAt" TIMESTAMP(3)
+  "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT,
+  "createdAt" TIMESTAMP(3) DEFAULT now(), details JSONB
 );
 CREATE TABLE "Report" (
   id INTEGER PRIMARY KEY, "userId" INTEGER, reason TEXT, status TEXT, details JSONB,

@@ -35,6 +35,7 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
 
 const { resolveIngestionError } = await import('../ingestion.service');
 const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+const { recordModActivity } = await import('../mod-activity');
 
 const SCHEMA = `
 CREATE TABLE "User" (
@@ -194,6 +195,14 @@ describe('spoke resolveIngestionError publishing', () => {
     const row = await imageRow();
     expect(row).toMatchObject({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
     expect(await purgeRows()).toBe(0);
+  });
+
+  it('records the level it replaced and the one it set', async () => {
+    await seed({});
+    await resolve();
+    expect(recordModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ activity: 'setNsfwLevel', details: { from: 0, to: 1 } })
+    );
   });
 
   it('leaves the purge queue alone when there was no block to clear', async () => {

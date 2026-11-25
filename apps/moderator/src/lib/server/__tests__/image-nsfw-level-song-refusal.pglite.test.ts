@@ -172,6 +172,7 @@ describe("a moderator's rating", () => {
       entityType: 'image',
       entityId: REVIEWED_SONG,
       activity: 'setNsfwLevel',
+      details: { from: 1, to: 8 },
     });
     expect(bustCachedObject).toHaveBeenCalledWith(expect.any(String), REVIEWED_SONG);
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({

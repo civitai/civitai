@@ -320,6 +320,7 @@ export async function resolveIngestionError({
       'blockedFor',
       'needsReview',
       'type',
+      'nsfwLevel',
       thumbnailParentId.as('parentId'),
       eb
         .selectFrom('User')
@@ -438,7 +439,13 @@ export async function resolveIngestionError({
 
   void syncSearchIndex({ entityType: 'image', entityId: id, action: 'update' });
 
-  await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
+  await recordModActivity({
+    userId,
+    entityType: 'image',
+    entityId: id,
+    activity: 'setNsfwLevel',
+    details: { from: image.nsfwLevel, to: nsfwLevel },
+  });
 
   await bustAfterWrite('ingestion-error-cache-bust', () =>
     Promise.all([

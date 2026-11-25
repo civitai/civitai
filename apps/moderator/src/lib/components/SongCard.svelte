@@ -2,6 +2,7 @@
   import { browser } from '$app/environment';
   import { tick } from 'svelte';
   import {
+    IconFlag,
     IconLoader2,
     IconMusic,
     IconPlayerPauseFilled,
@@ -23,9 +24,13 @@
   import { shownCover } from '$lib/music/song-tos';
   import {
     createPlayIntent,
+    isLyricSection,
     isSeek,
+    markerLabels,
+    nextReportTime,
     playingLyricIndex,
     playSongAt,
+    reportedLyricCounts,
     seekMarkers,
     songLoading,
     songPlayer,
@@ -47,7 +52,9 @@
     /** Which card this is where the same song shows twice (the grid's item key); see `playSongAt`. */
     cardKey?: SongCardKey;
     variant?: 'card' | 'detail';
-    reports?: readonly { timeSec: number | null; label: string }[];
+    /** Reports on the song: each with a time is a marker; on the detail card, its label, the jump
+     *  buttons and its lyric line's tint. `also` counts merged reporters. */
+    reports?: readonly { timeSec: number | null; label: string; also?: number }[];
     class?: string;
   } = $props();
   const detail = $derived(variant === 'detail');
@@ -60,6 +67,7 @@
   let time = $state(0);
   let duration = $state(NaN);
   let volume = $state(1);
+  let barWidth = $state(0);
   // From a play until the song can play: a removed song from storage starts loading only then.
   let loading = $state(false);
   const loadEvent = (event: SongLoadEvent) => (loading = songLoading(loading, event));
@@ -130,7 +138,6 @@
   function lengthOf(song: SongCard | null) {
     return Number.isFinite(duration) && duration > 0 ? duration : (song?.durationSec ?? 0);
   }
-  const isSection = (text: string) => /^\s*\[[^\]]+\]\s*$/.test(text);
 </script>
 
 {#snippet clock(song: SongCard | null)}
@@ -172,8 +179,10 @@
 
 {#snippet lyrics(lines: SongCard['lines'])}
   {@const playing = detail ? playingLyricIndex(lines, time) : -1}
+  {@const reported = detail ? reportedLyricCounts(lines, reports) : new Map<number, number>()}
   {#each lines as line, i (i)}
-    {#if isSection(line.text)}
+    {@const reportCount = reported.get(i)}
+    {#if isLyricSection(line.text)}
       <p class="mt-1 text-xs font-semibold uppercase tracking-wide text-dark-2">{line.text}</p>
     {:else if line.t != null}
       {@const at = line.t / 1000}
@@ -183,6 +192,7 @@
         class={cn(
           'flex w-full items-baseline text-left hover:bg-dark-5',
           detail ? 'gap-2 rounded-md px-2 py-1.5' : 'min-h-6 gap-2 rounded px-1 py-0.5',
+          reportCount && 'bg-red-500/[0.13] font-medium text-white hover:bg-red-500/20',
           i === playing && 'bg-blue-500/10 font-medium text-white'
         )}
         title="Play from {formatPlaybackTime(at)}"
@@ -195,7 +205,14 @@
             detail && 'w-[34px] text-xs font-semibold'
           )}>{formatPlaybackTime(at)}</span
         >
-        <span>{line.text}</span>
+        <span class="min-w-0 flex-1">{line.text}</span>
+        {#if reportCount}
+          <span
+            class="inline-flex shrink-0 items-center gap-1 self-center rounded bg-red-500/20 px-1.5 py-px text-[11px] font-medium text-red-300"
+          >
+            <IconFlag size={11} aria-hidden="true" />Reported ×{reportCount}
+          </span>
+        {/if}
       </button>
     {:else}
       <p class={detail ? 'm-0 px-2 py-1.5' : 'px-1'}>{line.text}</p>
@@ -205,6 +222,9 @@
 
 {#snippet player(song: SongCard | null, phase: 'loading' | 'loaded' | 'failed')}
   {@const cover = shownCover(song?.cover ?? null, removedCovers)}
+  {@const marks = mode === 'failed' ? [] : seekMarkers(reports, lengthOf(song))}
+  {@const labels = detail ? markerLabels(marks, barWidth) : []}
+  {@const next = nextReportTime(marks, time)}
   <div
     class={cn(
       'flex w-full flex-col text-left',
@@ -243,7 +263,16 @@
         {#if !detail}{@render playButton('')}{/if}
       </div>
 
-      <div class="relative">
+      <div class={cn('relative', labels.some((l) => l.text) && 'pt-4')} bind:clientWidth={barWidth}>
+        {#each labels as label (label.timeSec)}
+          {#if label.text}
+            <span
+              class="pointer-events-none absolute top-0 text-[11px] leading-none font-semibold whitespace-nowrap text-red-300"
+              style:left="{label.left}px"
+              aria-hidden="true">{label.text}</span
+            >
+          {/if}
+        {/each}
         <Slider
           type="single"
           min={0}
@@ -256,7 +285,7 @@
           bind:value={() => time, seek}
         />
         {#if mode !== 'failed'}
-          {#each seekMarkers(reports, lengthOf(song)) as mark (mark.timeSec)}
+          {#each marks as mark (mark.timeSec)}
             <!-- The line lets pointer events through to the slider, so the thumb still drags across
                  a marker; the marker is clicked by the cap above the track. -->
             <span
@@ -282,6 +311,28 @@
           <span class="text-[13px] font-medium tabular-nums text-white">{@render clock(song)}</span>
           <div class="ml-auto flex w-32 items-center gap-2">{@render volumeControl()}</div>
         </div>
+        {#if marks.length}
+          <div class="flex gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 flex-1 text-xs"
+              onclick={() => playSongAt(item.id, marks[0].timeSec, ownKey)}
+            >
+              <IconFlag aria-hidden="true" /> Jump to {formatPlaybackTime(marks[0].timeSec)}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 flex-1 text-xs"
+              disabled={next == null}
+              title={next == null ? 'No report after the playhead' : undefined}
+              onclick={() => next != null && playSongAt(item.id, next, ownKey)}
+            >
+              {next == null ? 'Next report' : `Next report ${formatPlaybackTime(next)}`}
+            </Button>
+          </div>
+        {/if}
       {:else}
         <div class="flex items-center gap-2">{@render volumeControl()}</div>
       {/if}

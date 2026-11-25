@@ -3,7 +3,10 @@ import { playerSongCoverText, songsOwnCoverText } from '@civitai/db-queries/prof
 import { storedSongDurationSec } from '@civitai/shared';
 import { songNeverReviewable, songScanStateOf } from '@civitai/shared/rating-review';
 import {
+  type AudioTab,
+  type CheckState,
   checkState,
+  DEFAULT_AUDIO_TAB,
   LYRICS_SOURCE_LABELS,
   MANY_REPORTS,
   reportTimeSec,
@@ -13,10 +16,12 @@ import {
   type DisputeFilter,
   type DisputeSongState,
   type DisputeSort,
+  type DisputeStatus,
   type HeldFilter,
   type HeldKind,
   type HeldSongRow,
   type HeldSort,
+  type HeldStatus,
   type ReportedFilter,
   type SongAppealRow,
   type ReportedSongRow,
@@ -34,6 +39,10 @@ import {
   pendingSongReports,
   songAppealImages,
 } from './audio-review-count';
+import { canAccess } from './access';
+import { logAxiomError } from './axiom';
+import { recordModActivity } from './mod-activity';
+import { getClickhouse } from './clickhouse';
 import { dbRead } from './db';
 import { getAppealImageQueue, ruleBlockedSql } from './image-review.service';
 import { visibleSongLinks } from './song-links.service';
@@ -314,7 +323,10 @@ async function songModelName(meta: Record<string, unknown> | null): Promise<stri
  *  withheld from `user`. */
 export async function getSongDetails(
   imageId: number,
-  user: App.Locals['user'] | undefined
+  user: App.Locals['user'] | undefined,
+  tab: AudioTab = DEFAULT_AUDIO_TAB,
+  /** Whether this moderator may open CSAM holds: only then is a lyrics hold named as one. */
+  canOpenHolds = false
 ): Promise<SongDetails | null> {
   const song = await dbRead
     .selectFrom('Image as s')
@@ -331,9 +343,12 @@ export async function getSongDetails(
       's.postId',
       's.meta',
       's.metadata',
+      's.nsfwLevelLocked',
+      's.scannedAt',
       't.genre',
       'p.publishedAt',
       'l.source as lyricsSource',
+      'l.imageId as lyricsId',
       'c.id as coverId',
       'c.url as coverUrl',
       'c.nsfwLevel as coverNsfwLevel',
@@ -373,11 +388,35 @@ export async function getSongDetails(
     getActiveStrikes(song.userId),
     song.coverId != null ? withheldImageIds(user, [song.coverId]) : [],
   ]);
-  const otherReported = await pendingSongReports()
-    .select(sql<number>`count(DISTINCT i.id)::int`.as('n'))
-    .where('i.userId', '=', song.userId)
-    .where('i.id', '<>', imageId)
-    .executeTakeFirst();
+  const [otherReported, otherHeld, lyrics, ownerDisputes, rating, activity] = await Promise.all([
+    pendingSongReports()
+      .select('i.id')
+      .distinct()
+      .where('i.userId', '=', song.userId)
+      .where('i.id', '<>', imageId)
+      .execute()
+      .then((rows) =>
+        visibleIds(
+          rows.map((r) => r.id),
+          user
+        )
+      ),
+    tab === 'held' ? otherHeldOf(song.userId, imageId, user) : null,
+    song.lyricsId != null ? lyricsCheck(imageId, canOpenHolds) : null,
+    tab === 'disputes' ? songDisputeTally(song.userId, user) : null,
+    tab === 'disputes'
+      ? songRatingSource(imageId, {
+          locked: song.nsfwLevelLocked,
+          scannedAt: song.scannedAt,
+        }).catch((error) => {
+          // The card is optional: a failed read (e.g. ModActivity.details not yet migrated)
+          // hides it rather than blanking the details pane.
+          logAxiomError(error, { name: 'audio-review-rating-source' });
+          return null;
+        })
+      : null,
+    tab === 'disputes' || tab === 'reported' ? songActivity(imageId) : null,
+  ]);
 
   const cover =
     song.coverId != null
@@ -402,6 +441,7 @@ export async function getSongDetails(
         needsReview: song.needsReview,
         blockedFor: song.blockedFor,
       }),
+      lyrics,
       cover:
         song.coverId != null
           ? checkState({
@@ -428,10 +468,148 @@ export async function getSongDetails(
           createdAt: owner.createdAt ?? null,
           removedSongs: Number(owner.removedSongs ?? 0),
           strikes: strikes.count,
-          otherReported: otherReported?.n ?? 0,
+          otherReported: otherReported.length,
+          otherHeld,
+          disputes: ownerDisputes,
         }
       : null,
+    rating,
+    activity,
   };
+}
+
+// A lyrics hold is decided in CSAM holds, whose page refuses to load without this grant.
+const CSAM_HOLDS = '/csam/text-holds';
+const CSAM_HOLDS_GRANT = 'csam.report.file';
+
+/** Whether this moderator can open CSAM holds: its page and the grant its load demands. */
+export const canOpenCsamHolds = (locals: Pick<App.Locals, 'user' | 'grants'>) =>
+  canAccess(locals.user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT];
+
+/** Which of `ids` are not withheld from `user`: an owner's counts leave those out, as the lists do. */
+async function visibleIds(ids: number[], user: App.Locals['user'] | undefined) {
+  if (!ids.length) return [];
+  const withheld = new Set(await withheldImageIds(user, ids));
+  return ids.filter((id) => !withheld.has(id));
+}
+
+/** The lyrics scan's state: held while a CSAM text hold is Pending (pending to a moderator who
+ *  cannot open CSAM holds), else the text moderation's verdict (`EntityModeration`, as the main
+ *  app's song decision reads it). */
+async function lyricsCheck(songId: number, canOpenHolds: boolean): Promise<CheckState> {
+  const [hold, moderation] = await Promise.all([
+    dbRead
+      .selectFrom('TextScanHold')
+      .select('id')
+      .where('entityType', '=', 'TrackLyrics')
+      .where('entityId', '=', songId)
+      .where('label', '=', 'csam')
+      .where(sql<boolean>`status = 'Pending'`)
+      .executeTakeFirst(),
+    dbRead
+      .selectFrom('EntityModeration')
+      .select(['status', 'blocked'])
+      .where('entityType', '=', 'TrackLyrics')
+      .where('entityId', '=', songId)
+      .executeTakeFirst(),
+  ]);
+  if (hold) return canOpenHolds ? 'held' : 'pending';
+  if (!moderation || moderation.status === 'Pending') return 'pending';
+  if (moderation.status !== 'Succeeded') return 'failed';
+  return moderation.blocked ? 'blocked' : 'passed';
+}
+
+/** An owner's rating disputes on songs, by outcome, leaving out songs withheld from `user`. */
+async function songDisputeTally(ownerId: number, user: App.Locals['user'] | undefined) {
+  const all = await dbRead
+    .selectFrom('RatingReview')
+    .select(['entityId', 'status', sql<number>`count(*)::int`.as('n')])
+    .where('entityType', '=', SONG_ENTITY_TYPE)
+    .where('userId', '=', ownerId)
+    .groupBy(['entityId', 'status'])
+    .execute();
+  const visible = new Set(await visibleIds([...new Set(all.map((r) => r.entityId))], user));
+  const rows = all.filter((r) => visible.has(r.entityId));
+  const of = (status: string) =>
+    rows.filter((r) => String(r.status) === status).reduce((n, r) => n + r.n, 0);
+  return {
+    total: rows.reduce((n, r) => n + r.n, 0),
+    pending: of(ReportStatus.Pending),
+    approved: of(ReportStatus.Actioned),
+    rejected: of(ReportStatus.Unactioned),
+  };
+}
+
+/** The rating rows read back for the card; past this many no-op writes, it says "Not recorded". */
+const RATING_ROWS_READ = 20;
+
+/**
+ * Who set the song's current level: its scans while it is unlocked, else the moderator of the
+ * latest `setNsfwLevel` row that changed it (`details.from` to `details.to`), with the level it
+ * replaced. A write that kept the level (a keep ruling, a same-level rating) credits no one; a row
+ * written before `details` existed names its moderator as the last to rate it, with no `before`.
+ */
+async function songRatingSource(
+  songId: number,
+  song: { locked: boolean; scannedAt: Date | null }
+): Promise<NonNullable<SongDetails['rating']>> {
+  if (!song.locked)
+    return { source: 'scan', by: null, at: song.scannedAt, before: null, recorded: true };
+  const rows = await dbRead
+    .selectFrom('ModActivity as a')
+    .leftJoin('User as u', 'u.id', 'a.userId')
+    .select(['u.username', 'a.createdAt', 'a.details'])
+    .where('a.entityType', '=', 'image')
+    .where('a.entityId', '=', songId)
+    .where('a.activity', '=', 'setNsfwLevel')
+    .orderBy('a.createdAt', 'desc')
+    .limit(RATING_ROWS_READ)
+    .execute();
+  for (const row of rows) {
+    const change = levelChange(row.details);
+    if (change === 'none') continue;
+    return {
+      source: 'moderator',
+      by: row.username ?? null,
+      at: row.createdAt,
+      before: change === 'unrecorded' ? null : change.from,
+      recorded: change !== 'unrecorded',
+    };
+  }
+  return { source: 'unknown', by: null, at: null, before: null, recorded: false };
+}
+
+/** A `setNsfwLevel` row's `{ from, to }`: the change, `none` when it kept the level, or
+ *  `unrecorded` on a row written before ratings stored their levels. */
+function levelChange(details: unknown): { from: number; to: number } | 'none' | 'unrecorded' {
+  const d = details as { from?: unknown; to?: unknown } | null;
+  if (!d || typeof d.from !== 'number' || typeof d.to !== 'number') return 'unrecorded';
+  return d.from === d.to ? 'none' : { from: d.from, to: d.to };
+}
+
+/** All-time plays, Like reactions and comments of one song from the image metrics the site counts
+ *  (`entityMetricDailyAgg_v2`, summed per day as the main app's metric reader does); null when
+ *  ClickHouse cannot answer, so the card leaves the row out rather than show zeros. */
+async function songActivity(songId: number): Promise<SongDetails['activity']> {
+  try {
+    const response = await getClickhouse().query({
+      query: `
+        SELECT metricType, sum(total) AS value
+        FROM entityMetricDailyAgg_v2
+        WHERE entityType = 'Image' AND entityId = {songId:Int32}
+          AND metricType IN ('Play', 'Like', 'commentCount')
+        GROUP BY metricType
+      `,
+      query_params: { songId },
+      format: 'JSONEachRow',
+    });
+    const rows = await response.json<{ metricType: string; value: string | number }>();
+    const of = (type: string) => Number(rows.find((r) => r.metricType === type)?.value ?? 0);
+    return { plays: of('Play'), likes: of('Like'), comments: of('commentCount') };
+  } catch (error) {
+    logAxiomError(error, { name: 'audio-review-song-activity' });
+    return null;
+  }
 }
 
 /** Every browsing level, Blocked included: a removed song or cover is what an appeal is about. */
@@ -587,10 +765,19 @@ export async function isSongAppeal(imageId: number): Promise<boolean> {
 }
 
 /** What holds a song, before the access rule: its kind, since when, and the hold or flagged cover. */
-type HeldEntry = { id: number; kind: HeldKind; waitingSince: Date; holdId: number | null };
+type HeldEntry = {
+  id: number;
+  kind: HeldKind;
+  waitingSince: Date;
+  holdId: number | null;
+  /** On a Resolved entry: its last Held decision, and the cover it decided. */
+  decision?: NonNullable<HeldSongRow['decision']>;
+  decidedCoverId?: number | null;
+};
 
-/** Every held song, one entry each: a lyrics hold first, then the song's own flag, then its cover's. */
-async function heldEntries(): Promise<HeldEntry[]> {
+/** Every held song, one entry each: a lyrics hold first, then the song's own flag, then its cover's.
+ *  With `ownerId`, only that owner's songs. */
+async function heldEntries(ownerId?: number): Promise<HeldEntry[]> {
   const [holds, songs, covers] = await Promise.all([
     dbRead
       .selectFrom('TextScanHold as h')
@@ -604,12 +791,14 @@ async function heldEntries(): Promise<HeldEntry[]> {
       .where('h.label', '=', 'csam')
       .where(sql<boolean>`h.status = 'Pending'`)
       .where('s.type', '=', 'audio')
+      .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
       .groupBy('h.entityId')
       .execute(),
     dbRead
       .selectFrom('Image as s')
       .select(['s.id', 's.createdAt as waitingSince'])
       .where(sql<boolean>`${sql.raw(flaggedSongsText('s'))}`)
+      .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
       .execute(),
     dbRead
       .selectFrom('Track as t')
@@ -617,6 +806,7 @@ async function heldEntries(): Promise<HeldEntry[]> {
       .innerJoin('Image as c', 'c.id', 't.coverImageId')
       .select(['s.id', 'c.createdAt as waitingSince'])
       .where(sql<boolean>`${sql.raw(flaggedCoverText('c', 's'))}`)
+      .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
       .execute(),
   ]);
   const entries = new Map<number, HeldEntry>();
@@ -653,6 +843,8 @@ const withheldHeldRow = (entry: HeldEntry): HeldSongRow => ({
   owner: null,
   removed: false,
   removableCoverId: null,
+  resolved: !!entry.decision,
+  decision: null,
 });
 
 /** The rows of these held entries, one each in their order. A lyrics row reads nothing of its song,
@@ -693,12 +885,12 @@ async function heldRows(
       ])
     : [[], new Map()];
   const byId = new Map(songs.map((s) => [s.id, s]));
-  // A cover row is withheld when its song or its flagged cover is: the detail shows both.
+  // A cover row is withheld when its song or its flagged (or decided) cover is: the detail shows both.
   const checked = [
     ...ids,
     ...open.flatMap((e) => {
       const coverId = e.kind === 'cover' ? byId.get(e.id)?.coverId : null;
-      return coverId != null ? [coverId] : [];
+      return [coverId, e.decidedCoverId].filter((id): id is number => id != null);
     }),
   ];
   const withheld = new Set(checked.length ? await withheldImageIds(user, checked) : []);
@@ -714,7 +906,11 @@ async function heldRows(
             nsfwLevel: song.coverNsfwLevel ?? 0,
           }
         : null;
-    if (withheld.has(entry.id) || (flaggedCover && withheld.has(flaggedCover.id)))
+    if (
+      withheld.has(entry.id) ||
+      (flaggedCover && withheld.has(flaggedCover.id)) ||
+      (entry.decidedCoverId != null && withheld.has(entry.decidedCoverId))
+    )
       return withheldHeldRow(entry);
     return {
       ...withheldHeldRow(entry),
@@ -728,7 +924,47 @@ async function heldRows(
       owner: { id: song.ownerId, username: song.ownerUsername },
       removed: song.ingestion === 'Blocked',
       removableCoverId: links.get(entry.id)?.songCoverId ?? null,
+      decision: entry.decision ?? null,
     };
+  });
+}
+
+/** The songs decided on the Held tab and not held again since, one entry each at its last decision
+ *  (`recordHeldDecision`'s rows). With `ownerId`, only that owner's songs. */
+async function resolvedHeldEntries(pending: HeldEntry[], ownerId?: number): Promise<HeldEntry[]> {
+  const rows = await dbRead
+    .selectFrom('ModActivity as a')
+    .innerJoin('Image as s', 's.id', 'a.entityId')
+    .leftJoin('User as u', 'u.id', 'a.userId')
+    .select(['a.entityId as id', 'a.createdAt', 'a.details', 'u.username'])
+    .distinctOn('a.entityId')
+    .where('a.activity', '=', HELD_DECISION_ACTIVITY)
+    .where('a.entityType', '=', 'image')
+    .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
+    .orderBy('a.entityId')
+    .orderBy('a.createdAt', 'desc')
+    .execute();
+  const held = new Set(pending.map((e) => e.id));
+  return rows.flatMap((r): HeldEntry[] => {
+    if (r.id == null || held.has(r.id)) return [];
+    const details = (r.details ?? {}) as Record<string, unknown>;
+    const kind = details.kind === 'song' ? 'song' : 'cover';
+    const at = new Date(r.createdAt);
+    return [
+      {
+        id: r.id,
+        kind,
+        waitingSince: at,
+        holdId: null,
+        decidedCoverId: typeof details.coverId === 'number' ? details.coverId : null,
+        decision: {
+          decision: String(details.decision ?? ''),
+          flag: String(details.flag ?? ''),
+          at,
+          by: r.username ?? null,
+        },
+      },
+    ];
   });
 }
 
@@ -736,7 +972,7 @@ async function heldRows(
  * One page of the Held tab: songs whose lyrics are under a CSAM text hold, songs whose own cover is
  * flagged for review, and songs flagged themselves, one row per song. Filtered here like the other
  * tabs, since a withheld row (every lyrics hold, and what the access rule withholds) matches only
- * its exact id, never its title or owner.
+ * its exact id, never its title or owner, and so is never listed under an owner either.
  */
 export async function getHeldSongs({
   sort,
@@ -744,33 +980,38 @@ export async function getHeldSongs({
   q,
   page,
   user,
+  owner,
+  status = 'pending',
 }: {
   sort: HeldSort;
   filter: HeldFilter;
   q: string;
   page: number;
   user: App.Locals['user'] | undefined;
+  owner?: number;
+  status?: HeldStatus;
 }) {
-  const entries = (await heldEntries()).sort(
+  const pending = await heldEntries(owner);
+  const resolved = status === 'pending' ? [] : await resolvedHeldEntries(pending, owner);
+  const entries = (status === 'resolved' ? resolved : [...pending, ...resolved]).sort(
     (a, b) => a.waitingSince.getTime() - b.waitingSince.getTime() || a.id - b.id
   );
   if (sort === 'newest') entries.reverse();
   const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
-  // Text search reads the rows it may match: the open ones.
-  const rows = q && !asId?.success ? await heldRows(entries, user) : null;
-  const searched = !q
-    ? entries
-    : asId?.success
-    ? entries.filter((e) => e.id === asId.data)
-    : entries.filter((_, i) => {
-        const row = rows![i];
-        const term = q.toLowerCase();
-        return (
-          !row.withheld &&
-          (!!row.title?.toLowerCase().includes(term) ||
-            !!row.owner?.username?.toLowerCase().startsWith(term))
-        );
-      });
+  // Text search and the owner filter read the rows they may match: the open ones.
+  const rows = (q && !asId?.success) || owner != null ? await heldRows(entries, user) : null;
+  const term = q.toLowerCase();
+  const searched = entries.filter((e, i) => {
+    if (rows && owner != null && rows[i].withheld) return false;
+    if (!q) return true;
+    if (asId?.success) return e.id === asId.data;
+    const row = rows![i];
+    return (
+      !row.withheld &&
+      (!!row.title?.toLowerCase().includes(term) ||
+        !!row.owner?.username?.toLowerCase().startsWith(term))
+    );
+  });
   const facets = {
     all: searched.length,
     lyrics: searched.filter((e) => e.kind === 'lyrics').length,
@@ -791,6 +1032,71 @@ export async function getHeldSongs({
     offset,
     pageSize: PAGE_SIZE,
   };
+}
+
+/** The owner's held songs on the Held tab other than `songId`, as the owner filter lists them for
+ *  `user` (no lyrics hold, nothing withheld), by kind: a flagged song, or a song with its cover
+ *  flagged. */
+async function otherHeldOf(ownerId: number, songId: number, user: App.Locals['user'] | undefined) {
+  const entries = (await heldEntries(ownerId)).filter((e) => e.id !== songId);
+  const rows = (await heldRows(entries, user)).filter((r) => !r.withheld);
+  return {
+    songs: rows.filter((r) => r.kind === 'song').length,
+    covers: rows.filter((r) => r.kind === 'cover').length,
+  };
+}
+
+/** What holds a song on the Held tab that a decision here takes: its own flag, or its own cover's.
+ *  Null for a song not held here (a lyrics hold is decided in CSAM holds). */
+export async function heldStateOf(
+  songId: number
+): Promise<{ kind: 'song' | 'cover'; flag: string; coverId: number | null } | null> {
+  const [song, cover] = await Promise.all([
+    dbRead
+      .selectFrom('Image as s')
+      .select('s.needsReview')
+      .where('s.id', '=', songId)
+      .where(sql<boolean>`${sql.raw(flaggedSongsText('s'))}`)
+      .executeTakeFirst(),
+    dbRead
+      .selectFrom('Track as t')
+      .innerJoin('Image as s', 's.id', 't.imageId')
+      .innerJoin('Image as c', 'c.id', 't.coverImageId')
+      .select(['c.id', 'c.needsReview'])
+      .where('s.id', '=', songId)
+      .where(sql<boolean>`${sql.raw(flaggedCoverText('c', 's'))}`)
+      .executeTakeFirst(),
+  ]);
+  if (song?.needsReview) return { kind: 'song', flag: song.needsReview, coverId: null };
+  if (cover?.needsReview) return { kind: 'cover', flag: cover.needsReview, coverId: cover.id };
+  return null;
+}
+
+export const HELD_DECISION_ACTIVITY = 'audioHeldDecision';
+export type HeldDecision = 'approveCover' | 'approveSong' | 'removeCover' | 'removeSong';
+
+/** One row per decision on the Held tab, beside the writers' own `review` rows (which say neither
+ *  the tab nor what was decided): what the Resolved list reads. */
+export async function recordHeldDecision(input: {
+  userId: number;
+  songId: number;
+  decision: HeldDecision;
+  held: { kind: 'song' | 'cover'; flag: string };
+  coverId: number | null;
+}) {
+  await recordModActivity({
+    userId: input.userId,
+    entityType: 'image',
+    entityId: input.songId,
+    activity: HELD_DECISION_ACTIVITY,
+    details: {
+      decision: input.decision,
+      kind: input.held.kind,
+      flag: input.held.flag,
+      songId: input.songId,
+      coverId: input.coverId,
+    },
+  });
 }
 
 /** Whether song `songId` is held for review itself, with `flag` still its flag (Approve song). */
@@ -819,30 +1125,37 @@ export async function flaggedCoverOf(songId: number, flag: string): Promise<numb
   return row?.id ?? null;
 }
 
-/** The disputes read at once; past this the oldest are listed. */
+/** The disputes read at once: past this, the oldest Pending ones, or the newest otherwise. */
 const DISPUTES_READ = 500;
 
 /**
- * One page of the Disputes tab: owners' Pending rating disputes on songs, each with its song, the
- * owner's ask and words, and the last ruling on an earlier dispute of the same song. Filtered here
- * like the other tabs, since a dispute on a song withheld from this moderator matches only its exact
- * id (the dispute's or the song's), never its title or owner.
+ * One page of the Disputes tab: owners' rating disputes on songs (Pending by default; Resolved ones
+ * carry their ruling), each with its song, the owner's ask and words, which of the song's disputes
+ * it is, and the last ruling on one filed before it. Filtered here like the other tabs, since a
+ * dispute on a song withheld from this moderator matches only its exact id (the dispute's or the
+ * song's), never its title or owner, and so is never listed under an owner either.
  */
 export async function getSongDisputes({
   sort,
   filter,
+  status = 'pending',
   q,
   page,
   user,
+  owner,
 }: {
   sort: DisputeSort;
   filter: DisputeFilter;
+  status?: DisputeStatus;
   q: string;
   page: number;
   user: App.Locals['user'] | undefined;
+  owner?: number;
 }) {
-  const disputes = await pendingSongDisputes()
+  const disputes = await dbRead
+    .selectFrom('RatingReview as rr')
     .innerJoin('User as owner', 'owner.id', 'rr.userId')
+    .leftJoin('User as resolver', 'resolver.id', 'rr.resolvedBy')
     .leftJoin('Image as s', (join) =>
       join.onRef('s.id', '=', 'rr.entityId').on('s.type', '=', 'audio')
     )
@@ -852,9 +1165,14 @@ export async function getSongDisputes({
       'rr.id',
       'rr.entityId as songId',
       'rr.createdAt',
+      'rr.status',
       'rr.currentLevel',
       'rr.suggestedLevel',
+      'rr.appliedLevel',
+      'rr.resolvedAt',
       'rr.userComment',
+      'rr.modComment',
+      'resolver.username as resolverUsername',
       'owner.id as ownerId',
       'owner.username as ownerUsername',
       's.id as foundId',
@@ -868,34 +1186,45 @@ export async function getSongDisputes({
         playerSongCoverText('c')
       )} THEN c.url END`.as('coverUrl'),
     ])
-    .orderBy('rr.createdAt')
-    .orderBy('rr.id')
+    .where('rr.entityType', '=', SONG_ENTITY_TYPE)
+    .$if(status === 'pending', (qb) => qb.where('rr.status', '=', ReportStatus.Pending))
+    .$if(status === 'resolved', (qb) => qb.where('rr.status', '<>', ReportStatus.Pending))
+    .$if(owner != null, (qb) => qb.where('rr.userId', '=', owner!))
+    .orderBy('rr.createdAt', status === 'pending' ? 'asc' : 'desc')
+    .orderBy('rr.id', status === 'pending' ? 'asc' : 'desc')
     .limit(DISPUTES_READ)
     .execute();
+  if (status !== 'pending') disputes.reverse();
 
   const songIds = [...new Set(disputes.map((d) => d.songId))];
   const [history, withheldList, coversWithheld] = await Promise.all([
     songIds.length
       ? dbRead
           .selectFrom('RatingReview')
-          .select(['entityId', 'status', 'appliedLevel', 'resolvedAt'])
+          .select(['id', 'entityId', 'status', 'currentLevel', 'appliedLevel', 'resolvedAt'])
           .where('entityType', '=', SONG_ENTITY_TYPE)
           .where('entityId', 'in', songIds)
-          .where('status', '<>', ReportStatus.Pending)
-          .orderBy('createdAt', 'desc')
+          .orderBy('createdAt')
+          .orderBy('id')
           .execute()
       : [],
     songIds.length ? withheldImageIds(user, songIds) : [],
     withheldCovers(disputes, user),
   ]);
   const withheld = new Set(withheldList);
-  // Newest first, so the first ruling seen per song is its last.
-  const earlierOf = new Map<number, (typeof history)[number]>();
-  const decidedOf = new Map<number, number>();
-  for (const h of history) {
-    if (!earlierOf.has(h.entityId)) earlierOf.set(h.entityId, h);
-    decidedOf.set(h.entityId, (decidedOf.get(h.entityId) ?? 0) + 1);
-  }
+  const historyOf = new Map<number, (typeof history)[number][]>();
+  for (const h of history) historyOf.set(h.entityId, [...(historyOf.get(h.entityId) ?? []), h]);
+  const ruling = (h: {
+    status: string;
+    currentLevel: number;
+    appliedLevel: number | null;
+    resolvedAt: Date | null;
+  }) => ({
+    status: h.status,
+    currentLevel: h.currentLevel,
+    appliedLevel: h.appliedLevel,
+    resolvedAt: h.resolvedAt,
+  });
 
   const rows = disputes.map((d): SongDisputeRow & { asks: 'lower' | 'higher' | null } => {
     const asks: 'lower' | 'higher' | null =
@@ -910,18 +1239,23 @@ export async function getSongDisputes({
         : d.ingestion === 'Scanned'
         ? 'reviewed'
         : 'unreviewed';
+    const songHistory = historyOf.get(d.songId) ?? [];
+    const index = songHistory.findIndex((h) => h.id === d.id);
+    const before = songHistory.slice(0, Math.max(index, 0));
     const base = {
       id: d.id,
       songId: d.songId,
       waitingSince: d.createdAt,
+      status: String(d.status),
       state,
-      disputes: (decidedOf.get(d.songId) ?? 0) + 1,
+      disputes: (index === -1 ? songHistory.length : index) + 1,
       asks,
     };
-    // Nothing about the song: not its levels (so no ask chip), its scan state or its disputes.
+    // Nothing about the song: not its levels (so no ask chip), its scan state, its disputes or rulings.
     if (withheld.has(d.songId))
       return {
         ...base,
+        status: d.status === ReportStatus.Pending ? ReportStatus.Pending : 'Resolved',
         asks: null,
         state: null,
         disputes: null,
@@ -935,8 +1269,9 @@ export async function getSongDisputes({
         songLevel: null,
         message: null,
         earlier: null,
+        ruling: null,
       };
-    const earlier = earlierOf.get(d.songId);
+    const earlier = before.filter((h) => h.status !== ReportStatus.Pending).at(-1);
     return {
       ...base,
       withheld: false,
@@ -948,27 +1283,29 @@ export async function getSongDisputes({
       suggestedLevel: d.suggestedLevel,
       songLevel: d.nsfwLevel,
       message: d.userComment || null,
-      earlier: earlier
-        ? {
-            status: earlier.status,
-            appliedLevel: earlier.appliedLevel,
-            resolvedAt: earlier.resolvedAt,
-          }
-        : null,
+      earlier: earlier ? ruling(earlier) : null,
+      ruling:
+        d.status === ReportStatus.Pending
+          ? null
+          : {
+              ...ruling({ ...d, status: String(d.status) }),
+              by: d.resolverUsername,
+              comment: d.modComment || null,
+            },
     };
   });
 
   const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
   const term = q.toLowerCase();
-  const searched = !q
-    ? rows
-    : rows.filter((r) =>
-        asId?.success
-          ? r.id === asId.data || r.songId === asId.data
-          : !r.withheld &&
-            (!!r.title?.toLowerCase().includes(term) ||
-              !!r.owner?.username?.toLowerCase().startsWith(term))
-      );
+  const searched = rows.filter((r) => {
+    if (owner != null && r.withheld) return false;
+    if (!q) return true;
+    return asId?.success
+      ? r.id === asId.data || r.songId === asId.data
+      : !r.withheld &&
+          (!!r.title?.toLowerCase().includes(term) ||
+            !!r.owner?.username?.toLowerCase().startsWith(term));
+  });
   const facets = {
     all: searched.length,
     lower: searched.filter((r) => r.asks === 'lower').length,

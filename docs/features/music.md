@@ -210,13 +210,24 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   time is a chip that plays the song from there, and each reported time is a red marker on the seek
   bar (hover names the reasons, a click on the dot above the track plays from it, and the thumb still
   drags across a marker; a report without a time has no chip or marker, and one at the stored length
-  stays at the end when the file reads a little shorter). A chip or marker asks the song's card to
+  stays at the end when the file reads a little shorter). Above the bar each marker has a red time
+  label, the first reading "Report at 1:24"; on a narrow bar the first shortens to its time and a
+  label that would overlap the one before it is hidden (its marker keeps the hover). Under the player,
+  "Jump to <first time>" plays from the first reported time and "Next report <time>" from the first
+  one after the playhead, disabled after the last. A lyric line holding a reported time (the time
+  falls between the line's start and the next timed line's) is tinted red with "Reported ×n", merged
+  reporters counted. A chip, marker or button asks the song's card to
   play: a card whose file failed plays nothing, and a song that falls back to the stored copy starts
   there at the time asked for. Then the cover
   with its rating and scan state, the automated checks as states only (passed, held, blocked, not
   finished, failed), the generation details the song stored (model, seed, prompt, music description,
-  lyrics source) and the owner (account age, removed songs, active strikes, other reported songs).
-  Play, like and comment counts are not shown.
+  lyrics source) and the owner (account age, removed songs, active strikes, other reported songs;
+  the owner's counts leave out songs withheld from the moderator, as the lists do).
+  The checks are "Audio scan" (the song's own verdict), "Lyrics scan" (a song with lyrics: held
+  while a CSAM text hold is Pending, shown as not finished to a moderator who cannot open CSAM
+  holds, else the lyrics' text moderation verdict) and "Cover scan". The
+  Song card's Activity row has the song's all-time plays, Like reactions and comments, from the
+  image metrics the site counts (ClickHouse, read for the open song only; left out when unread).
 - **Decisions** (`image.moderate`, as on Image reports): 1 Dismiss reports closes the song's shown
   reports as Unactioned (Image reports' Unaction); 2 Remove song is Image reports' removal and asks for a
   violation type, closing the reports as Actioned; 4 Set rating opens PG to XXX (the next digit picks)
@@ -247,7 +258,17 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   on restore: the resolver lifts the removal and rescans an unrated image, and a moderator rates it
   afterwards. A withheld appeal shows no media, owner, words or removal and takes no decision.
 - **Held** lists three kinds of held song, one row per song (chips All, Lyrics, Cover, Song; sort
-  by oldest or newest; search by title, owner or id):
+  by oldest or newest; search by title, owner or id; `owner=<userId>` lists one owner's rows, shown as
+  a removable "Owner:" chip, and like a text search never matches a lyrics hold or a withheld row).
+  The open song's owner card adds "Other held": the owner's other rows that filter lists, by kind
+  ("1 song, 2 covers"), with View linking to it; it is read on this tab only. Status Pending (the
+  default, and the tab's badge), Resolved or All: each decision on this tab (Approve cover or song,
+  Remove cover or song, not one held for a second moderator) writes a `ModActivity` row
+  `audioHeldDecision` with `details` `{ decision, kind, flag, songId, coverId }`, beside the writers'
+  own `review` rows, and Resolved lists each song at its last such decision unless it is held again:
+  what was decided, by whom, when and the flag, read-only with no keys. A decided song or cover
+  withheld from the moderator shows only its id. Decisions made before that column existed are not
+  listed:
   - **Lyrics held:** the song's lyrics are under a Pending CSAM text hold (`TrackLyrics`). The row
     shows "Withheld song #id", "Song withheld" and when it was held, with no audio, cover, lyrics,
     title or owner for anyone on this page, whatever their grants; search finds it only by its exact
@@ -271,13 +292,24 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   song withheld from the moderator (`withheldImageIds`) carries only its id and kind, and takes no
   decision. Every decision needs `image.moderate`. The sidebar badge counts the flagged songs and
   covers decided here, not lyrics holds, which CSAM holds counts; the tab's own count includes them.
-- **Disputes** lists owners' Pending rating disputes on songs (`RatingReview` entity type `Song`, see
+- **Disputes** lists owners' rating disputes on songs (`RatingReview` entity type `Song`, see
   "Rating disputes" below), one row per dispute: the level the owner saw and the level they ask
   for, "Repeat ×n" from the second dispute on the same song, and the owner with whether they
-  commented. Chips for All, Asks lower and Asks higher; sort by oldest or newest; search by title,
-  owner, the song's id or the dispute's. The open dispute has the song card (player and lyrics), its
-  facts, the two levels, the owner's comment, "This dispute" (when it was filed and the last ruling
-  on an earlier dispute of the song) and the song's side cards. Keys 1 to 5 pick PG to XXX, then a
+  commented. Status Pending (the default, and the tab's badge), Resolved or All: a resolved row shows
+  Approved or Rejected and its ruling read-only, and takes no key (a resolved dispute on a withheld
+  song reads only "Resolved"). Chips for All, Asks lower and Asks
+  higher; sort by oldest or newest; search by title, owner, the song's id or the dispute's;
+  `owner=<userId>` lists one owner's disputes (never one on a withheld song). The open dispute has
+  "by <owner> · disputed <age> ago · <nth> dispute" under its title, an "Owner's disputes" link
+  (that owner, every status), the song card (player and lyrics), its facts, three level cards
+  (Current, Owner asks, and Scan default: PG, the level a song's own scans give every clean song,
+  which nothing stores per song), the owner's comment, "This dispute" (when it was filed, its
+  ruling once resolved, and the last ruling on a dispute of the song filed before it: "Ruled Oct 30:
+  kept PG-13"), "Current rating" (set by its scans while unlocked, else the moderator of the latest
+  `setNsfwLevel` row whose `details` `{ from, to }` changed the level, with when and the level
+  before it (`from`); a write that kept the level, such as a keep ruling, credits no one, and a row
+  from before `details` existed reads "Last rated by" with the level before "Not recorded") and the song's side cards, whose owner card adds "Rating disputes" (the owner's song
+  disputes by outcome). The tallies and the rating card are read on this tab only, for the open song. Keys 1 to 5 pick PG to XXX, then a
   note and Enter apply it, as on `/ratings` (the same decision form): applying the owner's ask
   approves the dispute, any other level rejects it, and keeping the current level needs a reason.
   The ruling goes through the moderator rating-review resolver (`resolveRatingReview`, with

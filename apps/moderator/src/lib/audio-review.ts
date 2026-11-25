@@ -1,5 +1,6 @@
-import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
+import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
 import { removedKind, removedTitle, type RemovedState } from '$lib/image-review';
+import { plural } from '$lib/format';
 import { VIOLATION_LABELS } from '$lib/violations';
 
 /**
@@ -181,7 +182,8 @@ export type SongDetails = {
     postedAt: Date | null;
     allowRemix: boolean;
   };
-  checks: { song: CheckState; cover: CheckState | null };
+  /** `lyrics` is null for a song without lyrics. */
+  checks: { song: CheckState; lyrics: CheckState | null; cover: CheckState | null };
   cover: { id: number; url: string | null; nsfwLevel: number; shown: boolean } | null;
   generation: {
     model: string | null;
@@ -198,10 +200,65 @@ export type SongDetails = {
     strikes: number;
     /** Their other songs with a pending report. */
     otherReported: number;
+    /** Their other songs the Held tab's owner filter lists, by kind; read on the Held tab only. */
+    otherHeld: { songs: number; covers: number } | null;
+    /** Their rating disputes on songs by outcome; read on the Disputes tab only. */
+    disputes: { total: number; pending: number; approved: number; rejected: number } | null;
   } | null;
+  /** Who set the song's current level and when, from the rating writer's `setNsfwLevel` rows
+   *  (`details: { from, to }`); read on the Disputes tab only. A write that kept the level credits
+   *  no one; rows from before `details` know no `before`. */
+  rating: {
+    source: 'scan' | 'moderator' | 'unknown';
+    by: string | null;
+    at: Date | null;
+    before: number | null;
+    /** False for a moderator rating recorded before ratings stored their levels: `by` is then
+     *  the last moderator to rate it, whether or not that changed the level. */
+    recorded: boolean;
+  } | null;
+  /** All-time plays, Like reactions and comments (the site's image metrics); null when unread. */
+  activity: { plays: number; likes: number; comments: number } | null;
 };
 
-export const songDetailsUrl = (imageId: number) => `/audio-review/details/${imageId}`;
+/** "1,204 plays · 86 likes · 12 comments". */
+export const songActivityText = (a: { plays: number; likes: number; comments: number }) =>
+  [plural(a.plays, 'play'), plural(a.likes, 'like'), plural(a.comments, 'comment')]
+    .map((part) => part.replace(/^\d+/, (n) => Number(n).toLocaleString('en-US')))
+    .join(' · ');
+
+/** The level a song's own scans give it when they pass it (the main app's `apply-song-scan.ts`
+ *  stores PG for every clean song): nothing stores it per song. */
+export const SONG_SCAN_LEVEL = NsfwLevel.PG;
+
+/** The open song's details, with what `tab` shows beyond the shared cards. */
+export const songDetailsUrl = (imageId: number, tab: AudioTab) =>
+  `/audio-review/details/${imageId}?tab=${tab}`;
+
+/** The Held or Disputes tab listing one owner's rows. */
+export const ownerFilterHref = (tab: 'held' | 'disputes', ownerId: number, extra = '') =>
+  `/audio-review?tab=${tab}&owner=${ownerId}${extra}`;
+
+/** "2 (1 rejected, 1 pending)": an owner's song disputes by outcome. */
+export function disputeTallyText(t: {
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+}) {
+  const parts = [
+    t.approved ? `${t.approved} approved` : '',
+    t.rejected ? `${t.rejected} rejected` : '',
+    t.pending ? `${t.pending} pending` : '',
+  ].filter(Boolean);
+  return parts.length ? `${t.total} (${parts.join(', ')})` : String(t.total);
+}
+
+/** "1 song, 2 covers": what the owner's other held rows are. */
+export function otherHeldText({ songs, covers }: { songs: number; covers: number }) {
+  const parts = [songs ? plural(songs, 'song') : '', covers ? plural(covers, 'cover') : ''];
+  return parts.filter(Boolean).join(', ') || 'None';
+}
 
 /** Appeals tab chips: every appeal, a song's own, or a cover's. */
 export const APPEAL_FILTERS = ['all', 'song', 'cover'] as const;
@@ -278,6 +335,20 @@ export const HELD_FILTER_LABELS: Record<HeldFilter, string> = {
   song: 'Song',
 };
 export const HELD_SORTS = ['oldest', 'newest'] as const;
+/** Held tab status: Pending (decided here), Resolved (decided on this tab, read-only) or both. */
+export const HELD_STATUSES = ['pending', 'resolved', 'all'] as const;
+export type HeldStatus = (typeof HELD_STATUSES)[number];
+export const HELD_STATUS_LABELS: Record<HeldStatus, string> = {
+  pending: 'Pending',
+  resolved: 'Resolved',
+  all: 'All',
+};
+export const HELD_DECISION_LABELS: Record<string, string> = {
+  approveCover: 'Cover approved',
+  approveSong: 'Song approved',
+  removeCover: 'Cover removed',
+  removeSong: 'Song removed',
+};
 export type HeldSort = (typeof HELD_SORTS)[number];
 
 /** One held song. A lyrics hold is withheld from every moderator on this page: its song, cover,
@@ -303,6 +374,10 @@ export type HeldSongRow = {
   owner: { id: number; username: string | null } | null;
   removed: boolean;
   removableCoverId: number | null;
+  /** Decided on this tab (Resolved): it takes no decision. */
+  resolved: boolean;
+  /** What was decided, by whom and when; null while pending and on a withheld row. */
+  decision: { decision: string; flag: string; at: Date; by: string | null } | null;
 };
 
 const HELD_DECISIONS = {
@@ -315,6 +390,7 @@ export const heldDecisions = (kind: HeldKind): readonly string[] => HELD_DECISIO
 
 type HeldDecisionRow = Pick<HeldSongRow, 'kind' | 'withheld' | 'removed' | 'removableCoverId'> & {
   cover: unknown;
+  resolved?: boolean;
 };
 
 export function heldDecisionsEnabled(
@@ -323,7 +399,7 @@ export function heldDecisionsEnabled(
   canOpenHolds: boolean
 ): boolean[] {
   if (row.kind === 'lyrics') return [canOpenHolds];
-  const on = canAct && !row.withheld;
+  const on = canAct && !row.withheld && !row.resolved;
   const live = on && !row.removed;
   const cover = on && row.removableCoverId != null;
   return row.kind === 'cover'
@@ -334,6 +410,15 @@ export function heldDecisionsEnabled(
 /** A lyrics hold in CSAM holds: its song's pending lyrics hold. */
 export const lyricsHoldHref = (songId: number) =>
   `/csam/text-holds?entityType=TrackLyrics&q=${songId}`;
+
+/** Disputes tab status: Pending (decided here), Resolved (their ruling, read-only) or both. */
+export const DISPUTE_STATUSES = ['pending', 'resolved', 'all'] as const;
+export type DisputeStatus = (typeof DISPUTE_STATUSES)[number];
+export const DISPUTE_STATUS_LABELS: Record<DisputeStatus, string> = {
+  pending: 'Pending',
+  resolved: 'Resolved',
+  all: 'All',
+};
 
 /** Disputes tab chips: every dispute, or those asking for a lower or a higher rating. */
 export const DISPUTE_FILTERS = ['all', 'lower', 'higher'] as const;
@@ -363,18 +448,41 @@ export type SongDisputeRow = {
   songLevel: number | null;
   message: string | null;
   state: DisputeSongState | null;
-  /** This song's disputes so far, this one included. */
+  /** `RatingReview.status`: Pending, or the ruling's Actioned (approved) / Unactioned (rejected). */
+  status: string;
+  /** Which of the song's disputes this is, by when it was filed. */
   disputes: number | null;
-  /** The last ruling on an earlier dispute of this song. */
-  earlier: { status: string; appliedLevel: number | null; resolvedAt: Date | null } | null;
+  /** The last ruling on a dispute of this song filed before this one. */
+  earlier: DisputeRuling | null;
+  /** This dispute's own ruling, once resolved. */
+  ruling: (DisputeRuling & { by: string | null; comment: string | null }) | null;
 };
 
-/** The rating keys: 1 to 5 apply PG to XXX. None on a withheld song, a song its scans have not
- *  reviewed, or without the grant. */
+export type DisputeRuling = {
+  status: string;
+  /** The level the owner disputed. */
+  currentLevel: number;
+  appliedLevel: number | null;
+  resolvedAt: Date | null;
+};
+
+/** "approved: PG", "kept PG-13", "rejected: set R", or "closed, nothing applied". */
+export function disputeRulingText(r: Omit<DisputeRuling, 'resolvedAt'>) {
+  if (r.appliedLevel == null) return 'closed, nothing applied';
+  const level = songRatingLabel(r.appliedLevel);
+  if (r.status === 'Actioned') return `approved: ${level}`;
+  return r.appliedLevel === r.currentLevel ? `kept ${level}` : `rejected: set ${level}`;
+}
+
+/** The rating keys: 1 to 5 apply PG to XXX. None on a resolved dispute, a withheld song, a song
+ *  its scans have not reviewed, or without the grant. */
 export const disputeKeysEnabled = (
-  row: Pick<SongDisputeRow, 'withheld' | 'state'>,
+  row: Pick<SongDisputeRow, 'withheld' | 'state' | 'status'>,
   canAct: boolean
-) => SONG_RATING_LEVELS.map(() => canAct && !row.withheld && row.state !== 'unreviewed');
+) =>
+  SONG_RATING_LEVELS.map(
+    () => canAct && row.status === 'Pending' && !row.withheld && row.state !== 'unreviewed'
+  );
 
 export const disputeRowTitle = (row: Pick<SongDisputeRow, 'songId' | 'withheld' | 'title'>) =>
   songTitle({ ...row, id: row.songId });

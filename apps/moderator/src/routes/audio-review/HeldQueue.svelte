@@ -8,8 +8,11 @@
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import {
+    HELD_DECISION_LABELS,
     HELD_FILTER_LABELS,
     HELD_FILTERS,
+    HELD_STATUS_LABELS,
+    HELD_STATUSES,
     heldDecisions,
     heldDecisionsEnabled,
     ratingKeysEnabled,
@@ -19,12 +22,14 @@
     type HeldFilter,
     type HeldSongRow,
     type HeldSort,
+    type HeldStatus,
   } from '$lib/audio-review';
-  import { waitingMeta } from '$lib/format';
+  import { shortAge, waitingMeta } from '$lib/format';
   import { removedCovers } from '$lib/music/removed-covers';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import HeldSongDetail from './HeldSongDetail.svelte';
+  import OwnerFilterChip from './OwnerFilterChip.svelte';
   import QueueEmpty from './QueueEmpty.svelte';
   import { oldestNewestSort } from './queue';
 
@@ -46,7 +51,7 @@
       facets: Record<HeldFilter, number>;
       offset: number;
     };
-    filters: { sort: HeldSort; kind: HeldFilter };
+    filters: { sort: HeldSort; kind: HeldFilter; owner: number | null; status: HeldStatus };
     q: string;
     page: number;
     canAct: boolean;
@@ -79,11 +84,22 @@
       tab: 'held',
       sort: filters.sort === 'oldest' ? undefined : filters.sort,
       held: filters.kind === 'all' ? undefined : filters.kind,
+      owner: filters.owner ?? undefined,
+      status: filters.status === 'pending' ? undefined : filters.status,
       q,
       page: page > 1 ? page : undefined,
     });
 
   const sortGroup = $derived(oldestNewestSort(filters.sort));
+  const statusGroup = $derived({
+    key: 'status',
+    label: 'Status',
+    values: HELD_STATUSES,
+    labels: HELD_STATUS_LABELS,
+    active: filters.status,
+    defaultValue: 'pending',
+    pill: true,
+  } satisfies ChipGroup);
   const kindGroup = $derived({
     key: 'held',
     label: 'Show',
@@ -141,14 +157,24 @@
   <div class="flex flex-col gap-2.5">
     {@render tabsBar()}
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
+      <TriageFilterChips status={statusGroup} sort={sortGroup} selectionParam={SELECTION} />
     </div>
     <TriageFilterChips groups={[kindGroup]} selectionParam={SELECTION} />
+    {#if filters.owner != null}
+      <OwnerFilterChip
+        ownerId={filters.owner}
+        username={held.items.find((r) => r.owner)?.owner?.username ?? null}
+      />
+    {/if}
   </div>
 {/snippet}
 
 {#snippet empty()}
-  <QueueEmpty nothing="No held songs" q={q} pick="Select a song to review it." />
+  <QueueEmpty
+    nothing={filters.status === 'resolved' ? 'No songs decided here yet' : 'No held songs'}
+    {q}
+    pick="Select a song to review it."
+  />
 {/snippet}
 
 <TriageShell
@@ -182,7 +208,9 @@
       href={state.href}
       selected={state.selected}
       title={songTitle(row)}
-      {...waitingMeta(row.waitingSince, 'held')}
+      {...row.resolved
+        ? { meta: `decided ${shortAge(row.waitingSince)}`, metaClass: 'text-dark-2' }
+        : waitingMeta(row.waitingSince, 'held')}
       coverUrl={live(row).coverUrl ?? undefined}
       verdict={state.verdict}
       error={state.error}
@@ -192,9 +220,17 @@
         {#if row.withheld}<IconLock aria-hidden="true" />{:else}<IconMusic aria-hidden="true" />{/if}
       {/snippet}
       {#snippet badges()}
-        <span class="rounded bg-amber-500/15 px-1.5 py-px text-[11px] font-medium text-amber-300">
-          {KIND_BADGE[row.kind]}
-        </span>
+        {#if row.resolved}
+          <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-medium text-dark-0">
+            {row.decision
+              ? (HELD_DECISION_LABELS[row.decision.decision] ?? 'Resolved')
+              : 'Resolved'}
+          </span>
+        {:else}
+          <span class="rounded bg-amber-500/15 px-1.5 py-px text-[11px] font-medium text-amber-300">
+            {KIND_BADGE[row.kind]}
+          </span>
+        {/if}
         {#if row.kind === 'lyrics'}
           <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-medium text-dark-0">
             Decided in CSAM holds
