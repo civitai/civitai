@@ -4,7 +4,10 @@ import {
   createSongPlayer,
   songLoading,
   isSeek,
+  markerLabels,
+  nextReportTime,
   playingLyricIndex,
+  reportedLyricCounts,
   seekMarkers,
   uniqueCardKey,
   type SongMedia,
@@ -292,5 +295,95 @@ describe('report markers on the seek bar', () => {
   it('draws nothing while the song length is unknown', () => {
     for (const duration of [0, Number.NaN, Infinity])
       expect(seekMarkers([{ timeSec: 10, label: 'Spam' }], duration)).toEqual([]);
+  });
+});
+
+describe('marker labels above the seek bar', () => {
+  const marks = (...times: number[]) =>
+    seekMarkers(
+      times.map((timeSec) => ({ timeSec, label: 'Spam' })),
+      200
+    );
+
+  it('names the first "Report at" and the rest by their time, centred on each marker', () => {
+    const labels = markerLabels(marks(84, 171), 300);
+    expect(labels.map((l) => l.text)).toEqual(['Report at 1:24', '2:51']);
+    // 84 s of 200 on a 300 px bar is at 126 px; the label is centred there.
+    expect(labels[0].left + labels[0].width / 2).toBeCloseTo(126);
+  });
+
+  it('shortens the first label to its time when the long one would reach the next', () => {
+    expect(markerLabels(marks(84, 110), 300).map((l) => l.text)).toEqual(['1:24', '1:50']);
+  });
+
+  it('hides a label that would still collide, keeping the earlier one', () => {
+    expect(markerLabels(marks(84, 86, 171), 300).map((l) => l.text)).toEqual([
+      '1:24',
+      null,
+      '2:51',
+    ]);
+  });
+
+  it('keeps a label inside the bar at either end', () => {
+    const [first, last] = markerLabels(marks(0, 200), 300);
+    expect(first.left).toBe(0);
+    expect(last.left + last.width).toBe(300);
+  });
+
+  it('shows no label before the bar has a width', () => {
+    expect(markerLabels(marks(84), 0).map((l) => l.text)).toEqual([null]);
+  });
+});
+
+describe('the next reported time after the playhead', () => {
+  const marks = seekMarkers(
+    [84, 171].map((timeSec) => ({ timeSec, label: 'Spam' })),
+    200
+  );
+
+  it('is the first marker after the playhead', () => {
+    expect(nextReportTime(marks, 52)).toBe(84);
+    expect(nextReportTime(marks, 100)).toBe(171);
+  });
+
+  it('skips the marker the playhead was just sent to', () => {
+    expect(nextReportTime(marks, 84.1)).toBe(171);
+  });
+
+  it('is null past the last one, so the button disables', () => {
+    expect(nextReportTime(marks, 171)).toBeNull();
+    expect(nextReportTime([], 0)).toBeNull();
+  });
+});
+
+describe('lyric lines at reported times', () => {
+  const lines = [
+    { t: 12_000, text: 'Streetlights hum' },
+    { t: null, text: 'untimed' },
+    { t: 31_000, text: '[Chorus]' },
+    { t: 84_000, text: 'You never listen' },
+    { t: 101_000, text: 'Neon rain' },
+    { t: 171_000, text: 'Tomorrow' },
+  ];
+
+  it('counts each report on the line whose span [t, next line) holds its time, merged reporters too', () => {
+    const counts = reportedLyricCounts(lines, [
+      { timeSec: 84 },
+      { timeSec: 100.9, also: 1 },
+      { timeSec: 101 },
+      { timeSec: 400 },
+      { timeSec: 5 },
+      { timeSec: null },
+    ]);
+    expect([...counts]).toEqual([
+      [3, 3],
+      [4, 1],
+      [5, 1],
+    ]);
+  });
+
+  it('gives a section heading and an untimed line no span of their own', () => {
+    const counts = reportedLyricCounts(lines, [{ timeSec: 40 }]);
+    expect([...counts]).toEqual([[0, 1]]);
   });
 });

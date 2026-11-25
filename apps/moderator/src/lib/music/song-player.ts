@@ -215,3 +215,74 @@ export function seekMarkers(
     title: `Report at ${formatPlaybackTime(timeSec)}: ${[...labels].join(' · ')}`,
   }));
 }
+
+/** A marker's label above the bar: its text, or null when it would collide, and where it sits in
+ *  px from the bar's left. */
+export type MarkerLabel = { timeSec: number; text: string | null; left: number; width: number };
+
+// The labels are 11px semibold; a fixed per-character width keeps the layout decidable without
+// measuring text.
+const LABEL_CHAR_PX = 6.5;
+const LABEL_GAP_PX = 4;
+
+/** The first marker reads "Report at m:ss", the rest their time, each centred on its marker and
+ *  kept inside the bar. The first shortens to its time when the long text reaches the next label;
+ *  a label that still overlaps the last one shown is hidden (the marker keeps its hover title). */
+export function markerLabels(markers: readonly SeekMarker[], barWidthPx: number): MarkerLabel[] {
+  const place = (mark: SeekMarker, text: string) => {
+    const width = text.length * LABEL_CHAR_PX;
+    const centre = (mark.percent / 100) * barWidthPx;
+    const left = Math.min(Math.max(centre - width / 2, 0), Math.max(barWidthPx - width, 0));
+    return { timeSec: mark.timeSec, text, left, width };
+  };
+  const overlaps = (a: MarkerLabel, b: MarkerLabel) => a.left + a.width + LABEL_GAP_PX > b.left;
+  if (!(barWidthPx > 0)) return markers.map((m) => ({ ...place(m, ''), text: null }));
+  const labels = markers.map((m) => place(m, formatPlaybackTime(m.timeSec)));
+  if (labels.length) {
+    const long = place(markers[0], `Report at ${formatPlaybackTime(markers[0].timeSec)}`);
+    if (labels.length === 1 || !overlaps(long, labels[1])) labels[0] = long;
+  }
+  let shown: MarkerLabel | null = null;
+  return labels.map((label) => {
+    if (shown && overlaps(shown, label)) return { ...label, text: null };
+    shown = label;
+    return label;
+  });
+}
+
+/** The first reported time after the playhead, past the one it was just sent to; null after the
+ *  last, which disables "Next report". */
+export function nextReportTime(markers: readonly SeekMarker[], currentSec: number): number | null {
+  return (
+    markers.find((m) => isSeek(m.timeSec, currentSec) && m.timeSec > currentSec)?.timeSec ?? null
+  );
+}
+
+/** A section heading of the lyrics (`[Chorus]`): shown, never played from or reported on. */
+export const isLyricSection = (text: string) => /^\s*\[[^\]]+\]\s*$/.test(text);
+
+/**
+ * Per lyric line (by index), the reports whose time falls in its span: from its time to the next
+ * timed line's (the last runs to the end). A report counts its merged reporters too. Untimed lines
+ * and section headings have no span; a report before the first line is on none.
+ */
+export function reportedLyricCounts(
+  lines: readonly { t: number | null; text: string }[],
+  reports: readonly { timeSec: number | null; also?: number }[]
+): Map<number, number> {
+  const spans = lines
+    .map((line, index) => ({ index, t: line.t, text: line.text }))
+    .filter(
+      (l): l is { index: number; t: number; text: string } => l.t != null && !isLyricSection(l.text)
+    )
+    .sort((a, b) => a.t - b.t);
+  const counts = new Map<number, number>();
+  for (const report of reports) {
+    if (report.timeSec == null) continue;
+    const ms = report.timeSec * 1000;
+    let line: number | null = null;
+    for (const span of spans) if (span.t <= ms) line = span.index;
+    if (line != null) counts.set(line, (counts.get(line) ?? 0) + 1 + (report.also ?? 0));
+  }
+  return new Map([...counts].sort((a, b) => a[0] - b[0]));
+}

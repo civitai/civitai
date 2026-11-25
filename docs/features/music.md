@@ -210,7 +210,13 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   time is a chip that plays the song from there, and each reported time is a red marker on the seek
   bar (hover names the reasons, a click on the dot above the track plays from it, and the thumb still
   drags across a marker; a report without a time has no chip or marker, and one at the stored length
-  stays at the end when the file reads a little shorter). A chip or marker asks the song's card to
+  stays at the end when the file reads a little shorter). Above the bar each marker has a red time
+  label, the first reading "Report at 1:24"; on a narrow bar the first shortens to its time and a
+  label that would overlap the one before it is hidden (its marker keeps the hover). Under the player,
+  "Jump to <first time>" plays from the first reported time and "Next report <time>" from the first
+  one after the playhead, disabled after the last. A lyric line holding a reported time (the time
+  falls between the line's start and the next timed line's) is tinted red with "Reported ×n", merged
+  reporters counted. A chip, marker or button asks the song's card to
   play: a card whose file failed plays nothing, and a song that falls back to the stored copy starts
   there at the time asked for. Then the cover
   with its rating and scan state, the automated checks as states only (passed, held, blocked, not
