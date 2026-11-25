@@ -46,7 +46,7 @@ vi.mock('@civitai/db/kysely', () => {
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-const { readMarketSnapshot } = await import('../market-overview');
+const { readMarketSnapshot, snapshotReader, RETRY_AFTER_MS } = await import('../market-overview');
 const { assertFloor, marketView } = await import('$lib/analytics/market-overview');
 
 const SDXL = 'SDXL 1.0';
@@ -122,6 +122,11 @@ beforeAll(async () => {
       model({ owner, gate: { terms: download(150), timeframeDays: 7, endsAt: '2099-01-01' } })
     ),
     model({ owner: 76, gate: { terms: download(150), timeframeDays: 7, endsAt: '2020-01-01' } }),
+    // Free Checkpoints from only 4 sellers: a free cell under the floor.
+    ...[81, 82, 83, 84].map((owner) => model({ owner, type: 'Checkpoint' })),
+    // Never counted: a poi model and a private one.
+    model({ owner: 85, gate: { terms: download(150) } }),
+    model({ owner: 86, gate: { terms: download(150) } }),
     // A model listed on no site (minor, with no SFW level) and a draft are never counted.
     model({ owner: 41, nsfwLevel: 16, minor: true, gate: { terms: download(150) } }),
     model({ owner: 42, status: 'Draft', gate: { terms: download(150) } }),
@@ -131,6 +136,17 @@ beforeAll(async () => {
   await holder.db.exec(`
     INSERT INTO "ModelVersion" (id, "modelId", "baseModel") VALUES (9999, ${fixtures[0].modelId}, '${SDXL}');
     INSERT INTO "PaidAccess" ("entityType", "entityId", terms) VALUES ('ModelVersion', 9999, '{"generation": {"price": 600}}');
+  `);
+  await holder.db.exec(`
+    UPDATE "Model" SET poi = true WHERE "userId" = 85;
+    UPDATE "Model" SET availability = 'Private' WHERE "userId" = 86;
+  `);
+  // A free model with a second public version and a draft one: two versions counted.
+  const twoVersions = model({ owner: 35 });
+  await holder.db.exec(`
+    ${twoVersions.sql}
+    INSERT INTO "ModelVersion" (id, "modelId", "baseModel") VALUES (9996, ${twoVersions.modelId}, '${SDXL}');
+    INSERT INTO "ModelVersion" (id, "modelId", "baseModel", status) VALUES (9995, ${twoVersions.modelId}, '${SDXL}', 'Draft');
   `);
   // A free-generation model that also sells a version in a hidden band is paid, not free.
   const mixed = model({ owner: 51, gate: { terms: { generation: { free: true } } } });
@@ -146,7 +162,15 @@ beforeAll(async () => {
   `);
 });
 
+let snap: Awaited<ReturnType<typeof readMarketSnapshot>>;
+const snapshot0 = () => snap;
+
+// The 5-seller floor is the policy approved for this page (civitai/civitai#10494).
 describe('Creator Studio paid-model market overview', () => {
+  beforeAll(async () => {
+    snap = await readMarketSnapshot({} as never);
+  });
+
   it('shows a cell with 5 sellers and leaves a 4-seller cell out of every figure', async () => {
     const snapshot = await readMarketSnapshot({} as never);
     const view = marketView(snapshot, {});
@@ -170,10 +194,14 @@ describe('Creator Studio paid-model market overview', () => {
 
   it('counts free generation as free, a model with any paid version as paid, and a draft gate as no gate', async () => {
     const view = marketView(await readMarketSnapshot({} as never), {});
-    // 3 free-generation models, 2 ungated, the one gated only on a draft and the expired window; not the mixed one.
-    expect(view.free.models).toBe(7);
-    expect(view.free.versions).toBe(7);
-    expect(view.paidShare).toBeCloseTo(21 / 28);
+    // 3 free-generation models, 3 ungated (one with two public versions), the one gated only on a draft and the
+    // expired window; not the mixed one, and not the 4-seller Checkpoint cell.
+    expect(view.free.models).toBe(8);
+    expect(view.free.versions).toBe(9);
+    expect(view.paidShare).toBeCloseTo(21 / 29);
+    expect(marketView(snapshot0(), { type: 'Checkpoint' }).free.models).toBe(0);
+    expect(snapshot0().suppressed.free).toBe(1);
+    expect(marketView(snapshot0(), { access: 'early' }).paidShare).toBeNull();
   });
 
   it('refuses a snapshot that holds a cell under the floor', async () => {
@@ -182,5 +210,31 @@ describe('Creator Studio paid-model market overview', () => {
     expect(() =>
       assertFloor({ ...snapshot, cellSellers: { ...snapshot.cellSellers, [first]: 4 } })
     ).toThrow();
+  });
+});
+
+describe('market overview snapshot reader', () => {
+  it('keeps serving the last good snapshot after a failed fill, and waits before scanning again', async () => {
+    let now = 0;
+    let calls = 0;
+    const good = { builtAt: 'good' } as never;
+    const reader = snapshotReader(
+      async () => {
+        calls++;
+        if (calls > 1) throw new Error('fill failed');
+        return good;
+      },
+      () => now
+    );
+    expect(await reader()).toBe(good);
+    now = 10;
+    expect(await reader()).toBe(good);
+    expect(calls).toBe(2);
+    now = 20;
+    expect(await reader()).toBe(good);
+    expect(calls).toBe(2);
+    now = 10 + RETRY_AFTER_MS;
+    await reader();
+    expect(calls).toBe(3);
   });
 });

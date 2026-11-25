@@ -73,18 +73,22 @@ export async function countComFaceReadyModels(userId: number) {
   return Number(row?.count ?? 0);
 }
 
-function siteListingParts(alias: string) {
+function siteListingParts(alias: string, publicVersionKnown = false) {
   const m = sql.raw(`${alias}.`);
+  const publicVersion = publicVersionKnown ? sql`true` : hasPublicVersionSql(alias);
   return {
-    listed: sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`,
+    listed: sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${publicVersion} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`,
     onCom: sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`,
     hiddenOnRed: sql`(${m}"minor" or ${hasTagSql(alias, childBrowsingTagIds)})`,
   };
 }
 
-/** Listed on civitai.com or civitai.red: the union of the `siteFilterSql` sites. */
-export function shownOnSomeSiteSql(alias: string) {
-  const { listed, onCom, hiddenOnRed } = siteListingParts(alias);
+/**
+ * Listed on civitai.com or civitai.red: the union of the `siteFilterSql` sites. Pass `publicVersionKnown` only when
+ * the query already restricts to models with a published public version, to skip that per-model EXISTS.
+ */
+export function shownOnSomeSiteSql(alias: string, { publicVersionKnown = false } = {}) {
+  const { listed, onCom, hiddenOnRed } = siteListingParts(alias, publicVersionKnown);
   return sql<boolean>`(${listed} and (${onCom} or not ${hiddenOnRed}))`;
 }
 
@@ -105,11 +109,11 @@ function paidAccessToConfig(timeframeDays: number | null, terms: unknown): PaidA
   if (!t) return null;
   const gen = t.generation;
   const paidGen = gen && !('free' in gen) ? gen : undefined;
-  // The separate generation-only tier only exists alongside a download bundle.
   return {
     timeframe: timeframeDays ?? 0,
     permanent: timeframeDays == null,
     accessPrice: accessPrice(t),
+    // A generation-only gate has no separate generation price.
     generationPrice: t.download ? paidGen?.price : undefined,
     freeGeneration: !!gen && 'free' in gen,
     acceptsBlueBuzz: acceptsBlueBuzz(t),

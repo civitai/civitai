@@ -60,7 +60,9 @@ export async function readFreeCells(
     v as (
       select mv."modelId",
         count(*)::int as versions,
-        (array_agg(mv."baseModel" order by mv."publishedAt" desc nulls last, mv.id desc))[1] as base,
+        -- Hash-aggregated, no sort: a model's versions almost always share one ecosystem, and when they don't this
+        -- picks one deterministically rather than the newest.
+        max(mv."baseModel") as base,
         bool_or(pa."entityId" is not null) as gated
       from "ModelVersion" mv
       left join "PaidAccess" pa on pa."entityType" = 'ModelVersion' and pa."entityId" = mv.id
@@ -73,7 +75,7 @@ export async function readFreeCells(
         case when (m."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0 then 'sfw' else 'nsfw' end as rating,
         case when m.type::text in (${namedTypes}) then m.type::text else 'Other' end as type
       from v join "Model" m on m.id = v."modelId"
-      where m."deletedAt" is null and ${shownOnSomeSiteSql('m')}
+      where m."deletedAt" is null and ${shownOnSomeSiteSql('m', { publicVersionKnown: true })}
         and (not v.gated or m.id = any(${gatedFree}::int[]))
     )
     select fm.rating, fm.type, coalesce(eco.ecosystem, 'Other') as ecosystem,
@@ -120,20 +122,27 @@ const marketCache = createCache({
   },
 });
 
-// createCache fails open: with Redis down every view would refill. This instance serves its last good snapshot
-// instead, and a failed fill (including a floor breach) never replaces it.
-let lastGood: MarketSnapshot | null = null;
-// After a failed fill, wait this long before scanning again, so a pod with nothing cached doesn't rescan per request.
-const RETRY_AFTER_MS = 60_000;
-let failedAt = 0;
+// createCache fails open: with Redis down every view would refill. Each instance serves its last good snapshot instead,
+// and a failed fill (including a floor breach) never replaces it. After a failure it waits before scanning again, so
+// an instance with nothing cached doesn't rescan per request.
+export const RETRY_AFTER_MS = 60_000;
 
-export async function getMarketSnapshot(): Promise<MarketSnapshot | null> {
-  if (Date.now() - failedAt < RETRY_AFTER_MS) return lastGood;
-  try {
-    lastGood = await marketCache.get({});
-  } catch (error) {
-    failedAt = Date.now();
-    getLogger().logToAxiom({ name: 'market-overview-fill-failed', error: safeError(error) });
-  }
-  return lastGood;
+export function snapshotReader(
+  load: () => Promise<MarketSnapshot>,
+  clock: () => number = Date.now
+) {
+  let lastGood: MarketSnapshot | null = null;
+  let failedAt = -Infinity;
+  return async (): Promise<MarketSnapshot | null> => {
+    if (clock() - failedAt < RETRY_AFTER_MS) return lastGood;
+    try {
+      lastGood = await load();
+    } catch (error) {
+      failedAt = clock();
+      getLogger().logToAxiom({ name: 'market-overview-fill-failed', error: safeError(error) });
+    }
+    return lastGood;
+  };
 }
+
+export const getMarketSnapshot = snapshotReader(() => marketCache.get({}));

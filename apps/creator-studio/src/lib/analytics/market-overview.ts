@@ -213,7 +213,8 @@ export function marketView(s: MarketSnapshot, f: MarketFilters): MarketView {
       permanent: paid.filter((e) => e.access === 'permanent').length,
     },
     free: { models: freeModels, versions: free.reduce((n, c) => n + c.versions, 0) },
-    paidShare: all ? paidModels / all : null,
+    // Free models have no access kind, so a share under an access filter would compare unlike sets.
+    paidShare: all && !f.access ? paidModels / all : null,
     histogram: PRICE_BANDS.map((min, i) => ({
       min,
       max: PRICE_BANDS[i + 1] ?? null,
