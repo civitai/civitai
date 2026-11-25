@@ -26,6 +26,8 @@ export const marketOverviewEnabled = (user: SessionUser) =>
 
 type Db = typeof dbRead;
 
+// A live gate, as models.ts's paidAccessFilter reads it. Reads alias `pa` (PaidAccess).
+const LIVE_GATE = sql`pa."entityType" = 'ModelVersion' and (pa."endsAt" is null or pa."endsAt" > now())`;
 const PUBLIC_VERSION = sql`mv."status" = 'Published' and mv."availability" = 'Public'`;
 
 export async function readGatedRows(db: Db): Promise<GatedRow[]> {
@@ -35,13 +37,13 @@ export async function readGatedRows(db: Db): Promise<GatedRow[]> {
     from "PaidAccess" pa
     join "ModelVersion" mv on mv.id = pa."entityId"
     join "Model" m on m.id = mv."modelId"
-    where pa."entityType" = 'ModelVersion' and (pa."endsAt" is null or pa."endsAt" > now()) and ${PUBLIC_VERSION} and m."deletedAt" is null and ${shownOnSomeSiteSql('m')}
+    where ${LIVE_GATE} and ${PUBLIC_VERSION} and m."deletedAt" is null and ${shownOnSomeSiteSql('m')}
   `.execute(db);
   return rows.map((r) => ({ ...r, nsfwLevel: Number(r.nsfwLevel) }));
 }
 
 /**
- * Free models, one fine cell each by the ecosystem of their newest public version: no active gate on a public
+ * Free models, one fine cell each by the ecosystem of one of their public versions: no active gate on a public
  * version, or only gates that charge nothing (`gatedFree`). The ecosystem is mapped in SQL before
  * `count(distinct)`, because seller counts per raw base model do not add up.
  */
@@ -55,8 +57,7 @@ export async function readFreeCells(
   const namedTypes = sql.join(NAMED_TYPES.map((t) => sql.lit(t)));
   const { rows } = await sql<FreeCellRow>`
     with eco(base, ecosystem) as (values ${ecoMap}),
-    -- One pass over public versions instead of per-model subqueries: the newest version's base model, the version
-    -- count, and whether any of them is under an active gate.
+    -- One pass over public versions instead of per-model subqueries.
     v as (
       select mv."modelId",
         count(*)::int as versions,
@@ -65,8 +66,7 @@ export async function readFreeCells(
         max(mv."baseModel") as base,
         bool_or(pa."entityId" is not null) as gated
       from "ModelVersion" mv
-      left join "PaidAccess" pa on pa."entityType" = 'ModelVersion' and pa."entityId" = mv.id
-        and (pa."endsAt" is null or pa."endsAt" > now())
+      left join "PaidAccess" pa on pa."entityId" = mv.id and ${LIVE_GATE}
       where ${PUBLIC_VERSION}
       group by mv."modelId"
     ),
@@ -122,9 +122,10 @@ const marketCache = createCache({
   },
 });
 
-// createCache fails open: with Redis down every view would refill. Each instance serves its last good snapshot instead,
-// and a failed fill (including a floor breach) never replaces it. After a failure it waits before scanning again, so
-// an instance with nothing cached doesn't rescan per request.
+// Each instance keeps its last good snapshot and reuses it for the cache TTL, so a Redis outage (where createCache
+// fails open and would refill on every request) doesn't turn each view into a catalogue scan. Concurrent misses share
+// one fill, and a failed fill (including a floor breach) never replaces the snapshot.
+export const TTL_MS = 3_600_000;
 export const RETRY_AFTER_MS = 60_000;
 
 export function snapshotReader(
@@ -132,16 +133,28 @@ export function snapshotReader(
   clock: () => number = Date.now
 ) {
   let lastGood: MarketSnapshot | null = null;
+  let loadedAt = -Infinity;
   let failedAt = -Infinity;
-  return async (): Promise<MarketSnapshot | null> => {
-    if (clock() - failedAt < RETRY_AFTER_MS) return lastGood;
-    try {
-      lastGood = await load();
-    } catch (error) {
-      failedAt = clock();
-      getLogger().logToAxiom({ name: 'market-overview-fill-failed', error: safeError(error) });
-    }
-    return lastGood;
+  let inflight: Promise<MarketSnapshot | null> | null = null;
+  return (): Promise<MarketSnapshot | null> => {
+    const now = clock();
+    if (now - loadedAt < TTL_MS || now - failedAt < RETRY_AFTER_MS)
+      return Promise.resolve(lastGood);
+    inflight ??= load()
+      .then((snapshot) => {
+        lastGood = snapshot;
+        loadedAt = clock();
+        return snapshot;
+      })
+      .catch((error) => {
+        failedAt = clock();
+        getLogger().logToAxiom({ name: 'market-overview-fill-failed', error: safeError(error) });
+        return lastGood;
+      })
+      .finally(() => {
+        inflight = null;
+      });
+    return inflight;
   };
 }
 

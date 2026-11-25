@@ -46,7 +46,8 @@ vi.mock('@civitai/db/kysely', () => {
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-const { readMarketSnapshot, snapshotReader, RETRY_AFTER_MS } = await import('../market-overview');
+const { readMarketSnapshot, snapshotReader, RETRY_AFTER_MS, TTL_MS } =
+  await import('../market-overview');
 const { assertFloor, marketView } = await import('$lib/analytics/market-overview');
 
 const SDXL = 'SDXL 1.0';
@@ -122,6 +123,8 @@ beforeAll(async () => {
       model({ owner, gate: { terms: download(150), timeframeDays: 7, endsAt: '2099-01-01' } })
     ),
     model({ owner: 76, gate: { terms: download(150), timeframeDays: 7, endsAt: '2020-01-01' } }),
+    // Free NSFW LoRAs from 5 sellers: a free cell of their own.
+    ...[91, 92, 93, 94, 95].map((owner) => model({ owner, nsfwLevel: 16 })),
     // Free Checkpoints from only 4 sellers: a free cell under the floor.
     ...[81, 82, 83, 84].map((owner) => model({ owner, type: 'Checkpoint' })),
     // Never counted: a poi model and a private one.
@@ -196,9 +199,11 @@ describe('Creator Studio paid-model market overview', () => {
     const view = marketView(await readMarketSnapshot({} as never), {});
     // 3 free-generation models, 3 ungated (one with two public versions), the one gated only on a draft and the
     // expired window; not the mixed one, and not the 4-seller Checkpoint cell.
-    expect(view.free.models).toBe(8);
-    expect(view.free.versions).toBe(9);
-    expect(view.paidShare).toBeCloseTo(21 / 29);
+    expect(view.free.models).toBe(13);
+    expect(view.free.versions).toBe(14);
+    expect(view.paidShare).toBeCloseTo(21 / 34);
+    expect(marketView(snapshot0(), { rating: 'nsfw' }).free.models).toBe(5);
+    expect(marketView(snapshot0(), { rating: 'sfw' }).free.models).toBe(8);
     expect(marketView(snapshot0(), { type: 'Checkpoint' }).free.models).toBe(0);
     expect(snapshot0().suppressed.free).toBe(1);
     expect(marketView(snapshot0(), { access: 'early' }).paidShare).toBeNull();
@@ -214,7 +219,7 @@ describe('Creator Studio paid-model market overview', () => {
 });
 
 describe('market overview snapshot reader', () => {
-  it('keeps serving the last good snapshot after a failed fill, and waits before scanning again', async () => {
+  it('reuses a good snapshot for the TTL, keeps it through a failed fill, and waits before scanning again', async () => {
     let now = 0;
     let calls = 0;
     const good = { builtAt: 'good' } as never;
@@ -227,14 +232,27 @@ describe('market overview snapshot reader', () => {
       () => now
     );
     expect(await reader()).toBe(good);
-    now = 10;
+    now = TTL_MS - 1;
+    expect(await reader()).toBe(good);
+    expect(calls).toBe(1);
+    now = TTL_MS;
     expect(await reader()).toBe(good);
     expect(calls).toBe(2);
-    now = 20;
-    expect(await reader()).toBe(good);
+    now = TTL_MS + RETRY_AFTER_MS - 1;
+    await reader();
     expect(calls).toBe(2);
-    now = 10 + RETRY_AFTER_MS;
+    now = TTL_MS + RETRY_AFTER_MS;
     await reader();
     expect(calls).toBe(3);
+  });
+
+  it('shares one fill between concurrent requests', async () => {
+    let calls = 0;
+    const reader = snapshotReader(async () => {
+      calls++;
+      return { builtAt: 'x' } as never;
+    });
+    await Promise.all([reader(), reader(), reader()]);
+    expect(calls).toBe(1);
   });
 });
