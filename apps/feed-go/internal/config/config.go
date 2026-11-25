@@ -176,6 +176,13 @@ type Config struct {
 	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
+	// ShutdownDelay is FEED_GO_SHUTDOWN_DELAY_MS (default 10 s; 0 = none, negative or junk = default):
+	// how long, after SIGTERM, /readyz answers 503 while every listener keeps serving, before the
+	// listeners close and drain. The 503 removes the pod from rotation early only when the readiness
+	// probe reads /readyz with period × failure threshold inside this delay; otherwise the delay alone
+	// keeps the pod answering. The pod's termination grace must exceed any pre-stop hook + this + 15 s
+	// (DESIGN.md §6.1 Shutdown).
+	ShutdownDelay time.Duration
 	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT: the public requests one pod computes at once. Past it a
 	// request is not computed but proxied to the Node app (fallback reason `bulkhead`). 0 = not set
 	// explicitly (unset, zero, negative or junk): the cap is then the replica pool's connection ceiling
@@ -277,6 +284,9 @@ type Config struct {
 	ErrorLogPerMinute int
 }
 
+// DefaultShutdownDelay is ShutdownDelay when FEED_GO_SHUTDOWN_DELAY_MS is unset.
+const DefaultShutdownDelay = 10 * time.Second
+
 // Load reads the environment.
 func Load() (*Config, error) {
 	c := &Config{
@@ -360,6 +370,10 @@ func Load() (*Config, error) {
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.ShutdownDelay = DefaultShutdownDelay
+	if n := intEnv("FEED_GO_SHUTDOWN_DELAY_MS", -1); n >= 0 {
+		c.ShutdownDelay = time.Duration(n) * time.Millisecond
+	}
 	c.MaxInFlight = positiveIntEnv("FEED_GO_MAX_IN_FLIGHT", 0)
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond

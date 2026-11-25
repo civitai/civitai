@@ -109,6 +109,7 @@ event-engine-common
 .bundle-budget.json
 .editorconfig
 .eslintignore
+.gitleaks.toml
 .prettierignore
 .prettierrc
 CONTRIBUTING.md

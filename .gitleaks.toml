@@ -1,0 +1,72 @@
+# Secret scanning config for gitleaks (https://github.com/gitleaks/gitleaks).
+#
+# Used by .github/workflows/secret-scan.yml, which scans only the commits a PR
+# adds, and by the optional husky pre-commit check when gitleaks is installed.
+#
+# A finding is either a real credential (remove it from the branch history,
+# then rotate it — once pushed, treat it as disclosed) or a false positive.
+# For a false positive, prefer an obvious placeholder value in the code
+# (`token=YOUR_TOKEN`, `token=${TOKEN}`, `token=<token>`); otherwise extend the
+# allowlist below, or mark the line with a trailing `gitleaks:allow` comment.
+
+title = "civitai gitleaks config"
+
+[extend]
+# Start from gitleaks' built-in rule set and add to it.
+useDefault = true
+
+# Applies to every rule, built-in and custom.
+[[allowlists]]
+description = "Test fixtures built from sequential characters"
+regexTarget = "secret"
+regexes = [
+  # 0123456789..., abcdefgh..., defghijk... and so on: hand-typed fixture
+  # values, never generated credentials.
+  '''(?i)0123456789|abcdefgh|bcdefghi|cdefghij|defghijk|efghijkl|fghijklm|ghijklmn|hijklmno|ijklmnop|jklmnopq|klmnopqr|lmnopqrs|mnopqrst|nopqrstu|opqrstuv|pqrstuvw|qrstuvwx|rstuvwxy|stuvwxyz''',
+]
+
+# Credentials passed as a URL query parameter, e.g. example request URLs in
+# comments, docs, scripts or JSON samples. The default rules do not cover a
+# bare `token=` query value.
+[[rules]]
+id = "url-query-token"
+description = "Credential in a URL query parameter (token=...)"
+regex = '''[?&](?:access_|api_|auth_)?token=([A-Za-z0-9_\-]{10,})'''
+secretGroup = 1
+# No entropy floor: hand-made tokens can be low-entropy words. Placeholders are
+# filtered by the allowlists below instead.
+keywords = ["token="]
+
+  [[rules.allowlists]]
+  # Test files exercise token parsing with made-up values. The built-in rules
+  # still scan them, so a real high-entropy key in a test is still caught.
+  description = "Test files"
+  paths = [
+    '''(^|/)__tests__/''',
+    '''(^|/)src/tests/''',
+    '''\.(test|spec|selftest)\.[cm]?[jt]sx?$''',
+    '''_test\.go$''',
+  ]
+
+  [[rules.allowlists]]
+  description = "Placeholder and fixture values"
+  # Matched case-insensitively against the captured value.
+  stopwords = [
+    "example",
+    "placeholder",
+    "redacted",
+    "dummy",
+    "fake",
+    "test",
+    "sample",
+    "your",
+    "secret",
+    "xxxx",
+    "abcdef",
+    "changeme",
+  ]
+  regexTarget = "secret"
+  regexes = [
+    # SCREAMING_SNAKE names stand for an env var or constant, not a value.
+    '''^[A-Z][A-Z0-9_]*$''',
+  ]

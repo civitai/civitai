@@ -1,0 +1,37 @@
+{
+  "name": "models-signed-in-mature",
+  "description": "Signed in on the mature host, every level and showNsfw on: no cap, the viewer's own POI and private models allowed, sfwName never sent.",
+  "request": {
+    "path": "/api/search/indexes/models_v9/search",
+    "body": "{\"q\":\"lora\",\"filter\":\"type = LORA\"}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": {
+    "id": 1001,
+    "username": "me",
+    "isModerator": false,
+    "browsingLevel": 31,
+    "showNsfw": true
+  },
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[{\"id\":121,\"name\":\"Mature\",\"sfwName\":\"Safe\",\"images\":[{\"id\":1201,\"nsfwLevel\":16}],\"user\":{\"id\":1001,\"username\":\"me\",\"image\":\"i\",\"profilePicture\":{\"id\":321,\"nsfwLevel\":8}}}],\"query\":\"lora\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/models_v9/search",
+      "body": {
+        "q": "lora",
+        "filter": [
+          "type = LORA",
+          "poi != true OR user.id = 1001",
+          "availability != Private OR user.id = 1001"
+        ]
+      }
+    },
+    "body": "{\"hits\":[{\"id\":121,\"name\":\"Mature\",\"images\":[{\"id\":1201,\"nsfwLevel\":16}],\"user\":{\"id\":1001,\"username\":\"me\",\"image\":\"i\",\"profilePicture\":{\"id\":321,\"nsfwLevel\":8}}}],\"query\":\"lora\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  }
+}
