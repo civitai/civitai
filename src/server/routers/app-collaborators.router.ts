@@ -17,6 +17,7 @@ import { enforceAppBlocksAuthorFlag } from '~/server/trpc/app-blocks-author.midd
 import { rateLimit } from '~/server/middleware.trpc';
 import { appDeveloperProcedure, protectedProcedure, router } from '~/server/trpc';
 import type { SessionUser } from '~/types/session';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * App Listing COLLABORATORS — seat management, ownership transfer, and the APP-SCOPED
@@ -110,13 +111,7 @@ export const appCollaboratorsRouter = router({
    * (notification only). Rate-limited so an owner cannot spray invitations.
    */
   invite: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many collaborator invitations — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.collaborator-invites')))
     .input(inviteAppCollaboratorSchema)
     .mutation(async ({ ctx, input }) => {
       assertNotBanned(ctx.user as SessionUser);
@@ -147,13 +142,7 @@ export const appCollaboratorsRouter = router({
    * when the accumulated id set actually changes, not per keystroke.
    */
   ineligibleTargets: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 600,
-        period: 3600,
-        errorMessage: 'Too many collaborator lookups — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.collaborator-lookups')))
     .input(screenAppCollaboratorTargetsSchema)
     .query(async ({ ctx, input }) => {
       assertNotBanned(ctx.user as SessionUser);
@@ -369,13 +358,7 @@ export const appCollaboratorsRouter = router({
    * pending offer confers ZERO capability on the recipient.
    */
   initiateTransfer: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 10,
-        period: 3600,
-        errorMessage: 'Too many ownership transfer attempts — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.ownership-transfers')))
     .input(initiateAppTransferSchema)
     .mutation(async ({ ctx, input }) => {
       assertNotBanned(ctx.user as SessionUser);

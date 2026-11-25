@@ -1,6 +1,6 @@
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
-import { gradeKnightsVotes } from '@civitai/db/knights';
+import { gradeKnightsVotes, readWithoutJit } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import {
@@ -13,17 +13,16 @@ import {
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
-import {
-  ESCALATED_FROM_LEVEL_META_KEY,
-  servableImage,
-  servableImageContent,
-} from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, postShownToKnights } from '@civitai/db/knights';
+import { servableImage, servableImageContent } from '../image-gate';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
 import { heldSql } from '../conversion/held';
 import { metrics } from '../metrics';
-import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
+import { creditVote, insertVote, lockPlayerVoting, notHiddenCreator } from './vote-record';
+import { lockReasonSql, readImageState } from './image-state';
+import { openReview } from '../inquisitor/review.service';
 import {
   ESCALATION_PATH,
   FEED_STRETCH_SIZE,
@@ -51,12 +50,11 @@ import {
   isExcessiveDownRating,
   moderatorRuling,
   mostVotedLevel,
-  type ImageState,
   type WeightedAnswer,
   type WritebackDecision,
 } from './resolution';
 
-export { lockPlayerVoting };
+export { lockPlayerVoting, notHiddenCreator };
 
 export type ConsensusApplication = {
   questionKey: string;
@@ -77,11 +75,14 @@ export type QueueDeps = {
   mirrorXp?: XpMirror;
   /** Pacing for non-moderators; absent means unpaced. */
   voteLimits?: readonly VoteLimit[];
+  /** Whether the in-game inquisitor queue is on (`inquisitorQueue`); absent means off, so no review opens. */
+  inquisitorQueue?: () => boolean | Promise<boolean>;
 };
 
 /** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
 export const MAX_APPLY_ATTEMPTS = 8;
-const LEASE_MINUTES = 2;
+/** How long a write-back claim holds an item before another tick may take it. */
+export const LEASE_MINUTES = 2;
 const MAX_BACKOFF_MINUTES = 360;
 /** Minutes to wait after the nth failed try: 5, 10, 20, ... up to six hours. */
 export const backoffMinutes = (attempts: number) =>
@@ -117,7 +118,8 @@ export type CastVoteResult =
   | { status: 'recorded' | 'resolved' | 'escalated' | 'inquisitor' };
 
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
-const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
+export const addMinutes = (date: Date, minutes: number) =>
+  new Date(date.getTime() + minutes * 60_000);
 
 export function servableItems(db: Executor) {
   return (
@@ -171,6 +173,18 @@ END`;
 /** Rows the first round of a stage's normal-order scan reads; each later round reads twice as many as the one before. */
 export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.length * 2;
 
+/** The longest scan round that probes `notHiddenCreator` per row; longer rounds read faster as a parallel anti-join. */
+export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
+
+/**
+ * The most rows one stage's scan reads per priority per pick (five doubling rounds from `STAGE_SCAN_FIRST_ROUND`), so a bucket that
+ * cannot fill never drives a stage-sized read; past the budget the scan moves on to the next priority.
+ */
+export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;
+
+/** The most priorities one stage's scan reads (producers enqueue at 1 to 3), which bounds a pick at this many row budgets. */
+export const STAGE_SCAN_MAX_PRIORITIES = 3;
+
 /**
  * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
  * nothing is escalated), then the first `FEED.bucketWindowSize` items of each level bucket in the stage's normal order
@@ -179,22 +193,26 @@ export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.leng
  * player has already judged for the question, at any stage or in any earlier item.
  *
  * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
- * is full or the stage runs out. Most open items can be unservable (a draft or scheduled post, a deleted image), and
- * only the Image and Post rows tell, so a read per bucket would walk the whole stage once per bucket. A bucket that
- * cannot fill makes the scan read every candidate of the stage, so the rounds read only what bucketing and the cursor
- * need, and one more read fetches the served columns of the kept items alone.
+ * is full or the stage runs out. Each priority is scanned on its own, from a first round, with its own `rowBudget`: once a
+ * priority has used it or run out, the scan moves to the next priority. Scan sampling enqueues SFW at priority 1 and NSFW at
+ * priority 2, so a priority-1 backlog longer than one budget would otherwise hide every R, X and XXX item. The bucket is
+ * worked out from the Image row, so no index can seek to one, and a read per bucket would walk the whole stage once per
+ * bucket. The rounds read only what bucketing and the cursor need, and one more read fetches the served columns of the
+ * kept items alone.
  */
 async function stageWindow(
   db: Executor,
   userId: number,
   stage: Rank,
   exclude: number[],
-  escalatedSince: Date
+  escalatedSince: Date,
+  rowBudget = STAGE_SCAN_ROW_BUDGET
 ) {
-  const eligible = () =>
+  const eligible = (perRow = true) =>
     servableItems(db)
       .where('i.minRank', '=', stage)
       .where('img.userId', 'is distinct from', userId)
+      .where(notHiddenCreator(userId, { perRow }))
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
@@ -238,44 +256,52 @@ async function stageWindow(
   const kept: number[] = [];
   const taken = new Map<LevelBucket | null, number>();
   let filled = 0;
-  let after: StageScanCursor | null = null;
-  for (let size = STAGE_SCAN_FIRST_ROUND; ; size *= 2) {
-    const cursor: StageScanCursor | null = after;
-    const rows = await eligible()
-      .select([
-        'i.id',
-        'i.priority',
-        // createdAt is TIMESTAMP(3); this text names the exact stored value whatever the host or session time zone.
-        sql<string>`to_char(i."createdAt", 'YYYY-MM-DD HH24:MI:SS.MS')`.as('createdAtKey'),
-        'i.prediction',
-        'img.nsfwLevel as imageLevel',
-      ])
-      .where((eb) => eb(bucketLevelSql, '!=', 0))
-      // (priority, createdAt, id) is unique and never changes on a row, so a round starts exactly after the last one.
-      // The cursor carries the last row's own values, so it holds even if that row is gone by the next round.
-      .$if(cursor !== null, (qb) => {
-        const c = cursor as StageScanCursor;
-        return qb.where(
-          sql<SqlBool>`(i.priority, i."createdAt", i.id) > (${c.priority}, ${c.createdAt}::timestamp, ${c.id})`
-        );
-      })
-      .orderBy('i.priority', 'asc')
-      .orderBy('i.createdAt', 'asc')
-      .orderBy('i.id', 'asc')
-      .limit(size)
-      .execute();
-    for (const row of rows) {
-      const bucket = itemBucket(row.prediction, row.imageLevel);
-      const count = taken.get(bucket) ?? 0;
-      if (count >= FEED.bucketWindowSize) continue;
-      taken.set(bucket, count + 1);
-      if (count + 1 === FEED.bucketWindowSize) filled++;
-      kept.push(row.id);
+  // One priority at a time, each with its own budget. An equality on priority keeps the planner on the index's order; a range
+  // over (priority, createdAt, id) let it read and sort the whole rest of a large priority (about 0.7s against 50ms in prod).
+  let priority = await nextPriority(db, stage, null);
+  for (let started = 0; priority !== null && started < STAGE_SCAN_MAX_PRIORITIES; started++) {
+    let after: StageScanCursor | null = null;
+    for (let size = STAGE_SCAN_FIRST_ROUND, read = 0; read < rowBudget; size *= 2) {
+      const cursor: StageScanCursor | null = after;
+      const limit = Math.min(size, rowBudget - read);
+      const rows = await eligible(limit <= STAGE_SCAN_PER_ROW_PROBE_MAX)
+        .select([
+          'i.id',
+          // createdAt is TIMESTAMP(3); this text names the exact stored value whatever the host or session time zone.
+          sql<string>`to_char(i."createdAt", 'YYYY-MM-DD HH24:MI:SS.MS')`.as('createdAtKey'),
+          'i.prediction',
+          'img.nsfwLevel as imageLevel',
+        ])
+        .where((eb) => eb(bucketLevelSql, '!=', 0))
+        .where('i.priority', '=', priority)
+        // (createdAt, id) is unique within a priority and never changes on a row, so a round starts exactly after the last
+        // one. The cursor carries the last row's own values, so it holds even if that row is gone by the next round.
+        .$if(cursor !== null, (qb) => {
+          const c = cursor as StageScanCursor;
+          return qb.where(
+            sql<SqlBool>`(i."createdAt", i.id) > (${c.createdAt}::timestamp, ${c.id})`
+          );
+        })
+        .orderBy('i.createdAt', 'asc')
+        .orderBy('i.id', 'asc')
+        .limit(limit)
+        .execute();
+      read += rows.length;
+      for (const row of rows) {
+        const bucket = itemBucket(row.prediction, row.imageLevel);
+        const count = taken.get(bucket) ?? 0;
+        if (count >= FEED.bucketWindowSize) continue;
+        taken.set(bucket, count + 1);
+        if (count + 1 === FEED.bucketWindowSize) filled++;
+        kept.push(row.id);
+      }
+      if (rows.length < limit || filled === BUCKET_LEVELS.length) break;
+      // Annotated so the cursor's type does not depend on the rows its own round read.
+      const last: { id: number; createdAtKey: string } = rows[rows.length - 1];
+      after = { createdAt: last.createdAtKey, id: last.id };
     }
-    if (rows.length < size || filled === BUCKET_LEVELS.length) break;
-    // Annotated so the cursor's type does not depend on the rows its own round read.
-    const last: { id: number; priority: number; createdAtKey: string } = rows[rows.length - 1];
-    after = { priority: last.priority, createdAt: last.createdAtKey, id: last.id };
+    if (filled === BUCKET_LEVELS.length) break;
+    priority = await nextPriority(db, stage, priority);
   }
 
   // A kept item that stops being a candidate before this read (judged, closed, unservable) is left out, as if the scan
@@ -293,7 +319,23 @@ async function stageWindow(
   return [...escalated, ...normal];
 }
 
-type StageScanCursor = { priority: number; createdAt: string; id: number };
+type StageScanCursor = { createdAt: string; id: number };
+
+/** The lowest priority above `after` (any, when null) among the stage's open rating items, or null when none is left. */
+async function nextPriority(db: Executor, stage: Rank, after: number | null) {
+  const row = await db
+    .selectFrom('KnightsQueueItem as i')
+    .select('i.priority')
+    .where('i.status', '=', 'Open')
+    .where('i.minRank', '=', stage)
+    .where('i.isHiddenCheck', '=', false)
+    .where('i.audience', 'is', null)
+    .$if(after !== null, (qb) => qb.where('i.priority', '>', after as number))
+    .orderBy('i.priority', 'asc')
+    .limit(1)
+    .executeTakeFirst();
+  return row?.priority ?? null;
+}
 
 /**
  * What a player is served next: the highest stage they may judge that has an open item they have not judged,
@@ -308,7 +350,14 @@ export async function getFeed(
     exclude = [],
     now = new Date(),
     random = Math.random,
-  }: { limit?: number; exclude?: number[]; now?: Date; random?: () => number } = {}
+    scanRowBudget = STAGE_SCAN_ROW_BUDGET,
+  }: {
+    limit?: number;
+    exclude?: number[];
+    now?: Date;
+    random?: () => number;
+    scanRowBudget?: number;
+  } = {}
 ): Promise<Feed | null> {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -325,7 +374,9 @@ export async function getFeed(
   for (const stage of [...stages].reverse()) {
     if (items.length >= limit) break;
     const rows = lowestTierPerItem(
-      await stageWindow(db, userId, stage, exclude, escalatedSince)
+      await readWithoutJit(db, (trx) =>
+        stageWindow(trx, userId, stage, exclude, escalatedSince, scanRowBudget)
+      )
     ).sort(
       (a, b) =>
         a.tier - b.tier || a.priority - b.priority || +a.createdAt - +b.createdAt || a.id - b.id
@@ -661,18 +712,21 @@ export async function castVote(
           .executeTakeFirst();
         if (!locked || locked.status !== 'Open') return rejected('not-open');
 
-        const item = await servableItems(trx)
-          .where('i.id', '=', input.itemId)
-          .select([
-            'i.id',
-            'i.questionKey',
-            'i.imageId',
-            'i.minRank',
-            'i.votesNeeded',
-            'img.nsfwLevel as imageLevel',
-            'q.options',
-          ])
-          .executeTakeFirst();
+        const item = await readWithoutJit(trx, (trx) =>
+          servableItems(trx)
+            .where('i.id', '=', input.itemId)
+            .where(notHiddenCreator(input.userId))
+            .select([
+              'i.id',
+              'i.questionKey',
+              'i.imageId',
+              'i.minRank',
+              'i.votesNeeded',
+              'img.nsfwLevel as imageLevel',
+              'q.options',
+            ])
+            .executeTakeFirst()
+        );
         if (!item) return rejected('unavailable');
 
         const vote = await insertVote(
@@ -773,9 +827,6 @@ export async function castVote(
   return result;
 }
 
-const lockReasonSql = (metadata: 'metadata' | 'img.metadata') =>
-  sql<string | null>`${sql.ref(metadata)}->>'nsfwLevelReason'`;
-
 /** `moderatorRuling` giving a level, on an image with no `hasBlockMarker`, as SQL; change it with them. Expects `Image as img`. */
 const moderatorRuledImageSql = (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) =>
   eb.and([
@@ -785,21 +836,6 @@ const moderatorRuledImageSql = (eb: ExpressionBuilder<DB & { img: DB['Image'] },
     eb('img.blockedFor', 'is', null),
     eb(lockReasonSql('img.metadata'), 'is distinct from', KNIGHTS_VOTE_NSFW_LEVEL_REASON),
   ]);
-
-async function readImageState(db: Executor, imageId: number): Promise<ImageState | null> {
-  const image = await db
-    .selectFrom('Image')
-    .select([
-      'nsfwLevel',
-      'nsfwLevelLocked as locked',
-      'ingestion',
-      'blockedFor',
-      lockReasonSql('metadata').as('lockReason'),
-    ])
-    .where('id', '=', imageId)
-    .executeTakeFirst();
-  return image ?? null;
-}
 
 type Reroute = Exclude<WritebackDecision, { kind: 'apply' }>;
 
@@ -981,6 +1017,15 @@ async function markApplied(db: Kysely<DB>, itemId: number, now: Date, deps: Queu
       error,
     })
   );
+  // The moderators' in-game review of the settled rating; the tick sweep opens any this misses.
+  await (async () => {
+    if (await deps.inquisitorQueue?.()) await openReview(db, itemId, now);
+  })().catch((error) =>
+    console.error('knights: could not open the inquisitor review, the sweep will retry it', {
+      itemId,
+      error,
+    })
+  );
 }
 
 /** One write-back try. The claim leases the item so a concurrent run cannot write it twice; only a throw is transient. */
@@ -1102,6 +1147,8 @@ export async function applyPendingResolutions(
  * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
  * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
  * when a later stage is served, and expires when the hand-up would reach the Inquisitors.
+ * An item whose post's availability Knights does not show goes to the Inquisitors as `blocked` instead when the plurality of the latest stage with counted
+ * votes, the current one if it has any, is Blocked.
  */
 export async function escalateExpired(
   db: Kysely<DB>,
@@ -1129,6 +1176,22 @@ export async function escalateExpired(
     const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0, rerated: 0 };
     if (due.length === 0) return counts;
 
+    const onHiddenPost = new Set(
+      (
+        await trx
+          .selectFrom('Image as img')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select('img.id')
+          .where(
+            'img.id',
+            'in',
+            due.map((item) => item.imageId)
+          )
+          .where((eb) => eb.not(postShownToKnights(eb)))
+          .execute()
+      ).map((row) => row.id)
+    );
+
     // Counted votes at each item's stage. A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
     const counted = new Map<number, WeightedAnswer[]>();
     const stageVotes = await trx
@@ -1149,6 +1212,42 @@ export async function escalateExpired(
     }
     const staffed = await staffedRanks(trx, now);
 
+    // Kept apart from `counted`, which `extend` and `expire` read as votes at the current stage.
+    const latestStageVotes = new Map<number, WeightedAnswer[]>();
+    const unvotedHidden = due
+      .filter((item) => onHiddenPost.has(item.imageId) && !counted.has(item.id))
+      .map((item) => item.id);
+    if (unvotedHidden.length > 0) {
+      const earlier = await trx
+        .selectFrom('KnightsVote')
+        .select(['itemId', 'stage', 'answer', 'weight'])
+        .where('weight', '>', 0)
+        .where('itemId', 'in', unvotedHidden)
+        .execute();
+      const latestStage = new Map<number, string>();
+      for (const { itemId, stage } of earlier) {
+        const seen = latestStage.get(itemId);
+        if (seen === undefined || rankIndex(stage) > rankIndex(seen))
+          latestStage.set(itemId, stage);
+      }
+      for (const { itemId, stage, ...vote } of earlier) {
+        if (latestStage.get(itemId) !== stage) continue;
+        latestStageVotes.set(itemId, [...(latestStageVotes.get(itemId) ?? []), vote]);
+      }
+    }
+
+    // A hidden post's Blocked plurality, from the latest stage with counted votes, goes to the Inquisitors.
+    const routed = due.filter((item) => {
+      if (!onHiddenPost.has(item.imageId)) return false;
+      const votes = counted.get(item.id) ?? latestStageVotes.get(item.id) ?? [];
+      return votes.length > 0 && isBlockedLevel(Number(mostVotedLevel(votes)));
+    });
+    for (const item of routed) {
+      await toInquisitor(trx, item.id, now, 'blocked');
+      counts.toInquisitor++;
+    }
+    const live = due.filter((item) => !routed.includes(item));
+
     // An item extends only until two stage windows after it entered the stage (a custom shorter first `expiresAt` can extend
     // twice within that): one that sat that long with no vote is not coming back, and must not wait here forever (the one
     // player who could serve it may have judged it already).
@@ -1158,7 +1257,7 @@ export async function escalateExpired(
       staffed.has(item.minRank) &&
       (item.escalatedAt ?? item.createdAt) > enteredSince;
 
-    const idle = due.filter(extend);
+    const idle = live.filter(extend);
     if (idle.length > 0) {
       await trx
         .updateTable('KnightsQueueItem')
@@ -1191,7 +1290,7 @@ export async function escalateExpired(
       }
       return staffed.has(item.minRank) || leavesPlayers(item);
     };
-    const lapsed = due.filter(expire);
+    const lapsed = live.filter(expire);
     if (lapsed.length > 0) {
       // Votes are only graded here: `settleFinalItems`, next in the tick, pays them one item at a time, so one bad settlement
       // cannot roll back this batch, and player rows are not locked while every item lock is held.
@@ -1205,9 +1304,9 @@ export async function escalateExpired(
     }
 
     left = due
-      .filter((item) => !extend(item))
+      .filter((item) => routed.includes(item) || !extend(item))
       .map((item) => ({ id: item.id, status: 'Open', minRank: item.minRank }));
-    for (const item of due) {
+    for (const item of live) {
       if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
@@ -1252,7 +1351,7 @@ END`;
  * no label, no write-back, leftover votes inconclusive (`settleFinalItems`, next in the tick, settles them unpaid).
  * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back. Also an item
  *   waiting on the Inquisitors (`Inquisitor`, or `Ruling` whose moderator lease has lapsed) whose image row is gone, which no
- *   moderator can rule on; an image an evidence hold kept with its post deleted still can, and so a ruling in progress, or an
+ *   moderator can rule on; an image whose post is deleted still can, and so a ruling in progress, or an
  *   Inquisitor item whose image is merely blocked, is left alone.
  * - `image-unservable`: the post is live (published, not later than `now`) but the image fails `servableImageContent`: blocked,
  *   held for review, flagged poi/minor, or unrated, once scanned (ingestion `Scanned` or `Blocked`: a scan still to land may make
@@ -1282,79 +1381,83 @@ export async function closeUnservableItems(
   const closedOpen: MovedItem[] = [];
   const result = await db.transaction().execute(async (trx) => {
     // Primary-key lookups into Image and Post from the open and Inquisitor items: never a scan of either table.
-    const due = await trx
-      .selectFrom('KnightsQueueItem as i')
-      .leftJoin('Image as img', 'img.id', 'i.imageId')
-      .leftJoin('Post as p', 'p.id', 'img.postId')
-      .select([
-        'i.id',
-        'i.status',
-        'i.minRank',
-        sql<boolean>`"p"."id" IS NULL`.as('gone'),
-        sql<boolean>`"p"."id" IS NOT NULL AND "p"."publishedAt" IS NULL`.as('draft'),
-        sql<boolean>`"p"."publishedAt" IS NOT NULL AND "p"."publishedAt" <= ${utc(now)}`.as('live'),
-      ])
-      // Narrows to the status index before the per-reason rules below.
-      .where('i.status', 'in', ['Open', 'Inquisitor', 'Ruling'])
-      .where('i.isHiddenCheck', '=', false)
-      .where('i.audience', 'is', null)
-      .where((eb) =>
-        eb.or([
-          // Also true when the image is gone: the Post join then has nothing to match.
-          eb.and([eb('i.status', '=', 'Open'), eb('p.id', 'is', null)]),
-          // Only the image row: an evidence hold keeps an image with its post deleted, and a moderator can still rule on it.
-          eb.and([
-            eb('img.id', 'is', null),
-            eb.or([
-              eb('i.status', '=', 'Inquisitor'),
-              // The moderator app's claim (`RULING_LEASE_MS`): a lapsed lease is free to reclaim, a live one is a ruling in progress.
-              eb.and([
-                eb('i.status', '=', 'Ruling'),
-                eb.or([eb('i.nextAttemptAt', 'is', null), eb('i.nextAttemptAt', '<=', utc(now))]),
+    const due = await readWithoutJit(trx, (trx) =>
+      trx
+        .selectFrom('KnightsQueueItem as i')
+        .leftJoin('Image as img', 'img.id', 'i.imageId')
+        .leftJoin('Post as p', 'p.id', 'img.postId')
+        .select([
+          'i.id',
+          'i.status',
+          'i.minRank',
+          sql<boolean>`"p"."id" IS NULL`.as('gone'),
+          sql<boolean>`"p"."id" IS NOT NULL AND "p"."publishedAt" IS NULL`.as('draft'),
+          sql<boolean>`"p"."publishedAt" IS NOT NULL AND "p"."publishedAt" <= ${utc(now)}`.as(
+            'live'
+          ),
+        ])
+        // Narrows to the status index before the per-reason rules below.
+        .where('i.status', 'in', ['Open', 'Inquisitor', 'Ruling'])
+        .where('i.isHiddenCheck', '=', false)
+        .where('i.audience', 'is', null)
+        .where((eb) =>
+          eb.or([
+            // Also true when the image is gone: the Post join then has nothing to match.
+            eb.and([eb('i.status', '=', 'Open'), eb('p.id', 'is', null)]),
+            // Only the image row: an image can outlive its post, and a moderator can still rule on it.
+            eb.and([
+              eb('img.id', 'is', null),
+              eb.or([
+                eb('i.status', '=', 'Inquisitor'),
+                // The moderator app's claim (`RULING_LEASE_MS`): a lapsed lease is free to reclaim, a live one is a ruling in progress.
+                eb.and([
+                  eb('i.status', '=', 'Ruling'),
+                  eb.or([eb('i.nextAttemptAt', 'is', null), eb('i.nextAttemptAt', '<=', utc(now))]),
+                ]),
               ]),
             ]),
-          ]),
-          eb.and([
-            eb('i.status', '=', 'Open'),
-            eb('p.publishedAt', 'is not', null),
-            eb('p.publishedAt', '<=', utc(now)),
-            // A scan still to land (or a rescan) may yet make it servable: an owner rating can be queued before it.
-            eb('img.ingestion', 'in', ['Scanned', 'Blocked']),
-            eb.not(servableImageContent(eb)),
-            eb.not(moderatorRuledImageSql(eb)),
-          ]),
-          eb.and([
-            eb('i.status', '=', 'Open'),
-            eb('i.source', '=', SCAN_SAMPLE_SOURCE),
-            eb('p.id', 'is not', null),
-            eb('p.publishedAt', 'is', null),
-            eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),
-          ]),
-          eb.and([
-            eb('i.status', '=', 'Open'),
-            eb('i.minRank', '=', 'Knight'),
-            eb('i.escalatedAt', 'is', null),
-            eb('i.expiresAt', 'is not', null),
-            eb('p.publishedAt', '>', latestStageEndSql),
-            // The vote `escalateExpired` counts: one at the item's stage with weight.
-            eb.not(
-              eb.exists(
-                eb
-                  .selectFrom('KnightsVote as v')
-                  .select(sql`1`.as('one'))
-                  .whereRef('v.itemId', '=', 'i.id')
-                  .whereRef('v.stage', '=', 'i.minRank')
-                  .where('v.weight', '>', 0)
-              )
-            ),
-          ]),
-        ])
-      )
-      .orderBy('i.id', 'asc')
-      .limit(limit)
-      .forUpdate('i')
-      .skipLocked()
-      .execute();
+            eb.and([
+              eb('i.status', '=', 'Open'),
+              eb('p.publishedAt', 'is not', null),
+              eb('p.publishedAt', '<=', utc(now)),
+              // A scan still to land (or a rescan) may yet make it servable: an owner rating can be queued before it.
+              eb('img.ingestion', 'in', ['Scanned', 'Blocked']),
+              eb.not(servableImageContent(eb)),
+              eb.not(moderatorRuledImageSql(eb)),
+            ]),
+            eb.and([
+              eb('i.status', '=', 'Open'),
+              eb('i.source', '=', SCAN_SAMPLE_SOURCE),
+              eb('p.id', 'is not', null),
+              eb('p.publishedAt', 'is', null),
+              eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),
+            ]),
+            eb.and([
+              eb('i.status', '=', 'Open'),
+              eb('i.minRank', '=', 'Knight'),
+              eb('i.escalatedAt', 'is', null),
+              eb('i.expiresAt', 'is not', null),
+              eb('p.publishedAt', '>', latestStageEndSql),
+              // The vote `escalateExpired` counts: one at the item's stage with weight.
+              eb.not(
+                eb.exists(
+                  eb
+                    .selectFrom('KnightsVote as v')
+                    .select(sql`1`.as('one'))
+                    .whereRef('v.itemId', '=', 'i.id')
+                    .whereRef('v.stage', '=', 'i.minRank')
+                    .where('v.weight', '>', 0)
+                )
+              ),
+            ]),
+          ])
+        )
+        .orderBy('i.id', 'asc')
+        .limit(limit)
+        .forUpdate('i')
+        .skipLocked()
+        .execute()
+    );
 
     const gone = due.filter((item) => item.gone).map((item) => item.id);
     const drafts = due.filter((item) => item.draft).map((item) => item.id);
@@ -1414,7 +1517,6 @@ export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: D
   });
 }
 
-const pad = (n: number) => String(n).padStart(2, '0');
 const monthStart = (year: number, month: number) => {
   const d = new Date(Date.UTC(year, month, 1));
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
@@ -1429,20 +1531,8 @@ export async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Mont
   `.execute(db);
   if (existing.rows[0]?.found) return;
 
-  const from = monthStart(year, month - 1);
-  const to = monthStart(year, month);
-  await db.transaction().execute(async (trx) => {
-    // Two voters can find the same month missing; without the lock the loser fails on a duplicate relation.
-    await sql`SELECT pg_advisory_xact_lock(hashtext('KnightsVote partitions'))`.execute(trx);
-    await sql
-      .raw(
-        `CREATE TABLE IF NOT EXISTS "${name}" PARTITION OF "KnightsVote" ` +
-          `FOR VALUES FROM ('${from.year}-${pad(from.month)}-01') TO ('${to.year}-${pad(
-            to.month
-          )}-01')`
-      )
-      .execute(trx);
-  });
+  // Only the table's owner may add a partition: the owner's function does, for a month near now, under the partition lock.
+  await sql`SELECT public.knights_ensure_vote_partition(${year}::int, ${month}::int)`.execute(db);
 }
 
 export async function ensureVotePartitions(

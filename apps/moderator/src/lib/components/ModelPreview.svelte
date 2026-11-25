@@ -2,8 +2,10 @@
   import { browser } from '$app/environment';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
+  import { IconPhotoOff } from '@tabler/icons-svelte';
+  import { WITHHELD_REFUSED } from '$lib/held-media';
   import TrainingDataSheet from '$lib/components/TrainingDataSheet.svelte';
   import ModelPreviewFileRow from '$lib/components/ModelPreviewFileRow.svelte';
   import type { LightboxItem } from '$lib/lightbox';
@@ -56,8 +58,9 @@
   let trainingVersion = $state<{ id: number; title: string } | null>(null);
   let trainingOpen = $state(false);
 
+  const viewable = (p: ModelPreview) => p.images.filter((i) => !i.restricted);
   const lightboxItems = (p: ModelPreview): LightboxItem[] =>
-    p.images.map((i) => ({
+    viewable(p).map((i) => ({
       id: i.url,
       type: i.type,
       caption: `${i.type === 'video' ? 'Video' : 'Image'} #${i.id}${i.blocked ? ' · already removed' : ''}`,
@@ -91,8 +94,13 @@
       {#if p.images.length}
         <!-- One row that scrolls sideways, so the versions and description stay in view. -->
         <div class="flex gap-1.5 overflow-x-auto pb-1">
-          {#each p.images as image, i (image.id)}
+          {#each p.images as image (image.id)}
             <div class="relative size-40 shrink-0 overflow-hidden rounded-md border bg-muted/40">
+              {#if image.restricted}
+                <div class="grid size-full place-items-center text-dark-2" title={WITHHELD_REFUSED}>
+                  <IconPhotoOff size={24} aria-label={WITHHELD_REFUSED} />
+                </div>
+              {:else}
               <!-- `anim={false}`: a still frame. On a video `EdgeVideo` then never plays by itself —
                    poster and play icon, nothing fetched until hovered, no loop — and leaves the click to
                    this button. Its default autoplays what is in view and loops it, and a grid of those
@@ -102,11 +110,10 @@
                 type="button"
                 class="h-full w-full"
                 aria-label={`Open ${image.type} #${image.id}`}
-                onclick={() => (openIndex = i)}
+                onclick={() => (openIndex = viewable(p).findIndex((v) => v.id === image.id))}
               >
-                <EdgeMedia
-                  src={image.url}
-                  type={image.type}
+                <CdnOrRetractedMedia
+                  item={image}
                   width={320}
                   anim={false}
                   class="h-full w-full object-cover"
@@ -128,6 +135,7 @@
                 <span class="absolute inset-x-0 bottom-0 bg-black/70 px-1 text-center text-[10px]">
                   Removed
                 </span>
+              {/if}
               {/if}
             </div>
           {/each}

@@ -4,6 +4,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { articleShareCookieName } from '~/server/services/article-share.helpers';
 import { getArticleByShareToken } from '~/server/services/article-share.service';
+import { canViewArticle } from '~/server/services/article-read';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
@@ -46,8 +47,15 @@ export type CommentReadContext = Pick<Context, 'user' | 'features' | 'req' | 'ca
  * `getBlockCheckOwnerIds` resolves it for every current entity type; a new one needs a case there.
  */
 type CommentSurface = {
-  /** Throws not-found when the viewer may not see the entity's comments. Reads and writes. */
-  assertVisible?(entityId: number, ctx: CommentReadContext): Promise<void>;
+  /**
+   * Throws not-found when the viewer may not see the entity's comments. Reads and writes;
+   * `ownerSeesHeld` is the owner's view of their own held image, passed on reads only.
+   */
+  assertVisible?(
+    entityId: number,
+    ctx: CommentReadContext,
+    view?: { ownerSeesHeld?: boolean }
+  ): Promise<void>;
   /** Throws when the viewer may not write there: a create or an edit, or the owner's hide and pin. */
   assertWritable?(entityId: number, ctx: ProtectedContext): Promise<void>;
   /** Throws when the entity takes no new comments or edits; the owner may still hide and pin. */
@@ -154,15 +162,18 @@ async function assertPostCommentsVisible(postId: number, ctx: CommentReadContext
 async function assertArticleCommentsVisible(articleId: number, ctx: CommentReadContext) {
   const article = await dbRead.article.findUnique({
     where: { id: articleId },
-    select: { userId: true, status: true },
+    select: { userId: true, status: true, availability: true },
   });
   if (!article) throw throwNotFoundError('Article not found');
-  if (article.status === ArticleStatus.Published) return;
+  const published = article.status === ArticleStatus.Published;
+  if (published && canViewArticle(article, undefined)) return;
   // Signed-out reads are edge-cached by URL; a link holder's answer must never be served to anyone else.
   // `edgeCacheIt` on a commentv3 read would rewrite ctx.cache after this and undo it.
   if (ctx.cache)
     Object.assign(ctx.cache, { skip: true, canCache: false, edgeTTL: 0, browserTTL: 0 });
   if (ctx.user?.isModerator || article.userId === ctx.user?.id) return;
+  // Follows the article availability rule for comments: owner and moderators only, no share link.
+  if (published) throw throwNotFoundError('Article not found');
   const shared = await getArticleByShareToken({
     articleId,
     shareToken: ctx.req?.cookies?.[articleShareCookieName(articleId)],
@@ -279,11 +290,12 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
   article: { assertVisible: assertArticleCommentsVisible, assertWritable: accessGated('Article') },
   post: { assertVisible: assertPostCommentsVisible, assertWritable: accessGated('Post') },
   image: {
-    assertVisible: async (imageId, ctx) =>
+    assertVisible: async (imageId, ctx, view) =>
       void (await assertImageVisibleToViewer({
         id: imageId,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: view?.ownerSeesHeld ?? false,
       })),
     onCreated: (comment, ctx) => {
       if (comment.parentId) return;
@@ -346,6 +358,16 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
       await accessGated('Post')(text.postId, ctx);
     },
     onCreated: (comment, ctx) => void notifyPostTextOwner(comment, ctx).catch(handleLogError),
+  },
+  // Feature Pages threads: members read and write them only in the feature frame (featurePages.*,
+  // which also keeps the platform mirror); here only moderators reach them, to moderate.
+  featurePage: {
+    assertVisible: async (_id, ctx) => {
+      if (!ctx.user?.isModerator) throw throwNotFoundError('No comments on featurePage');
+    },
+    assertWritable: async () => {
+      throw throwBadRequestError('Feature page comments are written from the feature page.');
+    },
   },
 };
 

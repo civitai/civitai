@@ -17,13 +17,11 @@ import {
   getServableProfilePictures,
   type RawQueryClient,
 } from '~/server/services/profile-picture.sql';
-import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
-import { heldUserSql } from '@civitai/shared/held-media';
 import {
   semanticCoverImageCleanText,
-  semanticImageHeldText,
-} from '~/server/services/semantic-held-content.sql';
+  semanticImageCsamFlaggedText,
+} from '~/server/services/semantic-image-flags.sql';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -99,7 +97,7 @@ type ComicForSearchIndex = {
     id: number;
     username: string | null;
     deletedAt: Date | null;
-    image: string | null;
+    image: null;
     profilePictureId: number | null;
   };
   stats: {
@@ -129,11 +127,10 @@ export const comicSearchEligibleWhere = [
     SELECT 1 FROM "User" u
     WHERE u.id = cp."userId" AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
   )`,
-  Prisma.raw(`NOT ${heldUserSql('cp."userId"')}`),
   Prisma.raw(semanticCoverImageCleanText('cp."coverImageId"')),
   Prisma.raw(`NOT EXISTS (
     SELECT 1 FROM "ComicPanel" hp JOIN "Image" hi ON hi.id = hp."imageId"
-    WHERE hp."projectId" = cp.id AND ${semanticImageHeldText('hi')}
+    WHERE hp."projectId" = cp.id AND ${semanticImageCsamFlaggedText('hi')}
   )`),
   Prisma.sql`NOT EXISTS (
     SELECT 1 FROM "ComicChapter" fc
@@ -229,7 +226,7 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
           'id', u.id,
           'username', u.username,
           'deletedAt', u."deletedAt",
-          'image', ${Prisma.raw(fallbackUserImageColumn)},
+          'image', NULL,
           'profilePictureId', u."profilePictureId"
         ) "user"
       FROM "User" u
@@ -382,7 +379,7 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
 });
 
 /**
- * Queues every comic for an update, so one whose owner was banned, deleted or held, or whose cover
+ * Queues every comic for an update, so one whose owner was banned or deleted, or whose cover
  * or panel image was flagged, leaves the index (`pushData` deletes it) though no comic row changed.
  */
 export async function queueAllComicsForRefresh(db: RawQueryClient) {

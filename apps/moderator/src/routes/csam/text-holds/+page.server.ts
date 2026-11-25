@@ -26,7 +26,7 @@ import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
 import { ALSO_MAX } from './hold-author';
 import type { HoldContext } from './hold-context';
-import { getHoldContexts } from './hold-context.server';
+import { getHoldContexts, withheldHoldMedia } from './hold-context.server';
 import {
   CSAM_HOLD_DECISION_GRANTS,
   CSAM_HOLD_DECISIONS,
@@ -79,14 +79,17 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     console.error('CSAM hold rescans failed', err);
     return new Map<number, Date>();
   });
-  const items = queue.items.map((hold) => ({
-    ...hold,
-    cleanRescanAt: cleanRescans.get(hold.id) ?? null,
-    coverImages: covers.get(hold.id)?.images ?? [],
-    imageTotal: covers.get(hold.id)?.total ?? 0,
-    profile: contexts.get(hold.id)?.profile ?? null,
-    parent: contexts.get(hold.id)?.parent ?? null,
-  }));
+  const items = await withheldHoldMedia(
+    queue.items.map((hold) => ({
+      ...hold,
+      cleanRescanAt: cleanRescans.get(hold.id) ?? null,
+      coverImages: covers.get(hold.id)?.images ?? [],
+      imageTotal: covers.get(hold.id)?.total ?? 0,
+      profile: contexts.get(hold.id)?.profile ?? null,
+      parent: contexts.get(hold.id)?.parent ?? null,
+    })),
+    locals.user
+  );
   const typeCounts: Record<string, number> | null = byType && {
     ...byType,
     all: Object.values(byType).reduce((sum, n) => sum + n, 0),

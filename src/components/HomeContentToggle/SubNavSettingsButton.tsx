@@ -1,26 +1,16 @@
 import { Menu } from '~/components/MantineOverlays';
 import { IconLayoutNavbar, IconLayoutGrid, IconSettings } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 /**
- * Both modals stay dynamic. This button mounts on nearly every route now — the homepage gear it
+ * Both modals are lazy. This button mounts on nearly every route now — the homepage gear it
  * replaces mounted on one — so a static import would put `@dnd-kit` in the app-shell chunk for
  * every visitor, anonymous included.
  */
-const SubNavSettingsModal = dynamic(
-  () => import('~/components/HomeContentToggle/SubNavSettingsModal'),
-  { ssr: false }
-);
-const ManageHomeBlocksModal = dynamic(
-  () => import('~/components/HomeBlocks/ManageHomeBlocksModal'),
-  { ssr: false }
-);
-
-const openSubNavSettings = createDialogTrigger(SubNavSettingsModal);
-const openManageHomeBlocks = createDialogTrigger(ManageHomeBlocksModal);
+const openSubNavSettings = () =>
+  openDialog(() => import('~/components/HomeContentToggle/SubNavSettingsModal'));
 
 /**
  * `withHomepageOption` is passed only from the route that already had a gear of its own, where a
@@ -74,7 +64,7 @@ export function SubNavSettingsButton({
       <Menu.Dropdown>
         <Menu.Item
           leftSection={<IconLayoutGrid size={16} />}
-          onClick={() => openManageHomeBlocks()}
+          onClick={() => openDialog(() => import('~/components/HomeBlocks/ManageHomeBlocksModal'))}
         >
           Customize homepage
         </Menu.Item>

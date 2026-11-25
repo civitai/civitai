@@ -5,7 +5,8 @@ and, in shadow only, of the tRPC procedures `image.getInfinite` (the flat image 
 behind `FEED_GO_SERVE_INFINITE`, default off) and `model.getAll` (the model browse feed; also servable
 behind `FEED_GO_SERVE_MODEL_GETALL`, default off) and the public
 REST endpoints `GET /api/v1/images` and `GET /api/v1/models` / `/api/v1/models/{id}` (the model ones
-also servable behind `FEED_GO_SERVE_V1_MODELS`, default off), built to measure CPU per
+also servable behind `FEED_GO_SERVE_V1_MODELS`, the images one behind `FEED_GO_SERVE_V1_IMAGES`, both
+default off), built to measure CPU per
 request against the Node path on the same traffic. It answers the request shapes it has ported and
 proxies everything else to the Node app unchanged. **Read
 [DESIGN.md](DESIGN.md) first** — it covers scope, auth, wire format, routing, shadow comparison, the
@@ -20,16 +21,26 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 | --------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `FEED_GO_ADDR` (`:8080`)          | `GET /api/trpc/image.getImagesAsPostsInfinite`         | the procedure; only listens when `FEED_GO_FALLBACK_URL` is set                                                                                  |
 |                                   | `GET /api/trpc/model.getAll`                           | computed only with `FEED_GO_SERVE_MODEL_GETALL=true` (default off: proxied to the Node app as the `model-getall-off` fallback; DESIGN.md §15.8) |
-|                                   | `GET /api/trpc/image.getInfinite`                      | computed only with `FEED_GO_SERVE_INFINITE=true` (default off: proxied to the Node app as the `infinite-off` fallback; DESIGN.md §14.8)         |
+|                                   | `GET /api/trpc/image.getInfinite`                      | computed only with `FEED_GO_SERVE_INFINITE=true` (default off: proxied to the Node app as the `infinite-off` fallback; DESIGN.md §14.8); a collection's Random sort only with `FEED_GO_INFINITE_SERVE_SORT_RANDOM=true` too (default off, §14.9) |
 |                                   | `GET /api/v1/models`, `GET /api/v1/models/{id}`        | mounted only with `FEED_GO_V1_FALLBACK_URL`; computed only with `FEED_GO_SERVE_V1_MODELS=true` (default off: proxied as `v1-models-off`; §16.8) |
-| `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz`                                         | liveness / readiness                                                                                                                            |
+|                                   | `GET /api/v1/images`                                   | mounted only with `FEED_GO_V1_IMAGES_FALLBACK_URL`, its one fallback upstream; computed only with `FEED_GO_SERVE_V1_IMAGES=true` (default off: proxied as `v1-images-off`; §13.8) |
+| `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz`                                         | liveness (200 while the process runs, draining included)                                                                                        |
+|                                   | `GET /readyz`                                          | readiness: 503 from SIGTERM on, for `FEED_GO_SHUTDOWN_DELAY_MS` (default 10 s) before the listeners close (DESIGN.md §6.1 Shutdown)           |
 |                                   | `GET /metrics`                                         | Prometheus (`feed_go_*`, Go runtime, process CPU)                                                                                               |
 |                                   | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7)                                                                                                                |
-|                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly                                                                   |
+|                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST images endpoint, body and response headers (DESIGN.md §13)                                                        |
 |                                   | `POST /internal/shadow/image.getInfinite`              | shadow comparison of `image.getInfinite` (DESIGN.md §14)                                                                                        |
 |                                   | `POST /internal/shadow/model.getAll`                   | shadow comparison of `model.getAll` (DESIGN.md §15)                                                                                             |
 |                                   | `POST /internal/shadow/api/v1/models`, `…/models/id`   | shadow comparison of the REST model endpoints, body and response headers (DESIGN.md §16)                                                        |
 |                                   | `GET /debug/pprof/…`                                   | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2)                                                                 |
+
+A request from a blocked region (`REGION_BLOCK_CONFIG`) is handed to the Node app, which answers its
+451, unless `FEED_GO_ANSWER_REGION_BLOCKED=true` (default off): then every public route writes that
+same 451 here (outcome `region_blocked`; DESIGN.md §6.2). Likewise an `image.getInfinite` request
+whose feed-service call failed is handed back (`feed-unavailable` / `feed-status`), unless
+`FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE=true` (default off): then the route writes the app's own 503
+here for the requests the app answers with it whatever `feed-service-degrade` says, a signed-in viewer
+or a paged query (outcome `feed_unavailable`; DESIGN.md §14.11).
 
 Every answer on the public routes carries `X-Feed-Go-Served`: `go` when this service computed it
 (or answered the error itself), `node` when it was proxied to the Node app, including the proxy's own 502. The browser's shadow compare (`src/utils/faro/shadowCompare.ts`) reads it, so a proxied answer,
@@ -110,16 +121,33 @@ are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default
 caches `FEED_GO_CACHE_WRITEBACK` lists (default none), e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`; the names
 are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-frames`, `event-decorations`,
 `tag-ids`, `model-frames`, `model-decorations`, `version-images`, `model-data`, `model-tags`,
-`official-models`, `metrics`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
+`official-models`, `metrics`, `creator-memberships`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
 `model-data` cache also needs `DATABASE_URL`, the primary. Each write is counted in
 `feed_go_cache_writes_total{cache,result}` (`written` | `nx_lost` | `error`; not per endpoint), and
 `FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0) logs each written key, rate-limited, never its value
 (DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
-falls back (`index-feed-unconfigured`). The public `/api/v1/models` routes hand their fallbacks to
+falls back (`index-feed-unconfigured`). `FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS` (default off)
+answers an `image.getInfinite` gallery-settings miss from the model's row (its hold only, lag-aware,
+never written back; DESIGN.md §14.9) instead of the `gallery-settings-miss` fallback; the computed
+misses are counted as `feed_go_cache_miss_total{cache="gallery-hold"}`, which is not a
+`FEED_GO_CACHE_WRITEBACK` name. The public `/api/v1/models` routes hand their fallbacks to
 `FEED_GO_V1_FALLBACK_URL`, the Node app that serves `/api/v1` (a different upstream from
 `FEED_GO_FALLBACK_URL`'s; deployment config, not set here); `FEED_GO_SERVE_V1_MODELS=true` without it
-fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). The
+fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). Both
+routes hand every API credential to the Node app (`bearer-token`); `GET /api/v1/models/{id}` stops
+doing so with `FEED_GO_V1_BEARER_AUTH` on (default off; needs `FEED_GO_BEARER_AUTH`): a credential
+Node answers with the body any caller gets is computed here, and every other one falls back with
+its own reason (DESIGN.md §16.10). The list keeps every API credential a fallback. A list request
+with a text `query` is answered from the search index the Node app reads (`SEARCH_HOST`,
+`SEARCH_API_KEY`, `MEILI_CALL_TIMEOUT_MS` capped at 2.5 s, the `MEILI_CIRCUIT_*` breaker settings)
+only with `FEED_GO_V1_MODELS_SERVE_QUERY` on (default off: `v1-models-query`; DESIGN.md §16.11); a
+search the breaker or the 4-call cap rejects is handed back as `v1-models-query`. A
+`GET /api/v1/models/{id}` request for a model the statement finds no row for is answered with Node's
+404 here only with `FEED_GO_V1_MODELS_ANSWER_NOT_FOUND` on (default off: `v1-models-not-found`;
+outcome `not_found`; DESIGN.md §16.8). Credentialed
+requests reach this service only once the deployment's routing sends them here: the bypass that
+sends them to the Node app is narrowed to the list path (not removed) when `[id]` serves them. The
 REST endpoint's shadow also needs
 `NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds
 `metadata.nextPage` as the production Node app does (`https://<host>`).
@@ -129,7 +157,18 @@ Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `in
 samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 `feed-go-shadow-infinite` and `feed-go-shadow-model-getall` (both default off), sharing
 `FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
-are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
+are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). Its `ids` and `followed` input shapes are
+computed only behind `FEED_GO_GETALL_SERVE_INPUT_IDS` / `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both
+default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). An owner's user-cosmetics miss on a
+`model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
+`user-cosmetics-miss` fallback; DESIGN.md §15.2.5), and an owner's creator-membership miss only with
+`FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off: the `membership-miss` fallback; DESIGN.md §15.2.6),
+reading the tier under the app's own `TIER_METADATA_KEY`. `image.getInfinite`'s
+`publishedOnly` input is computed only behind `FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY` (default
+off: the `input-publishedOnly` fallback; DESIGN.md §14.2.1), and its `postIds` input only behind `FEED_GO_INFINITE_SERVE_INPUT_POST_IDS`
+(default off: the `input-postIds` fallback; DESIGN.md §14.2.2), and its `hubId` input (a
+user-composed hub, read with the `user-hubs` flag per viewer from `FLIPT_URL`) only behind
+`FEED_GO_INFINITE_SERVE_INPUT_HUB_ID` (default off: the `input-hubId` fallback; DESIGN.md §14.2.3). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 
@@ -149,3 +188,37 @@ OpenMetrics to a scrape that asks, carrying trace-id exemplars on `feed_go_reque
 and `feed_go_shadow_phase_seconds`. `FEED_GO_FALLBACK_LOG_PER_MIN` (default 0) logs one line per
 fallback with its reason and safe detail, rate-limited per endpoint and reason;
 `FEED_GO_ERROR_LOG_PER_MIN` (default 60) bounds the error lines the same way.
+
+## Profiling
+
+`FEED_GO_PPROF=true` (default off) mounts `net/http/pprof` under `/debug/pprof/` on the internal
+listener (`FEED_GO_INTERNAL_ADDR`) only; the public listener never routes it, whatever the toggle
+says, and nothing serves `http.DefaultServeMux` (`internal/server/mux_test.go` pins both). Pull a CPU
+profile through a port-forward to the internal port:
+
+```bash
+go tool pprof -http=:0 'http://localhost:9090/debug/pprof/profile?seconds=30'
+```
+
+Every public, shadow and probe handler runs under two pprof labels, `feed_endpoint` (the endpoint
+label of the metrics) and `mode` (`serve` | `shadow` | `probe`), inherited by every goroutine the
+request starts, so one profile splits per route and per mode: `-tagfocus feed_endpoint=infinite
+-tagfocus mode=serve` keeps one, `-tags` lists the split (`internal/server/labels.go`). The CPU
+phases of a served answer add a third label, `phase`: `decode hydrate` (a page's cache reads and
+their decode), `build page` (the per-item build) and `encode devalue` / `encode superjson` (the
+payload write). On a sampled request (tracing on) each phase is also a child span of that name in the
+request's trace, with `feed_go.items` (ids hydrated, rows built) or `feed_go.response.bytes`; an
+unsampled request starts no span (`internal/tracing/phase.go`). A phase span's duration is wall time,
+I/O waits included (`decode hydrate` covers its Redis and Postgres round trips), so rank CPU by the
+`phase` pprof label and wall time by the spans.
+
+`/metrics` carries, next to `process_cpu_seconds_total` and the default Go series, the runtime's CPU
+classes and GC families (`go_cpu_classes_*`: GC, scavenger, idle and user CPU seconds; `go_gc_*`), a
+fixed set the runtime defines.
+
+Benchmarks (run by the `feed-go benchmarks (allocs/op gate)` job of `.github/workflows/feed-go.yml`,
+on a dispatch): `BenchmarkRoute/{as-posts,infinite,model-getall}` is one served signed-in request per
+op, input through the in-memory Redis and Postgres fakes to the devalue bytes, on golden worlds
+scaled to production pages (`internal/server/route_bench_test.go`); `BenchmarkDevaluePayload` is the
+devalue writer alone over those answers; `BenchmarkUnpackCache/{model-data,tag-ids,follows}` is one
+request's decode of each cache (`internal/hydrate/bench_test.go`).

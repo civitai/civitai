@@ -32,6 +32,11 @@ export const ENTITY_SCHEMA_DOCUMENTS: ReadonlyArray<Record<string, unknown>> = [
         description:
           'The content rating of the app, or null when it has none (an off-site app may have no rating). Also the rating of every document this app publishes: a document carries no rating of its own, so a consumer joins it to its app entity.',
       },
+      listingContentRating: {
+        ...nullableString,
+        description:
+          "The store listing's own content rating, without the block fallback `contentRating` has: what the store filters its search on. Null when the listing has none",
+      },
       tagline: nullableString,
       category: nullableString,
       iconUrl: nullableString,
@@ -231,6 +236,67 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
         'Null unless the app is a fork. `slug` names the parent app when this subscription may read it, and is null when the parent is hidden from it or gone: show the parent only if it is visible to the viewer, else that it came from an app that is not available',
       required: ['slug'],
       properties: { slug: nullableString },
+    },
+    subListings: {
+      type: 'array',
+      description:
+        "The items the app placed in the store, each shown as its own store card beside the app: those the store could show some viewer, in id order. A subscription receives the items whose card rating its audience admits under the app-rating rule, and an item's image only when its own rating is admitted. Apply per request the store's mature rule to `contentRating`, and the item image ceiling (the card rating, the viewer's levels and the host rule) to `image` and to the app's own icon and cover, the item card's fallbacks",
+      items: {
+        type: 'object',
+        required: [
+          'id',
+          'title',
+          'tagline',
+          'contentRating',
+          'cardContentRating',
+          'author',
+          'sortTime',
+          'runHref',
+          'external',
+          'image',
+        ],
+        properties: {
+          id: { type: 'string', description: "The item's id: its card's key and tie-break" },
+          title: { type: 'string' },
+          tagline: nullableString,
+          contentRating: {
+            ...nullableString,
+            description: "The item's own rating, which the store's mature rule is applied to",
+          },
+          cardContentRating: {
+            ...nullableString,
+            description:
+              "The card's rating: the stricter of the app's and the item's. The card shows it and caps its images at it",
+          },
+          author: chip,
+          sortTime: {
+            type: 'string',
+            format: 'date-time',
+            description: "When the item was approved (else created): the store's `newest` sort key",
+          },
+          runHref: {
+            type: 'string',
+            description:
+              "The card's link: under the app's run route, or, when `external`, the off-site app's page for the item",
+          },
+          external: { type: 'boolean', description: 'The link leaves Civitai' },
+          image: {
+            type: ['object', 'null'],
+            description: "The item's own image at cover width, rated on its own; null when none",
+            required: ['url', 'nsfwLevel', 'rating'],
+            properties: {
+              url: { type: 'string' },
+              nsfwLevel: { type: 'integer' },
+              rating: { enum: ['pg', 'pg13', 'r', 'x', 'xxx'] },
+            },
+          },
+        },
+      },
+    },
+    subListingsOmitted: {
+      ...count,
+      description:
+        'How many more items the store shows beside the app than `subListings` carries: a body carries at most a fixed number of them, the most recently approved. Usually 0',
     },
   },
 };

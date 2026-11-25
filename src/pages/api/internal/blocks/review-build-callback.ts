@@ -26,6 +26,10 @@ import {
 } from '~/server/services/blocks/publish-request.service';
 import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
 import {
+  evaluateReviewBootCheck,
+  syncBootCheckHold,
+} from '~/server/services/blocks/review-boot-check.service';
+import {
   BUILD_STEP_LABELS,
   isBuildPipelineStep,
 } from '~/shared/constants/app-block-build.constants';
@@ -634,13 +638,40 @@ async function settlePublishedReview(
   const reachable = host
     ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
     : true;
-  if (reachable) {
+  const boot = reachable
+    ? await evaluateReviewBootCheck({
+        publishRequestId: args.publishRequestId,
+        slug: args.slug,
+        host,
+        url: args.baseDetail.url,
+      })
+    : null;
+  // Only the build whose guarded write matched (it owns the active preview) may move the hold.
+  const syncHold = async (marked: number) => {
+    if (boot && marked > 0)
+      await syncBootCheckHold(args.publishRequestId, boot, { expectedSha: args.sha });
+  };
+  if (reachable && boot && !boot.live) {
+    // The app never sent BLOCK_READY. Not an apply failure (the deploy worked) and not counted
+    // as one; the replay mark is freed so a same-sha rebuild is not swallowed as a duplicate.
+    await clearReviewApplyMark(args.publishRequestId, args.sha);
+    const marked = await markReviewPreviewState(
+      args.publishRequestId,
+      'preview-failed',
+      { ...args.baseDetail, bootCheck: boot.bootCheck, error: boot.error },
+      guard
+    );
+    await syncHold(marked);
+    if (marked === 0) await unpublishOrphan();
+    await settled(args.publishRequestId, false);
+  } else if (reachable) {
     const marked = await markReviewPreviewState(
       args.publishRequestId,
       'preview-live',
-      args.baseDetail,
+      boot ? { ...args.baseDetail, bootCheck: boot.bootCheck } : args.baseDetail,
       guard
     );
+    await syncHold(marked);
     // Live only if THIS preview was still the active one: a torn-down or superseded preview
     // (the guard matched no row) must not start an agent review, and is unpublished.
     if (marked === 0) await unpublishOrphan();

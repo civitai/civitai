@@ -410,3 +410,101 @@ func TestNextReadsAPrivateDocumentsKey(t *testing.T) {
 		}
 	}
 }
+
+// The adapter's private feed sends each record's `seq` beside its key, and a head in the `meta` of
+// `live` and `progress` (src/server/registry-adapter/private-feed.ts); both are read, and everything
+// else in those events is read as before. An event with no `meta` has none; an upsert's is never read.
+// Fails on origin/main: Entity has no Seq and Event no Meta there (the test does not compile).
+func TestNextReadsSeqAndHeadMeta(t *testing.T) {
+	s := streamOf("" +
+		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/notes/r1\",\"schemas\":[\"s\"],\"rev\":\"r1\",\"body\":{\"t\":1},\"key\":\"note-7e3\",\"seq\":41},\"cursor\":\"\",\"meta\":{\"head\":{\"seq\":5}}}\n\n" +
+		"event: live\nid: p1.c3\ndata: {\"cursor\":\"p1.c3\",\"meta\":{\"head\":{\"seq\":97}}}\n\n" +
+		"event: progress\nid: p1.c4\ndata: {\"cursor\":\"p1.c4\",\"meta\":{\"head\":{\"seq\":102}}}\n\n" +
+		"event: progress\nid: p1.c5\ndata: {\"cursor\":\"p1.c5\"}\n\n")
+	want := []struct {
+		ev   Event
+		meta string
+	}{
+		{Event{Type: Upsert, Entity: Entity{URN: "urn:apps.civitai.com:app/notes/r1", Schemas: []string{"s"}, Rev: "r1", Body: []byte(`{"t":1}`), Key: "note-7e3", Seq: 41}}, ""},
+		{Event{Type: Live, Cursor: "p1.c3"}, `{"head":{"seq":97}}`},
+		{Event{Type: Progress, Cursor: "p1.c4"}, `{"head":{"seq":102}}`},
+		{Event{Type: Progress, Cursor: "p1.c5"}, ""},
+	}
+	for i, w := range want {
+		got, err := s.Next()
+		if err != nil {
+			t.Fatalf("event %d: %v", i, err)
+		}
+		if got.Type != w.ev.Type || got.Cursor != w.ev.Cursor || got.Entity.URN != w.ev.Entity.URN ||
+			got.Entity.Key != w.ev.Entity.Key || got.Entity.Seq != w.ev.Entity.Seq ||
+			string(got.Entity.Body) != string(w.ev.Entity.Body) || string(got.Meta) != w.meta {
+			t.Fatalf("event %d = %+v (meta %s), want %+v (meta %s)", i, got, got.Meta, w.ev, w.meta)
+		}
+	}
+}
+
+// A level subscription names its level in the request's `meta`, sent as its compact JSON text; a
+// meta that is not one JSON object is refused before anything is sent. Fails on origin/main:
+// Request has no Meta there (the test does not compile).
+func TestSubscribeSendsMeta(t *testing.T) {
+	var got *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: end\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL}
+	s, err := c.Subscribe(context.Background(), Request{Schema: "s", Meta: []byte(" { \"level\" : 4 } ")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if q := got.URL.Query(); q.Get("meta") != `{"level":4}` || len(q["meta"]) != 1 {
+		t.Fatalf("meta sent %q", got.URL.RawQuery)
+	}
+	for _, bad := range []string{`[1]`, `{"level":`, `4`, `"x"`} {
+		got = nil
+		if _, err := c.Subscribe(context.Background(), Request{Schema: "s", Meta: []byte(bad)}); CodeOf(err) != BadRequest || got != nil {
+			t.Fatalf("meta %s: err %v, sent %v", bad, err, got != nil)
+		}
+	}
+	got = nil
+	s, err = c.Subscribe(context.Background(), Request{Schema: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if got.URL.Query().Has("meta") {
+		t.Fatalf("no meta given, sent %q", got.URL.RawQuery)
+	}
+}
+
+// An end names why the origin ended the stream in its `meta` (the level streams'
+// `{"reason":"levels_on"}`); an end whose data cannot be read, or whose meta is not an object, is an
+// end without one. Fails on origin/main: ParseEvent drops an end's data there.
+func TestEndReadsItsMeta(t *testing.T) {
+	for data, want := range map[string]string{
+		`{"meta":{"reason":"levels_on"}}`: `{"reason":"levels_on"}`,
+		`{}`:                              "",
+		`{"meta":null}`:                   "",
+		`{"meta":[1]}`:                    "",
+		`{oops`:                           "",
+	} {
+		ev, err := streamOf("event: end\ndata: " + data + "\n\n").Next()
+		if err != nil || ev.Type != End || string(ev.Meta) != want {
+			t.Fatalf("end %s: %+v (meta %s) %v, want meta %q", data, ev, ev.Meta, err, want)
+		}
+	}
+}
+
+// A level stream's entity carries the shared document's version and timestamps beside its key and
+// seq (level-feed.ts). Fails on origin/main: Entity has no Version, CreatedAt or UpdatedAt there.
+func TestNextReadsASharedDocumentsVersionAndTimes(t *testing.T) {
+	ev, err := streamOf("event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/records/k1\",\"schemas\":[\"s\"],\"rev\":\"r\"," +
+		"\"body\":{\"a\":1},\"key\":\"k1\",\"seq\":12,\"version\":3,\"createdAt\":\"2026-11-20T10:00:00.000Z\",\"updatedAt\":\"2026-11-21T11:00:00.000Z\"},\"cursor\":\"\"}\n\n").Next()
+	if err != nil || ev.Entity.Version != 3 || ev.Entity.CreatedAt != "2026-11-20T10:00:00.000Z" ||
+		ev.Entity.UpdatedAt != "2026-11-21T11:00:00.000Z" || ev.Entity.Seq != 12 || ev.Entity.Key != "k1" {
+		t.Fatalf("got %+v %v", ev.Entity, err)
+	}
+}

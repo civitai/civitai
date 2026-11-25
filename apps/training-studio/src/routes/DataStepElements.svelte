@@ -33,9 +33,9 @@
   import type { StudioPopover } from '$lib/elements/studio-popover';
   import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
   import { autoLabelAvailable, browser, hostConfig, hostLink } from '$lib/host';
-  import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
+  import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/nsfw-rating';
   import StickySummary from '$lib/components/StickySummary.svelte';
-  import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { blobPreview, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
@@ -68,6 +68,7 @@
     labelString,
     matchesTagFilter,
     mergeAutoLabel,
+    newBatch,
     nextImgId,
     parseLabel,
     plural,
@@ -76,6 +77,10 @@
     startLabelPass,
     tagsHaveTrigger,
     withFilterTags,
+    asDatasetFilter,
+    matchesRatingFilter,
+    ratingChoices,
+    type BatchSource,
     type DatasetFilter,
     type Img,
     type LabelPosition,
@@ -83,14 +88,14 @@
     type TagFilter,
   } from './trainingFlow';
   import { groupTags } from './tagReplace';
-  import LabelEditorModal from './LabelEditorModal.svelte';
+  import LabelEditorModal from './LabelEditorModalElements.svelte';
   import TagEditor from './TagEditor.svelte';
-  import GenerationPickerModal from './GenerationPickerModal.svelte';
+  import GenerationPickerModal from './GenerationPickerModalElements.svelte';
   import { fileDrop, isZip, pickedFiles } from './fileDrop';
   import { inFlight, uploadedFields, uploadTile } from './tileUpload';
   import { datasetEpoch, planRemoval } from './datasetRemoval';
-  import ReuseDatasetModal from './ReuseDatasetModal.svelte';
-  import ManageTagsModal from './ManageTagsModal.svelte';
+  import ReuseDatasetModal from './ReuseDatasetModalElements.svelte';
+  import ManageTagsModal from './ManageTagsModalElements.svelte';
   import RepeatsStepper from './RepeatsStepper.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
 
@@ -266,6 +271,7 @@
   // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
   const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
   const matureTotal = $derived(images.filter(isMature).length);
+  const ratingFilters = $derived(ratingChoices(images, filter));
   // With/without tag filter (and Manage tags' "Show images"): the images that matched when the filter
   // last changed — a snapshot, so adding a missing tag to one while reviewing doesn't hide it.
   let tagFilter = $state<(TagFilter & { ids: number[] }) | null>(null);
@@ -315,7 +321,9 @@
           ? images.filter(isMature)
           : filter === 'failed'
             ? images.filter(isFailed)
-            : images
+            : filter.startsWith('rating:')
+              ? images.filter((i) => matchesRatingFilter(i, filter))
+              : images
   );
   // Per-image repeats: tucked into the label editor, a bulk setter while a tag filter is on, and a
   // ×N badge only on images that repeat.
@@ -362,6 +370,7 @@
       .map((file) => ({ file, fileMediaType: fileMedia(file.type) }))
       .filter((x): x is { file: File; fileMediaType: Media } => !!x.fileMediaType);
     if (matched.length === 0) return;
+    const batch = newBatch('upload');
     const added: Img[] = matched.map(({ file, fileMediaType }) => ({
       id: nextImgId(),
       file,
@@ -372,6 +381,7 @@
       progress: 0,
       tags: [],
       caption: '',
+      batch,
     }));
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
@@ -421,7 +431,7 @@
       nsfwLevel?: string;
       repeats?: number;
     }[],
-    { silent = false }: { silent?: boolean } = {}
+    { silent = false, source = 'reuse' }: { silent?: boolean; source?: BatchSource } = {}
   ) {
     // Skip blobs already in the dataset (the picker can't see what's here) or repeated in the batch.
     const have = new Map<string, number>();
@@ -445,6 +455,7 @@
     if (!silent && skipped.length) dupOwnerIds = [...dupOwnerIds, ...skipped];
     if (fresh.length === 0) return;
     const toHydrate: { id: number; air: string; workflowId: string }[] = [];
+    const batch = newBatch(source);
     const added: Img[] = fresh.map(({ id, ...item }) => {
       const label = item.caption?.trim() ?? '';
       if (!item.url && item.previewWorkflowId)
@@ -467,6 +478,7 @@
         sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
         repeats: item.repeats,
+        batch,
       };
     });
     images = [...images, ...added];
@@ -481,7 +493,7 @@
     if (targets.length === 0) return;
     await pool(targets, 4, async (t) => {
       const direct = directDatasetUrl(t.air);
-      const url = direct ?? (await blobPreviewUrl(t.air, t.workflowId));
+      const { url, nsfwLevel } = direct ? { url: direct } : await blobPreview(t.air, t.workflowId);
       if (!url) return;
       // Tile removed mid-fetch — or the whole flow unmounted (its cleanup empties `images`, so
       // this same guard catches a late resolve after teardown and the URL never leaks).
@@ -489,7 +501,7 @@
         if (!direct) URL.revokeObjectURL(url);
         return;
       }
-      patch(t.id, { previewUrl: url, blobUrl: url });
+      patch(t.id, { previewUrl: url, blobUrl: url, ...(nsfwLevel ? { nsfwLevel } : {}) });
     });
     // A directly fetchable (https) item only becomes labelable once `blobUrl` exists — the add-time
     // drain saw nothing to do, so run it again now.
@@ -651,6 +663,7 @@
       captions: entries.map((e) => e.caption),
     });
     if (suggested) trigger = suggested;
+    const batch = newBatch('zip');
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -665,6 +678,7 @@
         // Verbatim (untrimmed) — the switch logic promises to restore the file's text exactly.
         sourceLabel: e.caption || undefined,
         labelTried: label ? true : undefined,
+        batch,
       };
     });
     images = [...images, ...added];
@@ -875,7 +889,8 @@
         url: media === 'image' ? i.previewUrl ?? i.url : i.url,
         name: `generation ${i.blobId.slice(0, 8)}`,
         nsfwLevel: i.nsfwLevel,
-      }))
+      })),
+      { source: 'generations' }
     );
   }
 
@@ -1104,8 +1119,8 @@
     {/if}
   </div>
 
-  <div class="flex flex-wrap gap-2.5">
-    <civitai-button variant="outline" onclick={() => fileInput.click()}>
+  <div class="flex flex-wrap items-center gap-2.5">
+    <civitai-button onclick={() => fileInput.click()}>
       <span slot="left"><IconUpload size={15} stroke={2} /></span>Upload files
     </civitai-button>
     <civitai-button variant="outline" onclick={() => (genPickerOpen = true)}>
@@ -1114,16 +1129,17 @@
     <civitai-button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
       <span slot="left"><IconArchive size={15} stroke={2} /></span>{importing ? 'Importing…' : 'Import .zip'}
     </civitai-button>
+    <civitai-button variant="outline" onclick={() => (reuseOpen = true)}>
+      <span slot="left"><IconRepeat size={15} stroke={2} /></span>Reuse a dataset
+    </civitai-button>
     <civitai-button
-      variant="outline"
+      class="ml-auto"
+      variant="subtle"
       onclick={exportZip}
       disabled={exporting || images.every((i) => i.status === 'blocked')}
       title="Download your {media} files with their {noun} as same-named .txt files"
     >
       <span slot="left"><IconDownload size={15} stroke={2} /></span>{exporting ? 'Zipping…' : 'Download .zip'}
-    </civitai-button>
-    <civitai-button variant="outline" onclick={() => (reuseOpen = true)}>
-      <span slot="left"><IconRepeat size={15} stroke={2} /></span>Reuse a dataset
     </civitai-button>
   </div>
 
@@ -1474,9 +1490,8 @@
                 { value: 'all', label: `All ${images.length}` },
                 { value: 'labeled', label: `Labeled ${labeledTotal}` },
                 { value: 'unlabeled', label: `Unlabeled ${unlabeledTotal}` },
-                ...(matureTotal > 0 || filter === 'mature'
-                  ? [{ value: 'mature', label: `Mature ${matureTotal}` }]
-                  : []),
+                ...(filter === 'mature' ? [{ value: 'mature', label: `Mature ${matureTotal}` }] : []),
+                ...ratingFilters.map((r) => ({ value: `rating:${r.rating}`, label: `${r.label} ${r.count}` })),
                 ...(failedTotal > 0 || filter === 'failed'
                   ? [{ value: 'failed', label: `Failed ${failedTotal}` }]
                   : []),
@@ -1484,8 +1499,8 @@
               value={filter}
               onchange={(e: Event) => {
                 const v = (e.currentTarget as StudioChipGroup).value;
-                if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
-                  showFilter(v);
+                const next = asDatasetFilter(v);
+                if (next) showFilter(next);
               }}
             ></studio-chip-group>
             <civitai-segmented-control
@@ -1580,10 +1595,10 @@
           {/if}
         </div>
 
-        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !i.nsfwLevel)}
+        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !!i.previewUrl && !i.nsfwLevel)}
           <p class="mb-3 text-xs text-dark-2">
-            Images reused from an earlier training have no rating badge. Retraining is charged the same
-            way the original run was.
+            Some images have no rating badge. Every image is checked again when you start training; if
+            that finds mature content, nothing is charged until you check the price and start again.
           </p>
         {/if}
 
@@ -1601,7 +1616,9 @@
                     ? 'No images rated mature.'
                     : filter === 'failed'
                       ? 'No failed uploads.'
-                      : 'No images.'}
+                      : filter.startsWith('rating:')
+                        ? `No images rated ${nsfwLevelLabel(filter.slice('rating:'.length))}.`
+                        : 'No images.'}
           </div>
         {/if}
 

@@ -52,6 +52,22 @@ describe('trainingData.resolve', () => {
     expect(resolveDownloadUrl).not.toHaveBeenCalled();
   });
 
+  it('refuses the row on a version added from a run to a model that never came from the Studio', async () => {
+    findMany.mockResolvedValue([
+      row({
+        url: EPOCH_URL,
+        metadata: { selectedEpochUrl: EPOCH_URL },
+        modelVersion: { meta: { trainingStudioWorkflowId: 'wf-added' }, model: { meta: null } },
+      }),
+    ]);
+
+    await expect(resolve.handler({ modelVersionId: 3407557 }, actor)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: expect.stringContaining('Training Studio'),
+    });
+    expect(resolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
   it('still refuses that row when its file metadata no longer names the epoch', async () => {
     findMany.mockResolvedValue([
       row({

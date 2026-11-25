@@ -115,7 +115,7 @@ ${SET_ASIDE_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
@@ -189,7 +189,8 @@ const event = (fields: Record<string, string>) => {
   for (const [k, v] of Object.entries(fields)) form.set(k, v);
   return {
     request: new Request('https://mod.example/reports/image', { method: 'POST', body: form }),
-    locals: { user: { id: 2 }, grants: {} },
+    // A grant holder: the restricted-image refusal is `card-media-access`'s, not this file's.
+    locals: { user: { id: 2, roles: ['moderator:admin'] }, grants: {} },
     getClientAddress: () => '127.0.0.1',
   } as never;
 };

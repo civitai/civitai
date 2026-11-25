@@ -1,9 +1,11 @@
+import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
+import { scanKeepsRowSql } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
@@ -64,8 +66,13 @@ export type PostAccessFacts = {
   stamped: boolean;
   /** `metadata.unpublishedBy`, as text. */
   unpublishedBy: string | null;
-  /** `metadata.unpublishedReason` is set. Only a moderator post unpublish writes it on a Post. */
+  /**
+   * `metadata.unpublishedReason` is set: a moderator post unpublish, or a delete a case keeps
+   * (`pendingDelete`).
+   */
   moderatorReason: boolean;
+  /** Unpublished by a delete its open case keeps: nobody has decided anything yet. */
+  pendingDelete: boolean;
   versionStatus: string | null;
   modelStatus: string | null;
 };
@@ -78,8 +85,10 @@ export type ImageAccessFacts = {
   blockedAt: Date | null;
   /** Latest `MODERATOR_TAKEDOWN_ACTIVITIES` row on this image. */
   lastTakedownActivityAt: Date | null;
-  /** A CSAM review flag or an evidence hold. Caps its url at `deny`. */
+  /** A CSAM review flag or an owner on an unfiled CSAM report, among others. Caps its url at `deny`. */
   held: boolean;
+  /** `scanKeepsRowSql` holds for the row. */
+  keptRow: boolean;
   post: PostAccessFacts | null;
 };
 
@@ -98,16 +107,18 @@ export type UrlAccessFacts = {
 
 function desiredPostAccess(post: PostAccessFacts | null): CdnAccess {
   if (!post || !post.unpublished || !post.stamped) return 'allow';
+  const violation =
+    post.versionStatus === ModelStatus.UnpublishedViolation ||
+    post.modelStatus === ModelStatus.UnpublishedViolation;
+  // Kept by a delete its case still holds, whoever deleted it: denied, not taken down, unless a
+  // moderator took down its version or model.
+  if (post.pendingDelete) return violation ? 'retract' : 'deny';
   // The owner unpublishing their own post or model is not a takedown, even if a moderator later
   // marks the model as a violation or an earlier moderator unpublish left its reason behind.
   if (post.unpublishedBy === null || post.unpublishedBy === String(post.ownerId)) return 'allow';
   if (post.moderatorReason) return 'retract';
   // Only a moderator can set this status: the unpublish services refuse a reason from anyone else.
-  if (
-    post.versionStatus === ModelStatus.UnpublishedViolation ||
-    post.modelStatus === ModelStatus.UnpublishedViolation
-  )
-    return 'retract';
+  if (violation) return 'retract';
   // Someone other than the owner, with no violation: the ban cascade. Reversible on purpose.
   return 'deny';
 }
@@ -126,6 +137,8 @@ export function desiredImageAccess(image: ImageAccessFacts): CdnAccess {
       !!image.lastTakedownActivityAt &&
       image.lastTakedownActivityAt.getTime() >= image.blockedAt.getTime();
     access = human ? 'retract' : 'deny';
+  } else if (image.ingestion !== 'Scanned' && image.keptRow) {
+    access = 'deny';
   }
   return strongestAccess([access, desiredPostAccess(image.post)]);
 }
@@ -305,12 +318,14 @@ type FactsRow = {
   lastTakedownActivityAt: Date | null;
   userId: number;
   csamReview: boolean;
+  keptRow: boolean;
   postId: number | null;
   postOwnerId: number | null;
   postUnpublished: boolean | null;
   postStamped: boolean | null;
   postUnpublishedBy: string | null;
   postModeratorReason: boolean | null;
+  postPendingDelete: boolean | null;
   postCsamHoldRemoved: boolean | null;
   matureUnderageUnpublish: boolean | null;
   versionStatus: string | null;
@@ -430,6 +445,7 @@ async function loadFacts(urls: string[]) {
       SELECT
         i.id, i.url, i."userId", i.ingestion::text AS ingestion, i."blockedFor",
         i."needsReview" IS NOT DISTINCT FROM 'csam' AS "csamReview",
+        ${scanKeepsRowSql('i')} AS "keptRow",
         q."createdAt" AS "blockedAt",
         ma."lastActedAt" AS "lastTakedownActivityAt",
         p.id AS "postId",
@@ -438,6 +454,7 @@ async function loadFacts(urls: string[]) {
         p.metadata ? 'unpublishedAt' AS "postStamped",
         p.metadata->>'unpublishedBy' AS "postUnpublishedBy",
         p.metadata ? 'unpublishedReason' AS "postModeratorReason",
+        p.metadata->>'unpublishedReason' = ${POST_PENDING_DELETE_REASON} AS "postPendingDelete",
         p.metadata->>'unpublishedReason' = ${CSAM_HOLD_POST_UNPUBLISH_REASON} AS "postCsamHoldRemoved",
         (mv.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}
           OR mo.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}) AS "matureUnderageUnpublish",
@@ -492,6 +509,7 @@ async function loadFacts(urls: string[]) {
       blockedFor: row.blockedFor,
       blockedAt: row.blockedAt,
       lastTakedownActivityAt: row.lastTakedownActivityAt,
+      keptRow: row.keptRow,
       held:
         row.csamReview ||
         holds.held(row.userId) ||
@@ -508,6 +526,7 @@ async function loadFacts(urls: string[]) {
               stamped: !!row.postStamped,
               unpublishedBy: row.postUnpublishedBy,
               moderatorReason: !!row.postModeratorReason,
+              pendingDelete: !!row.postPendingDelete,
               versionStatus: row.versionStatus,
               modelStatus: row.modelStatus,
             },
@@ -608,10 +627,7 @@ async function reportCoverage(
 }
 
 type OwnerHolds = {
-  /**
-   * Has an active hold marker, or is named on a CSAM report that is unsent, or sent without a
-   * verified evidence copy.
-   */
+  /** Named on a CSAM report that is unsent, or sent without a verified evidence copy. */
   held: (userId: number) => boolean;
   /** Named on any CSAM report. */
   reported: (userId: number) => boolean;
@@ -643,7 +659,7 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
     logToAxiom({
       type: 'error',
       name: 'cdn-access-hold-lookup',
-      message: 'evidence hold lookup failed; treating every owner as held',
+      message: 'owner report lookup failed; treating every owner as held',
       error: safeError(error),
     });
     return { held: () => true, reported: () => true, failed: true };

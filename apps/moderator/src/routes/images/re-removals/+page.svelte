@@ -12,6 +12,7 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { VIOLATION_LABELS } from '$lib/violations';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -93,17 +94,25 @@
           verdict && 'opacity-50'
         )}
       >
-        <a href={imageLookupUrl(row.imageId)} class="w-full shrink-0 sm:w-48">
-          <CdnOrRetractedMedia
-            item={{
-              id: row.imageId,
-              url: row.url,
-              type: row.mediaType === 'video' ? 'video' : 'image',
-            }}
-            width={400}
-            class="w-full rounded-md object-cover"
-          />
-        </a>
+        {#if row.restricted}
+          <div
+            class="flex aspect-square w-full shrink-0 items-center justify-center rounded-md bg-dark-6 p-4 text-center text-xs text-dark-2 sm:w-48"
+          >
+            {RETRACTED_REFUSED}
+          </div>
+        {:else}
+          <a href={imageLookupUrl(row.imageId)} class="w-full shrink-0 sm:w-48">
+            <CdnOrRetractedMedia
+              item={{
+                id: row.imageId,
+                url: row.url,
+                type: row.mediaType === 'video' ? 'video' : 'image',
+              }}
+              width={400}
+              class="w-full rounded-md object-cover"
+            />
+          </a>
+        {/if}
 
         <div class="min-w-0 flex-1 space-y-2 text-sm">
           <div class="flex flex-wrap items-baseline gap-x-2">

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -45,6 +46,69 @@ type Listing struct {
 	Media     []ListingMedia
 	// Detail is the body's public detail fields, decoded with Media (absent from Keys).
 	Detail ListingDetail
+	// SubListings is the body's subListings in stream order: the items the store grid shows as cards
+	// of their own beside the listing. Keys carries each with its key fields only (SubListing).
+	SubListings []SubListing
+	// SubListingsOmitted is how many more sub-listings the store grid shows beside the listing than
+	// the stream carries: the adapter caps each body's items (MAX_STREAM_SUB_LISTINGS) and says how
+	// many it left out (the body's subListingsOmitted, 0 when absent). The read API names such a
+	// listing to the web tier's shadow, so a left-out item is a known cap difference, not a mismatch.
+	SubListingsOmitted int64
+}
+
+// SubListing is one item of a store-listing@v1 body's subListings (ListingSubListingItem in
+// src/server/registry-adapter/catalog-media.ts): a sub-listing card the store grid shows beside its
+// parent listing, which the stream only carries while the store could show it to some viewer (an
+// approved item by an active author, under a parent whose sub-listings are on and whose link works).
+//
+// ID, Title, ContentRating and SortTime are its key fields: the grid ranks and gates items on them,
+// so Keys returns them (and nothing else of the item). The rest is read with the body.
+type SubListing struct {
+	// ID is the item's id, `asl_` and a ULID: the card's key and its tie-break.
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// ContentRating is the item's own rating ("" for none), which the store's mature rule reads
+	// (subListingMatureFilter, s.content_rating).
+	ContentRating string `json:"contentRating"`
+	// SortTime is the item's `newest` key: when it was approved, else created.
+	SortTime *time.Time `json:"sortTime"`
+
+	// The card's other fields, absent from Keys (keyOf).
+	Tagline *string `json:"-"`
+	// CardContentRating is the card's rating ("" for none): the stricter of parent and item
+	// (effectiveSubListingRating), which the card shows and caps its images at.
+	CardContentRating string           `json:"-"`
+	Author            ListingChip      `json:"-"`
+	RunHref           string           `json:"-"`
+	External          bool             `json:"-"`
+	Image             *SubListingImage `json:"-"`
+}
+
+// SubListingImage is an item's own image at cover width, rated on its own: like a media item, its
+// NsfwLevel is exactly its Rating's level, and the read API gates it per request.
+type SubListingImage struct {
+	URL       string
+	NsfwLevel int64
+	Rating    string
+}
+
+// subListingIDPrefix starts every item id (APP_SUB_LISTING_ID_RE, app-sub-listing.constants.ts):
+// the grid tells an item's position from a listing's by it (IsSubListingID).
+const subListingIDPrefix = "asl_"
+
+// IsSubListingID reports whether id names a sub-listing (isAppSubListingId): `asl_` and a
+// 26-character Crockford ULID.
+func IsSubListingID(id string) bool {
+	rest, ok := strings.CutPrefix(id, subListingIDPrefix)
+	if !ok || len(rest) != 26 {
+		return false
+	}
+	for _, r := range rest {
+		if !strings.ContainsRune("0123456789ABCDEFGHJKMNPQRSTVWXYZ", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // ListingDetail is the public detail part of a store-listing@v1 body (STORE_LISTING_SCHEMA_DOCUMENT),
@@ -149,6 +213,28 @@ type listingBody struct {
 	Stats                json.RawMessage   `json:"stats"`
 	CreatedAt            json.RawMessage   `json:"createdAt"`
 	UpdatedAt            json.RawMessage   `json:"updatedAt"`
+	// SubListings is required (an empty array for none): a body without it is from an adapter that
+	// does not publish sub-listings, and its listing would read as having none.
+	SubListings []json.RawMessage `json:"subListings"`
+	// SubListingsOmitted is optional: absent is none left out.
+	SubListingsOmitted *int64 `json:"subListingsOmitted"`
+}
+
+type subListingBody struct {
+	ID                *string         `json:"id"`
+	Title             *string         `json:"title"`
+	Tagline           json.RawMessage `json:"tagline"`
+	ContentRating     json.RawMessage `json:"contentRating"`
+	CardContentRating json.RawMessage `json:"cardContentRating"`
+	Author            *struct {
+		ID       *int64  `json:"id"`
+		Username *string `json:"username"`
+		Image    *string `json:"image"`
+	} `json:"author"`
+	SortTime json.RawMessage `json:"sortTime"`
+	RunHref  *string         `json:"runHref"`
+	External *bool           `json:"external"`
+	Image    json.RawMessage `json:"image"`
 }
 
 type mediaBody struct {
@@ -191,6 +277,10 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 		return Listing{}, nil, errors.New("listingContentRating missing")
 	case b.Media == nil:
 		return Listing{}, nil, errors.New("media missing")
+	case b.SubListings == nil:
+		return Listing{}, nil, errors.New("subListings missing")
+	case b.SubListingsOmitted != nil && *b.SubListingsOmitted < 0:
+		return Listing{}, nil, errors.New("subListingsOmitted is negative")
 	}
 	l := Listing{URN: urn, Rev: rev, Body: body, ID: *b.ID, App: *b.App, Slug: *b.Slug, Name: *b.Name, Kind: *b.Kind}
 	var err error
@@ -230,7 +320,88 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 		m.Position = i
 		l.Media = append(l.Media, m)
 	}
+	if b.SubListingsOmitted != nil {
+		l.SubListingsOmitted = *b.SubListingsOmitted
+	}
+	l.SubListings = make([]SubListing, 0, len(b.SubListings))
+	seen := map[string]bool{}
+	for i, raw := range b.SubListings {
+		sub, err := subListingFrom(raw)
+		if err != nil {
+			return Listing{}, nil, fmt.Errorf("subListings[%d]: %w", i, err)
+		}
+		if seen[sub.ID] {
+			return Listing{}, nil, fmt.Errorf("subListings[%d]: id %s twice", i, sub.ID)
+		}
+		seen[sub.ID] = true
+		l.SubListings = append(l.SubListings, sub)
+	}
 	return l, drops, nil
+}
+
+// subListingFrom reads one sub-listing item. Every defect fails the whole body: each field is either
+// what the grid ranks and gates the item on or what its card shows, and an item the read model
+// cannot rank, gate or show exactly as the database would must not be stored.
+func subListingFrom(raw json.RawMessage) (SubListing, error) {
+	var b subListingBody
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return SubListing{}, errors.New("not an object")
+	}
+	switch {
+	case b.ID == nil || !IsSubListingID(*b.ID):
+		return SubListing{}, errors.New("id missing or not a sub-listing id")
+	case b.Title == nil:
+		return SubListing{}, errors.New("title missing")
+	case b.ContentRating == nil:
+		return SubListing{}, errors.New("contentRating missing")
+	case b.CardContentRating == nil:
+		return SubListing{}, errors.New("cardContentRating missing")
+	case b.Author == nil || b.Author.ID == nil:
+		return SubListing{}, errors.New("author missing")
+	case b.RunHref == nil || *b.RunHref == "":
+		return SubListing{}, errors.New("runHref missing")
+	case b.External == nil:
+		return SubListing{}, errors.New("external missing")
+	case b.Image == nil:
+		return SubListing{}, errors.New("image missing")
+	}
+	s := SubListing{ID: *b.ID, Title: *b.Title, RunHref: *b.RunHref, External: *b.External,
+		Author: ListingChip{ID: *b.Author.ID, Username: b.Author.Username, Image: b.Author.Image}}
+	var err error
+	if s.ContentRating, err = nullableString(b.ContentRating); err != nil {
+		return SubListing{}, fmt.Errorf("contentRating: %w", err)
+	}
+	if s.CardContentRating, err = nullableString(b.CardContentRating); err != nil {
+		return SubListing{}, fmt.Errorf("cardContentRating: %w", err)
+	}
+	tagline, err := nullableString(b.Tagline)
+	if err != nil {
+		return SubListing{}, fmt.Errorf("tagline: %w", err)
+	}
+	if b.Tagline != nil && string(b.Tagline) != "null" {
+		s.Tagline = &tagline
+	}
+	if s.SortTime, err = nullableTime(b.SortTime); err != nil || s.SortTime == nil {
+		return SubListing{}, errors.New("sortTime missing or not an RFC 3339 date-time")
+	}
+	if string(b.Image) != "null" {
+		var mb mediaBody
+		if err := json.Unmarshal(b.Image, &mb); err != nil {
+			return SubListing{}, errors.New("image: not an object or null")
+		}
+		switch {
+		case mb.URL == nil || *mb.URL == "":
+			return SubListing{}, errors.New("image: url missing")
+		case mb.NsfwLevel == nil:
+			return SubListing{}, errors.New("image: nsfwLevel missing")
+		case mb.Rating == nil || mediaLevelOf[*mb.Rating] == 0:
+			return SubListing{}, errors.New("image: rating missing or unknown")
+		case *mb.NsfwLevel != mediaLevelOf[*mb.Rating]:
+			return SubListing{}, fmt.Errorf("image: nsfwLevel %d is not rating %s's level", *mb.NsfwLevel, *mb.Rating)
+		}
+		s.Image = &SubListingImage{URL: *mb.URL, NsfwLevel: *mb.NsfwLevel, Rating: *mb.Rating}
+	}
+	return s, nil
 }
 
 // statsFrom reads the counters of a stats object into dst. Each counter is a non-negative integer
@@ -348,6 +519,11 @@ type Listings interface {
 	Generations
 	// Count is how many listings gen holds. The consumer holds a snapshot that ends with none.
 	Count(ctx context.Context, gen int64) (int, error)
+	// StaleCount is how many listings of gen are marked stale (ChangeStale): rows kept as they
+	// were when the serving generation got an upsert of theirs it could not use, so they may lack a
+	// change that upsert carried. The read API answers not-ready while the serving generation holds
+	// any.
+	StaleCount(ctx context.Context, gen int64) (int, error)
 	// Get is one listing of gen, with its media in stream order; false when gen does not hold it.
 	Get(ctx context.Context, gen int64, urn string) (Listing, bool, error)
 	// Keys is every listing of gen with its columns only (no Body, no Media), for the grid's filter
@@ -371,12 +547,23 @@ func decodeStored(urn, rev string, body []byte) (Listing, error) {
 	return l, nil
 }
 
-// keyOf is l without its body and media: what Keys returns.
+// keyOf is l without its body and media, and with its sub-listings' key fields only: what Keys
+// returns.
 func keyOf(l Listing) Listing {
 	l.Body = nil
 	l.Media = nil
 	l.Detail = ListingDetail{}
+	l.SubListings = subListingKeys(l.SubListings)
 	return l
+}
+
+// subListingKeys is subs with each item's key fields only (SubListing), never nil.
+func subListingKeys(subs []SubListing) []SubListing {
+	out := make([]SubListing, 0, len(subs))
+	for _, s := range subs {
+		out = append(out, SubListing{ID: s.ID, Title: s.Title, ContentRating: s.ContentRating, SortTime: s.SortTime})
+	}
+	return out
 }
 
 // ListingsMemory is the in-process Listings, with the same transaction semantics as
@@ -399,6 +586,17 @@ func (m *ListingsMemory) Count(_ context.Context, gen int64) (int, error) {
 		return 0, ErrNoGeneration
 	}
 	return len(g.rows), nil
+}
+
+// StaleCount implements Listings.
+func (m *ListingsMemory) StaleCount(_ context.Context, gen int64) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.gens[gen]
+	if !ok {
+		return 0, ErrNoGeneration
+	}
+	return len(g.stale), nil
 }
 
 // Get implements Listings.

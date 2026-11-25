@@ -128,11 +128,29 @@ describe('saveRemixApp', () => {
     expect(dbMock.dbWrite.appBlock.create).not.toHaveBeenCalled();
   });
 
+  it('🔴 refuses a save whose row stopped being a remix app (P2025), and bumps nothing', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(pixelArt, 2) as never);
+    dbMock.dbWrite.appBlock.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    await expect(saveRemixApp({ ...pixelArt, name: 'Pixels' })).rejects.toMatchObject({
+      code: 'P2025',
+    });
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
   it('saves a stored video.remix row on its own slot, so a mod can still edit it', async () => {
     const video = { ...pixelArt, target: 'video.remix' as const };
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(video, 2) as never);
     await saveRemixApp({ ...video, name: 'Pixels' });
     expect(dbMock.dbWrite.appBlock.update).toHaveBeenCalledTimes(1);
+    // Re-checked at the write: a row that is no longer a remix app's is not replaced.
+    expect(dbMock.dbWrite.appBlock.update.mock.calls[0][0]).toMatchObject({
+      where: { blockId: 'remix-pixel-art', status: { in: ['remix', 'remix_disabled'] } },
+    });
     expect(written().data).toMatchObject({
       manifest: { targets: [{ slotId: 'video.remix' }] },
     });
@@ -660,7 +678,11 @@ describe('user apps: submit, review and enable', () => {
     });
 
     const written = lastWrite();
-    expect(written.where).toEqual({ id: row.id, manifest: { equals: row.manifest } });
+    expect(written.where).toEqual({
+      id: row.id,
+      manifest: { equals: row.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
     expect(written.data).toMatchObject({
       contentRating: 'x',
       manifest: { review: 'approved', remix: { engine: DEFAULT_ENGINE } },
@@ -853,7 +875,11 @@ describe('user apps: submit, review and enable', () => {
     });
 
     const revoke = lastWrite();
-    expect(revoke.where).toEqual({ id: sibling.id, manifest: { equals: sibling.manifest } });
+    expect(revoke.where).toEqual({
+      id: sibling.id,
+      manifest: { equals: sibling.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
     expect(revoke.data.contentRating).toBe('pg');
     // Out of menus and back to review, not deleted.
     expect(revoke.data.status).toBe('remix_disabled');
@@ -954,7 +980,11 @@ describe('user apps: submit, review and enable', () => {
     expect(held.review).toBe('submitted');
     expect(held.remix.engine).toEqual({ safe: DEFAULT_ENGINE.safe });
     expect(lastWrite().data.status).toBe('remix_disabled');
-    expect(lastWrite().where).toEqual({ id: sibling.id, manifest: { equals: moved.manifest } });
+    expect(lastWrite().where).toEqual({
+      id: sibling.id,
+      manifest: { equals: moved.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
   });
 
   describe('the minor-themed sweep and bar, scoped', () => {
@@ -1330,7 +1360,11 @@ describe('user apps: submit, review and enable', () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(approved as never);
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
     await setRemixAppEnabled({ slug: 'u7-probe', enabled: true, moderatorId: MOD });
-    expect(lastWrite().where).toEqual({ id: approved.id, manifest: { equals: approved.manifest } });
+    expect(lastWrite().where).toEqual({
+      id: approved.id,
+      manifest: { equals: approved.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
     expect(lastWrite().data.status).toBe('remix');
     expect(logOf(lastWrite())).toEqual([expect.objectContaining({ by: MOD, action: 'enabled' })]);
 

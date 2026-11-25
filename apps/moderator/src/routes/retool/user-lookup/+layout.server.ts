@@ -34,5 +34,5 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   const userId = await resolveUserId(q);
   if (!userId) return { ...base, result: null, notFound: true };
 
-  return { ...base, result: await getUserLookup(userId), notFound: false };
+  return { ...base, result: await getUserLookup(userId, locals.user), notFound: false };
 };

@@ -2,7 +2,8 @@ import * as z from 'zod';
 import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
+import type { RateLimit } from '~/server/middleware.trpc';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
@@ -485,6 +486,7 @@ export function isViewerScopedInfiniteFeed(
   input: Parameters<typeof isViewerScopedImageFeed>[0] & {
     hatSort?: unknown;
     hatTurfMine?: boolean | null;
+    hatTurfExpired?: boolean | null;
     hideTurfHats?: boolean | null;
     hideWornHats?: boolean | null;
   }
@@ -493,6 +495,7 @@ export function isViewerScopedInfiniteFeed(
     isViewerScopedImageFeed(input) ||
     !!input.hatSort ||
     !!input.hatTurfMine ||
+    !!input.hatTurfExpired ||
     !!input.hideTurfHats ||
     !!input.hideWornHats
   );
@@ -588,6 +591,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hatTeams: z.string().max(32).array().max(8).optional(),
     // Only the images the viewer has a live Turf hat on.
     hatTurfMine: z.boolean().optional(),
+    // Only the images where the viewer's Turf hat has expired, so they can place it again.
+    hatTurfExpired: z.boolean().optional(),
     hideTurfHats: z.boolean().optional(),
     hideWornHats: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the
@@ -731,6 +736,11 @@ export const updateImageAcceptableMinorSchema = z.object({
   acceptableMinor: z.boolean(),
 });
 
+/** Each change purges shared caches; moderators are not limited. */
+export const updateImageAcceptableMinorRateLimits: RateLimit[] = [
+  { limit: 30, period: CacheTTL.hour },
+];
+
 export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
 export const setTosViolationSchema = z.object({
   id: z.number(),
@@ -749,4 +759,6 @@ export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilt
   publishedOnly: z.boolean().optional(),
   /** With publishedOnly: also the caller's unpublished media from the crucible entry modal. */
   includeEntryDrafts: z.boolean().optional(),
+  /** Narrows to media, among the caller's newest OWN_MEDIA_QUERY_WINDOW (1,000), whose prompt, post title or post tag contains this text. */
+  query: z.string().trim().max(100).optional(),
 });

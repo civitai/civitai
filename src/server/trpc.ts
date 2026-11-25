@@ -14,6 +14,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { HEAVY_REQUEST_CONCURRENCY, withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
+import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
 import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
 import {
   recordTrpcCaller,
@@ -259,7 +260,9 @@ function runRecordProcedureDuration<T>(
   type: string,
   userId: number | undefined,
   caller: TrpcCallerClass | undefined,
-  next: () => Promise<T>
+  next: () => Promise<T>,
+  /** False for a feed-go parity replay: the procedure metrics count real callers only. */
+  metrics = true
 ): Promise<T> {
   const startedAt = performance.now();
   return next().then(
@@ -273,15 +276,17 @@ function runRecordProcedureDuration<T>(
       // Reuse the single performance.now() delta for BOTH the opt-in histogram and
       // the always-on slow-log — avoids startTimer's separate hrtime capture +
       // Object.assign per procedure. Same histogram semantics (wall-clock seconds).
-      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
-      if (caller) recordTrpcCaller(path, caller, durationMs / 1000);
+      if (metrics && TRPC_PROCEDURE_METRICS)
+        trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (metrics && caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({ path, type, durationMs, ok, errorCode, userId });
       return result;
     },
     (err) => {
       const durationMs = performance.now() - startedAt;
-      if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
-      if (caller) recordTrpcCaller(path, caller, durationMs / 1000);
+      if (metrics && TRPC_PROCEDURE_METRICS)
+        trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (metrics && caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({
         path,
         type,
@@ -297,17 +302,22 @@ function runRecordProcedureDuration<T>(
 
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
-  recordTrpcCall(ctx.req?.headers, !!ctx.user);
-  const caller = TRPC_CALLER_METRICS_ENABLED
-    ? safeClassifyTrpcCaller({
-        cache: ctx.cache,
-        apiKeyId: ctx.apiKeyId,
-        subject: ctx.subject,
-        user: ctx.user,
-        bannedUser: ctx.bannedUser,
-        userAgent: ctx.req?.headers?.['user-agent'],
-      })
-    : undefined;
+  // feed-go's serve-side parity replay (feed-go-parity-replay.ts) re-asks for an answer feed-go
+  // already served: counted, it would read as Node traffic in the per-procedure call rates and
+  // latencies (up to a large share of a procedure Node no longer serves). The slow log still names it.
+  const metrics = !isFeedGoParityReplay(ctx.req?.headers);
+  if (metrics) recordTrpcCall(ctx.req?.headers, !!ctx.user);
+  const caller =
+    metrics && TRPC_CALLER_METRICS_ENABLED
+      ? safeClassifyTrpcCaller({
+          cache: ctx.cache,
+          apiKeyId: ctx.apiKeyId,
+          subject: ctx.subject,
+          user: ctx.user,
+          bannedUser: ctx.bannedUser,
+          userAgent: ctx.req?.headers?.['user-agent'],
+        })
+      : undefined;
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the
@@ -316,11 +326,11 @@ const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
   // Re-label per procedure: the request-level label in [trpc].ts is trpc:batch for batched calls.
   if (longTaskLabelsArmed || pyroscopeArmed) {
-    const run = () => runRecordProcedureDuration(path, type, userId, caller, next);
+    const run = () => runRecordProcedureDuration(path, type, userId, caller, next, metrics);
     const profiled = pyroscopeArmed ? () => withProfileRoute(`trpc:${path}`, run) : run;
     return longTaskLabelsArmed ? runWithLongTaskLabel(`trpc:${path}`, profiled) : profiled();
   }
-  return runRecordProcedureDuration(path, type, userId, caller, next);
+  return runRecordProcedureDuration(path, type, userId, caller, next, metrics);
 });
 
 // An unreachable database (or no pooled connection in time) answers a retryable 503 with a generic

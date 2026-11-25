@@ -8,6 +8,7 @@ const HEADINGS: Record<string, string> = {
   language_level: 'How strong the language is',
   profanity: 'Profanity',
   subject_state: 'Who or what is shown',
+  tag_review: 'Tag review',
 };
 
 export const headingOf = (questionKey: string, prefix: string): string =>

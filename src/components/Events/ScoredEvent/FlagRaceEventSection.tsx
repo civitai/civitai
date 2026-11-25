@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
 import { HiddenFlagCard } from '~/components/HatTurf/FlagRace/HiddenFlagCard';
+import { useFlagReveal } from '~/components/HatTurf/FlagRace/useFlagReveal';
 import { FlagRaceTotals } from '~/components/HatTurf/FlagRace/FlagRaceTotals';
 import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
 import { FlagRowProviders, useFlagRow } from '~/components/HatTurf/FlagRace/FlagRowProviders';
@@ -14,6 +15,7 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 
 /**
  * The home row's Flag Race on the event page, signed in or not, while a flag day runs. Under it, each
@@ -31,8 +33,13 @@ export function FlagRaceEventSection({
 }) {
   const features = useFeatureFlags();
   const row = useFlagRow(features.flagRace ? event : undefined);
+  // Unbatched, so the edge caches it: every viewer gets the same answer.
+  const { data: media } = trpc.hatTurf.getEventMedia.useQuery(
+    { event },
+    { enabled: !!row, staleTime: 5 * 60_000, trpc: { context: { skipBatch: true } } }
+  );
   const ids = useMemo(() => row?.summary.flags.map((f) => f.imageId) ?? [], [row]);
-  const { images, flatData, isLoading } = useQueryImages(
+  const { images, flatData, revealable, isLoading } = useQueryImages(
     {
       ids,
       period: MetricTimeframe.AllTime,
@@ -41,23 +48,28 @@ export function FlagRaceEventSection({
       withMeta: false,
       include: ['cosmetics'],
     },
-    { enabled: ids.length > 0 }
+    { enabled: ids.length > 0, withRevealable: true }
   );
-  // In the day's flag order, not the feed's. A flag the server served but the viewer's hidden
-  // preferences took out (a block, a hidden user or tag) is hidden for them; one the
-  // server did not serve (removed by a moderator, deleted) has no slot at all.
+  const { reasons, revealed, reveal } = useFlagReveal(flatData ?? [], images, revealable);
+  // In the day's flag order, not the feed's. A flag the server did not serve (removed by a
+  // moderator, deleted) has no slot at all.
   const { slots, flags } = useMemo(() => {
-    const byId = new Map(images.map((image) => [image.id, image]));
+    const byId = new Map([...images, ...revealed].map((image) => [image.id, image]));
     const served = new Set((flatData ?? []).map((image) => image.id));
     const slots = ids.filter((id) => served.has(id)).map((id) => ({ id, image: byId.get(id) }));
     return { slots, flags: slots.flatMap((s) => (s.image ? [s.image] : [])) };
-  }, [ids, images, flatData]);
+  }, [ids, images, revealed, flatData]);
 
   if (!row || !ids.length) return null;
   return (
     <div className={flagClasses.wrap} data-testid="flag-race-event-section">
       <section className={clsx(partyClasses.party, flagClasses.row)}>
-        <FlagRacePanel event={event} summary={row.summary} />
+        <FlagRacePanel
+          event={event}
+          summary={row.summary}
+          video={media?.flagRace?.video}
+          duration={media?.flagRace?.duration}
+        />
         <div className={flagClasses.flags}>
           {isLoading ? (
             ids.map((id) => (
@@ -73,7 +85,12 @@ export function FlagRaceEventSection({
                     image ? (
                       <ImageCard key={id} data={image} />
                     ) : (
-                      <HiddenFlagCard key={id} imageId={id} />
+                      <HiddenFlagCard
+                        key={id}
+                        imageId={id}
+                        reason={reasons.get(id)}
+                        onShow={() => reveal(id)}
+                      />
                     )
                   )}
                 </ImagesProvider>

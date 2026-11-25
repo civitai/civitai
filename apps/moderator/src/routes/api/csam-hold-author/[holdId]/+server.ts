@@ -28,7 +28,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   const { userId } = holds;
   const [card, counts, reportedContent, recentReports] = canSeeUserCard(locals)
     ? await Promise.all([
-        orNull(getUserCard(userId)),
+        orNull(getUserCard(userId, locals.user)),
         orNull(getCounts(userId)),
         orNull(getReportedContent(userId)),
         // Automated is most of the corpus and would fill the whole list.

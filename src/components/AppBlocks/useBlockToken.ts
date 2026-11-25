@@ -35,6 +35,10 @@ interface UseBlockTokenResult {
    *  undefined on legacy responses → consumers fall back to the domain
    *  ceiling, i.e. the pre-field behaviour. */
   effectiveBrowsingLevel: number | undefined;
+  /** The app-data service this app's document store moved to, as the mint decided it
+   *  (`app-data-writes-routing.ts`): present only on a production page-run block token of an app
+   *  the cutover flag is on for. `undefined` everywhere else. Forwarded, never derived. */
+  appData: { url: string; slug: string } | undefined;
   /**
    * A bounded automatic re-mint is scheduled after a refresh failure — i.e. the
    * hook has NOT settled. Consumers must not take a destructive action (collapse
@@ -67,6 +71,15 @@ interface TokenResponse {
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
   effectiveBrowsingLevel?: number;
+  /** The App Storage writes cutover. Omitted unless the mint decided it. */
+  appData?: unknown;
+}
+
+/** The mint's `appData`, shape-checked: two strings, copied by field, or `undefined`. */
+export function readMintAppData(value: unknown): { url: string; slug: string } | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { url, slug } = value as Record<string, unknown>;
+  return typeof url === 'string' && typeof slug === 'string' ? { url, slug } : undefined;
 }
 
 export interface UseBlockTokenOptions {
@@ -119,6 +132,7 @@ export function useBlockToken(
   // A bounded automatic re-mint is scheduled. State (not a ref) because it is
   // part of the returned contract — it drives whether a consumer may take a
   // destructive action — so it has to re-render.
+  const [appData, setAppData] = useState<{ url: string; slug: string } | undefined>(undefined);
   const [retrying, setRetrying] = useState<boolean>(false);
   // M4 (audit-10): peek the current token via a ref instead of running a
   // side-effect inside a state-updater. React 18 strict-mode calls updaters
@@ -288,6 +302,7 @@ export function useBlockToken(
           ? data.effectiveBrowsingLevel
           : undefined
       );
+      setAppData(readMintAppData(data.appData));
       setPending(false);
 
       const expiresAtMs = new Date(data.expiresAt).getTime();
@@ -490,6 +505,8 @@ export function useBlockToken(
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,
+    // Scoped to the instance like the token: another app's service slug must never reach this one.
+    appData: tokenMatchesInstance ? appData : undefined,
     retrying,
     // The mint failed, nothing usable is left, and no automatic attempt is
     // coming. This — NOT a bare `error` — is what a consumer may act

@@ -52,6 +52,25 @@ type parityFixture struct {
 		Stream   map[string]map[string]json.RawMessage `json:"stream"`
 		Expected map[string]map[string]json.RawMessage `json:"expected"`
 	} `json:"details"`
+	SubListings struct {
+		Items []struct {
+			ID                string  `json:"id"`
+			Parent            string  `json:"parent"`
+			ContentRating     *string `json:"contentRating"`
+			CardContentRating *string `json:"cardContentRating"`
+			Image             *struct {
+				Key       string `json:"key"`
+				NsfwLevel int64  `json:"nsfwLevel"`
+			} `json:"image"`
+		} `json:"items"`
+		Expected map[string]map[string]*paritySubListing `json:"expected"`
+	} `json:"subListings"`
+}
+
+type paritySubListing struct {
+	ContentRating *string `json:"contentRating"`
+	Cover         *string `json:"cover"`
+	Icon          *string `json:"icon"`
 }
 
 type parityMedia struct {
@@ -98,7 +117,7 @@ func loadParity(t *testing.T) (parityFixture, map[string]store.Listing) {
 		fields := map[string]any{
 			"app": "urn:apps.civitai.com:app/" + l.Slug, "id": l.ID, "slug": l.Slug, "name": l.Slug, "kind": l.Kind,
 			"contentRating": appRating, "listingContentRating": l.ContentRating, "tagline": nil, "category": nil, "media": media, "creator": nil,
-			"stats": l.Stats, "createdAt": "2026-01-02T03:04:05.000Z", "updatedAt": nil,
+			"stats": l.Stats, "createdAt": "2026-01-02T03:04:05.000Z", "updatedAt": nil, "subListings": []any{},
 		}
 		// The detail part of the body, as the adapter publishes it (details.stream).
 		for k, v := range f.Details.Stream[l.Slug] {
@@ -302,6 +321,94 @@ func TestDetailParity(t *testing.T) {
 	// Positive control: some viewer is shown a fork's parent, so a rule that never named one fails.
 	if named == 0 {
 		t.Fatal("no viewer was shown a fork's parent")
+	}
+}
+
+// imageRatings is each NsfwLevel bit's media rating (NSFW_LEVEL_BY_IMAGE_RATING, inverted).
+var imageRatings = map[int64]string{1: "pg", 2: "pg13", 4: "r", 8: "x", 16: "xxx"}
+
+// TestSubListingParity runs every fixture sub-listing through the read model for every fixture
+// viewer: its parent's body, with the items the adapter would publish under it, decoded by the
+// ingest's decoder; the grid's gate on the parent (Filter) and on the item (SubListingAdmits); and
+// ProjectSubListingCard. Each must give subListings.expected exactly.
+func TestSubListingParity(t *testing.T) {
+	f, listings := loadParity(t)
+	if len(f.SubListings.Items) < 8 {
+		t.Fatalf("the sub-listing fixture shrank: %d items", len(f.SubListings.Items))
+	}
+	// Each parent's body again, with its items as the stream carries them.
+	items := map[string][]map[string]any{}
+	for _, it := range f.SubListings.Items {
+		var image any
+		if it.Image != nil {
+			image = map[string]any{"url": it.Image.Key, "nsfwLevel": it.Image.NsfwLevel, "rating": imageRatings[it.Image.NsfwLevel]}
+		}
+		items[it.Parent] = append(items[it.Parent], map[string]any{
+			"id": it.ID, "title": "title of " + it.ID, "tagline": nil, "contentRating": it.ContentRating,
+			"cardContentRating": it.CardContentRating, "author": map[string]any{"id": 9, "username": nil, "image": nil},
+			"sortTime": "2026-01-03T00:00:00Z", "runHref": "/apps/run/" + it.Parent + "/x?sl=" + it.ID, "external": false, "image": image,
+		})
+	}
+	parents := map[string]store.Listing{}
+	for slug, subs := range items {
+		l, ok := listings[slug]
+		if !ok {
+			t.Fatalf("a sub-listing names %s, which is not a fixture listing", slug)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(l.Body, &body); err != nil {
+			t.Fatal(err)
+		}
+		body["subListings"] = subs
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, drops, err := store.ListingFromEntity(l.URN, l.Rev, raw)
+		if err != nil || drops != nil {
+			t.Fatalf("%s with its sub-listings does not decode cleanly: %v %+v", slug, err, drops)
+		}
+		parents[slug] = p
+	}
+	shown := 0
+	for _, fv := range f.Viewers {
+		v := Viewer{RedCapable: fv.RedCapable, BrowsingLevel: fv.BrowsingLevel, Scope: fv.Scope}
+		want := f.SubListings.Expected[fv.Name]
+		if len(want) != len(f.SubListings.Items) {
+			t.Fatalf("viewer %q: expected has %d items, want %d", fv.Name, len(want), len(f.SubListings.Items))
+		}
+		for _, it := range f.SubListings.Items {
+			w, ok := want[it.ID]
+			if !ok {
+				t.Fatalf("viewer %q: no expectation for %s", fv.Name, it.ID)
+			}
+			p := parents[it.Parent]
+			s, ok := SubListingOf(p, it.ID)
+			if !ok {
+				t.Fatalf("%s is not under %s", it.ID, it.Parent)
+			}
+			admitted := len(Filter([]store.Listing{p}, "", "", nil, v)) == 1 && SubListingAdmits(s, v)
+			if !admitted {
+				if w != nil {
+					t.Errorf("viewer %q, %s: hidden, want shown", fv.Name, it.ID)
+				}
+				continue
+			}
+			if w == nil {
+				t.Errorf("viewer %q, %s: shown, want hidden", fv.Name, it.ID)
+				continue
+			}
+			shown++
+			c := ProjectSubListingCard(p, s, v)
+			got := paritySubListing{ContentRating: c.ContentRating, Cover: c.CoverURL, Icon: c.Parent.IconURL}
+			if !reflect.DeepEqual(got, *w) {
+				t.Errorf("viewer %q, %s:\n got %s\nwant %s", fv.Name, it.ID, show(got), show(*w))
+			}
+		}
+	}
+	// Positive control: the matrix shows cards at all, so a gate that hid every item would fail.
+	if shown < 25 {
+		t.Fatalf("only %d sub-listing views shown across the matrix", shown)
 	}
 }
 

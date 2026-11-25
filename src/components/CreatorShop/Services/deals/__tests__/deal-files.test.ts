@@ -170,6 +170,14 @@ describe('the buyer and the final files', () => {
     ).toBe('checkingOwned');
   });
 
+  it('does not say "being checked" of an owned file only another domain serves', () => {
+    const offDomain = file({ scanStatus: 'Passed', downloadOffDomain: true });
+    expect(buyerFinalsState([offDomain], { owned: true })).toBe('available');
+    expect(buyerFinalsState([file({ scanStatus: 'Passed' })], { owned: true })).toBe(
+      'checkingOwned'
+    );
+  });
+
   it('before accepting: checking while any file is unchecked, sealed once all have passed', () => {
     expect(buyerFinalsState([file({ scanStatus: 'Pending' })], { owned: false })).toBe('checking');
     expect(buyerFinalsState([file({ scanStatus: 'Passed' })], { owned: false })).toBe('sealed');

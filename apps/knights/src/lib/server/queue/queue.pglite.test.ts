@@ -1,12 +1,17 @@
 import type { PGlite } from '@electric-sql/pglite';
-import type { Kysely, KyselyPlugin } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sql, type Kysely, type KyselyPlugin } from 'kysely';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import { countOpenServableKnightItems } from '@civitai/db/knights';
+import { countOpenServableKnightItems, readWithoutJit } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { lockImage } from '../../../test/seed';
+import { engage, lockImage } from '../../../test/seed';
+import {
+  EXCLUSION_TABLES,
+  exclusionCases,
+  extraExclusionCases,
+} from '../../../test/skill-check-exclusions';
 import { PROGRESSION } from '../progression/config';
 import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
@@ -26,8 +31,10 @@ import {
   bucketLevelSql,
   servableItems,
   STAGE_SCAN_FIRST_ROUND,
+  STAGE_SCAN_MAX_PRIORITIES,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
+import { creditLateJudgment } from './vote-record';
 
 const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
@@ -37,6 +44,26 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 
 let pg: PGlite;
 let db: Kysely<DB>;
+/** For `countOpenServableKnightItems`, which only the main app runs, as its role reads. */
+let mainAppDb: Kysely<DB>;
+
+/** Noon on the 10th, `n` months from the real month: inside the window the partition function accepts. */
+const monthsFromNow = (n: number) => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + n, 10, 12));
+};
+
+/** Drops the vote partition holding `at` when it has no votes, so a test can watch it be created. Returns its name. */
+async function dropEmptyPartition(at: Date) {
+  const name = `KnightsVote_${at.getUTCFullYear()}_${String(at.getUTCMonth() + 1).padStart(
+    2,
+    '0'
+  )}`;
+  await pg.exec(`DO $$ BEGIN
+    IF to_regclass('"${name}"') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "${name}") THEN DROP TABLE "${name}"; END IF;
+  END $$;`);
+  return name;
+}
 let transactions: { open: () => number };
 const APPLIED = { outcome: 'applied' } as const;
 const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => APPLIED);
@@ -103,9 +130,10 @@ async function item(
  * which has milliseconds, so only the id orders them and a scan cursor must carry that instant exactly. Returns the item
  * ids in serving order.
  */
-async function sameAgeStage(levels: number[], firstImage = 100_000) {
+async function sameAgeStage(levels: number[], firstImage = 100_000, priorities?: number[]) {
   const params = [`{${levels.join(',')}}`, firstImage];
   const rows = `unnest($1::int[]) WITH ORDINALITY AS t(level, n)`;
+  const priority = `{${(priorities ?? levels.map(() => 1)).join(',')}}`;
   await pg.query(
     `INSERT INTO "Post" ("id","publishedAt") SELECT $2::int + n, '2020-01-01'::timestamp FROM ${rows}`,
     params
@@ -117,9 +145,9 @@ async function sameAgeStage(levels: number[], firstImage = 100_000) {
   );
   const items = await pg.query<{ id: number }>(
     `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","priority","createdAt","updatedAt")
-     SELECT $3::text, $2::int + n, 'test', 'Knight', 5, 1, '2026-12-15 11:00:00.123'::timestamp, '2026-12-15 11:00:00.123'::timestamp
+     SELECT $3::text, $2::int + n, 'test', 'Knight', 5, ($4::int[])[n], '2026-12-15 11:00:00.123'::timestamp, '2026-12-15 11:00:00.123'::timestamp
      FROM ${rows} ORDER BY n RETURNING id`,
-    [...params, Q]
+    [...params, Q, priority]
   );
   return items.rows.map((r) => r.id).sort((a, b) => a - b);
 }
@@ -161,7 +189,7 @@ const verdicts = async (id: number) =>
   ).rows;
 
 beforeAll(async () => {
-  ({ pg, db, transactions } = await createQueueDb());
+  ({ pg, db, mainAppDb, transactions } = await createQueueDb());
   await ensureVotePartitions(db, { now: NOW, monthsAhead: 1 });
   await pg.exec(`INSERT INTO "KnightsQuestion" ("key","kind","prompt","options")
     VALUES ('knights.test.bool','bool','Is there a hat?','[{"value":"yes","label":"Yes"},{"value":"no","label":"No"}]')`);
@@ -172,7 +200,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayerDay" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -235,7 +263,7 @@ describe('getFeed', () => {
     expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([escalated, knightItem]);
   });
 
-  it('orders by priority then age, and skips hidden checks and Acolytes', async () => {
+  it('orders by priority then age when every draw favours the lowest priority, and skips hidden checks and Acolytes', async () => {
     await player(1, 'Knight');
     await player(2, 'Acolyte');
     for (const id of [10, 11, 12, 13]) await image(id);
@@ -244,7 +272,12 @@ describe('getFeed', () => {
     await item(12, { hidden: true });
     const mid = await item(13, { priority: 2 });
 
-    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([high, mid, low]);
+    // A draw of 0.2 takes priority 1 while it lasts, then the lowest priority left, and never the starvation path.
+    expect((await getFeed(db, 1, { random: () => 0.2 }))?.items.map((i) => i.id)).toEqual([
+      high,
+      mid,
+      low,
+    ]);
     expect(await getFeed(db, 2)).toBeNull();
   });
 
@@ -257,7 +290,10 @@ describe('getFeed', () => {
 
     expect((await getFeed(db, 1, { exclude: [first] }))?.items.map((i) => i.id)).toEqual([second]);
     expect(await getFeed(db, 1, { exclude: [first, second] })).toBeNull();
-    expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([first, second]);
+    expect((await getFeed(db, 2, { random: () => 0.2 }))?.items.map((i) => i.id)).toEqual([
+      first,
+      second,
+    ]);
   });
 
   it('serves only as many items as asked for', async () => {
@@ -267,7 +303,9 @@ describe('getFeed', () => {
     await item(11, { priority: 2 });
     await item(12, { priority: 3 });
 
-    expect((await getFeed(db, 1, { limit: 1 }))?.items.map((i) => i.id)).toEqual([first]);
+    expect((await getFeed(db, 1, { limit: 1, random: () => 0.2 }))?.items.map((i) => i.id)).toEqual(
+      [first]
+    );
   });
 
   it('fills the stretch from the chosen question even when another question has more items', async () => {
@@ -350,6 +388,99 @@ describe('getFeed', () => {
     expect(served).toContain(x);
   });
 
+  it('stops a stage scan whose buckets cannot fill at the row budget', async () => {
+    await player(1, 'Knight');
+    // 350 PG items then one X item, under a budget that ends inside the second round: that round is cut to what is left
+    // of the budget and the scan stops there, before the X item, instead of reading on to the end of the stage.
+    const ids = await sameAgeStage([...Array<number>(350).fill(1), 8]);
+    const watched = watchFeedReads();
+
+    const served =
+      (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
+    expect(served).not.toContain(ids[350]);
+  });
+
+  it('gives each priority its own row budget, so a priority-1 backlog past the budget cannot hide priority 2', async () => {
+    await player(1, 'Knight');
+    // 350 PG items at priority 1, then one R, X and XXX item at priority 2. A 250-row budget runs out inside priority 1, so
+    // the scan jumps to the start of priority 2 and reads it from a first round again.
+    const levels = [...Array<number>(350).fill(1), 4, 8, 16];
+    const ids = await sameAgeStage(levels, 100_000, [...Array<number>(350).fill(1), 2, 2, 2]);
+    const nsfw = ids.slice(350);
+    const watched = watchFeedReads();
+
+    const feed = await getFeed(watched.db, 1, { scanRowBudget: 250, limit: 50 });
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150, 3]);
+    expect(watched.rounds[2]).toEqual(nsfw);
+    expect(feed?.items.map((i) => i.id)).toEqual(expect.arrayContaining(nsfw));
+  });
+
+  it('reads at most STAGE_SCAN_MAX_PRIORITIES row budgets per pick', async () => {
+    await player(1, 'Knight');
+    // 150 PG items at each of priorities 1 to 3, then an X item at priority 4. A 100-row budget is used up in each of the
+    // first three priorities, and the scan stops there instead of reading a fourth.
+    const pgs = Array<number>(150).fill(1);
+    const ids = await sameAgeStage([...pgs, ...pgs, ...pgs, 8], 100_000, [
+      ...pgs,
+      ...pgs.map(() => 2),
+      ...pgs.map(() => 3),
+      4,
+    ]);
+    const watched = watchFeedReads();
+
+    const feed = await getFeed(watched.db, 1, { scanRowBudget: 100, limit: 50 });
+    expect(STAGE_SCAN_MAX_PRIORITIES).toBe(3);
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 100, 100]);
+    expect(watched.rounds.map((r) => r[0])).toEqual([ids[0], ids[150], ids[300]]);
+    expect(feed?.items.map((i) => i.id)).not.toContain(ids[450]);
+  });
+
+  it('never reads or serves an image the gate refuses when the row budget cuts the scan short', async () => {
+    await player(1, 'Knight');
+    // The skill-check cases the serve gate refuses too (the rest only bar an image from skill checks).
+    const serveRefusals = [
+      'tos-violation',
+      'held-media',
+      'reported-image',
+      'uploader-banned-or-muted',
+      'held-media, image leg (flagged for CSAM review)',
+      'uploader-banned-or-muted, deleted leg',
+    ];
+    const refusals = [...exclusionCases(() => pg), ...extraExclusionCases(() => pg)].filter(
+      ([label]) => serveRefusals.includes(label)
+    );
+    expect(refusals.map(([label]) => label)).toEqual(serveRefusals);
+    // 100 PG items, then one R item per refusal and one clean R item, then PG items: the R bucket is empty, so the scan
+    // keeps any R row it reads. A 250-row budget cuts the second round to 150 rows, which reach past them.
+    const firstRefused = 100;
+    const clean = firstRefused + refusals.length;
+    const ids = await sameAgeStage([
+      ...Array<number>(firstRefused).fill(1),
+      ...Array<number>(refusals.length + 1).fill(4),
+      ...Array<number>(250).fill(1),
+    ]);
+    // The refusals write rows that name these image ids, which later tests reuse.
+    onTestFinished(async () => {
+      await pg.exec(`TRUNCATE ${EXCLUSION_TABLES} RESTART IDENTITY CASCADE`);
+    });
+    // sameAgeStage puts item ids[k] on image 100_001 + k.
+    for (const [k, [, refuse]] of refusals.entries()) await refuse(100_001 + firstRefused + k);
+    const refused = ids.slice(firstRefused, clean);
+    const servable = await readWithoutJit(db, (trx) => servableItems(trx).select('i.id').execute());
+    expect(servable.filter((r) => refused.includes(r.id))).toEqual([]);
+    const watched = watchFeedReads();
+
+    const served =
+      (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
+    // The full read fetches the served columns of every item the scan kept: the R row past the refused ones is kept.
+    expect(watched.fullReads.flat()).toContain(ids[clean]);
+    expect(watched.rounds.flat().filter((id) => refused.includes(id))).toEqual([]);
+    expect(watched.fullReads.flat().filter((id) => refused.includes(id))).toEqual([]);
+    expect(served.filter((id) => refused.includes(id))).toEqual([]);
+  });
+
   it('scans a stage whose buckets cannot fill in doubling rounds, and fetches the full rows of the kept items only', async () => {
     await player(1, 'Knight');
     // 350 PG items then one X item: only the PG bucket can fill, so the scan reads the whole stage. 351 rows overshoot
@@ -386,6 +517,38 @@ describe('getFeed', () => {
     expect(served).toContain(x);
   });
 
+  // SET LOCAL must not outlive the transaction it ran in: a pooled connection would carry JIT off to every later read.
+  it('turns JIT off only until the transaction that turned it off ends', async () => {
+    const jit = async (executor: Kysely<DB>) =>
+      (await sql<{ jit: string }>`SHOW jit`.execute(executor)).rows[0].jit;
+    await sql`SET jit = on`.execute(db);
+    expect(await readWithoutJit(db, (trx) => jit(trx))).toBe('off');
+    expect(await jit(db)).toBe('on');
+    await db.transaction().execute(async (trx) => {
+      expect(await readWithoutJit(trx, (inner) => jit(inner))).toBe('off');
+    });
+    expect(await jit(db)).toBe('on');
+  });
+
+  // Its estimate would start parallel workers that take longer to start than the small read takes to run.
+  it('turns parallel workers off for the read, only until its transaction ends', async () => {
+    const workers = async (executor: Kysely<DB>) =>
+      (
+        await sql<{
+          max_parallel_workers_per_gather: string;
+        }>`SHOW max_parallel_workers_per_gather`.execute(executor)
+      ).rows[0].max_parallel_workers_per_gather;
+    await sql`SET max_parallel_workers_per_gather = 2`.execute(db);
+    const before = await workers(db);
+    expect(before).toBe('2');
+    expect(await readWithoutJit(db, (trx) => workers(trx))).toBe('0');
+    expect(await workers(db)).toBe(before);
+    await db.transaction().execute(async (trx) => {
+      expect(await readWithoutJit(trx, (inner) => workers(inner))).toBe('0');
+    });
+    expect(await workers(db)).toBe(before);
+  });
+
   it('reads each level bucket by the same rule as itemBucket', async () => {
     // Raw JSON text, so jsonb keeps what a producer could write (a 4.0 keeps its scale).
     const predictions = [
@@ -412,9 +575,11 @@ describe('getFeed', () => {
     await image(399, 3);
     await item(399);
 
-    const rows = await servableItems(db)
-      .select([bucketLevelSql.as('level'), 'i.prediction', 'img.nsfwLevel'])
-      .execute();
+    const rows = await readWithoutJit(db, (trx) =>
+      servableItems(trx)
+        .select([bucketLevelSql.as('level'), 'i.prediction', 'img.nsfwLevel'])
+        .execute()
+    );
     expect(rows).toHaveLength(predictions.length + 1);
     for (const row of rows) {
       expect(levelBucket(Number(row.level))).toBe(itemBucket(row.prediction, row.nsfwLevel));
@@ -1136,6 +1301,7 @@ describe('what the feed serves', () => {
       () => pg.query(`UPDATE "Post" SET "publishedAt"='2099-01-01' WHERE id=10`),
     ],
     ['an image with no post', () => pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=10`)],
+    ['a Private post', () => pg.query(`UPDATE "Post" SET availability='Private' WHERE id=10`)],
     [
       'an image held for review',
       () => pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=10`),
@@ -1382,6 +1548,134 @@ describe('escalateExpired', () => {
     });
     expect(await itemRow(voted)).toMatchObject({ status: 'Open', minRank: 'Templar' });
     expect(await itemRow(idle)).toMatchObject({ status: 'Closed', reason: 'expired' });
+  });
+});
+
+describe('an expired item on a Private post', () => {
+  const PAST = new Date('2026-12-15T11:00:00Z');
+  const makePrivate = () => pg.query(`UPDATE "Post" SET availability='Private' WHERE id=10`);
+  async function knightItem(answer: string) {
+    await fiveKnights();
+    await active(20, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, answer);
+    await makePrivate();
+    return id;
+  }
+
+  it('goes to the Inquisitors as blocked from a stage below the last, never to the next player stage', async () => {
+    const id = await knightItem('32');
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason: 'blocked',
+    });
+  });
+
+  it('escalates the same Blocked votes on a Public post from a stage below the last, as before', async () => {
+    await fiveKnights();
+    await active(20, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, '32');
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({
+      escalated: 1,
+      toInquisitor: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  it('runs as any other item when the pick is not Blocked', async () => {
+    const id = await knightItem('4');
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({
+      escalated: 1,
+      toInquisitor: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  // A month partition before the Knight votes, so a scan without ORDER BY returns the later stage first.
+  const EARLIER_MONTH = new Date('2026-11-20T12:00:00Z');
+  async function escalatedItem(
+    stage: string,
+    votes: [stage: string, answer: string, weight: number, castAt?: Date][]
+  ) {
+    await ensureVotePartitions(db, { now: EARLIER_MONTH, monthsAhead: 0 });
+    await active(20, 'Templar');
+    await active(30, 'Paladin');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await pg.query(`UPDATE "KnightsQueueItem" SET "minRank"=$2, "escalatedAt"=$3 WHERE id=$1`, [
+      id,
+      stage,
+      new Date(PAST.getTime() - 3_600_000),
+    ]);
+    for (const [i, [at, answer, weight, castAt]] of votes.entries()) {
+      await pg.query(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+         VALUES ($1,$2,$3,$4,10,$5,$6,$7)`,
+        [id, 100 + i, castAt ?? PAST, Q, at, answer, weight]
+      );
+    }
+    return id;
+  }
+
+  it('takes the Blocked plurality of the stage before when the current stage has no counted vote, and reports the move', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 1]]);
+    await makePrivate();
+    const moved = vi.fn();
+    expect(await escalateExpired(db, { now: NOW, moved })).toMatchObject({
+      toInquisitor: 1,
+      extended: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Open', minRank: 'Templar' }]);
+  });
+
+  it('takes only the latest voted stage, over an earlier stage with another pick', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Templar', '32', 1, EARLIER_MONTH],
+      ['Knight', '4', 1],
+      ['Knight', '4', 1],
+    ]);
+    await makePrivate();
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+  });
+
+  it('does not route when a later stage picked a level over an earlier Blocked pick', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Templar', '4', 1, EARLIER_MONTH],
+      ['Knight', '32', 1],
+    ]);
+    await makePrivate();
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Paladin' });
+  });
+
+  it('does not route on earlier votes that carry no weight', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 0]]);
+    await makePrivate();
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  it('skips a later stage whose votes carry no weight', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Knight', '32', 1],
+      ['Templar', '4', 0],
+    ]);
+    await makePrivate();
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+  });
+
+  it('extends the same history on a Public post, as before', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 1]]);
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
   });
 });
 
@@ -2101,7 +2395,21 @@ describe('closeUnservableItems', () => {
     await pg.query(`UPDATE "Image" SET ingestion='Scanned', "nsfwLevel"=4 WHERE id=95`);
     expect((await sweep()).imageUnservable).toBe(0);
     expect(await statusOf([ownerRating])).toEqual([['Open', null]]);
-    expect(await countOpenServableKnightItems(db, 10)).toBe(1);
+    expect(await countOpenServableKnightItems(mainAppDb, 10)).toBe(1);
+  });
+
+  it('leaves open an item on a Private post: it is only hidden', async () => {
+    const id = await queued(96);
+    await pg.query(`UPDATE "Post" SET availability='Private' WHERE id=96`);
+
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 0,
+    });
+    expect(await statusOf([id])).toEqual([['Open', null]]);
+    expect(await countOpenServableKnightItems(mainAppDb, 10)).toBe(0);
   });
 
   it('closes an Inquisitor item whose image is gone, votes set aside, and leaves blocked images, held evidence and rulings in progress', async () => {
@@ -2118,7 +2426,7 @@ describe('closeUnservableItems', () => {
     };
     const imageGone = await atInquisitors(90);
     await countedVote(imageGone, 3, 90);
-    // An evidence hold keeps the image when its post is deleted: the moderators can still rule on it.
+    // An image can outlive its post: the moderators can still rule on it.
     const postGone = await atInquisitors(91);
     // Blocked escalations wait for a moderator by design.
     const blocked = await atInquisitors(92);
@@ -2205,17 +2513,24 @@ describe('closeWithoutOutcome', () => {
 
 describe('vote partitions', () => {
   it('creates the month partition on demand when the job has not', async () => {
+    // The owner's function creates a month near the real one only, so the vote is cast in one.
+    const at = monthsFromNow(3);
+    const name = await dropEmptyPartition(at);
+    const before = await pg.query<{ found: boolean }>(
+      `SELECT to_regclass('"${name}"') IS NOT NULL AS found`
+    );
+    expect(before.rows[0].found).toBe(false);
     await player(1, 'Knight');
     await image(10);
     const id = await item(10);
     const res = await castVote(
       db,
       { userId: 1, itemId: id, answer: '4' },
-      { applyConsensus, now: () => new Date('2033-07-09T10:00:00Z') }
+      { applyConsensus, now: () => at }
     );
     expect(res.status).toBe('recorded');
     const found = await pg.query<{ found: boolean }>(
-      `SELECT to_regclass('"KnightsVote_2033_07"') IS NOT NULL AS found`
+      `SELECT to_regclass('"${name}"') IS NOT NULL AS found`
     );
     expect(found.rows[0].found).toBe(true);
   });
@@ -2229,10 +2544,19 @@ describe('ensureVotePartitions', () => {
           `SELECT count(*)::int AS n FROM pg_inherits WHERE inhparent = '"KnightsVote"'::regclass`
         )
       ).rows[0].n;
+    const from = monthsFromNow(1);
+    const names = await Promise.all([1, 2, 3].map((n) => dropEmptyPartition(monthsFromNow(n))));
+    const missing = (
+      await pg.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM unnest($1::text[]) AS t(name) WHERE to_regclass(format('%I', name)) IS NULL`,
+        [names]
+      )
+    ).rows[0].n;
+    expect(missing).toBeGreaterThan(0);
     const before = await count();
-    await ensureVotePartitions(db, { now: new Date('2030-03-10T00:00:00Z'), monthsAhead: 2 });
-    await ensureVotePartitions(db, { now: new Date('2030-03-10T00:00:00Z'), monthsAhead: 2 });
-    expect(await count()).toBe(before + 3);
+    await ensureVotePartitions(db, { now: from, monthsAhead: 2 });
+    await ensureVotePartitions(db, { now: from, monthsAhead: 2 });
+    expect(await count()).toBe(before + missing);
 
     await player(1, 'Knight');
     await image(10);
@@ -2240,7 +2564,7 @@ describe('ensureVotePartitions', () => {
     const res = await castVote(
       db,
       { userId: 1, itemId: id, answer: '4' },
-      { applyConsensus, now: () => new Date('2030-04-02T00:00:00Z') }
+      { applyConsensus, now: () => monthsFromNow(2) }
     );
     expect(res.status).toBe('recorded');
   });
@@ -2734,8 +3058,8 @@ describe('countOpenServableKnightItems', () => {
     await pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=24`);
     await pg.query(`UPDATE "KnightsQueueItem" SET "minRank"='Templar' WHERE "imageId"=25`);
 
-    expect(await countOpenServableKnightItems(db, 100)).toBe(2);
-    expect(await countOpenServableKnightItems(db, 1)).toBe(1);
+    expect(await countOpenServableKnightItems(mainAppDb, 100)).toBe(2);
+    expect(await countOpenServableKnightItems(mainAppDb, 1)).toBe(1);
   });
 });
 
@@ -2755,5 +3079,89 @@ describe('a player and their own image', () => {
     expect(await vote(1, mine, '4')).toEqual({ status: 'rejected', reason: 'own-image' });
     expect(await verdicts(mine)).toEqual([]);
     expect(await vote(2, mine, '4')).toMatchObject({ status: 'recorded' });
+  });
+});
+
+describe('a creator the player hid or blocked', () => {
+  async function creatorItems() {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    await image(11);
+    await pg.query(`UPDATE "Image" SET "userId"=50 WHERE id=10`);
+    await pg.query(`UPDATE "Image" SET "userId"=51 WHERE id=11`);
+    return { theirs: await item(10), other: await item(11) };
+  }
+
+  it.each(['Block', 'Hide'] as const)(
+    'with a %s row, serves the creator to other players only and refuses the vote',
+    async (type) => {
+      const { theirs, other } = await creatorItems();
+      await engage(pg, 1, 50, type);
+
+      expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
+      expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+
+      expect(await vote(1, theirs, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+      expect(await verdicts(theirs)).toEqual([]);
+      expect(await vote(2, theirs, '4')).toMatchObject({ status: 'recorded' });
+    }
+  );
+
+  it('leaves the creator out of every scan round, the short per-row rounds and the long ones alike', async () => {
+    await player(1, 'Knight');
+    // 742 PG items, then two X items: only the PG bucket can fill, so the scan reads the whole stage in rounds of 100,
+    // 200 and 400 (probed per row) and then 800 (the plain anti-join). The creator owns one item in each kind of round.
+    const ids = await sameAgeStage([...Array<number>(740).fill(1), 8, 8]);
+    const [early, late, x] = [ids[5], ids[740], ids[741]];
+    await pg.query(
+      `UPDATE "Image" SET "userId"=50 WHERE id IN (SELECT "imageId" FROM "KnightsQueueItem" WHERE id IN ($1,$2))`,
+      [early, late]
+    );
+    await engage(pg, 1, 50, 'Hide');
+    const watched = watchFeedReads();
+
+    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200, 400, 40]);
+    expect(watched.rounds.flat()).toEqual(ids.filter((id) => id !== early && id !== late));
+  });
+
+  it('changes nothing for a Follow row', async () => {
+    const { theirs, other } = await creatorItems();
+    await engage(pg, 1, 50, 'Follow');
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+    expect(await vote(1, theirs, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('still serves the creator when it is the creator who blocked the player', async () => {
+    const { theirs, other } = await creatorItems();
+    await engage(pg, 50, 1, 'Block');
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+    expect(await vote(1, theirs, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('gives no late Watch credit on a settled item of a hidden creator', async () => {
+    const { theirs } = await creatorItems();
+    await engage(pg, 1, 50, 'Block');
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
+      theirs,
+      NOW,
+    ]);
+    const watchDays = async (userId: number) =>
+      (await pg.query(`SELECT 1 FROM "KnightsPlayerDay" WHERE "playerId"=$1`, [userId])).rows;
+
+    expect(await creditLateJudgment(db, { userId: 1, itemId: theirs, answer: '4', now: NOW })).toBe(
+      false
+    );
+    expect(await verdicts(theirs)).toEqual([]);
+    expect(await watchDays(1)).toEqual([]);
+
+    expect(await creditLateJudgment(db, { userId: 2, itemId: theirs, answer: '4', now: NOW })).toBe(
+      true
+    );
+    expect((await verdicts(theirs)).map((v) => v.playerId)).toEqual([2]);
   });
 });

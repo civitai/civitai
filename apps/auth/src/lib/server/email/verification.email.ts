@@ -6,9 +6,16 @@ import { createEmail, emailTheme, EMAIL_MUTED_CLASS, renderEmailShell } from '@c
 type VerificationData = { to: string; url: string };
 
 export const verificationEmail = createEmail<VerificationData, void>({
+  template: 'verification',
+  mailClass: 'transactional',
+  // Its link is single-use: never sent to a link tracker (a scanner must not be what spends it).
+  oneTimeTokenLinks: true,
   header: ({ to }) => ({ subject: 'Sign in to Civitai', to }),
   html: ({ url }) =>
     renderEmailShell({
+      icon: '🔑',
+      accent: 'blue',
+      eyebrow: 'Your sign-in link',
       header: 'Sign in to Civitai',
       body: `<p class="${EMAIL_MUTED_CLASS}" style="margin: 0; color: ${emailTheme.muted};">
           Click the button below to sign in. This link expires in 24 hours and can be used once.

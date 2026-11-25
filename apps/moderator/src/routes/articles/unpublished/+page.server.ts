@@ -16,10 +16,15 @@ const querySchema = z.object({
     .catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { page, username, status } = parseQuery(url, querySchema);
 
-  const data = await getModeratorArticles({ page, username: username || undefined, status });
+  const data = await getModeratorArticles({
+    page,
+    username: username || undefined,
+    status,
+    viewer: locals.user,
+  });
 
   return { status: status ?? 'all', username, ...data };
 };

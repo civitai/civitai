@@ -224,6 +224,7 @@ describe('listing detail parity (media-parity.json details): the site side', () 
           run: actionsRunSourceBlockId({ kind: l.kind, appBlockId: r.appBlockId })
             ? r.actionsRunSource
             : null,
+          subListings: [],
         }
       );
       const { fork, ...rest } = extras;

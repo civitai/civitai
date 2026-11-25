@@ -9,7 +9,7 @@ import { getRunnerDevTunnelUser } from '~/server/services/app-assistant/app-assi
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
 import {
   authorizeDevTunnelStart,
-  DEV_TUNNEL_REFUSAL_STATUS,
+  devTunnelRefusalAnswer,
 } from '~/server/services/blocks/dev-tunnel-access.service';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
@@ -71,7 +71,7 @@ const body = z.object({
   clientKey: z.string().min(1).max(128).optional(),
 });
 
-type Answer = { status: number; json: Record<string, unknown> };
+type Answer = { status: number; json: Record<string, unknown>; retryAfterSeconds?: number };
 const UNAVAILABLE: Answer = {
   status: 503,
   json: { error: 'Could not open the dev tunnel right now', code: 'unavailable' },
@@ -114,10 +114,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       const gate = await authorizeDevTunnelStart(subject.user, blockId);
       if (!gate.ok) {
         log('refused', { reason: gate.refusal.code });
-        return {
-          status: DEV_TUNNEL_REFUSAL_STATUS[gate.refusal.code],
-          json: { error: gate.refusal.error, code: gate.refusal.code },
-        };
+        return devTunnelRefusalAnswer(gate.refusal);
       }
 
       let started: Awaited<ReturnType<typeof startDevTunnel>>;
@@ -179,5 +176,6 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     log('deadline', { cancelled });
     return res.status(UNAVAILABLE.status).json(UNAVAILABLE.json);
   }
+  if (outcome.retryAfterSeconds) res.setHeader('Retry-After', String(outcome.retryAfterSeconds));
   return res.status(outcome.status).json(outcome.json);
 });

@@ -480,11 +480,12 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ) pti ON true
       WHERE NOT (c."entityType" = 'model')
       AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."entityType"::text <> 'featurePage'
       AND c."userId" != pc."userId"
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published' AND da."userId" <> pc."userId"
+      AND (da.status <> 'Published' OR da.availability = 'Private') AND da."userId" <> pc."userId"
       )
       AND NOT EXISTS (
       SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
@@ -626,11 +627,12 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LIMIT 1
       ) pti ON true
       WHERE c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."entityType"::text <> 'featurePage'
       AND (NOT (c."entityType" = 'model') OR c."parentId" IS NOT NULL)
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm
@@ -725,13 +727,14 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND c."tosViolation" = false
       AND c.hidden IS NOT TRUE
       AND c."deletedAt" IS NULL
+      AND c."entityType"::text <> 'featurePage'
       AND c.content LIKE '%"mention:%'
       AND (NOT (c."entityType" = 'model') OR m."userId" > 0)
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm

@@ -1,10 +1,8 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 
 // Lazy-consent UI. Opened on demand — either because the block fired
 // REQUEST_CONSENT on an action click, or because the viewer clicked "Review
 // permissions" on the host's own missing-permissions notice.
-const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
 
 export type OpenBlockConsentModalArgs = {
   appBlockId: string;
@@ -31,7 +29,7 @@ export type OpenBlockConsentModalArgs = {
  *
  * There are now four call sites across two host surfaces — each host's
  * REQUEST_CONSENT handler plus each host's own missing-permissions notice — and an
- * inline `dialogStore.trigger` at any of them is the same rule in another place.
+ * inline `openDialog` at any of them is the same rule in another place.
  * They would drift on the first prop that changes, and the props matter: the modal
  * writes a scope GRANT.
  *
@@ -53,16 +51,19 @@ export function openBlockConsentModal({
   onGranted,
   from,
 }: OpenBlockConsentModalArgs) {
-  dialogStore.trigger({
-    // A prompt for a source app is a different prompt from this app's own, so it gets its own id.
-    id: from === undefined ? `block-consent-${appBlockId}` : `block-consent-${appBlockId}-${from}`,
-    component: BlockConsentModal,
-    props: {
+  openDialog(
+    () => import('./BlockConsentModal'),
+    {
       appBlockId,
       blockName,
       missingScopes,
       onGranted,
       ...(from === undefined ? {} : { from }),
     },
-  });
+    {
+      // A prompt for a source app is a different prompt from this app's own, so it gets its own id.
+      id:
+        from === undefined ? `block-consent-${appBlockId}` : `block-consent-${appBlockId}-${from}`,
+    }
+  );
 }

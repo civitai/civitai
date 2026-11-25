@@ -53,10 +53,15 @@ function run(
   } as unknown as Workflow;
 }
 
-const resolve = (s: unknown = session) =>
+const resolve = (s: unknown = session, query: Record<string, string> = {}) =>
   (getServerSideProps as unknown as (args: unknown) => Promise<unknown>)({
     session: s,
-    ctx: { query: { workflowId: 'wf-1', epoch: '1' }, resolvedUrl: '/x', req: {}, res: {} },
+    ctx: {
+      query: { workflowId: 'wf-1', epoch: '1', ...query },
+      resolvedUrl: '/x',
+      req: {},
+      res: {},
+    },
   });
 
 beforeEach(() => {
@@ -122,5 +127,98 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
       redirect: { destination: '/models', permanent: false },
     });
     expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('from-orchestrator SSR — adding the run as a new version', () => {
+  const asVersion = (query: Record<string, string> = {}) =>
+    resolve(session, { target: 'existing', ...query });
+
+  beforeEach(() => {
+    mockGetWorkflow.mockResolvedValue(run('approved'));
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+  });
+
+  it("lists the owner's eligible models, those on the run's base model first", async () => {
+    dbMock.dbRead.model.findMany.mockResolvedValue([
+      { id: 1, name: 'Flux one', meta: null, modelVersions: [{ baseModel: 'Flux.1 D' }] },
+      { id: 3, name: 'SDXL one', meta: null, modelVersions: [{ baseModel: 'SDXL 1.0' }] },
+    ] as never);
+    const result = (await asVersion({ q: 'one' })) as {
+      props: { pickModel: { query: string; models: { id: number }[]; baseQuery: object } };
+    };
+    expect(result.props.pickModel.query).toBe('one');
+    expect(result.props.pickModel.models.map((m) => m.id)).toEqual([3, 1]);
+    // Each model link is built off this, so the search term must not ride along.
+    expect(result.props.pickModel.baseQuery).toEqual({
+      workflowId: 'wf-1',
+      epoch: '1',
+      target: 'existing',
+    });
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userId: session.user.id,
+          name: { contains: 'one', mode: 'insensitive' },
+        }),
+      })
+    );
+  });
+
+  it('sends a run that already has a draft back to it instead of offering a second one', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      {
+        id: 61,
+        meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
+        model: { id: 60, meta: null },
+      },
+    ] as never);
+    await expect(asVersion()).resolves.toEqual({
+      redirect: {
+        destination:
+          '/models/train/from-orchestrator?workflowId=wf-1&epoch=1&target=existing&modelId=60',
+        permanent: false,
+      },
+    });
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses the picker for an unapproved run', async () => {
+    mockGetWorkflow.mockResolvedValue(run('underReview'));
+    await expect(asVersion()).resolves.toEqual({ props: { session, refusal: 'not-approved' } });
+  });
+
+  it.each(['abc', '0', '-3'])('refuses a malformed model id %s', async (modelId) => {
+    await expect(asVersion({ modelId })).resolves.toEqual({
+      props: { session, refusal: 'model-not-eligible' },
+    });
+    // Refused before the run is read, so a malformed id never reaches a query.
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a model that is not one of the caller’s eligible models', async () => {
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+    await expect(asVersion({ modelId: '60' })).resolves.toEqual({
+      props: { session, refusal: 'model-not-eligible' },
+    });
+  });
+
+  it('lands a resumed added version in the VERSION wizard, not the model wizard', async () => {
+    mockGetWorkflow.mockResolvedValue(run('approved', { epochs: false }));
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      {
+        id: 61,
+        meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
+        model: { id: 60, meta: null },
+      },
+    ] as never);
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+      name: 'v2',
+      baseModel: 'SDXL 1.0',
+    } as never);
+    dbMock.dbWrite.modelFile.findFirst.mockResolvedValue({ id: 9, metadata: null } as never);
+    await expect(asVersion({ modelId: '60' })).resolves.toEqual({
+      redirect: { destination: '/models/60/model-versions/61/wizard?step=2', permanent: false },
+    });
   });
 });

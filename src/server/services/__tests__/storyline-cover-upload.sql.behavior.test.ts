@@ -70,7 +70,6 @@ beforeAll(async () => {
       "modelRestricted" boolean NOT NULL DEFAULT false);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]');
-    CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "TagsOnImageDetails" ("imageId" integer, "tagId" integer, disabled boolean DEFAULT false);
     CREATE TABLE "PlacementSpace" (surface text, "entityType" text, "entityId" integer, mode text,
       price integer);
@@ -257,7 +256,7 @@ describe("chapter 1's first image, the cover when none is picked", () => {
     } finally {
       fallback.on = false;
       await db.pg.exec(`UPDATE "Image" SET "blockedFor" = NULL WHERE id = 60;
-        DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser";`);
+        DELETE FROM "CsamReport";`);
     }
   };
 
@@ -274,12 +273,6 @@ describe("chapter 1's first image, the cover when none is picked", () => {
   it('is not shown when listed on a report', async () => {
     await expect(
       fallbackCover(`INSERT INTO "CsamReport" (images) VALUES ('[60]')`)
-    ).resolves.toBeNull();
-  });
-
-  it('is not shown when its owner is under an evidence hold', async () => {
-    await expect(
-      fallbackCover(`INSERT INTO "EvidenceHeldUser" VALUES (${OWNER})`)
     ).resolves.toBeNull();
   });
 });

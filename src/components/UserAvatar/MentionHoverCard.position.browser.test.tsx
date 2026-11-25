@@ -19,9 +19,9 @@ vi.mock('~/components/UserAvatar/UserHoverCard', async (orig) => ({
   HoverCreatorCard: () => <div data-testid="creator-card">card</div>,
 }));
 
-// The page's `.scroll-area` sets `will-change: transform`, which makes it the containing block
-// of `position: fixed` descendants. The test loads no stylesheet, so the same thing is built
-// inline: a scrolled box with that property around a mention that sits below the fold.
+// A transformed ancestor (a virtualized row, a transformed scroller) is the containing block of
+// `position: fixed` descendants. Built inline: a scrolled box with `will-change: transform`
+// around a mention that sits below the fold.
 describe('mention card anchor inside a transformed scroll area', () => {
   test('is positioned over the mention, not offset by the scroll', async () => {
     await renderWithProviders(

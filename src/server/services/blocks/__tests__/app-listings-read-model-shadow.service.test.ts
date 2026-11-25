@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ListAppListingsInput,
   ListingCard,
+  SubListingCard,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
   createCachedModeGate,
@@ -30,6 +31,7 @@ import {
   type ReadModelFlagReads,
   type ReadModelMode,
   type ReadModelShadowConfig,
+  type ReadModelSubListingCard,
   type ShadowLogEntry,
 } from '~/server/services/blocks/app-listings-read-model-shadow.service';
 import { IndexBreaker } from '~/server/services/blocks/app-index-search.service';
@@ -101,6 +103,35 @@ function rmCard(card: ListingCard, over: Partial<ReadModelCard> = {}): ReadModel
   };
 }
 
+/** A sub-listing's database card, under the listing `parent`. */
+function dbSub(n: number, over: Partial<SubListingCard> = {}): SubListingCard {
+  const id = `asl_01J9ZK3Q4R5S6T7V8W9X0YS0${String(n).padStart(2, '0')}`;
+  return {
+    cardType: 'sub-listing',
+    id,
+    name: `Item ${n}`,
+    tagline: `Item tagline ${n}`,
+    kind: 'onsite',
+    category: 'utility',
+    contentRating: 'pg',
+    coverUrl: `https://img.invalid/items/${n}/cover`,
+    creator: { id: 500 + n, username: `author-${n}`, image: null },
+    parent: {
+      id: 'al_alpha',
+      slug: 'alpha',
+      name: 'Name alpha',
+      iconUrl: 'https://img.invalid/alpha/icon',
+    },
+    runHref: `/apps/run/alpha/items/${n}?sl=${id}`,
+    ...over,
+  };
+}
+
+/** The read model's card for the same sub-listing. */
+function rmSub(card: SubListingCard, over: Partial<ReadModelSubListingCard> = {}) {
+  return { ...card, ...over } as ReadModelSubListingCard;
+}
+
 const INPUT: ListAppListingsInput = { kind: 'all', sort: 'top-rated', limit: 3 };
 const OPTS: ListAvailableListingsOpts = {
   redCapable: true,
@@ -116,6 +147,8 @@ let calls: Call[];
 let reply: Reply;
 let dbBySlugs: Map<string, ListingCard>;
 let dbBySlugsCalls: string[][];
+let dbSubListings: Map<string, SubListingCard>;
+let dbSubListingsCalls: string[][];
 let logs: ShadowLogEntry[];
 let config: ReadModelShadowConfig;
 let mode: ReadModelMode;
@@ -153,6 +186,13 @@ function makeShadow(over: Partial<ListingsShadowDeps> = {}) {
         return c ? [c] : [];
       });
     },
+    dbSubListingsByIds: async (ids) => {
+      dbSubListingsCalls.push(ids);
+      return ids.flatMap((id) => {
+        const c = dbSubListings.get(id);
+        return c ? [c] : [];
+      });
+    },
     breaker: new IndexBreaker(
       () => ({ threshold: 2, cooldownMs: 60_000 }),
       () => NOW_MS,
@@ -166,12 +206,14 @@ function makeShadow(over: Partial<ListingsShadowDeps> = {}) {
 
 /**
  * The read model answers `list` for a page and, asked by slug, the `admitted` listings (a slug for
- * that listing's own card, or a card).
+ * that listing's own card, or a card), and asked by sub-listing id, the `admittedSubs` items. As the
+ * read model does, an answer with sub-listing cards on says so (`subListings`).
  */
 function readModelAnswers(
-  list: ReadModelCard[],
+  list: (ReadModelCard | ReadModelSubListingCard)[],
   nextCursor?: string,
-  admitted: (string | ReadModelCard)[] = []
+  admitted: (string | ReadModelCard)[] = [],
+  admittedSubs: ReadModelSubListingCard[] = []
 ) {
   reply = ({ url }) => {
     const slugs = url.searchParams.get('slugs');
@@ -183,7 +225,18 @@ function readModelAnswers(
           .filter((c) => want.has(c.slug)),
       });
     }
-    return Response.json(nextCursor ? { items: list, nextCursor } : { items: list });
+    const subIds = url.searchParams.get('subListingIds');
+    if (subIds !== null) {
+      const want = new Set(subIds.split(','));
+      return Response.json({
+        items: admittedSubs.filter((c) => want.has(c.id)),
+        subListings: true,
+      });
+    }
+    const marker = url.searchParams.get('subListings') === '1' ? { subListings: true } : {};
+    return Response.json(
+      nextCursor ? { items: list, nextCursor, ...marker } : { items: list, ...marker }
+    );
   };
 }
 
@@ -223,6 +276,8 @@ beforeEach(async () => {
   calls = [];
   dbBySlugs = new Map();
   dbBySlugsCalls = [];
+  dbSubListings = new Map();
+  dbSubListingsCalls = [];
   logs = [];
   mode = 'shadow';
   config = {
@@ -267,13 +322,12 @@ describe('which pages are shadowed', () => {
     const shadow = makeShadow();
     shadow.shadow('grid', INPUT, { ...OPTS, floor: 'testers' }, { items: [A] });
     shadow.shadow('grid', INPUT, { ...OPTS, viewerBrowsingLevel: 64 }, { items: [A] });
-    shadow.shadow('grid', INPUT, { ...OPTS, includeSubListings: true }, { items: [A] });
     shadow.shadow('grid', INPUT, OPTS, { items: [A], search: 'index' });
     config.key = KEY.slice(0, 31);
     shadow.shadow('rest_list', INPUT, OPTS, { items: [A] });
     expect(calls).toEqual([]);
     expect(await moved()).toEqual([
-      'shadow_requests_total{grid/unsupported_input}:2',
+      'shadow_requests_total{grid/unsupported_input}:1',
       'shadow_requests_total{grid/unsupported_viewer}:2',
       'shadow_requests_total{rest_list/unconfigured}:1',
     ]);
@@ -325,19 +379,53 @@ describe('what is asked', () => {
     expect(dbBySlugsCalls).toEqual([]);
   });
 
-  it("a sub-listing's cursor is not shadowed; a cursor after a listing since deleted still is", async () => {
+  it('🔴 a cursor after a sub-listing card is moved like any other, and so is one after a deleted listing', async () => {
+    // The read model reads the item's tie-break from its id (listingread.Rank), as the database does.
     decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
-    await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
-    expect(calls).toEqual([]);
+    readModelAnswers([rmCard(A)]);
+    await makeShadow().shadow(
+      'grid',
+      { ...INPUT, cursor: 'db-cursor' },
+      { ...OPTS, includeSubListings: true },
+      { items: [A] }
+    );
+    expect(calls).toHaveLength(1);
+    // rm2␟k␟asl_01ARZ3NDEKTSV4RRFFQ69G5FAV, base64url.
+    expect(calls[0].url.searchParams.get('cursor')).toBe(
+      'cm0yH2sfYXNsXzAxQVJaM05ERUtUU1Y0UlJGRlE2OUc1RkFW'
+    );
     // The database pages after the deleted row's (sort key, id), and so does the read model.
     decoded = { cursorSortKey: 'k', cursorId: 'apl_gone', cursorMean: null };
+    await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
+    expect(calls).toHaveLength(2);
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:2',
+      'shadow_requests_total{grid/compared}:2',
+    ]);
+  });
+
+  it('🔴 a cursor after a sub-listing card with sub-listings off (the flag turned off between two pages) is moved too', async () => {
+    // The read model resumes after the item's key, as the parents-only statement does.
+    decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
     readModelAnswers([rmCard(A)]);
     await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
-    expect(calls).toHaveLength(1);
+    expect(calls.map((c) => c.url.searchParams.get('cursor'))).toEqual([
+      'cm0yH2sfYXNsXzAxQVJaM05ERUtUU1Y0UlJGRlE2OUc1RkFW',
+    ]);
+    expect(calls[0].url.searchParams.has('subListings')).toBe(false);
+    mode = 'serve';
+    config.sample = 0;
+    const page = await makeShadow().serve(
+      'grid',
+      { ...INPUT, cursor: 'db-cursor' },
+      OPTS,
+      async () => ({ items: [dbCard('database-only')] })
+    );
+    expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
     expect(await moved()).toEqual([
       'compared_slugs_total{grid}:1',
+      'serve_requests_total{grid/served}:1',
       'shadow_requests_total{grid/compared}:1',
-      'shadow_requests_total{grid/unsupported_input}:1',
     ]);
   });
 });
@@ -692,8 +780,8 @@ describe('failures', () => {
     reply = () => new Response('{}', { status: 500 });
     await shadow.shadow('grid', INPUT, OPTS, { items: [A] }); // opens the breaker
     t += 60_000; // the cooldown has passed: the next read-model call is the probe
-    // Page 2 after a sub-listing: returns before any read-model call.
-    decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
+    // A cursor that names no card: returns before any read-model call.
+    decoded = { cursorSortKey: 'k', cursorId: '', cursorMean: null };
     await shadow.shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
     // The next page is still the probe, not refused for another cooldown.
     readModelAnswers([rmCard(A)]);
@@ -1072,7 +1160,6 @@ describe('serving (mode serve)', () => {
     ['a tester floor', { floor: 'testers' }, 'unsupported_viewer'],
     ['a moderator floor', { floor: 'moderators' }, 'unsupported_viewer'],
     ['a level that cannot be signed', { viewerBrowsingLevel: 64 }, 'unsupported_viewer'],
-    ['sub-listing cards asked for', { includeSubListings: true }, 'unsupported_input'],
   ] as const)('user-facing only: %s is read from the database', async (_name, over, outcome) => {
     readModelAnswers([rmCard(A)]);
     const db = dbReadOf(DB_SERVED);
@@ -1149,18 +1236,13 @@ describe('serving (mode serve)', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('a cursor after a sub-listing card, or no usable key: the database', async () => {
-    decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
+  it('no usable key: the database', async () => {
     const db = dbReadOf(DB_SERVED);
-    await makeShadow().serve('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, db.read);
     config.key = KEY.slice(0, 31);
     await makeShadow().serve('rest_list', INPUT, OPTS, db.read);
-    expect(db.calls()).toBe(2);
+    expect(db.calls()).toBe(1);
     expect(calls).toEqual([]);
-    expect(await moved()).toEqual([
-      'serve_requests_total{grid/unsupported_input}:1',
-      'serve_requests_total{rest_list/unconfigured}:1',
-    ]);
+    expect(await moved()).toEqual(['serve_requests_total{rest_list/unconfigured}:1']);
   });
 
   it.each([
@@ -1347,5 +1429,269 @@ describe('servedCardOf', () => {
         })
       )?.kindData
     ).toEqual({ kind: 'onsite', appBlockId: null, hasPage: false, liveUrl: 'https://x.invalid' });
+  });
+});
+
+/**
+ * Sub-listing cards (LISTINGS-READ-MODEL.md, slice 6): a grid page with them (`includeSubListings`,
+ * the `/apps` grid page) is shadowed and served like any other. The read model is asked for them
+ * (`subListings=1`) and must say it answered with them; each card is matched by id, named by its id,
+ * and counted in the same classes as a listing's.
+ */
+describe('sub-listing cards (includeSubListings)', () => {
+  const SUBS: ListAvailableListingsOpts = { ...OPTS, includeSubListings: true };
+  const S1 = dbSub(1);
+  const S2 = dbSub(2, { coverUrl: null, runHref: 'https://items.invalid/i/2', external: true });
+  const S3 = dbSub(3);
+
+  it('🔴 a page with sub-listing cards is compared, not refused: asked with subListings=1', async () => {
+    readModelAnswers([rmCard(A), rmSub(S1), rmSub(S2), rmCard(B)], 'rm-next');
+    await makeShadow().shadow('grid', INPUT, SUBS, {
+      items: [A, S1, S2, B],
+      nextCursor: 'db-next',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url.searchParams.get('subListings')).toBe('1');
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:4',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+    expect(logs).toEqual([]);
+  });
+
+  it('without includeSubListings the read model is not asked for them', async () => {
+    readModelAnswers([rmCard(A)]);
+    await makeShadow().shadow('grid', INPUT, OPTS, { items: [A] });
+    expect(calls[0].url.searchParams.has('subListings')).toBe(false);
+  });
+
+  it('🔴 asked for sub-listing cards, an answer that does not say it has them is a bad_response', async () => {
+    reply = () => Response.json({ items: [rmCard(A)] });
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1] });
+    expect(await moved()).toEqual(['shadow_requests_total{grid/bad_response}:1']);
+  });
+
+  it.each([
+    ['a sub-listing card without a sub-listing id', { id: 'al_alpha_item' }],
+    ['a sub-listing card without its link', { runHref: '' }],
+    ['a sub-listing card without its parent', { parent: undefined }],
+  ] as [string, Record<string, unknown>][])('%s is a bad_response', async (_name, over) => {
+    reply = () => Response.json({ items: [{ ...rmSub(S1), ...over }], subListings: true });
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [S1] });
+    expect(await moved()).toEqual(['shadow_requests_total{grid/bad_response}:1']);
+  });
+
+  // Each field of a sub-listing card counts in its class: media (its cover, its parent's icon) or
+  // identity (what it is, who wrote it, where it links). One field differs per case.
+  it.each([
+    ['coverUrl', 'media', { coverUrl: 'https://img.invalid/items/1/other' }],
+    ['parentIconUrl', 'media', { parent: { ...S1.parent, iconUrl: null } }],
+    ['name', 'identity_field', { name: 'Other item' }],
+    ['tagline', 'identity_field', { tagline: null }],
+    ['kind', 'identity_field', { kind: 'offsite' }],
+    ['category', 'identity_field', { category: 'games' }],
+    ['contentRating', 'identity_field', { contentRating: 'pg13' }],
+    ['creator', 'identity_field', { creator: { ...S1.creator, username: 'someone-else' } }],
+    ['parent', 'identity_field', { parent: { ...S1.parent, slug: 'alpha-other' } }],
+    ['runHref', 'identity_field', { runHref: '/apps/run/alpha/items/other' }],
+    ['runHref', 'identity_field', { external: true }],
+  ] as [string, string, Partial<ReadModelSubListingCard>][])(
+    '%s counts as %s',
+    async (field, kind, over) => {
+      readModelAnswers([rmSub(S1, over)]);
+      await makeShadow().shadow('grid', INPUT, SUBS, { items: [S1] });
+      expect(await moved()).toEqual([
+        'compared_slugs_total{grid}:1',
+        `field_mismatches_total{grid/${field}}:1`,
+        `mismatches_total{grid/${kind}}:1`,
+        'shadow_requests_total{grid/compared}:1',
+      ]);
+      // Named by its id: an item has no slug.
+      expect(logs[0].fields).toEqual({ [S1.id]: [field] });
+    }
+  );
+
+  it('one id naming a listing on one side and a sub-listing on the other is an id identity mismatch', async () => {
+    const asListing = rmCard(dbCard('alpha', { id: S1.id }));
+    readModelAnswers([asListing]);
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [S1] });
+    expect(await moved()).toContain('field_mismatches_total{grid/id}:1');
+  });
+
+  it('a sub-listing card the database shows that the read model does not show this viewer: visibility_missing, asked by id', async () => {
+    readModelAnswers([rmCard(A), rmSub(S1)], undefined, [], []);
+    await makeShadow().shadow('grid', { ...INPUT, userId: 42 }, SUBS, { items: [A, S1, S2] });
+    // Asked by id, with the developer filter (the id path takes it: it names the parent's owner).
+    const byId = calls.find((c) => c.url.searchParams.has('subListingIds'));
+    expect(Object.fromEntries(byId!.url.searchParams)).toEqual({
+      subListingIds: S2.id,
+      userId: '42',
+    });
+    expect(dbSubListingsCalls).toEqual([]);
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:3',
+      'mismatches_total{grid/visibility_missing}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+    expect(logs).toEqual([
+      {
+        surface: 'grid',
+        visibilityMissing: [S2.id],
+        visibilityExtra: [],
+        fields: {},
+        order: false,
+      },
+    ]);
+  });
+
+  it('🔴 a sub-listing card past the adapter cap is a known difference: sub_listing_cap, not visibility or order', async () => {
+    reply = ({ url }) =>
+      url.searchParams.has('subListingIds')
+        ? Response.json({ items: [], subListings: true, cappedListings: [S2.parent.id] })
+        : Response.json({ items: [rmCard(A), rmSub(S1)], subListings: true });
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1, S2] });
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:3',
+      'mismatches_total{grid/sub_listing_cap}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+    expect(logs).toEqual([]);
+    // Positive control: the same answer naming another listing is a visibility mismatch.
+    reply = ({ url }) =>
+      url.searchParams.has('subListingIds')
+        ? Response.json({ items: [], subListings: true, cappedListings: ['al_other'] })
+        : Response.json({ items: [rmCard(A), rmSub(S1)], subListings: true });
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1, S2] });
+    expect(await moved()).toContain('mismatches_total{grid/visibility_missing}:1');
+  });
+
+  it('a sub-listing card on the database page only that the read model admits by id: order only', async () => {
+    readModelAnswers([rmCard(A), rmSub(S1)], undefined, [], [rmSub(S2)]);
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1, S2] });
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:3',
+      'order_mismatches_total{grid}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+  });
+
+  it('a sub-listing card the read model shows that the database does not: visibility_extra, asked of the database by id', async () => {
+    readModelAnswers([rmCard(A), rmSub(S1), rmSub(S3)]);
+    dbSubListings.set(S1.id, S1);
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1] });
+    expect(dbSubListingsCalls).toEqual([[S3.id]]);
+    expect(dbBySlugsCalls).toEqual([]);
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:3',
+      'mismatches_total{grid/visibility_extra}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+    expect(logs[0]).toMatchObject({ visibilityExtra: [S3.id], order: false });
+  });
+
+  it('a listing and a sub-listing on the read-model page only: one database check of each', async () => {
+    readModelAnswers([rmCard(A), rmCard(C), rmSub(S3)]);
+    dbBySlugs.set('charlie', C);
+    dbSubListings.set(S3.id, S3);
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A] });
+    expect([dbBySlugsCalls, dbSubListingsCalls]).toEqual([[['charlie']], [[S3.id]]]);
+    // Both shown by the database: a paging difference.
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:3',
+      'order_mismatches_total{grid}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+  });
+
+  it('🔴 asked by id, an answer that does not say it has sub-listing cards is a bad_response', async () => {
+    reply = ({ url }) =>
+      url.searchParams.has('subListingIds')
+        ? Response.json({ items: [] })
+        : Response.json({ items: [rmCard(A)], subListings: true });
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1] });
+    expect(await moved()).toEqual(['shadow_requests_total{grid/bad_response}:1']);
+  });
+
+  describe('served (mode serve)', () => {
+    beforeEach(() => {
+      mode = 'serve';
+      config.sample = 0;
+    });
+    const DB: ListingPage = { items: [dbCard('database-only')] };
+
+    it('🔴 a page with sub-listing cards is served from the read model, each card as the store card', async () => {
+      const rmNext = Buffer.from(`rm2\x1fk2\x1f${S2.id}`, 'utf8').toString('base64url');
+      readModelAnswers([rmCard(A), rmSub(S1), rmSub(S2)], rmNext);
+      let dbReads = 0;
+      const page = await makeShadow().serve('grid', INPUT, SUBS, async () => {
+        dbReads++;
+        return DB;
+      });
+      expect(dbReads).toBe(0);
+      expect(calls[0].url.searchParams.get('subListings')).toBe('1');
+      expect(page.items.slice(1)).toEqual([S1, S2]);
+      // The next cursor sits on a sub-listing card, in the database's format.
+      expect(encoded).toEqual([['k2', S2.id, undefined]]);
+      expect(page.nextCursor).toBe(`db-cursor(k2|${S2.id}|none)`);
+      expect(await moved()).toEqual(['serve_requests_total{grid/served}:1']);
+    });
+
+    it('🔴 a cursor after a sub-listing card is asked of the read model, not refused', async () => {
+      decoded = {
+        cursorSortKey: 'k',
+        cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        cursorMean: null,
+      };
+      readModelAnswers([rmSub(S3)]);
+      const page = await makeShadow().serve(
+        'grid',
+        { ...INPUT, cursor: 'db-cursor' },
+        SUBS,
+        async () => DB
+      );
+      expect(calls[0].url.searchParams.get('cursor')).toBe(
+        'cm0yH2sfYXNsXzAxQVJaM05ERUtUU1Y0UlJGRlE2OUc1RkFW'
+      );
+      expect(page.items).toEqual([S3]);
+    });
+
+    it.each([
+      [
+        'an answer that does not say it has sub-listing cards',
+        SUBS,
+        () => Response.json({ items: [rmCard(A)] }),
+      ],
+      [
+        'a sub-listing card the request did not ask for',
+        OPTS,
+        () => Response.json({ items: [rmCard(A), rmSub(S1)] }),
+      ],
+    ] as const)('🔴 %s: the database page instead', async (_name, opts, r) => {
+      reply = r;
+      let dbReads = 0;
+      const page = await makeShadow().serve('grid', INPUT, opts, async () => {
+        dbReads++;
+        return DB;
+      });
+      expect(page).toBe(DB);
+      expect(dbReads).toBe(1);
+      expect(await moved()).toEqual(['serve_requests_total{grid/bad_response}:1']);
+    });
+
+    it('a served page with sub-listing cards is compared with the database page, sub-listing cards included', async () => {
+      config.sample = 1;
+      readModelAnswers([rmCard(A), rmSub(S1)]);
+      dbPage = { items: [A, S1, S2] };
+      const shadow = makeShadow();
+      await shadow.serve('grid', INPUT, SUBS, async () => DB);
+      await shadow.servedComparison();
+      expect(await moved()).toEqual([
+        'compared_slugs_total{grid}:3',
+        'mismatches_total{grid/visibility_missing}:1',
+        'serve_requests_total{grid/served}:1',
+        'shadow_requests_total{grid/compared}:1',
+      ]);
+      expect(logs[0]).toMatchObject({ visibilityMissing: [S2.id] });
+    });
   });
 });

@@ -1,6 +1,6 @@
 # App store listings read model: design
 
-**Status:** slices 1 to 5 of 9 done, and slice 3b, all dark. Slice 1 is the adapter side of
+**Status:** slices 1 to 6 of 9 done, and slice 3b, all dark. Slice 1 is the adapter side of
 `store-listing@v1` (`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go
 ingest behind `APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`;
 README, "Listings read model"). Slice 3 is the read API, `GET /listings` and `GET /listings/{slug}`
@@ -10,9 +10,10 @@ Slice 4 is the site's shadow of the store grid and the public REST list behind t
 `app-listings-read-model` Flipt flag (`src/server/services/blocks/app-listings-read-model-shadow.service.ts`;
 Shadow diff, below). Slice 5 serves the store grid and the public REST list from the read model at
 the flag's `serve` variant (`serveListingPage`, same module; Serving, below), to be set per surface
-only after the gate below. Until then every listing read is served from the database. The `/apps`
-grid page itself asks for sub-listing cards, so neither slice reaches it yet: that needs slice 6
-(Serving, "What `grid` covers").
+only after the gate below. Until then every listing read is served from the database. Slice 6 puts
+the store's sub-listing cards in the stream, the read model and the API (Sub-listings, below), so
+the `/apps` grid page, which always asks for them, can be shadowed and served like the grid's other
+callers (Serving, "What `grid` covers").
 
 The goal: the user-facing app store reads its listings from a read model built from the registry,
 instead of from Prisma reads in `app-listing.service.ts`. The surfaces covered are the store grid
@@ -114,6 +115,79 @@ item's own rating under the app-rating rule (Media, below), which is coarser tha
 per-request ceiling. The creator chip's `image` is the user's avatar, carried as the public card
 carries it.
 
+### Sub-listings (slice 6)
+
+The store grid mixes sub-listing cards (`SubListingCard`: an item a parent app placed in the store)
+into its pages when the request asks for them (`includeSubListings`, behind `app-store-sub-listings`).
+The `/apps` grid page always asks. The child arm of `listAvailableListings` shows an item when its
+parent is in the grid for the viewer, it is approved, its author is not banned or deleted, its
+parent's sub-listing switch is on, its link works (an approved block on-site, a link template
+off-site), and the mature rule admits its own rating.
+
+**Decision: the items travel in their parent's body, as `subListings`, not as an entity of their own.**
+This is the smallest change that keeps parity:
+
+- An item is in the grid only while its parent is, so carrying it in the parent's entity makes that
+  rule structural: a parent the stream deletes takes its items with it, and the read model never
+  holds an item whose parent it does not hold, or one from another generation than its parent's.
+- The item card's parent fields (id, slug, name, kind, category) and its image fallbacks (the
+  parent's own icon and cover) are already in the parent's body.
+- No new schema, URN kind, relay gate, consumer, generation or cursor. A second entity type would
+  need all of those, and a join across two streams that can each lag the other.
+
+**The cap.** A body carries at most `MAX_STREAM_SUB_LISTINGS` (200) items (`capSubListings`,
+`catalog-media.ts`). A listing has no limit on its items but `maxPerAuthor`, and the grid pages
+through all of them, so its page size bounds nothing. The bound is the stream line: a body travels as
+one registry stream line, and app-index-go reads lines of at most 1 MiB (`MaxLine`,
+`internal/registry`); a longer one ends the stream `unavailable` and replays from the same cursor
+forever, wedging the listing stream for every index. An item is about 0.6 KB of JSON with short ASCII
+text and at most about 1.9 KB with every field at its bound (computed, and pinned by a test that
+builds 200 such items into a body: under 512 KiB), so 200 items leave more than half the line for the
+rest of the body. Past the cap the adapter keeps the most recently approved items (the `newest` order:
+`sortTime`, then id, descending, so the same catalog keeps the same items), says how many it left out
+(`subListingsOmitted`), counts them on `registry_adapter_listing_sub_listings_dropped_total` (per
+catalog read) and logs the listing id. The read model holds the count (`sub_listings_omitted`) and
+names such listings on every `subListingIds` answer (`cappedListings`); the shadow counts a
+database-page item of one of them that the read model does not hold as `sub_listing_cap`, a known
+difference outside the gate and outside the order, never as `visibility_missing`. A listing over the
+cap is served from the read model without its oldest items, which is why the count is reported: a
+nonzero `sub_listing_cap` before `serve` is read, and the cap raised or the items split into an
+entity of their own if a listing needs more.
+
+The cost: a parent's body, and so its upsert, grows with its items, and any item change re-sends the
+parent. Sub-listings change at review cadence, not rollup cadence, and the catalog is small; split
+them into an entity of their own if a parent's body or upsert volume becomes a measured problem.
+
+Each item (`ListingSubListingItem`, `registrySubListing` in `catalog-media.ts`) is read by
+`readStoreSubListingsOfParents` (`app-sub-listing-store.service.ts`) for the public catalog's
+listings, through the same child-arm predicate the grid uses (`subListingStoreArmWhere`) and the
+hydration's re-check, with every rating (the read model gates per request). It carries the card's own
+values, built with the card's own rules, so the read model ports no link builder:
+
+| Field                                             | What                                                                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                                              | the item's `asl_` id: the card's key and its tie-break                                                                                                                               |
+| `title`, `tagline`, `author{id, username, image}` | the card's name, tagline and creator chip                                                                                                                                            |
+| `contentRating`                                   | the item's own rating, which the store's mature rule reads (`subListingMatureFilter`, `s.content_rating`)                                                                            |
+| `cardContentRating`                               | the card's rating, the stricter of parent and item (`effectiveSubListingRating`): what the card shows and caps its images at                                                         |
+| `sortTime`                                        | `COALESCE(approved_at, created_at)` to the microsecond: the item's `newest` key                                                                                                      |
+| `runHref`, `external`                             | the card's link: under the parent's run route (`subListingRunHref`), or an off-site parent's link template filled in (`subListingExternalHref`). An item with neither is not carried |
+| `image{url, nsfwLevel, rating}`                   | the item's own image at cover width, rated on its own, only while it is in a public post and passes the per-image moderation check at every level (as a media item); else null       |
+
+A subscription receives the items whose card rating its audience admits, and an item's image only
+when its own rating is admitted (`readableBy`), as with the media. The read model, reading as a
+service, gets every item.
+
+**The read model's card** (`listingread.ProjectSubListingCard`) applies one ceiling to every image on
+it, `subListingImageCeiling`: the viewer's levels (the public floor when none, on any host) ∩ SFW ∩
+the levels up to the card rating, lifted on a red-capable host by `redHostMediaCeiling`. It differs
+from a listing card's `listingMediaCeiling` by the viewer term: an anonymous viewer is shown no PG-13
+image on an item card. The cover is the item image when visible, else the parent's own cover when
+visible; the parent icon is the parent's own icon when visible. Never a civitai.red override and
+never a screenshot, as the database card reads only the parent's `cover_id` and `icon_id`. The rule is
+pinned on both sides by the parity fixture's `subListings` (`parity_test.go` TestSubListingParity,
+`listing-media-parity.test.ts`).
+
 ### Media
 
 Decision: carry the red overrides. The stream carries every image the store could show on any
@@ -213,7 +287,7 @@ The read model ingests every rating. Its subscription uses the index's service i
 | Region hold                                                                              | the SFW domain for restricted regions             | Already in the web tier's inputs: a held region is served the SFW domain, which the web tier sends as `host: main`                                                                                                                        |
 | Store scope (`none` / `public-external` / `full`, the Flipt cohorts and the kill switch) | `resolveStoreVisibilityScope`                     | Passed in by the web tier, which already resolves it. The read model applies `none` as empty and `public-external` as off-site only. Flipt stays the one judge of the cohort                                                              |
 | Audience floor (testers, moderators)                                                     | `listingLevelVisibilityFilter`                    | Not in the read model: a floor other than `public` goes to the DB (above)                                                                                                                                                                 |
-| Media above the viewer's level                                                           | per image, `listingMediaCeiling`                  | Per item, from its `nsfwLevel`, with the same ceiling and the same red-override preference (Media, above; `listingread.ProjectMedia`)                                                                                                     |
+| Media above the viewer's level                                                           | per image, `listingMediaCeiling`                  | Per item, from its `nsfwLevel`, with the same ceiling and the same red-override preference (Media, above; `listingread.ProjectMedia`); a sub-listing card's images at `subListingImageCeiling` (Sub-listings, above)                      |
 | Banned or deleted owner                                                                  | `storeOwnerEligibleWhere`                         | Upstream: the listing leaves the catalog read, so the stream deletes it                                                                                                                                                                   |
 
 **Who resolves the viewer.** Decided in slice 3: the web tier, not this service. An earlier draft had
@@ -256,8 +330,16 @@ These match `listAvailableListings`.
     `name` sort can differ (punctuation, case-folded non-ASCII): ids are `apl_` and a ULID, which
     order the same either way.
 
-- **Sub-listing cards** (`app-store-sub-listings`) are not in the stream. A grid request that asks
-  for them merges them from the DB page, as index search already does.
+- **Sub-listing cards** (`subListings=1`, sent when the database read has `includeSubListings`):
+  the same order as the database's union of listings and items, `(sort key, tb, id)` with tb 0 for a
+  listing and 1 for an item, ascending in every sort, so a listing comes before its items on one key.
+  An item takes its parent's key for `top-rated` and `popular`, and its own `sortTime` or title for
+  `newest` and `name`. A cursor on an item carries its key and `asl_` id, and both sides read its tb
+  from the id; without sub-listings such a cursor resumes after its key, as the parents-only
+  statement does. The format is still `rm2`: a cursor's fields and every position an earlier one could
+  name mean the same as before, so no version bump.
+- A text search the app index answers (`app-index-search`) still takes its sub-listing cards from
+  the database page (`withSubListingCards`); it is a search, not a grid page.
 
 ## Shadow diff
 
@@ -273,8 +355,10 @@ compared the other way round (Serving, below).
   (absent is 0), `scope` narrowed by `narrowStoreScope`, the same defaults the database read applies.
   A floor other than `public`, or a level that is not an integer from 0 to 63, is not shadowed.
   `viewer_test.go`'s literal vector pins the signer on both sides.
-- **Not shadowed:** a page with sub-listing cards on it, a page the app index's search answered,
-  and page 2 onward after a sub-listing card.
+- **Not shadowed:** a page the app index's search answered. A page with sub-listing cards
+  (`includeSubListings`) asks the read model for them (`subListings=1`); an answer that does not say
+  it has them (`"subListings": true`, absent from a read model that ignored the parameter) is
+  `bad_response`. A cursor after a sub-listing card is moved like any other (Sort and paging).
 - **Paging.** A database cursor `(sort_key, id, mean)` is sent as the read model's cursor with the
   same three fields, so both sides rank page 2 onward from the same position with the same pinned
   mean, and no database read is needed for it. A cursor-format literal is pinned on both sides
@@ -282,6 +366,14 @@ compared the other way round (Serving, below).
 - **Compared by listing id.** A read-model card without its `id`, or an on-site one without
   `kindData.appBlockId`, makes the answer `bad_response`. Each listing is named by its slug in the
   checks and the log:
+  - a sub-listing card is matched by its id too, and named by it (it has no slug). One on one page
+    only is asked of the other side by id, with the same kind, category and developer filter
+    (`?subListingIds=` on the read model, which must mark its answer; `listStoreSubListingsByIds` on
+    the database), and counts as a visibility or order mismatch exactly as a listing does. On both
+    pages its cover and parent icon are **media** (`coverUrl`, `parentIconUrl`), and its name,
+    tagline, kind, category, rating, creator, parent (id, slug, name) and link (`runHref` with
+    `external`) are **identity** fields. One id naming a listing on one side and a sub-listing on the
+    other is the `id` identity field;
   - a listing on one page only is asked of the other side by slug, with the same kind and category
     (`?slugs=` on the read model; `listStoreListingsBySlugs` on the database, plus the developer
     filter). Not shown to this viewer at all there: a **visibility** mismatch,
@@ -337,7 +429,13 @@ consecutive days of shadow traffic:
   `sum by (surface) (increase(app_listings_read_model_mismatches_total{kind=~"visibility_missing|visibility_extra|media|identity_field"}[7d])) / sum by (surface) (increase(app_listings_read_model_compared_slugs_total[7d])) < 0.001`;
 - every `visibility_extra` that did occur is explained (the log names the slugs; a listing
   delisted within the adapter's poll is the expected one);
-- the breaker never opened, and `compared` is the large majority of the outcomes.
+- some slugs were compared, so the ratio above is not 0/0:
+  `sum by (surface) (increase(app_listings_read_model_compared_slugs_total[7d])) > 0`;
+- `compared` is more than 90% of the shadow outcomes:
+  `sum by (surface) (increase(app_listings_read_model_shadow_requests_total{outcome="compared"}[7d])) / sum by (surface) (increase(app_listings_read_model_shadow_requests_total[7d])) > 0.9`;
+- the breaker never opened. It is one per process, shared by serve and shadow, with no `surface`
+  label:
+  `sum(increase(app_listings_read_model_breaker_transitions_total{to="open"}[7d])) == 0`.
 
 Order and `stats_field` mismatches are reported, not gating: a stats field trails the database by
 up to an adapter poll, and the order can move with it. A listing whose stats differ persistently
@@ -351,21 +449,20 @@ page, from `GET /listings` instead of from the database, when the read model can
 
 - **User-facing only.** The database answers, and the read model is not asked, for a moderator
   (whatever floor they read the store at), a floor other than `public` (testers, moderators), a
-  level that cannot be signed, a request for sub-listing cards, and a cursor after a sub-listing
-  card. A grid request the app index searches (`app-index-search` on, with a text query) is a
+  level that cannot be signed, and a cursor that names no card. A grid request the app index searches (`app-index-search` on, with a text query) is a
   search, not a grid page: it, and every database read it makes, its fallbacks included, stays as
   it was (`StoreGridReads.gridPage`). Owner, creator and moderator screens, detail, card, OG and
   testers-only or private listings never call it (What stays on the database). Every served
   card's `restrictedAudience` is null: a `public`-floor viewer is told no restricted level.
-- **What `grid` covers.** The `/apps` grid page (`AppListingsMarketplaceBody`) always asks for
-  sub-listing cards (`includeSubListings: true`), and a viewer with `app-store-sub-listings` on gets
-  them (`storeGridRequest`). The read model holds none, so every such page is `unsupported_input`,
-  served and shadowed from the database alike. With that flag on, `serve` (and `shadow`) on the
-  `grid` surface reach only the other callers of `appListings.listAvailable`, which ask for no
-  sub-listing cards: the listing page's related rail and the developer filter ("More by this
-  developer", the profile Apps tab). The `/apps` grid page can be shadowed or served only once
-  sub-listings are in the read model (slice 6). `rest_list` is unaffected: the REST catalog never
-  asks for them.
+- **What `grid` covers.** Every caller of `appListings.listAvailable` that the index does not
+  search: the `/apps` grid page (`AppListingsMarketplaceBody`), which always asks for sub-listing
+  cards (`includeSubListings: true`, granted with `app-store-sub-listings` by `storeGridRequest`),
+  the listing page's related rail and the developer filter ("More by this developer", the profile
+  Apps tab), which ask for none. A page with sub-listing cards is served with the read model's cards
+  (`servedSubListingCardOf`: its gated media and its link as they are) when its answer says it has
+  them; an answer without the mark, or a sub-listing card in an answer to a request that did not ask
+  for them, is `bad_response` and the database page is read instead. `rest_list` never asks for
+  them.
 - **Fallback.** A timeout (`APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS`, default 400), a 503, any
   other failure, a body that does not parse, a card that cannot be a store card (an on-site card
   without `hasPage` and `liveUrl`, or a `kind` that is not its kind data's), or a next cursor that is
@@ -396,7 +493,18 @@ page, from `GET /listings` instead of from the database, when the read model can
 
 ### Turn-on order
 
-Each step is reversible by undoing it; nothing before the flag changes what any user sees.
+Nothing before the flag changes what any user sees. Each step is reversible by undoing it, in
+reverse order: in particular **roll app-index-go back before the adapter**. An adapter rolled back
+below the layout the serving index requires (say, slice 6's `subListings` under a layout 4 index)
+sends bodies that index cannot use. A serving listings generation keeps its last good row for such
+an upsert (counted `invalid`; `Consumer.KeepInvalidWhileServing`) rather than deleting it, so the
+read model is never emptied one delete at a time. The kept row is marked stale (a `stale` column of
+the row, so a restart keeps it), since it may lack what the upsert changed: a stricter rating, a
+rejected sub-listing, a banned author. While the serving generation holds any stale row, every
+listing request is answered 503 `not_ready` (counted `app_index_listings_requests_total{outcome="stale"}`;
+the count is `app_index_listings_stale_rows`), and the site reads the database (Fallback). A later
+valid upsert or a delete of that listing ends its mark; the index rolled back too, rebuilding at the
+older layout, ends them all (Operating a stale row, below).
 
 1. The adapter publishes `listingContentRating` (slice 3) and the listing `id` and detail fields
    (slice 3b), so the read model holds every listing at layout 3. This must be deployed before an
@@ -409,12 +517,45 @@ Each step is reversible by undoing it; nothing before the flag changes what any 
 4. The `app-listings-read-model` flag created, as a variant flag (variants `shadow` and `serve`;
    Cutover flags), and set to `shadow`. The flag lives in the Flipt state repository, not in this
    repo; until it exists every page is read from the database.
-5. Per surface, once the gate above passes for it: the flag at `serve` for that surface (a rule on
+5. The adapter publishes `subListings` (slice 6) before an app-index-go of layout 4 ingests: that
+   ingest treats a body without it as unusable, and holds an empty first snapshot rather than serve
+   listings without their items. The layout 4 generation is rebuilt beside the serving one, and the
+   API answers 503 from an older layout until it switches.
+6. Per surface, once the gate above passes for it, and only once an app-index-go of layout 4 is
+   serving: the flag at `serve` for that surface (a rule on
    the `surface` context, `grid` or `rest_list`). Back to `shadow` is the rollback. For `grid` the
-   gate measures, and `serve` serves, only the rail and developer-filter reads while
-   `app-store-sub-listings` is on (Serving, "What `grid` covers").
-6. The `/apps` grid page: after slice 6 puts sub-listings in the read model, the gate again for
-   `grid`, now measured on the grid page itself, then `serve`.
+   gate is measured on every grid read the index does not search, the `/apps` grid page with its
+   sub-listing cards included (Serving, "What `grid` covers"); a `grid` gate measured before slice 6
+   covered only the rail and the developer filter, and is measured again. A layout 3 index must not
+   serve: it ignores `subListings=1` (its answer lacks the mark, so the web tier reads the database
+   instead), but a cursor after a sub-listing card, from a page the database served, is read there
+   as a listing position and can serve again the listings on that card's sort key.
+
+### Operating a stale row
+
+- **Alert condition:** `max(app_index_listings_stale_rows) > 0`. The gauge is set only by the
+  replica holding the listings consumer lock (it reads 0 on every other one), hence `max()`. While
+  it holds, every listing request is 503 and the site serves the database: nothing wrong is shown,
+  but the read model serves nothing.
+- **Which listing:** the consumer logs each one at warn, with `stream=listings`, `urn` (the store
+  listing's URN) and `reason` (what `ListingFromEntity` refused). The message is
+  `unusable body; keeping the stored row, marked stale`. The same event counts
+  `app_index_listings_events_applied_total{type="invalid"}`.
+- **Way out 1, a valid upsert of that listing.** Fix what made the body unusable (most often an
+  adapter older than this index's layout: roll the adapter forward). The adapter sends an upsert
+  whenever a listing's body, and so its `rev` (a digest of the body), changes, so an adapter that
+  now builds that body differently sends it again, and so does any edit to the listing. A delete of
+  the listing (it left the catalog) also ends the mark.
+- **Way out 2, a rebuild.** The index has no rebuild switch. A new building generation is started
+  from an empty cursor only by a `ListingsLayoutVersion` bump (a release), a `cursor_expired` from
+  the registry, or a serving generation whose stored cursor is empty. By hand, that last one: with
+  every app-index-go process stopped (a running consumer writes its cursor back on every event,
+  and any replica takes the consumer lock when it is free), set
+  `cursor = ''` on the `serving` row of `app_index_listing_cursors`, then start them. It builds a new
+  generation beside the serving one (which keeps answering, 503 while it holds a stale row) and
+  switches at its `Live`; in a building generation an unusable body is treated as deleted, so that
+  listing is absent until it is valid again, and the new generation holds no stale row. If every
+  body is unusable the snapshot ends empty and is held, so fix the adapter first.
 
 ## Cutover flags
 
@@ -527,9 +668,15 @@ served for a week.
      of every listing per request (README, "Listing API").
 5. **Slice 5 (done): serve grid and REST** at the flag's `serve` variant, per surface and after
    the gate (Serving, above), with the flag reshaped as a variant (Cutover flags).
-6. **Slice 6: sub-listings in the read model.** Required before the `/apps` grid page can be
-   shadowed or served: it always asks for sub-listing cards, and the read model has none (Serving,
-   "What `grid` covers").
+6. **Slice 6 (done): sub-listings in the read model.** The adapter carries each listing's
+   sub-listing items in its body (`subListings`; Sub-listings, above); the read model requires them
+   (`ListingsLayoutVersion` 4: a `sub_listing_keys` column holding each item's key fields for the
+   ranking memo, rebuilt beside; the API answers 503 from an older-layout generation until the
+   switch), ranks them into a page with `subListings=1` in the database's order, hydrates them by id
+   (`subListingIds`), and gates and projects each per request. The shadow and serving answer pages
+   with sub-listing cards, and after one, instead of refusing them (`unsupported_input`). The card
+   rule is pinned on both sides by the parity fixture's `subListings`, and the stream's read is
+   executed against the grid's child arm on the same rows (`app-sub-listing-store.behavior.test.ts`).
 7. **Slice 7: shadow, then serve, detail, card and OG.**
 8. **Slice 8: launch and install** via `app-release@v1`.
 9. **Promotion** to the official registry: drop the relay gate, once the registry owner agrees.
@@ -539,7 +686,7 @@ served for a week.
 - Owner and creator screens: My apps, builds, drafts, submit and edit, revisions, analytics.
 - Moderator screens: the review queue, moderation listing, takedowns, history.
 - Tester and moderator store views (`floor !== 'public'`).
-- Sub-listing cards.
+- A text search's sub-listing cards (`withSubListingCards`, with the search's database page).
 - Writes of any kind, and every read inside a write transaction.
 - The "restricted audience" badge, which is viewer-scoped and only shown to non-public floors.
 - Fork lists and fork sessions.

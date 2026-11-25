@@ -15,7 +15,7 @@ import { answerHiddenCheck, readHiddenNotices } from './hidden.service';
 import { closeNotice, SMITE_NOTICE, SMITE_REASON, warningNotice } from './notices';
 
 const WARNING = { title: warningNotice(null, '').title };
-import { settleHiddenChecks } from './settle';
+import { gradeHiddenVotes, settleHiddenChecks } from './settle';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -270,6 +270,7 @@ describe('grading hidden checks', () => {
   it.each([
     ['unpublished', `UPDATE "Post" SET "publishedAt"=NULL WHERE id=10`],
     ['blocked', `UPDATE "Image" SET "ingestion"='Blocked' WHERE id=10`],
+    ['put on a Private post', `UPDATE "Post" SET availability='Private' WHERE id=10`],
   ])(
     'grades a check inconclusive, with no cost, when its image was %s since',
     async (_label, change) => {
@@ -299,6 +300,28 @@ describe('grading hidden checks', () => {
     await answer(1, await reference(10), '4');
     await settle(minutes(31));
     expect(await settle(minutes(32))).toMatchObject({ graded: 0 });
+  });
+
+  it('turns JIT off for its own image read, whatever the caller ran before it', async () => {
+    await seedPlayer(pg, 1);
+    await answer(1, await reference(10), '4');
+    const due = (
+      await pg.query<{
+        itemId: number;
+        playerId: number;
+        verdict: string;
+        gold: number;
+        createdAt: Date;
+        answer: string;
+      }>(
+        `SELECT "itemId","playerId",verdict,gold,"createdAt",answer FROM "KnightsVote" WHERE "playerId"=1`
+      )
+    ).rows;
+    // A transaction that ran no readWithoutJit first: the harness fails the test if the servableImage read runs with JIT on.
+    const { outcomes } = await db
+      .transaction()
+      .execute((trx) => gradeHiddenVotes(trx, due as never, { now: minutes(31), settings }));
+    expect(outcomes).toEqual([expect.objectContaining({ playerId: 1, verdict: 'correct' })]);
   });
 
   it('counts the check on its reference image when it is graded', async () => {
@@ -349,6 +372,87 @@ describe('retiring checks players keep failing', () => {
   });
 });
 
+describe('retiring mod-confirmed checks', () => {
+  const statusOf = async (id: number) =>
+    (
+      await pg.query<{ status: string }>(`SELECT status FROM "KnightsReferenceImage" WHERE id=$1`, [
+        id,
+      ])
+    ).rows[0].status;
+  const inquisitorRef = async (imageId: number) => {
+    const ref = await reference(imageId, '4');
+    await pg.query(`UPDATE "KnightsReferenceImage" SET source='inquisitor' WHERE id=$1`, [ref]);
+    return ref;
+  };
+  /** Earlier graded Knight answers on the check, as the ledger holds them. */
+  const priorVotes = (ref: number, verdicts: string[]) =>
+    pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict")
+       SELECT $1, 1000 + n, $2::timestamp + (n || ' seconds')::interval, $3, 0, 'Knight', '4', 1, v
+       FROM unnest($4::text[]) WITH ORDINALITY AS t(v, n)`,
+      [-ref, '2026-12-14 00:00:00', Q, verdicts]
+    );
+
+  it('keeps an inquisitor check whose shared counters are past the bar when Knights mostly got it right', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await pg.query(`UPDATE "KnightsReferenceImage" SET answers=19, failures=15 WHERE id=$1`, [ref]);
+    await priorVotes(ref, Array(19).fill('correct'));
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('active');
+  });
+
+  it('still retires a harvested check with the same shared counters', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    await pg.query(`UPDATE "KnightsReferenceImage" SET answers=19, failures=15 WHERE id=$1`, [ref]);
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('retired');
+  });
+
+  it('retires an inquisitor check once Knights hard-fail more than the bar, and counts it', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await priorVotes(ref, [...Array(10).fill('failed'), ...Array(9).fill('correct')]);
+    const before = await counterValue('knights_skill_checks_retired_total', { reason: 'failures' });
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('retired');
+    expect(await counterValue('knights_skill_checks_retired_total', { reason: 'failures' })).toBe(
+      before + 1
+    );
+  });
+
+  it('counts only the Knight failures since the check entered the pool', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await pg.query(`UPDATE "KnightsReferenceImage" SET "harvestedAt"=$1 WHERE id=$2`, [
+      '2026-12-14 12:00:00',
+      ref,
+    ]);
+    // Twenty failures from before the move (votes on the row's earlier life) and none since.
+    await priorVotes(ref, Array(20).fill('failed'));
+    await pg.query(
+      `UPDATE "KnightsVote" SET "createdAt"="createdAt" - interval '1 day' WHERE "itemId"=$1`,
+      [-ref]
+    );
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('active');
+  });
+
+  it('does not count close answers toward retiring an inquisitor check', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await inquisitorRef(10);
+    await priorVotes(ref, [...Array(10).fill('inconclusive'), ...Array(9).fill('failed')]);
+    await answer(1, ref, '8');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('active');
+  });
+});
+
 describe('naming the check behind a notice', () => {
   it('names the image, the answer given and the answer it wanted', async () => {
     await seedPlayer(pg, 1);
@@ -359,6 +463,17 @@ describe('naming the check behind a notice', () => {
     // The warning names both judgments in its own words.
     expect(notice).toMatchObject(warningNotice(notice.correctLabel, notice.answerLabel));
     expect(notice.answerLabel).not.toBe(notice.correctLabel);
+    expect(notice.correctLabel).toBeTruthy();
+  });
+
+  it('hides the image of a check on a Private post but still names the answers', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    const [notice] = await readHiddenNotices(db, 1);
+    expect(notice.imageKey).toBeNull();
     expect(notice.correctLabel).toBeTruthy();
   });
 

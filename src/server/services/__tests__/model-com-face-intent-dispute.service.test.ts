@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { logToAxiom } from '~/server/logging/client';
 import type * as LockReview from '~/server/services/lock-review.service';
 
 const mocks = vi.hoisted(() => ({
@@ -72,6 +73,25 @@ describe('processComFaceIntentDisputes', () => {
       })
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('logs the overturn as a prompt-tuning sample naming both passes', async () => {
+    const meta = { ...recorded, comFaceIntent: { ...recorded.comFaceIntent, promptId: 4 } };
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute({ meta })] as never);
+    mocks.verdict.mockResolvedValue({ status: 'allowed', promptId: 9 });
+
+    await processComFaceIntentDisputes();
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'model-com-face-intent-dispute',
+        message: 'overturned',
+        appealId: 1,
+        modelId: 7,
+        firstPromptId: 4,
+        secondPromptId: 9,
+      })
+    );
   });
 
   it('leaves a still-detected dispute pending for a moderator, marked so it is not judged again', async () => {

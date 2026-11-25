@@ -71,6 +71,7 @@ export function SavePresetModal() {
     <Modal
       onClose={dialog.onClose}
       opened={dialog.opened}
+      closeOnEscape={dialog.closeOnEscape}
       title="Save preset"
       size="sm"
       zIndex={dialog.zIndex}

@@ -2,6 +2,8 @@ import { Menu } from '@mantine/core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineChapterRemoveItem } from '~/components/Storyline/StorylineChapterRemoveItem';
 
 const mocks = vi.hoisted(() => ({
@@ -18,12 +20,6 @@ vi.mock('~/components/Storyline/storyline.data', () => ({
     return { isPending: false, mutate: mocks.remove };
   },
 }));
-// Confirms at once.
-vi.mock('@mantine/modals', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  openConfirmModal: ({ onConfirm }: { onConfirm: () => void }) => onConfirm(),
-}));
-
 const OWNER = 10;
 const AUTHOR = 20;
 // The reader is on image 1 of chapter 100 (chapter 1), or image 2, 3 or 4 of its continuations,
@@ -64,12 +60,15 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
 
 const renderItem = (imageId: number) =>
   renderWithProviders(
-    <Menu opened>
-      <Menu.Dropdown>
-        <StorylineChapterRemoveItem imageId={imageId} />
-        <Menu.Item>Other</Menu.Item>
-      </Menu.Dropdown>
-    </Menu>
+    <>
+      <Menu opened>
+        <Menu.Dropdown>
+          <StorylineChapterRemoveItem imageId={imageId} />
+          <Menu.Item>Other</Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+      <DialogProvider />
+    </>
   );
 const offered = () =>
   [...document.querySelectorAll('[role="menuitem"]')].some((el) =>
@@ -77,6 +76,7 @@ const offered = () =>
   );
 
 beforeEach(() => {
+  dialogStore.closeAll();
   mocks.currentUser = null;
   mocks.leave.mockReset();
   mocks.removed = null;
@@ -107,6 +107,11 @@ describe('Remove from storyline in the reader', () => {
       mocks.currentUser = { id: AUTHOR };
       renderItem(imageId);
       await page.getByRole('menuitem', { name: /Remove from storyline/ }).click();
+      expect(mocks.remove).not.toHaveBeenCalled();
+      await page
+        .getByRole('dialog', { name: 'Remove chapter' })
+        .getByRole('button', { name: 'Remove', exact: true })
+        .click();
       expect(mocks.remove.mock.calls).toEqual([[chapterId]]);
     });
 

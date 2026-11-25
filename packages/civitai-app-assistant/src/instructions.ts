@@ -132,6 +132,14 @@ export const DATA_RULE =
   "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site/reference.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
 
 /**
+ * The app's look: ADVICE, never a requirement (report_ready only adds a note, `gate.ts`). Many
+ * submitted apps shipped Civitai's stock look; the theming guide is where an accent of the app's own
+ * is explained. Runner-neutral: the page fetches the guide itself, the runner with `read_docs`.
+ */
+export const THEME_RULE =
+  "- A distinct look is recommended, not required: an accent of the app's own (a scoped --civitai-color-primary override on the app's root element, never at :root, checked in light and dark) helps it stand out in the store; see https://developer.civitai.com/apps/guide/theming.md.";
+
+/**
  * The viewer's own Buzz history. @civitai/sdk's BREAKING.md lists it under "No v1 route", which an
  * assistant read as "no transaction history"; the host still answers it over the bridge.
  */
@@ -168,6 +176,7 @@ const RULES_AFTER_SETUP = [
   // A run grepped the SDK README for "models(", found nothing, and shipped invented models as real ones.
   DATA_RULE,
   BUZZ_TRANSACTIONS_RULE,
+  THEME_RULE,
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
   SUBMIT_RULE,
   FEEDBACK_RULE,

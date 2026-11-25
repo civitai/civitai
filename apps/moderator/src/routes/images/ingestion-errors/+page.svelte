@@ -92,4 +92,5 @@
   {card}
   itemClass={(image) => (resolved.has(image.id) ? 'opacity-50' : '')}
   empty="No ingestion errors to review."
+  unprocessed
 />

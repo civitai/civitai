@@ -14,7 +14,6 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconCheck, IconExclamationCircle } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
@@ -95,6 +94,7 @@ import {
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { useTrainingImageStore } from '~/store/training.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const ModelSelector = ({
   status,
@@ -427,9 +427,9 @@ export const ModelSelect = ({
   const makeDefaultParams = (data: TrainingRunUpdate) => {
     const isChangingBase = !!data.base && data.base !== selectedRun.base;
     if (isChangingBase && isParamsDirty) {
-      openConfirmModal({
+      openConfirm({
         title: 'Change base model?',
-        children: (
+        message: (
           <Text size="sm">
             Changing the base model will reset your training parameters to the defaults for the new
             model. Your current parameter changes will be lost.

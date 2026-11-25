@@ -1,4 +1,5 @@
 import { createEmail, renderEmailShell } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { env } from '$env/dynamic/private';
 import { siteAppealDecisionText, type SiteAppealCategory } from '@civitai/shared/site-appeal';
 
@@ -10,9 +11,6 @@ export type AppealResolutionEmailData = {
   items: { url?: string; label: string }[];
 };
 
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
 const tosFooter =
   'For more information, see our <a href="https://civitai.com/content/tos">Terms of Service</a>.';
 
@@ -22,6 +20,8 @@ const tosFooter =
 // `resolvedMessage` is intentionally NOT emailed — it's shown only in-app — so the email carries only
 // the decision + the affected items.
 export const appealResolutionEmail = createEmail<AppealResolutionEmailData, never>({
+  template: 'appealResolution',
+  mailClass: 'transactional',
   header: ({ to, approved }) => ({
     to,
     from: env.EMAIL_FROM,
@@ -41,6 +41,9 @@ export const appealResolutionEmail = createEmail<AppealResolutionEmailData, neve
       )
       .join('');
     return renderEmailShell({
+      icon: approved ? '✅' : '⚖️',
+      accent: approved ? 'green' : 'gray',
+      eyebrow: 'Appeal',
       header: heading,
       body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
         <p style="margin: 0 0 16px 0;">${intro}</p>
@@ -76,6 +79,8 @@ export type SiteAppealResolutionEmailData = {
 // The site appeal form's decision. Same rule as above: the moderator's message stays out of the email;
 // the appeal page shows it, and that page is reachable from the banned screen.
 export const siteAppealResolutionEmail = createEmail<SiteAppealResolutionEmailData, never>({
+  template: 'siteAppealResolution',
+  mailClass: 'transactional',
   header: ({ to, approved }) => ({
     to,
     from: env.EMAIL_FROM,
@@ -85,6 +90,9 @@ export const siteAppealResolutionEmail = createEmail<SiteAppealResolutionEmailDa
     const heading = approved ? 'Appeal Approved' : 'Appeal Decision';
     const text = siteAppealDecisionText({ category, approved, restored });
     return renderEmailShell({
+      icon: approved ? '✅' : '⚖️',
+      accent: approved ? 'green' : 'gray',
+      eyebrow: 'Appeal',
       header: heading,
       body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
         <p style="margin: 0 0 16px 0;">${escapeHtml(text)}</p>

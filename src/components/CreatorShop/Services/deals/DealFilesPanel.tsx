@@ -13,9 +13,8 @@ import {
 } from '@mantine/core';
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { useRouter } from 'next/router';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
-import { useServerDomains } from '~/providers/AppProvider';
+import { useRedHref } from '~/hooks/useRedHref';
+import { OffDomainNotice } from '~/components/OffDomain/OffDomainNotice';
 import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -286,6 +285,7 @@ function PartyFiles({
                         <IconDownload size={16} />
                       </Anchor>
                     )}
+                    {file.downloadOffDomain && <DownloadOffDomain />}
                     {canEdit && round === currentRound && file.status === 'Uploading' && (
                       <Button
                         size="compact-xs"
@@ -328,14 +328,16 @@ function PartyFiles({
 
 /** Where this domain may not show a preview, says so and links to the same page on civitai.red. */
 function PreviewOffDomain() {
-  const router = useRouter();
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  return <OffDomainNotice noun="preview" href={useRedHref()()} />;
+}
+
+function DownloadOffDomain() {
+  const redHref = useRedHref();
   return (
     <Text size="xs" c="dimmed">
-      This preview isn&apos;t available on civitai.com.{' '}
-      <Anchor href={syncAccount(`//${redDomain}${router.asPath}`)} inherit>
-        See it on civitai.red
+      Not downloadable on civitai.com.{' '}
+      <Anchor href={redHref()} inherit>
+        Download on civitai.red
       </Anchor>
     </Text>
   );
@@ -409,6 +411,13 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
                         </Text>
                       </Group>
                     </Anchor>
+                  ) : file.downloadOffDomain ? (
+                    <Group key={file.id} gap={6} wrap="nowrap">
+                      <Text size="sm" className="truncate">
+                        {file.fileName}
+                      </Text>
+                      <DownloadOffDomain />
+                    </Group>
                   ) : (
                     <Text key={file.id} size="sm" c="dimmed">
                       Sealed file · {formatBytes(file.size)}

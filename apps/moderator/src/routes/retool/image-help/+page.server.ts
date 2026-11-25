@@ -6,10 +6,12 @@ import { parseForm, parseQuery } from '$lib/server/query';
 import {
   HELP_TYPES,
   createHelpRequest,
+  getHelpRequestImageIds,
   getHelpRequestImages,
   getOpenHelpRequests,
   resolveHelpRequest,
 } from '$lib/server/image-help.service';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   request: z.coerce.number().int().positive().optional().catch(undefined),
@@ -23,7 +25,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // pane makes the page look broken when there is work waiting.
   const selectedId = request ?? requests[0]?.id;
   const selected = requests.find((r) => r.id === selectedId) ?? null;
-  const images = selected ? await getHelpRequestImages(selected.id) : [];
+  const images = selected
+    ? await withheldRows(
+        await getHelpRequestImages(selected.id),
+        locals.user,
+        'image-help',
+        (i) => i.id,
+        withheldRow
+      )
+    : [];
 
   return {
     requests,
@@ -44,6 +54,11 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const withheld = await withheldRefusal(
+      locals.user,
+      await getHelpRequestImageIds(input.requestId)
+    );
+    if (withheld) return fail(403, { error: withheld });
 
     const result = await resolveHelpRequest({
       requestId: input.requestId,

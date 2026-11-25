@@ -49,7 +49,7 @@ vi.mock('~/server/prom/client', () => ({
   clickhouseFailSoftCounter: { inc: vi.fn() },
 }));
 
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: (...args: any[]) => h.createBuzzTransactionMany(...args),
   getTransactionByExternalId: (...args: any[]) => h.getTransactionByExternalId(...args),
   getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),

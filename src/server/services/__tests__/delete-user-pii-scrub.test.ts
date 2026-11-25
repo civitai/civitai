@@ -10,12 +10,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: flipt.isFlipt,
 }));
 
-// No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-}));
-
 /**
  * Account deletion is a SOFT delete, so no FK cascade fires and nothing is removed for
  * free. Measured on prod before this change, across 1,330,849 deleted accounts:
@@ -30,7 +24,6 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
  */
 
 import * as UserService from '~/server/services/user.service';
-import { guardedAccountScrubSql } from '~/server/services/legal-hold.service';
 
 const USER_ID = 42;
 
@@ -78,14 +71,21 @@ const dbWriteCallsMentioning = (needle: string) => {
   return hits;
 };
 
-/**
- * Index of the soft delete in $executeRaw.mock.calls: the guarded scrub, which carries deletedAt.
- * What its statement nulls is run as SQL in `account-legal-hold.behavior.test.ts`.
- */
+/** Index of the soft delete in user.update.mock.calls: the write that carries deletedAt. */
 const scrubIndex = () =>
-  dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([arg]) =>
-    (arg as { text?: string })?.text?.includes('"deletedAt" = now()')
+  dbMock.dbWrite.user.update.mock.calls.findIndex(
+    ([arg]) => (arg as { data?: { deletedAt?: unknown } })?.data?.deletedAt instanceof Date
   );
+const SCRUBBED = {
+  deletedAt: expect.any(Date),
+  email: null,
+  username: null,
+  name: null,
+  paddleCustomerId: null,
+  image: null,
+  profilePictureId: null,
+  subscriptionId: null,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -102,14 +102,16 @@ beforeEach(() => {
 });
 
 describe('deleteUser — what the soft delete scrubs', () => {
-  it('runs the guarded scrub for this account', async () => {
+  it('scrubs this account', async () => {
     await deleteUser();
 
-    // The statement that nulls name, email, username and the payment pointers. 733,857 deleted
+    // The write that nulls name, email, username and the payment pointers. 733,857 deleted
     // accounts carried a name, ~490k shaped "First Last"; nothing displays it, so a survivor is
     // pure retained PII.
-    const [statement] = dbMock.dbWrite.$executeRaw.mock.calls[scrubIndex()] as [{ text: string }];
-    expect(statement.text).toBe(guardedAccountScrubSql(USER_ID, false).text);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith({
+      where: { id: USER_ID },
+      data: expect.objectContaining(SCRUBBED),
+    });
   });
 
   it('deletes the UserProfile row', async () => {
@@ -140,9 +142,9 @@ describe('deleteUser — what the soft delete scrubs', () => {
     const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
     expect(ops).toContain(dbMock.dbWrite.userProfile.deleteMany.mock.results[0].value);
     expect(ops).toContain(dbMock.dbWrite.userLink.deleteMany.mock.results[0].value);
-    // The soft delete itself too, and first: without this, awaiting it outside the array passed
-    // every test here, including the ones that say "inside the transaction".
-    expect(ops[0]).toBe(dbMock.dbWrite.$executeRaw.mock.results[scrubIndex()].value);
+    // The soft delete itself too: without this, awaiting it outside the array passed every test
+    // here, including the ones that say "inside the transaction".
+    expect(ops).toContain(dbMock.dbWrite.user.update.mock.results[scrubIndex()].value);
   });
 });
 
@@ -153,7 +155,7 @@ describe('deleteUser — the account it acts on', () => {
 
     expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith({
       where: { id: USER_ID },
-      data: { meta: { kept: 1, imageRemoval: 'immediate' } },
+      data: { ...SCRUBBED, meta: { kept: 1, imageRemoval: 'immediate' } },
     });
     const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
     expect(ops).toContain(dbMock.dbWrite.user.update.mock.results[0].value);
@@ -164,8 +166,6 @@ describe('deleteUser — the account it acts on', () => {
     dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: FOUND, meta: {} });
     await deleteUser();
 
-    const [statement] = dbMock.dbWrite.$executeRaw.mock.calls[scrubIndex()] as [{ text: string }];
-    expect(statement.text).toBe(guardedAccountScrubSql(FOUND, false).text);
     expect(dbMock.dbWrite.model.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: FOUND } })
     );
@@ -184,33 +184,29 @@ describe('deleteUser — payment-provider ids', () => {
     // moving the null after the cancels was tried and reverted, because with seven live Paddle
     // subscriptions it bought a live API call per deletion for almost nothing to cancel.
     const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
-    expect(ops).toContain(dbMock.dbWrite.$executeRaw.mock.results[scrubIndex()].value);
+    expect(ops).toContain(dbMock.dbWrite.user.update.mock.results[scrubIndex()].value);
   });
 
-  it('nulls subscriptionId inside the transaction, via raw SQL', async () => {
+  it('nulls subscriptionId inside the transaction, with the soft delete', async () => {
     await deleteUser();
 
-    // Prisma cannot reach this column — it is absent from the User model — so the scan over
-    // WRITE_PATHS is what sees it at all. 3,339 already-deleted accounts still held one when
-    // this shipped: a pointer to the subscription, hence the customer, hence charges carrying
-    // receipt_email. Nulling paddleCustomerId above does not close it.
-    expect(dbWriteCallsMentioning('subscriptionId')).toEqual(['dbWrite.$executeRaw']);
-
-    // It is the guarded scrub, whose statement is run as SQL in
-    // `account-legal-hold.behavior.test.ts`; a substring check here let mutants through before.
-    const rawCall = dbMock.dbWrite.$executeRaw.mock.calls.findIndex((call) =>
-      JSON.stringify(call)?.includes('subscriptionId')
-    );
-    expect(rawCall).toBe(scrubIndex());
+    // 3,339 already-deleted accounts still held one when this shipped: a pointer to the
+    // subscription, hence the customer, hence charges carrying receipt_email. Nulling
+    // paddleCustomerId above does not close it.
+    expect(dbWriteCallsMentioning('subscriptionId')).toEqual(['dbWrite.user.update']);
+    expect(
+      (dbMock.dbWrite.user.update.mock.calls[scrubIndex()][0] as { data: Record<string, unknown> })
+        .data.subscriptionId
+    ).toBeNull();
 
     // Atomic with the soft delete. In the post-transaction tail it would be skippable, which
     // is the defect #4978 exists to fix.
     const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
-    expect(ops).toContain(dbMock.dbWrite.$executeRaw.mock.results[rawCall].value);
+    expect(ops).toContain(dbMock.dbWrite.user.update.mock.results[scrubIndex()].value);
   });
 
   it('CONTROL: the scan reports nothing for subscriptionId when the delete does not write it', () => {
-    // A BLEED control, not a visibility one: it shows the ['dbWrite.$executeRaw'] above comes
+    // A BLEED control, not a visibility one: it shows the ['dbWrite.user.update'] above comes
     // from the call deleteUser makes rather than from mock state left by an earlier test.
     // That the scan can SEE a $executeRaw write at all is a different property, carried by
     // the tagged-raw-SQL control further down.
@@ -399,7 +395,7 @@ describe('the profile archive before an account deletion', () => {
     );
   });
 
-  it('archives nothing for a user no report or hold names', async () => {
+  it('archives nothing for a user no report names', async () => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
       s.join('?').includes('"CsamReport"') ? [{ named: false }] : []) as never);
     const archive = vi.fn(async () => ({}));

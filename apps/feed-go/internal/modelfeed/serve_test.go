@@ -84,6 +84,11 @@ type fakeSources struct {
 	official      []hydrate.OfficialModel
 	officialErr   error
 	officialCalls int
+	// follows is FollowedUserIDs' answer per viewer; followRq the viewers it was asked for.
+	follows  map[int][]int
+	followRq []int
+	// computedRq are CreatorMembershipsComputed's calls.
+	computedRq [][]int
 }
 
 func (f *fakeSources) OfficialModels(_ context.Context) ([]hydrate.OfficialModel, error) {
@@ -125,9 +130,22 @@ func (f *fakeSources) CreatorMemberships(_ context.Context, ids []int) (map[int]
 	return out, nil
 }
 
+// CreatorMembershipsComputed answers as CreatorMemberships; computedRq records its calls.
+func (f *fakeSources) CreatorMembershipsComputed(ctx context.Context, ids []int) (map[int]bool, error) {
+	f.computedRq = append(f.computedRq, ids)
+	return f.CreatorMemberships(ctx, ids)
+}
+
 func (f *fakeSources) UserIDByUsername(_ context.Context, name string) (int, bool, error) {
 	id, ok := f.users[name]
 	return id, ok, nil
+}
+
+func (f *fakeSources) FollowedUserIDs(_ context.Context, userID int) ([]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.followRq = append(f.followRq, userID)
+	return append([]int{}, f.follows[userID]...), nil
 }
 
 type fakeGallery struct{ settings map[int]*feed.GallerySettings }
@@ -153,7 +171,13 @@ type env struct {
 	queries []string
 	args    [][]any
 	gates   map[int]*time.Time
-	covers  [][]any
+	// gatedVersions is the gate read's versionIds column: per gated model, its gated version ids.
+	gatedVersions map[int][]int
+	covers        [][]any
+	// community are the community-cover guard's rows (modelId, imageId); communityArgs each read's
+	// arguments.
+	community     [][]any
+	communityArgs [][]any
 }
 
 func newEnv(pages ...[]testRow) *env {
@@ -191,13 +215,23 @@ func newEnv(pages ...[]testRow) *env {
 					if d != nil {
 						v = *d
 					}
-					rows = append(rows, []any{id, v})
+					var versions any
+					if vs, ok := e.gatedVersions[id]; ok {
+						versions = vs
+					}
+					rows = append(rows, []any{id, v, versions})
 				}
 			}
-			return testkit.NewRows([]string{"modelId", "deadline"}, rows...), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}, rows...), nil
 		}},
 		{Match: `FROM "Image" i`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, e.covers...), nil
+		}},
+		{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(args []any) (*testkit.Rows, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			e.communityArgs = append(e.communityArgs, args)
+			return testkit.NewRows([]string{"modelId", "imageId"}, e.community...), nil
 		}},
 		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
 			if args[0] == "anime" {
@@ -356,9 +390,13 @@ func TestServeWholeAnswer(t *testing.T) {
 		t.Fatal("a loaded page is not trivial")
 	}
 	// One page: two items fill the limit. The cover 9999 was looked up on the replica (not on the
-	// shown version) and not found.
-	if len(e.queries) != 1 || len(e.db.Calls) != 3 {
+	// shown version) and not found, then among the model's featured community images, where it is
+	// not either (Node's withCommunityCovers finds no row and answers the same).
+	if len(e.queries) != 1 || len(e.db.Calls) != 4 {
 		t.Fatalf("queries %d, db calls %d (%v)", len(e.queries), len(e.db.Calls), e.db.Calls)
+	}
+	if !reflect.DeepEqual(e.communityArgs, [][]any{{[]int{9999}, []int{5002}}}) {
+		t.Fatalf("community-cover reads %v, want the one missing cover", e.communityArgs)
 	}
 }
 
@@ -485,6 +523,16 @@ func TestResolveLevel(t *testing.T) {
 	disjoint := 16
 	if got, _ := resolveLevel(&Input{BrowsingLevel: &disjoint}, Request{Cap: 3}); got != 3 {
 		t.Errorf("disjoint level: %d, want the cap", got)
+	}
+	// A sent level is held to the selectable levels before the cap, unless a moderator sent it.
+	mixed := 1 | 32
+	for _, c := range []struct {
+		v         *Viewer
+		cap, want int
+	}{{&Viewer{ID: 5}, 0, 1}, {nil, 0, 1}, {&Viewer{ID: 5}, 3, 1}, {&Viewer{ID: 5, IsModerator: true}, 0, 1 | 32}} {
+		if got, err := resolveLevel(&Input{BrowsingLevel: &mixed}, Request{Viewer: c.v, Cap: c.cap}); err != nil || got != c.want {
+			t.Errorf("viewer %+v cap %d: %d %v, want %d", c.v, c.cap, got, err, c.want)
+		}
 	}
 }
 
@@ -792,6 +840,263 @@ func TestServeCoverFromAnotherVersion(t *testing.T) {
 	}
 }
 
+// A chosen cover the owner lookup does not find can be a community image the creator featured in a
+// version showcase, which Node's withCommunityCovers (model-cover.service.ts) serves as the cover.
+// Not ported: a cover that has a featured, not-removed Community showcase row on one of the model's
+// versions falls back, on every path getCoverImages takes to withCommunityCovers.
+func TestServeCommunityCoverFallsBack(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		row  testRow
+		edit func(e *env, in *Input)
+	}{
+		// Not on the shown version, and the replica places it in another user's post.
+		{"a foreign image", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(e *env, _ *Input) {
+			e.covers = [][]any{{777, 55, 12, 1}}
+		}},
+		// No Image row at all for the owner lookup (its post is gone): Node still asks.
+		{"no image row", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, nil},
+		// The owner's image, but the version's cached images do not hold it.
+		{"an owner image not cached", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(e *env, _ *Input) {
+			e.covers = [][]any{{777, 9, 11, 1}}
+		}},
+		// Under a base-model filter the owner lookup is skipped; withCommunityCovers still runs.
+		{"a base-model filter", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(_ *env, in *Input) {
+			in.BaseModels = []string{"Pony"}
+		}},
+		{"hide paid", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(_ *env, in *Input) { in.HidePaid = true }},
+		// A .com viewer of a model with a .com face: the .com cover is the chosen one.
+		{"the .com cover", testRow{id: 1, owner: 9, sfwName: "Safe", cover: 101, sfwCover: 777, nsfw: true, nsfwLevel: 1 | 4, cursor: "x"}, nil},
+	} {
+		e := newEnv([]testRow{c.row})
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil), image(101, 9, 4, nil)}
+		e.community = [][]any{{1, 777}}
+		in := baseInput()
+		if c.edit != nil {
+			c.edit(e, in)
+		}
+		_, err := serve(t, e, in, nil)
+		if got := fallback.Reason(err); got != "model-community-cover" {
+			t.Errorf("%s: %v (%q), want model-community-cover", c.name, err, got)
+		}
+		if !reflect.DeepEqual(e.communityArgs, [][]any{{[]int{777}, []int{1}}}) {
+			t.Errorf("%s: community-cover reads %v, want [[[777] [1]]]", c.name, e.communityArgs)
+		}
+	}
+}
+
+// A cover Node's withCommunityCovers cannot change is served as before: found on the shown version
+// or as the owner's image on another (no community read), or missing with no featured row for that
+// model and image (the read finds none, or only another model's or another image's).
+func TestServeCommunityCoverServed(t *testing.T) {
+	// On the shown version.
+	e := newEnv([]testRow{{id: 1, owner: 9, cover: 101, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil), image(101, 9, 1, nil)}
+	e.community = [][]any{{1, 101}}
+	a, err := serve(t, e, baseInput(), nil)
+	if err != nil {
+		t.Fatalf("shown version: %v (%q)", err, fallback.Reason(err))
+	}
+	if id, _ := field(t, items(t, a)[0], "images").([]any)[0].(superjson.Object).Get("id"); id != int64(101) {
+		t.Fatalf("shown version: the cover first: %v", items(t, a)[0])
+	}
+	if len(e.communityArgs) != 0 {
+		t.Fatalf("shown version: community-cover reads %v, want none", e.communityArgs)
+	}
+
+	// The owner's image on another version.
+	e = newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+	e.sources.images[11] = []superjson.Object{image(777, 9, 1, nil)}
+	e.covers = [][]any{{777, 9, 11, 1}}
+	e.community = [][]any{{1, 777}}
+	a, err = serve(t, e, baseInput(), nil)
+	if err != nil {
+		t.Fatalf("another version: %v (%q)", err, fallback.Reason(err))
+	}
+	if id, _ := field(t, items(t, a)[0], "images").([]any)[0].(superjson.Object).Get("id"); id != int64(777) {
+		t.Fatalf("another version: the cover first: %v", items(t, a)[0])
+	}
+	if len(e.communityArgs) != 0 {
+		t.Fatalf("another version: community-cover reads %v, want none", e.communityArgs)
+	}
+
+	// Missing, and no featured row for this model and image.
+	for name, rows := range map[string][][]any{
+		"no row":          nil,
+		"another model's": {{2, 777}},
+		"another image's": {{1, 778}},
+	} {
+		e = newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+		e.community = rows
+		a, err = serve(t, e, baseInput(), nil)
+		if err != nil {
+			t.Fatalf("%s: %v (%q)", name, err, fallback.Reason(err))
+		}
+		if imgs := field(t, items(t, a)[0], "images").([]any); len(imgs) != 1 {
+			t.Fatalf("%s: images %v, want the version's own", name, imgs)
+		}
+		if len(e.communityArgs) != 1 {
+			t.Fatalf("%s: community-cover reads %v, want one", name, e.communityArgs)
+		}
+	}
+
+	// A failed read is an error, never a served default.
+	e = newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+	e.db.Routes = append([]testkit.Route{{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(_ []any) (*testkit.Rows, error) {
+		return nil, errors.New("replica down")
+	}}}, e.db.Routes...)
+	if _, err := serve(t, e, baseInput(), nil); err == nil {
+		t.Fatal("a failed community-cover read served")
+	}
+}
+
+// Under Hide Paid getCoverImages keeps the cover on the shown version (sameVersionOnly), as under a
+// base-model filter: no replica lookup of another version.
+func TestServeHidePaidCoverSameVersionOnly(t *testing.T) {
+	e := newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+	e.sources.images[11] = []superjson.Object{image(777, 9, 1, nil)}
+	e.covers = [][]any{{777, 9, 11, 1}}
+	in := baseInput()
+	in.HidePaid = true
+	a, err := serve(t, e, in, nil)
+	if err != nil {
+		t.Fatalf("%v (%q)", err, fallback.Reason(err))
+	}
+	for _, c := range e.db.Calls {
+		if strings.Contains(c, `FROM "Image" i`) {
+			t.Fatal("hide paid: no cover lookup on another version")
+		}
+	}
+	imgs := field(t, items(t, a)[0], "images").([]any)
+	if id, _ := imgs[0].(superjson.Object).Get("id"); len(imgs) != 1 || id != int64(100) {
+		t.Fatalf("hide paid: images %v, want the shown version's own", imgs)
+	}
+}
+
+// Under Hide Paid a gated model keeps only its free versions (#9385): a model with a paid and a free
+// version shows the free one, its base models are the free versions' own, and the paid chip and
+// deadline are off; a model whose every version is paid is left out; a free model is unchanged. Without
+// Hide Paid the same page shows the paid version with the chip on. Either way the gates are one read.
+func TestServeHidePaidShowsFreeVersion(t *testing.T) {
+	deadline := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	setup := func() *env {
+		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "x"}, {id: 2, owner: 9, cursor: "y"}, {id: 3, owner: 9, cursor: "z"}})
+		// 1: a paid version (newest) and a free one; 2: one paid version only; 3: one free version only.
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil), version(11, "SDXL 1.0", nil)}}
+		e.sources.page.Data[2] = hydrate.ModelData{Versions: []superjson.Object{version(20, "Flux.1 D", nil)}}
+		e.sources.page.Data[3] = hydrate.ModelData{Versions: []superjson.Object{version(30, "Illustrious", nil)}}
+		for _, v := range []int{10, 11, 20, 30} {
+			e.sources.images[v] = []superjson.Object{image(v*10, 9, 1, nil)}
+		}
+		e.gates[1], e.gates[2] = &deadline, nil
+		e.gatedVersions = map[int][]int{1: {10}, 2: {20}}
+		return e
+	}
+	gateReads := func(e *env) (n int) {
+		for _, c := range e.db.Calls {
+			if strings.Contains(c, `GROUP BY mv."modelId"`) {
+				n++
+			}
+		}
+		return
+	}
+	type card struct {
+		id, version int64
+		baseModels  []any
+		paid        bool
+		deadline    any
+	}
+	cards := func(a *Answer) []card {
+		list := items(t, a)
+		out := make([]card, 0, len(list))
+		for _, it := range list {
+			out = append(out, card{
+				id: field(t, it, "id").(int64), version: field(t, it, "version.id").(int64),
+				baseModels: field(t, it, "baseModels").([]any), paid: field(t, it, "hasActivePaidAccess").(bool),
+				deadline: field(t, it, "earlyAccessDeadline"),
+			})
+		}
+		return out
+	}
+
+	in := baseInput()
+	in.Limit, in.HidePaid = 10, true
+	e := setup()
+	a, err := serve(t, e, in, nil)
+	if err != nil {
+		t.Fatalf("hide paid: %v (%q)", err, fallback.Reason(err))
+	}
+	want := []card{
+		{id: 1, version: 11, baseModels: []any{"SDXL 1.0"}, paid: false, deadline: nil},
+		{id: 3, version: 30, baseModels: []any{"Illustrious"}, paid: false, deadline: nil},
+	}
+	if got := cards(a); !reflect.DeepEqual(got, want) {
+		t.Fatalf("hide paid: cards\n got  %+v\n want %+v", got, want)
+	}
+	if n := gateReads(e); n != 1 {
+		t.Fatalf("hide paid: %d gate reads, want 1", n)
+	}
+
+	// Control: the same world without Hide Paid.
+	in.HidePaid = false
+	e = setup()
+	if a, err = serve(t, e, in, nil); err != nil {
+		t.Fatalf("hide paid off: %v (%q)", err, fallback.Reason(err))
+	}
+	want = []card{
+		{id: 1, version: 10, baseModels: []any{"Pony", "SDXL 1.0"}, paid: true, deadline: deadline},
+		{id: 2, version: 20, baseModels: []any{"Flux.1 D"}, paid: true, deadline: nil},
+		{id: 3, version: 30, baseModels: []any{"Illustrious"}, paid: false, deadline: nil},
+	}
+	if got := cards(a); !reflect.DeepEqual(got, want) {
+		t.Fatalf("hide paid off: cards\n got  %+v\n want %+v", got, want)
+	}
+	if n := gateReads(e); n != 1 {
+		t.Fatalf("hide paid off: %d gate reads, want 1", n)
+	}
+}
+
+// Under Hide Paid the page query's free version must be Public exactly when getModelsRaw hides
+// private models: on the browse page it is, on a creator's page (username) it is not. servePage
+// hands its hidePrivateModels to the query (PageQuery.HidePrivate).
+func TestServeHidePaidPageQueryHidePrivate(t *testing.T) {
+	const public = `fv.availability = 'Public'::"Availability"`
+	for _, c := range []struct {
+		name     string
+		username string
+		want     bool
+	}{
+		{"browse page", "", true},
+		{"a creator's page", "artist_nine", false},
+	} {
+		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "x"}})
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+		e.sources.users["artist_nine"] = 9
+		in := baseInput()
+		in.HidePaid, in.Username = true, c.username
+		if _, err := serve(t, e, in, nil); err != nil {
+			t.Fatalf("%s: %v (%q)", c.name, err, fallback.Reason(err))
+		}
+		if len(e.queries) != 1 || !strings.Contains(e.queries[0], `FROM "ModelVersion" fv`) {
+			t.Fatalf("%s: page queries %d, want 1 with the free-version arm", c.name, len(e.queries))
+		}
+		if got := strings.Contains(e.queries[0], public); got != c.want {
+			t.Errorf("%s: free version must be Public = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // A .com face: its name, its cover, its PG/PG-13 images, a blank version description.
 func TestServeSfwFace(t *testing.T) {
 	e := newEnv([]testRow{{id: 1, owner: 9, name: "Spicy", sfwName: "Safe", cover: 101, sfwCover: 102, nsfw: true, nsfwLevel: 1 | 4, cursor: "x"}})
@@ -864,6 +1169,14 @@ func TestFilterImagesForViewer(t *testing.T) {
 	// A model marked nsfw keeps every image up to the highest level selected.
 	if got := ids(filterImagesForViewer(imgs, 1|8, true, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{1, 2, 3, 4, 5}) {
 		t.Fatalf("nsfw model, moderator: %v", got)
+	}
+	// The level is held to the selectable levels here too.
+	if got := ids(filterImagesForViewer(imgs, 1|32, true, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{1, 2, 4}) {
+		t.Fatalf("nsfw model, level 33: %v", got)
+	}
+	other := []superjson.Object{image(6, 5, 32, nil), image(7, 5, 1, nil)}
+	if got := ids(filterImagesForViewer(other, 1|32, false, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{7}) {
+		t.Fatalf("level 33: %v", got)
 	}
 }
 

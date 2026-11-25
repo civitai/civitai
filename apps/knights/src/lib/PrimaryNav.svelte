@@ -1,14 +1,16 @@
 <script lang="ts">
   import { page } from '$app/state';
   import Icon from '$lib/Icon.svelte';
-  import { activeHref, NAV_ITEMS } from '$lib/nav';
+  import { activeHref, navItems } from '$lib/nav';
 
-  let active = $derived(activeHref(page.url.pathname));
+  let { inquisitor = false }: { inquisitor?: boolean } = $props();
+  let items = $derived(navItems(inquisitor));
+  let active = $derived(activeHref(page.url.pathname, items));
 </script>
 
 <nav aria-label="Primary">
   <ul>
-    {#each NAV_ITEMS as item (item.href)}
+    {#each items as item (item.href)}
       <li>
         <!-- Hover-prefetching /play would consume a feed item. -->
         <a

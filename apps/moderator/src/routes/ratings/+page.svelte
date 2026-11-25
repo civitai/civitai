@@ -7,6 +7,7 @@
   import TriageFilterChips, {
     type ChipGroup,
   } from '$lib/components/triage/TriageFilterChips.svelte';
+  import CoverThumb from '$lib/components/triage/CoverThumb.svelte';
   import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
@@ -252,6 +253,13 @@
           error={state.error}
           onselect={state.select}
         >
+          {#snippet coverMedia()}
+            {#if row.entity && 'coverRestricted' in row.entity}
+              <CoverThumb image={{ id: row.entityId, url: '', nsfwLevel: 0, restricted: true }} />
+            {:else if row.preview.images[0]?.restricted}
+              <CoverThumb image={row.preview.images[0]} />
+            {/if}
+          {/snippet}
           {#snippet coverIcon()}<IconPhoto aria-hidden="true" />{/snippet}
           {#snippet badges()}
             {#if f.tab === 'other'}

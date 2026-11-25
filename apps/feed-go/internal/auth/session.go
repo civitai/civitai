@@ -17,9 +17,26 @@ type SessionUser struct {
 	Username    string
 	IsModerator bool
 	Banned      bool
+	// Memorialized is `memorialized === true`: the account's holder has died (refusesMemorializedSession).
+	Memorialized bool
 	// APIKey is set when the viewer came from an API key rather than a session cookie: the app then
 	// accepts the request whatever its Origin (createContext's isBearerAuth).
 	APIKey bool
+	// The Flipt targeting properties buildFliptContext reads off the session user (flipt.TargetUser):
+	// Tier is `tier` (nil when absent or not a string), IsEarlyAdopter and AppBuilderApproved are
+	// `isEarlyAdopter` / `appBuilderApproved` (true only when the boolean true), Onboarding is
+	// `onboarding` (0 when absent, a string, or not an integer).
+	Tier               *string
+	IsEarlyAdopter     bool
+	AppBuilderApproved bool
+	Onboarding         int
+	// BrowsingLevel and ShowNsfw are the saved `browsingLevel` (0 when absent or null) and `showNsfw`
+	// (true only when the boolean true) getServerBrowsingLevel reads off the session user.
+	// BrowsingPrefsUnread is set when either holds a value of another kind (a string, a fraction, a
+	// negative level): JavaScript's truthiness of it is not reproduced, so a reader falls back.
+	BrowsingLevel       int
+	ShowNsfw            bool
+	BrowsingPrefsUnread bool
 
 	// raw is the cached session entry, for the bearer checks that read more of it.
 	raw map[string]any
@@ -129,6 +146,10 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
 		return nil, nil
 	}
+	// refusesMemorializedSession: a moderator's impersonation of a memorialized account still resolves.
+	if u.Memorialized && claims.ImpersonatedBy == nil {
+		return nil, nil
+	}
 	if r.OnSlot != nil {
 		r.OnSlot(CookieSlot(tokenCookie))
 	}
@@ -166,10 +187,44 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 	u := &SessionUser{ID: id, raw: m}
 	u.Username, _ = m["username"].(string)
 	u.IsModerator, _ = m["isModerator"].(bool)
+	if t, ok := m["tier"].(string); ok {
+		u.Tier = &t
+	}
+	u.IsEarlyAdopter, _ = m["isEarlyAdopter"].(bool)
+	u.AppBuilderApproved, _ = m["appBuilderApproved"].(bool)
+	// A number only: hydrate.Int also reads a numeric string, which Node's bitwise test never matches.
+	if v, ok := m["onboarding"]; ok {
+		if _, isStr := v.(string); !isStr {
+			u.Onboarding, _ = hydrate.Int(v)
+		}
+	}
 	if b, ok := m["bannedAt"]; ok && b != nil {
 		u.Banned = true
 	}
+	u.Memorialized, _ = m["memorialized"].(bool)
+	readBrowsingPrefs(u, m)
 	return u, nil
+}
+
+// readBrowsingPrefs fills the saved browsing level and showNsfw: a number (not a numeric string) that
+// is a non-negative integer for the level, a boolean for showNsfw; absent or nil reads as unset.
+func readBrowsingPrefs(u *SessionUser, m map[string]any) {
+	if v, ok := m["browsingLevel"]; ok && v != nil {
+		n, isInt := hydrate.Int(v)
+		if _, isStr := v.(string); isStr || !isInt || n < 0 {
+			u.BrowsingPrefsUnread = true
+		} else {
+			u.BrowsingLevel = n
+		}
+	}
+	if v, ok := m["showNsfw"]; ok && v != nil {
+		b, isBool := v.(bool)
+		if !isBool {
+			u.BrowsingPrefsUnread = true
+		} else {
+			u.ShowNsfw = b
+		}
+	}
 }
 
 // FixedCookieNames is a CookieNames that gives the same names for every host.

@@ -32,6 +32,7 @@ const JUDGE = 40;
 const CLEAN = 1;
 const ACCEPTABLE_MINOR = 2;
 const MINOR_MATURE = 3;
+const HELD = 4;
 const MODERATOR = 50;
 
 beforeAll(async () => {
@@ -40,6 +41,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL DEFAULT ${OWNER}, "postId" int, url text NOT NULL,
       type text NOT NULL DEFAULT 'image', "nsfwLevel" int NOT NULL DEFAULT 1,
@@ -57,11 +59,14 @@ beforeAll(async () => {
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
     CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, "bannerId" int, status text, "publishedAt" timestamp, ingestion text
+      id int PRIMARY KEY, "coverId" int, "bannerId" int, status text, "publishedAt" timestamp, ingestion text, availability "Availability" DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability");
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "endAt" timestamp, "nsfwLevel" int);
+    CREATE TABLE "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
     CREATE TABLE "CommentV3" (
       id serial PRIMARY KEY, "entityType" text, "entityId" int, "parentId" int, "userId" int,
       content text, "deletedAt" timestamp, "createdAt" timestamp NOT NULL DEFAULT now()
@@ -72,9 +77,11 @@ beforeAll(async () => {
       (${ACCEPTABLE_MINOR}, 1, 'img-acceptable-minor', true);
     INSERT INTO "Image" (id, "postId", url, minor, "nsfwLevel") VALUES
       (${MINOR_MATURE}, 1, 'img-minor-mature', true, 4);
+    INSERT INTO "Image" (id, "postId", url, "needsReview") VALUES (${HELD}, 1, 'img-held', 'minor');
     INSERT INTO "CommentV3" ("entityType", "entityId", "userId", content) VALUES
       ('image', ${CLEAN}, ${JUDGE}, 'judge on clean'),
-      ('image', ${ACCEPTABLE_MINOR}, ${JUDGE}, 'judge on flagged');
+      ('image', ${ACCEPTABLE_MINOR}, ${JUDGE}, 'judge on flagged'),
+      ('image', ${HELD}, ${JUDGE}, 'judge on held');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -104,11 +111,16 @@ describe("an image's comment thread", () => {
 });
 
 describe("an image's judge comment", () => {
-  const judgeComment = (imageId: number, user?: { id: number; isModerator: boolean }) =>
+  const judgeComment = (
+    imageId: number,
+    user?: { id: number; isModerator: boolean },
+    scopedKey = false
+  ) =>
     createCallerFactory(challengeRouter)({
       user: user && { ...user, onboarding: 15, emailVerified: new Date(0), meta: {} },
       acceptableOrigin: true,
-      tokenScope: TokenScope.Full,
+      tokenScope: scopedKey ? TokenScope.MediaRead : TokenScope.Full,
+      ...(scopedKey ? { apiKeyId: 9 } : {}),
       features: { trpcFlagGuardPerRequest: true, challengePlatform: true },
       track: {},
       ip: '127.0.0.1',
@@ -130,6 +142,14 @@ describe("an image's judge comment", () => {
     expect(await judgeComment(ACCEPTABLE_MINOR, { id: MODERATOR, isModerator: true })).toBe(
       'judge on flagged'
     );
+  });
+
+  it('on an image held for review, is served to its owner on a session only', async () => {
+    const owner = { id: OWNER, isModerator: false };
+    expect(await judgeComment(HELD, owner)).toBe('judge on held');
+    expect(await judgeComment(HELD, owner, true)).toBeNull();
+    expect(await judgeComment(HELD, { id: STRANGER, isModerator: false })).toBeNull();
+    expect(await judgeComment(HELD)).toBeNull();
   });
 });
 

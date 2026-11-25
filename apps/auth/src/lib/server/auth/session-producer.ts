@@ -58,6 +58,7 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.mutedAt',
       'User.bannedAt',
       'User.deletedAt',
+      'User.flags',
       'User.customerId',
       'User.paddleCustomerId',
       'User.autoplayGifs',

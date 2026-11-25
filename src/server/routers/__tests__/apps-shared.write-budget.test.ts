@@ -619,6 +619,8 @@ describe('SEAM: a write-budget refusal through the real tRPC handler', () => {
     expect(data.rateLimit).toEqual({
       retryAfterSeconds: 223,
       retryAt: new Date(NOW + 223_000).toISOString(),
+      id: 'apps.shared-storage',
+      kind: 'abuse',
     });
     expect((err as Error).message).toBe('Too many submissions — retry in 223s');
   });

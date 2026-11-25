@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
@@ -10,14 +10,14 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * self-bound sender), and TRPCError→HTTP mapping (insufficient funds → 400).
  */
 
-function createMocks({
-  method = 'POST',
-  body = {},
-}: { method?: string; body?: unknown } = {}) {
-  const req = { method, body, query: {}, headers: {}, socket: { remoteAddress: '203.0.113.7' } } as unknown as Record<
-    string,
-    unknown
-  >;
+function createMocks({ method = 'POST', body = {} }: { method?: string; body?: unknown } = {}) {
+  const req = {
+    method,
+    body,
+    query: {},
+    headers: {},
+    socket: { remoteAddress: '203.0.113.7' },
+  } as unknown as Record<string, unknown>;
   let statusCode = 200;
   let payload: unknown;
   const headers: Record<string, string> = {};
@@ -116,6 +116,7 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
 
 import handler from '~/pages/api/v1/blocks/tip';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetUsageLimitConfigCache } from '~/server/services/usage-limit-config.service';
 const mockUserFind = dbMock.dbRead.user.findUnique;
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
@@ -212,14 +213,87 @@ describe('POST /api/v1/blocks/tip', () => {
     expect(res._status()).toBe(200);
   });
 
-  it('400 when the per-user DAILY tip cap is exceeded — reservation refunded, tip NOT sent', async () => {
-    mockReserve.mockResolvedValueOnce({ total: 25_001, key: 'k' }); // just over BLOCK_TIP_CAP_PER_DAY
-    const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
-    await handler(req as never, res as never);
-    expect(res._status()).toBe(400);
-    expect((res._json() as any).error).toMatch(/[Dd]aily tip limit/);
-    expect(mockRefund).toHaveBeenCalledWith('k', 100); // over-cap reservation refunded
-    expect(mockTip).not.toHaveBeenCalled();
+  describe('the per-user DAILY tip cap', () => {
+    // 20:00 UTC: the cap's UTC day resets in 4 hours.
+    const NOW = new Date('2026-07-13T20:00:00.000Z');
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('429 with the product meta when exceeded — reservation refunded, tip NOT sent', async () => {
+      mockReserve.mockResolvedValueOnce({ total: 25_001, key: 'k' }); // just over BLOCK_TIP_CAP_PER_DAY
+      const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(429);
+      expect(res._headers()['Retry-After']).toBe('14400');
+      expect(res._json()).toEqual({
+        error: 'Daily tip limit reached (25000 Buzz). Try again tomorrow.',
+        message: 'Daily tip limit reached (25000 Buzz). Try again tomorrow.',
+        code: 'TOO_MANY_REQUESTS',
+        rateLimit: {
+          retryAfterSeconds: 14_400,
+          retryAt: '2026-07-14T00:00:00.000Z',
+          id: 'apps.tip-daily',
+          // Abuse in the registry (no override can disable it), and it still reports its counts.
+          kind: 'abuse',
+          limit: 25_000,
+          // 25,001 reserved with this 100-Buzz tip, which the refund gave back.
+          used: 24_901,
+          remaining: 99,
+          windowSeconds: 86_400,
+          resetAt: '2026-07-14T00:00:00.000Z',
+        },
+      });
+      expect(mockRefund).toHaveBeenCalledWith('k', 100); // over-cap reservation refunded
+      expect(mockTip).not.toHaveBeenCalled();
+    });
+
+    it('a KeyValue override of apps.tip-daily is the cap enforced (and named) — no deploy', async () => {
+      resetUsageLimitConfigCache();
+      dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+        key: 'usage-limits',
+        value: { version: 1, limits: { 'apps.tip-daily': { base: 1_000 } } },
+      } as never);
+      try {
+        // 1,001 reserved with this 100-Buzz tip: over the overridden cap, far under the default.
+        mockReserve.mockResolvedValueOnce({ total: 1_001, key: 'k' });
+        const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+        await handler(req as never, res as never);
+        expect(res._status()).toBe(429);
+        expect(res._json()).toMatchObject({
+          error: 'Daily tip limit reached (1000 Buzz). Try again tomorrow.',
+          rateLimit: { id: 'apps.tip-daily', limit: 1_000, used: 901, remaining: 99 },
+        });
+        expect(mockTip).not.toHaveBeenCalled();
+      } finally {
+        dbMock.dbRead.keyValue.findUnique.mockReset();
+        resetUsageLimitConfigCache();
+      }
+    });
+
+    it('CONTROL: at the default config the same reservation is under the cap, and the tip is sent', async () => {
+      resetUsageLimitConfigCache();
+      mockReserve.mockResolvedValueOnce({ total: 1_001, key: 'k' });
+      const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(mockTip).toHaveBeenCalled();
+    });
+
+    it('the cap refusal is TRANSIENT: its idempotency claim is released, never replayed', async () => {
+      mockReserve.mockResolvedValueOnce({ total: 25_001, key: 'k' });
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 100, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(429);
+      expect(mockRelease).toHaveBeenCalledWith('system:blocks:tip-idem:42:k1');
+      expect(mockFinalize).not.toHaveBeenCalled();
+    });
   });
 
   it('503 (fail-closed) when the daily-cap reservation redis call throws', async () => {
@@ -268,6 +342,13 @@ describe('POST /api/v1/blocks/tip', () => {
     await handler(req as never, res as never);
     expect(res._status()).toBe(429);
     expect(res._headers()['Retry-After']).toBe('30');
+    // An abuse limit: the meta names it and the wait, never its numbers.
+    expect((res._json() as { rateLimit?: unknown }).rateLimit).toEqual({
+      retryAfterSeconds: 30,
+      retryAt: expect.any(String),
+      id: 'apps.tip-rate',
+      kind: 'abuse',
+    });
     expect(mockTip).not.toHaveBeenCalled();
   });
 
@@ -364,7 +445,7 @@ describe('POST /api/v1/blocks/tip', () => {
 
   // ── Idempotency (item 2, tip half) ──────────────────────────────────────────
   describe('idempotencyKey', () => {
-    it('absent key → today\'s behavior: the idempotency claim is NEVER consulted', async () => {
+    it("absent key → today's behavior: the idempotency claim is NEVER consulted", async () => {
       const { req, res } = createMocks({ body: { toUserId: 5, amount: 25 } });
       await handler(req as never, res as never);
       expect(res._status()).toBe(200);
@@ -483,9 +564,7 @@ describe('POST /api/v1/blocks/tip', () => {
       // The handler DERIVES the tip's externalTransactionId from this key so a
       // crash-window retry (Redis sentinel expired) collides on the Buzz ledger's
       // unique constraint → money moves once. The Redis sentinel stays the fast-path.
-      expect(mockTip).toHaveBeenCalledWith(
-        expect.objectContaining({ idempotencyKey: 'idem-abc' })
-      );
+      expect(mockTip).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: 'idem-abc' }));
     });
 
     it('MISMATCH (audit 🟡-1 residual): the same key with a DIFFERENT payload → 422, no charge', async () => {

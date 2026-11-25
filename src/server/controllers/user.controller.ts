@@ -1,3 +1,4 @@
+import { showcaseOptOutChanged } from '~/shared/constants/version-showcase.constants';
 import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
@@ -22,7 +23,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
-import { LegalHoldError } from '~/server/services/legal-hold.service';
+import { MemorializedAccountError } from '~/server/services/memorial.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
@@ -891,7 +892,7 @@ export const deleteUserHandler = async ({
     return user;
   } catch (error) {
     // The same refusal as a restricted account, so the two cannot be told apart.
-    if (error instanceof LegalHoldError)
+    if (error instanceof MemorializedAccountError)
       throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1749,6 +1750,12 @@ export const setUserSettingHandler = async ({
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+    if (showcaseOptOutChanged(restSettings, restInput)) {
+      const { bustVersionShowcasesForUser } = await import(
+        '~/server/services/version-showcase.service'
+      );
+      await bustVersionShowcasesForUser(id);
+    }
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
     // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and

@@ -27,7 +27,6 @@ import {
   calculateFervor,
   cleanseSmite,
   clearRatedImages,
-  processFinalRatings,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
 import { moderatorApp } from '~/server/services/moderator-app.service';
@@ -166,15 +165,15 @@ async function grantReleasedChunk(payFrom: Array<{ userId: number; from: Date }>
 
 const startOfDay = (d: Date) => dayjs(d).startOf('day').toDate();
 
-export async function runGrantBlessedBuzz() {
+/** Pays one day of v1 judgments, by default the day 3 days ago. A paid day is never paid twice:
+ *  its transactions carry the same externalId, which the Buzz service rejects as a duplicate. */
+export async function runGrantBlessedBuzz(day: Date = dayjs().subtract(3, 'day').toDate()) {
   if (!clickhouse) return;
   log('BlessedBuzz :: Granting Blessed Buzz');
 
-  // date range is 3 days ago
-  const startDate = dayjs().subtract(3, 'day').startOf('day').toDate();
-  const endDate = dayjs().subtract(3, 'day').endOf('day').toDate();
+  const startDate = dayjs(day).startOf('day').toDate();
+  const endDate = dayjs(day).endOf('day').toDate();
 
-  // Get all judgments from exactly 3 days ago
   log(
     `BlessedBuzz :: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
@@ -322,12 +321,6 @@ export async function runGrantBlessedBuzz() {
     log(`BlessedBuzz :: Stale counter reconciliation failed, will retry next run: ${error}`);
   }
 }
-
-const newOrderGrantBlessedBuzz = createJob(
-  'new-order-grant-bless-buzz',
-  '0 0 * * *',
-  runGrantBlessedBuzz
-);
 
 type DailyResetQueryResult = {
   userId: number;
@@ -554,100 +547,6 @@ const newOrderChangeFillTarget = createJob(
     }
 
     log('ChangeFillTarget :: Fill slot rotation complete');
-  }
-);
-
-// Rotate rating slot and purge old slot at 00:00 UTC daily
-// Players will now rate from the new slot, old slot gets purged
-// This job is not gated on `isV1KnightsLive`: after the cutover it keeps settling the ratings players
-// already cast in the old game (paid out later by grant-bless-buzz) until the old game is removed.
-const newOrderChangeRateTarget = createJob(
-  'new-order-change-rate-target',
-  '0 0 * * *',
-  async () => {
-    if (!clickhouse) {
-      log('ChangeRateTarget :: ClickHouse not available, skipping');
-      return;
-    }
-
-    log('ChangeRateTarget :: Starting rate slot rotation and purge');
-
-    // Only Knight rank uses slot rotation; other ranks remain on a single slot
-    const ranksToRotate = [NewOrderRankType.Knight] as const;
-
-    for (const rank of ranksToRotate) {
-      const currentSlot = await getActiveSlot(rank, 'rating');
-      const newSlot = currentSlot === 'a' ? 'b' : 'a';
-
-      // Rotate to the new slot
-      await setActiveSlot(rank, 'rating', newSlot);
-      log(`ChangeRateTarget :: ${rank} rating slot rotated: ${currentSlot} → ${newSlot}`);
-
-      log(`ChangeRateTarget :: ${rank} - Purging old slot ${currentSlot} before rotation`);
-
-      // Get all image IDs from the current (soon to be old) rating slot
-      // No limit - process all images in the slot
-      const imagesToPurge = (
-        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.getAll()))
-      )
-        .flat()
-        .map((value) => Number(value));
-
-      if (imagesToPurge.length > 0) {
-        log(
-          `ChangeRateTarget :: ${rank} - Found ${imagesToPurge.length} images to purge from slot ${currentSlot}`
-        );
-
-        // Mark images as Inconclusive by inserting NULL ratings into buffer
-        // Images still in queue at purge time legitimately didn't reach consensus
-        // (images with consensus were already removed via removeImageFromQueue)
-        log(`ChangeRateTarget :: ${rank} - Inserting NULL ratings into buffer for processing`);
-
-        const batches = chunk(imagesToPurge, 10000);
-        for (const batch of batches) {
-          // Insert NULL ratings into buffer - these will be marked as Inconclusive by processFinalRatings
-          const bufferRecords = batch.map((imageId) => ({
-            imageId,
-            rating: null,
-          }));
-
-          await clickhouse.insert({
-            table: 'knights_rating_updates_buffer',
-            values: bufferRecords,
-            format: 'JSONEachRow',
-          });
-        }
-
-        log(
-          `ChangeRateTarget :: ${rank} - Inserted ${imagesToPurge.length} NULL ratings into buffer`
-        );
-
-        // Process the ratings through the standard pipeline
-        // This will mark them as Inconclusive using the same logic as regular ratings
-        const result = await processFinalRatings();
-        log(
-          `ChangeRateTarget :: ${rank} - processFinalRatings result: ${JSON.stringify(
-            result,
-            null,
-            2
-          )}`
-        );
-
-        log(
-          `ChangeRateTarget :: ${rank} - Processed ${imagesToPurge.length} images as Inconclusive`
-        );
-
-        // Clear all pools in the old slot
-        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.reset({ all: true })));
-        await clearImageRatings(imagesToPurge);
-
-        log(`ChangeRateTarget :: ${rank} - Cleared all pools in slot ${currentSlot}`);
-      } else {
-        log(`ChangeRateTarget :: ${rank} - No images to purge from slot ${currentSlot}`);
-      }
-    }
-
-    log('ChangeRateTarget :: Rate slot rotation and purge complete');
   }
 );
 
@@ -944,13 +843,6 @@ const newOrderLinkDetection = createJob(
   { lockExpiration: 10 * 60 }
 );
 
-export const newOrderJobs = [
-  newOrderGrantBlessedBuzz,
-  newOrderDailyReset,
-  newOrderCleanseSmites,
-  // newOrderCleanupQueues,
-  newOrderChangeFillTarget,
-  newOrderChangeRateTarget,
-  newOrderAbuseDetection,
-  newOrderLinkDetection,
-];
+// The old game's jobs stay defined as a reference for checking v1 logic against v2, but are not
+// registered: v1 no longer runs.
+export const newOrderJobs = [newOrderAbuseDetection, newOrderLinkDetection];

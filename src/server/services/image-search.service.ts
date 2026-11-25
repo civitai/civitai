@@ -11,7 +11,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getAllImages, getImagesFromFeedServiceForRest } from '~/server/services/image.service';
 import { parseFeedCursor } from '~/server/common/feed-cursor';
-import { imageMetaCache, thumbnailCache } from '~/server/redis/caches';
+import { imageMetaCache, servableThumbnails, thumbnailCache } from '~/server/redis/caches';
 import type { PublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import {
@@ -308,7 +308,8 @@ export async function runImageSearch(
   }
 
   const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);
-  const customThumbnails = videoIds.length > 0 ? await thumbnailCache.fetch(videoIds) : {};
+  const customThumbnails =
+    videoIds.length > 0 ? servableThumbnails(await thumbnailCache.fetch(videoIds)) : {};
 
   const shaped: ShapedImage[] = items.map((image) => {
     const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);

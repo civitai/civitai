@@ -56,6 +56,7 @@ export const FEED_GO_SHADOW_ENDPOINTS = [
   'v1-models',
   'v1-models-id',
   'model-associated',
+  'site-search',
 ] as const;
 export type FeedGoShadowEndpoint = (typeof FEED_GO_SHADOW_ENDPOINTS)[number];
 
@@ -73,7 +74,8 @@ const feedGoShadowCounter = registerInstrumentationMetric(
         'feed-go-shadow-infinite; model-getall: model.getAll, flag feed-go-shadow-model-getall; ' +
         'v1-models / v1-models-id: GET /api/v1/models and /api/v1/models/[id], flag ' +
         'feed-go-shadow-v1-models; model-associated: model.getAssociatedResourcesCardData, flag ' +
-        'feed-go-shadow-model-associated). Only sampled requests are counted ' +
+        'feed-go-shadow-model-associated; site-search: POST /api/search/*, flag ' +
+        'feed-go-shadow-site-search). Only sampled requests are counted ' +
         '(FEED_GO_SHADOW_URL set, FEED_GO_SHADOW_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
@@ -134,14 +136,15 @@ const feedGoProbeCounter = registerInstrumentationMetric(
       name: PROBE_NAME,
       help:
         'Go-first probes posted to feed-go at the start of a sampled request, by outcome and ' +
-        'endpoint (flag feed-go-gofirst-probe, FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0).',
+        'endpoint (flag feed-go-gofirst-probe, FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0; v1-images: ' +
+        'FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
     })
 );
 
 try {
-  for (const endpoint of ['as-posts', 'infinite', 'model-getall'] as const) {
+  for (const endpoint of ['as-posts', 'infinite', 'model-getall', 'v1-images'] as const) {
     for (const outcome of FEED_GO_PROBE_OUTCOMES) {
       feedGoProbeCounter.inc({ outcome, feed_endpoint: endpoint }, 0);
     }

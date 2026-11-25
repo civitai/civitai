@@ -29,7 +29,7 @@ import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 // (`/reports/image`, the image queues' card grid); a static route wins over this one, so none of those
 // slugs reaches here. Articles, chats, collections, bounties and bounty entries share the same layout at
 // `/reports/[queue=entityQueue]`, whose matcher outranks this plain param.
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, locals }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
 
@@ -43,7 +43,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
       type === 'storyline' ? getStorylineReportHolds(reportIds) : [],
       type === 'storyline' ? getDeletedReportStorylines(reportIds) : [],
       type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
-      type === 'serviceOffering' ? getReportedServiceReviews(reportIds) : new Map(),
+      type === 'serviceOffering' ? getReportedServiceReviews(reportIds, locals.user) : new Map(),
     ]);
 
   return {

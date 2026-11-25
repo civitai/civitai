@@ -25,12 +25,21 @@ With the listings read model on, two more routes answer for the web tier: `GET /
 `GET /listings/{slug}` (below, "Listing API").
 
 `mature` is the mature content ratings the caller asks for: a comma-separated list of `r`, `x` and
-`xxx` (`mature=r,x`). Absent or empty, `/search` answers only apps rated `g`, `pg` or `pg13`, what
-the anonymous registry audience reads, so a caller that sends nothing gets SFW results. With it, an
-app rated one of the listed ratings is answered too; an app whose rating is none of the six (or
-missing) only with all three listed, the registry's own audience rule (`audienceAdmits`). Ratings
-compare case-insensitively. Any other element answers 400. The filter is in the store query, before
-`limit`, so a page is never short for it. The caller is trusted to send its viewer's own set: the
+`xxx` (`mature=r,x`). Absent or empty, `/search` answers no app rated `r`, `x` or `xxx`, so a caller
+that sends nothing gets SFW results. With it, an app rated one of the listed ratings is answered
+too. Every other rating, an unknown one or none included, is answered to every caller: the site's
+database rule for the store (`matureRatingAllowed`), which the listing API applies too
+(`store.Mature.Admits`). Ratings compare case-insensitively. Any other element answers 400. The filter is in the store query, before
+`limit`, so a page is never short for it.
+
+The rating filtered on is the listing's own, `listingContentRating` in the app entity's body, the
+column the site's database search filters on (`listingMatureFilter`), never the entity's
+`contentRating`, which falls back to the block's rating when the listing has none or one the
+adapter does not know: such an app (listing null, unknown or `pg-13`, block mature) is answered to
+every caller, as on the database path. A body without the field (an adapter that predates it) is
+filtered on its `contentRating`, as before (`store.App.GateRating`). The `rating` a result carries
+is still the entity's `contentRating`. The field rides on the app stream itself, so this does not
+depend on the listings read model (`APP_INDEX_LISTINGS`). The caller is trusted to send its viewer's own set: the
 index checks no identity, so any caller, a browser included, may ask for any set. The web tier
 derives it from the viewer's browsing level and host (`indexMature` in
 `app-index-search.service.ts`). The parameter is part of the URL, so a shared cache keys on it.
@@ -61,7 +70,10 @@ once it treats the path as cacheable: the TTL lives here, and the CDN rule only 
   starts over.
 - `cursor_expired`, a `LayoutVersion` bump (`internal/index`), or a serving generation whose cursor
   is empty builds a new generation from an empty cursor while the old one keeps answering; the switch
-  happens in one transaction at the new one's `Live`, and the old one is dropped.
+  happens in one transaction at the new one's `Live`, and the old one is dropped. Layout 2 added the
+  listing's own rating (`listing_rating`, `listing_rated`): the columns are added at startup, a
+  layout 1 row reads `listing_rated` false and is filtered on its `contentRating` as before, and the
+  rebuild replaces it with a row read from its body.
 - Any other end of the stream reconnects with the same cursor after an exponential backoff with
   jitter (`APP_INDEX_BACKOFF_*_MS`). A quiet stream is never treated as lost (the spec: a live
   stream may be silent for any length of time); there is no response-header or idle timeout. A dead
@@ -104,11 +116,10 @@ others it needs, refuses to start. Unset, nothing changes: no token is fetched a
 1. The auth hub: the index's service client, and `serviceSubjects` and relay listings on the
    resources its token is exchanged for.
 2. The apps origin: `REGISTRY_ADAPTER_SERVICE_CLIENTS` names the index's client.
-3. Only then this service's client settings. Search already filters mature apps per request: a
-   `/search` that does not ask for mature ratings answers SFW apps only; any caller may ask for
-   mature ratings with `mature` and get those apps' metadata. The web tier still routes no viewer
-   who may see a mature rating to the index (`viewerNotRoutable`, reason `mature_viewer`); lift that
-   once the index holds mature apps, and each such call carries the viewer's `mature`
+3. Only then this service's client settings. With them the index holds every rating, and search
+   filters mature apps per request: a `/search` that does not ask for mature ratings answers SFW
+   apps only; any caller may ask for mature ratings with `mature` and get those apps' metadata. The
+   web tier routes a viewer who may see a mature rating to the index with that viewer's `mature`
    (`indexMature`).
 
 Configured before steps 1 and 2, every token is refused: the index stops taking in changes and
@@ -150,11 +161,21 @@ series is registered, nothing subscribes to the schema and the listing routes ar
   by one on a resumed stream are applied as they come.
 - **`unavailable`** (the adapter's answer when its listing read failed) deletes nothing: the
   subscription is opened again from the stored cursor, like any other `unavailable`.
-- A body missing an identity field (`app`, `id`, `slug`, `name`, `kind`, `contentRating`, `listingContentRating`), a
-  detail field of the wrong type, or a media item
+- A body missing an identity field (`app`, `id`, `slug`, `name`, `kind`, `contentRating`, `listingContentRating`), or
+  `subListings` (an empty array when the listing has none), a
+  detail field of the wrong type, a media item
   whose host or rating is unknown or whose `nsfwLevel` is not exactly its rating's level (pg 1, pg13
-  2, r 4, x 8, xxx 16), is treated as deleted (`app_index_listings_events_applied_total{type="invalid"}`):
-  such an item could not be gated.
+  2, r 4, x 8, xxx 16), or a sub-listing item that cannot be read whole (an `asl_` id, its title, own
+  and card ratings, author, sort time, link, and an image whose level is its rating's), is treated as
+  deleted (`app_index_listings_events_applied_total{type="invalid"}`): such an item could not be
+  gated, or a listing without `subListings` would read as having no sub-listing cards. That is in a
+  building generation; in a serving one the stored row is kept, marked stale, and the cursor moves
+  (still counted `invalid`), so an adapter rolled back below this layout does not empty the
+  generation. A stale row may lack what its upsert changed (a stricter gate included), so while the
+  serving generation holds one the listing API answers 503 `not_ready` and the site reads the
+  database; `app_index_listings_stale_rows` counts them (set only on the replica holding the
+  consumer lock, so read it with `max()`). The mark is stored with the row, so a
+  restart keeps it; a later valid upsert or a delete of the listing ends it.
 - What can be left out without misgating is dropped and the listing kept, each drop logged and
   counted (`app_index_listings_dropped_total{what}`): a media item with an unknown slot
   (`media_item`), and a stats counter that is missing, negative or not an integer (`stat`), stored
@@ -172,9 +193,9 @@ start and taking `/search` down with it.
 ### Listing API
 
 `GET /listings` and `GET /listings/{slug}` answer the store grid and the detail page from the read
-model, for the web tier only. The site calls `GET /listings` only in shadow, behind the
-`app-listings-read-model` flag, and serves its own database answer (`LISTINGS-READ-MODEL.md`,
-"Shadow diff"). Each is a port of the store's database read
+model, for the web tier only. The site calls `GET /listings` behind the `app-listings-read-model`
+flag, to shadow its database answer or to serve from it (`LISTINGS-READ-MODEL.md`, "Shadow diff"
+and "Serving"). Each is a port of the store's database read
 (`listAvailableListings`, `getListingDetail`), and `internal/listingread` names the site function each
 rule mirrors.
 
@@ -216,11 +237,12 @@ the civitai.red overrides only on a red host, preferred over the own image of th
 cover falling back to the first visible screenshot. A listing the viewer may not see is a 404,
 exactly like a missing one.
 
-| Route                       | Parameters                                                                                                                                                 | Answer                         |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| `GET /listings`             | `sort` (`top-rated` default, `popular`, `newest`, `name`), `kind` (`all`, `onsite`, `offsite`), `category`, `userId`, `cursor` (≤ 512), `limit` (1-50, 20) | `{items: [card], nextCursor?}` |
-| `GET /listings?slugs=a,b,c` | up to 50 slugs (each ≤ 64 bytes), `kind`, `category`; no `cursor`, no `userId`                                                                             | `{items: [card]}`              |
-| `GET /listings/{slug}`      | the slug (≤ 64 bytes)                                                                                                                                      | the detail, or 404             |
+| Route                               | Parameters                                                                                                                                                                      | Answer                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `GET /listings`                     | `sort` (`top-rated` default, `popular`, `newest`, `name`), `kind` (`all`, `onsite`, `offsite`), `category`, `userId`, `cursor` (≤ 512), `limit` (1-50, 20), `subListings` (`1`) | `{items: [card], nextCursor?, subListings?}` |
+| `GET /listings?slugs=a,b,c`         | up to 50 slugs (each ≤ 64 bytes), `kind`, `category`; no `cursor`, no `userId`, no `subListings`                                                                                | `{items: [card]}`                            |
+| `GET /listings?subListingIds=a,b,c` | up to 50 sub-listing ids (each ≤ 64 bytes), `kind`, `category`, `userId`; no `cursor`                                                                                           | `{items: [sub-listing card], subListings}`   |
+| `GET /listings/{slug}`              | the slug (≤ 64 bytes)                                                                                                                                                           | the detail, or 404                           |
 
 - The sorts and the keyset paging are the store grid's: the same sort keys, `top-rated` with the
   global mean pinned in the cursor for the paging session. The global mean is over the listings the
@@ -229,6 +251,22 @@ exactly like a missing one.
   (the database path's `v2` cursors, an earlier layout's slug-keyed `rm1`, or anything that does not
   decode) pages from the start. Cursors are not signed: any well-formed one
   is accepted and only positions the page, which every viewer may read from any position anyway.
+- **Sub-listing cards.** With `subListings=1` the page mixes in each admitted listing's sub-listing
+  cards, as `listAvailableListings` does with `includeSubListings`: an item is gated by its parent
+  (the scope, the mature rule, the kind, category and developer filters, `userId` naming the parent's
+  creator) and by the mature rule over its own rating; it ranks on its parent's key for `top-rated`
+  and `popular` and on its own sort time or title for `newest` and `name`; and the order is (key,
+  tb, id), tb 0 for a listing and 1 for an item, ascending in every sort, so a listing comes before
+  its items on one key. A cursor on an item carries its key and `asl_` id, and its tb is read from
+  the id, as the database reads it; without `subListings` such a cursor resumes after its key. The
+  answer says `"subListings": true`, so the web tier can tell it from that of a service that would
+  have ignored the parameter. A card is the site's `SubListingCard`, its images (its own, else its
+  parent's own cover; its parent's own icon) gated at `subListingImageCeiling` (the card rating, the
+  viewer's levels on any host, lifted on a red host), never a civitai.red override or a screenshot.
+  `subListingIds` hydrates items by id, as `listStoreSubListingsByIds` does: the web tier's shadow
+  checks an item one page shows and the other does not. Its answer also names, in
+  `cappedListings`, every listing the viewer could find with those filters whose stream left items
+  out past the adapter's per-listing cap (`subListingsOmitted` in the body).
 - `slugs` hydrates a search the site answered itself: the site keeps its text search where it is
   (the app index's `/search`, routed by its own `viewerNotRoutable` rule) and asks here for the cards
   of the slugs it found, as `listStoreListingsBySlugs` does from the database. They come back in the
@@ -245,7 +283,7 @@ exactly like a missing one.
 - Every response is `no-store` and carries no CORS header. A store failure is 500, never an empty
   page. A read that races a generation switch is 503: each store read checks, after reading, that its
   generation still exists. A serving generation of an older row layout is 503 too, until the rebuild
-  beside it switches over.
+  beside it switches over, and so is one that holds a stale row (above; outcome `stale`).
 - The gate and the filters run twice: on the rows a page is ranked from, and again on the rows its
   cards are projected from, since the consumer keeps writing the serving generation between the two
   reads. A listing re-rated or re-kinded in between is left out, so a page can be short by it; it is

@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { mainAppBase } from '../main-app-base';
 import { MAIN_APP_TIMEOUT_MS } from './config';
 
 /** The main app answered a 4xx other than 408 and 429: it refused this request for good, and a retry would be refused again. */
@@ -86,7 +87,7 @@ function resolve(): MainAppPort {
   if (!port) {
     const token = env.WEBHOOK_TOKEN;
     if (!token) throw new Error('WEBHOOK_TOKEN is not configured');
-    port = mainAppPort({ baseUrl: env.CIVITAI_APP_URL || 'https://civitai.com', token });
+    port = mainAppPort({ baseUrl: mainAppBase(), token });
   }
   return port;
 }

@@ -44,6 +44,7 @@ const expectedUser = {
   settings: { creatorShop: { enabled: true } },
   excludeFromLeaderboards: true,
   excludeFromEventPoints: true,
+  memorialized: false,
   links: [{ url: 'https://example.com', type: 'Social' }],
   stats: {
     downloadCountAllTime: 31,

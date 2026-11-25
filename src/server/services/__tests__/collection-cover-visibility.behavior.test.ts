@@ -124,6 +124,7 @@ const UNFLAGGED_R = 228; // the viewer's image rated R with no minor flag set (N
 beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,
@@ -155,7 +156,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text,
-      "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1
+      "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1, availability text DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "ImageConnection" ("imageId" integer, "entityId" integer, "entityType" text);
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);

@@ -76,8 +76,15 @@ vi.mock('~/components/Apps/AgentReviewChat', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
-    useUtils: () => ({ blocks: { getAgentReview: { invalidate: mocks.invalidate } } }),
+    useUtils: () => ({
+      blocks: {
+        getAgentReview: { invalidate: mocks.invalidate },
+        listAgentReviews: { invalidate: mocks.invalidate },
+      },
+    }),
     blocks: {
+      listAgentReviews: { useQuery: () => ({ data: [] }) },
+      getAgentReviewModels: { useQuery: () => ({ data: { available: true, models: [] } }) },
       getAgentReview: {
         useQuery: () => ({
           data: mocks.report,
@@ -313,6 +320,20 @@ describe('re-running ONE analysis instead of all three', () => {
     expect(mocks.mutate).toHaveBeenCalledWith({
       publishRequestId: 'pubreq_01HZX',
       sections: ['codeReview'],
+    });
+  });
+
+  test('🔴 the targeted retry runs on the model that wrote the rest of the report', async () => {
+    // The carried analyses came from this run's model; retrying one on the default model would
+    // mix two models' work in one report. The run's stored `openrouter/<id>` is sent as `<id>`.
+    mocks.report = { ...PARTIAL_REPORT, model: 'openrouter/anthropic/claude-x' };
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await page.getByTestId('apps-report-section-rerun').click();
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      publishRequestId: 'pubreq_01HZX',
+      sections: ['codeReview'],
+      model: 'anthropic/claude-x',
     });
   });
 

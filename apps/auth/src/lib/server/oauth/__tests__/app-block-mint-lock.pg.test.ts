@@ -37,6 +37,8 @@ const NO_LOCK_ROLE = `mint_no_lock_${process.pid}`;
 
 const SCHEMA = `
   CREATE TABLE app_blocks (id TEXT PRIMARY KEY, app_id TEXT NOT NULL, status TEXT NOT NULL);
+  CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT, flags INTEGER NOT NULL DEFAULT 0);
+  INSERT INTO "User" (id, username) VALUES (7, 'owner-7');
   CREATE TABLE "ApiKey" (
     id SERIAL PRIMARY KEY, key TEXT NOT NULL, name TEXT NOT NULL, "tokenScope" INTEGER NOT NULL,
     "tokenScopeWide" TEXT, "userId" INTEGER NOT NULL, type TEXT NOT NULL,
@@ -226,7 +228,7 @@ describePg('app-token mint vs a suspension, on two real connections', () => {
     await admin.query(`INSERT INTO app_blocks VALUES ('b1', $1, 'approved')`, [CLIENT]);
     await admin.query(`GRANT SELECT, INSERT ON "ApiKey" TO ${NO_LOCK_ROLE}`);
     await admin.query(`GRANT USAGE ON SEQUENCE "ApiKey_id_seq" TO ${NO_LOCK_ROLE}`);
-    await admin.query(`GRANT SELECT ON app_blocks TO ${NO_LOCK_ROLE}`);
+    await admin.query(`GRANT SELECT ON app_blocks, "User" TO ${NO_LOCK_ROLE}`);
     const restricted = new pg.Pool({ connectionString: urlFor(DB_NAME, NO_LOCK_ROLE), max: 1 });
     try {
       dbHandle.current = new Kysely<DB>({ dialect: new PostgresDialect({ pool: restricted }) });
@@ -239,7 +241,7 @@ describePg('app-token mint vs a suspension, on two real connections', () => {
       expect(await liveTokens()).toBe(1);
     } finally {
       await restricted.end();
-      await admin.query(`REVOKE ALL ON app_blocks, "ApiKey" FROM ${NO_LOCK_ROLE}`);
+      await admin.query(`REVOKE ALL ON app_blocks, "ApiKey", "User" FROM ${NO_LOCK_ROLE}`);
       await admin.query(`REVOKE ALL ON SEQUENCE "ApiKey_id_seq" FROM ${NO_LOCK_ROLE}`);
     }
   });

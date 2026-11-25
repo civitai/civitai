@@ -655,6 +655,10 @@ func TestCacheMissCounter(t *testing.T) {
 		"metrics/computed": 0, "metrics/error": 0,
 		"image-tags/computed": 0, "image-tags/error": 0,
 		"user-follows/computed": 0, "user-follows/error": 0,
+		"version-showcase/computed": 0, "version-showcase/error": 0,
+		"image-resources/computed": 0, "image-resources/error": 0,
+		"creator-memberships/computed": 0, "creator-memberships/error": 0,
+		"gallery-hold/computed": 0, "gallery-hold/error": 0,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("series %v, want %v", got, want)
@@ -694,7 +698,9 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 		// Sessions are resolved once per request, before any endpoint's compute.
 		"feed_go_session_cookie_slot_total": true,
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
-		"feed_go_cache_miss_total": true}
+		"feed_go_cache_miss_total": true,
+		// The search guard is one per process, used by the list route alone.
+		"feed_go_search_rejected_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {
@@ -716,10 +722,11 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	// 21: feed_go_shadow_compare_viewer_total (model-associated's per-viewer-class results) and
-	// feed_go_devalue_write_total included.
-	if checked != 21 {
-		t.Fatalf("checked %d per-endpoint families, want 21 (a family was renamed or lost)", checked)
+	// 23: feed_go_shadow_compare_viewer_total (per-viewer-class body results),
+	// feed_go_shadow_response_viewer_total (the tRPC feeds' per-viewer-class header results),
+	// feed_go_devalue_write_total and feed_go_serve_parity_total included.
+	if checked != 23 {
+		t.Fatalf("checked %d per-endpoint families, want 23 (a family was renamed or lost)", checked)
 	}
 }
 

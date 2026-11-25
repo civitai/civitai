@@ -51,7 +51,6 @@ import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
 import { isProbeableMediaKey } from '@civitai/shared/media-key';
-import { captureImageHeldSql, ownerHeldSql } from '~/server/services/legal-hold.service';
 
 export const SCRIPT_BASENAME = 'hide-lost-original-images';
 /** The Moderation Lead's cross-check is a snapshot; past this it is re-run before a write. */
@@ -156,10 +155,9 @@ export function parseArgs(argv: string[]): RunOptions {
 }
 
 /**
- * Why a row is held or in review, or NULL. Over `"Image" i`. A hold predicate that comes back NULL
- * counts as held (COALESCE ... TRUE): the CASE would otherwise fall through to "may hide".
- * A pending item in a collection is held too: collection-ai-review rejects an item whose image is
- * NotFound, which would tell the owner and which undo does not reverse.
+ * Why a row is held or in review, or NULL. Over `"Image" i`. A pending item in a collection is
+ * held too: collection-ai-review rejects an item whose image is NotFound, which would tell the owner
+ * and which undo does not reverse.
  */
 const safetyHoldSql = Prisma.sql`(CASE
   WHEN i."needsReview" IS NOT NULL THEN 'needs-review'
@@ -167,8 +165,6 @@ const safetyHoldSql = Prisma.sql`(CASE
   WHEN i."tosViolation" THEN 'tos'
   WHEN i.minor THEN 'minor'
   WHEN i.poi THEN 'poi'
-  WHEN COALESCE(${captureImageHeldSql('i')}, TRUE) THEN 'image-hold'
-  WHEN COALESCE(${ownerHeldSql(Prisma.sql`i."userId"`)}, TRUE) THEN 'owner-hold'
 END)`;
 
 /**

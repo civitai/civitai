@@ -17,8 +17,8 @@ export type ProbeCandidate = { imageId: number; mediaUrl: string };
 /**
  * 🔴 A probe copies the image's bytes into orchestrator blob storage, and no copy of CSAM-class
  * material is ever made outside the evidence path. So an image is refused when it is flagged for
- * CSAM review, owned by a user any hold leg in `csam-flag-clear` names (a CSAM report, an evidence
- * hold, a media-removing ban), or touched by any CSAM signal the relabel set excludes on — which
+ * CSAM review, owned by a user any hold leg in `csam-flag-clear` names (a CSAM report, a
+ * media-removing ban), or touched by any CSAM signal the relabel set excludes on — which
  * covers an image blocked for CSAM, as one of its owner's images. Every leg is pinned in
  * `scan-probe-service.pglite.test.ts`.
  */

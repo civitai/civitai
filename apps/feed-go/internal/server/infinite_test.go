@@ -72,7 +72,7 @@ func TestInfiniteShadowSampleIsLabelledAndClassifiedByImage(t *testing.T) {
 	}
 	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
 		for _, r := range []string{"order", "membership", "fields"} {
-			if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": r}); found {
+			if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": r}); v != 0 {
 				t.Fatalf("an infinite sample was counted under %s/%s", e, r)
 			}
 		}

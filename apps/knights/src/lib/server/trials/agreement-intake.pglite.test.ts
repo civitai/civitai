@@ -93,6 +93,18 @@ const references = async () =>
   ).rows;
 
 describe('takeAgreementIntake', () => {
+  it('never overwrites a mod-confirmed skill check on the same image: the mod-confirmed row wins', async () => {
+    await verdict(1, { level: 4, answers: ['4', '4', '4'] });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey") VALUES (1,'skillCheck','4','inquisitor',$1)`,
+      [Q]
+    );
+    expect(await takeAgreementIntake(db, { now: NOW })).toEqual({ added: 0 });
+    expect(await references()).toEqual([
+      { imageId: 1, answer: '4', status: 'active', source: 'inquisitor', pool: 'skillCheck' },
+    ]);
+  });
+
   it('takes a unanimous Knight verdict of 3+ players in as a probation agreement check', async () => {
     await verdict(1, { level: 4, answers: ['4', '4', '4'] });
     expect(await takeAgreementIntake(db, { now: NOW })).toEqual({ added: 1 });
@@ -167,6 +179,26 @@ describe('takeAgreementIntake', () => {
       .filter((r) => r.status === 'probation')
       .map((r) => r.imageId);
     expect(taken).toEqual([2, 3, 4, 5]);
+  });
+
+  it('frees the slot of a live check whose image is hidden for now, and keeps that check', async () => {
+    const config = { ...AGREEMENT_INTAKE, probationPerLevel: 1 };
+    await verdict(1, { level: 2 });
+    // The level's one live check sits on an image players cannot be shown right now.
+    await pg.query(
+      `INSERT INTO "Post" ("id","publishedAt","availability") VALUES (90,'2020-01-01','Private')`
+    );
+    await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES (90,'k',2,90)`);
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status") VALUES (90,'hiddenCheck','2','agreement',$1,'active')`,
+      [Q]
+    );
+
+    expect(await takeAgreementIntake(db, { now: NOW, config })).toEqual({ added: 1 });
+    expect((await references()).map((r) => [r.imageId, r.status])).toEqual([
+      [1, 'probation'],
+      [90, 'active'],
+    ]);
   });
 });
 

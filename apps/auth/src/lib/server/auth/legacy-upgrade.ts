@@ -28,6 +28,7 @@ import {
   setSessionCookie,
 } from './session';
 import { getOrProduceSessionUser } from './session-producer';
+import { refusedAccountReason } from './account-refusal';
 import { signatureVerifier, verifier } from './verifier';
 import { isUnconfirmedSession } from './unconfirmed-session';
 
@@ -75,8 +76,15 @@ function newUpgrade(from: SessionClaims, live: SessionClaims): Upgrade {
   };
 }
 
-const sign = ({ jti, claims }: Upgrade) =>
-  getSigner().mintSessionToken(claims, { jti, expiresIn: sessionExpiresIn(claims) });
+/** Null when the account may no longer hold a session: the copy is not made. */
+async function sign({ jti, claims }: Upgrade): Promise<string | null> {
+  // Runs on page requests: a failed read leaves the session where it is rather than failing the page.
+  const refused = await refusedAccountReason(Number(claims.sub), 'legacy-upgrade').catch(
+    () => true
+  );
+  if (refused) return null;
+  return getSigner().mintSessionToken(claims, { jti, expiresIn: sessionExpiresIn(claims) });
+}
 
 /** Whether `token` is a live session of the same family and account as `of`. */
 async function isSameSession(token: string | undefined, of: SessionClaims): Promise<boolean> {
@@ -122,6 +130,7 @@ export async function preUpgradeHubSession(
   if (await isSameSession(cookies.get(hostSessionCookieName()), shared)) return;
   const upgrade = newUpgrade(shared, shared);
   const token = await sign(upgrade);
+  if (!token) return;
   await sessions.trackToken(upgrade.jti, Number(upgrade.claims.sub)).catch(() => undefined);
   await recordFamily(cookies, familyId({ ...upgrade.claims, jti: upgrade.jti }));
   setSessionCookie(cookies, token, 'host');
@@ -225,9 +234,10 @@ export async function upgradeHubSession(
 async function finish(
   cookies: Cookies,
   j0: SessionClaims,
-  token: string,
+  token: string | null,
   { won }: { won: boolean }
-): Promise<string> {
+): Promise<string | null> {
+  if (!token) return null;
   if (cookies.get(hostSessionCookieName()) !== token) setSessionCookie(cookies, token, 'host');
   await recordFamily(cookies, familyId(j0));
   const retire = retireSharedSession();

@@ -8,7 +8,6 @@ import { createPgliteHarness, type Harness } from './doc-store.harness';
 import {
   BOARD,
   ctx,
-  TALLIES,
   expectCode,
   freshApp,
   NS_PROD,
@@ -85,7 +84,7 @@ describe('per-user ceilings from userLimits', () => {
   // usage-row lock (`SQL_CHARGE_APP`, which runs right after `beforeUsageCharge`).
   it.each([
     ['a put', 'put'],
-    ['an increment', 'increment'],
+    ['a create', 'create'],
   ])("%s resolves the viewer's ceiling before the transaction and the lock", async (_l, op) => {
     const app = freshApp('tierorder');
     const events: string[] = [];
@@ -110,7 +109,7 @@ describe('per-user ceilings from userLimits', () => {
     });
     const one = ctx(app, NS_PROD, VIEWER_1);
     if (op === 'put') await store.put(one, PREFS, 'a', { v: 1 });
-    else await store.increment(one, TALLIES, 'c', 'plays');
+    else await store.create(one, BOARD, { v: 1 });
     expect(events.filter((e) => e !== 'connect').slice(0, 2)).toEqual(['ceiling', 'charge']);
     expect(events.indexOf('ceiling')).toBeLessThan(events.indexOf('connect'));
     // Resolved once, outside; the charge to the same viewer did not resolve it again inside.

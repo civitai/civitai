@@ -272,25 +272,33 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     return ids;
   }
 
+  /** Up to `limit` point ids from `offset` up, in id order, and the id to read from next (0 at the end). */
+  async idsFrom(offset: number, limit: number): Promise<{ ids: number[]; next: number }> {
+    const page = await idempotent(() =>
+      this.client.scroll(this.collection, {
+        offset,
+        limit,
+        with_payload: false,
+        with_vector: false,
+      })
+    );
+    return {
+      ids: page.points.map((point) => Number(point.id)),
+      next: page.next_page_offset == null ? 0 : Number(page.next_page_offset),
+    };
+  }
+
   /** Point ids with lo <= id < hi. Scroll walks ids in ascending order from `offset`. */
   async idsInRange(lo: number, hi: number, pageSize = 10_000): Promise<number[]> {
     const ids: number[] = [];
     let offset: number | undefined = lo;
     while (offset !== undefined && offset < hi) {
-      const page = await idempotent(() =>
-        this.client.scroll(this.collection, {
-          offset,
-          limit: pageSize,
-          with_payload: false,
-          with_vector: false,
-        })
-      );
-      for (const point of page.points) {
-        const id = Number(point.id);
+      const page = await this.idsFrom(offset, pageSize);
+      for (const id of page.ids) {
         if (id >= hi) return ids;
         ids.push(id);
       }
-      offset = page.next_page_offset == null ? undefined : Number(page.next_page_offset);
+      offset = page.next || undefined;
     }
     return ids;
   }

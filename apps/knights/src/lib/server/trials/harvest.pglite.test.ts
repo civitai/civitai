@@ -343,6 +343,40 @@ describe('the paused harvest job', () => {
   });
 });
 
+describe('mod-confirmed skill checks under the paused job', () => {
+  const insert = (imageId: number, source: string, harvestedDaysAgo: number) =>
+    pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","harvestedAt") VALUES ($1,'skillCheck','4',$2,$3)`,
+      [imageId, source, daysAgo(harvestedDaysAgo)]
+    );
+  const run = () =>
+    runHarvestJob(db, { now: NOW, settings: { paused: true, hiddenCheckShare: 0 } });
+
+  it('never ages out an inquisitor check, while a harvested one of the same age still goes', async () => {
+    await image(1, { level: 4 });
+    await insert(1, 'inquisitor', HARVEST.freshMaxAgeDays + 5);
+    await image(2, { level: 4 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","harvestedAt") VALUES (2,'trials','4','harvested',$1)`,
+      [daysAgo(HARVEST.freshMaxAgeDays + 5)]
+    );
+
+    await run();
+
+    expect(await references()).toMatchObject([
+      { imageId: 1, status: 'active' },
+      { imageId: 2, status: 'retired' },
+    ]);
+  });
+
+  it('retires an inquisitor check once a moderator moves the image off its level', async () => {
+    await image(1, { level: 8, reason: null });
+    await insert(1, 'inquisitor', 1);
+    await run();
+    expect(await references()).toMatchObject([{ imageId: 1, status: 'retired' }]);
+  });
+});
+
 describe('harvestRulings batching', () => {
   const small = { ...HARVEST, batchSize: 2, maxBatches: 3 };
   const cursor = async () =>
@@ -519,5 +553,17 @@ describe('a moderator ruling on an image players agreed on', () => {
         modActivityId: null,
       }),
     ]);
+  });
+});
+
+describe('references on a Private post', () => {
+  it('are only hidden: a fresh item is not retired over it', async () => {
+    await image(3, { level: 4 });
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 3`);
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES (3,'trials','4','harvested')`
+    );
+    await harvestRulings(db, { now: NOW });
+    expect((await references()).map((r) => [r.imageId, r.status])).toEqual([[3, 'active']]);
   });
 });

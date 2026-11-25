@@ -1,8 +1,7 @@
-import dynamic from 'next/dynamic';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import type { ComponentProps } from 'react';
+import { openDialog } from '~/components/Dialog/openDialog';
+import type UnpublishModal from '~/components/Modals/UnpublishModal';
 
-const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'), {
-  ssr: false,
-});
-
-export const openUnpublishModal = createDialogTrigger(UnpublishModal);
+export function openUnpublishModal({ props }: { props: ComponentProps<typeof UnpublishModal> }) {
+  openDialog(() => import('~/components/Modals/UnpublishModal'), props);
+}

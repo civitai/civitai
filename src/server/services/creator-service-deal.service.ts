@@ -32,7 +32,11 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import {
+  BUYER_DISCLOSURE_VERSION,
+  buyerDisclosureItems,
+  buyerDisclosureLines,
+} from '~/shared/constants/creator-service-terms.constants';
 import type { ServiceLicense } from '~/shared/constants/creator-service-license.constants';
 import { NO_SERVICE_LICENSE } from '~/shared/constants/creator-service-license.constants';
 import {
@@ -63,6 +67,16 @@ import {
   type ServiceDealStatus,
 } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
+import type {
+  ServiceFormAnswerLine,
+  ServiceFormAnswers,
+  ServicePriceLine,
+} from '~/shared/utils/service-request-form';
+import {
+  priceServiceRequest,
+  serviceFormTextAnswers,
+  serviceRequestFormSchema,
+} from '~/shared/utils/service-request-form';
 import {
   dealActions,
   dealActorRole,
@@ -310,6 +324,8 @@ type OfferingRow = {
   licensePreset: ServiceLicensePreset | null;
   licenseCustomText: string | null;
   licenseAllowResale: boolean;
+  requestForm: Prisma.JsonValue;
+  requestFormVersion: number;
   blocked: boolean;
   sellerOk: boolean;
   showable: boolean;
@@ -336,7 +352,10 @@ export async function requestServiceDeal({
   licenseAgreed = false,
   buyerId,
   requestText,
+  formVersion,
+  formAnswers,
   disclosureVersion,
+  disclosureReviewEnabled,
   buzzType,
   servableLevels,
   consentLevels,
@@ -353,8 +372,14 @@ export async function requestServiceDeal({
   licenseAgreed?: boolean;
   buyerId: number;
   requestText: string;
+  /** The form version the buyer answered; left out for a service without a form. */
+  formVersion?: number;
+  /** The buyer's answers. The price is worked out from them again here, never taken. */
+  formAnswers?: ServiceFormAnswers;
   /** The buyer-disclosure version shown before the hold. */
   disclosureVersion: string;
+  /** Whether the buyer was shown the with-reviews disclosure. Undefined from an old page. */
+  disclosureReviewEnabled?: boolean;
   buzzType: string;
   /** What the request's domain may be served (`domainServableLevels`). */
   servableLevels: number;
@@ -365,15 +390,25 @@ export async function requestServiceDeal({
 }) {
   if (!isServiceDealBuzzType(buzzType))
     throw throwBadRequestError(`Services cannot be paid in ${buzzType} Buzz`);
-  if (disclosureVersion !== SERVICES_TERMS_VERSION)
+  // The buyer must have been shown this disclosure, in the variant this deal will run under.
+  if (disclosureVersion !== BUYER_DISCLOSURE_VERSION || disclosureReviewEnabled !== reviewEnabled)
     throw throwBadRequestError('Review the request terms before sending. Nothing was charged.');
+  // The pins below hold the offering to these terms, so these are the lines the buyer read.
+  const disclosureLines = buyerDisclosureLines(
+    buyerDisclosureItems({
+      price: expectedPrice,
+      revisionsIncluded: expectedRevisionsIncluded,
+      deliveryDays: expectedDeliveryDays,
+      reviewEnabled,
+    })
+  );
 
   await throwOnBlockedUserContent(requestText, { surface: 'creator-service-request' });
 
   const [offering] = await dbWrite.$queryRaw<OfferingRow[]>`
     SELECT o."id", o."sellerId", o."status"::text AS "status", o."maxOpenDeals", o."price",
       o."revisionsIncluded", o."deliveryDays", o."licensePreset"::text AS "licensePreset",
-      o."licenseCustomText", o."licenseAllowResale",
+      o."licenseCustomText", o."licenseAllowResale", o."requestForm", o."requestFormVersion",
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
@@ -402,10 +437,21 @@ export async function requestServiceDeal({
     });
   if (offering.maxOpenDeals !== null && offering.open >= offering.maxOpenDeals)
     throw throwBadRequestError('This service is not taking new requests right now');
+  // A form the buyer did not answer, or answered in another version, is a change of terms.
+  const form = offering.requestForm ? serviceRequestFormSchema.parse(offering.requestForm) : null;
+  if (form ? formVersion !== offering.requestFormVersion : formAnswers !== undefined)
+    throw termsChanged();
+  const priced = form ? priceServiceRequest(form, offering, formAnswers ?? {}) : null;
+  if (priced && !priced.ok) throw throwBadRequestError(priced.error);
+  const textAnswers = form && formAnswers ? serviceFormTextAnswers(form, formAnswers) : [];
+  if (textAnswers.length)
+    await throwOnBlockedUserContent(textAnswers, { surface: 'creator-service-request' });
+  const price = priced?.ok ? priced.price : offering.price;
+  const deliveryDays = priced?.ok ? priced.deliveryDays : offering.deliveryDays;
   if (
-    offering.price !== expectedPrice ||
+    price !== expectedPrice ||
     offering.revisionsIncluded !== expectedRevisionsIncluded ||
-    offering.deliveryDays !== expectedDeliveryDays ||
+    deliveryDays !== expectedDeliveryDays ||
     offering.licensePreset !== expectedLicense.licensePreset ||
     offering.licenseCustomText !== expectedLicense.licenseCustomText ||
     offering.licenseAllowResale !== expectedLicense.licenseAllowResale
@@ -428,18 +474,25 @@ export async function requestServiceDeal({
       INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", "price", "buzzType",
         "feeAmount", "revisionsIncluded", "deliveryDays", "previewKind", "status", "requestText",
         "updatedAt", "maxNsfwLevel", "reviewEnabledAt", "licensePreset", "licenseCustomText",
-        "licenseAllowResale", "licenseAgreedAt")
-      SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
-        0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
+        "licenseAllowResale", "licenseAgreedAt", "buyerDisclosureVersion", "buyerDisclosureLines",
+        "formVersion", "formAnswers", "priceBreakdown")
+      SELECT o."id", ${buyerId}::int, o."sellerId", ${price}::int, ${buzzType}::"ServiceBuzzType",
+        0, o."revisionsIncluded", ${deliveryDays}::int, o."previewKind", 'Requested'::"ServiceDealStatus",
         ${requestText}::text, now(), ${offeringLevel},
         CASE WHEN ${reviewEnabled}::boolean THEN now() END, o."licensePreset", o."licenseCustomText",
-        o."licenseAllowResale", CASE WHEN o."licensePreset" IS NULL THEN NULL ELSE now() END
+        o."licenseAllowResale", CASE WHEN o."licensePreset" IS NULL THEN NULL ELSE now() END,
+        ${BUYER_DISCLOSURE_VERSION}::text, ${disclosureLines}::text[],
+        ${form ? offering.requestFormVersion : null}::int,
+        ${priced?.ok ? JSON.stringify(priced.answers) : null}::jsonb,
+        ${priced?.ok ? JSON.stringify(priced.breakdown) : null}::jsonb
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
-        AND o."price" = ${expectedPrice}::int
+        -- The base and the form the price was worked out from.
+        AND o."price" = ${offering.price}::int
         AND o."revisionsIncluded" = ${expectedRevisionsIncluded}::int
-        AND o."deliveryDays" = ${expectedDeliveryDays}::int
+        AND o."deliveryDays" = ${offering.deliveryDays}::int
+        AND o."requestFormVersion" = ${offering.requestFormVersion}::int
         AND o."licensePreset"::text IS NOT DISTINCT FROM ${expectedLicense.licensePreset}::text
         AND o."licenseCustomText" IS NOT DISTINCT FROM ${expectedLicense.licenseCustomText}::text
         AND o."licenseAllowResale" = ${expectedLicense.licenseAllowResale}::boolean
@@ -1218,6 +1271,9 @@ export async function getServiceDealView({
         }
       : null,
     requestText: deal.requestText,
+    /** What the buyer answered on the service's form, and the price those answers gave. */
+    formAnswers: deal.formAnswers as ServiceFormAnswerLine[] | null,
+    priceBreakdown: deal.priceBreakdown as ServicePriceLine[] | null,
     chatId: deal.chatId,
     requestedAt: deal.requestedAt,
     acceptedAt: deal.acceptedAt,

@@ -82,6 +82,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT 'u',
       "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',
@@ -99,7 +100,7 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, "bannerId" int, status text, "publishedAt" timestamp, ingestion text
+      id int PRIMARY KEY, "coverId" int, "bannerId" int, status text, "publishedAt" timestamp, ingestion text, availability "Availability" DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -260,6 +261,25 @@ describe('imagesForModelVersionsCache', () => {
     const cached = await imagesForModelVersionsCache.fetch([9, 8]);
     expect(ids(cached[9].images)).toEqual(SHOWN_TO_OTHERS);
     expect(cached[8]).toEqual({ modelVersionId: 8, images: [] });
+  });
+
+  it('keeps only the images at a selectable level from an entry cached before', async () => {
+    installFakeCacheRedis();
+    const image = (id: number, nsfwLevel: number) => ({
+      id,
+      userId: OWNER,
+      modelVersionId: 7,
+      nsfwLevel,
+      minor: false,
+    });
+    await redis.packed.set(`${REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION}:7` as never, {
+      modelVersionId: 7,
+      images: [image(9101, 32), image(9102, 1), image(9103, 16 | 32)],
+      cachedAt: new Date(),
+    });
+
+    const cached = await imagesForModelVersionsCache.fetch([7]);
+    expect(ids(cached[7].images)).toEqual([9102, 9103]);
   });
 });
 

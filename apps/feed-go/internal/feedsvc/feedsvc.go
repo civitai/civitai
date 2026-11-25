@@ -107,6 +107,9 @@ type Query struct {
 	// `generation`); Pending is `pending: true` (UNSUPPORTED_FLAGS, after `requiringMeta`).
 	HasPrioritizedUserIDs bool
 	Pending               bool
+	// PublishedOnly is `publishedOnly: true` (UNSUPPORTED_FLAGS, after `pending`): image.getInfinite
+	// sends it only without a `userId` (beside one it routes to Postgres, or the handler withdrew it).
+	PublishedOnly bool
 	// Techniques is the input's `techniques` as sent; the positive ids are sent (after `tools`), in
 	// order and with repeats. Unlike `tags`, a list of only impossible ids is not refused: no
 	// `techniques` is sent.
@@ -116,6 +119,106 @@ type Query struct {
 	// BaseModels is the input's `baseModels` as sent; the non-empty names are sent, in order and with
 	// repeats.
 	BaseModels []string
+	// Hub is a hub's resolved sources (serveImagesFromFeedService's `hubSources`, from
+	// resolveHubForFeed); nil = no `hubId`. The caller answers a hub that resolved to nothing
+	// (`hubSources: null`) itself, before Map (serveFromFeed's empty page).
+	Hub *Hub
+}
+
+// Hub is ResolvedHubSources (src/server/services/user-hub.service.ts) as mapHubSources reads it:
+// the any-of sources and the keep-out lists. Collection sources are not here: with
+// HUB_COLLECTION_SOURCES_ENABLED false the mapper never reads them.
+type Hub struct {
+	UserIDs, VersionIDs []int
+	// TagGroups are AND-groups of tag ids, ORed.
+	TagGroups                           [][]int
+	ExcludedUserIDs, ExcludedVersionIDs []int
+	ExcludedTagGroups                   [][]int
+}
+
+// MAX_HUB: the feed service's ceilings on a hub's sources and keep-out lists.
+const (
+	maxHubUsers             = 50
+	maxHubVersions          = 750
+	maxHubTagGroups         = 50
+	maxHubTagsPerGroup      = 50
+	maxHubExcludedTagGroups = 20
+)
+
+// HubRoutes are serveFromFeed's HUB_ROUTES: the feed plans that took a hub's union, or its own empty
+// page. A hub answered on any other route is a feed build that ignored the sources (`hub:route`).
+var HubRoutes = map[string]bool{"union-walk": true, "union-gather": true, "empty": true}
+
+// hubParams is mapHubSources: the hub's feed parameters and its excluded creators, or the reason the
+// mapper refuses it (every one an empty page).
+func hubParams(q Query) (params [][2]string, excludedUsers []int, reason string) {
+	h := q.Hub
+	// The feed takes one driver: a hub's sources, or a creator, an id list or a gallery.
+	if q.UserID != 0 || q.FollowedSent || q.NewCreators || len(q.PostIDs) > 0 || q.PostID != 0 || q.Model3DID != 0 {
+		return nil, nil, "hub:driver"
+	}
+	whole := func(list []int) bool { return len(positive(list)) == len(list) }
+	groupsWhole := func(groups [][]int) bool {
+		for _, g := range groups {
+			if len(g) == 0 || !whole(g) {
+				return false
+			}
+		}
+		return true
+	}
+	if !whole(h.UserIDs) || !whole(h.VersionIDs) || !groupsWhole(h.TagGroups) || !whole(h.ExcludedUserIDs) ||
+		!whole(h.ExcludedVersionIDs) || !groupsWhole(h.ExcludedTagGroups) {
+		return nil, nil, "hub:ids"
+	}
+	if len(h.UserIDs) == 0 && len(h.VersionIDs) == 0 && len(h.TagGroups) == 0 {
+		return nil, nil, "hub:none"
+	}
+	// The `hideAutoResources` / `hideManualResources` refusal beside version sources is not reachable
+	// here: withoutUnservedFilters drops both flags before the mapper runs.
+	switch {
+	case len(h.UserIDs) > maxHubUsers:
+		return nil, nil, fmt.Sprintf("hub:users>%d", maxHubUsers)
+	case len(h.VersionIDs) > maxHubVersions:
+		return nil, nil, fmt.Sprintf("hub:versions>%d", maxHubVersions)
+	case len(h.TagGroups) > maxHubTagGroups:
+		return nil, nil, fmt.Sprintf("hub:tagGroups>%d", maxHubTagGroups)
+	case len(h.ExcludedVersionIDs) > maxHubVersions:
+		return nil, nil, fmt.Sprintf("hub:excludedVersions>%d", maxHubVersions)
+	case len(h.ExcludedTagGroups) > maxHubExcludedTagGroups:
+		return nil, nil, fmt.Sprintf("hub:excludedTagGroups>%d", maxHubExcludedTagGroups)
+	}
+	for _, groups := range [][][]int{h.TagGroups, h.ExcludedTagGroups} {
+		for _, g := range groups {
+			if len(g) > maxHubTagsPerGroup {
+				return nil, nil, fmt.Sprintf("hub:tagsPerGroup>%d", maxHubTagsPerGroup)
+			}
+		}
+	}
+	if len(h.UserIDs) > 0 {
+		params = append(params, [2]string{"anyUserIds", join(h.UserIDs)})
+	}
+	if len(h.VersionIDs) > 0 {
+		params = append(params, [2]string{"anyVersionIds", join(h.VersionIDs)})
+	}
+	if len(h.TagGroups) > 0 {
+		params = append(params, [2]string{"anyTagGroups", tagGroupsParam(h.TagGroups)})
+	}
+	if len(h.ExcludedVersionIDs) > 0 {
+		params = append(params, [2]string{"excludedVersionIds", join(h.ExcludedVersionIDs)})
+	}
+	if len(h.ExcludedTagGroups) > 0 {
+		params = append(params, [2]string{"excludedTagGroups", tagGroupsParam(h.ExcludedTagGroups)})
+	}
+	return params, h.ExcludedUserIDs, ""
+}
+
+// tagGroupsParam is `groups.map((g) => g.join(',')).join(';')`.
+func tagGroupsParam(groups [][]int) string {
+	parts := make([]string, len(groups))
+	for i, g := range groups {
+		parts[i] = join(g)
+	}
+	return strings.Join(parts, ";")
 }
 
 // Refusal is why a Query cannot be sent to the feed. Rejected refusals are answered by Node with a
@@ -249,6 +352,9 @@ func Map(q Query) (string, *Refusal) {
 	if q.Pending {
 		return skip("flag:pending")
 	}
+	if q.PublishedOnly {
+		return skip("flag:publishedOnly")
+	}
 	// `[...postIds, postId]`: the completion's list, then the input's own post.
 	postIDs := positive(append(append([]int(nil), q.PostIDs...), q.PostID))
 	if len(postIDs) > 0 {
@@ -283,6 +389,15 @@ func Map(q Query) (string, *Refusal) {
 		}
 		if q.UserID != 0 || q.FollowedSent {
 			return skip("flag:newCreators:userId")
+		}
+	}
+	// The hub, right after the new-creators board and before the sort.
+	var hub [][2]string
+	var hubExcludedUsers []int
+	if q.Hub != nil {
+		var reason string
+		if hub, hubExcludedUsers, reason = hubParams(q); reason != "" {
+			return skip(reason)
 		}
 	}
 	sort, ok := sorts[q.Sort]
@@ -365,12 +480,18 @@ func Map(q Query) (string, *Refusal) {
 	if len(excludedTags) > 0 {
 		p.set("excludedTags", join(excludedTags))
 	}
-	excludedUsers := uniq(positive(q.ExcludedUserIDs))
+	// The hub's own refusals first (`[...new Set([...hub.excludedUserIds, ...ints(excludedUserIds)])]`):
+	// the list is cut at the feed's limit, and a hub exclusion lost to the cut is content its owner kept
+	// out. The hub's ids are all positive (hubParams refused any other).
+	excludedUsers := uniq(append(append([]int(nil), hubExcludedUsers...), positive(q.ExcludedUserIDs)...))
 	if len(excludedUsers) > maxUsers {
 		excludedUsers = excludedUsers[:maxUsers]
 	}
 	if len(excludedUsers) > 0 {
 		p.set("excludedUserIds", join(excludedUsers))
+	}
+	for _, kv := range hub {
+		p.set(kv[0], kv[1])
 	}
 	if versionIDs != "" {
 		p.set("versionIds", versionIDs)
@@ -459,6 +580,8 @@ type Answer struct {
 	Status     int
 	IDs        []int
 	NextCursor string // the feed's own `<a>|<b>`, "" = end
+	// Route is the answer's `route` when it is a string ("" otherwise): the plan the feed took.
+	Route string
 }
 
 // Request-source headers, by mode. A shadow compute only re-runs a sampled request, so its calls must
@@ -531,6 +654,7 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	var body struct {
 		Items      []any `json:"items"`
 		NextCursor any   `json:"nextCursor"`
+		Route      any   `json:"route"`
 	}
 	dec := json.NewDecoder(io.LimitReader(res.Body, 8<<20))
 	dec.UseNumber()
@@ -540,6 +664,9 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	a := Answer{Status: res.StatusCode, IDs: Ints(body.Items)}
 	if s, ok := body.NextCursor.(string); ok {
 		a.NextCursor = s
+	}
+	if s, ok := body.Route.(string); ok {
+		a.Route = s
 	}
 	return a, nil
 }

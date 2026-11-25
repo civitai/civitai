@@ -7,7 +7,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CandidateSlot } from '~/components/Comics/CandidateImageModal';
 import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
 import { PanelUnlockActions } from '~/components/Comics/PanelUnlockActions';
-import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
+import {
+  NSFW_CAPPED,
+  NSFW_CAPPED_MESSAGE,
+  PRIVATE_GEN,
+  PRIVATE_GEN_MESSAGE,
+} from '~/shared/orchestrator/workflow-data';
 
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,6 +38,7 @@ const buttonLabels = () =>
   Array.from(document.body.querySelectorAll('button, a')).map((el) => el.textContent?.trim());
 
 const capped: CandidateSlot = { requiresUnlock: true, blockedReason: NSFW_CAPPED };
+const privateSlot: CandidateSlot = { requiresUnlock: true, blockedReason: PRIVATE_GEN };
 const upgradable: CandidateSlot = { requiresUnlock: true, blockedReason: 'canUpgrade' };
 const clean: CandidateSlot = { key: 'clean-key', nsfwLevel: 1 };
 
@@ -57,6 +63,16 @@ describe('comics candidate picker', () => {
     expect(buttonLabels()).not.toContain('Unlock with yellow Buzz');
     expect(document.body.textContent).toContain(NSFW_CAPPED_MESSAGE);
   });
+
+  it.each(['red', 'green'] as const)(
+    'offers no unlock or redirect for a private result on %s',
+    (domain) => {
+      renderPicker([privateSlot, clean], domain);
+      expect(buttonLabels()).not.toContain('Unlock with yellow Buzz');
+      expect(buttonLabels()).not.toContain('Open on civitai.red');
+      expect(document.body.textContent).toContain(PRIVATE_GEN_MESSAGE);
+    }
+  );
 
   it('offers the unlock when one locked result is within the cap', () => {
     renderPicker([upgradable, capped], 'red');
@@ -89,12 +105,13 @@ describe('single-image panel unlock', () => {
   }
 
   it.each([
-    ['red', false],
-    ['green', true],
-  ])('offers nothing to unlock a capped output on %s', (_domain, isGreen) => {
-    renderActions(NSFW_CAPPED, isGreen);
+    ['a capped', 'red', NSFW_CAPPED, NSFW_CAPPED_MESSAGE, false],
+    ['a capped', 'green', NSFW_CAPPED, NSFW_CAPPED_MESSAGE, true],
+    ['a private', 'red', PRIVATE_GEN, PRIVATE_GEN_MESSAGE, false],
+  ])('offers nothing to unlock %s output on %s', (_kind, _domain, reason, message, isGreen) => {
+    renderActions(reason, isGreen);
     expect(buttonLabels()).toEqual([]);
-    expect(document.body.textContent).toContain(NSFW_CAPPED_MESSAGE);
+    expect(document.body.textContent).toContain(message);
   });
 
   it('sends an output within the cap from green to red', () => {

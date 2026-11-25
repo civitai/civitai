@@ -29,7 +29,6 @@ import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
-import { captureImageKeptSql, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
 import { normalizeText } from '~/utils/normalize-text';
@@ -71,7 +70,10 @@ import {
   ingestionAfterScanErrorSql,
   keepPermanentScanFailureSql,
   ingestionAfterVerdictSql,
+  scanKeepsRowSql,
   ingestionKeptAfterVerdict,
+  reviewKeyAfterSql,
+  csamBlockedSql,
   withoutGraceMarkersSql,
 } from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
@@ -330,6 +332,13 @@ export async function markImageScanError({
     RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
       "userId"
   `;
+  await queueCdnAccessSyncWhen(
+    imageId,
+    Prisma.sql`"ingestion" = ${
+      ImageIngestionStatus.Error
+    }::"ImageIngestionStatus" AND ${scanKeepsRowSql('Image')}`,
+    'scan-error-cdn-sync'
+  );
   return {
     retryCount: rows[0]?.retryCount ?? null,
     mediaType: rows[0]?.mediaType ?? null,
@@ -529,26 +538,51 @@ export type ScanOutcome = {
   audit?: Awaited<ReturnType<typeof auditScanResults>>;
 };
 
+/** The `needsReview` a skipped verdict leaves: it fills only an empty one. */
+export const reviewKeyAfterSkipSql = (
+  reviewKey: string | null
+) => Prisma.sql`COALESCE("needsReview", CASE
+  WHEN COALESCE("ingestion" = 'Blocked'::"ImageIngestionStatus" OR lower("blockedFor") = ${BlockedReason.Moderated}, false)
+    AND ${reviewKey}::text NOT IN ('csam', 'appeal') THEN NULL
+  ELSE ${reviewKey}::text END)`;
+
 /**
- * A block a scan must not lift: the owner is banned or held, or a hold kept the image. The fresh
- * read and the write's WHERE share it, since a ban or hold can land between the two.
+ * Queues a CDN access sync for the image when `condition` holds on its row. A failure is logged and
+ * never thrown: the caller's write has landed, and a retried callback would count twice.
  */
-const blockKeptByBanOrHoldSql = (alias: string) => {
+async function queueCdnAccessSyncWhen(imageId: number, condition: Prisma.Sql, name: string) {
+  await dbWrite.$queryRaw`
+    SELECT queue_cdn_access_sync(id, 'Image', NULL)::text AS queued
+    FROM "Image" WHERE id = ${imageId} AND ${condition}
+  `.catch((error: Error) => {
+    logToAxiom({ type: 'error', name, imageId, message: error.message });
+  });
+}
+
+/**
+ * A block a scan must not lift: the owner is banned. The fresh read and the write's WHERE share it,
+ * since a ban can land between the two.
+ */
+export const blockKeptByBanSql = (alias: string) => {
   const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`(${hasBlockMarkerSql(alias)} AND (
-    EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL)
-    OR ${ownerHeldSql(Prisma.sql`${t}."userId"`)}
-    OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = ${t}.id)
-    OR ${captureImageKeptSql(`"${alias}"`)}))`;
+  return Prisma.sql`(${hasBlockMarkerSql(alias)} AND
+    EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL))`;
 };
 
-/** Whether `blockKeptByBanOrHoldSql` holds for the image. A read that fails counts as kept. */
-function isBlockKeptByBanOrHold(imageId: number) {
-  return ownerHeld(
-    dbWrite,
-    Prisma.sql`FROM "Image" m WHERE m.id = ${imageId}`,
-    blockKeptByBanOrHoldSql('m')
-  );
+/** Whether `blockKeptByBanSql` holds for the image. A read that fails counts as kept. */
+async function isBlockKeptByBan(imageId: number) {
+  const rows = await dbWrite.$queryRaw<{ kept: unknown }[]>`
+    SELECT ${blockKeptByBanSql('m')} AS kept FROM "Image" m WHERE m.id = ${imageId}
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'scan-block-kept-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
+  if (!rows) return true;
+  return rows.some((r) => r.kept !== false);
 }
 
 /** One image in this many is logged without a prior review, so the line's volume shows it runs. */
@@ -593,9 +627,8 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
  * post-update side effects need. Three terminal shapes:
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
- *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it, unless the owner is banned or held, a hold kept the image, the
- *    image is under appeal, or the block is CSAM.
+ *    un-block the image. A *prior* block is decided again by the verdict, within the
+ *    conditions on the write below.
  *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
  *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
@@ -735,16 +768,15 @@ export async function resolveScanOutcome({
     reviewKey = 'csam';
   }
 
-  // A block on a banned or held owner's image, or on one a hold kept, is that decision, not a stale
-  // automated one, so a scan never lifts it. Read fresh, not from `image`: the ban or hold can block
-  // the row after this scan loaded it.
+  // A block on a banned owner's image is that decision, not a stale automated one, so a scan never
+  // lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     const [current] = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
       SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
     `;
-    if (current && hasBlockMarker(current) && (await isBlockKeptByBanOrHold(image.id))) {
+    if (current && hasBlockMarker(current) && (await isBlockKeptByBan(image.id))) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
@@ -755,12 +787,20 @@ export async function resolveScanOutcome({
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
-  const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
+  const csamBlocked = csamBlockedSql();
+  // The CSAM block the row holds once this write lands: the stored one, or one this scan writes back
+  // from the loaded copy after it was lifted.
+  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${
+    (toUpdate.blockedFor as string) ?? null
+  }::text = ${BlockedReason.CSAM})`;
   // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
   // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
   const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
+  // Blocked/Error/NotFound rows a block marker keeps: the verdict skips them (CSAM is left to csamBlocked below).
+  const keptFromScan = Prisma.sql`(COALESCE("ingestion" IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus", 'NotFound'::"ImageIngestionStatus"), false)
+    AND ${scanKeepsRowSql('Image')} AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM})`;
   let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
     async (axesTerm) =>
@@ -779,25 +819,35 @@ export async function resolveScanOutcome({
         WHEN "nsfwLevelLocked" AND "nsfwLevel" <> 0
           AND ${scanLevel}::int <> ${Prisma.raw(String(NsfwLevel.Blocked))} THEN "nsfwLevel"
         ELSE ${scanLevel}::int END,
-      "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
-        ELSE ${(toUpdate.needsReview as string) ?? null} END,
+      -- Every way the row ends Blocked, a stored CSAM block included, settles its review as any block does.
+      "needsReview" = CASE WHEN ${csamBlocked} THEN ${reviewKeyAfterSql(
+        'block',
+        (toUpdate.needsReview as string) ?? null
+      )} ELSE ${reviewKeyAfterSql(
+        lifting ? 'verdict' : 'block',
+        (toUpdate.needsReview as string) ?? null,
+        csamAfterWrite
+      )} END,
       "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
-      "minor" = ${(toUpdate.minor as boolean) ?? false},
-      "poi" = ${(toUpdate.poi as boolean) ?? false},
+      -- Only a moderator clears these.
+      "minor" = "minor" OR ${(toUpdate.minor as boolean) ?? false},
+      "poi" = "poi" OR ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
       "metadata" = ${withoutGraceMarkersSql(metadataSet)},
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
       )}::jsonb)${axesTerm}
     WHERE id = ${image.id}${blocking ? Prisma.empty : Prisma.sql` AND NOT ${graceBlockedSql}`}${
-        lifting ? Prisma.sql` AND NOT ${blockKeptByBanOrHoldSql('Image')}` : Prisma.empty
+        lifting
+          ? Prisma.sql` AND NOT ${blockKeptByBanSql('Image')} AND NOT ${keptFromScan}`
+          : Prisma.empty
       }
   `),
     axesSet,
     axesTarget
   );
   if (!blocking && rowsWritten === 0) {
-    // Skipped as grace-blocked, or blocked by a ban or hold since the read: the hash is still kept (a later block reads it), and the outcome is
+    // Skipped as grace-blocked, kept from the scan, or blocked by a ban or hold since the read: the hash is still kept (a later block reads it), and the outcome is
     // the row as it stands, so no Scanned effects run.
     await dbWrite.$executeRaw`
       UPDATE "Image" SET "pHash" = COALESCE(${pHash ?? null}, "pHash") WHERE id = ${image.id}
@@ -810,13 +860,30 @@ export async function resolveScanOutcome({
       });
       return 0;
     });
+    // A skipped row still takes what the scan adds; nothing is cleared.
+    await dbWrite.$executeRaw`
+      UPDATE "Image" SET
+        "minor" = "minor" OR ${(toUpdate.minor as boolean) ?? false},
+        "poi" = "poi" OR ${(toUpdate.poi as boolean) ?? false},
+        "needsReview" = ${reviewKeyAfterSkipSql(reviewKey)}
+      WHERE id = ${image.id} AND ${keptFromScan} AND NOT ${graceBlockedSql}
+    `.catch((error: Error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'scan-skipped-flags',
+        imageId: image.id,
+        message: error.message,
+      });
+      return 0;
+    });
+    await queueCdnAccessSyncWhen(image.id, keptFromScan, 'scan-skip-cdn-sync');
     const rows = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
       SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = ${image.id}
     `.catch(() => null);
-    // A failed read is reported blocked, since the skip only matches a blocked row; no row at all
-    // means the image is gone, and the verdict is reported as before.
+    // A failed read is reported blocked, the stricter outcome; no row at all means the image is
+    // gone, and the verdict is reported as before.
     const kept =
       rows === null
         ? {
@@ -831,6 +898,12 @@ export async function resolveScanOutcome({
       toUpdate.nsfwLevel = scanLevel = kept.nsfwLevel;
     }
   }
+  if (!blocking && rowsWritten && hasBlockMarker(image))
+    await queueCdnAccessSyncWhen(
+      image.id,
+      Prisma.sql`"ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+      'scan-lift-cdn-sync'
+    );
   // The side effects follow the row as written, not the verdict above: a Scanned outcome queues the
   // image for Knights review and signals its owner, though the guard kept the row CSAM-blocked. The
   // verdict has landed, so a failed read must not turn it into a scan error.
@@ -882,6 +955,8 @@ export async function resolveScanOutcome({
   if (scanLevel !== NsfwLevel.Blocked && !ratingLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
+    const minorAtFloor = Prisma.sql`(COALESCE(("scanJobs"->'hasMinor')::boolean, false)
+      AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked})`;
     try {
       const [raised] = await dbWrite.$queryRaw<
         { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
@@ -889,14 +964,15 @@ export async function resolveScanOutcome({
         UPDATE "Image" SET
           -- A rescan keeps the level until its checks have run at the floor; it applies it then.
           "nsfwLevel" = CASE WHEN ${rescan} THEN "nsfwLevel" ELSE ${floor} END,
-          ingestion = CASE WHEN ${rescan} THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+          ingestion = CASE WHEN ${rescan} THEN ${
+        ImageIngestionStatus.Rescan
+      }::"ImageIngestionStatus"
             ELSE ingestion END,
-          "needsReview" = CASE
-            WHEN "needsReview" IN ('csam', 'appeal') THEN "needsReview"
-            WHEN ("scanJobs"->'hasMinor')::boolean AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked}
-            THEN 'minor'
-            ELSE "needsReview"
-          END
+          "needsReview" = ${reviewKeyAfterSql(
+            'verdict',
+            Prisma.sql`CASE WHEN ${minorAtFloor} THEN 'minor' END`
+          )},
+          "minor" = "minor" OR ${minorAtFloor}
         WHERE id = ${image.id}
           AND NOT "nsfwLevelLocked"
           AND ingestion NOT IN (

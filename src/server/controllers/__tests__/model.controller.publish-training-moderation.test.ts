@@ -193,6 +193,110 @@ describe('publishModelHandler — training moderation gate', () => {
   });
 });
 
+describe('publishModelHandler — versions that name their own run', () => {
+  const publishVersion = (versionIds = [43]) =>
+    publishModelHandler({
+      input: { id: MODEL_ID, versionIds },
+      ctx: {
+        user: { id: OWNER_ID, isModerator: false },
+        track: { modelEvent: vi.fn().mockResolvedValue(undefined) },
+      },
+    } as never);
+
+  it.each(['evaluating', 'underReview', 'rejected', undefined])(
+    'refuses a version added from a %s run to a model that never came from the Studio',
+    async (status) => {
+      dbMock.dbRead.model.findUnique.mockResolvedValue({
+        status: 'Draft',
+        meta: null,
+        nsfw: false,
+        userId: OWNER_ID,
+      } as never);
+      dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+        { id: 43, meta: { trainingStudioWorkflowId: 'wf-added' } },
+      ] as never);
+      mockGetWorkflow.mockResolvedValue(trainingRun(status));
+      await expect(publishVersion()).rejects.toThrow(NOT_APPROVED);
+      expect(mockGetWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ path: { workflowId: 'wf-added' } })
+      );
+      expect(mockPublishModelById).not.toHaveBeenCalled();
+    }
+  );
+
+  it('publishes the version when its run is approved and back-links it once', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: null,
+      nsfw: false,
+      userId: OWNER_ID,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 43, meta: { trainingStudioWorkflowId: 'wf-added' } },
+    ] as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await expect(publishVersion()).resolves.toMatchObject({ id: MODEL_ID });
+    expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: 'wf-added',
+        metadata: expect.objectContaining({
+          published: true,
+          modelId: MODEL_ID,
+          modelVersionId: 43,
+        }),
+      })
+    );
+  });
+
+  it("back-links a run named on its model only to that run's own version, not another run's", async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
+      nsfw: false,
+      userId: OWNER_ID,
+    } as never);
+    // The model's versions, oldest first: v1 (44, the model's own run) and one added from wf-added.
+    const versions = [
+      { id: 44, meta: null },
+      { id: 45, meta: { trainingStudioWorkflowId: 'wf-added' } },
+    ];
+    dbMock.dbWrite.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id?: { in: number[] } };
+    }) =>
+      args.where.id
+        ? versions.filter((v) => args.where.id!.in.includes(v.id))
+        : versions) as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await expect(publishVersion([45])).resolves.toMatchObject({ id: MODEL_ID });
+    const stamped = mockUpdateWorkflow.mock.calls.map(([args]) => [
+      args.workflowId,
+      args.metadata.modelVersionId,
+    ]);
+    expect(stamped).toEqual(
+      expect.arrayContaining([
+        ['wf-added', 45],
+        ['wf-1', 44],
+      ])
+    );
+  });
+
+  it('back-links a Studio-born model once when the model and its v1 name the same run', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: UNSTAMPED_META,
+      nsfw: false,
+      userId: OWNER_ID,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 43, meta: UNSTAMPED_META },
+    ] as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await expect(publishVersion()).resolves.toMatchObject({ id: MODEL_ID });
+    expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('privateModelFromTrainingHandler — training moderation gate', () => {
   const run = () =>
     privateModelFromTrainingHandler({
@@ -204,6 +308,7 @@ describe('privateModelFromTrainingHandler — training moderation gate', () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({
       userId: OWNER_ID,
       meta: UNSTAMPED_META,
+      modelVersions: [],
     } as never);
     mockPrivateModelFromTraining.mockResolvedValue({ id: MODEL_ID, modelVersions: [] });
   });
@@ -222,6 +327,24 @@ describe('privateModelFromTrainingHandler — training moderation gate', () => {
       expect(mockPrivateModelFromTraining).not.toHaveBeenCalled();
     }
   );
+
+  it('checks every version of the model when none are named', async () => {
+    // A non-Studio model holding a version added from an unapproved run.
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      meta: null,
+      modelVersions: [{ id: 43 }],
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 43, meta: { trainingStudioWorkflowId: 'wf-added' } },
+    ] as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('underReview'));
+    await expect(run()).rejects.toThrow(NOT_APPROVED);
+    expect(mockGetWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: 'wf-added' } })
+    );
+    expect(mockPrivateModelFromTraining).not.toHaveBeenCalled();
+  });
 });
 
 describe('publishPrivateModelHandler — training moderation gate', () => {

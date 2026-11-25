@@ -92,6 +92,7 @@ beforeAll(async () => {
       "collectionId" int NOT NULL, "userId" int NOT NULL,
       permissions "CollectionContributorPermission"[] NOT NULL
     );
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT 'u',
       "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',
@@ -124,7 +125,8 @@ beforeAll(async () => {
       availability text
     );
 
-    INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner'), (${STRANGER}, 'stranger');
+    INSERT INTO "User" (id, username, image) VALUES
+      (${OWNER}, 'owner', 'legacy-avatar.png'), (${STRANGER}, 'stranger', NULL);
     INSERT INTO "Post" (id, "userId", "publishedAt", availability) VALUES
       (1, ${STRANGER}, now() - interval '1 day', 'Public'),
       (2, ${STRANGER}, now() - interval '1 day', 'Private'),
@@ -323,6 +325,21 @@ const pull = async (id: number) => {
     itemSrcs: data.itemImages.map((i) => i.src).filter((x) => x != null),
   };
 };
+
+describe('collections search index owner', () => {
+  it("carries the owner's profilePictureId but not the legacy image", async () => {
+    const data = await pullData(
+      { db, logger: () => undefined } as never,
+      {
+        type: 'update',
+        ids: [OWN_PUBLISHED],
+      } as never
+    );
+    const user = data.collections[0]?.user as Record<string, unknown>;
+    expect(user).toHaveProperty('profilePictureId');
+    expect(user).toHaveProperty('image', null);
+  });
+});
 
 describe('collections search index covers', () => {
   it("indexes no legacy cover string for an article whose cover image awaits review, and keeps a servable one's", async () => {

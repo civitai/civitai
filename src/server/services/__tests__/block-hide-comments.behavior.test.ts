@@ -10,14 +10,31 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+// `afterRead` runs once the candidate read has returned, before any write: what lands in between.
+const holder = vi.hoisted(() => ({
+  db: null as unknown as PGlite,
+  afterRead: null as null | (() => Promise<unknown>),
+  read: false,
+}));
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbReadLong: {},
   pgDbWrite: {},
   pgDbRead: {
     connect: async () => ({
-      query: (sql: string, params?: unknown[]) => holder.db.query(sql, params),
+      query: async (sql: string, params?: unknown[]) => {
+        const result = await holder.db.query(sql, params);
+        // After the read's own transaction ends, so what runs here commits on its own.
+        if (sql === 'COMMIT' && holder.read) {
+          holder.read = false;
+          // Once: the first read only.
+          const run = holder.afterRead;
+          holder.afterRead = null;
+          await run?.();
+        }
+        if (sql.includes('WITH owned')) holder.read = true;
+        return result;
+      },
       release: () => undefined,
     }),
   },
@@ -30,6 +47,8 @@ import {
   SECTION_OWNERS,
 } from '~/server/services/block-hide-comments.service';
 import { CommentEntityType } from '~/shared/utils/prisma/enums';
+import { Prisma } from '@prisma/client';
+import { restoreScamCase, runScamCleanup } from '~/server/services/scam-cleanup.service';
 
 const BLOCKER = 1;
 const BLOCKED = 2;
@@ -65,7 +84,7 @@ beforeAll(async () => {
     CREATE TABLE "CommentV3" (
       id int PRIMARY KEY, "userId" int, "entityType" "CommentEntityType", "entityId" int,
       hidden boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false,
-      "pinnedAt" timestamptz, "deletedAt" timestamptz, "updatedAt" timestamptz
+      "pinnedAt" timestamptz, "deletedAt" timestamptz, "updatedAt" timestamptz, "hiddenAt" timestamptz
     );
   `);
 });
@@ -101,11 +120,16 @@ beforeEach(async () => {
       (3004, ${BLOCKED}, 'comicChapter', 63, false, NULL);
   `);
 
-  // The writes are `setCommentFlags`, whose SQL runs as written.
+  holder.afterRead = null;
+  // The writes run their SQL as written.
   dbMock.dbWrite.$queryRawUnsafe.mockReset();
   dbMock.dbWrite.$queryRawUnsafe.mockImplementation(
     (async (sql: string, ...params: unknown[]) => (await holder.db.query(sql, params)).rows) as any
   );
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (first: never, ...values: unknown[]) => {
+    const sql = Prisma.sql(first as unknown as TemplateStringsArray, ...(values as never[]));
+    return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
+  }) as never);
 });
 
 const hiddenIds = async () =>
@@ -124,10 +148,93 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     expect(await hiddenIds()).toEqual([1001, 1002, 1003, 1004, 1005, 1006, 2001]);
   });
 
+  it('re-stamps the comments it would hide that are hidden already, and no others', async () => {
+    const earlier = '2026-11-01T00:00:00.000Z';
+    await holder.db.exec(`
+      UPDATE "CommentV3" SET "hiddenAt" = '${earlier}' WHERE id = 2001;
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId", hidden, "hiddenAt")
+      VALUES (3005, ${BLOCKED}, 'image', 20, true, '${earlier}');`);
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    const stamps = await holder.db.query<{ id: number; hidden: boolean; same: boolean }>(
+      `SELECT id, hidden, "hiddenAt" = '${earlier}' AS same FROM "CommentV3" WHERE id IN (2001, 3005) ORDER BY id`
+    );
+    expect(stamps.rows).toEqual([
+      { id: 2001, hidden: true, same: false },
+      { id: 3005, hidden: true, same: true },
+    ]);
+  });
+
+  it('after a block, a restore of an earlier hide passes its rows by', async () => {
+    await holder.db.exec(`TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId") VALUES (1001, ${BLOCKED}, 'image', 10);`);
+    const record = await runScamCleanup('comments', BLOCKED);
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
+      userId: BLOCKED,
+      type: 'scam',
+      triggers: [{ cleanup: record }],
+    } as never);
+
+    expect(await restoreScamCase(1)).toEqual({ restored: 0, skipped: 0 });
+    expect(await hiddenIds()).toEqual([1001]);
+  });
+
+  const cleanupRecord = async () => {
+    const record = await runScamCleanup('comments', BLOCKED);
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValue({
+      userId: BLOCKED,
+      type: 'scam',
+      triggers: [{ cleanup: record }],
+    } as never);
+  };
+
+  it('a hide landing between the read and the write is stamped by the block', async () => {
+    await holder.db.exec(`TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId") VALUES (1001, ${BLOCKED}, 'image', 10);`);
+    holder.afterRead = cleanupRecord;
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    expect(holder.afterRead, 'the hook ran').toBeNull();
+
+    expect(await restoreScamCase(1)).toEqual({ restored: 0, skipped: 0 });
+    expect(await hiddenIds()).toEqual([1001]);
+  });
+
+  it('a restore landing between the read and the write still leaves the block hidden', async () => {
+    await holder.db.exec(`TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId") VALUES (1001, ${BLOCKED}, 'image', 10);`);
+    await cleanupRecord();
+    holder.afterRead = () => restoreScamCase(1);
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    expect(holder.afterRead, 'the hook ran').toBeNull();
+
+    expect(await hiddenIds()).toEqual([1001]);
+  });
+
   it("hides on another owner's sections only when they are the blocker", async () => {
     await hideBlockedUserCommentsOnOwnContent({ ownerId: OTHER_OWNER, blockedUserId: BLOCKED });
 
     expect(await hiddenIds()).toEqual([2001, 3001, 3002, 3003, 3004]);
+  });
+
+  it('hides a visible comment even past a ceiling of comments hidden already', async () => {
+    await holder.db.exec(`
+      TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId", hidden)
+      SELECT g, ${BLOCKED}, 'image', 10, true FROM generate_series(1, ${BLOCK_HIDE_MAX_COMMENTS}) g;
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId")
+      VALUES (${BLOCK_HIDE_MAX_COMMENTS + 1}, ${BLOCKED}, 'image', 10);
+    `);
+
+    const result = await hideBlockedUserCommentsOnOwnContent({
+      ownerId: BLOCKER,
+      blockedUserId: BLOCKED,
+    });
+
+    expect(result).toMatchObject({ status: 'hidden', count: 1 });
+    const { rows } = await holder.db.query<{ hidden: boolean }>(
+      `SELECT hidden FROM "CommentV3" WHERE id = ${BLOCK_HIDE_MAX_COMMENTS + 1}`
+    );
+    expect(rows).toEqual([{ hidden: true }]);
   });
 
   it('stops at the row ceiling, in batches, and says so', async () => {
@@ -177,8 +284,13 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 
 describe('SECTION_OWNERS', () => {
   // A comment section with no owner here is never hidden on a block.
-  it('resolves an owner for every comment entity type', () => {
-    expect(Object.keys(SECTION_OWNERS).sort()).toEqual(Object.values(CommentEntityType).sort());
+  // A Feature Pages topic has no civitai owner, so it has no arm (block-hide-comments.service.ts).
+  const OWNED_TYPES = Object.values(CommentEntityType)
+    .filter((t) => t !== 'featurePage')
+    .sort();
+
+  it('resolves an owner for every comment entity type that has one', () => {
+    expect(Object.keys(SECTION_OWNERS).sort()).toEqual(OWNED_TYPES);
   });
 
   // Each type's sections live in their own table, keyed by their own owner column. Every type gets
@@ -268,8 +380,8 @@ describe('SECTION_OWNERS', () => {
     `);
   });
 
-  it('covers every comment entity type', () => {
-    expect(SECTIONS.map(([type]) => type).sort()).toEqual(Object.values(CommentEntityType).sort());
+  it('covers every comment entity type that has an owner', () => {
+    expect(SECTIONS.map(([type]) => type).sort()).toEqual(OWNED_TYPES);
   });
 
   it("hides the comment on the blocker's section of every type, and none on another owner's", async () => {

@@ -8,9 +8,11 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
+import { TEXT_MODERATION_RETRY_STATUSES } from '~/server/jobs/text-moderation-retry.constants';
 import {
   hasBlockMarker,
-  isMinorMatureImage,
+  minorMatureHidden,
+  noBlockMarkerWhere,
   withoutMinorFlag,
 } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
@@ -63,6 +65,7 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
+import { articleReadableWhere, canViewArticle } from '~/server/services/article-read';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import {
@@ -660,10 +663,7 @@ export const getArticles = async ({
         // This take prio over mod status just so mods can see the same as users.
         if (hidePrivateArticles && a.availability === Availability.Private) return false;
         // Whatever filter is set, a private article is only listed for its owner and staff.
-        if (a.availability === Availability.Private)
-          return !!sessionUser?.isModerator || a.userId === sessionUser?.id;
-
-        return true;
+        return canViewArticle(a, sessionUser);
       })
       .map(({ tags, user, userCosmetics, cursorV, storedCoverId, ...article }) => {
         const { profilePictureId, ...u } = user;
@@ -769,6 +769,7 @@ export const getCivitaiNews = async () => {
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
       AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
       AND a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
+      AND a.availability != 'Private'
       AND (a."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     ORDER BY a."createdAt" DESC
     LIMIT 10
@@ -865,15 +866,6 @@ export const articleContentImageSelect = {
   modelRestricted: true,
 } satisfies Prisma.ImageSelect;
 
-/** A minor-flagged R+ image (`isMinorMatureImage`) is shown only to its uploader and moderators. */
-function minorMatureHidden(
-  image: { userId: number; minor?: boolean | null; nsfwLevel: number } | null | undefined,
-  viewerId?: number,
-  isModerator?: boolean
-) {
-  return !!image && !isModerator && image.userId !== viewerId && isMinorMatureImage(image);
-}
-
 /**
  * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
  * article's owner who uploaded it may see it. Read and save share this so a save keeps exactly what
@@ -896,19 +888,7 @@ export const getArticleById = async ({
   try {
     const db = await getDbWithoutLag('article', id);
     const article = await db.article.findFirst({
-      where: {
-        id,
-        OR: !isModerator
-          ? [
-              {
-                publishedAt: { not: null },
-                status: ArticleStatus.Published,
-                ingestion: ArticleIngestionStatus.Scanned,
-              },
-              { userId },
-            ]
-          : undefined,
-      },
+      where: { id, ...articleReadableWhere({ id: userId, isModerator }) },
       // Include `moderatorNsfwLevel` here (not in the shared select) so the
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the
@@ -924,7 +904,8 @@ export const getArticleById = async ({
       },
     });
 
-    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (!article || !canViewArticle(article, { id: userId, isModerator }))
+      throw throwNotFoundError(`No article with id ${id}`);
     if (userId && !isModerator) {
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
@@ -2746,9 +2727,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
-    EntityModerationStatus.Failed,
-    EntityModerationStatus.Expired,
-    EntityModerationStatus.Canceled,
+    ...TEXT_MODERATION_RETRY_STATUSES,
   ]);
   const textDone = !required || (!!moderation && textTerminalStatuses.has(moderation.status));
 
@@ -3099,11 +3078,7 @@ export async function recomputeArticleIngestionInTx(
   // Also guards blocked/error on any stale EntityModeration row whose
   // content has since been emptied.
   const hasText = articleHasText(current.title, current.content);
-  const textErrorStatuses: string[] = [
-    EntityModerationStatus.Failed,
-    EntityModerationStatus.Expired,
-    EntityModerationStatus.Canceled,
-  ];
+  const textErrorStatuses: string[] = TEXT_MODERATION_RETRY_STATUSES;
   const textSucceeded = hasText && textModeration?.status === EntityModerationStatus.Succeeded;
   // Only on the way into Scanned: an article already there keeps what it has, so rows from before
   // verdicts carried a hash do not take it down on its next recompute.
@@ -3326,13 +3301,15 @@ const rescanImageSelect = {
   nsfwLevel: true,
   nsfwLevelLocked: true,
   blockedFor: true,
+  needsReview: true,
 } as const;
 
 /**
  * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
  * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
- * the block, which only a moderator decides; and an image someone other than the article's author
- * owns, which the author has no say over.
+ * the block, which only a moderator decides; an image awaiting review, whose flag a clean scan
+ * result could clear; and an image someone other than the article's author owns, which the author
+ * has no say over.
  */
 function canRescanArticleImage(
   image: {
@@ -3341,6 +3318,7 @@ function canRescanArticleImage(
     nsfwLevel: number;
     nsfwLevelLocked: boolean;
     blockedFor: string | null;
+    needsReview: string | null;
   },
   articleUserId: number
 ) {
@@ -3348,8 +3326,31 @@ function canRescanArticleImage(
     image.userId === articleUserId &&
     image.ingestion !== ImageIngestionStatus.Pending &&
     !image.nsfwLevelLocked &&
+    image.needsReview === null &&
     !hasBlockMarker(image)
   );
+}
+
+/**
+ * `canRescanArticleImage` as the Rescan write's filter, so a block or review flag that lands after
+ * the row was read is not overwritten: the scan result would then clear it. Change the two together.
+ */
+const rescanArticleImageWhere = (articleUserId: number): Prisma.ImageWhereInput => ({
+  userId: articleUserId,
+  nsfwLevelLocked: false,
+  needsReview: null,
+  AND: [{ ingestion: { not: ImageIngestionStatus.Pending } }, noBlockMarkerWhere()],
+});
+
+/** Flips the images still eligible on the primary to Rescan; returns the ids it flipped. */
+async function markArticleImagesForRescan(imageIds: number[], articleUserId: number) {
+  if (!imageIds.length) return new Set<number>();
+  const flipped = await dbWrite.image.updateManyAndReturn({
+    where: { id: { in: imageIds }, ...rescanArticleImageWhere(articleUserId) },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+    select: { id: true },
+  });
+  return new Set(flipped.map(({ id }) => id));
 }
 
 /**
@@ -3458,17 +3459,15 @@ export async function rescanArticle({
   for (const own of ownImages)
     if (!candidates.some((image) => image.id === own.id)) candidates.push(own);
 
-  const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
-
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
-  const imageIdsToIngest = imagesToIngest.map((image) => image.id);
-  if (imageIdsToIngest.length) {
-    await dbWrite.image.updateMany({
-      where: { id: { in: imageIdsToIngest } },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-  }
+  const flipped = await markArticleImagesForRescan(
+    candidates
+      .filter((image) => canRescanArticleImage(image, article.userId))
+      .map((image) => image.id),
+    article.userId
+  );
+  const imagesToIngest = candidates.filter((image) => flipped.has(image.id));
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -3598,20 +3597,20 @@ export async function rescanArticleImage({
 
   // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
   // no attempt.
-  if (!canRescanArticleImage(image, article.userId)) {
-    if (image.ingestion === ImageIngestionStatus.Pending) return;
-    throw throwBadRequestError(
+  const refused = () =>
+    throwBadRequestError(
       'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
     );
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw refused();
   }
 
   // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
   // then reports the article as in-progress (allComplete=false), which resumes
   // the 15s status poll so the eventual result loads without a manual refresh.
-  await dbWrite.image.update({
-    where: { id: image.id },
-    data: { ingestion: ImageIngestionStatus.Rescan },
-  });
+  const flipped = await markArticleImagesForRescan([image.id], article.userId);
+  if (!flipped.has(image.id)) throw refused();
   enqueueImageIngestion({
     images: [image],
     name: 'article-rescan-image',

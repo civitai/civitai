@@ -126,6 +126,7 @@ vi.mock('~/components/Dialog/dialogStore', async (orig) => {
 });
 
 // eslint-disable-next-line import/first
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
 // eslint-disable-next-line import/first
 import { ImagePrepError, imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
@@ -420,6 +421,8 @@ let lastValue: ImageValue[] = [];
 let valueWrites: ImageValue[][] = [];
 /** Adds an image to the harness's value from outside, as another part of the form would. */
 let pushValue: (image: ImageValue) => void = () => undefined;
+/** Empties the harness's value from outside, as removing every image would. */
+let clearValue: () => void = () => undefined;
 
 /** Samples the flag on every render, the way WhatIfProvider reads it. */
 function PendingProbe() {
@@ -440,15 +443,18 @@ function PendingHarness({
   initialValue?: ImageValue[];
   max?: number;
 }) {
-  const [value, setValue] = useState<ImageValue[]>(initialValue);
-  pushValue = (image) => setValue((prev) => [...prev, image]);
-  const onChange = (next: ImageValue[]) =>
+  // Null, as the form holds it once every image is removed.
+  const [value, setValue] = useState<ImageValue[] | null>(initialValue);
+  pushValue = (image) => setValue((prev) => [...(prev ?? []), image]);
+  clearValue = () => setValue(null);
+  const onChange = (written: ImageValue[] | null) =>
     setValue((prev) => {
-      if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+      if (JSON.stringify(prev) === JSON.stringify(written)) return prev;
+      const next = written ?? [];
       events.push({ kind: 'value', count: next.length });
       lastValue = next;
       valueWrites.push(next);
-      return next;
+      return written;
     });
   return (
     <div data-testid="source-images">
@@ -922,6 +928,93 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
       mocks.getImageDimensions.mock.calls.filter(([src]) => src === existing).length
     ).toBeGreaterThan(1);
     expect(mocks.reportApplicationError).toHaveBeenCalledTimes(1);
+  });
+
+  describe('an orchestrator link saved in the value', () => {
+    const blobUrl = (exp: string) =>
+      `https://orchestration.civitai.com/v2/consumer/blobs/SRC123.jpeg?sig=s&exp=${exp}`;
+    const EXPIRED = blobUrl('2020-01-01T00:00:00Z');
+    const CURRENT = blobUrl('2999-01-01T00:00:00Z');
+    const FRESH = blobUrl('2999-06-01T00:00:00Z');
+
+    let refreshRequests: unknown[] = [];
+    let refreshResponse: () => Response | Promise<Response>;
+    beforeEach(() => {
+      refreshRequests = [];
+      refreshResponse = () =>
+        Response.json({ results: [{ blobId: 'SRC123.jpeg', status: 'refreshed', url: FRESH }] });
+      const realFetch = globalThis.fetch;
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        if (String(input).includes('/api/orchestrator/refreshBlobs')) {
+          refreshRequests.push(JSON.parse(String(init?.body)));
+          return refreshResponse();
+        }
+        return realFetch(input, init);
+      });
+      onTestFinished(() => spy.mockRestore());
+      mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
+        if (src === FRESH) return { width: 1024, height: 1024 };
+        throw new Error('Image failed to load');
+      });
+    });
+
+    test('that expired and fails to load is refreshed once and swapped for the new link', async () => {
+      remixProvenanceStore.setToken(EXPIRED, 'remix-token');
+      sourceMetadataStore.setMetadata(EXPIRED, { nsfwLevel: 'r' });
+      onTestFinished(() => {
+        remixProvenanceStore.removeToken(FRESH);
+        sourceMetadataStore.removeMetadata(EXPIRED);
+        sourceMetadataStore.removeMetadata(FRESH);
+      });
+      renderWithProviders(
+        <PendingHarness initialValue={[{ url: EXPIRED, width: 1024, height: 1024 }]} />
+      );
+      await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([FRESH]));
+      await vi.waitFor(() => expect(pendingNow()).toBe(false));
+      expect(refreshRequests).toEqual([{ blobIds: ['SRC123.jpeg'] }]);
+      expect(mocks.getImageDimensions.mock.calls.map(([src]) => src)).toContain(FRESH);
+      expect(mocks.reportApplicationError).not.toHaveBeenCalled();
+      // Same image under the new link: its remix credit and rating follow it.
+      expect(remixProvenanceStore.getToken(FRESH)).toBe('remix-token');
+      expect(sourceMetadataStore.getMetadata(FRESH)?.nsfwLevel).toBe('r');
+    });
+
+    test('that expired and the orchestrator reports gone is asked once, then reported', async () => {
+      refreshResponse = () =>
+        Response.json({ results: [{ blobId: 'SRC123.jpeg', status: 'gone' }] });
+      renderWithProviders(
+        <PendingHarness initialValue={[{ url: EXPIRED, width: 1024, height: 1024 }]} />
+      );
+      await vi.waitFor(() => expect(mocks.reportApplicationError).toHaveBeenCalledTimes(1));
+      await sleep(500);
+      expect(refreshRequests).toHaveLength(1);
+      expect(loadFailures()[0][1]).toContain('expired:true');
+    });
+
+    test('that the user removes while its refresh is in flight stays removed', async () => {
+      let answer: (response: Response) => void = () => undefined;
+      refreshResponse = () => new Promise<Response>((resolve) => (answer = resolve));
+      renderWithProviders(
+        <PendingHarness initialValue={[{ url: EXPIRED, width: 1024, height: 1024 }]} />
+      );
+      await vi.waitFor(() => expect(refreshRequests).toHaveLength(1));
+      clearValue();
+      answer(
+        Response.json({ results: [{ blobId: 'SRC123.jpeg', status: 'refreshed', url: FRESH }] })
+      );
+      await sleep(500);
+      expect(valueWrites.flat().map((v) => v.url)).not.toContain(FRESH);
+    });
+
+    test('that has not expired is never sent for a refresh, even when it fails to load', async () => {
+      renderWithProviders(
+        <PendingHarness initialValue={[{ url: CURRENT, width: 1024, height: 1024 }]} />
+      );
+      await vi.waitFor(() => expect(mocks.reportApplicationError).toHaveBeenCalledTimes(1));
+      await sleep(500);
+      expect(refreshRequests).toHaveLength(0);
+      expect(loadFailures()[0][1]).toContain('expired:false');
+    });
   });
 });
 
@@ -2324,8 +2417,9 @@ describe('SourceImageUploadMultiple — a url that cannot be loaded', () => {
     ]);
   });
 
+  // An unsigned consumer-blob link counts as expired (blob-url.ts), so it carries `expired:true`.
   test.each([
-    ['https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg', 'orchestrator'],
+    ['https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg', 'orchestrator expired:true'],
     [`${IMAGE_LOCATION}/abc/original=true/a.jpeg`, 'image-cdn'],
     ['https://civitai.com/images/123', 'site-page'],
     ['https://example.com/only-in-the-value.jpg', 'other'],

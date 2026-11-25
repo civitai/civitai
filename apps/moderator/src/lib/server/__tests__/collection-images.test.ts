@@ -13,7 +13,10 @@ const getImagesForCollection = vi.fn(
     offset,
   })
 );
-vi.mock('../bulk-image.service', () => ({
+vi.mock('../bulk-image.service', async (importOriginal) => ({
+  // The real `withholdBatchMedia`: a grant holder (`collectionImages(..., true)`) reads nothing.
+  withholdBatchMedia: (await importOriginal<typeof import('../bulk-image.service')>())
+    .withholdBatchMedia,
   getImagesForCollection,
   getImagesForConnection: vi.fn(),
 }));
@@ -26,7 +29,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('collectionImages', () => {
   it('reads the asked-for page', async () => {
-    const batch = await collectionImages(5, 2);
+    const batch = await collectionImages(5, 2, true);
     expect(getImagesForCollection).toHaveBeenCalledWith(5, {
       limit: COLLECTION_IMAGES_PER_PAGE,
       offset: COLLECTION_IMAGES_PER_PAGE,
@@ -35,13 +38,13 @@ describe('collectionImages', () => {
   });
 
   it('clamps a page past the end to the last one', async () => {
-    const batch = await collectionImages(5, 9);
+    const batch = await collectionImages(5, 9, true);
     expect(getImagesForCollection).toHaveBeenLastCalledWith(5, { limit: 60, offset: 120 });
     expect(batch.page).toBe(3);
   });
 
   it('an empty collection is page 1', async () => {
     getImagesForCollection.mockResolvedValue({ items: [], total: 0, truncated: false, offset: 0 });
-    expect((await collectionImages(5, 4)).page).toBe(1);
+    expect((await collectionImages(5, 4, true)).page).toBe(1);
   });
 });

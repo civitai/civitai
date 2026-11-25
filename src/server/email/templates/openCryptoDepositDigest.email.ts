@@ -1,5 +1,5 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { OPEN_DEPOSIT_DIGEST_AFTER_DAYS } from '~/server/common/chain-config';
 
 export type OpenDepositDigestItem = {
@@ -60,6 +60,8 @@ const listedLine = (i: ListedPaymentDigestItem) =>
   `Payment ${i.paymentId}: ${LISTED_STATE_LABEL[i.state]}${i.status ? ` (${i.status})` : ''}`;
 
 export const openCryptoDepositDigestEmail = createEmail({
+  template: 'openCryptoDepositDigest',
+  mailClass: 'transactional',
   header: ({ to, items, listed }: OpenCryptoDepositDigestData) => ({
     subject: `NP open-payment digest: ${items.length} crypto deposit${
       items.length === 1 ? '' : 's'
@@ -81,6 +83,9 @@ export const openCryptoDepositDigestEmail = createEmail({
       )
       .join('');
     return simpleEmailWithTemplate({
+      icon: '🧾',
+      accent: 'gray',
+      eyebrow: 'Staff: crypto deposits',
       header: `${data.items.length} crypto deposit${data.items.length === 1 ? '' : 's'} still open`,
       body: `
       <p>
@@ -88,7 +93,12 @@ export const openCryptoDepositDigestEmail = createEmail({
         finished, so no Buzz has been credited. They are checked again every day and credited
         automatically if they finish.
       </p>
-      <p>${summary(data)}</p>${
+      ${renderEmailSummary([
+        { label: 'Open', value: `${data.counts.open}` },
+        { label: 'Oldest open', value: `${data.counts.oldestOpenDays} days` },
+        { label: 'Held for review', value: `${data.counts.held}` },
+        { label: 'Finished but uncredited', value: `${data.counts.finishedUncredited}` },
+      ])}${
         data.listed?.length
           ? `
       <p>Listed payment ids (no IPN row):</p>

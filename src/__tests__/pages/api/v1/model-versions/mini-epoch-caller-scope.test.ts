@@ -278,6 +278,7 @@ describe('mini/[id]?modelFileId= for a file the caller may not see', () => {
   );
 
   it('still serves a visible file by id', async () => {
+    h.variants['mini-epoch-caller-gate'] = 'log';
     const { status, body } = await ask({ user: { id: STRANGER_ID } }, PUBLIC_FILE.id);
     expect(status).toBe(200);
     expect(JSON.stringify(body)).toContain(PUBLIC_FILE.hashes.SHA256);
@@ -413,19 +414,6 @@ describe('mini/[id]?modelFileId= by an owner whose credential lacks the scope', 
   });
 });
 
-describe('mini/[id], the primary file hidden from the caller', () => {
-  it('log: the caller line names it as its own reason', async () => {
-    h.variants['mini-epoch-caller-gate'] = 'log';
-    await request({}, [TRAINING_FILE]);
-    await request({ user: { id: OWNER_ID } }, [TRAINING_FILE]);
-    const picks = (loggingMock.logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
-      .map(([entry]) => entry)
-      .filter((entry) => entry?.name === 'mini-epoch-caller')
-      .map((entry) => (entry.payload as { pick?: unknown } | undefined)?.pick);
-    expect(picks).toEqual(['hidden-primary', 'primary']);
-  });
-});
-
 describe('mini/[id], the system account', () => {
   const system = { id: -1, username: 'civitai', isModerator: true };
 
@@ -436,6 +424,8 @@ describe('mini/[id], the system account', () => {
   });
 
   it('gets no moderation block by a key the scope gate refuses under enforce', async () => {
+    // The caller gate is off here: under it this Private version refuses the key outright.
+    h.variants['mini-epoch-caller-gate'] = null;
     const refused = await request(
       { user: system, context: bearer(TokenScope.UserRead, 'apiKey') },
       [PUBLIC_FILE]

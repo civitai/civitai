@@ -92,11 +92,13 @@ afterEach(async () => {
 });
 
 const walk = (limit: number) =>
-  walkPages((cursor?: number) => getAppealImageQueue({ browsingLevel: 1, cursor, limit }));
+  walkPages((cursor?: number) =>
+    getAppealImageQueue({ browsingLevel: 1, cursor, limit, csamReview: true })
+  );
 
 describe('appeal queue order', () => {
   it('serves the oldest appeal first, not the newest image', async () => {
-    const { items } = await getAppealImageQueue({ browsingLevel: 1, limit: 10 });
+    const { items } = await getAppealImageQueue({ browsingLevel: 1, limit: 10, csamReview: true });
 
     expect(items.map((i) => i.id)).toEqual(IMAGES_BY_APPEAL_AGE);
   });
@@ -105,5 +107,14 @@ describe('appeal queue order', () => {
   // row shown and never the extra row fetched to detect a next page.
   it.each([1, 2, 3, 4])('reaches every appeal exactly once at %i per page', async (limit) => {
     expect(await walk(limit)).toEqual(IMAGES_BY_APPEAL_AGE);
+  });
+
+  // This schema has none of the tables the media access rule reads, so that read fails here.
+  it('serves the page with every card withheld, rather than failing, when the access read fails', async () => {
+    const { items } = await getAppealImageQueue({ browsingLevel: 1, limit: 10, csamReview: false });
+
+    expect(items.map((i) => [i.id, i.restricted])).toEqual(
+      IMAGES_BY_APPEAL_AGE.map((id) => [id, true])
+    );
   });
 });

@@ -9,8 +9,10 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
 // EndpointLabel names the endpoint label. Not `endpoint`: that is a reserved scrape target label (the
@@ -23,21 +25,39 @@ const EndpointLabel = "feed_endpoint"
 //
 // Every feed_go_* series carries EndpointLabel (`feed_endpoint`), one of Endpoints.
 type Metrics struct {
-	Requests      *prometheus.CounterVec   // endpoint, mode, outcome
-	Fallbacks     *prometheus.CounterVec   // endpoint, mode, reason
-	Duration      *prometheus.HistogramVec // endpoint, mode, outcome
-	ShadowResults *prometheus.CounterVec   // endpoint, result
-	ShadowDiffs   *prometheus.CounterVec   // endpoint, category, kind
-	ShadowDropped *prometheus.CounterVec   // endpoint
+	Requests  *prometheus.CounterVec   // endpoint, mode, outcome
+	Fallbacks *prometheus.CounterVec   // endpoint, mode, reason
+	Duration  *prometheus.HistogramVec // endpoint, mode, outcome
+	// ShadowResults, ShadowDiffs and ShadowResponse are the body and header comparisons of the Node
+	// shadow samples: feed_go_shadow_compare_total, feed_go_shadow_field_diffs_total and
+	// feed_go_shadow_response_total curried with source="shadow" (SourceShadow). The Parity* fields
+	// are the same three families curried with source="serve-parity" (SourceServeParity): the
+	// serve-side parity sampler's comparisons (serveparity.go). One family each, so a query that sums
+	// by feed_endpoint (the recorded parity ratios) reads both sources, and `source` splits them.
+	ShadowResults  *prometheus.CounterVec // endpoint, result
+	ShadowDiffs    *prometheus.CounterVec // endpoint, category, kind
+	ShadowDropped  *prometheus.CounterVec // endpoint
+	ParityResults  *prometheus.CounterVec // endpoint, result (source="serve-parity")
+	ParityDiffs    *prometheus.CounterVec // endpoint, category, kind (source="serve-parity")
+	ParityResponse *prometheus.CounterVec // endpoint, result (source="serve-parity")
+	// ServeParity counts the serve-side parity sampler's replays by outcome (feed_go_serve_parity_total:
+	// endpoint, outcome: ServeParityOutcomes).
+	ServeParity *prometheus.CounterVec
 
 	// ShadowViewer counts the body comparison results of the endpoints whose answer reports a viewer
-	// class (model-associated: modelfeed.ViewerClasses), so a serve gate can require samples per class
-	// (endpoint, viewer, result: ShadowResults' values). Seeded for each class's match result.
+	// class (model-associated: modelfeed.ViewerClasses; the tRPC feeds: FeedViewerClasses), so a serve
+	// gate can require samples per class (endpoint, viewer, result: ShadowResults' values). Seeded for
+	// each class's match result.
 	ShadowViewer *prometheus.CounterVec
 
 	// ShadowResponse counts the header comparison of each compared sample, beside the body's
 	// ShadowResults (endpoint, result: match|mismatch|uncompared).
 	ShadowResponse *prometheus.CounterVec
+
+	// ShadowResponseViewer is ShadowResponse's match and mismatch per viewer class, for the tRPC feeds
+	// (FeedViewerEndpoints; endpoint, viewer: FeedViewerClasses, result). Seeded for every class and
+	// result.
+	ShadowResponseViewer *prometheus.CounterVec
 
 	// Per-phase cost of a shadow sample (DESIGN.md §10). Phases: decode (read + parse the posted
 	// sample, Node's envelope included), compute (the answer serving would produce), compare
@@ -61,7 +81,7 @@ type Metrics struct {
 	// Seconds from the Node request's start to the probe's first cache read.
 	GoFirstCheckLag *prometheus.HistogramVec // endpoint
 
-	// Panics counts recovered panics by where (serve | shadow | probe). Not per endpoint.
+	// Panics counts recovered panics by where (serve | shadow | probe | serve-parity). Not per endpoint.
 	Panics *prometheus.CounterVec
 	// RevocationDegraded counts session revocation reads that failed, by the verdict then given from the
 	// markers already read (verdict: deny_cached | allow_unknown).
@@ -96,6 +116,14 @@ type Metrics struct {
 	// CacheWrites counts the cache writes of write-back (feed_go_cache_writes_total: cache, result:
 	// written | nx_lost | error), per key. Seeded only for the written-back caches (SeedCacheWrites).
 	CacheWrites *prometheus.CounterVec
+	// SearchRejected counts the text searches of GET /api/v1/models the search guard did not make
+	// (feed_go_search_rejected_total: why = open | busy; v1models.MeiliClient.OnReject). Each is a
+	// `v1-models-query` fallback too, which alone would not tell it from the switch being off.
+	SearchRejected *prometheus.CounterVec
+	// FeedUnavailable counts the image.getInfinite 503s written here for a failed feed-service call
+	// (outcome feed_unavailable), by why the call failed (feed_go_feed_unavailable_total: endpoint,
+	// reason, detail; feedUnavailableCause). Not seeded: the series appear with the first failure.
+	FeedUnavailable *prometheus.CounterVec
 }
 
 // MetricsHandler is the /metrics handler over g. With openMetrics (on with tracing) it answers a scrape
@@ -134,7 +162,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_requests_total",
-			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error).",
+			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error|region_blocked|feed_unavailable|not_found).",
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		Fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_total",
@@ -149,18 +177,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_compare_viewer_total",
 			Help: "Shadow comparison results by the sample's viewer class (anon, user, owner, moderator), for the endpoints whose answer reports one.",
 		}, []string{EndpointLabel, "viewer", "result"}),
-		ShadowResults: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "feed_go_shadow_compare_total",
-			Help: "Shadow comparisons by result: match, match_empty, match_cached, fields, order, membership, unsupported, deadline, go_error, bad_request.",
-		}, []string{EndpointLabel, "result"}),
-		ShadowDiffs: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "feed_go_shadow_field_diffs_total",
-			Help: "Differing paths found by shadow comparisons, by path category and kind.",
-		}, []string{EndpointLabel, "category", "kind"}),
-		ShadowResponse: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "feed_go_shadow_response_total",
-			Help: "Shadow comparisons of the compared response headers (shadow.ComparedHeaders), by result: match, mismatch (the diffs are in feed_go_shadow_field_diffs_total as header:<name>), uncompared (a REST endpoint, whose port writes no headers yet, or a sample that carried none). Separate from feed_go_shadow_compare_total, which is the body's.",
-		}, []string{EndpointLabel, "result"}),
+		ServeParity: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_serve_parity_total",
+			Help: "Serve-side parity replays (a served answer re-asked of the Node app after the response), by outcome: compared, dropped_queue, skipped_bulkhead, skipped_credential, skipped_closing, upstream_error, upstream_status, timeout, bad_body.",
+		}, []string{EndpointLabel, "outcome"}),
+		ShadowResponseViewer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_response_viewer_total",
+			Help: "feed_go_shadow_response_total's match and mismatch by the sample's viewer class (anon, crawler, banned, user, moderator), for the tRPC feed endpoints (Node shadow samples only).",
+		}, []string{EndpointLabel, "viewer", "result"}),
 		ShadowDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_dropped_total",
 			Help: "Shadow requests dropped because the comparison queue was full.",
@@ -231,6 +255,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_cache_writes_total",
 			Help: "Cache writes of write-back (FEED_GO_CACHE_WRITEBACK), per key, by cache and result: written, nx_lost (a SET NX found the key filled by another writer since the read; nothing written) or error (the write failed). Series exist only for the written-back caches.",
 		}, []string{"cache", "result"}),
+		SearchRejected: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_search_rejected_total",
+			Help: "Text searches (GET /api/v1/models `query`) not made, by why: open (the search circuit is open, or its half-open trial is in flight) or busy (the per-process concurrency cap is reached). Each is handed back to the app as a v1-models-query fallback.",
+		}, []string{"why"}),
 		Errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_errors_total",
 			Help: "Compute errors (mode serve|shadow|probe) and fallback-proxy errors (mode proxy), by the error's class (fallback.ErrorClasses: deadline, canceled, pg_no_rows, pg_<SQLSTATE class>, redis_nil, timeout, conn_refused, http_5xx, ...). Every error is counted, whether or not its log line was rate-limited.",
@@ -247,6 +275,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_session_cookie_slot_total",
 			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
 		}, []string{"slot"}),
+		FeedUnavailable: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_feed_unavailable_total",
+			Help: "image.getInfinite 503s written here for a failed feed-service call (outcome feed_unavailable), by the fallback they replace: reason feed-unavailable (the call failed; detail is the error's class: deadline, timeout, conn_refused, conn_reset, dns, net_*, eof, json, other, ...) or feed-status (the feed answered a 5xx; detail is the status). A value outside those sets is other.",
+		}, []string{EndpointLabel, "reason", "detail"}),
 		FallbackProxyErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_proxy_errors_total",
 			Help: "Fallback requests the proxy answered 502 because the Node app failed before a response started, by reason (upstream: unreachable or connection broken; canceled: the client left first). A failure mid-body aborts the response (http.ErrAbortHandler) and is not counted.",
@@ -262,16 +294,37 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
 		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
 	}
+	// One family per comparison, with `source` (SourceLabel) last so the curried vectors keep the
+	// label order every caller uses.
+	shadowResults := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "feed_go_shadow_compare_total",
+		Help: "Body comparisons by result (match, match_empty, match_cached, fields, order, membership, unsupported, deadline, go_error, bad_request) and source (shadow: a Node sample; serve-parity: a served answer re-asked of the Node app).",
+	}, []string{EndpointLabel, "result", SourceLabel})
+	shadowDiffs := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "feed_go_shadow_field_diffs_total",
+		Help: "Differing paths found by the body and header comparisons, by path category, kind and source (shadow | serve-parity).",
+	}, []string{EndpointLabel, "category", "kind", SourceLabel})
+	shadowResponse := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "feed_go_shadow_response_total",
+		Help: "Comparisons of the compared response headers (shadow.ComparedHeaders), by result: match, mismatch (the diffs are in feed_go_shadow_field_diffs_total as header:<name>), uncompared (a REST endpoint, whose port writes no headers yet, or a sample that carried none); and source (shadow | serve-parity). Separate from feed_go_shadow_compare_total, which is the body's.",
+	}, []string{EndpointLabel, "result", SourceLabel})
+	m.ShadowResults = shadowResults.MustCurryWith(prometheus.Labels{SourceLabel: SourceShadow})
+	m.ShadowDiffs = shadowDiffs.MustCurryWith(prometheus.Labels{SourceLabel: SourceShadow})
+	m.ShadowResponse = shadowResponse.MustCurryWith(prometheus.Labels{SourceLabel: SourceShadow})
+	m.ParityResults = shadowResults.MustCurryWith(prometheus.Labels{SourceLabel: SourceServeParity})
+	m.ParityDiffs = shadowDiffs.MustCurryWith(prometheus.Labels{SourceLabel: SourceServeParity})
+	m.ParityResponse = shadowResponse.MustCurryWith(prometheus.Labels{SourceLabel: SourceServeParity})
+	m.seedOutcomes()
+	m.seedServeParity()
 	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
 		for _, r := range []string{DevalueWriteDevalue, DevalueWriteFallback, DevalueWriteSuperjson} {
 			m.DevalueWrites.WithLabelValues(e, r)
 		}
 	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
-	// rather than an absent series.
+	// rather than an absent series (the shadow results: seedOutcomes).
 	for _, e := range Endpoints {
 		m.ShadowDropped.WithLabelValues(e)
-		m.ShadowResults.WithLabelValues(e, "deadline")
 		for _, r := range []string{"match", "mismatch", "uncompared"} {
 			m.ShadowResponse.WithLabelValues(e, r)
 		}
@@ -287,7 +340,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.GoFirstPages.WithLabelValues(e)
 		m.GoFirstDropped.WithLabelValues(e)
 	}
-	for _, w := range []string{"serve", "shadow", "probe"} {
+	for _, w := range []string{"serve", "shadow", "probe", "serve-parity"} {
 		m.Panics.WithLabelValues(w)
 	}
 	for _, r := range []string{"ok", "error"} {
@@ -307,21 +360,230 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, v := range modelfeed.ViewerClasses {
 		m.ShadowViewer.WithLabelValues(EndpointAssociated, v, "match")
 	}
-	reg.MustRegister(m.ShadowViewer)
-	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
+	for _, e := range FeedViewerEndpoints {
+		for _, v := range FeedViewerClasses {
+			m.ShadowViewer.WithLabelValues(e, v, "match")
+			for _, r := range []string{"match", "mismatch"} {
+				m.ShadowResponseViewer.WithLabelValues(e, v, r)
+			}
+		}
+	}
+	reg.MustRegister(m.ShadowViewer, m.ShadowResponseViewer)
+	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight,
-		m.SessionCookieSlot, m.DevalueWrites)
+		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,
+		m.SessionCookieSlot, m.DevalueWrites, m.FeedUnavailable)
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
+	}
+	for _, why := range []string{v1models.SearchRejectedOpen, v1models.SearchRejectedBusy} {
+		m.SearchRejected.WithLabelValues(why)
 	}
 	return m
 }
 
+// ShadowResultValues are the `result` values of feed_go_shadow_compare_total: the classifiers' match,
+// fields, order and membership, the trivial and cached matches, and the compare path's own outcomes.
+var ShadowResultValues = []string{"match", "match_empty", "match_cached", "fields", "order", "membership", "unsupported", "deadline", "go_error", "bad_request"}
+
+// RequestOutcomes are the `outcome` values of feed_go_requests_total. region_blocked
+// (OutcomeRegionBlocked) is the app's 451 written here for a blocked region: neither a served answer
+// nor a fallback, so the served-traffic and fallback-rate figures keep their meaning. feed_unavailable
+// (OutcomeFeedUnavailable) is, the same way, the app's 503 written here on image.getInfinite for a
+// failed feed-service call. not_found (OutcomeNotFound) is, the same way, Node's 404 written here on
+// GET /api/v1/models/{id} for a model the statement finds no row for.
+var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error", OutcomeRegionBlocked, OutcomeFeedUnavailable, OutcomeNotFound}
+
+// computeFallbackReasons are the fallback reasons every compute can end in, whatever its endpoint
+// (Server.within: a panic, a gone client, the budget), so feed_go_fallback_total is seeded with them
+// for each mode that computes. Serving, the request-determined reasons are seeded too
+// (RequestFallbackReasons); every other reason is endpoint-specific and stays lazy.
+var computeFallbackReasons = []string{"deadline", "canceled", "panic"}
+
+// RequestFallbackReasons is, per public route, every fallback reason the request alone decides (its
+// method, region, user agent, headers, credential form, path, query or input, never a store's state
+// or this process's config) that the route's serve path can reach: the series seedOutcomes creates at
+// 0 for mode serve. A comparison of fallback rates between a new process and an old one subtracts
+// these reasons, as they measure the traffic rather than the port; a reason series born inside the
+// window would lose its first event to increase() and bias that comparison against the new process.
+//
+// Each list holds only the reasons that route's code can produce: the input-<key> and
+// v1-models-<key> reasons are the parsers' own key lists, so a key added there is seeded here.
+// `bearer-token` is seeded on the REST routes only: on the tRPC routes it means the API keys are not
+// configured.
+func RequestFallbackReasons() map[string][]string {
+	// Every public route: the API request policy (apiRequestPolicy) and a method other than GET.
+	policy := []string{"method", "region-blocked", "crawler-user-agent"}
+	// The tRPC routes resolve a bearer credential (auth.bearerToken, resolveBearer).
+	bearer := []string{"bearer-malformed", "bearer-multiple-headers", "bearer-query-token"}
+	// The images input (feed.parseInput), on both image procedures.
+	imagesInput := []string{
+		"input-envelope", "input-invalid", "input-unknown-key", "input-sort", "input-include",
+		"input-cursor", "input-tools", "input-techniques",
+	}
+	// Both REST model routes: preflight's credential check, the conditional request, the host.
+	v1 := []string{"bearer-token", "v1-models-conditional", "v1-models-host"}
+
+	asPosts := sortedUnion(policy, bearer, imagesInput, []string{"verified-bot", "input-include-no-cosmetics"},
+		prefixed("input-", feed.UnsupportedInputKeys()))
+	infinite := sortedUnion(policy, bearer, imagesInput, []string{
+		"input-collectionTagId", "ids-not-int4", "collection-id", "collection-tag-id",
+		"infinite-user-zero", "prioritized-cursor", "collection-random-cursor", "collection-random-post-id",
+	}, prefixed("input-", feed.InfiniteUnsupportedInputKeys()))
+	modelGetAll := sortedUnion(policy, bearer, []string{
+		"verified-bot", "input-envelope", "input-invalid", "input-unknown-key", "input-ids",
+		"model-cursor", "model-sort-recently-added", "model-collection-id", "model-ids", "input-hidePaid",
+	}, prefixed("input-", modelfeed.UnsupportedInputKeys()))
+	v1Models := sortedUnion(policy, v1, []string{
+		"v1-models-session-cookie", "v1-models-etag", "v1-models-query-encoding", "v1-models-authed-only",
+		"v1-models-query", "v1-models-limit", "v1-models-input-number", "v1-models-sort",
+		"v1-models-input-enum", "v1-models-input-duplicate", "v1-models-input-bool", "v1-models-ids",
+		"v1-models-page-limit", "v1-models-cursor",
+	}, prefixed("v1-models-", v1models.UnportedFallbackKeys()))
+	v1ModelsID := sortedUnion(policy, v1, []string{"v1-models-origin", "v1-models-path", "v1-models-id"})
+	// The REST images route: preflight's credential check, its serve-only checks, and feed.ParseV1 /
+	// feed.ServeV1's request-determined reasons (the query, the shapes not ported, nextPage's host, the
+	// paging guard, the cursors). Not `v1-path`: the route's pattern is the images path itself.
+	v1Images := sortedUnion(policy, []string{
+		"bearer-token", "v1-images-conditional", "v1-images-session-cookie", "input-unknown-key",
+		"v1-host", "v1-query-encoding", "v1-input-duplicate", "v1-input-number",
+		"v1-input-username", "v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool",
+		"v1-image-id", "v1-tags", "v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort",
+		"v1-with-tags", "v1-cursor", "v1-legacy-cursor", "v1-page-limit",
+	})
+	// The site-search route (sitesearch.go): its region block (no user-agent check: the path is not
+	// bot-aware), the method, the credential form, the path, the etag query, the body, the indexes, the
+	// address the rate limit keys on, and the profanity refusal civitai.com applies to any text.
+	search := sortedUnion([]string{
+		"method", "region-blocked", "bearer-token", "search-path", "search-etag", "search-content-type",
+		"search-body-size", "search-input", "search-input-invalid", "search-input-duplicate",
+		"input-unknown-key", "search-index", "search-rate-limit-ip", "search-profanity",
+	})
+	return map[string][]string{
+		EndpointAsPosts:     asPosts,
+		EndpointInfinite:    infinite,
+		EndpointModelGetAll: modelGetAll,
+		EndpointV1Models:    v1Models,
+		EndpointV1ModelsID:  v1ModelsID,
+		EndpointV1Images:    v1Images,
+		EndpointSearch:      search,
+	}
+}
+
+// sortedUnion joins lists into one sorted list without duplicates.
+func sortedUnion(lists ...[]string) []string {
+	var out []string
+	for _, l := range lists {
+		out = append(out, l...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func prefixed(prefix string, keys []string) []string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = prefix + k
+	}
+	return out
+}
+
+// cachedEndpoint reports whether endpoint can answer from the origin response cache (served_cached,
+// match_cached): the single-model route only (v1models.Answer.Cached).
+func cachedEndpoint(e string) bool { return e == EndpointV1ModelsID }
+
+// emptyReachable reports whether endpoint can count a trivial answer (served_empty, match_empty) in
+// mode: never on as-posts or site-search, whose computes do not mark one, and on the single-model route
+// only in the shadow, as its trivial answer is the not-found body, which the public route answers as
+// not_found (OutcomeNotFound) or falls back on, never as served_empty.
+func emptyReachable(endpoint, mode string) bool {
+	return endpoint != EndpointAsPosts && endpoint != EndpointSearch && (endpoint != EndpointV1ModelsID || mode == "shadow")
+}
+
+// outcomeReachable reports whether the mode's path can count outcome for endpoint.
+func outcomeReachable(endpoint, mode, outcome string) bool {
+	switch outcome {
+	case "served_cached":
+		return cachedEndpoint(endpoint)
+	case "served_empty":
+		return emptyReachable(endpoint, mode)
+	case OutcomeRegionBlocked:
+		// site-search always hands a blocked region back (ServeSearchHTTP).
+		return mode == "serve" && endpoint != EndpointSearch
+	case OutcomeFeedUnavailable:
+		return mode == "serve" && endpoint == EndpointInfinite
+	case OutcomeNotFound:
+		return mode == "serve" && endpoint == EndpointV1ModelsID
+	}
+	return true
+}
+
+// shadowResultReachable reports whether the compare path can count result for endpoint: match_cached
+// needs a cached answer, match_empty a trivial one, and the single-model route's classifier
+// (ClassifyV1ModelID) has no order, nor has site-search's (ClassifySearch).
+func shadowResultReachable(endpoint, result string) bool {
+	switch result {
+	case "match_cached":
+		return cachedEndpoint(endpoint)
+	case "match_empty":
+		return emptyReachable(endpoint, "shadow")
+	case "order":
+		return endpoint != EndpointV1ModelsID && endpoint != EndpointSearch
+	}
+	return true
+}
+
+// seedOutcomes creates, at 0, every request outcome, shadow result and generic fallback series the
+// serve, shadow and probe paths can reach, and serving the request-determined fallback reasons
+// (RequestFallbackReasons), so a new pod's first event is an increase from 0 that
+// rate() over its lifetime counts, rather than the creation of a series at 1 that it does not. The
+// label values are the closed sets above crossed with the endpoints each path serves; the series are
+// the ones those paths create on their own, never more.
+func (m *Metrics) seedOutcomes() {
+	for _, e := range ServedEndpoints {
+		for _, o := range RequestOutcomes {
+			if outcomeReachable(e, "serve", o) {
+				m.Requests.WithLabelValues(e, "serve", o)
+			}
+		}
+		// An error that is no fallback is counted with reason `error` (serveFallback).
+		m.Fallbacks.WithLabelValues(e, "serve", "error")
+		for _, r := range computeFallbackReasons {
+			m.Fallbacks.WithLabelValues(e, "serve", r)
+		}
+	}
+	for e, reasons := range RequestFallbackReasons() {
+		for _, r := range reasons {
+			m.Fallbacks.WithLabelValues(e, "serve", r)
+		}
+	}
+	for _, e := range Endpoints {
+		for _, o := range RequestOutcomes {
+			if outcomeReachable(e, "shadow", o) {
+				m.Requests.WithLabelValues(e, "shadow", o)
+			}
+		}
+		for _, r := range ShadowResultValues {
+			if shadowResultReachable(e, r) {
+				m.ShadowResults.WithLabelValues(e, r)
+			}
+		}
+		for _, r := range computeFallbackReasons {
+			m.Fallbacks.WithLabelValues(e, "shadow", r)
+		}
+	}
+	for _, e := range ProbeEndpoints {
+		for _, r := range computeFallbackReasons {
+			m.Fallbacks.WithLabelValues(e, "probe", r)
+		}
+	}
+}
+
 // ServedEndpoints are the endpoints with a public route (each takes its serve slot from the one
-// shared pool): the three tRPC procedures and the two REST model routes.
-var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID}
+// shared pool): the three tRPC procedures, the two REST model routes, the REST images route and site
+// search.
+var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID, EndpointV1Images, EndpointSearch}
 
 // ErrorModes are the `mode` values of feed_go_errors_total: a compute error on the public route, in a
 // shadow sample or in a Go-first probe, and a fallback-proxy error.

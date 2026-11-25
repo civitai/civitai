@@ -16,6 +16,7 @@ import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
+import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
 
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
@@ -35,7 +36,15 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  *   `GET /api/v1/models` + `GET /api/v1/models/[id]` (one flag, `feed-go-shadow-v1-models`): the raw
  *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
  *   handler itself. A request carrying an API credential is not mirrored (`skipped_credential`):
- *   the body can echo it.
+ *   the body can echo it. The exception, off unless `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true`:
+ *   an `/api/v1/models/[id]` request whose credential is an Authorization header (never a
+ *   `?token=`) is mirrored with a description of it in place of the key
+ *   (`feed-go-shadow-credential.ts`: the key's `generateSecretHash`, never the key). The list never.
+ * - `POST /api/search/*` (flag `feed-go-shadow-site-search`): the request's JSON body, the search
+ *   call Node made and the backend's 200 body (both captured by the site-search service), and the
+ *   answer Node wrote, so feed-go reshapes the same backend answer for its own viewer and compares
+ *   both the call and the answer, without asking the backend again. A request carrying an API
+ *   credential is not mirrored.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
  * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
@@ -64,7 +73,11 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  * Fire-and-forget: the POST is started before the handler and never awaited. It runs only for a
  * request the shadow sampler already sampled (so it is inside that sample's per-second token), for
  * a further `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE` fraction of them (default 0: off), takes its own
- * slot under the shared in-flight cap, and has the shadow timeout.
+ * slot under the shared in-flight cap, and has the shadow timeout. `image.getInfinite` and
+ * `model.getAll` are probed the same way; `GET /api/v1/images` too, at
+ * `/internal/probe/api/v1/images` with its raw query as `input` and its `path`, at its own rate
+ * (`FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE`, default 0: off), started where the route decides
+ * its sample (after the cheap rejects and the bulkhead slot, before the gallery gates and the search).
  */
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
@@ -79,6 +92,9 @@ export const FEED_GO_SHADOW_V1_IMAGES_PATH = `/internal/shadow${FEED_GO_SHADOW_V
 export const FEED_GO_SHADOW_V1_MODELS_ROUTE = '/api/v1/models';
 export const FEED_GO_SHADOW_V1_MODELS_PATH = `/internal/shadow${FEED_GO_SHADOW_V1_MODELS_ROUTE}`;
 export const FEED_GO_SHADOW_V1_MODELS_ID_PATH = `${FEED_GO_SHADOW_V1_MODELS_PATH}/id`;
+/** The site search route (`POST /api/search/*`, one flag), and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_SITE_SEARCH_ROUTE = '/api/search';
+export const FEED_GO_SHADOW_SITE_SEARCH_PATH = `/internal/shadow${FEED_GO_SHADOW_SITE_SEARCH_ROUTE}`;
 /** The third tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE = 'model.getAll';
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
@@ -91,6 +107,8 @@ export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
 export const FEED_GO_PROBE_INFINITE_PATH = `/internal/probe/${FEED_GO_SHADOW_INFINITE_PROCEDURE}`;
 /** feed-go's Go-first probe path for `model.getAll`. */
 export const FEED_GO_PROBE_MODEL_GET_ALL_PATH = `/internal/probe/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
+/** feed-go's Go-first probe path for `GET /api/v1/images`. */
+export const FEED_GO_PROBE_V1_IMAGES_PATH = `/internal/probe${FEED_GO_SHADOW_V1_IMAGES_ROUTE}`;
 
 export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
@@ -145,8 +163,18 @@ const RESPONSE_HEADER_MAX_CHARS = 1024;
 /** A response's headers as `res.getHeaders()` returns them. */
 export type ShadowResponseHeaders = Record<string, string | string[] | number | undefined>;
 
-/** The route's response, read for its headers once the handler has answered. */
-export type ShadowResponseLike = { getHeaders?: () => ShadowResponseHeaders };
+/**
+ * The route's response, read for its headers once the handler has answered. A REST sample whose
+ * response has not sent its headers yet (`headersSent === false`, with `once`) is read on the
+ * response's `finish` instead: see `finish`.
+ */
+export type ShadowResponseLike = {
+  getHeaders?: () => ShadowResponseHeaders;
+  statusCode?: number;
+  headersSent?: boolean;
+  destroyed?: boolean;
+  once?(event: 'finish' | 'close', listener: () => void): unknown;
+};
 
 /**
  * The `names` (default FEED_GO_COMPARED_RESPONSE_HEADERS) a response carries, lowercased, each a
@@ -189,6 +217,8 @@ export type FeedGoShadowConfig = {
   modelGetAllUrl: string | undefined;
   /** Full compare endpoint URL for `model.getAssociatedResourcesCardData`, or undefined (disabled). */
   modelAssociatedUrl: string | undefined;
+  /** Full compare endpoint URL for `POST /api/search/*`, or undefined (disabled). */
+  siteSearchUrl?: string;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -202,6 +232,25 @@ export type FeedGoShadowConfig = {
   probeModelGetAllUrl: string | undefined;
   /** The fraction of sampled requests that are also probed (0 = none, 1 = every one). */
   probeRate: number;
+  /** Full Go-first probe URL for `GET /api/v1/images`, or undefined (disabled). */
+  probeV1ImagesUrl?: string;
+  /**
+   * The fraction of sampled `GET /api/v1/images` requests that are also probed
+   * (`FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE`, default 0: off). Its own rate, so turning the
+   * REST probe on is a separate step from the tRPC probes' `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE`.
+   */
+  probeV1ImagesRate?: number;
+  /**
+   * `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` (`true` or `1`; default off): mirror an `[id]`
+   * request with an Authorization credential, described rather than forwarded (see the module doc).
+   */
+  v1ModelsCredentials?: boolean;
+  /**
+   * `FEED_GO_SHADOW_V1_MODELS_QUERY` (`true` or `1`; default off): mirror a `GET /api/v1/models`
+   * request with a text `query` (the search path). Off, such a request is never sampled, as before
+   * feed-go answered it.
+   */
+  v1ModelsQuery?: boolean;
 };
 
 type Env = Record<string, string | undefined>;
@@ -218,9 +267,11 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let infiniteUrl: string | undefined;
   let modelGetAllUrl: string | undefined;
   let modelAssociatedUrl: string | undefined;
+  let siteSearchUrl: string | undefined;
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
   let probeModelGetAllUrl: string | undefined;
+  let probeV1ImagesUrl: string | undefined;
   const base = env.FEED_GO_SHADOW_URL?.trim();
   if (base) {
     try {
@@ -233,9 +284,11 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
         modelGetAllUrl = new URL(FEED_GO_SHADOW_MODEL_GET_ALL_PATH, parsed).toString();
         modelAssociatedUrl = new URL(FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH, parsed).toString();
+        siteSearchUrl = new URL(FEED_GO_SHADOW_SITE_SEARCH_PATH, parsed).toString();
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
         probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
+        probeV1ImagesUrl = new URL(FEED_GO_PROBE_V1_IMAGES_PATH, parsed).toString();
       }
     } catch {
       url = undefined;
@@ -245,9 +298,11 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       infiniteUrl = undefined;
       modelGetAllUrl = undefined;
       modelAssociatedUrl = undefined;
+      siteSearchUrl = undefined;
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
       probeModelGetAllUrl = undefined;
+      probeV1ImagesUrl = undefined;
     }
   }
   return {
@@ -258,10 +313,19 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     infiniteUrl,
     modelGetAllUrl,
     modelAssociatedUrl,
+    siteSearchUrl,
     probeUrl,
     probeInfiniteUrl,
     probeModelGetAllUrl,
     probeRate: envNumber(env.FEED_GO_GOFIRST_PROBE_SAMPLE_RATE, 0, 0, 1),
+    probeV1ImagesUrl,
+    probeV1ImagesRate: envNumber(env.FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE, 0, 0, 1),
+    v1ModelsCredentials: ['true', '1'].includes(
+      (env.FEED_GO_SHADOW_V1_MODELS_CREDENTIALS ?? '').trim().toLowerCase()
+    ),
+    v1ModelsQuery: ['true', '1'].includes(
+      (env.FEED_GO_SHADOW_V1_MODELS_QUERY ?? '').trim().toLowerCase()
+    ),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -284,6 +348,8 @@ type ShadowRequestLike = {
   url?: string;
   headers: Record<string, string | string[] | undefined>;
   query: Partial<Record<string, string | string[]>>;
+  /** The parsed JSON body (`POST /api/search/*` only). */
+  body?: unknown;
 };
 
 function headerValue(v: string | string[] | undefined): string | undefined {
@@ -312,18 +378,50 @@ export function pickShadowHeaders(req: ShadowRequestLike): Record<string, string
   return out;
 }
 
-type Captured = { envelope: unknown } | { data: unknown };
+/**
+ * What a site-search sample mirrors: the search call and the backend's 200 body
+ * (`SiteSearchUpstream`), and the answer Node wrote: the backend's bytes on a passthrough (`raw`),
+ * else the reshaped body `res.json` stringified.
+ */
+export type SiteSearchCapture = {
+  path: string;
+  request: string;
+  response: Buffer;
+  raw?: Buffer;
+  body?: unknown;
+};
 
-/** The REST routes: their samples carry a path and capture their own JSON body. */
-type RestEndpoint = Extract<FeedGoShadowEndpoint, 'v1-images' | 'v1-models' | 'v1-models-id'>;
+type Captured = { envelope: unknown } | { data: unknown } | { siteSearch: SiteSearchCapture };
+
+/**
+ * The REST routes: their samples carry a path and capture their own JSON body (site-search: its call
+ * and the backend's answer too).
+ */
+type RestEndpoint = Extract<
+  FeedGoShadowEndpoint,
+  'v1-images' | 'v1-models' | 'v1-models-id' | 'site-search'
+>;
 const REST_ENDPOINTS: ReadonlySet<FeedGoShadowEndpoint> = new Set<FeedGoShadowEndpoint>([
   'v1-images',
   'v1-models',
   'v1-models-id',
+  'site-search',
 ]);
 function isRestEndpoint(endpoint: FeedGoShadowEndpoint): endpoint is RestEndpoint {
   return REST_ENDPOINTS.has(endpoint);
 }
+
+/**
+ * The header a credentialed `/api/v1/models/[id]` sample carries in place of its key (feed-go's
+ * SampleCredentialHeader): the credential's description (`feed-go-shadow-credential.ts`).
+ */
+export const FEED_GO_SAMPLE_CREDENTIAL_HEADER = 'x-feed-go-credential';
+
+/** What `[id]` tells `beginRest` about the request's credential. */
+export type RestSampleOptions = {
+  /** Describes the request's Authorization credential (feed-go-shadow-credential.ts). */
+  credential?: () => string | undefined;
+};
 
 export type FeedGoShadowSample = {
   endpoint: FeedGoShadowEndpoint;
@@ -354,6 +452,8 @@ export type FeedGoShadowDeps = {
   enabledV1Images?: () => boolean;
   /** The `feed-go-shadow-v1-models` flag (absent: neither model route is sampled). */
   enabledV1Models?: () => boolean;
+  /** The `feed-go-shadow-site-search` flag (absent: `POST /api/search/*` is never sampled). */
+  enabledSiteSearch?: () => boolean;
   /** The `feed-go-shadow-infinite` flag (absent: `image.getInfinite` is never sampled). */
   enabledInfinite?: () => boolean;
   /** The `feed-go-shadow-model-getall` flag (absent: `model.getAll` is never sampled). */
@@ -394,6 +494,31 @@ export type FeedGoShadowDeps = {
  */
 export const FEED_GO_TRAINING_DATA_SQL_HEADER = 'x-feed-go-training-data-sql';
 
+/**
+ * A site-search sample's POST body, assembled from text: the backend's answer and the call are JSON
+ * Node already holds as bytes, so they are spliced in rather than parsed and written again (the
+ * answer is about a megabyte). `node` is `{upstream: {path, body}, body}`, the call and the answer,
+ * the document feed-go compares its own with; `upstream` is the backend's answer it reshapes.
+ */
+function siteSearchSampleBody(
+  sample: FeedGoShadowSample,
+  capture: SiteSearchCapture,
+  response: Record<string, unknown>
+): string {
+  const answer = capture.raw ? capture.raw.toString('utf8') : JSON.stringify(capture.body);
+  if (typeof answer !== 'string') throw new Error('site-search: no answer to mirror');
+  const extra = JSON.stringify(response);
+  return (
+    `{"input":${JSON.stringify(sample.input)},"path":${JSON.stringify(sample.path ?? '')}` +
+    `,"headers":${JSON.stringify(sample.headers)}` +
+    `,"upstream":${capture.response.toString('utf8')}` +
+    `,"node":{"upstream":{"path":${JSON.stringify(capture.path)},"body":${capture.request}}` +
+    `,"body":${answer}}` +
+    (extra === '{}' ? '' : `,${extra.slice(1, -1)}`) +
+    '}'
+  );
+}
+
 /** A sampler instance. The module exports one wired to the env, the flag and the counter. */
 export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const { config, enabled } = deps;
@@ -402,6 +527,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const enabledInfinite = deps.enabledInfinite ?? (() => false);
   const enabledModelGetAll = deps.enabledModelGetAll ?? (() => false);
   const enabledModelAssociated = deps.enabledModelAssociated ?? (() => false);
+  const enabledSiteSearch = deps.enabledSiteSearch ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -423,6 +549,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     'v1-images': { url: config.v1ImagesUrl, enabled: enabledV1Images },
     'v1-models': { url: config.v1ModelsUrl, enabled: enabledV1Models },
     'v1-models-id': { url: config.v1ModelsIdUrl, enabled: enabledV1Models },
+    'site-search': { url: config.siteSearchUrl, enabled: enabledSiteSearch },
   };
 
   function release(sample: FeedGoShadowSample) {
@@ -474,6 +601,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       if (config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      // feed-go's own replay of a request it served (feed-go-parity-replay.ts): it compares that
+      // answer itself, so a sample of it would only be a second comparison of the same request.
+      if (isFeedGoParityReplay(req.headers)) return undefined;
       // Exactly the mirrored procedures, unbatched (the web client never batches either:
       // NEVER_BATCH_PROCEDURES in src/utils/trpc.ts).
       const procedure = req.query.trpc;
@@ -518,29 +648,46 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
 
   /**
    * `begin` for a REST route: whether this request is sampled. The handler calls it after its cheap
-   * rejects (and its bulkhead slot, where it has one), captures its own JSON body (`captureRest`)
-   * and calls `finish`, which is where the in-flight slot and the token are taken. Never throws.
+   * rejects (and its bulkhead slot, where it has one), captures its own JSON body (`captureRest`;
+   * site-search: `captureSiteSearch`) and calls `finish`, which is where the in-flight slot and the
+   * token are taken. The `GET` routes' input is the query string; `POST /api/search/*`'s is the
+   * parsed JSON body as JSON.stringify writes it. Never throws.
    */
   function beginRest(
     endpoint: RestEndpoint,
-    req: ShadowRequestLike
+    req: ShadowRequestLike,
+    opts: RestSampleOptions = {}
   ): FeedGoShadowSample | undefined {
     try {
       const route = restRoutes[endpoint];
       if (!route.url || config.rate <= 0) return undefined;
-      if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      const method = endpoint === 'site-search' ? 'POST' : 'GET';
+      if ((req.method ?? '').toUpperCase() !== method) return undefined;
+      // The list's text search is mirrored only with FEED_GO_SHADOW_V1_MODELS_QUERY. A text query is
+      // any value other than the one empty string (the handler's `if (query)`).
+      if (endpoint === 'v1-models' && !config.v1ModelsQuery) {
+        const q = req.query.query;
+        if (q !== undefined && q !== '') return undefined;
+      }
       if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
-      // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`), and feed-go
-      // falls back on any credential: never mirrored, only counted.
+      // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`): never mirrored,
+      // only counted, unless it is `[id]`'s Authorization credential with the credential sampling on,
+      // which is described instead (credentialHeaders).
+      let described: Record<string, string> | undefined;
       if (hasApiCredential(req)) {
-        record('skipped_credential', endpoint);
-        return undefined;
+        described = credentialHeaders(endpoint, req, opts);
+        if (!described) {
+          record('skipped_credential', endpoint);
+          return undefined;
+        }
       }
       const target = req.url ?? '';
       const q = target.indexOf('?');
       const path = q < 0 ? target : target.slice(0, q);
-      const input = q < 0 ? '' : target.slice(q + 1);
+      const input =
+        endpoint === 'site-search' ? JSON.stringify(req.body) : q < 0 ? '' : target.slice(q + 1);
+      if (typeof input !== 'string') return undefined;
       const headers = pickShadowHeaders(req);
       if (endpoint === 'v1-models' || endpoint === 'v1-models-id') {
         try {
@@ -549,12 +696,15 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           // Without the hash feed-go falls back on any body with a Training Data file.
         }
       }
+      if (described) Object.assign(headers, described);
       return {
         endpoint,
         holdsSlot: false,
         input,
         path: path || undefined,
         headers,
+        // The images route can be probed (`probe`): its start time, as a tRPC sample's.
+        ...(endpoint === 'v1-images' ? { startedAt: epochNow() } : {}),
         done: false,
       };
     } catch {
@@ -562,9 +712,49 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
   }
 
+  /**
+   * The header describing `[id]`'s credential (FEED_GO_SAMPLE_CREDENTIAL_HEADER), or undefined when
+   * the request is not mirrored: another route (the list included), the credential sampling off, a
+   * `?token=` (the query string itself carries it), or no description.
+   */
+  function credentialHeaders(
+    endpoint: RestEndpoint,
+    req: ShadowRequestLike,
+    opts: RestSampleOptions
+  ): Record<string, string> | undefined {
+    if (endpoint !== 'v1-models-id' || !config.v1ModelsCredentials) return undefined;
+    if (req.query.token !== undefined || !opts.credential) return undefined;
+    let credential: string | undefined;
+    try {
+      credential = opts.credential();
+    } catch {
+      return undefined;
+    }
+    if (!credential) return undefined;
+    return { [FEED_GO_SAMPLE_CREDENTIAL_HEADER]: credential };
+  }
+
   /** `beginRest` for `GET /api/v1/images`. */
   function beginV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
     return beginRest('v1-images', req);
+  }
+
+  /**
+   * `beginRest` for `POST /api/search/*`: the handler calls it after its cheap rejects (the rate
+   * limit, the profanity refusal). A request carrying an API credential is never mirrored.
+   */
+  function beginSiteSearch(req: ShadowRequestLike): FeedGoShadowSample | undefined {
+    return beginRest('site-search', req);
+  }
+
+  /** The site-search handler's capture: references only, encoded later in `send`. Never throws. */
+  function captureSiteSearch(sample: FeedGoShadowSample, capture: SiteSearchCapture): void {
+    try {
+      if (sample.endpoint !== 'site-search' || sample.captured || sample.done) return;
+      sample.captured = { siteSearch: capture };
+    } catch {
+      /* never throw from the handler */
+    }
   }
 
   /**
@@ -581,15 +771,17 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * The Go-first probe for a sampled `as-posts` request: call it at the start of the request, before
-   * the handler runs. Starts the POST synchronously (its bytes leave on a later turn of the event
+   * The Go-first probe for a sampled request of a probed endpoint (the three tRPC procedures above,
+   * and `GET /api/v1/images` at its own rate): call it at the start of the request, before the
+   * handler runs. Starts the POST synchronously (its bytes leave on a later turn of the event
    * loop) and never awaits it; the probe holds its own in-flight slot until the POST settles. At most
    * once per sample. Never throws.
    */
   function probe(sample: FeedGoShadowSample | undefined): void {
     try {
       if (!sample || sample.probed) return;
-      // The tRPC procedures feed-go has a probe for; a REST sample is never probed.
+      // The endpoints feed-go has a probe for: three tRPC procedures and `GET /api/v1/images`, the
+      // latter at its own rate (default 0). No other REST sample is probed.
       const url =
         sample.endpoint === 'as-posts'
           ? config.probeUrl
@@ -597,10 +789,14 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           ? config.probeInfiniteUrl
           : sample.endpoint === 'model-getall'
           ? config.probeModelGetAllUrl
+          : sample.endpoint === 'v1-images'
+          ? config.probeV1ImagesUrl
           : undefined;
-      if (!url || config.probeRate <= 0) return;
+      const rate =
+        sample.endpoint === 'v1-images' ? config.probeV1ImagesRate ?? 0 : config.probeRate;
+      if (!url || rate <= 0) return;
       if (!enabledProbe()) return;
-      if (random() >= config.probeRate) return;
+      if (random() >= rate) return;
       sample.probed = true;
       if (inFlight >= config.maxInFlight) {
         recordProbe('dropped_overload', sample.endpoint);
@@ -608,6 +804,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       }
       const body = JSON.stringify({
         input: sample.input,
+        ...(sample.path ? { path: sample.path } : {}),
         headers: sample.headers,
         startedAt: sample.startedAt,
       });
@@ -682,7 +879,6 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       const started = now();
       const captured = sample.captured!;
-      const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
       // No status: only 200s are posted, and feed-go does not compare it.
       const response = sample.responseHeaders
         ? {
@@ -690,11 +886,17 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
             ...(sample.responseHeaderSet ? { responseHeaderSet: sample.responseHeaderSet } : {}),
           }
         : {};
-      body = JSON.stringify(
-        isRestEndpoint(endpoint)
-          ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
-          : { input: sample.input, headers: sample.headers, node, ...response }
-      );
+      if ('siteSearch' in captured) {
+        body = siteSearchSampleBody(sample, captured.siteSearch, response);
+      } else {
+        const node =
+          'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
+        body = JSON.stringify(
+          isRestEndpoint(endpoint)
+            ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
+            : { input: sample.input, headers: sample.headers, node, ...response }
+        );
+      }
       // Drop the reference to the captured page now that it is encoded: only `body` is needed
       // while the POST is in flight.
       sample.captured = undefined;
@@ -738,6 +940,17 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
    * response headers (when the route passes them). A response whose headers cannot be read is not
    * sent (`skipped_headers`), so its comparison is not silently lost. Synchronous, returns nothing to
    * await, never throws.
+   *
+   * A REST route calls this from its `finally`, right after `res.json`, but the response may not be
+   * written yet: the endpoint wrappers' `withAxiom` replaces `res.json` with one that flushes the
+   * request's logs first and only then calls Next's, and Next's `res.json` is what sets the ETag
+   * (api-resolver's `sendData`, its `generateETag` over the body string, even with `generateEtags`
+   * off). So when the response has not sent its headers yet, the headers and the status are read
+   * when it emits `finish`, which is exactly what went out (a 304 Next answered to `If-None-Match` is
+   * then `skipped_status`). The in-flight slot is taken first, so the samples waiting on a response
+   * are bounded like the ones in flight; a response that closes without finishing (a client abort),
+   * or was already closed when the handler returned, is `skipped_status`. A tRPC sample is read now,
+   * as before.
    */
   function finish(
     sample: FeedGoShadowSample,
@@ -753,6 +966,55 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       }
       if (!sample.captured) {
         record('skipped_no_capture', sample.endpoint);
+        release(sample);
+        return;
+      }
+      const sent =
+        isRestEndpoint(sample.endpoint) && response?.headersSent === false ? response : undefined;
+      // Already closed (the client went away while the handler ran): neither event comes again, and
+      // nothing complete was sent.
+      if (sent?.destroyed === true) {
+        complete(sample, 0, sent);
+        return;
+      }
+      const once = typeof sent?.once === 'function' ? sent.once.bind(sent) : undefined;
+      if (sent && once) {
+        if (!takeSlot(sample)) return;
+        let settled = false;
+        once('finish', () => {
+          if (settled) return;
+          settled = true;
+          complete(
+            sample,
+            typeof sent.statusCode === 'number' ? sent.statusCode : statusCode,
+            sent
+          );
+        });
+        once('close', () => {
+          if (settled) return;
+          settled = true;
+          complete(sample, 0, sent);
+        });
+        return;
+      }
+      complete(sample, statusCode, response);
+    } catch {
+      sample.captured = undefined;
+      release(sample);
+    }
+  }
+
+  /** `finish`'s second half, once the response's headers are final. Never throws. */
+  function complete(
+    sample: FeedGoShadowSample,
+    statusCode: number,
+    response?: ShadowResponseLike
+  ): void {
+    try {
+      if (sample.done) return;
+      if (statusCode !== 200) {
+        record('skipped_status', sample.endpoint);
+        sample.captured = undefined;
         release(sample);
         return;
       }
@@ -776,26 +1038,36 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           sample.responseHeaders = pickShadowResponseHeaders(headers);
         }
       }
-      if (!sample.holdsSlot) {
-        // A REST sample is bounded here, after the handler: it held nothing while it ran.
-        if (!admit(sample.endpoint)) {
-          sample.captured = undefined;
-          release(sample);
-          return;
-        }
-        inFlight++;
-        sample.holdsSlot = true;
-      }
+      if (!takeSlot(sample)) return;
       schedule(() => send(sample));
     } catch {
+      sample.captured = undefined;
       release(sample);
     }
+  }
+
+  /**
+   * A REST sample is bounded after the handler (it held nothing while it ran): take its in-flight
+   * slot and token now, unless it holds one. False (and the sample released) when dropped.
+   */
+  function takeSlot(sample: FeedGoShadowSample): boolean {
+    if (sample.holdsSlot) return true;
+    if (!admit(sample.endpoint)) {
+      sample.captured = undefined;
+      release(sample);
+      return false;
+    }
+    inFlight++;
+    sample.holdsSlot = true;
+    return true;
   }
 
   return {
     begin,
     beginRest,
     beginV1Images,
+    beginSiteSearch,
+    captureSiteSearch,
     probe,
     run,
     capture,
@@ -828,6 +1100,9 @@ function getInstance(): FeedGoShadow {
     ),
     enabledModelAssociated: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_ASSOCIATED)
+    ),
+    enabledSiteSearch: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_SITE_SEARCH)
     ),
     enabledProbe: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)
@@ -872,15 +1147,42 @@ export function beginFeedGoShadowV1Images(req: ShadowRequestLike): FeedGoShadowS
  */
 export function beginFeedGoShadowV1Models(
   req: ShadowRequestLike,
-  kind: 'list' | 'id'
+  kind: 'list' | 'id',
+  opts?: RestSampleOptions
 ): FeedGoShadowSample | undefined {
   try {
     const owner = getInstance();
-    const sample = owner.beginRest(kind === 'list' ? 'v1-models' : 'v1-models-id', req);
+    const sample = owner.beginRest(kind === 'list' ? 'v1-models' : 'v1-models-id', req, opts);
     if (sample) owners.set(sample, owner);
     return sample;
   } catch {
     return undefined;
+  }
+}
+
+/** `POST /api/search/*`: whether this request is sampled (see `beginSiteSearch`). Never throws. */
+export function beginFeedGoShadowSiteSearch(
+  req: ShadowRequestLike
+): FeedGoShadowSample | undefined {
+  try {
+    const owner = getInstance();
+    const sample = owner.beginSiteSearch(req);
+    if (sample) owners.set(sample, owner);
+    return sample;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `POST /api/search/*`: keep references to the call, the backend's answer and Node's 200 answer. */
+export function captureFeedGoShadowSiteSearch(
+  sample: FeedGoShadowSample,
+  capture: SiteSearchCapture
+): void {
+  try {
+    (owners.get(sample) ?? getInstance()).captureSiteSearch(sample, capture);
+  } catch {
+    /* never throw from the handler */
   }
 }
 

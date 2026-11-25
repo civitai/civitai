@@ -5,17 +5,17 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { servableImageKeys } from '../relabel.service';
 import { csamExcludedImageIds } from '../relabel-csam-exclusion';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
 
-// Stand-ins for the five main-database tables the query reads, cut to the columns it touches.
-const TABLES = `
-CREATE TABLE "Image" (
-  id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text,
-  url text NOT NULL DEFAULT 'key', type text NOT NULL DEFAULT 'image'
-);
-CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
+// The shared withhold rule's tables, and the main-database tables the query's own arms read, cut to
+// the columns it touches. Each image gets its own url unless a case gives it one.
+const TABLES = `${INQUISITOR_IMAGE_SCHEMA}
+CREATE SEQUENCE image_url;
+ALTER TABLE "Image" ALTER COLUMN url SET DEFAULT ('key-' || nextval('image_url'));
+ALTER TABLE "CsamReport" ALTER COLUMN images SET DEFAULT '[]';
+CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL, status text, details jsonb, "userId" int);
 CREATE TABLE "ImageReport" ("reportId" int NOT NULL, "imageId" int NOT NULL);
 CREATE TABLE "UserReport" ("reportId" int NOT NULL, "userId" int NOT NULL);
-CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
 `;
 
 let pg: PGlite;
@@ -89,6 +89,19 @@ describe('csamExcludedImageIds', () => {
 
   it('excludes every image of an owner with any image blocked for CSAM', async () => {
     await pg.exec(`INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (4, 20, 'CSAM')`);
+    expect(await excluded([1, 2])).toEqual([2]);
+  });
+
+  // What the moderator views withhold without the CSAM grant is out of the set too.
+  it('excludes an image whose copy on the same url, under another owner, is blocked for CSAM', async () => {
+    await pg.exec(`
+      UPDATE "Image" SET url = 'shared-key' WHERE id = 1;
+      INSERT INTO "Image" (id, "userId", "blockedFor", url) VALUES (5, 50, 'CSAM', 'shared-key');`);
+    expect(await excluded([1, 2])).toEqual([1]);
+  });
+
+  it('excludes an image blocked for CSAM among other reasons', async () => {
+    await pg.exec(`UPDATE "Image" SET "blockedFor" = 'moderated, CSAM' WHERE id = 2`);
     expect(await excluded([1, 2])).toEqual([2]);
   });
 });

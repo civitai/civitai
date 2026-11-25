@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
 import { clearSession, readHubSession } from '$lib/server/auth/session';
@@ -30,9 +31,6 @@ import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 // spoke-signed one-time token verified here) is a possible future hardening; deliberately not done for a
 // DoS-only risk. The GET path performs NO state change by itself — only the same-origin POST it submits does.
 
-const escapeAttr = (s: string): string =>
-  s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
 export const GET: RequestHandler = async ({ url }) => {
   const returnUrl = url.searchParams.get('returnUrl') ?? '';
   // Forward returnUrl in the POST action; it's VALIDATED at POST time against the trusted-spoke registry.
@@ -41,7 +39,7 @@ export const GET: RequestHandler = async ({ url }) => {
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Signing out…</title>
 <style>body{background:#0b0c10;color:#e8eaed;font-family:system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0}</style>
 </head><body>
-<form id="logout" method="POST" action="${escapeAttr(
+<form id="logout" method="POST" action="${escapeHtml(
     action
   )}"><noscript><button type="submit">Click to finish signing out</button></noscript></form>
 <p>Signing you out…</p>

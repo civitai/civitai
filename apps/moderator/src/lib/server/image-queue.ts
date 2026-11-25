@@ -3,6 +3,14 @@ import { agentReportFilterOf, agentReportWhere } from '$lib/server/agent-reporte
 import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
+import { holdsCsamReview } from '$lib/server/held-media';
+import {
+  listWithheldIds,
+  withheldAccountRefusal,
+  withheldApprovedAppeal,
+  withheldRefusal,
+  withheldRow,
+} from '$lib/server/retracted-media';
 import {
   getCsamQueueByUser,
   getImageReviewQueue,
@@ -18,6 +26,7 @@ import {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   RemovedImageNotRestorableError,
+  ImageChangedError,
   ModeratorRemovedImageError,
   CsamReviewImageError,
   AppealRestoreRefusedError,
@@ -102,11 +111,31 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
   }));
 }
 
+/** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule, review tags, report
+ *  reason or 3D model parent. */
+async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
+  const ids = items.map((i) => i.id);
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, 'image-queue');
+  return items.map((item) => {
+    if (!withheld.has(item.id)) return { ...item, restricted: false };
+    const { report } = item as { report?: object };
+    return {
+      ...withheldRow(item),
+      model3d: null,
+      promptHighlight: null,
+      ruleDefinition: null,
+      ruleReason: null,
+      reviewTags: [] as never[],
+      ...(report ? { report: { ...report, reason: '', details: null } } : {}),
+    };
+  });
+}
+
 /**
  * One image queue's cards, for `view`. Shared by `/images/[slug]` (the review queues) and
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
  */
-export async function loadImageQueue(view: ImageViewSlug, url: URL) {
+export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.Locals['user']) {
   const { cursor, limit, level, userId, captures } = parseQuery(url, querySchema);
   const capturesOnly = captures ?? false;
   const tagIds = parseIds(url.searchParams.get('tags'));
@@ -137,7 +166,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       ...base,
       view,
       kind: 'reported' as const,
-      items: await withModel3d(items),
+      items: await withheldCards(await withModel3d(items), user),
       nextCursor: reportId ? undefined : nextCursor,
       singleReport: reportId ?? null,
       // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
@@ -150,8 +179,15 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       browsingLevel: level,
       cursor,
       limit,
+      csamReview: holdsCsamReview(user),
     });
-    return { ...base, view, kind: 'appeal' as const, items: await withModel3d(items), nextCursor };
+    // model3d would draw a withheld image's media; drop it.
+    const cards = (await withModel3d(items)).map((item) =>
+      item.restricted
+        ? { ...item, model3d: null, approvedAppeal: withheldApprovedAppeal(item.approvedAppeal) }
+        : item
+    );
+    return { ...base, view, kind: 'appeal' as const, items: cards, nextCursor };
   }
 
   if (view === 'minor' || view === 'remixSource') {
@@ -170,13 +206,16 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       view,
       kind: 'review-highlight' as const,
       tagOptions: await getReviewQueueTags(view),
-      items: await withModel3d(
-        items.map(({ prompt, negativePrompt, ...item }) => ({
-          ...item,
-          promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
-            categories,
-          }),
-        }))
+      items: await withheldCards(
+        await withModel3d(
+          items.map(({ prompt, negativePrompt, ...item }) => ({
+            ...item,
+            promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
+              categories,
+            }),
+          }))
+        ),
+        user
       ),
       nextCursor,
       capturesOnly,
@@ -207,11 +246,14 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     view,
     kind: 'review' as const,
     tagOptions,
-    items: await withModel3d(
-      stripped.map((item) => ({
-        ...item,
-        ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
-      }))
+    items: await withheldCards(
+      await withModel3d(
+        stripped.map((item) => ({
+          ...item,
+          ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
+        }))
+      ),
+      user
     ),
     nextCursor,
     userId: csamUserId ?? null,
@@ -273,11 +315,36 @@ export function parseResolutionReason(form: FormData, status: ResolutionVerdict<
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
 }
 
+const IMAGE_CHANGED = 'This image changed since this page loaded. Reload and try again.';
+
+/** The review flag a card showed, posted with its accept: '' is no flag; absent, nothing to check. */
+function shownFlag(value: FormDataEntryValue | null): string | null | undefined {
+  return typeof value === 'string' ? value || null : undefined;
+}
+
+/** The review flag each selected card showed, posted as JSON keyed by image id. */
+function shownFlags(value: FormDataEntryValue | null): Map<number, string | null> | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return new Map(
+      Object.entries(parsed).map(([id, flag]) => [
+        Number(id),
+        typeof flag === 'string' ? flag : null,
+      ])
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export const imageQueueActions = {
   accept: async ({ request, locals }) => {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const withheldAccept = await withheldRefusal(locals.user, [imageId]);
+    if (withheldAccept) return fail(403, { error: withheldAccept, imageId });
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
     if (reportId && !(await reportIsOnImage(reportId, imageId)))
@@ -289,6 +356,7 @@ export const imageQueueActions = {
         removeMinorFlag,
         userId: locals.user.id,
         keepModeratorRemoved: !!reportId,
+        shownNeedsReview: shownFlag(form.get('needsReview')),
       });
     } catch (e) {
       if (e instanceof ModeratorRemovedImageError && reportId) {
@@ -313,6 +381,7 @@ export const imageQueueActions = {
           error: `This image was ${REMOVED_REASON}. ${REMOVED_REMEDY}`,
           imageId,
         });
+      if (e instanceof ImageChangedError) return fail(409, { error: IMAGE_CHANGED, imageId });
       throw e;
     }
     if (reportId)
@@ -329,6 +398,8 @@ export const imageQueueActions = {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const withheldBlock = await withheldRefusal(locals.user, [imageId]);
+    if (withheldBlock) return fail(403, { error: withheldBlock, imageId });
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
     if (reportId && !(await reportIsOnImage(reportId, imageId)))
       return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
@@ -380,6 +451,8 @@ export const imageQueueActions = {
     );
     if (typeof input === 'string') return fail(400, { error: input });
     const { imageId } = input;
+    const withheldDismiss = await withheldRefusal(locals.user, [imageId]);
+    if (withheldDismiss) return fail(403, { error: withheldDismiss, imageId });
     const result = await dismissFromCsamQueue({ ...input, userId: locals.user.id });
     if (!result.ok)
       return fail(result.reason === 'unavailable' ? 503 : 409, {
@@ -404,6 +477,8 @@ export const imageQueueActions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const withheldAccount = await withheldAccountRefusal(locals.user, input.userId);
+    if (withheldAccount) return fail(403, { error: withheldAccount });
     const result = await dismissUserFromCsamQueue({ ...input, moderatorId: locals.user.id });
     if (!result.ok)
       return fail({ unavailable: 503, capture: 400, changed: 409 }[result.reason], {
@@ -434,6 +509,8 @@ export const imageQueueActions = {
         .slice(0, 1000) || undefined;
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
+    const withheld = await withheldRefusal(locals.user, [imageId]);
+    if (withheld) return fail(403, { error: withheld, imageId });
 
     let closed;
     try {
@@ -465,6 +542,8 @@ export const imageQueueActions = {
     const nsfwLevel = Number(form.get('nsfwLevel'));
     if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
     if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
+    const withheldRating = await withheldRefusal(locals.user, imageIds);
+    if (withheldRating) return fail(403, { error: withheldRating });
 
     // `updateImageNsfwLevel` throws bare Errors (missing image, Redis down). Uncaught, a form action
     // error replaces the queue with an error page, taking the record of what was already actioned
@@ -504,6 +583,8 @@ export const imageQueueActions = {
     const flagValue = parseImageFlagValue(String(form.get('flagValue') ?? ''));
     if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
     if (!flagValue) return fail(400, { error: 'Unknown flag.' });
+    const withheldFlag = await withheldRefusal(locals.user, imageIds);
+    if (withheldFlag) return fail(403, { error: withheldFlag });
 
     const result = await setImageFlag({ ...flagValue, imageIds, moderatorId: locals.user.id });
     if (!result.ok) return fail(400, { error: result.error });
@@ -522,10 +603,14 @@ export const imageQueueActions = {
   bulkAccept: async ({ request, locals }) => {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
+    const withheldBulk = await withheldRefusal(locals.user, imageIds);
+    if (withheldBulk) return fail(403, { error: withheldBulk });
     const posted = parseIds(form.get('reportIds'));
     const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
+    const shown = shownFlags(form.get('needsReviewByImage'));
     const refused: number[] = [];
+    const changed: number[] = [];
     const removed: number[] = [];
     const underCsamReview: number[] = [];
     const unpaidImages = new Set<number>();
@@ -538,7 +623,12 @@ export const imageQueueActions = {
           userId: locals.user.id,
           deferAppealEmail: true,
           keepModeratorRemoved: posted.length > 0,
+          shownNeedsReview: shown?.get(imageId),
         }).catch((e) => {
+          if (e instanceof ImageChangedError) {
+            changed.push(imageId);
+            return undefined;
+          }
           if (e instanceof ModeratorRemovedImageError) {
             removed.push(imageId);
             if (e.unpaid) unpaidImages.add(imageId);
@@ -576,18 +666,25 @@ export const imageQueueActions = {
       ...(notMoved && { notMoved }),
     };
     // A partial batch moves no other report: the refused images' reports stay open.
-    if (refused.length || underCsamReview.length)
+    if (refused.length || underCsamReview.length || changed.length)
       return fail(409, {
         ...notice,
         error: [
-          `${imageIds.length - refused.length - underCsamReview.length - removed.length} of ${
-            imageIds.length
-          } accepted.`,
+          `${
+            imageIds.length -
+            refused.length -
+            underCsamReview.length -
+            removed.length -
+            changed.length
+          } of ${imageIds.length} accepted.`,
           reportIds.length ? `No ${closedReportIds.length ? 'other ' : ''}report was moved.` : '',
           refused.length ? `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.` : '',
           refused.length ? REMOVED_REMEDY : '',
           underCsamReview.length
             ? `Not accepted (under CSAM review, left to that queue): ${underCsamReview.join(', ')}.`
+            : '',
+          changed.length
+            ? `Not accepted (changed since this page loaded; reload): ${changed.join(', ')}.`
             : '',
         ]
           .filter(Boolean)
@@ -608,6 +705,8 @@ export const imageQueueActions = {
     const { request, locals } = event;
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
+    const withheldBulkBlock = await withheldRefusal(locals.user, imageIds);
+    if (withheldBulkBlock) return fail(403, { error: withheldBulkBlock });
     const posted = parseIds(form.get('reportIds'));
     const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const violation = parseViolation(form);
@@ -683,6 +782,8 @@ export const imageQueueActions = {
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason });
+    const withheld = await withheldRefusal(locals.user, imageIds);
+    if (withheld) return fail(403, { error: withheld });
     const refused: number[] = [];
     const closed = await Promise.all(
       imageIds.map((imageId) =>

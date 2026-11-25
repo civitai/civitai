@@ -22,7 +22,16 @@ import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  clickhouseDownloads,
+  queryDownloadsClickhouse,
+} from '~/server/clickhouse/downloads-client';
+import {
+  readsDedicatedDownloadsClickhouse,
+  withSharedClickhouseFallback,
+} from '~/server/services/downloads-clickhouse';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
 import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
@@ -1576,14 +1585,31 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
   staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
-export const thumbnailCache = createCachedObject<{
+/** The thumbnail rows `thumbnailCache` hands out. */
+export const thumbnailRowsSql = (thumbnailIds: (number | string)[]) => Prisma.sql`
+  SELECT id, url, width, height, "nsfwLevel", cast(metadata->'parentId' as int) as "parentId",
+    ${hasBlockMarkerSql('Image')} AS "blockMarked"
+  FROM "Image"
+  WHERE id IN (${Prisma.join(thumbnailIds)})
+`;
+
+export type ThumbnailCacheItem = {
   id: number;
   url: string;
   width: number | null;
   height: number | null;
   nsfwLevel: NsfwLevel;
+  blockMarked: boolean;
   parentId?: number;
-}>({
+};
+
+/** Drops block-marked thumbnails: list readers must not serve them. */
+export const servableThumbnails = <T extends { blockMarked?: boolean }>(
+  thumbnails: Record<number, T>
+): Record<number, T> =>
+  Object.fromEntries(Object.entries(thumbnails).filter(([, t]) => t.blockMarked === false));
+
+export const thumbnailCache = createCachedObject<ThumbnailCacheItem>({
   key: REDIS_KEYS.CACHES.THUMBNAILS,
   idKey: 'parentId',
   lookupFn: async (ids, fromWrite) => {
@@ -1608,19 +1634,10 @@ export const thumbnailCache = createCachedObject<{
         width: number | null;
         height: number | null;
         nsfwLevel: NsfwLevel;
+        blockMarked: boolean;
         parentId: number;
       }[]
-    >`
-        SELECT
-          id,
-          url,
-          width,
-          height,
-          "nsfwLevel",
-          cast(metadata->'parentId' as int) as "parentId"
-        FROM "Image"
-        WHERE id IN (${Prisma.join(thumbnailIds)})
-      `;
+    >(thumbnailRowsSql(thumbnailIds));
 
     return Object.fromEntries(thumbnails.filter((x) => !!x.parentId).map((x) => [x.parentId, x]));
   },
@@ -2070,17 +2087,18 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
   ttl: CacheTTL.day,
-  cacheNotFound: false,
+  // A user with no downloads is cached as "none" too. The marker lives only 10 minutes because the
+  // download row reaches the table asynchronously: a lookup that lands after bustUserDownloadsCache's
+  // window but before the row does pins "none" for at most this long.
+  cacheNotFound: true,
+  notFoundTtl: CacheTTL.md,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};
     if (userIds.length === 0) return {};
+    const shared = clickhouse;
 
-    const results = await clickhouse.$query<{
-      userId: number;
-      modelVersionId: number;
-      fileId: number;
-      lastDownloaded: string;
-    }>`
+    type Row = { userId: number; modelVersionId: number; fileId: number; lastDownloaded: string };
+    const query = `
       SELECT
         userId,
         modelVersionId,
@@ -2092,6 +2110,17 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
       ORDER BY lastDownloaded DESC
       LIMIT 2000 BY userId
     `;
+    const readShared = () => shared.$query<Row>(query);
+    const results = readsDedicatedDownloadsClickhouse(
+      'user-downloads',
+      clickhouseDownloads !== undefined
+    )
+      ? await withSharedClickhouseFallback(
+          'user-downloads',
+          () => queryDownloadsClickhouse<Row>(query),
+          readShared
+        )
+      : await readShared();
 
     // Group by userId
     const grouped = results.reduce((acc, { userId, modelVersionId, fileId, lastDownloaded }) => {

@@ -49,8 +49,24 @@ const {
   applySystemModelNsfwFlag,
   holdLeadAfterSfwOnlyLift,
 } = await import('~/server/services/text-scan/actions/model-nsfw');
-const { resolveRestrictedNsfwVerdict } = await import(
+const { currentRestrictedLeadRevision, resolveRestrictedNsfwVerdict: resolveRuling } = await import(
   '~/server/services/text-scan/actions/restricted-nsfw-verdict'
+);
+// Every ruling carries the revision its screen showed; a test that changes nothing in between rules on
+// the current one.
+const resolveRestrictedNsfwVerdict = async (
+  args: Omit<Parameters<typeof resolveRuling>[0], 'revision'> & { revision?: string }
+) =>
+  resolveRuling({
+    ...args,
+    revision:
+      args.revision ??
+      (await currentRestrictedLeadRevision(dbMock.dbWrite as never, args.modelId)) ??
+      '',
+  });
+const { restrictedLeadRevision } = await import('@civitai/shared/restricted-lead-revision');
+const { resolveRestrictedNsfwVerdictInput, restrictedNsfwRulingArgs } = await import(
+  '~/server/schema/moderator/restricted-nsfw-verdict'
 );
 
 const { rollbackMinorHashAutoFlags } = await import('~/server/services/minor-hash.service');
@@ -61,6 +77,7 @@ const MODERATOR = 3;
 const SYSTEM_LOCK = { source: 'text-scan', at: '2026-11-01T00:00:00.000Z' };
 
 let db: PGlite;
+const txReads: string[] = [];
 
 beforeAll(async () => {
   db = new PGlite();
@@ -77,6 +94,15 @@ beforeAll(async () => {
       meta jsonb NOT NULL DEFAULT '{}',
       "deletedAt" timestamp(3)
     );
+    CREATE TABLE "EntityModeration" (
+      "entityType" text NOT NULL,
+      "entityId" int NOT NULL,
+      "triggeredLabels" text[] NOT NULL DEFAULT '{}',
+      result jsonb,
+      "contentHash" text,
+      "nsfwLevel" int,
+      UNIQUE ("entityType", "entityId")
+    );
     CREATE TABLE "ModActivity" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -90,7 +116,15 @@ beforeAll(async () => {
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
-  const tx = { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
+  // Its own handle, apart from dbWrite and dbRead, so a read off the transaction is seen; it keeps
+  // the text of each read, in order.
+  const tx = {
+    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+      txReads.push(strings.join('?'));
+      return (raw.queryRaw as (...a: unknown[]) => unknown)(strings, ...values);
+    },
+    $executeRaw: raw.executeRaw,
+  };
   dbMock.dbWrite.$transaction.mockImplementation(((fn: (t: typeof tx) => unknown) =>
     fn(tx)) as never);
   dbMock.dbWrite.model.findUnique.mockImplementation(
@@ -116,7 +150,7 @@ type Seed = Partial<{
 }>;
 
 async function seed({ nsfw = false, minor, poi, sfwOnly, locked = [], meta = {} }: Seed) {
-  await db.exec(`DELETE FROM "Model"`);
+  await db.exec(`DELETE FROM "Model"; DELETE FROM "EntityModeration"`);
   await db.query(
     `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, poi, minor, "sfwOnly", meta)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -568,6 +602,267 @@ describe('resolveRestrictedNsfwVerdict', () => {
     expect(rulings).toHaveLength(5);
     expect(rulings[0].at).toBe('old-1');
     expect(rulings[4].ruling).toBe('dismiss');
+  });
+
+  // The revision the moderator's screen sends back: a ruling lands only on the lead it showed.
+  const screen = () => currentRestrictedLeadRevision(dbMock.dbWrite as never, MODEL);
+  const ruleSeen = (
+    ruling: 'keep' | 'dismiss' | 'rateNsfw',
+    revision: string | null,
+    reason?: string
+  ) =>
+    resolveRestrictedNsfwVerdict({
+      modelId: MODEL,
+      ruling,
+      reason,
+      userId: MODERATOR,
+      revision: revision ?? undefined,
+    });
+  const STALE = /changed since it was opened/;
+  const scanRow = (level: number, reason: string) =>
+    db.query(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, "contentHash", "nsfwLevel")
+       VALUES ('Model', $1, '{nsfw}', $2, 'h1', $3)
+       ON CONFLICT ("entityType", "entityId") DO UPDATE SET result = $2, "nsfwLevel" = $3`,
+      [MODEL, { labels: { nsfw: { reason } } }, level]
+    );
+  const expectRefusedKeepingLead = async (
+    seen: string | null,
+    ruling: 'keep' | 'dismiss' = 'keep'
+  ) => {
+    const before = (await row()).meta.restrictedNsfwVerdict;
+    await expect(ruleSeen(ruling, seen, 'Escalated')).rejects.toThrow(STALE);
+    expect((await row()).meta.restrictedNsfwVerdict).toEqual(before);
+  };
+
+  it('rules on the lead the moderator was shown when nothing has changed', async () => {
+    await seed({ sfwOnly: true, meta: lead('sfwOnly') });
+    await scanRow(16, 'explicit');
+    await ruleSeen('dismiss', await screen());
+    expect((await row()).meta).not.toHaveProperty('restrictedNsfwVerdict');
+  });
+
+  it('refuses once the owner unticks minor and the verdict applies', async () => {
+    await seed({ minor: true, meta: lead('minor') });
+    const seen = await screen();
+    await db.query(`UPDATE "Model" SET minor = false WHERE id = $1`, [MODEL]);
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
+    await expectRefusedKeepingLead(seen);
+  });
+
+  // Only the flag changes: the same lead waits for publish, but a Keep would now close it instead
+  // of keeping it dormant.
+  it('refuses once the owner unticks minor on a Private model', async () => {
+    await seed({ minor: true, meta: lead('minor') });
+    await db.query(`UPDATE "Model" SET availability = 'Private' WHERE id = $1`, [MODEL]);
+    const seen = await screen();
+    await db.query(`UPDATE "Model" SET minor = false WHERE id = $1`, [MODEL]);
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBe('held_restricted');
+    expect((await row()).meta.restrictedNsfwVerdict).toEqual(lead('minor').restrictedNsfwVerdict);
+    await expectRefusedKeepingLead(seen);
+  });
+
+  // The revived lead keeps its time; a screen from before the Keep must not rule on it again.
+  it('refuses a screen opened before a Keep once the kept lead is revived', async () => {
+    await seed({ minor: true, meta: lead('minor') });
+    const seen = await screen();
+    await ruleSeen('keep', seen);
+    await db.query(`UPDATE "Model" SET minor = false, availability = 'Private' WHERE id = $1`, [
+      MODEL,
+    ]);
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBe('held_restricted');
+    expect((await row()).meta.restrictedNsfwVerdict.at).toBe(
+      lead('minor').restrictedNsfwVerdict.at
+    );
+    await expectRefusedKeepingLead(seen, 'dismiss');
+  });
+
+  it.each([
+    ['a newer scan reads another level', () => scanRow(28, 'explicit')],
+    ['a newer scan gives another reason', () => scanRow(16, 'graphic')],
+  ])('refuses once %s, though the lead keeps its time', async (_, rescan) => {
+    await seed({ sfwOnly: true, meta: lead('sfwOnly') });
+    await scanRow(16, 'explicit');
+    const seen = await screen();
+    await rescan();
+    await expectRefusedKeepingLead(seen, 'dismiss');
+  });
+
+  it('refuses once the forensics shown are from another scan', async () => {
+    await seed({
+      sfwOnly: true,
+      meta: { ...lead('sfwOnly'), textModeration: { scannedAt: '2026-11-04T00:00:00.000Z' } },
+    });
+    const seen = await screen();
+    await db.query(
+      `UPDATE "Model" SET meta = jsonb_set(meta, '{textModeration,scannedAt}', '"2026-11-05T00:00:00.000Z"')
+       WHERE id = $1`,
+      [MODEL]
+    );
+    await expectRefusedKeepingLead(seen, 'dismiss');
+  });
+
+  it("refuses once a moderator's lock changes what Keep would do", async () => {
+    await seed({ sfwOnly: true, meta: lead('sfwOnly') });
+    const seen = await screen();
+    await db.query(`UPDATE "Model" SET "lockedProperties" = '{nsfw}' WHERE id = $1`, [MODEL]);
+    await expectRefusedKeepingLead(seen);
+  });
+
+  // Every field the revision covers, changed alone on a full row: each must change the revision.
+  describe('the revision covers each field on its own', () => {
+    const FULL = {
+      restrictedNsfwVerdict: {
+        source: 'text-scan',
+        at: '2026-11-04T00:00:00.000Z',
+        restriction: 'minor',
+        liftedBy: 'moderator',
+        applied: { at: '2026-11-05T00:00:00.000Z' },
+      },
+      restrictedNsfwVerdictRulings: [{ at: '2026-11-03T00:00:00Z' }],
+      systemNsfwLock: { source: 'text-scan', at: '2026-11-05T00:00:00.000Z' },
+      textModeration: { scannedAt: '2026-11-02T00:00:00.000Z' },
+    };
+    const set =
+      (sql: string, ...params: unknown[]) =>
+      () =>
+        db.query(sql.replace('$MODEL', String(MODEL)), params);
+    const meta = (path: string, value: unknown) =>
+      set(`UPDATE "Model" SET meta = jsonb_set(meta, '{${path}}', $1::jsonb) WHERE id = $MODEL`, [
+        JSON.stringify(value),
+      ]);
+    const scan = (column: string, value: unknown) =>
+      set(`UPDATE "EntityModeration" SET ${column} = $1 WHERE "entityId" = $MODEL`, value);
+    const model = (assignment: string) => set(`UPDATE "Model" SET ${assignment} WHERE id = $MODEL`);
+
+    it.each([
+      ['lead at', meta('restrictedNsfwVerdict,at', '2026-11-06T00:00:00.000Z')],
+      ['lead source', meta('restrictedNsfwVerdict,source', 'profanity-filter')],
+      ['lead restriction', meta('restrictedNsfwVerdict,restriction', 'poi')],
+      ['lead liftedBy', meta('restrictedNsfwVerdict,liftedBy', 'appeal')],
+      ['lead applied at', meta('restrictedNsfwVerdict,applied,at', '2026-11-06T00:00:00.000Z')],
+      ['newest ruling', meta('restrictedNsfwVerdictRulings', [{ at: '2026-11-06T00:00:00Z' }])],
+      ['minor', model('minor = NOT minor')],
+      ['poi', model('poi = NOT poi')],
+      ['Private', model(`availability = 'Private'`)],
+      ['nsfw', model('nsfw = NOT nsfw')],
+      ['sfwOnly', model('"sfwOnly" = NOT "sfwOnly"')],
+      ['locks', model(`"lockedProperties" = '{sfwOnly,minor,nsfw}'`)],
+      ['system lock at', meta('systemNsfwLock,at', '2026-11-06T00:00:00.000Z')],
+      ['scan level', scan('"nsfwLevel"', 28)],
+      ['scan labels', scan('"triggeredLabels"', ['nsfw'])],
+      ['scan reason', scan('result', { labels: { nsfw: { reason: 'graphic' } } })],
+      ['scan content hash', scan('"contentHash"', 'h2')],
+      ['forensics time', meta('textModeration,scannedAt', '2026-11-06T00:00:00.000Z')],
+    ])('%s', async (_, change) => {
+      await seed({ sfwOnly: true, minor: true, locked: ['sfwOnly', 'minor'], meta: FULL });
+      await db.query(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, "contentHash", "nsfwLevel")
+         VALUES ('Model', $1, '{nsfw,violence}', $2, 'h1', 16)`,
+        [MODEL, { labels: { nsfw: { reason: 'explicit' } } }]
+      );
+      const before = await screen();
+      await change();
+      expect(await screen()).not.toBe(before);
+    });
+  });
+
+  // In the ruling's transaction, the row lock first, then the revision: never off the transaction.
+  it('locks the model row, then reads the revision, all in the ruling transaction', async () => {
+    await seed({ sfwOnly: true, meta: lead('sfwOnly') });
+    const seen = await screen();
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockClear();
+    vi.mocked(dbMock.dbRead.$queryRaw).mockClear();
+    txReads.length = 0;
+    await ruleSeen('dismiss', seen);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(txReads[0]).toMatch(/FOR UPDATE/);
+    expect(txReads.findIndex((q) => q.includes('"EntityModeration"'))).toBeGreaterThan(0);
+    expect((await row()).meta).not.toHaveProperty('restrictedNsfwVerdict');
+  });
+
+  // The endpoint's body and the ruling it makes: the revision must get through both.
+  it('refuses through the endpoint a ruling whose revision is stale', async () => {
+    await seed({ sfwOnly: true, meta: lead('sfwOnly') });
+    const seen = await screen();
+    await db.query(`UPDATE "Model" SET "lockedProperties" = '{nsfw}' WHERE id = $1`, [MODEL]);
+    const body = resolveRestrictedNsfwVerdictInput.parse({
+      modelId: MODEL,
+      ruling: 'keep',
+      revision: seen,
+    });
+    await expect(
+      resolveRestrictedNsfwVerdict(restrictedNsfwRulingArgs(body, MODERATOR))
+    ).rejects.toThrow(STALE);
+  });
+
+  it('gives a lead with no time a revision too, so the form always sends one', async () => {
+    await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: { restriction: 'sfwOnly' } } });
+    const seen = await screen();
+    expect(seen).toMatch(/^[0-9a-f]{64}$/);
+    await ruleSeen('dismiss', seen);
+    expect((await row()).meta).not.toHaveProperty('restrictedNsfwVerdict');
+  });
+
+  // The same stored row as the moderator app's list test (restricted-nsfw-verdicts.pglite.test.ts):
+  // both must read it into this revision.
+  it('reads the stored row into the revision the moderator list gives', async () => {
+    // Booleans that differ, so a field read into another's place is seen.
+    await seed({
+      sfwOnly: true,
+      minor: true,
+      locked: ['sfwOnly', 'minor'],
+      meta: {
+        restrictedNsfwVerdict: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00.000Z',
+          restriction: 'minor',
+          liftedBy: 'moderator',
+          applied: { at: '2026-11-05T00:00:00.000Z' },
+        },
+        restrictedNsfwVerdictRulings: [
+          { at: '2026-11-01T00:00:00Z' },
+          { at: '2026-11-03T00:00:00Z' },
+        ],
+        systemNsfwLock: { source: 'text-scan', at: '2026-11-05T00:00:00.000Z' },
+        textModeration: { scannedAt: '2026-11-02T00:00:00.000Z' },
+      },
+    });
+    await db.query(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, "contentHash", "nsfwLevel")
+       VALUES ('Model', $1, '{nsfw,violence}', $2, 'h1', 16)`,
+      [MODEL, { labels: { nsfw: { reason: 'explicit' } } }]
+    );
+    await db.query(`UPDATE "Model" SET availability = 'Private' WHERE id = $1`, [MODEL]);
+    expect(await screen()).toBe(
+      restrictedLeadRevision({
+        lead: {
+          at: '2026-11-04T00:00:00.000Z',
+          source: 'text-scan',
+          restriction: 'minor',
+          liftedBy: 'moderator',
+          appliedAt: '2026-11-05T00:00:00.000Z',
+        },
+        lastRulingAt: '2026-11-03T00:00:00Z',
+        model: {
+          minor: true,
+          poi: false,
+          isPrivate: true,
+          nsfw: false,
+          sfwOnly: true,
+          locks: ['minor', 'sfwOnly'],
+          systemNsfwLockAt: '2026-11-05T00:00:00.000Z',
+        },
+        scan: {
+          nsfwLevel: 16,
+          triggeredLabels: ['violence', 'nsfw'],
+          nsfwReason: 'explicit',
+          contentHash: 'h1',
+          forensicsScannedAt: '2026-11-02T00:00:00.000Z',
+        },
+      })
+    );
   });
 
   it('refuses a second ruling on the same lead', async () => {

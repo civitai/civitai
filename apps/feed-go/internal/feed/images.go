@@ -15,6 +15,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
 // RawImage is one row of the getAllImages SELECT.
@@ -290,7 +291,10 @@ func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer
 			model3dIDs = append(model3dIDs, *r.Model3DID)
 		}
 	}
-	p, err := h.Page(ctx, req)
+	pctx, phase := tracing.StartPhase(ctx, tracing.PhaseHydrate)
+	phase.SetInt(tracing.AttrItems, len(req.ImageIDs))
+	p, err := h.Page(pctx, req)
+	phase.End()
 	if err != nil {
 		return nil, err
 	}
@@ -360,12 +364,12 @@ func BuildImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []
 				continue
 			}
 		}
-		out = append(out, buildImage(r, hy))
+		out = append(out, buildImage(r, hy, viewer))
 	}
 	return out
 }
 
-func buildImage(r RawImage, hy *Hydrated) Image {
+func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 	thumb, hasThumb := hy.Thumbs[r.ID]
 	nsfw := r.NsfwLevel
 	if hasThumb && thumb.NsfwLevel > nsfw {
@@ -418,8 +422,10 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	if d, ok := hy.Decorations[r.ID]; ok {
 		decoration = d
 	}
+	// feedThumbnailFields: the level counts either way; the url only for a servable thumbnail, the
+	// creator or a moderator.
 	var thumbURL any = superjson.Undefined{}
-	if hasThumb {
+	if hasThumb && (thumb.Servable || (viewer.ID != 0 && r.UserID == viewer.ID) || viewer.IsModerator) {
 		thumbURL = thumb.URL // `thumbnail?.url`: a thumbnail without a url is null, not undefined
 	}
 
@@ -510,6 +516,9 @@ func FetchImages(ctx context.Context, db Querier, cache *QueryCache, h Hydrator,
 	if err != nil {
 		return nil, err
 	}
+	_, phase := tracing.StartPhase(ctx, tracing.PhaseBuild)
+	phase.SetInt(tracing.AttrItems, len(rows))
 	page.Images = BuildImages(rows, hy, viewer, now)
+	phase.End()
 	return page, nil
 }

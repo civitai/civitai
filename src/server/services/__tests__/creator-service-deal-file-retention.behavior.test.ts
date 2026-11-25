@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -100,9 +101,6 @@ beforeAll(async () => {
       "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       "reportSentAt" timestamp, "archivedAt" timestamp);
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
-    CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
     CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status "AppealStatus" NOT NULL);
     CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT now());
@@ -112,6 +110,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
   await holder.db.exec(`
     ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "blockedFor" text;
     ALTER TABLE "CsamReport" ADD COLUMN images jsonb NOT NULL DEFAULT '[]';`);
@@ -124,7 +123,7 @@ beforeEach(async () => {
   s3.send.mockResolvedValue({ ETag: '"abc123"' });
   await holder.db.exec(`
     TRUNCATE "ServiceDealFilePurge", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering",
-      "Report", "UserReport", "CsamReport", "EvidenceHold", "Appeal", "ModActivity", "Image" RESTART IDENTITY CASCADE;
+      "Report", "UserReport", "CsamReport", "Appeal", "ModActivity", "Image" RESTART IDENTITY CASCADE;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -298,49 +297,18 @@ describe('a report on the offering', () => {
   });
 });
 
+/** An open report against `party`, which keeps the deal's removed files. */
+const openReportOn = (party: number) =>
+  `INSERT INTO "Report" (status) VALUES ('Pending');
+   INSERT INTO "UserReport" ("userId", "reportId") VALUES (${party}, (SELECT max(id) FROM "Report"));`;
+
 describe('holds', () => {
   const holds: [string, (party: number) => string][] = [
-    ['an evidence hold', (p) => `INSERT INTO "EvidenceHold" ("userId") VALUES (${p})`],
-    [
-      'a moderation report archived long ago but never sent',
-      (p) => `INSERT INTO "CsamReport" ("userId", "archivedAt") VALUES (${p}, ${daysAgo(700)})`,
-    ],
-    [
-      'a moderation report long sent but not archived',
-      (p) => `INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${p}, ${daysAgo(800)})`,
-    ],
-    [
-      'a moderation report sent and archived within the year',
-      (p) =>
-        `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES (${p}, ${daysAgo(
-          300
-        )}, ${daysAgo(200)})`,
-    ],
-    [
-      'a moderation report naming them second, archived long ago but never sent',
-      (p) =>
-        `INSERT INTO "CsamReport" (details, "archivedAt") VALUES ('{"secondaryUserId": "${p}"}', ${daysAgo(
-          700
-        )})`,
-    ],
     ['a pending appeal', (p) => `INSERT INTO "Appeal" ("userId", status) VALUES (${p}, 'Pending')`],
     [
       'a minor-safety ban',
       (p) =>
         `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = ${p}`,
-    ],
-    [
-      'an image held for review',
-      (p) => `INSERT INTO "Image" ("userId", "needsReview") VALUES (${p}, 'csam')`,
-    ],
-    [
-      'a blocked image no sent report lists',
-      (p) => `INSERT INTO "Image" ("userId", "blockedFor") VALUES (${p}, 'CSAM')`,
-    ],
-    [
-      'an image listed in a holding report naming someone else',
-      (p) =>
-        `INSERT INTO "Image" (id, "userId") VALUES (900${p}, ${p}); INSERT INTO "CsamReport" ("userId", images) VALUES (${OTHER}, '[{"id": 900${p}}]')`,
     ],
     [
       'an open report against them',
@@ -366,27 +334,6 @@ describe('holds', () => {
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
   });
-
-  it.each([
-    ['naming them', (p: number) => `"userId" = ${p}`],
-    ['naming them second', (p: number) => `details = '{"secondaryUserId": "${p}"}'`],
-  ])(
-    'a moderation report %s, sent and archived over a year ago, keeps nothing',
-    async (_n, who) => {
-      const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
-      for (const p of [BUYER, SELLER]) {
-        await q(
-          `INSERT INTO "CsamReport" ("reportSentAt", "archivedAt") VALUES (${daysAgo(
-            400
-          )}, ${daysAgo(10)})`
-        );
-        await q(`UPDATE "CsamReport" SET ${who(p)} WHERE id = (SELECT max(id) FROM "CsamReport")`);
-      }
-      await sweepAndPurge();
-      expect(await kept(finalId)).toBe(false);
-      expect(await kept(attachmentId)).toBe(false);
-    }
-  );
 
   it.each(cases)('%s hides the deal files on schedule and keeps them', async (_name, sql) => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
@@ -466,11 +413,9 @@ describe('holds', () => {
     expect(await kept(finalId)).toBe(false);
   });
 
-  it('a released evidence hold and a resolved appeal keep nothing', async () => {
+  it('a resolved appeal keeps nothing', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
-    await holder.db.exec(`
-      INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${BUYER}, now());
-      INSERT INTO "Appeal" ("userId", status) VALUES (${SELLER}, 'Rejected');`);
+    await holder.db.exec(`INSERT INTO "Appeal" ("userId", status) VALUES (${SELLER}, 'Rejected');`);
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
   });
@@ -488,7 +433,7 @@ describe('holds', () => {
     const unheldViews = await partyViews(unheld.dealId);
 
     const held = await closedDeal('Cancelled', 40);
-    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    await holder.db.exec(openReportOn(BUYER));
     await sweepAndPurge();
     expect(await kept(held.finalId)).toBe(true);
     expect(await partyViews(held.dealId)).toEqual(unheldViews);
@@ -506,7 +451,7 @@ describe('holds', () => {
 
   it('a held, hidden file stays listed and downloadable for a moderator outside the deal', async () => {
     const { dealId, finalId, attachmentId } = await closedDeal('Cancelled', 40);
-    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${SELLER})`);
+    await holder.db.exec(openReportOn(SELLER));
     await sweepAndPurge();
     const listed = await files.listServiceDealFiles({
       dealId,
@@ -618,7 +563,7 @@ describe('the purge after the sweep', () => {
   it('re-reads the holds under the row lock: one landing after the candidates were read stops the delete', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();
-    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    await holder.db.exec(openReportOn(BUYER));
     // The candidate read ran before the hold landed.
     dbMock.dbWrite.$queryRaw.mockImplementationOnce((async () => [{ id: finalId }]) as never);
     expect(await purge()).toBe(0);
@@ -646,7 +591,7 @@ describe('the purge after the sweep', () => {
     await sweep();
     // The storage HEAD runs after the claim and before the first delete.
     s3.send.mockImplementationOnce(async () => {
-      await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${SELLER})`);
+      await holder.db.exec(openReportOn(SELLER));
       return { ETag: '"abc123"' };
     });
     expect(await purge()).toBe(0);
@@ -666,7 +611,7 @@ describe('the purge after the sweep', () => {
     await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE id = $1`, [attachmentId]);
     await sweep();
     s3.purgeObjectVersions.mockImplementationOnce(async () => {
-      await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+      await holder.db.exec(openReportOn(BUYER));
       return { versionsDeleted: 1, remaining: 0 };
     });
     expect(await purge()).toBe(0);
@@ -825,7 +770,7 @@ describe('a party deleting a file', () => {
     s3.purgeObjectVersions.mockClear();
 
     const held = await openDeal();
-    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    await holder.db.exec(openReportOn(BUYER));
     expect(await deleteBoth(held)).toEqual([{ id: held.finalId }, { id: held.attachmentId }]);
     expect(await removed(held.finalId)).toBe(true);
     expect(await removed(held.attachmentId)).toBe(true);
@@ -853,7 +798,7 @@ describe('a party deleting a file', () => {
   it('drops only the public copy of a held preview: the upload and its scan image stay', async () => {
     const { dealId } = await openDeal();
     const previewId = await publishedPreview(dealId);
-    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${SELLER})`);
+    await holder.db.exec(openReportOn(SELLER));
     expect(await files.deleteServiceDealFile({ fileId: previewId, userId: SELLER })).toEqual({
       id: previewId,
     });
@@ -877,7 +822,7 @@ describe('a party deleting a file', () => {
   it('drops the public copy of a preview the sweep hides on a held deal, and nothing else', async () => {
     const { dealId } = await closedDeal('Cancelled', 40);
     const previewId = await publishedPreview(dealId);
-    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    await holder.db.exec(openReportOn(BUYER));
     await sweep();
     expect(await files.dropRemovedPreviewCopies()).toBe(1);
     expect(await purge()).toBe(0);
@@ -912,13 +857,13 @@ describe('account deletion', () => {
 
   it('hides them under a hold but the purge keeps them; an open deal keeps them unhidden', async () => {
     const held = await closedDeal('Completed', 1);
-    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    await holder.db.exec(openReportOn(BUYER));
     await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
     expect(await removed(held.finalId)).toBe(true);
     expect(await purge()).toBe(0);
     expect(await kept(held.finalId)).toBe(true);
     await q(`UPDATE "ServiceDealFile" SET "removedAt" = NULL`);
-    await q(`DELETE FROM "EvidenceHold"`);
+    await q(`DELETE FROM "UserReport"`);
     await q(
       `UPDATE "ServiceDeal" SET status = 'Delivered', "releaseAt" = NULL, "settledAt" = NULL`
     );
@@ -955,7 +900,7 @@ describe('the purge record', () => {
     expect(await record(finalId)).toBeDefined();
     // After the retry's claim and before its first delete.
     s3.send.mockImplementationOnce(async () => {
-      await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${SELLER})`);
+      await holder.db.exec(openReportOn(SELLER));
       return { ETag: '"abc123"' };
     });
     await purge();

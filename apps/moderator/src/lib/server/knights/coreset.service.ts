@@ -2,6 +2,8 @@ import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import {
+  postHiddenFromKnights,
+  readWithoutJit,
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
@@ -93,12 +95,20 @@ export async function getCoreItems(
   const base = forImage(references().where('r.source', '=', REFERENCE_SOURCE.core), query);
   const total = await countRows(base);
   const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
-  const items = await listItems(base, config)
-    .orderBy(sql`("r"."status" = ${REFERENCE_STATUS.active})`, 'desc')
-    .orderBy('r.id', 'asc')
-    .limit(limit)
-    .offset(offset)
-    .execute();
+  const items = await readWithoutJit(
+    dbWrite,
+    async (trx) =>
+      (
+        await trx.executeQuery(
+          listItems(base, config)
+            .orderBy(sql`("r"."status" = ${REFERENCE_STATUS.active})`, 'desc')
+            .orderBy('r.id', 'asc')
+            .limit(limit)
+            .offset(offset)
+            .compile()
+        )
+      ).rows
+  );
   return { items, total, page };
 }
 
@@ -116,13 +126,21 @@ export async function getFreshItems(
   );
   const total = await countRows(base);
   const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
-  const items = await listItems(base, config)
-    .orderBy(flaggedSql(config), 'desc')
-    .orderBy('r.harvestedAt', 'desc')
-    .orderBy('r.id', 'desc')
-    .limit(limit)
-    .offset(offset)
-    .execute();
+  const items = await readWithoutJit(
+    dbWrite,
+    async (trx) =>
+      (
+        await trx.executeQuery(
+          listItems(base, config)
+            .orderBy(flaggedSql(config), 'desc')
+            .orderBy('r.harvestedAt', 'desc')
+            .orderBy('r.id', 'desc')
+            .limit(limit)
+            .offset(offset)
+            .compile()
+        )
+      ).rows
+  );
   return { items, total, page };
 }
 
@@ -187,19 +205,28 @@ export async function unservableReason(
   imageId: number,
   db: typeof dbWrite | Transaction<DB> = dbWrite
 ): Promise<string | null> {
-  const servable = await db
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .select('img.id')
-    .where('img.id', '=', imageId)
-    .where(servableImage)
-    .executeTakeFirst();
+  const servable = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select('img.id')
+      .where('img.id', '=', imageId)
+      .where(servableImage)
+      .executeTakeFirst()
+  );
   if (servable) return null;
 
   const image = await db
     .selectFrom('Image as img')
     .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select(['img.ingestion', 'img.blockedFor', 'img.poi', 'img.minor', 'p.publishedAt'])
+    .select([
+      'img.ingestion',
+      'img.blockedFor',
+      'img.poi',
+      'img.minor',
+      'p.publishedAt',
+      'p.availability',
+    ])
     .where('img.id', '=', imageId)
     .executeTakeFirst();
   if (!image) return `Image ${imageId} was not found.`;
@@ -213,6 +240,9 @@ export async function unservableReason(
   }
   if (!image.publishedAt || image.publishedAt > new Date()) {
     return `Image ${imageId} is not published, so Acolytes could not see it.`;
+  }
+  if (postHiddenFromKnights(image.availability)) {
+    return `Image ${imageId} is on a post whose availability Knights does not show.`;
   }
   return `Image ${imageId} cannot be shown to Acolytes: it must be a rated image with no review hold.`;
 }
@@ -238,6 +268,12 @@ export async function addCoreImage(input: {
     .executeTakeFirst();
   if (existing?.pool === REFERENCE_POOL.hiddenCheck) {
     return { ok: false, error: 'This image is a hidden check, and an image is never in both.' };
+  }
+  if (existing?.pool === REFERENCE_POOL.skillCheck) {
+    return {
+      ok: false,
+      error: 'This image is a mod-confirmed skill check, and an image is in one pool only.',
+    };
   }
   if (existing?.source === REFERENCE_SOURCE.core && existing.status === REFERENCE_STATUS.active) {
     return { ok: false, error: 'This image is already in the core set.' };

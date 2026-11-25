@@ -5,13 +5,16 @@ export function studioPublishUrl({
   epoch,
   ownRights,
   shareDataset,
+  asVersion,
 }: {
   workflowId: string;
   epoch: number;
   ownRights?: boolean;
   shareDataset?: boolean;
+  asVersion?: boolean;
 }): string {
   const params = new URLSearchParams({ workflowId, epoch: String(epoch) });
+  if (asVersion) params.set('target', 'existing');
   if (ownRights !== undefined || shareDataset !== undefined) {
     params.set('ownRights', ownRights ? '1' : '0');
     params.set('shareDataset', ownRights && shareDataset ? '1' : '0');

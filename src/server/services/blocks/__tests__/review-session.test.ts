@@ -3,6 +3,7 @@ import {
   signReviewAccessToken,
   verifyReviewAccessToken,
   REVIEW_ACCESS_TOKEN_TTL_SECONDS,
+  withReviewEntryToken,
 } from '~/server/services/blocks/review-session';
 
 /**
@@ -134,5 +135,23 @@ describe('signReviewAccessToken / verifyReviewAccessToken', () => {
       expect(() => verifyReviewAccessToken(token, HOST)).not.toThrow();
       expect(verifyReviewAccessToken(token, HOST).ok).toBe(false);
     });
+  });
+});
+
+describe('withReviewEntryToken', () => {
+  it('a URL with no query: `?mr=`', () => {
+    expect(withReviewEntryToken('https://review-abc.civit.ai/my-app', 'p.s')).toBe(
+      'https://review-abc.civit.ai/my-app?mr=p.s'
+    );
+  });
+  it('a URL with a query: `&mr=`', () => {
+    expect(withReviewEntryToken('https://review-abc.civit.ai/my-app?x=1', 'p.s')).toBe(
+      'https://review-abc.civit.ai/my-app?x=1&mr=p.s'
+    );
+  });
+  it('the token is URI-encoded', () => {
+    expect(withReviewEntryToken('https://h/a', 'a+b/c=d&e')).toBe(
+      'https://h/a?mr=a%2Bb%2Fc%3Dd%26e'
+    );
   });
 });

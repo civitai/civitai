@@ -527,15 +527,34 @@ function handler(world, spec) {
     const isPrivate = v.availability === 'Private' || ['Draft', 'Training'].includes(v.status);
     let can = !!(coveredR && validStatus && (!isPrivate || isOwned || isMod));
     if (isBaseModelGenerationDisabled(v.baseModel)) can = false;
+    // `getResourceCanGenerate(...) && isGenerationEligible(...)`: the gate rules only turn a true
+    // false, so taking eligibility first changes no answer; it is what feed-go reads the rules for.
+    can =
+      can &&
+      isGenerationEligible({
+        covered,
+        coveredLive,
+        baseModel: v.baseModel,
+        modelType: m.type,
+        flags: v.flags,
+      });
     if (can) {
       if (!rules) return 'unmigrated';
+      const subject = { id: v.id, baseModel: v.baseModel };
       const hasTestingAccess = isMod ? true : viewer?.id ? null : false;
+      // feed-go's fallback: a hidden testers rule (testing access is a per-user Flipt answer there)
+      // that names this version, by id or through its base model's ecosystem.
       const testers = rules.filter(
         (r) => r.availableTo === 'testers' && r.presentation === 'hidden'
       );
       if (
         hasTestingAccess === null &&
-        testers.some((r) => r.ecosystems.length || r.modelVersionIds.includes(v.id))
+        testers.some((r) =>
+          gates.isTargetedBy(subject, {
+            ecosystems: new Set(r.ecosystems),
+            versionIds: new Set(r.modelVersionIds),
+          })
+        )
       )
         return 'testers';
       const applicable = gates.applicableRulesFor(rules, {
@@ -544,19 +563,9 @@ function handler(world, spec) {
         hasTestingAccess: !!hasTestingAccess,
       });
       const hiddenTargets = gates.canGenerateBlockedTargets(gates.toGateRuleViews(applicable));
-      if (hiddenTargets.ecosystems.size) return 'ecosystem';
-      if (gates.isTargetedBy({ id: v.id, baseModel: v.baseModel }, hiddenTargets)) can = false;
+      if (gates.isTargetedBy(subject, hiddenTargets)) can = false;
     }
-    return (
-      can &&
-      isGenerationEligible({
-        covered,
-        coveredLive,
-        baseModel: v.baseModel,
-        modelType: m.type,
-        flags: v.flags,
-      })
-    );
+    return can;
   };
   const completeModels = models
     .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...m }) => {
@@ -602,7 +611,6 @@ function handler(world, spec) {
     const can = canGenerateOf(m.canGenerate);
     if (can === 'wildcards') return fallback('model-assoc-wildcards');
     if (can === 'testers') return fallback('gate-rules-testers');
-    if (can === 'ecosystem') return fallback('gate-rules-ecosystem');
     if (can === 'unmigrated') return fallback('gate-rules-unmigrated');
   }
   return {
@@ -666,6 +674,7 @@ const baseWorld = () => ({
   },
 });
 const input = (extra = {}) => ({ fromId: 9001, type: 'Suggested', ...extra });
+const GATE = (rules) => ({ migrated: true, entries: rules.map((r) => JSON.stringify(r)) });
 const specs = [
   { name: 'signed-out-capped-to-pg', viewer: 'anon', cap: 1, input: input({ browsingLevel: 31 }) },
   { name: 'signed-out-level-absent', viewer: 'anon', cap: 1, input: input() },
@@ -878,23 +887,113 @@ const specs = [
       },
     },
   },
+  // The ecosystem gate: a hidden rule's ecosystem target reaches a version through its base model's
+  // own ecosystem key (isTargetedBy), never a parent's.
   {
-    name: 'fallback-gate-ecosystem',
+    name: 'gate-ecosystem-hidden',
     viewer: 'viewer',
     cap: 0,
     input: input({ browsingLevel: 31 }),
     world: {
-      gateRules: {
-        migrated: true,
-        entries: [
-          JSON.stringify({
-            id: 'e',
-            availableTo: 'nobody',
-            presentation: 'hidden',
-            ecosystems: ['SDXL'],
-          }),
-        ],
-      },
+      gateRules: GATE([
+        { id: 'e', availableTo: 'nobody', presentation: 'hidden', ecosystems: ['SDXL'] },
+      ]),
+    },
+  },
+  {
+    name: 'gate-ecosystem-child-only',
+    viewer: 'viewer',
+    cap: 0,
+    input: input({ browsingLevel: 31 }),
+    world: {
+      gateRules: GATE([
+        { id: 'e', availableTo: 'nobody', presentation: 'hidden', ecosystems: ['Pony'] },
+      ]),
+    },
+  },
+  {
+    name: 'gate-ecosystem-moderator-exempt',
+    viewer: 'mod',
+    cap: 0,
+    input: input({ browsingLevel: 31 }),
+    world: {
+      gateRules: GATE([
+        {
+          id: 'e',
+          availableTo: 'moderators',
+          presentation: 'hidden',
+          ecosystems: ['SDXL', 'Pony'],
+        },
+      ]),
+    },
+  },
+  {
+    name: 'gate-ecosystem-disabled-keeps',
+    viewer: 'viewer',
+    cap: 0,
+    input: input({ browsingLevel: 31 }),
+    world: {
+      gateRules: GATE([
+        { id: 'e', availableTo: 'nobody', presentation: 'disabled', ecosystems: ['SDXL', 'Pony'] },
+        { id: 'x', availableTo: 'nobody', presentation: 'experimental', ecosystems: ['SDXL'] },
+      ]),
+    },
+  },
+  {
+    // A base model the tables do not hold, and a deprecated (disabled) one, next to an SDXL one, every
+    // ecosystem they could be in hidden.
+    name: 'gate-ecosystem-unknown-and-deprecated',
+    viewer: 'viewer',
+    cap: 0,
+    input: input({ browsingLevel: 31 }),
+    world: {
+      associations: [
+        [5013, null],
+        [5014, null],
+        [5001, null],
+      ],
+      models: [
+        ...MODELS,
+        model(5013, 1001, { versions: [ver(6013, 'Not A Base Model')] }),
+        model(5014, 1002, { versions: [ver(6014, 'SD 3')] }),
+      ],
+      images: [...IMAGES, img(8130, 1001, 6013, 1), img(8140, 1002, 6014, 1)],
+      gateRules: GATE([
+        { id: 'e', availableTo: 'nobody', presentation: 'hidden', ecosystems: ['SD3', 'Other'] },
+      ]),
+    },
+  },
+  {
+    name: 'gate-ecosystem-testers-signed-out',
+    viewer: 'anon',
+    cap: 1,
+    input: input({ browsingLevel: 1 }),
+    world: {
+      gateRules: GATE([
+        { id: 't', availableTo: 'testers', presentation: 'hidden', ecosystems: ['SDXL'] },
+      ]),
+    },
+  },
+  {
+    name: 'gate-ecosystem-testers-other-ecosystem',
+    viewer: 'viewer',
+    cap: 0,
+    input: input({ browsingLevel: 31 }),
+    world: {
+      gateRules: GATE([
+        { id: 't', availableTo: 'testers', presentation: 'hidden', ecosystems: ['Flux1'] },
+      ]),
+    },
+  },
+  {
+    name: 'fallback-gate-testers-ecosystem',
+    viewer: 'viewer',
+    cap: 0,
+    input: input({ browsingLevel: 31 }),
+    world: {
+      gateRules: GATE([
+        { id: 't', availableTo: 'testers', presentation: 'hidden', ecosystems: ['SDXL'] },
+      ]),
     },
   },
   {

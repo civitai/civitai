@@ -264,6 +264,8 @@ export type AppealCoverImage = {
   acceptableMinor?: boolean;
   /** Names what the tile is when the set is not one entity's gallery, e.g. a profile's avatar. */
   caption?: string;
+  /** Withheld from this moderator (`withheldCoverImages`): `url` is empty. */
+  restricted?: boolean;
 };
 
 export type MinorFlagAppealRow = {
@@ -1482,13 +1484,18 @@ export async function getHeldDetectionModelCount() {
 }
 
 export type MinorHashMatchDetail = {
+  modelCoverId: number | null;
   modelCoverUrl: string | null;
   modelCoverType: string | null;
   modelCoverRestricted: boolean | null;
   modelCreatedAt: Date | null;
   uploaderModelCount: number;
   uploaderJoinedAt: Date | null;
+  minorModelCoverId: number | null;
   minorModelCoverUrl: string | null;
+  /** Set by `withheldHashDetail` when a cover is withheld from this moderator. */
+  modelCoverWithheld?: boolean;
+  minorModelCoverWithheld?: boolean;
   minorModelCoverType: string | null;
   minorModelCoverRestricted: boolean | null;
   minorModelStatus: string | null;
@@ -1520,9 +1527,13 @@ export async function getMinorHashMatchDetail({
 }) {
   // Every seed-side id is cast rather than left to inference: a null bind reaches Postgres untyped,
   // and `col = $1` with no type to resolve against fails.
-  const cover = (id: number | null, column: 'url' | 'type' | 'modelRestricted') => sql`
+  const cover = (id: number | null, column: 'id' | 'url' | 'type' | 'modelRestricted') => sql`
     (SELECT ${
-      column === 'modelRestricted' ? sql`i."modelRestricted"` : sql`i.${sql.ref(column)}::text`
+      column === 'modelRestricted'
+        ? sql`i."modelRestricted"`
+        : column === 'id'
+        ? sql`i.id`
+        : sql`i.${sql.ref(column)}::text`
     }
      FROM "ModelVersion" mv
      JOIN "Post" p ON p."modelVersionId" = mv.id
@@ -1534,6 +1545,7 @@ export async function getMinorHashMatchDetail({
 
   const result = await sql<MinorHashMatchDetail>`
     SELECT
+      ${cover(modelId, 'id')} AS "modelCoverId",
       ${cover(modelId, 'url')} AS "modelCoverUrl",
       ${cover(modelId, 'type')} AS "modelCoverType",
       ${cover(modelId, 'modelRestricted')} AS "modelCoverRestricted",
@@ -1541,6 +1553,7 @@ export async function getMinorHashMatchDetail({
       (SELECT count(*)::int FROM "Model" om WHERE om."userId" = m."userId" AND om.status <> 'Deleted')
         AS "uploaderModelCount",
       u."createdAt" AS "uploaderJoinedAt",
+      ${cover(minorModelId, 'id')} AS "minorModelCoverId",
       ${cover(minorModelId, 'url')} AS "minorModelCoverUrl",
       ${cover(minorModelId, 'type')} AS "minorModelCoverType",
       ${cover(minorModelId, 'modelRestricted')} AS "minorModelCoverRestricted",
@@ -1786,10 +1799,7 @@ export async function getModelFlagDetail({
       ) f ON TRUE
       LEFT JOIN LATERAL (
         SELECT count(*) FILTER (WHERE o.status::text = 'Published')::int AS "uploaderPublished",
-               count(*) FILTER (
-                 WHERE o.status::text = 'UnpublishedViolation'
-                   AND o.meta ->> 'removedWithOwner' IS DISTINCT FROM 'true'
-               )::int AS "uploaderModUnpublished",
+               count(*) FILTER (WHERE o.status::text = 'UnpublishedViolation')::int AS "uploaderModUnpublished",
                count(*) FILTER (WHERE o.id <> m.id AND ${revertedSql})::int AS "revertedCount",
                to_char(max(${revertedAtSql}) FILTER (WHERE o.id <> m.id) AT TIME ZONE 'UTC',
                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "revertedLastAt"

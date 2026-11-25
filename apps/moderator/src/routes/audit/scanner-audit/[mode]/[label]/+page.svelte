@@ -283,9 +283,11 @@
             {#if copiedId}<IconCheck size={14} />{:else}<IconCopy size={14} />{/if}
             {copiedId ? 'Copied' : 'Copy ID'}
           </Button>
-          <Button variant="outline" size="sm" onclick={() => openRaw(current.workflowIds[0])}>
-            <IconCode size={14} /> Raw workflow
-          </Button>
+          {#if data.canViewRawWorkflow}
+            <Button variant="outline" size="sm" onclick={() => openRaw(current.workflowIds[0])}>
+              <IconCode size={14} /> Raw workflow
+            </Button>
+          {/if}
         {/if}
         <div class="ml-auto flex items-center gap-1">
           <Button

@@ -53,6 +53,8 @@ export type ImageModActivity = {
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
     | 'retractedMedia:view'
+    // A version showcase removal: the version it was removed from.
+    | `versionShowcaseRemove:${number}`
     | ReturnType<typeof shownActivity>;
 };
 
@@ -107,6 +109,9 @@ type UserModActivity = {
     | 'tipaltiResync:status'
     // A moderator released a built personal-data export to the account owner (personal-data-export.service).
     | 'releasePersonalDataExport'
+    | 'memorialPropose'
+    | 'memorialConfirm'
+    | 'memorialReverse'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when

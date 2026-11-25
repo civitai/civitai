@@ -39,15 +39,24 @@ const studioModel = (workflowId: string, m: ModelRow) =>
     ]
   );
 
-/** A main-app trainer model, linked to its run by its training file or its version's meta. */
-const trainerModel = async (workflowId: string, m: ModelRow, link: 'file' | 'version') => {
+/** A main-app trainer model, linked to its run by its training file or its version's meta, or a
+ *  model a Studio run was added to as a version, linked by that version's meta only. */
+const trainerModel = async (
+  workflowId: string,
+  m: ModelRow,
+  link: 'file' | 'version' | 'studio-version'
+) => {
   await db.query(
     `INSERT INTO "Model" (id, "userId", status, mode, "deletedBy") VALUES ($1, $2, $3, $4, $5)`,
     [m.id, m.userId ?? OWNER, m.status ?? 'Published', m.mode ?? null, m.deletedBy ?? null]
   );
   await db.query(`INSERT INTO "ModelVersion" (id, "modelId", meta) VALUES ($1, $1, $2)`, [
     m.id,
-    link === 'version' ? { trainingWorkflowId: workflowId } : {},
+    link === 'version'
+      ? { trainingWorkflowId: workflowId }
+      : link === 'studio-version'
+      ? { trainingStudioWorkflowId: workflowId }
+      : {},
   ]);
   await db.query(
     `INSERT INTO "ModelFile" ("modelVersionId", type, metadata) VALUES ($1, 'Training Data', $2)`,
@@ -92,6 +101,12 @@ describe('studioWithheldWorkflowIds', () => {
       expect(await withheld(['wf-t'])).toEqual(['wf-t']);
     }
   );
+
+  it('withholds a Studio run added as a version once its model is taken down, and only then', async () => {
+    await trainerModel('wf-added', { id: 6, mode: 'TakenDown' }, 'studio-version');
+    await trainerModel('wf-live', { id: 7 }, 'studio-version');
+    expect(await withheld(['wf-added', 'wf-live'])).toEqual(['wf-added']);
+  });
 
   it("answers only for the caller's own models", async () => {
     await studioModel('wf-1', { id: 1, userId: OTHER, mode: 'TakenDown' });

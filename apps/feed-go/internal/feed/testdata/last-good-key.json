@@ -1,0 +1,102 @@
+{
+  "about": "Which image-feed requests can have a saved last-good page: lastGoodKey in src/server/services/feed-primary-degrade.ts returns a key (lastGood true) or undefined (lastGood false). Read by src/server/services/__tests__/feed-primary-degrade-last-good-key.test.ts against lastGoodKey and by apps/feed-go/internal/feed/unavailable_test.go against lastGoodUncacheable (its negation), so a change to either side's condition fails one of them. currentUserId null or 0 is a signed-out viewer. Queries are well-formed: a query Go cannot parse is a Go-only case (unavailable_test.go).",
+  "uncacheableParams": ["cursor", "offset", "before", "viewerId"],
+  "cases": [
+    {
+      "name": "anonymous first page",
+      "currentUserId": null,
+      "query": "levels=1&excludedTags=9901&sort=reactions&limit=2",
+      "lastGood": true
+    },
+    {
+      "name": "anonymous first page, currentUserId 0",
+      "currentUserId": 0,
+      "query": "levels=1&excludedTags=9901&sort=reactions&limit=2",
+      "lastGood": true
+    },
+    {
+      "name": "anonymous first page, many filters",
+      "currentUserId": null,
+      "query": "levels=31&excludedTags=1%2C2&excludedUsers=3&modelId=4&modelVersionId=5&types=image&withMeta=true&fromPlatform=true&disableMinor=true&disablePoi=true&userId=6&tags=7&sort=newest&period=Week&limit=100&techniques=8&tools=9&baseModels=SDXL+1.0",
+      "lastGood": true
+    },
+    {
+      "name": "anonymous first page, an empty query",
+      "currentUserId": null,
+      "query": "",
+      "lastGood": true
+    },
+    {
+      "name": "signed in, first page",
+      "currentUserId": 5,
+      "query": "levels=1&excludedTags=9901&sort=reactions&limit=2",
+      "lastGood": false
+    },
+    {
+      "name": "signed in, an empty query",
+      "currentUserId": 5,
+      "query": "",
+      "lastGood": false
+    },
+    {
+      "name": "a negative user id reads as signed in",
+      "currentUserId": -1,
+      "query": "levels=1&limit=2",
+      "lastGood": false
+    },
+    {
+      "name": "anonymous next page (cursor)",
+      "currentUserId": null,
+      "query": "levels=1&excludedTags=9901&sort=reactions&limit=2&cursor=1%7C2",
+      "lastGood": false
+    },
+    {
+      "name": "anonymous, an empty cursor",
+      "currentUserId": null,
+      "query": "levels=1&limit=2&cursor=",
+      "lastGood": false
+    },
+    {
+      "name": "anonymous, offset",
+      "currentUserId": null,
+      "query": "levels=1&excludedTags=9901&sort=reactions&limit=2&offset=40",
+      "lastGood": false
+    },
+    {
+      "name": "anonymous, a time cut (before)",
+      "currentUserId": null,
+      "query": "levels=1&sort=newest&limit=2&before=1700000000",
+      "lastGood": false
+    },
+    {
+      "name": "anonymous, a viewerId",
+      "currentUserId": null,
+      "query": "levels=1&excludedTags=9901&sort=reactions&limit=2&viewerId=5",
+      "lastGood": false
+    },
+    {
+      "name": "anonymous, a paging param first",
+      "currentUserId": null,
+      "query": "cursor=feed%3A1%3A2&levels=1",
+      "lastGood": false
+    },
+    {
+      "name": "names that only contain a paging param",
+      "currentUserId": null,
+      "query": "levels=1&cursorx=1&offsets=2&xbefore=3&viewerIds=4&limit=2",
+      "lastGood": true
+    },
+    {
+      "name": "a paging param as a value, not a name",
+      "currentUserId": null,
+      "query": "levels=1&sort=cursor&period=offset&limit=2",
+      "lastGood": true
+    },
+    {
+      "name": "names are case-sensitive",
+      "currentUserId": null,
+      "query": "levels=1&Cursor=1&OFFSET=2&viewerid=3&limit=2",
+      "lastGood": true
+    }
+  ]
+}

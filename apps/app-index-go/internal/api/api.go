@@ -9,8 +9,8 @@
 //	    (listings.go)
 //
 // `mature` is the mature content ratings the caller asks for, a comma-separated list of r, x and
-// xxx (ParseQuery). Absent or empty, a search answers only apps rated g, pg or pg13: what the
-// anonymous registry audience reads. It is not a gate: no identity is checked, so any caller may
+// xxx (ParseQuery). Absent or empty, a search answers no app rated r, x or xxx (store.Mature.Admits,
+// the site's store rule). It is not a gate: no identity is checked, so any caller may
 // ask for any set; the caller is trusted to send its viewer's own. The parameter is part of the
 // URL, so a shared cache keys on it.
 //
@@ -193,7 +193,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 
 // ParseQuery validates the search parameters. `mature` names the mature ratings the caller asks
 // for (store.Mature): each comma-separated element must be exactly r, x or xxx (repeats are
-// harmless); absent or empty is none, the SFW audience.
+// harmless); absent or empty is none, which answers no mature app.
 func ParseQuery(v map[string][]string) (store.Query, error) {
 	get := func(k string) string {
 		if xs := v[k]; len(xs) > 0 {

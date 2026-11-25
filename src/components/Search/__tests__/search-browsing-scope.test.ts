@@ -71,6 +71,7 @@ vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', async (impor
     hiddenLoading: false,
     moderatedTags: [],
     systemHiddenTags: new Map(),
+    moderatedHiddenImages: new Map(),
   }),
 }));
 

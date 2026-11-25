@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsInquisitorVote","KnightsInquisitorReview","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage" RESTART IDENTITY`
   );
   await pg.exec(
     `INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES (1,'Knight'),(2,'Knight')`
@@ -87,7 +87,18 @@ describe('listJudgments', () => {
     const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
 
     expect(row.imageKey).toBeNull();
+    expect(row.imageId).toBeNull();
     expect(row.status).toBe('wrong');
+  });
+
+  it('hides the thumbnail and the image id of an image on a Private post', async () => {
+    await judge(10, NOW);
+    const before = (await listJudgments(db, 1, { page: 1 })).judgments[0];
+    expect([before.imageId, before.imageKey]).toEqual([10, expect.any(String)]);
+
+    await pg.exec(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    const after = (await listJudgments(db, 1, { page: 1 })).judgments[0];
+    expect([after.imageId, after.imageKey]).toEqual([null, null]);
   });
 
   it('shows a vote as pending until it is settled, even once graded', async () => {

@@ -1,8 +1,5 @@
-import dynamic from 'next/dynamic';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 
-const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'), {
-  ssr: false,
-});
-
-export const openUserProfileEditModal = createDialogTrigger(UserProfileEditModal);
+export function openUserProfileEditModal() {
+  openDialog(() => import('~/components/Modals/UserProfileEditModal'));
+}

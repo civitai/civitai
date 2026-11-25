@@ -17,10 +17,12 @@
   import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
   import { holdsStart, readinessMessage, type ReadinessView } from './uploadReadiness';
   import { MatureRepriceError } from '$lib/mature-charge';
+  import type { RatingCount } from '$lib/nsfw-rating';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import BlueFirstToggle from '$lib/components/BlueFirstToggle.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
+  import HelpTip, { TAP_TARGET } from '$lib/components/HelpTip.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import {
     AI_TOOLKIT_OPTION_FIELDS,
@@ -31,7 +33,6 @@
   import { isAbort, uploadFile } from '$lib/upload';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -101,6 +102,7 @@
     repeated,
     trainsPairs = false,
     matureCount: scannedMature,
+    matureRatings = [],
     readiness = { kind: 'off' },
     readinessUnusableCount,
     onCheckReadinessAgain,
@@ -131,6 +133,8 @@
     trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
+    /** `matureCount` by rating, when the upload scan's ratings account for it. */
+    matureRatings?: RatingCount[];
     /** Whether every dataset file is ready to train; `off` leaves Start to the other checks. */
     readiness?: ReadinessView;
     /** How many images or pairs Remove takes out when files can't be used. */
@@ -223,6 +227,10 @@
   let refusedMature = $state(0);
   const matureCount = $derived(Math.max(scannedMature, refusedMature));
   const mature = $derived(matureCount > 0);
+  // The server's count can include images the upload scan never rated; then no breakdown adds up.
+  const matureBreakdown = $derived(
+    matureRatings.reduce((sum, r) => sum + r.count, 0) === matureCount ? matureRatings : []
+  );
 
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -617,19 +625,14 @@
 </script>
 
 {#snippet help(text: string, subject: string)}
-  <Tooltip.Provider>
-    <Tooltip.Root>
-      <Tooltip.Trigger
-        class="inline-flex text-dark-2 transition-colors hover:text-dark-0"
-        aria-label="About {subject}"
-      >
-        <IconInfoCircle size={13} stroke={2} />
-      </Tooltip.Trigger>
-      <Tooltip.Content class="max-w-[300px] text-xs leading-snug" portalProps={portalProps()}>
-        {text}
-      </Tooltip.Content>
-    </Tooltip.Root>
-  </Tooltip.Provider>
+  <HelpTip
+    label="About {subject}"
+    class="{TAP_TARGET} inline-flex text-dark-2 transition-colors hover:text-dark-0"
+    contentClass="max-w-[300px] text-xs leading-snug"
+  >
+    <IconInfoCircle size={13} stroke={2} />
+    {#snippet content()}{text}{/snippet}
+  </HelpTip>
 {/snippet}
 
 {#snippet sampleImage(p: SamplePrompt)}
@@ -1119,7 +1122,9 @@
         <span>
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
-          <strong>mature</strong> (R or above).
+          <strong>mature</strong>{#if matureBreakdown.length > 0}:
+            {matureBreakdown.map((r) => `${r.count} ${r.label}`).join(', ')}.{:else}
+            (R or above).{/if}
           {#if scannedMature > 0}
             <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
               See which

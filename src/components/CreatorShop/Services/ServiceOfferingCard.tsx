@@ -1,8 +1,8 @@
 import { Button, Paper, Text } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import type { ComponentProps, ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import cardStyles from '~/components/CardTemplates/AspectRatioCard.module.scss';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -32,10 +32,6 @@ type ServiceCoverImage = Pick<
 type ServiceCardSeller = ComponentProps<typeof UserAvatar>['user'];
 
 export const COVER_ASPECT_RATIO = 4 / 3;
-
-const ServiceBuyerPreviewModal = dynamic(
-  () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal')
-);
 
 /**
  * Whether ImageGuard draws its own level chip on the cover: always while blurred, and on a
@@ -129,6 +125,9 @@ export function ServiceOfferingCard({
     | 'licensePreset'
     | 'licenseCustomText'
     | 'licenseAllowResale'
+    | 'requestForm'
+    | 'requestFormVersion'
+    | 'fromPrice'
   > &
     Partial<Pick<ServiceOffering, 'happyCount' | 'reviewCount'>> & {
       coverImage?: ServiceCoverImage | null;
@@ -167,11 +166,16 @@ export function ServiceOfferingCard({
   );
   const price = (
     <div className="flex w-full items-end justify-between gap-2">
-      <div className="rounded-full bg-black/60 backdrop-blur-sm">
+      <div className="flex items-center rounded-full bg-black/60 backdrop-blur-sm">
+        {!!offering.requestForm && (
+          <Text size="xs" c="white" pl={10}>
+            from
+          </Text>
+        )}
         <CurrencyBadge
           currency={Currency.BUZZ}
           type={domain === 'green' ? 'green' : 'yellow'}
-          unitAmount={offering.price}
+          unitAmount={offering.fromPrice ?? offering.price}
         />
       </div>
       <div className="rounded-sm bg-black/60 backdrop-blur-sm">
@@ -246,10 +250,10 @@ export function ServiceOfferingCard({
                 color="gray"
                 fullWidth
                 onClick={() =>
-                  dialogStore.trigger({
-                    component: ServiceBuyerPreviewModal,
-                    props: { offering, seller, sellerId, sellerUsername, slotsOpen, canRequest },
-                  })
+                  openDialog(
+                    () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal'),
+                    { offering, seller, sellerId, sellerUsername, slotsOpen, canRequest }
+                  )
                 }
               >
                 Preview as buyer
@@ -271,7 +275,7 @@ export function ServiceOfferingCard({
                   onClick={() =>
                     dialogStore.trigger({
                       component: ServiceRequestModal,
-                      props: { offering, sellerUsername },
+                      props: { offering, sellerUsername, seller, sellerId },
                     })
                   }
                 >

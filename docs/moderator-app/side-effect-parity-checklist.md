@@ -18,7 +18,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 | # | Gap | Surface | Severity | Status |
 |---|---|---|---|---|
 | 1 | Rating-locked **Blocked** rows never unblocked on accept (`resetBlockedNsfwLevel` missing) | shared `acceptImage` (minor-review, comics-review, appeals, delegated `image.moderate`) | **BLOCKER** (regression vs `c371fcbc16`) | ✅ **DONE** — reset UPDATE before recompute in `acceptImage` |
-| 2 | **KoNO finalize** dropped (vote finalize, smites, counters, pool-reset, signals) | `/images/ratings` + `/images/downleveled` `setLevel` | **BLOCKER** (downleveled) | ✅ **DONE** — delegated: spoke `syncKonoFinalize` (`kono.ts`) → new main `/api/internal/kono-finalize` runs `updatePendingImageRatings` + pool reset |
+| 2 | **KoNO finalize** dropped (vote finalize, smites, counters, pool-reset, signals) | `/images/ratings` + `/images/downleveled` `setLevel` | **BLOCKER** (downleveled) | ✅ **RETIRED** — the delegate (`kono.ts` → `/api/internal/kono-finalize`) was removed with the old Knights game |
 | 3 | Comic **project/chapter** mod tools not ported (TOS toggle, set project/chapter nsfw, unpublish chapter) | comic detail mod UI (not the queue) | BLOCKER-if-expected | 🅿️ **Deferred** — NOT a migrated page (this surface was never in the spoke); revisit if comic project/chapter moderation moves here. Every *migrated* page is at parity. |
 | 4 | **User moderation** (ban / mute / strikes / restrictions) unbuilt | `/users` still a placeholder; `/users/newest` is read-only | BLOCKER-if-expected | 🅿️ **Out of scope for now** (user decision) — stays main-app until session-revoke is designed |
 | 5 | `metadata.nsfwLevelReason` not written (+ `IMAGE_METADATA` bust) | `setLevel` (ratings/downleveled) | DEGRADED | ✅ **DONE** — reason + Model3D rollup + cache bust in `updateImageNsfwLevel` |
@@ -53,7 +53,13 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         same statement, `ImageStorageDelete` (the main app's `image-storage-deletes` job deletes the file, with URL
         dedup), `UpdateNsfwLevel` for the post and, when asked, `CdnAccessSync`; the helper then removes the image's collection
         links. After commit, `finishImageDeletes`:
-        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`
+        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`.
+        An image the hold check refuses (CSAM review or block) is left untouched, keeps its search entry, and is
+        returned as `review`, with nothing queued. One that reaches the delete in an open child-safety case is
+        left in place, queued by the same statement as a `PendingDelete` for the main app's `pending-deletes`
+        job, and also returned as `review`; unless it is the moderator's own, the same statement blocks it
+        (`hidden`), so `finishImageDeletes` takes it out of search. Once the holds are removed, every in-case
+        image takes the second path.
   - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; hand
         cover, banner and content images to the shared `queueImageDeletes` in the delete's transaction, which
         queues the author's images nothing else uses, the same rule as `deleteArticleById`; the main app's
@@ -68,7 +74,7 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         file and its resized copies are purged by the main app's `image-storage-deletes` job, and the CDN takedown
         is queued as `CdnAccessSync` by the delete statement itself, so the spoke has no purge helper.
   - [x] **postId images — DONE.** The delete statement queues each deleted image's post for its recount
-        (`UpdateNsfwLevel`), `finishImageDeletes` queues a kept image's post, and both get `bustPostGalleryCaches`
+        (`UpdateNsfwLevel`), `finishImageDeletes` queues the post of each image it blocked (one its case kept and the delete blocked), and both get `bustPostGalleryCaches`
         (the spoke's `bustCachesForPosts` port). An article delete leaves posted images alone in both apps (the
         shared `queueImageDeletes` rule). `postMetrics.queueUpdate`
         is intentionally NOT mirrored — it enqueues to the main app's bucket-based metric queue (unsafe to

@@ -2,6 +2,7 @@ package v1models
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,6 +25,12 @@ type Answer struct {
 	Cached bool
 	// NotFound: the `[id]` body is the not-found answer, which Node sends with a 404.
 	NotFound bool
+	// Absent: a NotFound answer the public route may write as Node's 404 (Config.AnswerNotFound): the
+	// request is a public one (DetailRequest.Serving), the model statement returned no row, and the
+	// model's lag flag read clean (absentConfirmed). Every other NotFound answer (a statement row that
+	// getModelsWithVersions then dropped, a set or unreadable lag flag, the switch off, a shadow
+	// sample) leaves it false, and the public route falls back.
+	Absent bool
 }
 
 // NodeBuiltWindow is how recent an origin cache entry must be to count as the one Node built for the
@@ -47,10 +54,13 @@ type DetailRequest struct {
 	Serving bool
 	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
 	Host string
-	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
-	// (TrainingDataSQLHeader); "" = none (always so for a public request: the server never reads the
-	// header off one, so a Training Data candidate there falls back as drift).
+	// TrainingDataSQL is the Node Training Data rule-set id a sample carried (TrainingDataSQLHeader);
+	// "" = none (always so on a public request, whose header is never read).
 	TrainingDataSQL string
+	// Rules, on a public request, vouches for this build's rules when the Node builds now answering
+	// published exactly them; read only when the body has a Training Data candidate. With neither
+	// vouching, a Training Data candidate falls back as drift.
+	Rules *TrainingDataRules
 }
 
 // ServeDetail answers `GET /api/v1/models/[id]` (the PublicEndpoint path: no session is read).
@@ -71,7 +81,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		if body, age, ok := d.cachedDetail(ctx, id, level); ok && (req.Serving || age >= NodeBuiltWindow) {
 			// withListableTrainingData runs after the cache, which keys on neither the host nor a
 			// restriction placed since the entry was written.
-			out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+			out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL, rules: req.Rules})
 			if err != nil {
 				return nil, err
 			}
@@ -89,7 +99,11 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		return nil, err
 	}
 	if len(res.items) == 0 {
-		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true, NotFound: true}, nil
+		ans := &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true, NotFound: true}
+		if req.Serving && d.Config.AnswerNotFound && res.statementRows == 0 {
+			ans.Absent = d.absentConfirmed(ctx, id)
+		}
+		return ans, nil
 	}
 	// buildPublicModelResponse lists every Public file (Training Data too, without its metadata); the
 	// listing is applied to the built body as to a cached one.
@@ -99,11 +113,24 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	if err != nil {
 		return nil, err
 	}
-	out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+	out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL, rules: req.Rules})
 	if err != nil {
 		return nil, err
 	}
 	return &Answer{Body: out}, nil
+}
+
+// absentConfirmed reports whether a model the statement found no row for may be answered not found
+// here: its lag flag (`lag-helper:model:<id>`, hydrate.Sources.ModelLagFlagged) reads clean. Node's
+// statement reads the replica without consulting the flag, so this is stricter than Node: a model a
+// recent write flagged (a replica that may not show it yet) is handed to Node, as is one whose flag
+// cannot be read (no cache client, a failed read).
+func (d *Deps) absentConfirmed(ctx context.Context, id int) bool {
+	if d.Sources == nil || d.Sources.Packed == nil || d.Sources.Packed.Redis == nil {
+		return false
+	}
+	flagged, err := d.Sources.ModelLagFlagged(ctx, []int{id})
+	return err == nil && !flagged
 }
 
 // cachedDetail is fetchModelResponseCached's read: the packed `{ data, cachedAt }` entry, served when
@@ -139,9 +166,25 @@ type ListRequest struct {
 	Query, Path, Host string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13.
 	RegionRestricted bool
-	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
-	// (TrainingDataSQLHeader); "" = none.
+	// TrainingDataSQL and Rules vouch for the listing, as on DetailRequest.
 	TrainingDataSQL string
+	Rules           *TrainingDataRules
+	// Serving: a public request, not a shadow sample. A text query is answered serving only with
+	// Config.ServeQuery (FEED_GO_V1_MODELS_SERVE_QUERY); a sample is computed whenever a search
+	// backend is configured (the Node sampler sends one only with FEED_GO_SHADOW_V1_MODELS_QUERY).
+	// A model-data miss is computed serving only with Config.ServeDataMiss
+	// (FEED_GO_V1_MODELS_SERVE_DATA_MISS); a sample computes it whenever the miss computation is on
+	// (Config.ComputeMisses), so the shadow compares it before it is served.
+	Serving bool
+}
+
+// computeDataMiss is whether the list computes a model-data miss: serving, only with
+// Config.ServeDataMiss; in a shadow sample, whenever the miss computation is on.
+func (d *Deps) computeDataMiss(serving bool) bool {
+	if serving {
+		return d.Config.ServeDataMiss
+	}
+	return d.Config.ComputeMisses
 }
 
 // UsernameResolver is the `username` filter's user lookup on the replica.
@@ -167,12 +210,16 @@ func (d *Deps) origin(host string) (string, error) {
 	return "https://" + strings.TrimSuffix(h, ":443"), nil
 }
 
-// ServeList answers `GET /api/v1/models` for a signed-out caller with no text query (the
-// Meilisearch path is not ported; an empty `query` is no text query).
+// ServeList answers `GET /api/v1/models` for a signed-out caller. A truthy `query` is the text search
+// (DESIGN.md §16.11): answered only with a search backend (Deps.Search) and, on a public request, with
+// Config.ServeQuery; otherwise it falls back (`v1-models-query`).
 func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListRequest) (*Answer, error) {
 	in, err := ParseList(req.Query)
 	if err != nil {
 		return nil, err
+	}
+	if in.Text != "" && (d.Search == nil || (req.Serving && !d.Config.ServeQuery)) {
+		return nil, fallback.New("v1-models-query")
 	}
 	if d.Config.ImageLocation == "" {
 		return nil, fallback.New("v1-models-unconfigured-urls")
@@ -195,14 +242,23 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	if req.RegionRestricted {
 		level = browsing.SFWLevels
 	}
+	// The text search runs before getModelsRaw (resolveModelSearchIds): its ids are the page, its
+	// lookahead the cursor, whatever the statement then returns.
+	var text *textPage
+	if in.Text != "" {
+		if text, err = d.searchPage(ctx, in, level); err != nil {
+			return nil, err
+		}
+	}
 	// enforceBlockedBrowsingTagsForModels, ahead of every lookup in getModelsRaw: a blocked tag name
-	// is an empty page (`{ items: [] }`, no cursor), with no statement and no username read.
+	// is an empty page (`{ items: [] }`, no cursor but the text search's), with no statement and no
+	// username read.
 	blocked, err := d.tagBlocked(ctx, in.Tag)
 	if err != nil {
 		return nil, err
 	}
 	if blocked {
-		return listAnswer(in, &withVersions{}, nil, origin, path), nil
+		return listAnswer(in, nil, text.cursorOr(""), origin, path), nil
 	}
 	target := 0
 	if in.Username != "" {
@@ -232,24 +288,44 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 			tagID = &id
 		}
 	}
+	raw := RawInput{
+		Take: in.Limit, Cursor: in.Cursor, Archived: in.Archived, DisablePoi: true, TargetUserID: target, TagID: tagID,
+		Types: in.Types, BaseModels: in.BaseModels, Sort: in.Sort, Period: in.Period, PeriodMode: in.PeriodMode,
+		IDs: in.IDs, EarlyAccess: in.EarlyAccess, BrowsingLevel: level,
+		ComputeDataMiss: d.computeDataMiss(req.Serving),
+	}
+	if text != nil {
+		if len(text.ids) == 0 {
+			// No hit is no result (runModelSearch's noTextMatches): Node's statement then carries no
+			// id clause and its rows are discarded, so it is not sent here.
+			return listAnswer(in, nil, text.cursor, origin, path), nil
+		}
+		// `ids: searchIds`, no cursor and no skip: the search's offset is the page.
+		raw.IDs, raw.Cursor = text.ids, ""
+	}
 	res, err := d.getModelsWithVersions(ctx, withVersionsInput{
-		raw: RawInput{
-			Take: in.Limit, Cursor: in.Cursor, Archived: in.Archived, DisablePoi: true, TargetUserID: target, TagID: tagID,
-			Types: in.Types, BaseModels: in.BaseModels, Sort: in.Sort, Period: in.Period, PeriodMode: in.PeriodMode,
-			IDs: in.IDs, EarlyAccess: in.EarlyAccess, BrowsingLevel: level,
-		},
-		hidePrivate: in.IDs == nil && in.Username == "",
+		raw: raw,
+		// hidePrivateModels is `!ids && !username`: the search's ids are an array, even empty.
+		hidePrivate: raw.IDs == nil && in.Username == "",
 	})
 	if err != nil {
 		return nil, err
 	}
+	items := res.items
+	cursor := res.nextCursor
+	if text != nil {
+		// The search's order, not the statement's (getModelsWithVersions re-sorts): each hit the
+		// statement returned, in hit order; a hit it did not return is left out.
+		items = inSearchOrder(text.ids, items)
+		cursor = text.cursor
+	}
 	// runModelSearch's trainingDataListing over every item's versions (all their files, before the
 	// shaper's own filters).
-	versions := make([]superjson.Object, 0, len(res.items))
-	for _, it := range res.items {
+	versions := make([]superjson.Object, 0, len(items))
+	for _, it := range items {
 		versions = append(versions, it.versions...)
 	}
-	listing, err := d.trainingDataListing(ctx, versions, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+	listing, err := d.trainingDataListing(ctx, versions, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL, rules: req.Rules})
 	if err != nil {
 		return nil, err
 	}
@@ -257,27 +333,84 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 		level: level, downloadBase: origin, nsfwImagePassthrough: in.Nsfw && !req.RegionRestricted,
 		primaryFileOnly: in.PrimaryFileOnly, imageLocation: d.Config.ImageLocation, listing: listing,
 	}
-	items := make([]any, 0, len(res.items))
-	for _, it := range res.items {
+	shaped := make([]any, 0, len(items))
+	for _, it := range items {
 		o, err := shapeModel(it, opts)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, o)
+		shaped = append(shaped, o)
 	}
-	return listAnswer(in, res, items, origin, path), nil
+	return listAnswer(in, shaped, cursor, origin, path), nil
+}
+
+// textPage is resolveModelSearchIds' answer: the page's ids in the index's order, and the next
+// offset when the lookahead hit came back ("" = none).
+type textPage struct {
+	ids    []int
+	cursor string
+}
+
+func (t *textPage) cursorOr(def string) string {
+	if t == nil {
+		return def
+	}
+	return t.cursor
+}
+
+// searchPage runs the request's text search. A failed search falls back
+// (`v1-models-query-search-failed`): Node makes its own call and answers it (a 503 on a brownout). A
+// search the guard rejected (ErrSearchRejected: the circuit open, the concurrency cap reached) was
+// never made: it is handed back at once as an unanswered text query (`v1-models-query`), counted on
+// its own by the guard's OnReject.
+func (d *Deps) searchPage(ctx context.Context, in *ListInput, level int) (*textPage, error) {
+	hits, err := d.Search.SearchModelIDs(ctx, searchRequest(in, level))
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, ErrSearchRejected) {
+			return nil, fallback.New("v1-models-query")
+		}
+		return nil, fallback.New("v1-models-query-search-failed")
+	}
+	page := &textPage{ids: hits}
+	if len(hits) > in.Limit {
+		page.ids = hits[:in.Limit]
+		page.cursor = strconv.Itoa(in.TextOffset + in.Limit)
+	}
+	return page, nil
+}
+
+// inSearchOrder is `searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)`.
+func inSearchOrder(ids []int, items []*item) []*item {
+	byID := make(map[int]*item, len(items))
+	for _, it := range items {
+		if id, ok := intOf(getVal(it.base, "id")); ok {
+			if _, seen := byID[id]; !seen {
+				byID[id] = it
+			}
+		}
+	}
+	out := make([]*item, 0, len(ids))
+	for _, id := range ids {
+		if it := byID[id]; it != nil {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // listAnswer is the handler's body: `{ items, metadata: { nextCursor, nextPage, currentPage?,
-// pageSize? } }`, the undefined members left out.
-func listAnswer(in *ListInput, res *withVersions, items []any, origin, path string) *Answer {
+// pageSize? } }`, the undefined members left out. cursor is the next cursor ("" = none).
+func listAnswer(in *ListInput, items []any, cursor, origin, path string) *Answer {
 	if items == nil {
 		items = []any{}
 	}
 	meta := superjson.Object{}
-	if res.nextCursor != "" {
-		meta = append(meta, superjson.Field{Key: "nextCursor", Val: res.nextCursor})
-		params := feed.WithParam(in.Query, "cursor", res.nextCursor)
+	if cursor != "" {
+		meta = append(meta, superjson.Field{Key: "nextCursor", Val: cursor})
+		params := feed.WithParam(in.Query, "cursor", cursor)
 		meta = append(meta, superjson.Field{Key: "nextPage", Val: origin + path + "?" + feed.QSStringify(params)})
 	}
 	if in.Page > 0 && in.Cursor == "" {
@@ -285,7 +418,7 @@ func listAnswer(in *ListInput, res *withVersions, items []any, origin, path stri
 	}
 	return &Answer{
 		Body:    superjson.Object{{Key: "items", Val: items}, {Key: "metadata", Val: meta}},
-		Trivial: len(res.items) == 0,
+		Trivial: len(items) == 0,
 	}
 }
 
