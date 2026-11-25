@@ -114,6 +114,11 @@ type Config struct {
 	// `image.getInfinite` request with `postIds` (feed.InfinitePorts). Off, such a request is the
 	// `input-postIds` fallback, as before the port.
 	InfiniteServeInputPostIDs bool
+	// InfiniteServeSortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM (default off): compute an
+	// image.getInfinite request for a collection's `sort: 'Random'` (feed.InfinitePorts.SortRandom). Off,
+	// it is the `input-sort` fallback, as before the port. It changes nothing while ServeInfinite is
+	// off, except what the shadow computes.
+	InfiniteServeSortRandom bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
 	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
@@ -283,13 +288,14 @@ func Load() (*Config, error) {
 
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 
-		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
-		ModelImagesSlim:      boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),
-		CoverageNext:         boolEnv("FEED_GO_GENERATION_COVERAGE_NEXT", true),
-		LoadingOpenToAll:     boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
-		Pprof:                boolEnv("FEED_GO_PPROF", false),
-		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
-		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
+		BaseModelFeedMetrics:    boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
+		ModelImagesSlim:         boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),
+		CoverageNext:            boolEnv("FEED_GO_GENERATION_COVERAGE_NEXT", true),
+		LoadingOpenToAll:        boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
+		Pprof:                   boolEnv("FEED_GO_PPROF", false),
+		ServeModelGetAll:        boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
+		ServeInfinite:           boolEnv("FEED_GO_SERVE_INFINITE", false),
+		InfiniteServeSortRandom: boolEnv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", false),
 
 		InfiniteServeInputPostIDs: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", false),
 

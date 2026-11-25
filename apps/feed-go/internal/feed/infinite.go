@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +92,9 @@ type InfinitePorts struct {
 	PublishedOnly bool
 	// PostIDs is FEED_GO_INFINITE_SERVE_INPUT_POST_IDS: compute a request with `postIds`.
 	PostIDs bool
+	// SortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM: compute a collection's `sort: 'Random'`
+	// (random.go). Off, it is the `input-sort` fallback.
+	SortRandom bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
@@ -172,11 +176,20 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	// Recently Added orders on the collection's items: answered beside a collectionId only (without
-	// one, Node's BAD_REQUEST: the input-sort fallback parseInput raises for it).
-	recentlyAdded := m["sort"] == SortRecentlyAdded && !isEmpty(m["collectionId"])
+	// Recently Added and Random order on the collection's items: answered beside a collectionId only
+	// (without one, Node's BAD_REQUEST: the input-sort fallback parseInput raises for it). Random only
+	// with its port on.
+	collectionSort := ""
+	if !isEmpty(m["collectionId"]) {
+		switch {
+		case m["sort"] == SortRecentlyAdded:
+			collectionSort = SortRecentlyAdded
+		case m["sort"] == SortRandom && ports.SortRandom:
+			collectionSort = SortRandom
+		}
+	}
 	parsed := withoutUnreadIncludes(m)
-	if recentlyAdded {
+	if collectionSort != "" {
 		parsed = without(parsed, "sort")
 	}
 	unsupported := infiniteUnsupported
@@ -191,8 +204,8 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 		return nil, err
 	}
 	in := &InfiniteInput{Input: *base}
-	if recentlyAdded {
-		in.Sort = SortRecentlyAdded
+	if collectionSort != "" {
+		in.Sort = collectionSort
 	}
 	if v, ok := m["userId"]; ok && v != nil {
 		n, err := intIn(v, 0, math.MaxInt32)
@@ -276,6 +289,14 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 		if in.PostIDs, err = int4IDs(v, "postIds"); err != nil {
 			return nil, err
 		}
+	}
+	// A collection's Random sort beside a `postId`: getAllImages orders it by the seeded sort key (its
+	// Random branch replaces the post scope's `i."index"`, then appends `, i."id"`) and builds the
+	// `seed:sortKey:id` cursor, where this service's post scope (ImagesQuery.IndexOrder, a `postId`
+	// without a `modelId`) would order by the index and page on it. Every Random request with a
+	// `postId` is left to Node, decided by the input alone.
+	if in.Sort == SortRandom && in.PostID != 0 {
+		return nil, fallback.New("collection-random-post-id")
 	}
 	return in, nil
 }
@@ -751,6 +772,9 @@ type InfiniteDeps struct {
 	// Ports are the input shapes served behind their own switch (ParseInfiniteWith), all off by
 	// default.
 	Ports InfinitePorts
+	// RandomSeed reads a collection's Random seed (InfinitePorts.SortRandom); nil = not configured (a
+	// Random request that needs the stored seed falls back).
+	RandomSeed *RandomSeed
 }
 
 // InfiniteRequest is one call.
@@ -1085,7 +1109,14 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 // infiniteFromDB is getAllImages for one page (no overscan, no grouping), stamped
 // `{ nextCursor, items, source: 'db' }` by the handler.
 func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time) (*InfiniteAnswer, error) {
-	if !in.NumericCursor() {
+	var random *RandomCursor
+	if in.Sort == SortRandom {
+		// getAllImages' Random branch reads its own `seed:sortKey:id` cursor and never calls getCursor.
+		var err error
+		if random, err = parseRandomCursor(&in.Input); err != nil {
+			return nil, err
+		}
+	} else if !in.NumericCursor() {
 		// getCursor reads a single-field sort's cursor as one integer; anything else is a 400.
 		return nil, fallback.Newf("input-cursor", "%q", in.CursorText)
 	}
@@ -1144,6 +1175,23 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			return &InfiniteAnswer{Value: superjson.Object{
 				{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}, {Key: "source", Val: "db"},
 			}, Trivial: true}, nil
+		}
+	}
+	if in.Sort == SortRandom {
+		// The cursor's seed when it is truthy, else the stored one (getCollectionRandomSeed), read
+		// only once the collection is readable: an unreadable one is the empty page above, which Node
+		// answers whatever the seed.
+		q.Cursor = 0
+		if random != nil {
+			q.RandomSeed = random.Seed
+			q.RandomCursor = random
+		}
+		if q.RandomSeed == 0 {
+			seed, err := d.RandomSeed.Seed(ctx)
+			if err != nil {
+				return nil, err
+			}
+			q.RandomSeed = seed
 		}
 	}
 	if in.prioritizedSystemUser() {
@@ -1233,9 +1281,14 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 	if len(rows) > q.Limit {
 		look := rows[len(rows)-1]
 		rows = rows[:len(rows)-1]
-		if look.CursorNull {
+		switch {
+		case q.Sort == SortRandom && q.CollectionID != 0:
+			// The Random page's `concat(seed::text, ':', ct."sortKey"::text, ':', i."id"::text)`: the
+			// query selects the sort key, and the string is built from the seed it bound.
+			next = strconv.FormatInt(q.RandomSeed, 10) + ":" + strconv.Itoa(look.CursorID) + ":" + strconv.Itoa(look.ID)
+		case look.CursorNull:
 			next = nil
-		} else {
+		default:
 			next = int64(look.CursorID)
 		}
 	}

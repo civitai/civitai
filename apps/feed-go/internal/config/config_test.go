@@ -271,6 +271,34 @@ func TestLoadGetAllUserCosmeticsMissDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_INFINITE_SERVE_SORT_RANDOM is off unless set, and is its own switch: FEED_GO_SERVE_INFINITE
+// does not turn it on, nor it FEED_GO_SERVE_INFINITE.
+func TestLoadInfiniteServeSortRandomDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeSortRandom != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_SORT_RANDOM=%q -> %v, want %v", in, c.InfiniteServeSortRandom, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	if c, err := Load(); err != nil || c.InfiniteServeSortRandom || !c.ServeInfinite {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: InfiniteServeSortRandom=%v ServeInfinite=%v err=%v, want false, true", c.InfiniteServeSortRandom, c.ServeInfinite, err)
+	}
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	t.Setenv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", "true")
+	if c, err := Load(); err != nil || !c.InfiniteServeSortRandom || c.ServeInfinite {
+		t.Fatalf("FEED_GO_INFINITE_SERVE_SORT_RANDOM=true alone: InfiniteServeSortRandom=%v ServeInfinite=%v err=%v, want true, false", c.InfiniteServeSortRandom, c.ServeInfinite, err)
+	}
+}
+
 // The model.getAll input ports' switches default off, and each turns on only its own port.
 func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {

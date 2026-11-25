@@ -55,6 +55,16 @@ var goldenInfinitePorts = map[string]goldenInfinitePort{
 			"post-ids-taken-down-owner":    "input-postIds",
 		},
 	},
+	"SortRandom": {
+		on: func(fx *goldenFixture) *bool { return &fx.Config.ServeSortRandom },
+		fixtures: map[string]string{
+			"collection-random-first-page":       "input-sort",
+			"collection-random-cursor":           "input-sort",
+			"collection-random-cursor-seed-wins": "input-sort",
+			"collection-random-numeric-cursor":   "input-sort",
+			"collection-random-cursor-zero-seed": "input-sort",
+		},
+	},
 }
 
 // goldenInfinitePortCase is one fixture of one port.
