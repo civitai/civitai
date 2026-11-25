@@ -148,7 +148,7 @@ function pruneBefore(timestamps: number[], cutoff: number) {
 }
 
 // Params that page or time-cut a feed; a query carrying any of them is not a first page.
-const PAGING_PARAMS = ['cursor', 'offset', 'before'];
+const PAGING_PARAMS = ['cursor', 'offset']; // PROBE MUTANT: before dropped
 
 /**
  * The cache key for a request, or undefined when its page must not be cached: a signed-in viewer,

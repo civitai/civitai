@@ -2,11 +2,16 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"syscall"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -157,5 +162,76 @@ func TestAnswerInfiniteFeedUnavailableOnlyForMarkedInfinite(t *testing.T) {
 				t.Errorf("%s: requests{%s,outcome=feed_unavailable} = %v, want 0", c.name, e, v)
 			}
 		}
+	}
+}
+
+// feedUnavailableCauses is every feed_go_feed_unavailable_total series in reg, as
+// "endpoint reason detail" -> value.
+func feedUnavailableCauses(t *testing.T, reg *prometheus.Registry) map[string]float64 {
+	t.Helper()
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]float64{}
+	for _, mf := range mfs {
+		if mf.GetName() != "feed_go_feed_unavailable_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			l := map[string]string{}
+			for _, p := range m.GetLabel() {
+				l[p.GetName()] = p.GetValue()
+			}
+			out[l[EndpointLabel]+" "+l["reason"]+" "+l["detail"]] = m.GetCounter().GetValue()
+		}
+	}
+	return out
+}
+
+// The answered 503 records why the feed call failed, as the fallback it replaces would have
+// (feed_go_fallback_total's reason plus the fallback's loggable detail), on
+// feed_go_feed_unavailable_total{feed_endpoint, reason, detail}: a refused connection, the feed
+// client's own timeout and a 5xx are three different series, so an outage can be told apart. The
+// detail is bounded: a failed call's is one of fallback.ErrorClasses, a 5xx's its status, anything
+// else `other`. With the switch off nothing is counted there (the fallback records it instead).
+func TestAnswerInfiniteFeedUnavailableRecordsTheCause(t *testing.T) {
+	refused := &url.Error{Op: "Get", URL: "http://feed.invalid/v1/feed", Err: &net.OpError{Op: "dial", Net: "tcp",
+		Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}}}
+	timedOut := &url.Error{Op: "Get", URL: "http://feed.invalid/v1/feed", Err: context.DeadlineExceeded}
+	mark := func(fb error) error { return &feed.UnavailableError{Fallback: fb} }
+	for _, c := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"connection refused", mark(fallback.Wrap("feed-unavailable", refused)), "infinite feed-unavailable conn_refused"},
+		{"the feed client's timeout", mark(fallback.Wrap("feed-unavailable", timedOut)), "infinite feed-unavailable deadline"},
+		{"a body that is not JSON", mark(fallback.Wrap("feed-unavailable", &json.SyntaxError{})), "infinite feed-unavailable json"},
+		{"a 503", mark(fallback.Safef("feed-status", "%d", 503)), "infinite feed-status 503"},
+		{"a 502", mark(fallback.Safef("feed-status", "%d", 502)), "infinite feed-status 502"},
+		{"a detail outside the classes", mark(fallback.Safef("feed-unavailable", "%s", "free text")), "infinite feed-unavailable other"},
+		{"a status outside 5xx", mark(fallback.Safef("feed-status", "%d", 404)), "infinite feed-status other"},
+		{"another reason", mark(fallback.Safef("feed-hydrate-error", "%s", "pg_57")), "infinite other other"},
+	} {
+		reg := prometheus.NewRegistry()
+		s, _ := feedUnavailableServer(reg, true, c.err)
+		w := httptest.NewRecorder()
+		PublicMux(s).ServeHTTP(w, regionRequest("/api/trpc/image.getInfinite?input=%7B%22json%22%3A%7B%7D%7D", nil))
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s: status %d, want 503", c.name, w.Code)
+		}
+		if got, want := feedUnavailableCauses(t, reg), map[string]float64{c.want: 1}; !maps.Equal(got, want) {
+			t.Errorf("%s: feed_go_feed_unavailable_total %v, want %v", c.name, got, want)
+		}
+	}
+	reg := prometheus.NewRegistry()
+	s, _ := feedUnavailableServer(reg, false, mark(fallback.Wrap("feed-unavailable", refused)))
+	PublicMux(s).ServeHTTP(httptest.NewRecorder(), regionRequest("/api/trpc/image.getInfinite?input=%7B%22json%22%3A%7B%7D%7D", nil))
+	if got := feedUnavailableCauses(t, reg); len(got) != 0 {
+		t.Errorf("off: feed_go_feed_unavailable_total %v, want no series", got)
+	}
+	if v := infiniteServeFallbacks(t, reg, "feed-unavailable"); v != 1 {
+		t.Errorf("off: feed-unavailable fallbacks = %v, want 1", v)
 	}
 }
