@@ -17,7 +17,8 @@
  *   --notifications notifications-db replica
  *
  * Options:
- *   --explain       Run EXPLAIN ANALYZE on the query
+ *   --explain       Show the query plan (EXPLAIN); the query is not run
+ *   --explain-analyze  Run the query and show the plan with timings (EXPLAIN ANALYZE)
  *   --writable      Use the primary database (DATABASE_URL) instead of replica
  *   --timeout <s>   Query timeout in seconds (default: 30)
  *   --file, -f      Read query from a file
@@ -123,7 +124,7 @@ const DEFAULT_TARGET = 'prod';
 // Parse arguments
 const args = process.argv.slice(2);
 let query = '';
-let explain = false;
+let explain = null;
 let writable = false;
 let jsonOutput = false;
 let quiet = false;
@@ -136,7 +137,9 @@ for (let i = 0; i < args.length; i++) {
   if (targetName) {
     if (!requestedTargets.includes(targetName)) requestedTargets.push(targetName);
   } else if (arg === '--explain') {
-    explain = true;
+    explain = 'EXPLAIN';
+  } else if (arg === '--explain-analyze') {
+    explain = 'EXPLAIN ANALYZE';
   } else if (arg === '--writable') {
     writable = true;
   } else if (arg === '--json') {
@@ -162,7 +165,7 @@ for (let i = 0; i < args.length; i++) {
     // a `--` comment is still SQL, hence the two exceptions above.
     console.error(`Error: unknown option "${arg}".`);
     console.error(`Targets: ${Object.values(TARGETS).map((t) => t.flag).join(', ')}`);
-    console.error('Options: --explain --writable --timeout <s> --file <path> --json --quiet');
+    console.error('Options: --explain --explain-analyze --writable --timeout <s> --file <path> --json --quiet');
     process.exit(1);
   } else {
     query = arg;
@@ -179,7 +182,8 @@ Targets (pick one, defaults to --prod):
   --notifications notifications-db replica (read-only, needs tunnel)
 
 Options:
-  --explain       Run EXPLAIN ANALYZE on the query
+  --explain       Show the query plan (EXPLAIN); the query is not run
+  --explain-analyze  Run the query, show the plan with timings (EXPLAIN ANALYZE)
   --writable      Use primary database (requires explicit permission)
   --timeout <s>   Query timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --file, -f      Read query from a file
@@ -346,6 +350,9 @@ async function main() {
         await client.end();
         process.exit(1);
       }
+      // Not redundant with the statement_timeout connection option: a transaction pooler may drop
+      // startup parameters. SET LOCAL travels with the transaction.
+      await client.query(`SET LOCAL statement_timeout = ${timeoutSeconds * 1000}`);
     }
 
     // The read-only prod target is a hot standby. A server that is not in recovery is a primary or a
@@ -366,7 +373,7 @@ async function main() {
       }
     }
 
-    const finalQuery = explain ? `EXPLAIN ANALYZE ${query}` : query;
+    const finalQuery = explain ? `${explain} ${query}` : query;
     const start = Date.now();
     const queryResult = await client.query(
       readOnlyRun ? { text: finalQuery, queryMode: 'extended' } : finalQuery
