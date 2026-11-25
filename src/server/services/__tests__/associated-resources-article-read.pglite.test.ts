@@ -151,9 +151,12 @@ afterAll(() => h?.stop());
 
 describe('getAssociatedResourcesSimple article side', () => {
   const listed = async (viewer: ArticleReader) =>
-    (await getAssociatedResourcesSimple({ fromId: MODEL, type: 'Suggested' }, viewer)).map(
-      (x) => x.item.title
-    );
+    (
+      await getAssociatedResourcesSimple(
+        { fromId: MODEL, type: 'Suggested', browsingLevel: 31 },
+        viewer
+      )
+    ).map((x) => ('title' in x.item ? x.item.title : null));
 
   it('lists only live, viewable articles to anyone but the author and moderators', async () => {
     expect(await listed(VIEWERS.anon)).toEqual(['live', 'unsearchable', 'earlyAccess']);
@@ -166,8 +169,12 @@ describe('getAssociatedResourcesSimple article side', () => {
     expect(await listed(VIEWERS.moderator)).toEqual(all);
   });
 
-  it('returns the same article fields as before', async () => {
-    const [first] = await getAssociatedResourcesSimple({ fromId: MODEL, type: 'Suggested' });
+  it('does not return the read-rule columns on the article item', async () => {
+    const [first] = await getAssociatedResourcesSimple({
+      fromId: MODEL,
+      type: 'Suggested',
+      browsingLevel: 31,
+    });
     expect(Object.keys(first.item).sort()).toEqual(['id', 'nsfwLevel', 'title', 'user']);
   });
 });
