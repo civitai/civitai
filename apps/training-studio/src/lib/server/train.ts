@@ -53,12 +53,10 @@ export async function submitTrainingBatch(
             message: 'submit mature count',
             userId,
             images,
-            mature,
             failed,
-            rated,
             unrated: unratedKeys.length,
             // Not Axiom fields on this dataset, so they ride in payload.
-            payload: { v2NotMatureUploadMature, v2MatureUploadNotMature },
+            payload: { mature, rated, v2NotMatureUploadMature, v2MatureUploadNotMature },
           })
       : undefined,
     callbacks: workflowSignalCallbacks(userId),
