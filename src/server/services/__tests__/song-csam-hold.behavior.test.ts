@@ -5,6 +5,7 @@ import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Prisma } from '@prisma/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
+import type * as FliptClient from '~/server/flipt/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
@@ -26,6 +27,12 @@ vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
     feed.statement = statement;
     throw FEED_CAPTURED;
   }),
+}));
+// Flipt answers the `music` flag: on for every viewer here.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (key: string) => (key === 'music' ? true : null),
 }));
 
 const { trackLyricsModerationAdapter } = await import(

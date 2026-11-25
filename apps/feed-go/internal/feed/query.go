@@ -177,6 +177,16 @@ func (q *ImagesQuery) Build() Built {
 	if len(q.Types) > 0 {
 		and = append(and, `i.type = ANY(`+a.add(q.Types)+`::text[]::"MediaType"[])`)
 	}
+	// songsHiddenSql: a viewer without the `music` flag gets no song (type 'audio') but their own,
+	// and a cached model gallery names no viewer. feed-go cannot evaluate the Flipt-backed flag, so
+	// here only moderators (who always hold it) see other users' songs.
+	if !q.IsModerator {
+		if q.ViewerID != 0 && q.ModelID == 0 && q.ModelVersionID == 0 && q.Model3DID == 0 {
+			and = append(and, `(i."type" != 'audio' OR i."userId" = `+a.add(q.ViewerID)+`)`)
+		} else {
+			and = append(and, `i."type" != 'audio'`)
+		}
+	}
 	if q.WithMeta {
 		and = append(and, `NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`)
 	}

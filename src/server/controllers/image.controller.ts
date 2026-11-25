@@ -1236,6 +1236,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
         shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
+        music: !!ctx.features?.music,
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.

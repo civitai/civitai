@@ -104,8 +104,10 @@ import {
 } from '~/server/utils/image-removal-mode';
 import {
   assertImageVisibleToViewer,
+  canSeeSongs,
   entityImageVisibilityConditions,
   getVisibleSongIds,
+  songsHiddenSql,
   imageBlockedForConditions,
   notReportListedSql,
   reviewedGalleryImageConditions,
@@ -2950,6 +2952,12 @@ const getAllImagesUncaptured = async (
   if (types && types.length > 0) {
     AND.push(Prisma.sql`i.type = ANY(ARRAY[${Prisma.join(types)}]::"MediaType"[])`);
   }
+  // Model galleries are cached across viewers, so they exempt no owner (songsHiddenSql).
+  const songsHidden = songsHiddenSql({
+    music: canSeeSongs(user),
+    ownerId: modelId || modelVersionId || model3dId ? undefined : userId,
+  });
+  if (songsHidden) AND.push(songsHidden);
 
   // [x]
   if (include.includes('meta')) {
@@ -4694,6 +4702,7 @@ export const getImage = async ({
   isModerator,
   ownerSeesHeld = false,
   shownReviewImageLevels,
+  music,
 }: GetImageInput & {
   userId?: number;
   isModerator?: boolean;
@@ -4701,10 +4710,18 @@ export const getImage = async ({
   ownerSeesHeld?: boolean;
   /** `imageVisibilityConditions`' `shownReviewImageLevels`: the image page's read only. */
   shownReviewImageLevels?: number;
+  /** `imageVisibilityConditions`' `music`: the viewer's flag, for a read that should hide songs. */
+  music?: boolean;
 }) => {
   const AND = [
     Prisma.sql`i.id = ${id}`,
-    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, shownReviewImageLevels }),
+    ...imageVisibilityConditions({
+      userId,
+      isModerator,
+      ownerSeesHeld,
+      shownReviewImageLevels,
+      music,
+    }),
   ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
@@ -5023,6 +5040,9 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(...reviewedGalleryImageConditions(browsingLevel || allBrowsingLevelsFlag));
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  // A read without a viewer fills the shared cache, so it serves no song.
+  const songsHidden = songsHiddenSql({ music: !!user && canSeeSongs(user), ownerId: userId });
+  if (songsHidden) imageWhere.push(songsHidden);
 
   const query = Prisma.sql`
      WITH targets AS (
@@ -5301,6 +5321,8 @@ export const getImagesForPosts = async ({
     );
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  const songsHidden = songsHiddenSql({ music: canSeeSongs(user), ownerId: userId });
+  if (songsHidden) imageWhere.push(songsHidden);
 
   if (isModerator) {
     if (poiOnly) {

@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * The post feed's images, run as SQL over seeded rows: a song held for csam review (its lyrics or
@@ -15,6 +16,12 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+// Flipt answers the `music` flag: on for every viewer here.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (key: string) => (key === 'music' ? true : null),
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getImagesForPosts } from '~/server/services/image.service';

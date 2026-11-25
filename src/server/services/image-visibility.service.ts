@@ -18,10 +18,12 @@ import {
   notReviewImageSql,
   shownReviewImageSql,
 } from '~/server/services/creator-service-review-image-sql';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { SessionUser } from '~/types/session';
 
 /**
  * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
@@ -125,9 +127,15 @@ export function imageVisibilityConditions({
   ownerSeesHeld = false,
   shownReviewImageLevels,
   judgingCrucibleIds,
+  music,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /**
+   * The viewer's `music` flag: `false` hides songs other than the viewer's own (`songsHiddenSql`).
+   * Unset leaves songs to the caller, as for a by-id action a song procedure already gated.
+   */
+  music?: boolean;
   /**
    * `userId` (the session user) also sees their own items under an owner-hidden review hold. Only
    * for a read that shows the owner their item; not for one that acts on the image (a remix, say).
@@ -226,8 +234,29 @@ export function imageVisibilityConditions({
     imageNotRestrictedSql({ viewerId: userId }),
     // Without the opt-in, a review image is closed to its uploader too (moderators aside).
     ...(shownReviewImageLevels === undefined ? [notReviewImageSql] : []),
+    ...(music === false ? [songsHiddenSql({ music, ownerId: userId })!] : []),
   ];
 }
+
+/**
+ * Songs are `Image` rows with `type = 'audio'`. A generic image read serves them only to `music`
+ * flag holders (moderators hold it) and to their owner: this, as SQL over `"Image" i`, or
+ * undefined when nothing is hidden. Give no `ownerId` to a read cached for many viewers, where a
+ * viewer id in the statement would key the cache per user.
+ */
+export function songsHiddenSql({ music, ownerId }: { music: boolean; ownerId?: number }) {
+  if (music) return undefined;
+  return ownerId
+    ? Prisma.sql`(i."type" != 'audio' OR i."userId" = ${ownerId})`
+    : Prisma.sql`i."type" != 'audio'`;
+}
+
+/**
+ * Whether generic image reads serve songs to `user`: the `music` flag, or a moderator (a Flipt answer
+ * overrides the flag's role check, so a moderator outside its segment would otherwise lose them).
+ */
+export const canSeeSongs = (user: SessionUser | undefined) =>
+  !!user?.isModerator || !!getFeatureFlagsLazy({ user }).music;
 
 /**
  * The image's owner, rating and post, or NOT_FOUND unless the viewer may see its generation data:

@@ -23,7 +23,8 @@ const ImageOnSiteSQL = `(i.meta->>'civitaiResources' IS NOT NULL
 // sqlVersionImages is imagesForModelVersionsCache's lookupFn query: getImagesForModelVersion
 // (src/server/services/image.service.ts) with `{modelVersionIds, imagesPerVersion: 20, db}` and no
 // other option, so no user (imageBlockedForConditions drops every blocked image, and
-// minorMatureImageVisibleSql every image the minor content rule restricts), no browsing level (the
+// minorMatureImageVisibleSql every image the minor content rule restricts, songsHiddenSql every
+// song), no browsing level (the
 // reviewed, non-pending, rated branch), no include (no meta column, no tags). Its enum and json
 // columns are selected as text (Prisma hands the Node code the enum's name and JSON.parse of the
 // json). The target ids are one int[] parameter where Node binds ARRAY[$1, …]; LIMIT is the bound 20.
@@ -45,6 +46,7 @@ var sqlVersionImages = `WITH targets AS (
       AND (i."nsfwLevel" & ` + strconv.Itoa(browsing.AllLevels) + `) != 0
       AND ` + ImageReviewedSQL("i") + `
       AND ` + MinorMatureImageHiddenSQL("i") + `
+      AND i."type" != 'audio'
       AND (
         (i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0
         OR NOT i."modelRestricted"

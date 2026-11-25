@@ -68,6 +68,15 @@ func (q assocImageQuery) build() (string, []any) {
 		hydrate.ImageReviewedSQL("i"),
 		// minorMatureImageVisibleSql({ userId, isModerator }).
 		hydrate.MinorMatureImageVisibleSQL("i", q.ViewerID, q.IsModerator, bind))
+	// songsHiddenSql: no song but the viewer's own; feed-go cannot evaluate the `music` flag, so only
+	// moderators (who always hold it) see other users' songs.
+	if !q.IsModerator {
+		if q.ViewerID != 0 {
+			and = append(and, `(i."type" != 'audio' OR i."userId" = `+bind(q.ViewerID)+`)`)
+		} else {
+			and = append(and, `i."type" != 'audio'`)
+		}
+	}
 	// imageNotRestrictedSql({ viewerId: userId }): the uploader carve-out for a positive id only.
 	notRestricted := `((i."nsfwLevel" & ` + strconv.Itoa(table.Levels.NSFW) + `) = 0 OR NOT i."modelRestricted"`
 	if q.ViewerID > 0 {
