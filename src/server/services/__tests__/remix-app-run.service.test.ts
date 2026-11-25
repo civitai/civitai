@@ -521,8 +521,17 @@ beforeEach(() => {
   h.price = 30;
   // No rows yet: the registry serves the seed.
   dbMock.dbWrite.appBlock.findMany.mockResolvedValue([]);
+  // Only the selected columns, as Prisma returns them: a flag the loader stops selecting goes unseen.
   dbMock.dbRead.image.findUnique.mockImplementation(
-    async ({ where }: { where: { id: number } }) => h.images.get(where.id) ?? null
+    async ({ where, select }: { where: { id: number }; select?: Record<string, boolean> }) => {
+      const row = h.images.get(where.id) as Record<string, unknown> | undefined;
+      if (!row || !select) return row ?? null;
+      return Object.fromEntries(
+        Object.keys(select)
+          .filter((k) => select[k])
+          .map((k) => [k, row[k]])
+      );
+    }
   );
   h.submitWorkflow.mockImplementation(
     async ({ body, query }: { body: Record<string, unknown>; query?: { whatif?: boolean } }) => {
