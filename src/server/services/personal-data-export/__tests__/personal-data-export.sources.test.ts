@@ -278,7 +278,7 @@ describe('exportWorkflows', () => {
     expect(yielded).toBeLessThan(MONGO_DOC_CAP + 2);
   });
 
-  /** The stored shape (PascalCase), as a key census of real documents showed it. */
+  /** Stored shape: PascalCase keys. */
   const storedDoc = () => ({
     _id: '777-1',
     Status: 3,
@@ -448,6 +448,10 @@ describe('exportWorkflows', () => {
 
     it('keeps generations, whichever way the step type is stored', () => {
       expect(isUserGeneration(storedDoc())).toBe(true);
+      for (const purpose of ['checkpoint-merge', 'reviewed-style', 'generationSource'])
+        expect(isUserGeneration({ ...storedDoc(), Metadata: { purpose } }), purpose).toBe(true);
+      for (const purpose of ['text-scan-preview', 'moderation-review', 'audit'])
+        expect(isUserGeneration({ ...storedDoc(), Metadata: { purpose } }), purpose).toBe(false);
       for (const t of ['imageGen', 'ImageGenStep', 'videoGen', 'VideoGenStep', 'comfy', 'training'])
         expect(isUserGeneration({ Steps: [step(t, '0'), step('textToImage', '1')] }), t).toBe(true);
     });

@@ -85,7 +85,8 @@ export const USER_STEP_TYPES: ReadonlySet<string> = new Set(
   ].map((t) => t.toLowerCase())
 );
 
-const SYSTEM_PURPOSE_RE = /(scan|moderat|audit|review|classif|check)/i;
+/** A site-set purpose such as `text-scan-preview`, matched as a whole word so `checkpoint` is not one. */
+const SYSTEM_PURPOSE_RE = /(^|[^a-z])(scan|moderat\w*|audit|review|classif\w*|check)([^a-z]|$)/i;
 
 const stepType = (t: unknown) =>
   typeof t === 'string' ? t.toLowerCase().replace(/step$/, '') : undefined;
@@ -236,7 +237,7 @@ export async function exportWorkflows({
     source: 'mongo',
     rows: 0,
     description:
-      'Your generation workflows: prompts, settings, resources, steps and dates. Outputs are listed as links and details, not files.',
+      'Your generation workflows: prompts, settings, resources, steps and dates. Outputs are listed as links and details, not files. Not included: workflows the site runs itself, and generations made with chat (language-model) steps.',
     status: 'complete',
   };
   // One past the cap, so reaching it is distinguishable from having exactly that many.
