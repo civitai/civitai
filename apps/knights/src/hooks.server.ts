@@ -25,10 +25,19 @@ const PUBLIC_PATHS = new Set([
 const PROBE_PATHS = new Set(['/healthz', '/readyz', '/metrics']);
 
 // Open both Redis connections at boot instead of on the first request that needs one. Not awaited: a
-// connect that hangs must not hold up serving, and a failed connect is logged and retried by the client.
+// connect that hangs must not hold up serving, and @civitai/redis logs and retries a failed connect. A client
+// that cannot even be built (bad config) is logged, not thrown: the first request that needs it retries.
 export const init: ServerInit = () => {
-  getSysRedis();
-  getCacheRedis();
+  for (const [name, open] of [
+    ['sys', getSysRedis],
+    ['cache', getCacheRedis],
+  ] as const) {
+    try {
+      open();
+    } catch (err) {
+      console.error(`[knights] redis-init-failed (${name})`, err);
+    }
+  }
   void readiness.check();
 };
 

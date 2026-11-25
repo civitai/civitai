@@ -128,6 +128,18 @@ describe('knights access gate', () => {
     expect(readinessCheck).toHaveBeenCalledTimes(1);
   });
 
+  it('server init survives a Redis client that cannot be built, and still opens the other', () => {
+    getSysRedis.mockReset().mockImplementationOnce(() => {
+      throw new Error('REDIS_SYS_URL is not set');
+    });
+    getCacheRedis.mockReset();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => (init as unknown as () => unknown)()).not.toThrow();
+    expect(getCacheRedis).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('[knights] redis-init-failed (sys)', expect.any(Error));
+    error.mockRestore();
+  });
+
   it('serves the sign-in routes without a session', async () => {
     const { resolve } = await run('/api/auth/callback');
     expect(resolve).toHaveBeenCalled();

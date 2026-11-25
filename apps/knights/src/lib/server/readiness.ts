@@ -1,4 +1,5 @@
 import { getSysRedis } from './redis';
+import { within } from './redis-timeout';
 
 /** How long one readiness ping may take before the probe answers not-ready and the next probe retries. */
 export const READINESS_PING_TIMEOUT_MS = 500;
@@ -24,23 +25,12 @@ export function createReadiness({
   let inFlight: Promise<boolean> | undefined;
 
   const attempt = async (): Promise<boolean> => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<false>((resolve) => {
-      timer = setTimeout(resolve, timeoutMs, false);
-    });
-    const pinged = Promise.resolve()
-      .then(ping)
-      .then(
-        () => true,
-        () => false
-      );
-    try {
-      const ok = await Promise.race([pinged, deadline]);
-      if (ok) ready = true;
-      return ok;
-    } finally {
-      clearTimeout(timer);
-    }
+    const ok = await within(Promise.resolve().then(ping), timeoutMs).then(
+      () => true,
+      () => false
+    );
+    if (ok) ready = true;
+    return ok;
   };
 
   return {

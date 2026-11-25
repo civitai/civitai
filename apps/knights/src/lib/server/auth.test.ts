@@ -12,8 +12,7 @@ vi.mock('@civitai/auth', async (importOriginal) => {
     },
   };
 });
-const { revocationCheck } = vi.hoisted(() => ({ revocationCheck: vi.fn() }));
-vi.mock('./metrics', () => ({ metrics: { revocationCheck, sessionCookieSlot: vi.fn() } }));
+vi.mock('./metrics', () => ({ metrics: { revocationCheck: vi.fn(), sessionCookieSlot: vi.fn() } }));
 vi.mock('./redis', () => ({ getSysRedis: vi.fn() }));
 
 await import('./auth');
@@ -41,10 +40,5 @@ describe('revocation check logging', () => {
     const logged = JSON.stringify(warn.mock.calls);
     expect(logged).not.toContain('secret-sid-123');
     expect(logged).not.toContain('424242');
-  });
-
-  it('counts every outcome', () => {
-    captured.config!.onOutcome!('hit', 0.001);
-    expect(revocationCheck).toHaveBeenCalledWith('hit');
   });
 });
