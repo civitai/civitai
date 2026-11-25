@@ -370,6 +370,85 @@ describe('ReviewActionBar — publish floor (icon + cover)', () => {
   });
 });
 
+/**
+ * 🔴 REVIEW BOOT CHECK. The server refuses an approve whose ENFORCED boot check found the build
+ * never sends BLOCK_READY (`approveRequest`, via `bootCheckFailed`), and the queue/page reads
+ * carry the same summary as `previewBootCheck`. The bar disables every Approve on it and says
+ * why; a check that could not run leaves Approve enabled with a notice; a SHADOW result changes
+ * nothing.
+ */
+describe('ReviewActionBar — review boot check', () => {
+  const REFUSAL =
+    'Cannot approve: the boot check found that this build never finishes loading (no BLOCK_READY). The developer has to fix it and resubmit. Rebuilding the preview re-runs the check.';
+  const UNAVAILABLE =
+    "Boot check couldn't run for this build, so nobody has confirmed the app finishes loading. Check that the preview starts before you approve.";
+
+  test('🔴 enforce + failed: Approve + build disabled, the refusal shown, Reject still offered', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'failed', mode: 'enforce' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+    await expect
+      .element(page.getByTestId('apps-review-approve-boot-check'))
+      .toHaveTextContent(REFUSAL);
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeEnabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 enforce + failed on the review page: Approve AND Approve & next disabled', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'failed', mode: 'enforce' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+        approveAndNext
+      />
+    );
+    await expect.element(page.getByTestId('apps-review-approve-now-button')).toBeDisabled();
+    await expect.element(page.getByTestId('apps-review-approve-next')).toBeDisabled();
+  });
+
+  test('enforce + unavailable: Approve enabled, the yellow notice shown', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'unavailable', mode: 'enforce' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await expect
+      .element(page.getByTestId('apps-review-boot-check-unavailable'))
+      .toHaveTextContent(UNAVAILABLE);
+    expect(page.getByTestId('apps-review-approve-boot-check').elements()).toHaveLength(0);
+  });
+
+  test('shadow + failed: Approve enabled, no boot-check notice of either kind', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'failed', mode: 'shadow' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    expect(page.getByTestId('apps-review-approve-boot-check').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-boot-check-unavailable').elements()).toHaveLength(0);
+  });
+});
+
 describe('ReviewActionBar — reject reason gate', () => {
   test('the reject confirm is gated under the 3-char floor, then fires with the trimmed reason', async () => {
     renderWithProviders(

@@ -25,6 +25,7 @@ import {
   releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
+import { evaluateReviewBootCheck } from '~/server/services/blocks/review-boot-check.service';
 import {
   BUILD_STEP_LABELS,
   isBuildPipelineStep,
@@ -634,11 +635,37 @@ async function settlePublishedReview(
   const reachable = host
     ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
     : true;
-  if (reachable) {
+  // The BOOT CHECK (flag `app-blocks-review-boot-check`): answering over HTTP proves the files are
+  // served, not that the app starts. With the flag on, load the preview the way a host does and
+  // require BLOCK_READY within the host's window. The row stays `preview-deploying` meanwhile.
+  // `null` = the flag is off: the writes below are exactly what they were before the check.
+  // Only an ENFORCED `failed` fails the preview; shadow and `unavailable` go live with the result
+  // recorded (see review-boot-check.service).
+  const boot = reachable
+    ? await evaluateReviewBootCheck({
+        publishRequestId: args.publishRequestId,
+        slug: args.slug,
+        host,
+        url: args.baseDetail.url,
+      })
+    : null;
+  if (reachable && boot && !boot.live) {
+    // The app never sent BLOCK_READY. Not an apply failure (the deploy worked) and not counted
+    // as one; the replay mark is freed so a same-sha rebuild is not swallowed as a duplicate.
+    await clearReviewApplyMark(args.publishRequestId, args.sha);
+    const marked = await markReviewPreviewState(
+      args.publishRequestId,
+      'preview-failed',
+      { ...args.baseDetail, bootCheck: boot.bootCheck, error: boot.error },
+      guard
+    );
+    if (marked === 0) await unpublishOrphan();
+    await settled(args.publishRequestId, false);
+  } else if (reachable) {
     const marked = await markReviewPreviewState(
       args.publishRequestId,
       'preview-live',
-      args.baseDetail,
+      boot ? { ...args.baseDetail, bootCheck: boot.bootCheck } : args.baseDetail,
       guard
     );
     // Live only if THIS preview was still the active one: a torn-down or superseded preview

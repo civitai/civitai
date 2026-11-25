@@ -59,6 +59,7 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
+import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import { APP_STORAGE_PUBLISH_SCOPE } from '~/shared/constants/block-storage.constants';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
@@ -183,7 +184,8 @@ interface IframeHostProps {
   onConsentGranted?: () => void;
 }
 
-const BLOCK_READY_TIMEOUT_MS = 10_000;
+// BLOCK_READY_TIMEOUT_MS: imported from ~/shared/constants/block-ready.constants (one window
+// for every host and the review boot check).
 // If the token never arrives within this window, surface a token_error so the
 // user isn't stuck behind an indefinite skeleton.
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;

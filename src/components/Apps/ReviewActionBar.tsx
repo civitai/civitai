@@ -33,6 +33,12 @@ import {
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
 import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
+import {
+  BOOT_CHECK_APPROVE_REFUSAL,
+  BOOT_CHECK_UNAVAILABLE_NOTICE,
+  bootCheckFailed,
+  bootCheckUnavailable,
+} from '~/shared/utils/review-boot-check';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { trpcKeepalive } from '~/utils/trpc-keepalive';
@@ -164,6 +170,10 @@ export function ReviewActionBar({
   // reason shown, rather than offered and refused.
   const floorMissing = request.approveFloorMissing ?? [];
   const floorBlocked = floorMissing.length > 0;
+  // The review boot check: the SAME predicate approveRequest refuses on, over the same projection
+  // (`previewBootCheck`). Unavailable never blocks; it only adds the notice below.
+  const bootBlocked = bootCheckFailed(request.previewBootCheck);
+  const bootUnavailable = bootCheckUnavailable(request.previewBootCheck);
   const mediaSplitDecision =
     request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
       ? mediaSplit
@@ -171,6 +181,8 @@ export function ReviewActionBar({
   const openHolds = useOpenPublishRequestHolds(mode === 'pending' ? request.slug : null);
   const [holdOverrideReason, setHoldOverrideReason] = useState('');
   const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
+  // Every reason Approve (all three buttons) is disabled, in one place.
+  const approveGated = splitStateUnknown || floorBlocked || holdBlocked || bootBlocked;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async (result) => {
@@ -356,6 +368,16 @@ export function ReviewActionBar({
             {listingFloorApproveRefusal(floorMissing)}
           </Alert>
         )}
+        {bootBlocked && (
+          <Alert color="red" variant="light" data-testid="apps-review-approve-boot-check">
+            {BOOT_CHECK_APPROVE_REFUSAL}
+          </Alert>
+        )}
+        {bootUnavailable && (
+          <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-unavailable">
+            {BOOT_CHECK_UNAVAILABLE_NOTICE}
+          </Alert>
+        )}
         {mode === 'pending' && <VersionListingRatingNotice publishRequestId={request.id} />}
         {request.approveRating && (
           <OnsiteApproveRatingWarning
@@ -427,7 +449,7 @@ export function ReviewActionBar({
                 variant="default"
                 leftSection={<IconCheck size={14} />}
                 onClick={() => approveMut.mutate(approveInput())}
-                disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
+                disabled={busy || approveGated}
                 loading={approveMut.isPending}
                 title="Approve now, with no undo window"
                 data-testid="apps-review-approve-now-button"
@@ -438,7 +460,7 @@ export function ReviewActionBar({
                 color="green"
                 rightSection={<IconArrowRight size={14} />}
                 onClick={approveLater}
-                disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
+                disabled={busy || approveGated}
                 data-testid="apps-review-approve-next"
               >
                 Approve &amp; next
@@ -449,7 +471,7 @@ export function ReviewActionBar({
               color="green"
               leftSection={<IconCheck size={14} />}
               onClick={() => approveMut.mutate(approveInput())}
-              disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
+              disabled={busy || approveGated}
               loading={approveMut.isPending}
             >
               Approve + build

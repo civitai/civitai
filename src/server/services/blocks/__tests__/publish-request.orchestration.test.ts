@@ -3531,6 +3531,60 @@ describe('approveRequest', () => {
     expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 THE REVIEW BOOT CHECK approve gate. An ENFORCED boot check that found the build never sends
+   * BLOCK_READY refuses Approve, before anything is written. A shadow result, an unavailable
+   * check and a non-preview row do not: each reaches the Forgejo commit (made to fail with a
+   * sentinel here, so "past the gate" is observable without a full approve).
+   */
+  describe('the review boot-check gate', () => {
+    const REFUSAL =
+      'Cannot approve: the boot check found that this build never finishes loading (no BLOCK_READY). The developer has to fix it and resubmit. Rebuilding the preview re-runs the check.';
+    const withBootCheck = (deployState: string | null, bootCheck: unknown) =>
+      pendingRequest({
+        deployState,
+        deployDetail: JSON.stringify({
+          sha: 'b'.repeat(40),
+          error: 'Boot check: …',
+          bootCheck,
+        }),
+      });
+
+    it('🔴 enforce + failed: refused with the reason, nothing committed', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        withBootCheck('preview-failed', { result: 'failed', mode: 'enforce' })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow(REFUSAL);
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['shadow + failed', 'preview-live', { result: 'failed', mode: 'shadow' }],
+      ['enforce + unavailable', 'preview-live', { result: 'unavailable', mode: 'enforce' }],
+      ['enforce + passed', 'preview-live', { result: 'passed', mode: 'enforce' }],
+      ['no check recorded', 'preview-failed', undefined],
+      // A non-preview row's detail is never read as a preview's.
+      ['not a preview state', null, { result: 'failed', mode: 'enforce' }],
+    ])('%s: not refused by the gate (reaches the commit)', async (_label, state, bootCheck) => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        withBootCheck(state, bootCheck)
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      mockForgejo.commitFiles.mockRejectedValue(new Error('SENTINEL: past the boot-check gate'));
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow('SENTINEL: past the boot-check gate');
+    });
+  });
+
   it('rejects when the request id does not exist', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);

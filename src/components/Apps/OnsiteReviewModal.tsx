@@ -84,6 +84,12 @@ import {
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import type { FloorAsset } from '~/shared/utils/listing-publish-floor';
 import {
+  bootCheckUnavailable,
+  BOOT_CHECK_UNAVAILABLE_NOTICE,
+  reviewBootCheckSummary,
+  type ReviewBootCheckSummary,
+} from '~/shared/utils/review-boot-check';
+import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
@@ -158,6 +164,9 @@ export type ReviewedRequestCommon = {
   approveRating?: { listingId: string; declared: string | null } | null;
   /** Icon / cover the listing this approve publishes lacks; non-empty ⇒ the server refuses Approve. */
   approveFloorMissing?: FloorAsset[];
+  /** The review boot check's result + mode (pending list + single read); null = no check
+   *  recorded. `bootCheckFailed(previewBootCheck)` ⇒ the server refuses Approve. */
+  previewBootCheck?: ReviewBootCheckSummary | null;
 };
 
 export type PendingRequest = ReviewedRequestCommon;
@@ -920,6 +929,17 @@ function ReviewPreviewPanel({
             data-testid="apps-review-preview-state"
           >
             {chip}
+          </Badge>
+        )}
+        {bootCheckUnavailable(reviewBootCheckSummary(state, detail)) && (
+          <Badge
+            size="sm"
+            variant="light"
+            color="yellow"
+            title={BOOT_CHECK_UNAVAILABLE_NOTICE}
+            data-testid="apps-review-boot-check-unavailable-badge"
+          >
+            Boot check couldn&apos;t run
           </Badge>
         )}
       </Group>

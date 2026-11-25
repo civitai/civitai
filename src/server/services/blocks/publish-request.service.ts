@@ -85,6 +85,12 @@ import {
   listingFloorNoListingNextStep,
   type FloorAsset,
 } from '~/shared/utils/listing-publish-floor';
+import {
+  BOOT_CHECK_APPROVE_REFUSAL,
+  bootCheckFailed,
+  reviewBootCheckSummary,
+  type ReviewBootCheckRecord,
+} from '~/shared/utils/review-boot-check';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import type { Advisory } from '~/server/services/blocks/submit-advisories';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
@@ -3335,6 +3341,10 @@ export async function listPendingRequests(
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
         // #8240's expiry from the build's start), so the queue chip and the page agree.
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
+        // The review boot check's result + mode (never the rest of the detail): the action bar
+        // disables Approve on `bootCheckFailed(previewBootCheck)`, the predicate approveRequest
+        // refuses on, and the queue keeps an unchecked build out of the fast lane.
+        previewBootCheck: reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail)),
         // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
         // "not run". `null` = the surface is on and this request has no report.
         ...(agentSummaries ? { agentReview: withStaleness(r.id) } : {}),
@@ -3648,6 +3658,15 @@ async function approveRequestUnderClaim(
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
+  }
+  // An enforced review boot check found the build never reaches BLOCK_READY. The review action
+  // bar disables Approve on the same predicate, from the same projection (`previewBootCheck`).
+  if (
+    bootCheckFailed(
+      reviewBootCheckSummary(request.deployState, parseReviewDetail(request.deployDetail))
+    )
+  ) {
+    throw new Error(BOOT_CHECK_APPROVE_REFUSAL);
   }
   const { checkHoldsBeforeApprove, claimApprove } = await import('./publish-request-holds.service');
   const holdDecision = {
@@ -5858,6 +5877,12 @@ export type ReviewPreviewDetail = {
    * (APPS_REVIEW_BUILD_ONLY, PR previews): the build is recorded and no preview is served.
    */
   buildOnly?: boolean;
+  /**
+   * The review boot check's result (`~/shared/utils/review-boot-check`), written by the build
+   * watcher when the `app-blocks-review-boot-check` flag is not off. A new build's
+   * `preview-building` write replaces the detail, so a rebuild never inherits an old result.
+   */
+  bootCheck?: ReviewBootCheckRecord;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -6521,6 +6546,9 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
       sourceDirty: true,
       submittedBy: { select: reviewUserChipSelect },
       reviewedBy: { select: reviewUserChipSelect },
+      // Read only for the boot-check projection below; never returned.
+      deployState: true,
+      deployDetail: true,
     },
   });
   if (!r) return null;
@@ -6530,7 +6558,7 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
   // Match the list builders' row mapping exactly (bundle bigint → string,
   // Forgejo review-repo deep link, push-row canonical-commit link, and the
   // slug-joined store-listing facts the review surfaces render).
-  const { status, sourceCommit, sourceDirty, ...rest } = r;
+  const { status, sourceCommit, sourceDirty, deployState, deployDetail, ...rest } = r;
   const { readActionsRunSourcesForRender } = await import('./actions-run-source.service');
   const [listingFacts, actionsRuns] = await Promise.all([
     listingFactsForRequests([r as ListingJoinSubject]),
@@ -6540,6 +6568,8 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
     ...rest,
     ...listingFacts(r.id),
     sourceProvenance: reviewSourceProvenance({ sourceCommit, sourceDirty }, actionsRuns.get(r.id)),
+    // Same projection as listPendingRequests (the approve gate's input).
+    previewBootCheck: reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail)),
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:

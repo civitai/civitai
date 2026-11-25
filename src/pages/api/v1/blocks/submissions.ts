@@ -178,7 +178,13 @@ function shapeRow(
     status: row.status, // 'pending' | 'approved' | 'rejected' | 'withdrawn'
     rejectionReason: row.rejectionReason,
     approvalNotes: row.approvalNotes,
-    deployState: row.deployState, // null | 'building' | 'deploying' | 'live' | 'failed'
+    // Approved rows: null | 'building' | 'deploying' | 'live' | 'failed'. A PENDING row carries its
+    // review preview instead: 'preview-building' | 'preview-deploying' | 'preview-live' |
+    // 'preview-failed', with `deployDetail` the preview's JSON detail. On 'preview-failed' its
+    // `error` is the reason (a failed review boot check reads "Boot check: the app loaded but
+    // never sent BLOCK_READY within 10s. First error: …"), and `bootCheck` holds the check's
+    // result when one ran.
+    deployState: row.deployState,
     deployDetail: row.deployDetail,
     deployUpdatedAt: row.deployUpdatedAt ? row.deployUpdatedAt.toISOString() : null,
     // #4059 build provenance — the submitting CLIENT'S OWN CLAIM about the tree

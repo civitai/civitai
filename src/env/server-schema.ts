@@ -1518,6 +1518,11 @@ export const serverSchema = z
     // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
     // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
+    // Base URL of the App Block review boot-check service, which loads a review preview the way
+    // a host does and reports whether the app sent BLOCK_READY (see review-boot-check.service).
+    // OPTIONAL: when unset, every boot check reads `unavailable` (fail-open) and the review is
+    // never blocked on it. Only read while the `app-blocks-review-boot-check` flag is not off.
+    APP_BLOCK_BOOT_CHECK_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
     // dev-uploaded ZIP bundles. Production points at an in-cluster MinIO
