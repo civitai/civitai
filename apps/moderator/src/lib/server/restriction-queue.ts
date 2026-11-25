@@ -113,13 +113,13 @@ export async function restrictionTriageLoad(
   } catch {
     sourcesFailed = true;
   }
-  // A remix's input images can be its source's own file, so a source withheld from this moderator,
-  // or one whose withheld read failed, takes them off the card too.
+  // A remix's input images can be its source's own file, so they are shown only beside a source
+  // read and cleared for this moderator: not one withheld, missing, past the lookup cap, or unread.
   const shownInputs = <R extends { triggers: RestrictionRow['triggers'] }>(row: R): R => ({
     ...row,
     triggers: row.triggers.map((trigger) => {
       const id = triggerOrigin(trigger).imageId;
-      return id && (sourcesFailed || sources[id]?.restricted)
+      return id && !(sources[id] && !sources[id].restricted)
         ? { ...trigger, inputImages: undefined, inputVideo: undefined }
         : trigger;
     }),

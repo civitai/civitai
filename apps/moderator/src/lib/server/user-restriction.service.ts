@@ -405,8 +405,8 @@ export type RemixSource = {
   restricted?: true;
 };
 
-/** The remix sources, with those withheld from `viewer` sent with no key, type or prompt. A failed
- *  withheld read throws, so the page says the sources could not be loaded. */
+/** The remix sources, with those withheld from `viewer` sent with no key or prompt (`restricted`).
+ *  A failed withheld read throws, so the page says the sources could not be loaded. */
 export async function getRemixSources(
   ids: readonly number[],
   viewer: App.Locals['user'] | undefined

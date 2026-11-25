@@ -685,6 +685,14 @@ describe('generator-restrictions load — origin and sources', () => {
     expect(inputsOf(await run()).inputImages).toBeUndefined();
   });
 
+  // Past the lookup cap, or missing: nothing cleared it, so its inputs stay off.
+  it('takes them off when the source was not read', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockResolvedValue([]);
+
+    expect(inputsOf(await run()).inputImages).toBeUndefined();
+  });
+
   it('keeps them for a source the moderator can see', async () => {
     getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
     getRemixSources.mockResolvedValue([
