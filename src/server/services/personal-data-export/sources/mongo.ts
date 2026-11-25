@@ -60,13 +60,8 @@ const NESTED_DENY_RE =
   /(callback|scan|hash|blobkey|trace|moderat|safety|classif|score|label|verdict|audit|xguard|clavata|matchedterm|matchedregex|threshold|policy|rating|flagged|^category$|reason|blocked|^user$|^messages$|responseformat|chattemplate)/i;
 
 /**
- * Only generations the user asked for are written: a workflow is kept when EVERY step's type is
- * one the generator submits for a user, and nothing marks it as the site's own. Anything else (an
- * automated check, a step type added later, a step with no type) is left out whole, so a new
- * internal workflow stays out of the archive until its step type is listed here. Stored step types
- * appear both as the client name (`imageGen`) and as the class name (`ImageGenStep`), so they are
- * compared lower-cased with any `Step` suffix removed. Language-model steps are not listed: their
- * input carries the site's own instructions.
+ * Step types the generator submits for a user. Language-model steps are not listed: their input
+ * carries the site's own instructions.
  */
 export const USER_STEP_TYPES: ReadonlySet<string> = new Set(
   // The step types whose output the generator shows the user (`normalizeStepOutput` in
@@ -102,6 +97,7 @@ const SYSTEM_PURPOSE_WORD_RE =
   /^(scan|scann|moderat\w*|audit|review|classif\w*|check)(s|es|ed|ing)?$/;
 const isSystemPurpose = (purpose: string) =>
   purpose
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .split(/[^a-z]+/)
@@ -110,6 +106,14 @@ const isSystemPurpose = (purpose: string) =>
 const stepType = (t: unknown) =>
   typeof t === 'string' ? t.toLowerCase().replace(/step$/, '') : undefined;
 
+/**
+ * Only generations the user asked for are written: a workflow is kept when EVERY step's type is in
+ * `USER_STEP_TYPES` and nothing marks it as the site's own. Anything else (an automated check, a
+ * step type added later, a step with no type) is left out whole, so a new internal workflow stays
+ * out of the archive until its step type is listed. Stored step types appear both as the client
+ * name (`imageGen`) and as the class name (`ImageGenStep`), so they are compared lower-cased with
+ * any `Step` suffix removed.
+ */
 export function isUserGeneration(doc: unknown): boolean {
   if (!isObject(doc)) return false;
   const meta = isObject(doc.Metadata) ? doc.Metadata : {};
@@ -256,7 +260,7 @@ export async function exportWorkflows({
     source: 'mongo',
     rows: 0,
     description:
-      'Your generation workflows: prompts, settings, resources, steps and dates. Outputs are listed as links and details, not files. Not included: workflows the site runs itself, and generations that include chat (language-model), custom-workflow or image-conversion steps.',
+      'Your generation workflows: prompts, settings, resources, steps and dates. Outputs are listed as links and details, not files. Not included: workflows the site runs itself, and generations that include chat (language-model), App Block custom-workflow or image format conversion steps.',
     status: 'complete',
   };
   // One past the cap, so reaching it is distinguishable from having exactly that many.

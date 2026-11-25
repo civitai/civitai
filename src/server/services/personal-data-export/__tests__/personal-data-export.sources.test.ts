@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExportWriter } from '../output';
 import { PG_FETCH_SIZE, exportPostgres, planPostgresExport } from '../sources/postgres';
@@ -6,6 +8,7 @@ import {
   MONGO_DOC_CAP,
   MONGO_MAX_TIME_MS,
   exportWorkflows,
+  USER_STEP_TYPES,
   isUserGeneration,
   reduceWorkflow,
   workflowRange,
@@ -438,20 +441,26 @@ describe('exportWorkflows', () => {
         'scanning',
         'checks',
         'reviewed',
+        'scanned',
+        'classifierRun',
+        'HTMLScan',
       ])
         expect(isUserGeneration({ ...storedDoc(), Metadata: { purpose } }), purpose).toBe(false);
-      for (const t of [
-        'imageGen',
-        'ImageGenStep',
-        'videoGen',
-        'VideoGenStep',
-        'comfy',
-        'training',
-        'imageUpscaler',
-        'soniloAudioGen',
-        'yuE2',
-      ])
+      for (const t of [...USER_STEP_TYPES, 'ImageGenStep', 'VideoGenStep'])
         expect(isUserGeneration({ Steps: [step(t, '0'), step('textToImage', '1')] }), t).toBe(true);
+    });
+
+    it('keeps every step type whose output the generator shows the user', () => {
+      // The generator's own list: a type added there and not here would drop those generations.
+      const src = readFileSync(
+        resolve(__dirname, '../../orchestrator/orchestration-new.service.ts'),
+        'utf8'
+      );
+      const start = src.indexOf('export function normalizeStepOutput');
+      const body = src.slice(start, src.indexOf('\n}\n', start));
+      const cases = [...body.matchAll(/case '(\w+)':/g)].map((m) => m[1]);
+      expect(cases.length).toBeGreaterThan(10);
+      for (const c of cases) expect(USER_STEP_TYPES.has(c.toLowerCase()), c).toBe(true);
     });
 
     it('writes none of the check workflows into the file', async () => {
