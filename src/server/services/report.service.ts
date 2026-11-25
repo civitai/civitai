@@ -837,6 +837,17 @@ export async function bulkSetReportStatus({
       ? await removedReporterIds(ids)
       : new Set<number>();
 
+  // Only a set holding a report on a Feature Pages comment reads the mirror table, so every other
+  // set runs as before, whatever this environment has of that table.
+  const touchesFeaturePages =
+    status === ReportStatus.Unactioned &&
+    (
+      await dbWrite.$queryRaw<{ found: number }[]>`
+        SELECT 1 AS found FROM "CommentV3Report" cr JOIN "CommentV3" c ON c.id = cr."commentId"
+        WHERE cr."reportId" = ANY(${ids}::int[]) AND c."entityType"::text = 'featurePage'
+        LIMIT 1`
+    ).length > 0;
+
   // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
   // report another path has already moved to `status` matches nothing, so it is not rewritten and
   // its reporters are not paid a second time. Who is paid comes from the rows this changed.
@@ -857,7 +868,7 @@ export async function bulkSetReportStatus({
       ${fromStatus ? Prisma.sql`AND status = ${fromStatus}::"ReportStatus"` : Prisma.empty}
       ${
         // A batch lifts no scan hide: the scan's report on its hide waits for its own dismissal.
-        status === ReportStatus.Unactioned
+        touchesFeaturePages
           ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "FeaturePageCommentMirror" m
               WHERE m."scanHideReportId" = "Report".id)`
           : Prisma.empty
