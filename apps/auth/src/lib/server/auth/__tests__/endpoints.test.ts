@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   mintUserSession: vi.fn(),
   mintSession: vi.fn(),
   invalidateAll: vi.fn(),
+  logToAxiom: vi.fn<(record: Record<string, unknown>) => Promise<undefined>>(async () => undefined),
 }));
 vi.mock('$lib/server/auth/verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
 vi.mock('$lib/server/auth/session-producer', () => ({
@@ -18,6 +19,7 @@ vi.mock('$lib/server/auth/session-producer', () => ({
   invalidateSessionUser: h.invalidate,
   produceSessionUser: h.produce,
 }));
+vi.mock('$lib/server/axiom', () => ({ logToAxiom: h.logToAxiom }));
 vi.mock('$lib/server/auth/registry', () => ({ sessions: { invalidateAll: h.invalidateAll } }));
 vi.mock('$lib/server/auth/session', () => ({
   SESSION_COOKIE: 'civ-token',
@@ -55,6 +57,7 @@ const ev = (
     }),
     url,
     cookies: { get: (n: string) => (n === 'civ-token' ? opts.cookie : undefined) },
+    platform: { req: { socket: { remoteAddress: '10.0.0.9' } } },
   };
 };
 
@@ -164,6 +167,49 @@ describe('POST /api/auth/identity (invalidate / refresh)', () => {
     const res = await POST(ev({ auth: 'Bearer wrong', body: { scope: 'all' } }));
     expect(res.status).toBe(401);
     expect(h.invalidateAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/auth/identity audit record', () => {
+  const audits = () =>
+    h.logToAxiom.mock.calls
+      .map(([record]) => record)
+      .filter((record) => record.name === 'identity-invalidate-audit')
+      .map((record) => record.payload);
+  const withCaller = (event: ReturnType<typeof ev>) => {
+    event.request.headers.set('cf-connecting-ip', '203.0.113.7');
+    event.request.headers.set('user-agent', 'curl/8.4.0');
+    return event;
+  };
+
+  it('records an accepted scope:"all" call with its caller', async () => {
+    await POST(withCaller(ev({ auth: 'Bearer secret-123', body: { scope: 'all' } })));
+    expect(audits()).toEqual([
+      expect.objectContaining({
+        internal: true,
+        status: 204,
+        scope: 'all',
+        clientIp: '203.0.113.7',
+        socketIp: '10.0.0.9',
+        userAgent: 'curl/8.4.0',
+      }),
+    ]);
+    expect(JSON.stringify(audits())).not.toContain('secret-123');
+  });
+
+  it('records a refused call without the presented token', async () => {
+    await POST(withCaller(ev({ auth: 'Bearer wrong-token-value', body: { scope: 'all' } })));
+    expect(audits()).toEqual([
+      expect.objectContaining({ internal: false, status: 401, scope: 'all' }),
+    ]);
+    const serialized = JSON.stringify(audits());
+    expect(serialized).not.toContain('wrong-token-value');
+    expect(serialized).not.toContain('secret-123');
+  });
+
+  it('does not record an accepted per-user bust', async () => {
+    await POST(ev({ auth: 'Bearer secret-123', body: { userId: 5 } }));
+    expect(audits()).toHaveLength(0);
   });
 });
 

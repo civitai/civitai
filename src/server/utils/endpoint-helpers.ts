@@ -35,7 +35,16 @@ import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
-import { matchProbeToken, matchWebhookToken } from '~/server/utils/webhook-token';
+import {
+  matchProbeToken,
+  matchWebhookToken,
+  type TokenMatchSlot,
+} from '~/server/utils/webhook-token';
+import {
+  recordAdminEndpointAudit,
+  type AdminAuditCredential,
+  type AdminAuditOutcome,
+} from '~/server/utils/admin-endpoint-audit';
 import { recordWebhookTokenMatch } from '~/server/prom/webhook-token.metrics';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
@@ -416,9 +425,10 @@ export function JobEndpoint(
  * is set. Only `WEBHOOK_TOKEN` decides whether the endpoint is configured.
  */
 export function WebhookEndpoint(
-  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  options: { audit?: string } = {}
 ) {
-  return webhookTokenEndpoint(handler, false);
+  return webhookTokenEndpoint(handler, false, options.audit);
 }
 
 /**
@@ -431,31 +441,57 @@ export function ProbeEndpoint(
   return webhookTokenEndpoint(handler, true);
 }
 
+/** `audit` names the action in an `admin-endpoint-audit` record written for every call, 401s included. */
 function webhookTokenEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
-  acceptProbeToken: boolean
+  acceptProbeToken: boolean,
+  audit?: string
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
-      res.status(503).json({ error: 'Endpoint not configured' });
-      return;
-    }
+    const startedAt = Date.now();
+    let slot: TokenMatchSlot | undefined;
+    let presented: AdminAuditCredential[] = [];
+    let outcome: AdminAuditOutcome = 'rejected';
+    try {
+      if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
+        res.status(503).json({ error: 'Endpoint not configured' });
+        return;
+      }
 
-    const { bearer, queryToken, header } = presentedTokens(req);
-    // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
-    const slot =
-      header !== undefined
-        ? matchWebhookToken(header)
-        : matchWebhookToken(bearer) ??
-          matchWebhookToken(queryToken) ??
-          (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
-    if (!slot) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    recordWebhookTokenMatch(req, slot);
+      const { bearer, queryToken, header } = presentedTokens(req);
+      presented = [
+        ...(header !== undefined ? ['header' as const] : []),
+        ...(bearer !== undefined ? ['bearer' as const] : []),
+        ...(queryToken !== undefined ? ['query' as const] : []),
+      ];
+      // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
+      slot =
+        header !== undefined
+          ? matchWebhookToken(header)
+          : matchWebhookToken(bearer) ??
+            matchWebhookToken(queryToken) ??
+            (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
+      if (!slot) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      recordWebhookTokenMatch(req, slot);
 
-    await handler(req, res);
+      outcome = 'error';
+      await handler(req, res);
+      outcome = 'accepted';
+    } finally {
+      if (audit)
+        recordAdminEndpointAudit(req, {
+          action: audit,
+          slot: slot ?? 'none',
+          presented,
+          outcome,
+          // A throw before responding escapes to Next, which answers 500.
+          status: outcome === 'error' && !res.headersSent ? 500 : res.statusCode,
+          durationMs: Date.now() - startedAt,
+        });
+    }
   });
 }
 
