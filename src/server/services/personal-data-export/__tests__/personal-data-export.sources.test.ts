@@ -6,7 +6,7 @@ import {
   MONGO_DOC_CAP,
   MONGO_MAX_TIME_MS,
   exportWorkflows,
-  isSystemWorkflow,
+  isUserGeneration,
   reduceWorkflow,
   workflowRange,
   type WorkflowCollection,
@@ -261,7 +261,7 @@ describe('exportWorkflows', () => {
           (async function* () {
             for (let i = 0; i < MONGO_DOC_CAP + 50; i++) {
               yielded++;
-              yield { _id: `777-${i}` };
+              yield { _id: `777-${i}`, Steps: [{ _t: 'imageGen' }] };
             }
           })(),
           { close: async () => undefined }
@@ -381,12 +381,95 @@ describe('exportWorkflows', () => {
     expect(text).not.toContain('SYSTEM-TEXT');
   });
 
-  it('skips a workflow with no purpose whose later step is named as a scan', () => {
-    const doc = storedDoc();
-    doc.Metadata = { params: doc.Metadata.params } as typeof doc.Metadata;
-    doc.Steps.push({ ...doc.Steps[0], _t: 'textToImage', Name: 'promptScan' });
-    expect(isSystemWorkflow(doc)).toBe(true);
-    expect(isSystemWorkflow(storedDoc())).toBe(false);
+  describe('which workflows are written', () => {
+    const step = (
+      _t: string,
+      Name: string,
+      Input: object = { MediaUrl: 'https://other/u.png' }
+    ) => ({
+      _t,
+      Name,
+      Input,
+    });
+    // Shapes the site's own checks submit: none sets a purpose the old denylist recognised.
+    const siteChecks: Record<string, object> = {
+      'text moderation': {
+        Metadata: { mode: 'text', entityType: 'Article', entityId: 1 },
+        Steps: [step('XGuardModerationStep', 'textModeration', { Mode: 'text', Text: 'OTHER' })],
+      },
+      'prompt moderation': {
+        Metadata: {},
+        Steps: [step('xGuardModeration', 'promptModeration', { PositivePrompt: 'OTHER' })],
+      },
+      'image scan': {
+        Metadata: { imageId: 1 },
+        Steps: [
+          step('WdTaggingStep', 'tags', { MediaUrl: 'https://other/u.png', Threshold: 0.3 }),
+          step('MediaRatingStep', 'rating'),
+          step('mediaHash', 'hash'),
+        ],
+      },
+      'perceptual hash': { Metadata: {}, Steps: [step('mediaHash', '')] },
+      'audio moderation': {
+        Metadata: { scan: 'audio' },
+        Steps: [step('audioCaptioning', 'audio')],
+      },
+      'video scan': {
+        Metadata: { imageId: 1 },
+        Steps: [
+          step('videoFrameExtraction', 'frames'),
+          step('repeat', 'r', { Template: { $type: 'wdTagging', Name: 'tags' } }),
+        ],
+      },
+      'language model check': {
+        Metadata: { purpose: 'text-scan-preview' },
+        Steps: [step('ChatCompletionStep', 'textScan', { Messages: [] })],
+      },
+      'unknown future step type': { Metadata: {}, Steps: [step('someNewInternalStep', '0')] },
+      'a step with no type': { Metadata: {}, Steps: [{ Name: '0', Input: {} }] },
+      'no steps': { Metadata: {}, Steps: [] },
+      'a site purpose on a generation step': {
+        Metadata: { purpose: 'moderation-review' },
+        Steps: [step('imageGen', '0')],
+      },
+      'a generation followed by a check step': {
+        Metadata: {},
+        Steps: [step('imageGen', '0'), step('wdTagging', 'tags')],
+      },
+      'a generation step named as a scan': {
+        Metadata: {},
+        Steps: [step('textToImage', '0'), step('textToImage', 'promptScan')],
+      },
+    };
+
+    for (const [name, doc] of Object.entries(siteChecks))
+      it(`leaves out ${name}`, () =>
+        expect(isUserGeneration({ _id: '777-9', ...doc })).toBe(false));
+
+    it('keeps generations, whichever way the step type is stored', () => {
+      expect(isUserGeneration(storedDoc())).toBe(true);
+      for (const t of ['imageGen', 'ImageGenStep', 'videoGen', 'VideoGenStep', 'comfy', 'training'])
+        expect(isUserGeneration({ Steps: [step(t, '0'), step('textToImage', '1')] }), t).toBe(true);
+    });
+
+    it('writes none of the check workflows into the file', async () => {
+      const collection: WorkflowCollection = {
+        find() {
+          return Object.assign(
+            (async function* () {
+              yield storedDoc();
+              for (const d of Object.values(siteChecks)) yield { _id: '777-9', ...d };
+            })(),
+            { close: async () => undefined }
+          );
+        },
+      };
+      const { files, writer } = memoryWriter();
+      const entry = await exportWorkflows({ userId: SUBJECT, writer, collection });
+      const text = files.get(entry.file)!;
+      expect(entry.rows).toBe(1);
+      for (const s of ['777-9', 'OTHER', 'https://other']) expect(text, s).not.toContain(s);
+    });
   });
 
   it("inside the user's settings, still drops credential and check-shaped keys", () => {
@@ -396,9 +479,30 @@ describe('exportWorkflows', () => {
       ApiKey: 'k',
       SafetyScore: 0.2,
       Messages: [{ Content: 'x' }],
+      XGuardResult: { A: 1 },
+      ClavataLabels: ['x'],
+      PHash: 'p',
+      Scores: [1],
+      Threshold: 0.3,
+      Flagged: true,
+      BlockedReason: 'policy',
+      Reason: 'r',
     } as never;
     const input = (reduceWorkflow(doc) as Record<string, any>).Steps[0].Input;
-    for (const k of ['ApiKey', 'SafetyScore', 'Messages']) expect(input).not.toHaveProperty(k);
+    for (const k of [
+      'ApiKey',
+      'SafetyScore',
+      'Messages',
+      'XGuardResult',
+      'ClavataLabels',
+      'PHash',
+      'Scores',
+      'Threshold',
+      'Flagged',
+      'BlockedReason',
+      'Reason',
+    ])
+      expect(input, k).not.toHaveProperty(k);
     expect(input.Prompt).toBe('a cat');
   });
 

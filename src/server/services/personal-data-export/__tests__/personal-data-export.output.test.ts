@@ -62,7 +62,7 @@ describe('reduceWorkflow', () => {
       find() {
         return Object.assign(
           (async function* () {
-            yield { _id: '1-a' };
+            yield { _id: '1-a', Steps: [{ _t: 'imageGen' }] };
             throw Object.assign(new Error('time'), { codeName: 'MaxTimeMSExpired' });
           })(),
           { close: async () => void closed++ }
@@ -72,7 +72,7 @@ describe('reduceWorkflow', () => {
     const { files, w } = writer();
     const entry = await exportWorkflows({ userId: 1, writer: w, collection });
     expect(entry).toMatchObject({ status: 'partial', rows: 1 });
-    expect(files.get(entry.file)).toBe('{"_id":"1-a"}\n');
+    expect(files.get(entry.file)).toBe('{"_id":"1-a","Steps":[{"_t":"imageGen"}]}\n');
     expect(closed).toBe(1);
   });
 });

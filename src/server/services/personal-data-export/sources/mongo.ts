@@ -57,23 +57,51 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
  * second guard behind the allowlist. Case-insensitive, because stored documents use PascalCase.
  */
 const NESTED_DENY_RE =
-  /(callback|scan|hash|blobkey|trace|moderat|safety|classif|score|label|verdict|^user$|^messages$|responseformat|chattemplate)/i;
+  /(callback|scan|hash|blobkey|trace|moderat|safety|classif|score|label|verdict|xguard|clavata|matchedterm|matchedregex|threshold|policy|rating|flagged|^category$|reason|blocked|^user$|^messages$|responseformat|chattemplate)/i;
 
 /**
- * Workflows the site runs on its own account of a user (automated checks), not generations the user
- * asked for: never written. The step type check is a second guard for a check whose purpose is unset.
+ * Only generations the user asked for are written: a workflow is kept when EVERY step's type is
+ * one the generator submits for a user, and nothing marks it as the site's own. Anything else (an
+ * automated check, a step type added later, a step with no type) is left out whole, so a new
+ * internal workflow stays out of the archive until its step type is listed here. Stored step types
+ * appear both as the client name (`imageGen`) and as the class name (`ImageGenStep`), so they are
+ * compared lower-cased with any `Step` suffix removed. Language-model steps are not listed: their
+ * input carries the site's own instructions.
  */
-const SYSTEM_PURPOSE_RE = /(scan|moderat|audit|review|classif|check)/i;
-const SYSTEM_STEP_TYPES = new Set(['ChatCompletionStep']);
+export const USER_STEP_TYPES: ReadonlySet<string> = new Set(
+  [
+    'textToImage',
+    'imageGen',
+    'videoGen',
+    'comfy',
+    'aceStepAudio',
+    'polyGen',
+    'videoInterpolation',
+    'videoUpscaler',
+    'imageBackgroundRemoval',
+    'preprocessImage',
+    'training',
+    'imageResourceTraining',
+  ].map((t) => t.toLowerCase())
+);
 
-export function isSystemWorkflow(doc: unknown): boolean {
+const SYSTEM_PURPOSE_RE = /(scan|moderat|audit|review|classif|check)/i;
+
+const stepType = (t: unknown) =>
+  typeof t === 'string' ? t.toLowerCase().replace(/step$/, '') : undefined;
+
+export function isUserGeneration(doc: unknown): boolean {
   if (!isObject(doc)) return false;
-  const purpose = isObject(doc.Metadata) ? doc.Metadata.purpose : undefined;
-  if (typeof purpose === 'string' && SYSTEM_PURPOSE_RE.test(purpose)) return true;
+  const meta = isObject(doc.Metadata) ? doc.Metadata : {};
+  if (typeof meta.purpose === 'string' && SYSTEM_PURPOSE_RE.test(meta.purpose)) return false;
+  if ('scan' in meta) return false;
   const steps = Array.isArray(doc.Steps) ? doc.Steps : [];
-  return steps.some(
-    (s) => isObject(s) && (SYSTEM_STEP_TYPES.has(String(s._t)) || /scan/i.test(String(s.Name)))
-  );
+  if (steps.length === 0) return false;
+  return steps.every((s) => {
+    if (!isObject(s)) return false;
+    const t = stepType(s._t);
+    return !!t && USER_STEP_TYPES.has(t) && !/scan/i.test(String(s.Name ?? ''));
+  });
 }
 
 /**
@@ -227,7 +255,7 @@ export async function exportWorkflows({
           entry.status = 'partial';
           break;
         }
-        if (isSystemWorkflow(doc)) continue;
+        if (!isUserGeneration(doc)) continue;
         yield reduceWorkflow(doc);
       }
     } catch (e) {
