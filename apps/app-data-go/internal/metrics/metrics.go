@@ -30,7 +30,7 @@ var FallbackReasons = []string{
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
 var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen",
 	// A level stream whose service token was not minted (shared.CloseServiceToken*).
-	"service_token_refused", "service_token_unavailable", "service_client_unconfigured"}
+	"service_token_refused", "service_token_unavailable"}
 
 // Outcomes are the `outcome` values of app_data_reads_total. `registry_only` is a read that asked for
 // the registry's answer only (api.RegistryOnlyHeader) and that the registry could not answer: REST

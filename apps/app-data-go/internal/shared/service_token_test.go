@@ -13,8 +13,7 @@ import (
 )
 
 // THE SERVICE TOKEN's failures, named: a hub refusal is ErrServiceTokenRefused, any other failure to
-// mint it ErrServiceTokenUnavailable, no service client ErrNoServiceClient; a cancelled stream is
-// left to the manager.
+// mint it ErrServiceTokenUnavailable; a cancelled stream is left to the manager.
 func TestClassifyServiceToken(t *testing.T) {
 	cases := []struct {
 		err    error
@@ -27,7 +26,6 @@ func TestClassifyServiceToken(t *testing.T) {
 		{&token.EndpointError{Status: 502, Code: "none"}, CloseServiceTokenUnavailable, ErrServiceTokenUnavailable},
 		{errors.New("token endpoint unreachable"), CloseServiceTokenUnavailable, ErrServiceTokenUnavailable},
 		{context.DeadlineExceeded, CloseServiceTokenUnavailable, ErrServiceTokenUnavailable},
-		{ErrNoServiceClient, CloseServiceClientUnconfigured, ErrNoServiceClient},
 	}
 	for _, c := range cases {
 		f := ClassifyServiceToken(c.err)
@@ -40,8 +38,8 @@ func TestClassifyServiceToken(t *testing.T) {
 	}
 }
 
-// With no service client a read is refused before any stream opens, and a level stream opened anyway
-// (the level manager directly) is refused service_client_unconfigured, never minted another way.
+// With no service client every read is refused before any stream opens: Reader.Read is the only path
+// to the level manager, so no level stream is ever minted another way.
 func TestNoServiceClientOpensNothing(t *testing.T) {
 	a := &seamAdapter{}
 	bounds := Bounds{MaxStreams: 10, MaxRecords: 100, MaxBytes: 1 << 20}
@@ -68,12 +66,7 @@ func TestNoServiceClientOpensNothing(t *testing.T) {
 	if st := viewers.Stats(); st.Streams != 0 || len(closed) != 0 {
 		t.Fatalf("a refused read opened streams: %+v, closed %v", st, closed)
 	}
-	_, err := levels.View(ctx, LevelSubject(schema, "1"), schema, 0)
-	var f *session.ExchangeFailure
-	if !errors.Is(err, ErrNoServiceClient) || !errors.As(err, &f) || f.Reason != CloseServiceClientUnconfigured {
-		t.Fatalf("a level stream with no service client: %v", err)
-	}
-	if a.levelSubs(schema) != 0 {
+	if st := levels.Stats(); st.Streams != 0 || a.levelSubs(schema) != 0 {
 		t.Fatal("🔴 a level stream subscribed with no service client")
 	}
 }

@@ -158,13 +158,15 @@ func TestAHubRefusalOfTheServiceTokenIsItsOwnReason(t *testing.T) {
 }
 
 // 🔴 With no service client the shared path refuses every read `503 service_client_unconfigured`,
-// before it opens any stream: never a level stream under another client's token.
+// before it opens any stream: never a level stream under another client's token. No Retry-After:
+// waiting does not configure a client.
 func TestNoServiceClientRefusesSharedReadsExplicitly(t *testing.T) {
 	a := &adapterStub{}
 	s := realSharedStack(t, a, nil, nil)
 	for range 2 {
 		g := s.shared(t, notesPath, "civitai_shared-e")
-		if g.status != http.StatusServiceUnavailable || g.err.Error != "service_client_unconfigured" || g.header.Get("Retry-After") != "1" {
+		if g.status != http.StatusServiceUnavailable || g.err.Error != "service_client_unconfigured" || g.err.Code != "service_client_unconfigured" ||
+			len(g.header.Values("Retry-After")) != 0 {
 			t.Fatalf("no service client: %d %v %s; want 503 service_client_unconfigured", g.status, g.header, g.body)
 		}
 	}

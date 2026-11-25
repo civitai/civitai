@@ -372,8 +372,9 @@ would refuse every user (its predicate admits the app's rating against the held 
 `private-feed.ts:312-322`). **Chosen: forward the edge's region.** app-data-go copies the region
 values the edge set on the viewer's request (the edge sets them and strips any a client sent; this
 service never reads a client's) onto the subscription it opens for that viewer, as the adapter's
-region headers. **Precondition:** app-data-go is reachable only through the edge, which strips
-client-sent region headers; otherwise region forwarding is off and the SFW hold applies. A viewer's
+region headers, behind `APP_DATA_FORWARD_REGION` (off: the SFW hold applies). **Decided
+(2026-11-25):** the flag is turned on with this release, trusting the edge's region headers on the
+same terms as the site's own region handling. A viewer's
 streams are keyed by token and region, so a viewer whose region changes opens new ones. The exact mask is
 ANDed with the region hold. Level streams are read as a service, which has no region; the region hold reaches a
 viewer through the mask the per-viewer stream names.

@@ -172,8 +172,10 @@ func (s *Server) sharedError(w http.ResponseWriter, start time.Time, err error, 
 	case errors.Is(err, shared.ErrSignedOutBusy):
 		s.sharedRefusal(w, start, "capacity", anon)
 	case errors.Is(err, shared.ErrNoServiceClient):
-		// No service client is configured: no level stream can be read until one is.
-		s.sharedRefusal(w, start, "service_client_unconfigured", anon)
+		// No service client is configured: no level stream can be read until one is, and waiting does
+		// not change that, so no Retry-After.
+		s.writeShared(w, start, http.StatusServiceUnavailable,
+			storeErr("service_client_unconfigured", "shared collections cannot be read: no service client is configured"), anon, "unavailable")
 	case errors.Is(err, shared.ErrServiceTokenRefused):
 		// The hub refused to mint this service's own token (alone, or as the cause of a cooldown).
 		s.sharedRefusal(w, start, "service_token_refused", anon)

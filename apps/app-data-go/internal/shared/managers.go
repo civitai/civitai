@@ -15,8 +15,6 @@ import (
 const (
 	CloseServiceTokenRefused     = "service_token_refused"
 	CloseServiceTokenUnavailable = "service_token_unavailable"
-	// CloseServiceClientUnconfigured: no service client (Reader.Read refuses first; never expected).
-	CloseServiceClientUnconfigured = "service_client_unconfigured"
 )
 
 // ClassifyServiceToken is the level manager's session.Options.ClassifyExchange: a hub refusal of the
@@ -26,8 +24,6 @@ func ClassifyServiceToken(err error) *session.ExchangeFailure {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return nil
-	case errors.Is(err, ErrNoServiceClient):
-		return &session.ExchangeFailure{Reason: CloseServiceClientUnconfigured, Err: ErrNoServiceClient}
 	case errors.Is(err, token.ErrRefused):
 		return &session.ExchangeFailure{Reason: CloseServiceTokenRefused, Err: ErrServiceTokenRefused}
 	default:
@@ -51,7 +47,8 @@ type Build struct {
 	Level, Viewer Bounds
 	// ServiceToken is this service's own token and its expiry (token.Source.TokenExpiring), and
 	// ServiceRefused drops it (token.Source.Invalidate): called when the registry refuses it. A nil
-	// ServiceToken is no service client: every read is ErrNoServiceClient (THE SERVICE TOKEN).
+	// ServiceToken is no service client: Reader.Read refuses every read ErrNoServiceClient before any
+	// stream opens, and it is the only path to the level manager (THE SERVICE TOKEN).
 	ServiceToken   func(ctx context.Context) (string, time.Time, error)
 	ServiceRefused func()
 	// ViewerExchange trades a viewer's token for one toward the adapter (exchange.Router.Exchange).
@@ -81,9 +78,6 @@ func NewReader(b Build) (r *Reader, levels, viewers *session.Manager) {
 		Budget: b.Budget, Reserve: b.Level.MaxBytes,
 		Cooldown: b.Cooldown, NotPrivateCooldown: b.Cooldown,
 		Exchange: func(ctx context.Context, _ string) (exchange.Token, error) {
-			if b.ServiceToken == nil {
-				return exchange.Token{}, ErrNoServiceClient
-			}
 			// A stream closes ExpiryMargin before the token's expiry, so it never outlives it.
 			tok, expires, err := b.ServiceToken(ctx)
 			return exchange.Token{Access: tok, Expires: expires}, err
