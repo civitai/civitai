@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
+import { Prisma } from '@prisma/client';
+import { CompiledQuery, sql } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getCsamSupplementalCandidates } from '@civitai/db-queries/csam-queue';
 import { SHOWN_RENDITIONS } from '@civitai/shared/held-media';
@@ -11,6 +12,7 @@ import type {
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import { getViewedImageIds, shownActivities } from '~/server/services/csam.service-new';
+import { blockImagesAsCsamInTransaction, CSAM_IMAGE_BLOCK } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 const SHOWN_ACTIVITIES = SHOWN_RENDITIONS.flatMap(shownActivities);
@@ -122,7 +124,16 @@ export async function createSupplementalCsamReport({
   details,
   type,
   supplementalOf,
-}: CreateCsamReportSchema & { reportedById: number; supplementalOf: number }) {
+  blockListedImages = false,
+}: CreateCsamReportSchema & {
+  reportedById: number;
+  supplementalOf: number;
+  /**
+   * Blocks the listed images as CSAM in the report's own transaction, so a refused or failed filing
+   * blocks nothing.
+   */
+  blockListedImages?: boolean;
+}) {
   if (type !== 'Image' || userId === -1)
     throwBadRequestError('Only an image report on a user can be supplemental');
 
@@ -135,6 +146,20 @@ export async function createSupplementalCsamReport({
       supplementalOf,
       reportedById,
     });
+    if (blockListedImages)
+      await blockImagesAsCsamInTransaction(imageIds, {
+        $executeRaw: async (strings, ...values) => {
+          const statement = Prisma.sql(strings, ...values);
+          const result = await tx.executeQuery(CompiledQuery.raw(statement.text, statement.values));
+          return Number(result.numAffectedRows ?? 0);
+        },
+        writeBlock: (ids) =>
+          tx
+            .updateTable('Image')
+            .set({ ...CSAM_IMAGE_BLOCK })
+            .where('id', 'in', ids)
+            .execute(),
+      });
     return tx
       .insertInto('CsamReport')
       .values({

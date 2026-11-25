@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
@@ -28,6 +29,7 @@ import {
   releaseSettledAppealFlags,
 } from '~/server/services/image-appeal-flag';
 import {
+  afterCsamImageBlock,
   bulkAddBlockedImages,
   HeldMediaCopyError,
   logCsamBlocklistNoHash,
@@ -51,6 +53,8 @@ export async function createCsamReportHandler({
   return fileCsamReport({ ...input, reportedById: ctx.user.id });
 }
 
+export const CSAM_LISTED_BLOCK_FAILED_MESSAGE =
+  'Filing the report failed, so nothing was filed and no image was blocked. File the report again.';
 export const CSAM_BLOCKLIST_FAILED_MESSAGE =
   'The report was filed and the account removed. Writing the image hashes to the blocklist failed and has been logged. Do not file again.';
 /** The blocklist entry landed but its review copy did not. An operator repairs it with the reconcile
@@ -87,9 +91,27 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     contextText,
   };
   const filed = contextText.length ? { ...filing, details: withContext } : filing;
-  const report = supplementalOf
-    ? await createSupplementalCsamReport({ ...filed, supplementalOf })
-    : await createCsamReport({ ...filed, writeBlocklist: false });
+  // Blocked in the report's own transaction, so a refused or failed filing blocks nothing.
+  let report: { id: number };
+  try {
+    report = supplementalOf
+      ? await createSupplementalCsamReport({ ...filed, supplementalOf, blockListedImages: true })
+      : await createCsamReport({ ...filed, writeBlocklist: false, blockListedImages: true });
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'BAD_REQUEST') throw error;
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      message: 'filing the report and blocking its images failed; nothing filed',
+      userId,
+      error: (error as Error)?.message,
+      payload: { reportedById, imageCount: imageIds.length },
+    });
+    // A 503 so the message reaches the moderator (a 500's is replaced).
+    throwServiceUnavailableError(CSAM_LISTED_BLOCK_FAILED_MESSAGE, error);
+    throw error;
+  }
+  await afterCsamImageBlock({ imageIds });
 
   // Hashes read now, written after the account removal below, so a failed blocklist write cannot
   // hold that up.
