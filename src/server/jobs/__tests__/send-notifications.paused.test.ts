@@ -34,9 +34,8 @@ vi.mock('~/server/db/pgDb', () => ({
   pgDbWrite: {},
 }));
 
-const { sendNotificationsJob, PAUSED_NOTIFICATION_TYPES_KEY } = await import(
-  '~/server/jobs/send-notifications'
-);
+const { sendNotificationsJob } = await import('~/server/jobs/send-notifications');
+const { PAUSED_NOTIFICATION_TYPES_KEY } = await import('~/server/jobs/paused-notification-types');
 
 const PAUSED = 'new-model-version';
 const RUNNING = 'new-model-from-following';

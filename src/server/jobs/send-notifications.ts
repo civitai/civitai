@@ -3,7 +3,6 @@ import { isPromise } from 'util/types';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NotificationsClientError } from '@civitai/notifications';
 import { notifications } from '~/server/notifications/client';
-import { dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
@@ -11,6 +10,7 @@ import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-user
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate } from './job';
+import { getPausedNotificationTypes } from './paused-notification-types';
 import type {
   NotificationSingleRow,
   NotificationPendingRow,
@@ -27,22 +27,6 @@ const concurrent = 8;
 // instead of waiting for a non-deterministic pg-pool connection-termination timeout.
 const NOTIFICATION_QUERY_TIMEOUT_MS = 20_000;
 
-/**
- * `KeyValue` row holding a JSON array of processor keys this job skips, e.g. `["new-model-version"]`.
- * Delete the row to resume. A resumed type sends only what its query's own lookback still reaches.
- */
-export const PAUSED_NOTIFICATION_TYPES_KEY = 'paused-notification-types';
-
-/** Throws on a malformed row so the run sends nothing rather than ignoring an intended pause. */
-export async function getPausedNotificationTypes() {
-  const row = await dbWrite.keyValue.findUnique({ where: { key: PAUSED_NOTIFICATION_TYPES_KEY } });
-  if (!row) return new Set<string>();
-  const value = row.value;
-  if (!Array.isArray(value) || !value.every((v) => typeof v === 'string'))
-    throw new Error(`${PAUSED_NOTIFICATION_TYPES_KEY} must be a JSON array of strings`);
-  return new Set(value as string[]);
-}
-
 export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async (e) => {
   try {
     const [lastRun, setLastRun] = await getJobDate('last-sent-notifications');
@@ -56,7 +40,6 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
     for (const batch of notificationBatches) {
       e.checkIfCanceled();
       const promises = batch.map(({ prepareQuery, key, category }) => async () => {
-        // Paused: no query and no setLastSent, so its cursor stays at the pause time.
         if (pausedTypes.has(key)) return;
         try {
           e.checkIfCanceled();
