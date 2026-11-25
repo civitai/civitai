@@ -8,6 +8,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconTrophy, IconPlus, IconSearch } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
@@ -38,8 +39,15 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
   const filters = removeEmpty({ ...cruciblesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { crucibles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryCrucibles(debouncedFilters, { keepPreviousData: true });
+  const {
+    crucibles,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isFetching,
+    serverRefusal,
+  } = useQueryCrucibles(debouncedFilters, { keepPreviousData: true });
 
   const browsingLevel = useBrowsingLevelDebounced();
   const openIds = useMemo(
@@ -100,6 +108,8 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
           )}
           {!hasNextPage && showEof && <EndOfFeed />}
         </div>
+      ) : serverRefusal ? (
+        <SearchRefusalNotice refusal="policy" refusedBy={serverRefusal.refusedBy} />
       ) : (
         <CruciblesEmptyState hasFilters={hasFilters} isLoggedIn={!!currentUser} />
       )}

@@ -48,16 +48,20 @@ function SearchableArticlesFeed(props: Props) {
   const filters = useInfiniteArticleFilters(props);
   const searchText = useFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(
-    searchText,
-    'articles_semantic',
-    'semantic'
-  );
+  const { refusal } = useSearchRefusal(searchText, 'articles_semantic', 'semantic');
   const search = useSemanticArticleFeed(filters, refusal ? undefined : searchText);
   useScrollToTopOnChange(search.searchKey);
-  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  const shownRefusal =
+    refusal ??
+    (isSearchRefusedError(search.error)
+      ? 'profanity'
+      : search.serverRefusal
+      ? 'policy'
+      : undefined);
   if (shownRefusal)
-    return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
+    return (
+      <SearchRefusalNotice refusal={shownRefusal} refusedBy={search.serverRefusal?.refusedBy} />
+    );
   return searchText ? (
     <ArticlesFeed {...props} search={{ text: searchText, ...search }} />
   ) : (

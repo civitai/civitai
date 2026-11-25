@@ -930,7 +930,12 @@ describe('the query audit and the browsing level', () => {
       candidateSource: source,
       refuseNarrowing: true,
     });
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+    });
     expect(calls).toHaveLength(0);
   });
 
@@ -1048,7 +1053,13 @@ describe('the query audit and the browsing level', () => {
   it('refuses a minor query for a moderator, before asking the index', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     expect(calls).toHaveLength(0);
   });
 

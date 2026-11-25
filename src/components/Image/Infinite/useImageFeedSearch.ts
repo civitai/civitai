@@ -1,3 +1,4 @@
+import { pageRefusal } from '~/components/Search/search-refusal';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
@@ -130,5 +131,10 @@ export function useSemanticImageFeed(
 
   const { items } = useFeedImageItems(data?.pages, { isRefetching: rest.isRefetching });
 
-  return { ...rest, images: items, correctedQuery: data?.pages[0]?.correctedQuery };
+  return {
+    ...rest,
+    images: items,
+    correctedQuery: data?.pages[0]?.correctedQuery,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
+  };
 }

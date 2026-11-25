@@ -102,15 +102,10 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const similarTo = useImageFeedSimilarTo();
   const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic', 'semantic');
+  const { refusal } = useSearchRefusal(query, 'images_semantic', 'semantic');
   // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
   const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
-  return (
-    <ImagesFeed
-      {...props}
-      feedSearch={{ query, similarTo, sort, refusal, profanityMatches, period }}
-    />
-  );
+  return <ImagesFeed {...props} feedSearch={{ query, similarTo, sort, refusal, period }} />;
 }
 
 type FeedSearch = {
@@ -119,7 +114,6 @@ type FeedSearch = {
   similarTo?: number;
   sort?: ImageFeedSearchSort;
   refusal?: SearchRefusal;
-  profanityMatches: string[];
   /** The saved feed period while `useSearchPeriod` is still writing it. */
   period?: MetricTimeframe;
 };
@@ -346,10 +340,16 @@ function ImagesFeed({
     />
   );
 
-  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  const shownRefusal =
+    refusal ??
+    (isSearchRefusedError(search.error)
+      ? 'profanity'
+      : search.serverRefusal
+      ? 'policy'
+      : undefined);
   if (shownRefusal)
     return (
-      <SearchRefusalNotice refusal={shownRefusal} profanityMatches={feedSearch?.profanityMatches} />
+      <SearchRefusalNotice refusal={shownRefusal} refusedBy={search.serverRefusal?.refusedBy} />
     );
 
   return (

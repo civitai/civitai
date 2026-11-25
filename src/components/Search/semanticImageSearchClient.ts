@@ -1,3 +1,4 @@
+import { throwIfRefused } from '~/components/Search/search-refusal';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { baseModels } from '~/shared/constants/basemodel.constants';
@@ -168,7 +169,9 @@ export function createOffsetPager() {
     // A deep link to page N whose earlier pages were never fetched: approximate the offset.
     const offset = page === 0 ? undefined : cursor ?? page * hitsPerPage;
 
-    const result = await search({ ...filters, query, limit: hitsPerPage, cursor: offset });
+    const result = throwIfRefused(
+      await search({ ...filters, query, limit: hitsPerPage, cursor: offset })
+    );
     if (result.nextCursor !== undefined) pageCursors.set(`${key}:${page + 1}`, result.nextCursor);
     const earlier = new Set(
       Array.from({ length: page }, (_, i) => pageIds.get(`${key}:${i}`) ?? []).flat()

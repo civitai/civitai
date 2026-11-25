@@ -19,7 +19,7 @@ export function useSearchRefusal(
   text: string | undefined,
   index: string | undefined,
   via: 'semantic' | 'siteSearch'
-): { refusal?: SearchRefusal; profanityMatches: string[] } {
+): { refusal?: SearchRefusal } {
   const benignPhrases = useBenignPhrases();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const domainColor = useDomainColor();
@@ -60,5 +60,5 @@ export function useSearchRefusal(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, refusal]);
 
-  return { refusal, profanityMatches: profanity.matches };
+  return { refusal };
 }

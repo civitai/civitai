@@ -75,6 +75,7 @@ export async function searchSemanticComics({
     items: [] as ComicSearchIndexRecord[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,

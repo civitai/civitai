@@ -83,6 +83,18 @@ import { useFeedSearchSync } from '~/components/AutocompleteSearch/useFeedSearch
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  SEARCH_POLICY_MESSAGE,
+  searchRefusedByLine,
+  type SearchRefusedBy,
+} from '~/shared/constants/search-refusal.constants';
+
+/** The dropdown's refusal items that show the policy message, and the check each names to a moderator. */
+const REFUSAL_ITEM_CHECKS: Record<string, SearchRefusedBy> = {
+  profanity: 'profanity',
+  disabled: 'real people',
+  'blocked-words': 'blocked words',
+};
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { browserChecksProfanity, getSearchRefusal } from '~/components/Search/search-refusal';
 import classes from './AutocompleteSearch.module.scss';
@@ -781,43 +793,24 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               </Stack>
             );
           }
-          if (key === 'profanity') {
+          // Every refusal but the minors one: the policy message, naming no term or rule.
+          const refusedBy = Object.hasOwn(REFUSAL_ITEM_CHECKS, key)
+            ? REFUSAL_ITEM_CHECKS[key]
+            : undefined;
+          if (refusedBy) {
             return (
               <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search query contains inappropriate content that violates our community
-                  guidelines.
+                <Text size="sm" align="center" weight={600}>
+                  {SEARCH_POLICY_MESSAGE.title}
                 </Text>
-                {profanityAnalysis.matches.length > 0 && (
+                <Text size="xs" align="center">
+                  {SEARCH_POLICY_MESSAGE.body}
+                </Text>
+                {currentUser?.isModerator && (
                   <Text size="xs" align="center" c="dimmed">
-                    Flagged terms: {profanityAnalysis.matches.join(', ')}
+                    {searchRefusedByLine(refusedBy)}
                   </Text>
                 )}
-                <Text size="xs" align="center">
-                  Please refine your search terms to find appropriate content.
-                </Text>
-              </Stack>
-            );
-          }
-          if (key === 'disabled') {
-            return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search includes terms tied to real people. Content depicting real people is
-                  filtered from search results.
-                </Text>
-              </Stack>
-            );
-          }
-          if (key === 'blocked-words') {
-            return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  Your search query contains blocked words and has been filtered.
-                </Text>
-                <Text size="xs" align="center">
-                  Please try a different search term.
-                </Text>
               </Stack>
             );
           }

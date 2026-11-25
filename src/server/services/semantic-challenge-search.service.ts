@@ -8,7 +8,11 @@ import {
   queryVerdictLevel,
   recordRefusal,
   semanticQueryRefusal,
+  refusedByGuard,
+  refusedByWord,
   semanticSearchPrelude,
+  withRefusal,
+  type QueryRefusal,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
@@ -97,6 +101,7 @@ export async function searchSemanticChallenges({
     items: [] as HydratedChallenge[],
     nextCursor: undefined,
     correctedQuery: undefined,
+    refused: false as boolean,
   };
   const prelude = await semanticSearchPrelude({
     index: 'challenges_semantic',
@@ -107,7 +112,7 @@ export async function searchSemanticChallenges({
     browsingLevelCap,
     track,
   });
-  if (!prelude) return none;
+  if ('refusedBy' in prelude) return withRefusal(none, user, prelude.refusedBy);
   const { browsingLevel, hidden, refusalOf } = prelude;
 
   const statuses = input.status?.length
@@ -181,12 +186,13 @@ export async function searchSemanticChallenges({
     return kept;
   };
 
+  let correctionVerdict: QueryRefusal = false;
   const search = auditedTextCandidates({
     source: candidateSource,
     text: input.query,
     filter,
     viewer: { isModerator: !!user?.isModerator },
-    audit: (correction) => refusalOf(correction, 'correction'),
+    audit: async (correction) => (correctionVerdict = await refusalOf(correction, 'correction')),
   });
   const page = await collectPage({
     candidates: search.candidates,
@@ -203,6 +209,11 @@ export async function searchSemanticChallenges({
     payload: { returned: search.state.returned, shown: page.items.length },
   });
 
-  if (search.state.refused) return none;
-  return { ...page, correctedQuery: search.state.correctedQuery };
+  if (search.state.refused)
+    return withRefusal(none, user, refusedByWord(correctionVerdict) ?? 'error');
+  return withRefusal(
+    { ...page, correctedQuery: search.state.correctedQuery },
+    user,
+    page.items.length ? undefined : refusedByGuard(search.state.first?.guard)
+  );
 }

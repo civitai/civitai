@@ -1,3 +1,4 @@
+import { pageRefusal } from '~/components/Search/search-refusal';
 import { useMemo } from 'react';
 import * as z from 'zod';
 import type { GetCruciblesInfiniteSchema } from '~/server/schema/crucible.schema';
@@ -103,7 +104,15 @@ export const useQueryCrucibles = (
     isRefetching: rest.isRefetching,
   });
 
-  return { data, crucibles, isLoading: isLoading || loadingPreferences, ...rest };
+  return {
+    data,
+    crucibles,
+    isLoading: isLoading || loadingPreferences,
+    serverRefusal: query
+      ? pageRefusal(semantic.data?.pages[0], semantic.isPlaceholderData)
+      : undefined,
+    ...rest,
+  };
 };
 
 export function useFollowedCrucibleIds({ enabled = true }: { enabled?: boolean } = {}) {

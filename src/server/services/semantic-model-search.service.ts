@@ -63,7 +63,12 @@ export async function searchSemanticModels({
   onViewerDependent?: () => void;
   candidateSource?: CandidateSource;
 }) {
-  const none = { items: [] as HydratedModel[], nextCursor: undefined, correctedQuery: undefined };
+  const none = {
+    items: [] as HydratedModel[],
+    nextCursor: undefined,
+    correctedQuery: undefined,
+    refused: false as boolean,
+  };
   const { query, cursor, limit, spellcheck, ...feedFilters } = input;
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,

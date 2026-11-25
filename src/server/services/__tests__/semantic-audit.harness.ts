@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { SemanticAuditEntry } from '~/server/services/semantic-search-audit.service';
 import type { CandidateSource, GuardRead } from '~/server/services/semantic-search-client';
+import { SEARCH_REFUSED_BY } from '~/shared/constants/search-refusal.constants';
 import type { SessionUser } from '~/types/session';
 
 /** The keys a semantic search procedure may hand the browser, besides the router's latencyMs. */
-const PAGE_KEYS = ['items', 'nextCursor', 'correctedQuery'];
+const PAGE_KEYS = ['items', 'nextCursor', 'correctedQuery', 'refused'];
 
 export const AUDIT_VIEWER = { id: 77, isModerator: false } as SessionUser;
 
@@ -63,6 +64,78 @@ export function describeSemanticAuditContract({
       const result = await run({ source: src, user: AUDIT_VIEWER });
       expect(Object.keys(result).filter((k) => !PAGE_KEYS.includes(k))).toEqual([]);
       expect(JSON.stringify(result)).not.toMatch(/rule_a|guard|bypass|verdict/i);
+    });
+  });
+
+  // One search per test: the harnesses' fixtures and candidate caches outlive a search.
+  describe(`${index}: a refused page`, () => {
+    const pass: GuardRead = { outcome: 'pass', rules: [], mode: 'enforce', version: 'v1' };
+    const MOD = { ...AUDIT_VIEWER, isModerator: true } as SessionUser;
+    // What every service answers when nothing matched, besides the mark.
+    const NO_MATCH = { items: [], nextCursor: undefined, correctedQuery: undefined };
+    const minusRefused = ({ refused, ...rest }: { refused?: unknown }) => rest;
+
+    it('marks a page with no matches as not refused', async () => {
+      expect(await run({ source: source(pass, []), user: AUDIT_VIEWER })).toEqual({
+        ...NO_MATCH,
+        refused: false,
+      });
+    });
+
+    it('marks a page with matches as not refused', async () => {
+      const page = await run({ source: source(pass), user: AUDIT_VIEWER });
+      expect(page.items.length).toBeGreaterThan(0);
+      expect(page).toMatchObject({ refused: false });
+    });
+
+    it.each([
+      ['by the word audit', () => (refuse(), source(pass))],
+      ['by the search service', () => source(enforceFlag, [])],
+    ])('is, %s, a no-match page plus `refused` for a non-moderator', async (_, setup) => {
+      const refused = await run({ source: setup(), user: AUDIT_VIEWER });
+      expect(refused).toMatchObject({ refused: true });
+      expect(minusRefused(refused)).toEqual(NO_MATCH);
+      expect(Object.hasOwn(refused, 'refusedBy')).toBe(false);
+    });
+
+    it("names the search service's check to a moderator", async () => {
+      expect(await run({ source: source(enforceFlag, []), user: MOD })).toMatchObject({
+        refused: true,
+        refusedBy: 'query guard',
+      });
+    });
+
+    it("names the word audit's check to a moderator", async () => {
+      refuse();
+      const page = await run({ source: source(pass), user: MOD });
+      expect(page).toMatchObject({ refused: true });
+      expect(SEARCH_REFUSED_BY).toContain((page as { refusedBy?: string }).refusedBy);
+    });
+
+    it('names a guard that could not complete as fail-closed, not as a verdict', async () => {
+      const failed = { ...enforceFlag, outcome: 'unavailable' as const, rules: [] };
+      expect(await run({ source: source(failed, []), user: MOD })).toMatchObject({
+        refused: true,
+        refusedBy: 'error',
+      });
+    });
+
+    // The candidate cache holds the search service's answer; the mark is put on after it, per viewer.
+    it.runIf(ownCache)(
+      "serves a non-moderator no refusedBy after a moderator's search filled the cache",
+      async () => {
+        const src = vi.fn(source(enforceFlag, []));
+        expect(await run({ source: src, user: MOD })).toMatchObject({ refusedBy: 'query guard' });
+        const page = await run({ source: src, user: AUDIT_VIEWER });
+        expect(page).toMatchObject({ refused: true });
+        expect(Object.hasOwn(page, 'refusedBy')).toBe(false);
+      }
+    );
+
+    it('names nothing on a moderator page that was not refused', async () => {
+      const page = await run({ source: source(pass), user: MOD });
+      expect(page).toMatchObject({ refused: false });
+      expect(Object.hasOwn(page, 'refusedBy')).toBe(false);
     });
   });
 

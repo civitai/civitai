@@ -1,3 +1,4 @@
+import { pageRefusal } from '~/components/Search/search-refusal';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { SemanticModelSearchRequest } from '~/server/schema/semantic-model-search.schema';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
@@ -366,6 +367,7 @@ export const useSemanticModelFeed = (
     ...rest,
     models: items,
     isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
     correctedQuery: data?.pages[0]?.correctedQuery,
     // Identifies the search, so the feed can scroll to the top when it changes.
     searchKey: query ? JSON.stringify(input) : undefined,

@@ -1,4 +1,7 @@
 import { Alert, Button, Center, Loader, MultiSelect, Text, TextInput, Title } from '@mantine/core';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { pageRefusal } from '~/components/Search/search-refusal';
+import { SemanticSearchError } from '~/components/SemanticSearch/SemanticSearchError';
 import { IconSearch } from '@tabler/icons-react';
 import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
@@ -65,12 +68,20 @@ export function SemanticImageSearch() {
     ...options,
     enabled: enabled && videos,
   });
-  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetching } = videos
-    ? videoResults
-    : imageResults;
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetching,
+    isPlaceholderData,
+  } = videos ? videoResults : imageResults;
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const latencyMs = data?.pages[0]?.latencyMs;
   const correctedQuery = data?.pages[0]?.correctedQuery;
+  const serverRefusal = pageRefusal(data?.pages[0], isPlaceholderData);
 
   const searchKey = JSON.stringify(input);
   useScrollToTopOnChange(searchKey);
@@ -188,11 +199,9 @@ export function SemanticImageSearch() {
           <Loader />
         </Center>
       ) : isError ? (
-        <Alert color="red" title="Search failed">
-          {error.data?.code === 'NOT_FOUND' || error.data?.code === 'TOO_MANY_REQUESTS'
-            ? error.message
-            : 'Search is unavailable right now, try again.'}
-        </Alert>
+        <SemanticSearchError error={error} />
+      ) : !items.length && serverRefusal ? (
+        <SearchRefusalNotice refusal="policy" refusedBy={serverRefusal.refusedBy} />
       ) : !items.length ? (
         <NoContent
           message={`No ${videos ? 'videos' : 'images'} matched. Try other words or fewer filters.`}

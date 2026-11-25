@@ -1,3 +1,4 @@
+import { pageRefusal } from '~/components/Search/search-refusal';
 import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -104,7 +105,16 @@ export function useQueryChallenges(
 
   const { isLoading, ...restWithoutLoading } = rest;
 
-  return { challenges: items, isLoading: isLoading || loadingPreferences, ...restWithoutLoading };
+  return {
+    challenges: items,
+    isLoading: isLoading || loadingPreferences,
+    // The semantic search's page, or the feed's own when it searched the text instead.
+    serverRefusal: pageRefusal(
+      data?.pages[0] as Parameters<typeof pageRefusal>[0],
+      rest.isPlaceholderData
+    ),
+    ...restWithoutLoading,
+  };
 }
 
 // Hook to get a single challenge by ID
