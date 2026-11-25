@@ -1,4 +1,4 @@
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldItemImageSql } from '@civitai/shared/held-media';
 import { childSafetyImageCase } from '@civitai/db-queries/child-safety-case';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { constants } from '~/server/common/constants';
@@ -547,8 +547,11 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     return { file, copies };
   });
 
-  await clearDeletedCopies(await deleteImages(removed.copies.map(({ imageId }) => imageId)));
   const { file } = removed;
+  await clearDeletedCopies(
+    await deleteImages(removed.copies.map(({ imageId }) => imageId)),
+    file.id
+  );
   // An upload never completed still sits at the uploader's key, which they can write to: the
   // server keeps its own copy instead.
   if (isUploaderKey(file.s3Key)) await keepServerCopy(await getBucket(), file.id, file.s3Key);
@@ -580,11 +583,10 @@ async function deleteImages(imageIds: number[]) {
 }
 
 /** Entries stop pointing at copies that are gone: deleted now, or by an earlier run. */
-export function clearDeletedCopies(imageIds: number[], fileId?: number) {
+export function clearDeletedCopies(imageIds: number[], fileId: number) {
   return dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
-    WHERE e."imageId" IS NOT NULL
-      AND ${fileId === undefined ? Prisma.sql`TRUE` : Prisma.sql`e."fileId" = ${fileId}::int`}
+    WHERE e."imageId" IS NOT NULL AND e."fileId" = ${fileId}::int
       AND (e."imageId" IN (${Prisma.join(imageIds.length ? imageIds : [-1])})
         OR NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId"))`;
 }
@@ -704,9 +706,9 @@ const entryKept = (e: Prisma.Sql) => Prisma.sql`(
 )`;
 
 /**
- * Whether a file must be kept when it is removed, judged from the row each time: a scan of it has not
- * passed (an image in it, its own scan copy, or a processing step still running). `f` names the
- * file row.
+ * Whether a file must be kept when it is removed, judged from the row each time: an image in it is
+ * unchecked or refused for anything but its rating, its own scan copy has not passed, or a
+ * processing step still runs. `f` names the file row.
  */
 const mustKeep = (f: Prisma.Sql) => Prisma.sql`(
   EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
@@ -1091,7 +1093,8 @@ export async function listServiceDealFiles({
           failReason: row.failReason,
           scanStatus: row.scanStatus,
           previewUrl: null,
-          canDownload: canReviewCsam,
+          // Refused as the download refuses it.
+          canDownload: canReviewCsam && !(row.kind === 'Final' && row.csamHeld),
           removedAt: row.removedAt,
         },
       ];
@@ -1186,23 +1189,11 @@ export type ServiceDealFileDownload = {
   removed: boolean;
 };
 
-/**
- * The object a user may download, or null (the route answers 404 for null, so a file id reveals
- * nothing). The seller may take back anything they uploaded; a moderator anything, for dispute
- * review; the buyer only a Final of the delivered round that has passed its scan, once they own it.
- * An Attachment reverses the roles: the buyer may take back their own, and the seller gets the
- * delivery copy only once its scans pass, and never after the deal is Declined, Expired or Cancelled.
- *
- * A buyer gets the delivery file, never the upload: for a zip that is the archive the server built,
- * and a zip without one is not downloadable by them at all. `delivered` asks a moderator for the
- * buyer's version instead of the original.
- */
 /** The columns `finalLevelGate` reads, over the file row `f`. */
 const finalLevelColumns = Prisma.sql`f."scannedEtag",
       (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
-        WHERE e."fileId" = f."id" AND (i."needsReview" IS NOT DISTINCT FROM 'csam'
-          OR i."blockedFor" IS NOT DISTINCT FROM 'CSAM' OR i.minor IS TRUE
+        WHERE e."fileId" = f."id" AND (${Prisma.raw(heldItemImageSql('i'))} OR i.minor IS TRUE
           OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))) AS "csamHeld",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
@@ -1232,8 +1223,8 @@ function finalLevelGate(
   const video = isFinalVideoName(row.fileName);
   if (!video && row.contentLevel === null) return 'served';
   const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
-  // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold,
-  // but only while the scan image that shows it is not held is still there to say so.
+  // Dispute review sees it whatever its rating, Blocked included (no domain's levels hold it), but
+  // only while its scan image still exists to show it is not held.
   if (!levelInDomain && !(disputeReview && !row.ratedImageGone))
     return row.contentLevel ? 'offDomain' : 'refused';
   // A video never stamped (refused, or not scanned yet) goes only to dispute review.
@@ -1241,6 +1232,17 @@ function finalLevelGate(
   return 'served';
 }
 
+/**
+ * The object a user may download, or null (the route answers 404 for null, so a file id reveals
+ * nothing). The seller may take back anything they uploaded; a moderator anything, for dispute
+ * review; the buyer only a Final of the delivered round that has passed its scan, once they own it.
+ * An Attachment reverses the roles: the buyer may take back their own, and the seller gets the
+ * delivery copy only once its scans pass, and never after the deal is Declined, Expired or Cancelled.
+ *
+ * A buyer gets the delivery file, never the upload: for a zip that is the archive the server built,
+ * and a zip without one is not downloadable by them at all. `delivered` asks a moderator for the
+ * buyer's version instead of the original.
+ */
 export async function resolveServiceDealFileDownload({
   fileId,
   userId,

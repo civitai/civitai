@@ -804,8 +804,8 @@ export async function settleFinals() {
 /**
  * Step 5: the copy of an image that passed has done its job (one refused only for its rating goes
  * in the purge, with its file). The copy of an image whose scan has not finished, or that was
- * rejected, is KEPT, even after its file was deleted: its Image row is what
- * the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
+ * refused for anything but its rating, is KEPT, even after its file was deleted: its Image row is
+ * what the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
  * is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
  * passes. A delete that fails stays pointed at and is retried.
  */

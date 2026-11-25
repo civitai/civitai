@@ -1780,6 +1780,22 @@ describe('copies of scanned images', () => {
       expect((await fileRow(fileId)).removedAt).not.toBeNull();
     });
 
+    it("leaves another file's entries alone, even one pointing at a copy that is gone", async () => {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      const other = await zipFinal(dealId, [{ name: 'b.png', data: IMAGE_B }]);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanKey") VALUES ($1, $2, 0, 'b.png', 1, 999, 'gone-key')`,
+        [other, dealId]
+      );
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      expect(
+        await q(`SELECT "imageId", "scanKey" FROM "ServiceDealFileEntry" WHERE "fileId" = $1`, [
+          other,
+        ])
+      ).toEqual([{ imageId: 999, scanKey: 'gone-key' }]);
+    });
+
     it('still judges the image whose scan finishes later, and drops it once it passes', async () => {
       await threeImages();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id = 3`);
@@ -1799,6 +1815,7 @@ describe('copies of scanned images', () => {
     });
   });
 
+  // Decided in civitai/civitai#10422.
   describe("a Final refused only for a rating above the deal's level", () => {
     /** A one-image zip Final rated `flags` above the PG-13 deal, settled, then deleted by its seller. */
     async function overLevelFinal(flags = '') {
@@ -1978,6 +1995,7 @@ describe('the finals malware scan flag', () => {
   });
 });
 
+// Decided in civitai/civitai#10422.
 describe('a Final rated outside the domain', () => {
   /** A completed R deal whose one Final (`name`) passed, its one image rated R. */
   async function completedRatedFinal(name: 'a.png' | 'result.zip') {
@@ -2045,6 +2063,44 @@ describe('a Final rated outside the domain', () => {
     expect(await download(fileId, 31)).toBeNull();
     expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
     expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
+  });
+
+  it('is not refused because its owner is named on a CSAM report, only for its own flag', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "Image" SET "userId" = $1`, [SELLER]);
+    await q(`INSERT INTO "CsamReport" ("userId", images) VALUES ($1, '[]')`, [SELLER]);
+    expect(await download(fileId, 31)).not.toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: true });
+    await q(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    expect(await download(fileId, 31)).toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
+  });
+
+  it('once removed, is listed downloadable to a CSAM reviewer only while no image in it is held', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+    const asReviewer = async () =>
+      (
+        await files.listServiceDealFiles({
+          dealId,
+          userId: 99,
+          isModerator: true,
+          canReviewCsam: true,
+          servableLevels: 31,
+        })
+      ).find((row) => row.id === fileId);
+    expect(await asReviewer()).toMatchObject({ canDownload: true });
+    await q(`UPDATE "Image" SET minor = true`);
+    expect(await asReviewer()).toMatchObject({ canDownload: false });
+    expect(
+      await files.resolveServiceDealFileDownload({
+        fileId,
+        userId: 99,
+        isModerator: true,
+        moderatorFetch: true,
+        servableLevels: 31,
+      })
+    ).toBeNull();
   });
 
   it('a file with no rated image is served on any domain', async () => {
