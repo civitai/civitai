@@ -2,6 +2,7 @@ import { json, type RequestHandler } from '@sveltejs/kit';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
+import { isMemorializedFlags } from '@civitai/shared/memorial';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import {
   apiKeyRowScope,
@@ -38,7 +39,7 @@ const userinfo: RequestHandler = async ({ request }) => {
   const apiKey = await db
     .selectFrom('ApiKey')
     .innerJoin('User', 'User.id', 'ApiKey.userId')
-    .select(['ApiKey.userId', 'ApiKey.tokenScope', 'ApiKey.tokenScopeWide'])
+    .select(['ApiKey.userId', 'ApiKey.tokenScope', 'ApiKey.tokenScopeWide', 'User.flags'])
     .where('ApiKey.key', '=', hash)
     .where('ApiKey.type', '=', 'Access')
     .where((eb) => eb.or([eb('ApiKey.expiresAt', '>=', now), eb('ApiKey.expiresAt', 'is', null)]))
@@ -50,7 +51,12 @@ const userinfo: RequestHandler = async ({ request }) => {
 
   const tokenScope = apiKey ? apiKeyRowScope(apiKey) : null;
   // A client-credentials token is single-purpose: it identifies no user here.
-  if (!apiKey || tokenScope === null || carriesClientCredentialsOnlyScope(tokenScope)) {
+  if (
+    !apiKey ||
+    tokenScope === null ||
+    isMemorializedFlags(apiKey.flags) ||
+    carriesClientCredentialsOnlyScope(tokenScope)
+  ) {
     return json(
       { error: 'invalid_token', error_description: 'Invalid or expired token' },
       { status: 401, headers }

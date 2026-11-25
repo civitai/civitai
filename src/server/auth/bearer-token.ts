@@ -45,6 +45,8 @@ export async function getBearerTokenUser(
   // A ban leaves the user row intact (so the cookie session can still show the banned page); every
   // bearer path must refuse it here, as tRPC's isAuthed does.
   if (user.bannedAt) return null;
+  // A credential that outlived the memorialization's revoke still resolves to no one.
+  if (user.memorialized) return null;
   if (refuseModerationAccountSession(user, 'bearer-token')) return null;
   // A system account with moderator access authenticates with read-only keys only, unless an admin
   // has allowed it write keys. Both are read from the primary, not the session copy, so a grant

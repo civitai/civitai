@@ -7,12 +7,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   mintSessionToken: vi.fn(async () => 'minted-token'),
-  trackToken: vi.fn(async () => {}),
+  trackToken: vi.fn(async () => undefined),
   verifyToken: vi.fn(),
-  linkAccount: vi.fn(async () => {}),
+  linkAccount: vi.fn(async () => undefined),
   getOrCreateDeviceId: vi.fn(() => 'device-xyz'),
 }));
 
+// No user rows: the account checks at each mint pass, as for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../test/kysely-fake')).createKyselyFake({}),
+}));
 // Spread the real module and override only the signer: a hand-listed export list couples this test to
 // session.ts's whole transitive graph, and silently breaks the moment that graph grows (it did — `cookiePrefix`,
 // pulled in via pending-authz.ts). The real cookie helpers are pure env reads, so they need no stubbing.

@@ -1,3 +1,10 @@
+/** The `User.flags` bit a confirmed memorialization sets; the main app's `UserFlag.Memorialized` is this. */
+export const MEMORIALIZED_USER_FLAG = 4;
+
+export function isMemorializedFlags(flags: number | null | undefined): boolean {
+  return ((flags ?? 0) & MEMORIALIZED_USER_FLAG) !== 0;
+}
+
 /** How the holder's death was confirmed before a moderator proposed memorializing the account. */
 export const MEMORIAL_BASES = ['family', 'obituary', 'attestation'] as const;
 export type MemorialBasis = (typeof MEMORIAL_BASES)[number];
