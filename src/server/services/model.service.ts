@@ -613,8 +613,8 @@ export const getModelsRaw = async ({
    */
   coverage?: CoverageAudience;
   /**
-   * Keep taken-down models listed: only the v1 by-id route, which serves one model directly with its
-   * images dropped. A sibling of `input` so it can never arrive from parsed query params.
+   * Keep taken-down models listed; only the v1 by-id route sets it. A sibling of `input` so it can
+   * never arrive from parsed query params.
    */
   includeWithheld?: boolean;
 }) => {
