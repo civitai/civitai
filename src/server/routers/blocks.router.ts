@@ -1,4 +1,5 @@
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { APP_BLOCK_TAG_PREFIX } from '~/shared/utils/app-block-tags';
 import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { assertNoBlockMediaInputs } from '~/server/services/blocks/block-media-input-guard';
 import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
@@ -24,7 +25,7 @@ import {
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB,
@@ -163,6 +164,7 @@ import {
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
   agentReviewChatSchema,
+  agentReviewRequestSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
   getPublishRequestSchema,
@@ -389,6 +391,7 @@ import {
 import {
   recordBlockPostSubjectRefusal,
   recordBlockUnlockChargedNotReleased,
+  recordBlockUnlockOutcomeUnknown,
   recordStepPriceCheck,
   type AppBlockPostSurface,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -428,6 +431,7 @@ import {
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
 import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
@@ -3215,16 +3219,12 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(startAgentReviewSchema)
     .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { startAgentReview } = await import('~/server/services/blocks/agent-review.service');
       try {
         return await startAgentReview({
@@ -3233,6 +3233,8 @@ export const blocksRouter = router({
           // Optional targeted re-run (one failed analysis instead of all three).
           // `undefined` ⇒ a full run, exactly as before this field existed.
           sections: input.sections,
+          // Optional OpenRouter model for this run. `undefined` ⇒ the agent's default model.
+          model: input.model,
         });
       } catch (err) {
         // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a
@@ -3261,18 +3263,70 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(getAgentReviewSchema)
     .query(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
-      return getAgentReport(input.publishRequestId);
+      // `reportId` (the report picker) is looked up WITHIN this request, so the per-request
+      // gate above still covers it.
+      return getAgentReport(input.publishRequestId, input.reportId);
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW — every run of a request, newest first (model, status, times, cost),
+   * for the panel's report picker. Gated IDENTICALLY to getAgentReview.
+   */
+  listAgentReviews: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(agentReviewRequestSchema)
+    .query(async ({ ctx, input }) => {
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
+      const { listAgentReports } = await import(
+        '~/server/services/blocks/app-review-report.service'
+      );
+      return listAgentReports(input.publishRequestId);
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW — the models a re-run can be dispatched on: OpenRouter's
+   * tool-capable models within the input-price ceiling, with their prices (cached server-side). Gated IDENTICALLY to
+   * startAgentReview, on the request the moderator is reviewing. When OpenRouter cannot be
+   * reached this answers `available: false` rather than failing, so the picker can say so; a
+   * chosen model cannot be priced then, and startAgentReview refuses it (the default still runs).
+   */
+  getAgentReviewModels: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(agentReviewRequestSchema)
+    .query(async ({ ctx, input }) => {
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
+      const { getPickableAgentReviewModels } = await import(
+        '~/server/services/blocks/agent-review-models.service'
+      );
+      try {
+        // Only models within the input-price ceiling (the start refuses the rest anyway).
+        return { available: true, models: await getPickableAgentReviewModels() };
+      } catch (err) {
+        logToAxiom({
+          name: 'app-blocks.review.agent-models',
+          type: 'warning',
+          message: 'could not load the OpenRouter model list',
+          error: safeError(err),
+        });
+        return { available: false, models: [] };
+      }
     }),
 
   /**
@@ -3293,21 +3347,19 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(agentReviewChatSchema)
     .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Agentic review is restricted to civitai team');
-      }
-      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
-      const { isAgentReviewLaneEnabled } = await import(
+      // Moderator, then the request's lane flag (on-site or connect): one gate for every
+      // agent-review procedure.
+      const { assertAgentReviewAccess } = await import(
         '~/server/services/blocks/agent-review-lane'
       );
-      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
-        throw throwAuthorizationError('Agentic review is not enabled');
-      }
+      await assertAgentReviewAccess(ctx.user, input.publishRequestId);
       const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
       try {
         return await agentReviewChat({
           publishRequestId: input.publishRequestId,
           messages: input.messages,
+          // The run on screen (report picker). Looked up within this request in the service.
+          reportId: input.reportId,
         });
       } catch (err) {
         // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;
@@ -3910,6 +3962,9 @@ export const blocksRouter = router({
       const problemsListing = listing ?? (readsDraft(r) ? draftBySlug.get(r.slug) : undefined);
       return {
         ...rest,
+        // 🔴 The author's own view: a review boot check is reduced to a fixed reason, never the
+        // app's own output (`redactDeployDetailForAuthor`, the one author-facing redaction).
+        deployDetail: redactDeployDetailForAuthor(rest.deployDetail),
         modelInstallCount: pinnedCount,
         userSubscriptionCount: totalSubs,
         // The backing on-site listing id (owner unpublish/republish/history target)
@@ -15580,7 +15635,11 @@ async function outputUnlockDeps(opts: {
         domain: resolveBlockMaturity(claims).isGreen ? 'green' : 'red',
       }),
     assertUnlockReleasesOutput: async () =>
-      orchestration.assertUnlockReleasesOutput({ token: await token(), workflowId }),
+      orchestration.assertUnlockReleasesOutput({
+        token: await token(),
+        workflowId,
+        outsideComicEditor: true,
+      }),
     liftRestriction: async () =>
       workflows.liftWorkflowMatureRestriction({
         token: await token(),
@@ -15595,6 +15654,10 @@ async function outputUnlockDeps(opts: {
         name: 'app-block-unlock-charged-not-released',
         details: entry,
       });
+    },
+    warnOutcomeUnknown: (entry) => {
+      recordBlockUnlockOutcomeUnknown();
+      logToAxiom({ type: 'warning', name: 'app-block-unlock-outcome-unknown', details: entry });
     },
   };
   return { deps, unlockService };
@@ -16850,7 +16913,7 @@ function buildWorkflowTags(
     // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),
-    `app-block:block:${claims.blockId}`,
+    `${APP_BLOCK_TAG_PREFIX}block:${claims.blockId}`,
     // Per-instance tag — the SAME helper the dev-token publish proof reads
     // (`assertBlockWorkflowTaggedForInstance`).
     appBlockInstanceTag(claims.blockInstanceId),

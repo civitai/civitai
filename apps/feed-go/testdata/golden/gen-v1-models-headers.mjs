@@ -3,7 +3,8 @@
 //   GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-v1-models-headers.mjs
 //
 // Each case names a body fixture of v1-models/ (its request and world), adds request headers, and
-// states the headers Node's route sets on its 200: the endpoint wrapper (MixedAuthEndpoint /
+// states the headers Node's route sets on its answer (a 200, or the status the body fixture names:
+// the [id] not-found 404 carries the same headers): the endpoint wrapper (MixedAuthEndpoint /
 // PublicEndpoint, and withBlockScope on [id]), the handler, and res.json's ETag. The header VALUES are
 // written here by hand; src/server/__tests__/feed-go-v1-models.golden.test.ts runs the REAL wrappers
 // and handlers over each case and requires exactly these headers (on a mismatch it prints them). The
@@ -98,6 +99,14 @@ const cases = [
     headers: {},
     expect: { ...BASE, 'cache-control': NO_STORE },
   },
+  {
+    // The not-found 404: PublicEndpoint's headers and the handler's no-store are set before the
+    // handler finds nothing, and res.json sets the ETag of the 404 body as of any other.
+    name: 'detail-not-found',
+    fixture: 'detail-not-found.json',
+    headers: {},
+    expect: { ...BASE, 'cache-control': NO_STORE },
+  },
 ];
 
 rmSync(OUT, { recursive: true, force: true });
@@ -109,11 +118,16 @@ for (const c of cases) {
   if (fx.expect?.fallback || typeof fx.expect?.body !== 'string') {
     throw new Error(`${c.name}: ${c.fixture} has no expected body`);
   }
+  // The status is the body fixture's (written only when it is not 200).
+  const status = fx.expect.status ?? 200;
   const doc = {
     name: c.name,
     fixture: c.fixture,
     request: { headers: c.headers },
-    expect: { headers: { ...c.expect, etag: generateETag(fx.expect.body) } },
+    expect: {
+      ...(status === 200 ? {} : { status }),
+      headers: { ...c.expect, etag: generateETag(fx.expect.body) },
+    },
   };
   writeFileSync(join(OUT, `${c.name}.json`), JSON.stringify(doc, null, 2) + '\n');
 }

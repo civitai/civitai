@@ -60,12 +60,6 @@ const EXEMPT: Record<string, string> = {
   SQL_MOD_GET: 'the moderator tooling: moderators see every document',
   SQL_RATER_UNRATED: 'the rater: read server-side to be rated, never returned to a viewer',
   SQL_RATER_GET: 'the rater: one document read server-side to be rated, never returned to a viewer',
-  SQL_PUBLISH_SOURCES:
-    "server-side publish: the CALLER'S OWN private documents, copied server-side, never returned",
-  SQL_PUBLISH_TARGETS:
-    'server-side publish: only a content hash and the author of each shared copy, never a body',
-  SQL_PUBLISH_LOCK_OWN_TARGETS:
-    "server-side publish: the content hash of the caller's own copies, locked, never a body",
   SQL_VIEWER_RECORDS:
     "the record export: only the CALLER'S OWN documents (private, and visible shared ones they created), returned to that caller",
   SQL_PRIVATE_FEED_DOCS:
@@ -125,7 +119,7 @@ describe('content-level seam ledger', () => {
 
   it('list, the one statement built at run time, applies the predicate when levels are on', () => {
     const list = functionBody(source, 'list');
-    expect(list).toMatch(/docColumns\(viewerParam/);
+    expect(list).toMatch(/docColumns\(ctx\.levels !== undefined\)/);
     expect(list).toMatch(/if \(ctx\.levels\) \{\s*conds\.push\(\s*sharedDocLevelVisible\(/);
   });
 

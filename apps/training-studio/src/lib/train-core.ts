@@ -1,8 +1,9 @@
 import { ZodError } from 'zod';
 import { parseAiToolkitOptions, type AiToolkitOptions } from '@civitai/shared/training-options';
 import {
+  CLIP_SKIP_AS_SENT,
   KOHYA_CONTINUE_KEYS as SHARED_KOHYA_CONTINUE_KEYS,
-  pickDefinedKeys,
+  copyKohyaInput,
 } from '@civitai/shared/training-kohya-replay';
 import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { buildKohyaInput } from './kohya-training';
@@ -351,7 +352,7 @@ export async function submitTraining(
   /** The server's rating found the dataset mature: the charge stays out of Green. */
   mature = false
 ): Promise<string> {
-  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
+  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION, ...CLIP_SKIP_AS_SENT };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
   const key = run.submitKey && SUBMIT_KEY.test(run.submitKey) ? run.submitKey : undefined;
 
@@ -1007,6 +1008,7 @@ async function buildContinuation(
     sourceWorkflowId: opts.workflowId,
     sourceEpoch: opts.fromEpoch,
     matureCount,
+    ...CLIP_SKIP_AS_SENT,
   };
   const slug = name ? slugify(name) : '';
 
@@ -1014,7 +1016,7 @@ async function buildContinuation(
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
   const continuedInput =
     input.engine === 'kohya'
-      ? continueKohyaInput(input, addEpochs, steps, continueFrom, traceMode)
+      ? continueKohyaInput(input, srcMeta, addEpochs, steps, continueFrom, traceMode)
       : {
           engine: 'ai-toolkit',
           ecosystem: input.ecosystem,
@@ -1093,6 +1095,7 @@ const KOHYA_CONTINUE_KEYS = SHARED_KOHYA_CONTINUE_KEYS satisfies readonly (keyof
 
 function continueKohyaInput(
   input: Record<string, unknown>,
+  sourceMeta: TrainingStudioMeta,
   epochs: number,
   steps: number | undefined,
   continueFrom: string,
@@ -1103,7 +1106,7 @@ function continueKohyaInput(
       'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
     );
   return {
-    ...pickDefinedKeys(input, KOHYA_CONTINUE_KEYS),
+    ...copyKohyaInput(input, KOHYA_CONTINUE_KEYS, sourceMeta),
     engine: 'kohya',
     maxTrainEpochs: epochs,
     ...(steps ? { steps } : {}),

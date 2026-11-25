@@ -14,12 +14,14 @@ export type HashDetail = {
     fileSizeKB: number;
   } | null;
   detail: {
+    modelCoverId: number | null;
     modelCoverUrl: string | null;
     modelCoverType: string | null;
     modelCoverRestricted: boolean | null;
     modelCreatedAt: string | null;
     uploaderModelCount: number;
     uploaderJoinedAt: string | null;
+    minorModelCoverId: number | null;
     minorModelCoverUrl: string | null;
     minorModelCoverType: string | null;
     minorModelCoverRestricted: boolean | null;

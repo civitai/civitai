@@ -22,7 +22,6 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
-  TALLIES,
 } from './doc-store.functional';
 import { APPDATA_TABLES } from './doc-store.sql-scan';
 
@@ -64,15 +63,13 @@ async function rowsByTable(
 
 const NONE = Object.fromEntries(APPDATA_TABLES.map((t) => [t, 0]));
 
-/** Every kind of row a moderator can create: private + shared docs, an index row, a counter,
- * a counter-created doc, a mark, and a tombstone. */
+/** Every kind of row a moderator can create: private + shared docs, an index row, a report, and
+ * a tombstone. */
 async function seedModerator(store: DocStore, publishRequestId: string, uid: number) {
   const c = asMod(publishRequestId, uid);
   await store.put(c, PREFS, 'theme', { mode: `m${uid}` });
   await store.put(c, POSTS, 'p1', { status: 'open', score: uid });
-  await store.increment(c, POSTS, 'p1', 'views', 2);
-  await store.mark(c, POSTS, 'p1', 'vote');
-  await store.increment(c, TALLIES, 'game', 'plays', 1);
+  await store.report(c, POSTS, 'p1');
   await store.put(c, BOARD, 'gone', { t: 1 });
   await store.delete(c, BOARD, 'gone');
 }
@@ -91,7 +88,7 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('per-moderator review namespaces', () => {
-    it('two moderators on ONE request see none of each other’s private or shared docs, marks or counters', async () => {
+    it('two moderators on ONE request see none of each other’s private or shared docs or reports', async () => {
       const pr = freshRequest('ISO');
       const m1 = asMod(pr, MOD_1);
       const m2 = asMod(pr, MOD_2);
@@ -99,54 +96,38 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       await store.put(m1, PREFS, 'k', { who: 1 });
       await store.put(m1, BOARD, 'same', { by: 1 });
       await store.put(m1, POSTS, 'p', { status: 'open' });
-      // Each namespace numbers its own writes and marks.
-      expect(await store.mark(m1, POSTS, 'p', 'vote')).toEqual({
-        marked: true,
-        count: 1,
-        markSeq: 1,
-      });
-      expect(await store.increment(m1, POSTS, 'p', 'views', 5)).toEqual({ value: 5, markSeq: 2 });
-      expect(await store.increment(m1, TALLIES, 'g', 'plays', 3)).toEqual({
-        value: 3,
-        markSeq: 3,
-        seq: 4,
-      });
+      expect(await store.report(m1, POSTS, 'p')).toEqual({ added: true });
 
       expect(await store.get(m2, PREFS, 'k')).toBeNull();
       expect(await store.get(m2, BOARD, 'same')).toBeNull();
       expect(await store.get(m2, POSTS, 'p')).toBeNull();
-      expect(await store.get(m2, TALLIES, 'g')).toBeNull();
       expect((await store.list(m2, BOARD)).items).toEqual([]);
-      expect((await store.list(m2, POSTS, { markedBy: 'me', mark: 'vote' })).items).toEqual([]);
       // Moderator 1's shared key is not moderator 1's document in moderator 2's namespace:
-      // no `not_author`, a fresh version, and tallies that start from zero.
+      // no `not_author`, a fresh version, and moderator 2's own report is a new one.
       expect((await store.put(m2, BOARD, 'same', { by: 2 })).version).toBe(1);
       await store.put(m2, POSTS, 'p', { status: 'closed' });
-      expect(await store.mark(m2, POSTS, 'p', 'vote')).toEqual({
-        marked: true,
-        count: 1,
-        markSeq: 1,
-      });
-      expect(await store.increment(m2, POSTS, 'p', 'views', 2)).toEqual({ value: 2, markSeq: 2 });
-      expect(await store.increment(m2, TALLIES, 'g', 'plays', 1)).toEqual({
-        value: 1,
-        markSeq: 3,
-        seq: 3,
-      });
+      expect(await store.report(m2, POSTS, 'p')).toEqual({ added: true });
 
       expect(await store.get(m1, BOARD, 'same')).toMatchObject({ data: { by: 1 }, version: 1 });
-      expect(await store.get(m1, POSTS, 'p')).toMatchObject({
-        data: { status: 'open' },
-        counters: { views: 5 },
-        marks: { vote: 1 },
-      });
-      expect(await store.get(m1, TALLIES, 'g')).toMatchObject({ counters: { plays: 3 } });
-      // The app's usage is the shared data (board, post, counter doc); moderator 1's own row adds
-      // their private doc, which the app's ceiling does not carry.
+      expect(await store.get(m1, POSTS, 'p')).toMatchObject({ data: { status: 'open' } });
+      // One report row in each namespace, each by its own moderator.
+      expect(
+        (
+          await h.raw(
+            `SELECT ns, user_id FROM appdata.doc_mark WHERE app_id = $1 AND key = 'p' ORDER BY ns`,
+            [pr]
+          )
+        ).map((r) => `${r.ns}|${r.user_id}`)
+      ).toEqual([
+        `${reviewNamespace(pr, MOD_1)}|${MOD_1}`,
+        `${reviewNamespace(pr, MOD_2)}|${MOD_2}`,
+      ]);
+      // The app's usage is the shared data (board, post); moderator 1's own row adds their
+      // private doc, which the app's ceiling does not carry.
       const m1Usage = await store.usage(m1);
       expect({ app: m1Usage.app.docs, viewer: m1Usage.viewer?.docs }).toEqual({
-        app: 3,
-        viewer: 4,
+        app: 2,
+        viewer: 3,
       });
       // `{"who": 1}` is 10 bytes of jsonb text.
       expect(m1Usage.viewer!.bytes - m1Usage.app.bytes).toBe(10);
@@ -193,7 +174,7 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       }
       // prod and dev rows under the request's OWN app id: the purge must not reach them.
       await store.put(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', { status: 'open' });
-      await store.mark(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', 'vote');
+      await store.report(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1');
       await store.put(ctx(pr, NS_DEV, MOD_1), PREFS, 'k', { a: 1 });
       await store.put(ctx(app, NS_PROD, MOD_1), POSTS, 'p1', { status: 'open' });
       await store.put(ctx(app, NS_DEV, MOD_1), PREFS, 'k', { a: 1 });

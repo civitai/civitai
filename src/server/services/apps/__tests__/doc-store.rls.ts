@@ -3,7 +3,7 @@
 // and another app's rows. Shared by the PGlite and real-Postgres files.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Harness } from './doc-store.harness';
-import { APPDATA_TABLES } from './doc-store.sql-scan';
+import { APPDATA_SCHEMA_TABLES } from './doc-store.sql-scan';
 
 const RLS_A = 'ab_RLSPROBEA';
 const RLS_B = 'ab_RLSPROBEB';
@@ -42,7 +42,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
            FROM pg_class c WHERE c.relnamespace = 'appdata'::regnamespace AND c.relkind = 'r' ORDER BY c.relname`
       );
       expect(rows).toEqual(
-        [...APPDATA_TABLES].sort().map((t) => ({
+        [...APPDATA_SCHEMA_TABLES].sort().map((t) => ({
           relname: t,
           relrowsecurity: true,
           relforcerowsecurity: true,
@@ -242,7 +242,8 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
 
     it('positive control: the superuser sees every seeded row', async () => {
       const want = SEED.map(([a, n]) => `${a}|${n}`).sort();
-      for (const t of APPDATA_TABLES) expect({ t, rows: await all(t) }).toEqual({ t, rows: want });
+      for (const t of APPDATA_SCHEMA_TABLES)
+        expect({ t, rows: await all(t) }).toEqual({ t, rows: want });
     });
 
     it('on, bound to a request: reads and deletes ONLY that request’s review rows — never prod or dev', async () => {

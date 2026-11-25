@@ -130,6 +130,7 @@ function fakes(reads: Array<() => Wf>, over: Partial<Fakes> = {}): Fakes {
     liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ outcome: 'lifted' })),
     acquireLock: vi.fn<D['acquireLock']>(async () => release),
     warnChargedNotReleased: vi.fn<D['warnChargedNotReleased']>(() => undefined),
+    warnOutcomeUnknown: vi.fn<D['warnOutcomeUnknown']>(() => undefined),
     release,
     ...over,
   };
@@ -504,6 +505,51 @@ describe('the orchestrator write got no response (our timeout)', () => {
     expect(JSON.stringify(result)).not.toContain('r1.png');
     // The write may still land: the lock is not released, so a retry is refused as in progress.
     expect(f.release).not.toHaveBeenCalled();
+  });
+
+  // Decision (unknown-outcome record): the reply says nothing was charged, so support needs a
+  // record naming who may have paid what. Keep it on this branch only.
+  it('🔴 records the unlock for support: user, workflow, position, price and planned level', async () => {
+    const f = fakes([LOCKED], {
+      liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ outcome: 'no-response' })),
+    });
+    await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
+    expect(f.warnOutcomeUnknown).toHaveBeenCalledTimes(1);
+    expect(f.warnOutcomeUnknown).toHaveBeenCalledWith({
+      userId: VIEWER,
+      workflowId: WF,
+      position: 1,
+      unlockBuzz: TOTAL,
+      plannedLevel: expect.any(Number),
+    });
+  });
+
+  it('a record that throws does not change the reply or release the lock', async () => {
+    const f = fakes([LOCKED], {
+      liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ outcome: 'no-response' })),
+      warnOutcomeUnknown: vi.fn<D['warnOutcomeUnknown']>(() => {
+        throw new Error('log down');
+      }),
+    });
+    const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
+    expect(result.outcome).toBe('unavailable');
+    expect(f.release).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['lifted', async () => ({ outcome: 'lifted' as const })],
+    ['insufficient-funds', async () => ({ outcome: 'insufficient-funds' as const })],
+    [
+      'a thrown failure',
+      async (): Promise<never> => {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'refused' });
+      },
+    ],
+  ])('CONTROL: %s records no unknown outcome', async (_label, lift) => {
+    const f = fakes([LOCKED], { liftRestriction: vi.fn<D['liftRestriction']>(lift) });
+    await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f).catch(() => undefined);
+    expect(f.liftRestriction).toHaveBeenCalledTimes(1);
+    expect(f.warnOutcomeUnknown).not.toHaveBeenCalled();
   });
 });
 

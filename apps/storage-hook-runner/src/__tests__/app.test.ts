@@ -267,28 +267,14 @@ describe('POST /v1/check: request shape', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  // The tally input is the storage API's update operator (`$inc` / `$mark` / `$unmark`), the op's
-  // own; the pre-operator `{ kind, name, by }` shape is contract drift and must fail closed (400).
+  // The tally ops (increment, mark, unmark) were removed from App Storage: the runner refuses them,
+  // and `tally` is always null (still a required field). Anything else is contract drift and must
+  // fail closed (400).
   it.each([
-    ['increment', { $inc: { likes: 2 } }],
-    ['mark', { $mark: 'star' }],
-    ['unmark', { $unmark: 'star' }],
-  ] as const)('answers 200 for %s carrying its own update operator', async (op, tally) => {
-    const res = await post(
-      JSON.stringify(checkBody(ALLOW, { input: { op, after: null, tally } as never }))
-    );
-    expect(res.statusCode).toBe(200);
-    expect(res.json().result).toEqual({ allow: true });
-  });
-
-  it.each([
-    ['the pre-operator counter shape', 'increment', { kind: 'counter', name: 'likes', by: 1 }],
-    ['the pre-operator mark shape', 'mark', { kind: 'mark', name: 'star' }],
-    ["another op's operator", 'mark', { $unmark: 'star' }],
-    ['$inc naming two counters', 'increment', { $inc: { likes: 1, plays: 1 } }],
-    ['two operators', 'mark', { $mark: 'star', $unmark: 'star' }],
-    ['no operator on a tally op', 'increment', null],
+    ['a removed tally op', 'increment', { $inc: { likes: 1 } }],
+    ['a removed tally op with no operator', 'mark', null],
     ['an operator on a document write', 'put', { $inc: { likes: 1 } }],
+    ['a pre-operator tally shape on a document write', 'put', { kind: 'mark', name: 'star' }],
   ] as const)('refuses 400 bad_request for %s', async (_what, op, tally) => {
     const res = await post(
       JSON.stringify(checkBody(ALLOW, { input: { op, after: null, tally } as never }))

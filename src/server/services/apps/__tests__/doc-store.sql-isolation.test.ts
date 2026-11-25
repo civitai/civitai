@@ -57,7 +57,7 @@ describe('scanner controls', () => {
       `SELECT 1 FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2`,
       `UPDATE appdata.usage_app u SET bytes = 1 WHERE u.app_id = $1 AND u.ns = $2`,
       `DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.key = $3`,
-      `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll) VALUES ($1, $2, $3)`,
+      `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll) VALUES ($1, $2, $3)`,
       `INSERT INTO appdata.usage_user AS u (app_id, ns, user_id) SELECT $1, $2, $3::int`,
       `BEGIN; SELECT set_config('appdata.app_id', 'x', true), set_config('appdata.ns', 'prod', true)`,
       // Review maintenance: keyed on the request; the usage_app-only listing need not be.
@@ -135,7 +135,18 @@ describe('scanner controls', () => {
         `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
         /lacks u\.app_id = \$1/,
       ],
-      [`SELECT t.key FROM appdata.doc_tally t WHERE t.ns LIKE 'rev:%'`, /lacks t\.app_id = \$1/],
+      [`SELECT tb.key FROM appdata.doc_tomb tb WHERE tb.ns LIKE 'rev:%'`, /lacks tb\.app_id = \$1/],
+      // The tables removed with marks, counters and their tallies (docs/app-storage-generic-core.md,
+      // rollout step 5) are still in the schema until the hand-applied cleanup drops them, but no
+      // statement may name them.
+      [
+        `SELECT t.count FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2`,
+        /retired appdata relation doc_tally/,
+      ],
+      [
+        `INSERT INTO appdata.mark_head AS mh (app_id, ns, last_mark_seq) VALUES ($1, $2, 1)`,
+        /retired appdata relation mark_head/,
+      ],
       [
         `UPDATE appdata.doc d SET version = 1 WHERE d.app_id = $1 AND d.ns LIKE 'rev:%'`,
         /is not a SELECT or DELETE/,
@@ -182,7 +193,8 @@ describe('doc-store.ts SQL', () => {
       ),
     ]);
     expect(literals.length).toBeGreaterThanOrEqual(25);
-    // Every table is touched somewhere, so a table cannot drop out of the scan unnoticed.
+    // Every table is touched somewhere, so a table cannot drop out of the scan unnoticed; and
+    // neither retired table (`doc_tally`, `mark_head`) is named at all.
     expect(new Set(refs.map((r) => r[1]))).toEqual(new Set(APPDATA_TABLES));
   });
 
@@ -234,9 +246,9 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     });
     expect(maint.map((n) => owner(n, 'variable')).sort()).toEqual([
       'SQL_REVIEW_APP_IDS',
-      // One delete per appdata table (the mark sequence's `mark_head` and the maintenance runs'
-      // `maint_run` included).
-      ...Array(9).fill('SQL_REVIEW_PURGE'),
+      // One delete per appdata table the store names (the maintenance runs' `maint_run`
+      // included; the retired `doc_tally` and `mark_head` are not deleted from any more).
+      ...Array(7).fill('SQL_REVIEW_PURGE'),
     ]);
   });
 
@@ -448,15 +460,11 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
     // The permission-hooks suite rates a document Blocked and reads back what a hooked write left.
     'server/services/apps/__tests__/doc-store-api.hooks.test.ts',
-    // The publish suite reads back the copies, seqs, usage and tombstones a publish wrote.
-    'server/services/apps/__tests__/doc-store-api.publish.test.ts',
-    // The tally-operator suite compares the rows the old routes and the PATCH operators write.
-    'server/services/apps/__tests__/doc-store-api.tally-operators.test.ts',
     // The unchanged-writes suite reads back the row, seq and rating an unchanged put must not move.
     'server/services/apps/__tests__/doc-store-api.unchanged-writes.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
-    // The report API suite reads back the report rows a report wrote and the tallies it must not.
+    // The report API suite reads back the report rows a report wrote.
     'server/services/apps/__tests__/doc-store-report-api.test.ts',
     // Reads every column that can hold a user id, to prove an account wipe left none.
     'server/services/apps/__tests__/doc-store.account-wipe.test.ts',
@@ -468,14 +476,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Seeds the run records the removed rollout step 4 tooling wrote (no store op writes them now),
     // ages them for the retention, and reads back what an account wipe left in them.
     'server/services/apps/__tests__/doc-store.maint-runs.pglite.test.ts',
-    // Reads back the mark sequence each mark, unmark and increment stamped, and the order of the
-    // statements that took it.
-    'server/services/apps/__tests__/doc-store.mark-seq.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
-    // Reads back the rating columns a publish under content levels left on each copy.
-    'server/services/apps/__tests__/doc-store.publish.levels.pglite.test.ts',
-    'server/services/apps/__tests__/doc-store.publish.pg.test.ts',
     // Reads back the rating columns and rating id the rater stored, and seeds a moderator override.
     'server/services/apps/__tests__/doc-store.rater.pglite.test.ts',
     // Reads back the record_id the column default gave each write, and seeds rows with none for

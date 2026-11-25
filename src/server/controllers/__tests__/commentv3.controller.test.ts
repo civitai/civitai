@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as CommentOwnerService from '~/server/services/comment-owner.service';
 import type * as ReadService from '~/server/services/commentv3/read.service';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
@@ -27,14 +28,20 @@ vi.mock('~/server/services/commentv3/read.service', async (importOriginal) => ({
   ...read,
 }));
 
-const gate = vi.hoisted(() => vi.fn(async (_entity: unknown, _ctx: unknown) => undefined));
+const gate = vi.hoisted(() =>
+  vi.fn(async (_entity: unknown, _ctx: unknown, _view?: unknown) => undefined)
+);
 vi.mock('~/server/services/commentv3/surfaces', async (importOriginal) => {
   const actual = await importOriginal<typeof Surfaces>();
   return {
     ...actual,
     commentSurface: (entityType: string) => ({
       ...actual.commentSurface(entityType),
-      assertVisible: (entityId: number, ctx: unknown) => gate({ entityType, entityId }, ctx),
+      // A write passes no view; keep its call two arguments long.
+      assertVisible: (entityId: number, ctx: unknown, view?: unknown) =>
+        view === undefined
+          ? gate({ entityType, entityId }, ctx)
+          : gate({ entityType, entityId }, ctx, view),
     }),
   };
 });
@@ -145,6 +152,7 @@ describe('getSection tells the read service who is asking', () => {
     expect(gate).toHaveBeenCalledTimes(1);
     expect(gate).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: 'article', entityId: 10 }),
+      expect.anything(),
       expect.anything()
     );
   });
@@ -194,7 +202,11 @@ describe('getReplies and getThread take the entity from the stored comment', () 
       ctx: ctxFor({ id: 2 }),
       input: { parentId: 5, sort: 'Oldest' } as never,
     });
-    expect(gate).toHaveBeenCalledWith({ entityType: 'image', entityId: 7 }, expect.anything());
+    expect(gate).toHaveBeenCalledWith(
+      { entityType: 'image', entityId: 7 },
+      expect.anything(),
+      expect.anything()
+    );
   });
 
   it('is not found when the comment does not exist, or the read finds nothing to show', async () => {
@@ -321,7 +333,7 @@ describe('the section controls answer only where the section is visible', () => 
   ])('%s is not found on a hidden section', async (_, call) => {
     gate.mockRejectedValueOnce(Object.assign(new Error('hidden'), { code: 'NOT_FOUND' }));
     await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(gate).toHaveBeenCalledWith({ entityType: 'bounty', entityId: 7 }, expect.anything());
+    expect(gate.mock.calls.at(-1)?.[0]).toEqual({ entityType: 'bounty', entityId: 7 });
     expect(read.getCommentLock).not.toHaveBeenCalled();
     expect(section.getSectionMuted).not.toHaveBeenCalled();
     expect(section.toggleSectionMute).not.toHaveBeenCalled();
@@ -355,5 +367,39 @@ describe('the section controls answer only where the section is visible', () => 
       { comment: expect.objectContaining({ id: 5, entityType: 'bounty' }) }
     );
     expect(stored).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the owner's view of a held image's thread is asked for on reads only", () => {
+  const input = { entityType: 'image', entityId: 7 } as const;
+  const owner = { id: 2, isModerator: false };
+  const session = { user: owner } as never;
+  const scopedKey = { user: owner, apiKeyId: 5, tokenScope: TokenScope.MediaRead } as never;
+  const ownerViewOf = () =>
+    (gate.mock.calls.at(-1)?.[2] as { ownerSeesHeld?: boolean })?.ownerSeesHeld;
+
+  beforeEach(() => {
+    read.getCommentEntity.mockResolvedValue({ entityType: 'image', entityId: 7, path: '5' });
+  });
+
+  it.each([
+    [
+      'section',
+      (ctx: never) =>
+        getCommentSectionHandler({ ctx, input: { ...input, sort: 'Oldest' } as never }),
+    ],
+    ['replies', (ctx: never) => getCommentRepliesHandler({ ctx, input: { parentId: 5 } as never })],
+    ['lock state', (ctx: never) => getSectionLockHandler({ ctx, input })],
+    ['mute state', (ctx: never) => getSectionMutedHandler({ ctx, input })],
+  ])('%s: on a session, not on a scoped key', async (_, call) => {
+    await call(session);
+    expect(ownerViewOf()).toBe(true);
+    await call(scopedKey);
+    expect(ownerViewOf()).toBe(false);
+  });
+
+  it('the mute toggle, a write, never asks for it', async () => {
+    await toggleSectionMuteHandler({ ctx: session, input });
+    expect(ownerViewOf()).toBeUndefined();
   });
 });

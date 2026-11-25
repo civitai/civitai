@@ -12,6 +12,7 @@ import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
 import { getStanding } from '$lib/server/standing';
+import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import type { LayoutServerLoad } from './$types';
 
 // The header's recap dot: a recap exists and has not been seen today, on the home card or in the header dialog (either one
@@ -73,6 +74,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
         .where('userId', '=', locals.user.id)
         .executeTakeFirst()
     : undefined;
+  const inquisitor = await inquisitorQueueOpen(locals.user);
   return {
     civitaiUrl,
     // Keys the player's own sound setting in the browser; never shown.
@@ -88,7 +90,9 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     fervorWindowDays: PROGRESSION.fervorWindowDays,
     // A signed-out visitor (the welcome page, a 404) wears no badge, so the cosmetics are not read for them.
     badges: locals.user ? await rankBadgeUrls(db) : { small: {}, large: {} },
-    recapUnseen: await recapUnseen(locals.user?.id),
-    headerStats: player !== undefined && locals.user ? await headerStats(locals.user.id) : null,
+    inquisitor,
+    recapUnseen: inquisitor ? false : await recapUnseen(locals.user?.id),
+    headerStats:
+      !inquisitor && player !== undefined && locals.user ? await headerStats(locals.user.id) : null,
   };
 };

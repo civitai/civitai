@@ -9,7 +9,11 @@ import {
   type WorkflowStepTemplate,
   type WorkflowTemplate,
 } from '@civitai/orchestration-client';
-import { KOHYA_REPLAY_KEYS, replayKohyaInput } from '@civitai/shared/training-kohya-replay';
+import {
+  CLIP_SKIP_AS_SENT,
+  KOHYA_REPLAY_KEYS,
+  replayKohyaInput,
+} from '@civitai/shared/training-kohya-replay';
 
 // One-off: refunds a training run broken by a trainer bug and, in `retrain` mode, submits the same run
 // again on the owner's Buzz.
@@ -257,16 +261,18 @@ export function buildRetrainBody(
   const name = typeof meta.name === 'string' && meta.name ? `${meta.name} (retrain)` : meta.name;
   // The source's model links stay with the source: the retrain is published as its own model.
   const { published, modelId, modelVersionId, sourceEpoch, ...kept } = meta;
-  // An API run's metadata is its own; it gets only the link back to the source.
+  // An API run's metadata is its own; it gets only the link back to the source. Both are stamped:
+  // the replayed clip skip is already the value the retrain trains at.
   const metadata = studio
-    ? { ...kept, name, sourceWorkflowId, retrainOf: sourceWorkflowId }
-    : { retrainOf: sourceWorkflowId };
+    ? { ...kept, name, sourceWorkflowId, retrainOf: sourceWorkflowId, ...CLIP_SKIP_AS_SENT }
+    : { retrainOf: sourceWorkflowId, ...CLIP_SKIP_AS_SENT };
   const step = {
     $type: 'training',
     priority: 'low',
     input: replayKohyaInput(
       input,
-      KOHYA_REPLAY_KEYS satisfies readonly (keyof KohyaTrainingInput)[]
+      KOHYA_REPLAY_KEYS satisfies readonly (keyof KohyaTrainingInput)[],
+      workflow.metadata
     ),
   } as unknown as WorkflowStepTemplate;
   return {

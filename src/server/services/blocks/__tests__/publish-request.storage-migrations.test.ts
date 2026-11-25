@@ -249,7 +249,7 @@ describe('submitVersion — keyedBy immutability against every approval', () => 
 // docs/app-storage-generic-core.md, rollout step 3: marks, counters and `write: "none"` are
 // deprecated. Submit refuses a NEW one against the previous approved version (what the store
 // enforces, `app_blocks.manifest`), and lets a collection keep, or drop, what it already declares.
-describe('submitVersion — deprecated marks, counters and write "none"', () => {
+describe('submitVersion — removed marks, counters and write "none"', () => {
   const VOTES = (extra: Record<string, unknown>) => ({
     collections: {
       cards: { visibility: 'private', schema: V1_SCHEMA },
@@ -274,7 +274,7 @@ describe('submitVersion — deprecated marks, counters and write "none"', () => 
     const err = await refusedFor(VOTES({ marks: ['vote', 'down'] }));
     expect(err?.name).toBe('StorageMigrationRefusal');
     expect(err?.message).toContain(
-      'storage.collections.votes.marks: "down" is not declared on this collection by the previous approved version, and marks are deprecated'
+      'storage.collections.votes.marks: "down" is not declared on this collection by the previous approved version, and marks were removed'
     );
     expect(s3Send).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
@@ -282,7 +282,7 @@ describe('submitVersion — deprecated marks, counters and write "none"', () => 
 
   it('🔴 refuses a new counter, and a new write "none" collection', async () => {
     expect((await refusedFor(VOTES({ marks: ['vote'], counters: ['views'] })))?.message).toContain(
-      'storage.collections.votes.counters: "views" is not declared on this collection by the previous approved version, and counters are deprecated'
+      'storage.collections.votes.counters: "views" is not declared on this collection by the previous approved version, and counters were removed'
     );
     const none = await refusedFor({
       collections: {
@@ -291,7 +291,7 @@ describe('submitVersion — deprecated marks, counters and write "none"', () => 
       },
     });
     expect(none?.message).toContain(
-      'storage.collections.plays.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated'
+      'storage.collections.plays.write: "none" is not declared on this collection by the previous approved version, and write "none" was removed'
     );
     expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
   });
@@ -315,11 +315,11 @@ describe('submitVersion — deprecated marks, counters and write "none"', () => 
     const err = await refusedFor(VOTES({ marks: ['vote'] }));
     expect(err?.name).toBe('StorageMigrationRefusal');
     expect(err?.message).toContain(
-      'storage.collections.votes.marks: marks are deprecated and cannot be declared on a new app (declared: "vote")'
+      'storage.collections.votes.marks: marks were removed and cannot be declared on a new app (declared: "vote")'
     );
     expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
     // Positive control: the same first version without the mark passes this gate.
     const without = await refusedFor(VOTES({}));
-    expect(without?.message ?? '').not.toContain('deprecated');
+    expect(without?.message ?? '').not.toContain('were removed');
   });
 });

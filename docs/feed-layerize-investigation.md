@@ -43,12 +43,14 @@ fixes revealed that the feed has several independent sources of
 
 ### 1. The `.scroll-area` ~500 MB composited layer
 
-Defined at [src/styles/globals.css:485-492](src/styles/globals.css#L485-L492):
+Was defined in `src/styles/globals.css` (`.scroll-area`) as below. The
+`will-change: transform` line is removed on the branch for lever A; see that
+section for the status of its test.
 
 ```css
 .scroll-area {
   overflow-x: hidden;
-  will-change: transform;
+  will-change: transform; /* removed under lever A */
   position: relative;
   scrollbar-width: thin;
   display: flex;
@@ -120,7 +122,7 @@ event handlers" promotion of the feed layer.
 **Status: fixed.** A `pnpm patch` against `@mantine/hooks` makes
 `useClickOutside`'s `touchstart` listener passive. Same bug exists in
 v8.3.18 and v9.1.1, so the patch survives upgrades. See
-[patches/@mantine__hooks.patch](../patches/@mantine__hooks.patch).
+[patches/@mantine\_\_hooks.patch](../patches/@mantine__hooks.patch).
 
 ### 5. Content-visibility on virtualized rows
 
@@ -140,11 +142,11 @@ trade scroll-time benefit for idle compositor cost.
 
 Production idle traces on the same page:
 
-| Date | `Layerize` total | Events | Mean per event | Frame drop rate |
-|---|---:|---:|---:|---:|
-| 2026-04-28 baseline | 4716 ms / 13.8 s (34 %) | 440 | 10.7 ms | 50 % |
-| 2026-04-28 post-deploy (CustomNumberFlow with `will-change`) | 8522 ms / 10.7 s (79 %) | 374 | 22.8 ms | 75 % |
-| 2026-04-29 expected post-`will-change` removal | TBD | TBD | TBD | TBD |
+| Date                                                         |        `Layerize` total | Events | Mean per event | Frame drop rate |
+| ------------------------------------------------------------ | ----------------------: | -----: | -------------: | --------------: |
+| 2026-04-28 baseline                                          | 4716 ms / 13.8 s (34 %) |    440 |        10.7 ms |            50 % |
+| 2026-04-28 post-deploy (CustomNumberFlow with `will-change`) | 8522 ms / 10.7 s (79 %) |    374 |        22.8 ms |            75 % |
+| 2026-04-29 expected post-`will-change` removal               |                     TBD |    TBD |            TBD |             TBD |
 
 The interim regression (Apr 28 post-deploy) shows clearly how a
 seemingly-safe `will-change` declaration on small elements (digit stacks)
@@ -157,6 +159,14 @@ component should be reviewed for instance count before merging.
 Roughly ordered by impact-per-effort.
 
 ### A. Re-attempt removing `will-change: transform` from `.scroll-area`
+
+**Status:** the removal is applied on a branch; the test plan below has not run
+yet and gates the merge. That branch had a second reason for the removal: the
+property made `.scroll-area` the containing block for every in-tree
+`position: fixed` element, which then scrolled with the page (the comics
+project page's mobile chapter button, for example). That is why `ViewportAnchor`,
+`StickerPlacementTray` and `useMenuSheet` portal their overlays. If the test
+regresses scroll feel, revert the removal and keep those portals.
 
 The biggest single potential win. The 500 MB layer is the upper bound on
 per-`Layerize` cost; without it, Chrome auto-tiles the scrollable area
@@ -172,7 +182,7 @@ attempt:
   against the layer)
 - The CustomNumberFlow stack-layer storm is gone
 
-This is essentially the only change that *could* make things worse on
+This is essentially the only change that _could_ make things worse on
 the new baseline, so it's worth a controlled test under clean
 conditions.
 
@@ -227,8 +237,8 @@ same wrappers would give stronger isolation: changes inside one row's
 subtree (image decode, hover state, NumberFlow value change) would not
 invalidate the parent feed layer's overlap analysis.
 
-**Important caveat:** `contain: paint` was *previously rejected on the
-parent `.scroll-area`* per saved memory notes. That rejection applies to
+**Important caveat:** `contain: paint` was _previously rejected on the
+parent `.scroll-area`_ per saved memory notes. That rejection applies to
 the parent specifically. **On individual rows it's structurally
 different:**
 
@@ -257,7 +267,7 @@ metric updated while they were offscreen. Server-fetched initial values
 mean this is bounded.
 
 This is independent of `Layerize` directly — it reduces the
-*per-signal-fan-out* cost. Mentioned here because it interacts with
+_per-signal-fan-out_ cost. Mentioned here because it interacts with
 several feed-page costs at once.
 
 ### E. Verify content-visibility's net effect

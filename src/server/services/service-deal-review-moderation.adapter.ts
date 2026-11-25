@@ -74,25 +74,21 @@ async function settleReviewText(
 type RawClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
 
 /**
- * Puts a text back to Pending with no check recorded, so it stays unshown until a check is sent
- * again; `only` narrows which texts. The edit and reply writers and a restore set the same state
- * inline, as part of their own write.
+ * Puts unsettled text back to Pending with no check recorded, so it stays unshown until a check is
+ * sent again; `only` narrows which texts. The edit and reply writers and a restore set the same
+ * state inline, as part of their own write.
  */
 function resetReviewTextToPending(
   db: RawClient,
   type: TextType,
   reviewId: number,
-  from: 'unsettled' | 'blocked',
   only: Prisma.Sql
 ) {
   const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
   return db.$executeRaw`
     UPDATE "ServiceDealReview" r
     SET ${cols.status} = 'Pending', ${cols.workflow} = NULL
-    WHERE r."id" = ${reviewId}::int
-      AND r.${cols.status} IN ${Prisma.raw(
-    from === 'blocked' ? "('Blocked')" : "('Pending', 'Error')"
-  )}
+    WHERE r."id" = ${reviewId}::int AND r.${cols.status} IN ('Pending', 'Error')
       AND ${only}`;
 }
 
@@ -108,7 +104,6 @@ function resendReviewText(
     db,
     type,
     reviewId,
-    'unsettled',
     Prisma.sql`(${workflowId ?? null}::text IS NULL OR r.${cols.workflow} = ${
       workflowId ?? null
     }::text)
@@ -314,16 +309,18 @@ export async function blockServiceDealReviewText(type: TextType, reviewId: numbe
 /**
  * A dismissed csam hold sends the blocked text back to its check, unless the csam queue still holds
  * it; the reconcile in the deals job rechecks it. Text blocked for its level is blocked again by the
- * stored verdict.
+ * stored verdict. Text cleared while held has nothing to check and settles as the edit settles it.
  */
 export async function requeueBlockedServiceDealReviewText(type: TextType, reviewId: number) {
-  await resetReviewTextToPending(
-    dbWrite,
-    type,
-    reviewId,
-    'blocked',
-    csamQueueClearSql(type, reviewId)
-  );
+  const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+  const requeued = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealReview" r
+    SET ${cols.status} = (CASE WHEN r.${cols.text} IS NULL THEN 'Scanned' ELSE 'Pending' END)
+        ::"ServiceOfferingIngestionStatus",
+      ${cols.workflow} = NULL
+    WHERE r."id" = ${reviewId}::int AND r.${cols.status} = 'Blocked'
+      AND ${csamQueueClearSql(type, reviewId)}`;
+  if (requeued && type === 'ServiceDealReview') await syncReviewPublication(reviewId);
 }
 
 const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
@@ -332,7 +329,6 @@ const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
     return new Map([...subjects].map(([id, s]) => [id, s.fields[0]?.text ?? '']));
   },
 
-  // Only the retry cron calls submit.
   submit: ({ entityId, content }) =>
     trackSubmit(type, entityId, content, () =>
       submitTextModerationOrScan({

@@ -1,7 +1,11 @@
 # App Storage: a generic collections core
 
-**Status:** design, decided (see "Decisions"); nothing built. Production usage was measured on
-2026-11-23 ("Inventory (2026-11-23)"). Code citations are to `main` at `f9cad06bca`.
+**Status:** decided (see "Decisions"). Rollout steps 1 to 4 are done; step 5 (removal) is in
+progress: the code removal has shipped, the hand-applied final cleanup has not run yet ("Rollout",
+step 5). Production usage was measured on 2026-11-23 ("Inventory (2026-11-23)"). Code citations in
+the sections above "Rollout" are to `main` at `f9cad06bca`, before the removal; the behaviour now
+in force is described in `docs/features/app-blocks.md` ("Document store: removed tallies and
+publish").
 
 App Storage (the document store behind `/api/v1/blocks/storage`, `src/server/services/apps/doc-store.ts`)
 grew feature-specific primitives next to its collections: marks, counters, tallies on every document,
@@ -83,6 +87,7 @@ pre-generated key). Viewer-keyed collections add a third way, below.
 | `GET`, `PUT`, `DELETE /:c/@me/:parent`                              | the viewer's document for `parent`            | **new**, `keyedBy: "parent+viewer"`                                                                                                                                                                          |
 | `PATCH /:c/:key` (`$inc`, `$mark`, `$unmark`)                       | tallies                                       | **removed**                                                                                                                                                                                                  |
 | `POST /:c/:key/counters/:name`, `PUT`/`DELETE /:c/:key/marks/:name` | tallies (already deprecated)                  | **removed**                                                                                                                                                                                                  |
+| `PUT`/`DELETE /:c/:key/marks/report`                                | the `report` mark                             | **kept as an alias** of the report API for SDKs older than 0.30: `PUT` files through `fileReport` and answers `{marked: true}`; `DELETE` stays `400` "a report cannot be withdrawn"                          |
 | `POST /_publish/:to`, `POST /_unpublish/:to`                        | publish (behind `app-blocks-storage-publish`) | **removed**                                                                                                                                                                                                  |
 
 `@me` cannot collide with a key: `@` is outside the key grammar (`DOC_STORE_BOUNDS.key`,
@@ -565,7 +570,7 @@ Each step names what ends it.
    other apps that declare tallies hold none and only change their manifests. Ends
    per target when its switch is open and its old calls stop, and per app when none of its
    documents has `author_kind = 'counter'`, removed by a purge that ran with no open report on them.
-5. **Remove when usage is zero for 7 days.** Zero means: `civitai_app_block_doc_store_tally_ops_total`
+5. **Remove when usage is zero.** As planned: remove when usage is zero for 7 days. Zero means: `civitai_app_block_doc_store_tally_ops_total`
    flat (it has no app label), `app_storage_requests_total{op}` flat for `increment`, `mark`, `unmark`,
    `patch`, `publish` and `unpublish` (its `app` label names the app; `recordAppStorageRequest`), and no
    non-report `doc_mark` or `doc_tally` row written, **and** no app's approved manifest head still
@@ -575,6 +580,20 @@ Each step names what ends it.
    SDK surface (major release) and Flipt flag go; the final cleanup SQL runs. Seven days and no longer
    because the inventory shows four apps with data and about 56 marks and 37 counter documents, all
    migrated or purged by step 4, so the window only has to cover clients still on an old app version.
+
+   **As done.** The removal went ahead as soon as usage was zero, with no soak and no `410`
+   release: the removed routes answer exactly as an unknown route does (`PATCH /:c/:key` `405`,
+   the per-tally and `_publish` / `_unpublish` paths `404 not_found`), with no `Deprecation`
+   header. Two approved apps still declared removed primitives, with no data under them: a counter
+   `plays` on a `write: "none"` collection, and a `vote` mark. Their manifests are not refused at
+   serve time: the parser is unchanged, `marks` and `counters` are inert, and `write: "none"` is
+   served read-only (the permanent branch in "Manifest fields"). Submit keeps the step 3 rule (no
+   NEW declaration; a collection may keep what its previous approved version declares), so those
+   two apps can ship unrelated versions and roll back. Documents still carry `counters: {}`,
+   `marks: {}` and `viewer` until no supported SDK release reads them (SDK 0.30 refuses a document
+   without them). The step 4 tooling went in the same removal ("Final cleanup"). The final cleanup
+   SQL is hand-applied after the code is deployed everywhere, as a separate change; it is not a
+   migration file in the repo.
 
 ## Registry and app-data-go impact
 

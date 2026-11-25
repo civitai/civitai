@@ -5285,6 +5285,7 @@ export interface KnightsQueueItem {
   noEffect: string | null;
   meta: JsonValue | null;
   voteCount: number;
+  verdictLabelledValue: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -1,0 +1,21 @@
+{
+  "name": "fallback-profanity-host",
+  "description": "Any text on the SFW host: Node checks it for profanity, which feed-go does not port (here the check passes and Node answers 200).",
+  "request": {
+    "path": "/api/search/indexes/tools_v2/search",
+    "body": "{\"q\":\"cat\"}",
+    "host": "green.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[],\"query\":\"cat\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":0}"
+  },
+  "expect": {
+    "fallback": "search-profanity",
+    "nodeStatus": 200
+  }
+}

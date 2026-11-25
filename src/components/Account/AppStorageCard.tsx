@@ -29,8 +29,8 @@ import { trpc } from '~/utils/trpc';
  *
  * Emptying deletes the viewer's PRIVATE data in that app. What they posted for other people to
  * see (shared documents they authored) is only deleted when they tick the second option in the
- * confirmation; counters they started, their posts moderation hid and their votes on other
- * people's posts always stay. The row and the confirmation say what stays (`holdings`, from the
+ * confirmation; their posts moderation hid and their reports on other people's posts always
+ * stay. The row and the confirmation say what stays (`holdings`, from the
  * listing), and Empty is disabled on a row with nothing it could remove.
  */
 

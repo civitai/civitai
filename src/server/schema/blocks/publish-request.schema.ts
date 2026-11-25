@@ -2,6 +2,10 @@ import * as z from 'zod';
 import { BLOCK_SLUG } from '@civitai/app-assistant';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
+import {
+  AGENT_REVIEW_MODEL_ID_MAX,
+  AGENT_REVIEW_MODEL_ID_RE,
+} from '~/shared/constants/agent-review-model.constants';
 import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 import {
   HOLD_LABEL_MAX,
@@ -347,6 +351,14 @@ export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchem
  * client renderer cannot disagree about which analyses exist.
  */
 
+/** An OpenRouter model id a moderator chose for an agent review run. */
+export const agentReviewModelIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(AGENT_REVIEW_MODEL_ID_MAX)
+  .regex(AGENT_REVIEW_MODEL_ID_RE, 'Not an OpenRouter model id (expected vendor/model)');
+
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
  *  dispatches an ephemeral review agent for a PENDING request. */
 export const startAgentReviewSchema = z.object({
@@ -371,6 +383,14 @@ export const startAgentReviewSchema = z.object({
     .min(1)
     .max(AGENT_REVIEW_SECTIONS.length)
     .optional(),
+  /**
+   * Run on this OpenRouter model (`vendor/model`, as OpenRouter lists it) instead of the review
+   * agent's default. Omitted on a full run ⇒ the default, and the provisioned Job sets no model
+   * values. On a targeted re-run it must be the
+   * latest run's own model. An id OpenRouter does not list as tool-capable is refused (the
+   * service needs its price for the cost cap).
+   */
+  model: agentReviewModelIdSchema.optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
@@ -379,6 +399,14 @@ export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
  *  (P2) — the poll + render source for the report of a PENDING request. Same
  *  shape as previewRequest (the pending request id). */
 export const getAgentReviewSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  /** One run of this request (the report picker). Omitted ⇒ the latest run. */
+  reportId: z.string().min(1).max(64).optional(),
+});
+
+/** Input for the MOD-ONLY `blocks.listAgentReviews` (every run of a request, for the report
+ *  picker) and `blocks.getAgentReviewModels` (the re-run model picker). */
+export const agentReviewRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });
 
@@ -400,6 +428,8 @@ export type AgentReviewChatMessage = z.infer<typeof agentReviewChatMessageSchema
 export const agentReviewChatSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   messages: z.array(agentReviewChatMessageSchema).min(1).max(20),
+  /** The run the moderator is viewing; the chat grounds on it. Omitted ⇒ the latest run. */
+  reportId: z.string().min(1).max(64).optional(),
 });
 
 export type AgentReviewChatInput = z.infer<typeof agentReviewChatSchema>;

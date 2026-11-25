@@ -855,9 +855,9 @@ function rememberWarnedOrigin(origin: string) {
 }
 
 // `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
-// 429's wait unless it is exposed. `Deprecation` and `Link` likewise: the document store's
-// deprecated per-tally routes announce themselves with them (`LEGACY_TALLY_HEADERS`), and an SDK
-// can only warn about what it can read.
+// 429's wait unless it is exposed. `Deprecation` and `Link` likewise, so a block route that
+// deprecates itself (RFC 9745) can be read by an SDK; none sends them today (the document
+// store's deprecated tally and publish routes were removed).
 const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After, Deprecation, Link';
 
 /**

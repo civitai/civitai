@@ -13,8 +13,15 @@ const { getStanding } = vi.hoisted(() => ({
   getStanding: vi.fn(async (..._: unknown[]) => ({ banned: false, muted: false })),
 }));
 vi.mock('$lib/server/standing', () => ({ getStanding }));
+const { getSysRedis, getCacheRedis, readinessCheck } = vi.hoisted(() => ({
+  getSysRedis: vi.fn(),
+  getCacheRedis: vi.fn(),
+  readinessCheck: vi.fn(() => new Promise<boolean>(() => {})),
+}));
+vi.mock('$lib/server/redis', () => ({ getSysRedis, getCacheRedis }));
+vi.mock('$lib/server/readiness', () => ({ readiness: { check: readinessCheck } }));
 
-const { handle } = await import('../hooks.server');
+const { handle, init } = await import('../hooks.server');
 
 const page = (url: URL) => new Request(url, { headers: { 'sec-fetch-mode': 'navigate' } });
 
@@ -91,8 +98,18 @@ describe('knights access gate', () => {
     expect(getStanding).not.toHaveBeenCalled();
   });
 
-  it.each(['/healthzx', '/healthz/x', '/healthz/', '/api/healthz'])(
-    'still guards %s: only /healthz itself is exempt',
+  it('answers the /readyz probe without a session, revocation, access or standing lookup', async () => {
+    guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });
+    const { response, resolve } = await run('/readyz');
+    expect(resolve).toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(guardCheck).not.toHaveBeenCalled();
+    expect(accessFor).not.toHaveBeenCalled();
+    expect(getStanding).not.toHaveBeenCalled();
+  });
+
+  it.each(['/healthzx', '/healthz/x', '/healthz/', '/api/healthz', '/readyz/', '/readyz/x'])(
+    'still guards %s: only the probe paths themselves are exempt',
     async (path) => {
       guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });
       const { response, resolve } = await run(path);
@@ -101,6 +118,33 @@ describe('knights access gate', () => {
       expect(resolve).not.toHaveBeenCalled();
     }
   );
+
+  it('server init opens both Redis clients and starts readiness without waiting on either', () => {
+    // readinessCheck never settles: init must still return at once.
+    const returned = (init as unknown as () => unknown)();
+    expect(returned).toBeUndefined();
+    expect(getSysRedis).toHaveBeenCalledTimes(1);
+    expect(getCacheRedis).toHaveBeenCalledTimes(1);
+    expect(readinessCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('server init survives a Redis client that cannot be built, and still opens the other', () => {
+    getSysRedis.mockReset().mockImplementationOnce(() => {
+      throw Object.assign(new TypeError('Invalid URL'), {
+        code: 'ERR_INVALID_URL',
+        input: 'redis://user:hunter2@node-1:6379',
+      });
+    });
+    getCacheRedis.mockReset();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => (init as unknown as () => unknown)()).not.toThrow();
+    expect(getCacheRedis).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('[knights] redis-init-failed (sys)', {
+      error: 'TypeError',
+      code: 'ERR_INVALID_URL',
+    });
+    error.mockRestore();
+  });
 
   it('serves the sign-in routes without a session', async () => {
     const { resolve } = await run('/api/auth/callback');

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
  * A zero-chrome box for a Popover to anchor to, positioned from viewport coordinates.
  *
  * Portaled so `fixed` is measured from the viewport: left in place, a transformed ancestor
- * (the page's `.scroll-area` sets `will-change: transform`) re-bases it and the card lands as
+ * (a virtualized row, a transformed scroller) re-bases it and the card lands as
  * far from its trigger as that ancestor is scrolled. `Popover.Target` clones its child, so the
  * portal has to sit behind a component that forwards the props and ref it injects.
  */
