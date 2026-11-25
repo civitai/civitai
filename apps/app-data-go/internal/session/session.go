@@ -71,6 +71,12 @@
 // most once per (token, schema) per ReopenEvery, and a floor still not met is ErrFloorNotMet. A
 // stream that names no head cannot be compared with any floor, so its reads are answered unfloored.
 //
+// OTHER FEEDS. The same manager serves the adapter's other per-subscription streams (the shared
+// collections' level and per-viewer streams, package shared): Options.Accept names the cursors of the
+// feed it reads (a Live of any other is ErrNotPrivate, "not this feed"), Options.SubscribeMeta the
+// `meta` a subscription names, and View answers the stream's latest `meta` beside its records. An
+// `end` naming a reason is an EndedError, and a key cooling down after one answers that reason too.
+//
 // A HEAD THAT WENT BACK means the namespace's seqs restarted: the adapter ends the stream
 // `cursor_expired`, and a head below the one held is treated the same. Neither is a failure: the
 // stream closes with no cooldown, its overlays (numbered in the old order) are dropped, and the read
@@ -124,16 +130,60 @@ type Subscriber interface {
 	Subscribe(ctx context.Context, schema, token string) (Stream, error)
 }
 
+// MetaSubscriber also opens a subscription naming a request `meta` (Options.SubscribeMeta).
+type MetaSubscriber interface {
+	SubscribeMeta(ctx context.Context, schema, token string, meta json.RawMessage) (Stream, error)
+}
+
 // ClientSubscriber opens subscriptions on a registry over its HTTP binding.
 type ClientSubscriber struct{ Client *registry.Client }
 
 // Subscribe implements Subscriber.
 func (c ClientSubscriber) Subscribe(ctx context.Context, schema, token string) (Stream, error) {
-	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Token: token})
+	return c.SubscribeMeta(ctx, schema, token, nil)
+}
+
+// SubscribeMeta implements MetaSubscriber.
+func (c ClientSubscriber) SubscribeMeta(ctx context.Context, schema, token string, meta json.RawMessage) (Stream, error) {
+	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Token: token, Meta: meta})
 	if err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// EndedError is an `end` that named why the origin ended the stream (its `meta.reason`, e.g. a level
+// stream's `levels_on`). It is ErrEnded.
+type EndedError struct{ Reason string }
+
+func (e *EndedError) Error() string { return ErrEnded.Error() + " (" + e.Reason + ")" }
+
+// Unwrap makes an EndedError ErrEnded.
+func (e *EndedError) Unwrap() error { return ErrEnded }
+
+// endReasonRE is a reason this service reads: a short lowercase word, never free text.
+var endReasonRE = regexp.MustCompile(`^[a-z_]{1,32}$`)
+
+// endError is the error an `end` carrying meta stands for.
+func endError(meta json.RawMessage) error {
+	var m struct {
+		Reason string `json:"reason"`
+	}
+	if len(meta) == 0 || json.Unmarshal(meta, &m) != nil || !endReasonRE.MatchString(m.Reason) {
+		return ErrEnded
+	}
+	return &EndedError{Reason: m.Reason}
+}
+
+// Snapshot is what View answers: the records (overlays applied) and the stream's latest `meta` and
+// head, as of the read.
+type Snapshot struct {
+	Entities []registry.Entity
+	// Meta is the latest `meta` a Live or Progress carried; nil when none did.
+	Meta json.RawMessage
+	// Head is the latest head the stream named, when HasHead (only with OverlayTTL set).
+	Head    int64
+	HasHead bool
 }
 
 // Why a read was not answered from a stream. Each is a reason to read REST instead.
@@ -208,6 +258,10 @@ type Ack struct {
 	// URN is "" when the answer named no recordId.
 	URN  string
 	Body json.RawMessage
+	// Version, CreatedAt and UpdatedAt are a shared document's, as the write answered them (read by
+	// package shared's overlays; a private stream's entities carry none).
+	Version              int64
+	CreatedAt, UpdatedAt string
 }
 
 // Options bound the manager. Zero values are not defaults: main sets every field from config.
@@ -244,6 +298,12 @@ type Options struct {
 	// acknowledgement applied, by kind (Overlay*). Nil is none.
 	Floor    func(outcome string)
 	Overlaid func(kind string)
+	// Accept reports whether a Live's cursor is one of the feed this manager reads; nil is the private
+	// feed's (PrivateFeedCursor). Any other is closed unread, ErrNotPrivate.
+	Accept func(cursor string) bool
+	// SubscribeMeta, when set, is the request `meta` of the subscription a read for subject opens
+	// (nil: none). A non-nil meta needs a Subscriber that is a MetaSubscriber.
+	SubscribeMeta func(subject string) json.RawMessage
 }
 
 type tokenID [sha256.Size]byte
@@ -267,6 +327,8 @@ type Manager struct {
 	sessions map[key]*session
 	perToken map[tokenID]int
 	cooling  map[key]time.Time
+	// coolCause is why a cooling key's stream ended, when its end named a reason (an EndedError).
+	coolCause map[key]error
 	// reopened is when each key last reopened for a floor (ReopenEvery).
 	reopened map[key]time.Time
 }
@@ -280,7 +342,7 @@ func New(sub Subscriber, opts Options) *Manager {
 	return &Manager{
 		sub: sub, opts: opts, base: base, cancel: cancel,
 		sessions: map[key]*session{}, perToken: map[tokenID]int{}, cooling: map[key]time.Time{},
-		reopened: map[key]time.Time{},
+		coolCause: map[key]error{}, reopened: map[key]time.Time{},
 	}
 }
 
@@ -306,6 +368,8 @@ type session struct {
 	// head is the newest head the stream named (Live / Progress meta), when hasHead.
 	head    int64
 	hasHead bool
+	// meta is the latest `meta` a Live or Progress carried.
+	meta json.RawMessage
 	// overlays are this token's acknowledged writes the stream has not shown yet, by storage key;
 	// overlayBytes their size, bounded with the records' own bounds.
 	overlays     map[string]overlay
@@ -327,11 +391,17 @@ func (o overlay) size() int { return len(o.urn) + len(o.body) }
 // stream has sent `Live`, opening the stream if none is open; minSeq > 0 is the read's floor. Any
 // error means: nothing from the stream.
 func (m *Manager) ReadAt(ctx context.Context, token, schema string, minSeq int64) ([]registry.Entity, error) {
+	snap, err := m.View(ctx, token, schema, minSeq)
+	return snap.Entities, err
+}
+
+// View is ReadAt, answering the stream's latest `meta` and head beside its records.
+func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) (Snapshot, error) {
 	k := key{token: sha256.Sum256([]byte(token)), schema: schema}
 	for retried := false; ; retried = true {
 		s, err := m.session(k, token) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 		if err != nil {
-			return nil, err
+			return Snapshot{}, err
 		}
 		ents, err := m.read(ctx, s, token)
 		switch {
@@ -339,11 +409,16 @@ func (m *Manager) ReadAt(ctx context.Context, token, schema string, minSeq int64
 			// Only with the writes on (classify); the key has no cooldown against it.
 			continue
 		case err != nil:
-			return nil, err
-		case minSeq <= 0:
-			return ents, nil
+			return Snapshot{}, err
+		case minSeq > 0:
+			s, ents, err = m.floor(ctx, s, token, minSeq, ents)
+			if err != nil {
+				return Snapshot{}, err
+			}
 		}
-		return m.floor(ctx, s, token, minSeq, ents)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return Snapshot{Entities: ents, Meta: s.meta, Head: s.head, HasHead: s.hasHead}, nil
 	}
 }
 
@@ -358,6 +433,9 @@ func (m *Manager) session(k key, token string) (*session, error) {
 		return s, nil
 	}
 	if until, ok := m.cooling[k]; ok && now.Before(until) {
+		if cause := m.coolCause[k]; cause != nil {
+			return nil, errors.Join(ErrCoolingDown, cause)
+		}
 		return nil, ErrCoolingDown
 	}
 	if err := m.room(k); err != nil {
@@ -377,21 +455,22 @@ func (m *Manager) room(k key) error {
 	return nil
 }
 
-func (m *Manager) floor(ctx context.Context, s *session, token string, minSeq int64, ents []registry.Entity) ([]registry.Entity, error) {
+// floor answers the session the read is answered from (the reopened one, after a reopen).
+func (m *Manager) floor(ctx context.Context, s *session, token string, minSeq int64, ents []registry.Entity) (*session, []registry.Entity, error) {
 	s.mu.Lock()
 	headless := !s.hasHead
 	s.mu.Unlock()
 	// Off, or with no head to compare against (a refused or empty stream): answered unfloored, as a
 	// stream that could never meet a floor would otherwise answer 503 for as long as it is open.
 	if !m.writesOn() || headless || m.met(s, token, minSeq) {
-		return ents, nil
+		return s, ents, nil
 	}
 	now := m.opts.Now()
 	m.mu.Lock()
 	if at, ok := m.reopened[s.k]; ok && now.Sub(at) < m.opts.ReopenEvery {
 		m.mu.Unlock()
 		m.observeFloor(FloorSpent)
-		return nil, ErrFloorNotMet
+		return nil, nil, ErrFloorNotMet
 	}
 	m.reopened[s.k] = now
 	m.mu.Unlock()
@@ -407,16 +486,16 @@ func (m *Manager) floor(ctx context.Context, s *session, token string, minSeq in
 	switch {
 	case err != nil:
 		m.observeFloor(FloorStillBehind)
-		return nil, err
+		return nil, nil, err
 	case headless:
 		// The reopened stream names no head either: unfloored, as above, and not counted as met.
-		return ents, nil
+		return fresh, ents, nil
 	case !m.met(fresh, token, minSeq):
 		m.observeFloor(FloorStillBehind)
-		return nil, ErrFloorNotMet
+		return nil, nil, ErrFloorNotMet
 	}
 	m.observeFloor(FloorMet)
-	return ents, nil
+	return fresh, ents, nil
 }
 
 func (m *Manager) observeFloor(outcome string) {
@@ -550,6 +629,7 @@ func (s *session) dropOverlay(k string) {
 // open starts a session's stream, holding carried overlays. m.mu is held.
 func (m *Manager) open(k key, token string, now time.Time, carried map[string]overlay) *session {
 	delete(m.cooling, k)
+	delete(m.coolCause, k)
 	ctx, cancel := context.WithCancel(m.base)
 	s := &session{
 		k: k, opened: now, lastRead: now, cancel: cancel,
@@ -679,7 +759,16 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 	s.mu.Lock()
 	s.expires, s.checked = tok.Expires, m.opts.Now()
 	s.mu.Unlock()
-	st, err := m.sub.Subscribe(ctx, s.k.schema, tok.Access)
+	var st Stream
+	if meta := m.subscribeMeta(token); meta != nil {
+		ms, ok := m.sub.(MetaSubscriber)
+		if !ok {
+			return CloseError, ErrFailed
+		}
+		st, err = ms.SubscribeMeta(ctx, s.k.schema, tok.Access, meta)
+	} else {
+		st, err = m.sub.Subscribe(ctx, s.k.schema, tok.Access)
+	}
 	if err != nil {
 		return m.classify(err)
 	}
@@ -712,20 +801,22 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 		case registry.Delete:
 			s.remove(ev.URN)
 		case registry.Live:
-			if !PrivateFeedCursor(ev.Cursor) {
+			if !m.accepts(ev.Cursor) {
 				return CloseNotPrivate, ErrNotPrivate
 			}
 			// Before Live: a read answered at Live is answered under this head.
 			if m.writesOn() && !s.observeHead(ev.Meta) {
 				return CloseCursorExpired, ErrCursorExpired
 			}
+			s.observeMeta(ev.Meta)
 			s.markLive()
 		case registry.Progress:
 			if m.writesOn() && !s.observeHead(ev.Meta) {
 				return CloseCursorExpired, ErrCursorExpired
 			}
+			s.observeMeta(ev.Meta)
 		case registry.End:
-			return CloseEnd, ErrEnded
+			return CloseEnd, endError(ev.Meta)
 		case registry.Malformed:
 			// A change this cache cannot apply leaves it unable to say what the user holds: a record
 			// that should have left might still be served. Start over instead.
@@ -738,6 +829,30 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 
 // writesOn is the writes flag as the manager sees it (OverlayTTL is set only with it).
 func (m *Manager) writesOn() bool { return m.opts.OverlayTTL > 0 }
+
+func (m *Manager) accepts(cursor string) bool {
+	if m.opts.Accept != nil {
+		return m.opts.Accept(cursor)
+	}
+	return PrivateFeedCursor(cursor)
+}
+
+func (m *Manager) subscribeMeta(subject string) json.RawMessage {
+	if m.opts.SubscribeMeta == nil {
+		return nil
+	}
+	return m.opts.SubscribeMeta(subject)
+}
+
+// observeMeta keeps meta as the stream's latest; an event with none leaves the last one.
+func (s *session) observeMeta(meta json.RawMessage) {
+	if len(meta) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.meta = meta
+}
 
 func (m *Manager) classify(err error) (string, error) {
 	switch code := registry.CodeOf(err); {
@@ -860,6 +975,10 @@ func (m *Manager) end(s *session, reason string, err error) {
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.NotPrivateCooldown)
 	default:
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.Cooldown)
+		var ended *EndedError
+		if errors.As(err, &ended) {
+			m.coolCause[s.k] = err
+		}
 	}
 	m.mu.Unlock()
 	s.cancel()
@@ -904,6 +1023,7 @@ func (m *Manager) Sweep() {
 	for k, until := range m.cooling {
 		if !now.Before(until) {
 			delete(m.cooling, k)
+			delete(m.coolCause, k)
 		}
 	}
 	for k, at := range m.reopened {

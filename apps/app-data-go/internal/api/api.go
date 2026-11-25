@@ -40,6 +40,15 @@
 // its reason as the code (streamRefusal), never a REST read. Writes off, `minSeq` is not read and
 // the keyed get is the mux's 404.
 //
+// CUT OVER. With APP_DATA_WRITES on, a read is a cut-over app's (only an app the site has moved to
+// this service calls it; the per-app flag that moves it is the site's to evaluate): it is never read
+// from REST. Each reason the registry cannot answer is its answer (streamRefusal), and an empty
+// stream is an empty answer (WRITES-DESIGN.md, "The empty stream"). Only the site's shadow, which
+// sends RegistryOnlyHeader, still gets its `source: none` answer. Writes off, the REST fallback
+// stands, unchanged.
+//
+// Shared collections and signed-out viewers are package shared's (shared.go here).
+//
 // Also /healthz, /readyz and /metrics.
 package api
 
@@ -105,6 +114,15 @@ type Server struct {
 	// Writes, when set (APP_DATA_WRITES on), adds the write routes and `info` (writes.Forwarder).
 	// Nil registers none of them: each answers 404, as any path the mux does not know.
 	Writes Routes
+	// Shared, when set (APP_DATA_WRITES on, with the registry path), serves shared collections and
+	// signed-out viewers (shared.go). Nil: a collection the private feed does not serve answers as
+	// before, and the `@me` routes are the mux's 404.
+	Shared SharedReads
+	// Anonymous verifies a signed-out viewer's block token (exchange.BlockVerifier.CheckAnonymous).
+	// Nil refuses every signed-out read `401 sign_in_required`.
+	Anonymous func(ctx context.Context, token string) (exchange.AnonymousClaims, error)
+
+	shared sharedSchemas
 }
 
 // Routes registers a set of routes on the API's mux.
@@ -126,6 +144,10 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("OPTIONS /v1/apps/{slug}/collections/{collection}/records", writes.Preflight)
 		// The key path's preflight (writes.Preflight, registered with the writes) allows GET too.
 		mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/{key}", s.record)
+		if s.Shared != nil {
+			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me", s.mine)
+			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me/{parent}", s.mine)
+		}
 		s.Writes.Register(mux)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -179,9 +201,11 @@ type keyed struct {
 var minSeqRE = regexp.MustCompile(`^[0-9]{1,15}$`)
 
 type readParams struct {
-	schema string
-	minSeq int64
-	token  string
+	schema           string
+	slug, collection string
+	major            int
+	minSeq           int64
+	token            string
 }
 
 // params reads the schema, the floor (writes on only) and the token, or answers the refusal and
@@ -210,7 +234,7 @@ func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time)
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
 		return p, false
 	}
-	p.schema = schema
+	p.schema, p.slug, p.collection, p.major = schema, r.PathValue("slug"), r.PathValue("collection"), major
 	token, ok := bearer(r)
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
@@ -237,6 +261,9 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case s.sharedPath(p):
+		s.sharedGet(w, r, start, p, k)
+		return
 	case s.Streams == nil:
 		s.streamRefusal(w, start, "registry_off")
 		return
@@ -248,6 +275,10 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	ents, err := s.Streams.ReadAt(ctx, p.token, p.schema, p.minSeq)
 	switch {
+	case errors.Is(err, session.ErrNotPrivate) && s.Shared != nil:
+		s.shared.mark(p.schema, time.Now())
+		s.sharedGet(w, r, start, p, k)
+		return
 	case errors.Is(err, session.ErrFloorNotMet):
 		s.streamRefusal(w, start, "floor_not_met")
 		return
@@ -323,6 +354,12 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := p.token
+	if s.sharedPath(p) {
+		s.sharedList(w, r, start, p)
+		return
+	}
+	// Never REST for a cut-over app's read (see CUT OVER); the shadow keeps its registry-only answer.
+	cutover := s.Writes != nil && r.Header.Get(RegistryOnlyHeader) != "1"
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.Deadline)
 	defer cancel()
@@ -339,9 +376,23 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		// An empty answer is not trusted: the origin answers a token it refuses with an empty
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
 		switch {
+		case errors.Is(err, session.ErrNotPrivate) && s.Shared != nil:
+			s.shared.mark(p.schema, time.Now())
+			s.sharedList(w, r, start, p)
+			return
 		case errors.Is(err, session.ErrFloorNotMet):
 			// Never REST: a client that sent a floor retries this service.
 			s.streamRefusal(w, start, "floor_not_met")
+			return
+		case cutover && err != nil:
+			s.streamRefusal(w, start, fallbackReason(err))
+			return
+		case cutover && keyPrefix != "" && !allKeyed(ents):
+			s.streamRefusal(w, start, "unkeyed")
+			return
+		case cutover:
+			// The empty stream is accepted for v1: an empty answer, never a REST read.
+			s.write(w, start, http.StatusOK, registryAnswer(ents, keyPrefix), "registry", "ok")
 			return
 		case err != nil || len(ents) == 0:
 			reason = fallbackReason(err)
@@ -349,15 +400,13 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 			reason = "unkeyed"
 		default:
 			// The stream holds records, so it was not refused: a prefix that keeps none is an empty answer.
-			out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
-			for _, e := range ents {
-				if strings.HasPrefix(e.Key, keyPrefix) {
-					out.Items = append(out.Items, item{URN: e.URN, Key: e.Key, Rev: e.Rev, Data: e.Body})
-				}
-			}
-			s.write(w, start, http.StatusOK, out, "registry", "ok")
+			s.write(w, start, http.StatusOK, registryAnswer(ents, keyPrefix), "registry", "ok")
 			return
 		}
+	}
+	if cutover {
+		s.streamRefusal(w, start, reason)
+		return
 	}
 	if r.Header.Get(RegistryOnlyHeader) == "1" {
 		s.write(w, start, http.StatusOK, answer{Source: "none", Reason: reason, Items: []item{}}, "none", "registry_only")
@@ -385,6 +434,17 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Data: d.Data})
 	}
 	s.write(w, start, http.StatusOK, out, "rest", "ok")
+}
+
+// registryAnswer is a private stream's records under keyPrefix.
+func registryAnswer(ents []registry.Entity, keyPrefix string) answer {
+	out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Key, keyPrefix) {
+			out.Items = append(out.Items, item{URN: e.URN, Key: e.Key, Rev: e.Rev, Data: e.Body})
+		}
+	}
+	return out
 }
 
 // keyPrefixRE is a document key's grammar (the store's `[A-Za-z0-9._:-]{1,128}`): a prefix of one.

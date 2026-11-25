@@ -38,7 +38,8 @@ func TestDefaults(t *testing.T) {
 	}
 	want := Config{Addr: ":8080", RESTURL: "https://site.invalid", MaxStreams: 100, MaxStreamsPerToken: 4,
 		IdleTTL: 5 * time.Minute, MaxAge: 14 * time.Minute, LiveWait: 1500 * time.Millisecond,
-		RequestDeadline: 4 * time.Second, MaxRecords: 1000, MaxBytes: 2 << 20, RESTMaxInFlight: 64}
+		RequestDeadline: 4 * time.Second, MaxRecords: 1000, MaxBytes: 2 << 20, RESTMaxInFlight: 64,
+		LevelMaxStreams: 50, LevelMaxRecords: 3000, LevelMaxBytes: 16 << 20}
 	if *c != want {
 		t.Fatalf("got %+v\nwant %+v", *c, want)
 	}
@@ -58,6 +59,7 @@ func TestEverySettingIsRead(t *testing.T) {
 		"APP_DATA_STREAM_MAX_AGE_MS": "9000", "APP_DATA_LIVE_WAIT_MS": "11",
 		"APP_DATA_REQUEST_DEADLINE_MS": "130", "APP_DATA_MAX_RECORDS_PER_STREAM": "17",
 		"APP_DATA_MAX_BYTES_PER_STREAM": "70000", "APP_DATA_REST_MAX_INFLIGHT": "5",
+		"APP_DATA_LEVEL_MAX_STREAMS": "6", "APP_DATA_LEVEL_MAX_RECORDS": "2501", "APP_DATA_LEVEL_MAX_BYTES": "3000000",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +67,7 @@ func TestEverySettingIsRead(t *testing.T) {
 	want := Config{Addr: ":9", RESTURL: "http://site.ns.svc.cluster.local:3000", RegistryURL: "https://registry.invalid",
 		MaxStreams: 7, MaxStreamsPerToken: 3, IdleTTL: 2 * time.Second, MaxAge: 9 * time.Second,
 		LiveWait: 11 * time.Millisecond, RequestDeadline: 130 * time.Millisecond, MaxRecords: 17, MaxBytes: 70000,
-		RESTMaxInFlight: 5}
+		RESTMaxInFlight: 5, LevelMaxStreams: 6, LevelMaxRecords: 2501, LevelMaxBytes: 3_000_000}
 	wantRelay := Relay{TokenURL: "http://hub.ns.svc:8080/token", ClientID: "relay-client", //nolint:gosec // G101: a synthetic test fixture, not a credential
 		ClientSecret: "FILE-SECRET-91c2", Resource: "https://apps.invalid"}
 	if c.Relay == nil || *c.Relay != wantRelay {
@@ -107,6 +109,10 @@ func TestInvalidSettingsFailTheStart(t *testing.T) {
 		"wait not under deadline":   {map[string]string{"APP_DATA_LIVE_WAIT_MS": "4000", "APP_DATA_REQUEST_DEADLINE_MS": "4000"}, "less than APP_DATA_REQUEST_DEADLINE_MS"},
 		"tiny byte bound":           {map[string]string{"APP_DATA_MAX_BYTES_PER_STREAM": "100"}, "APP_DATA_MAX_BYTES_PER_STREAM must be"},
 		"block exchange not a bool": {map[string]string{"APP_DATA_BLOCK_EXCHANGE": "yes"}, "APP_DATA_BLOCK_EXCHANGE must be true, 1, false or 0"},
+		// A level stream's bound must exceed the app's own 2,000-row read, as the adapter's does.
+		"level records at the app's read": {map[string]string{"APP_DATA_LEVEL_MAX_RECORDS": "2000"}, "APP_DATA_LEVEL_MAX_RECORDS must be an integer"},
+		"level bytes under 1 MiB":         {map[string]string{"APP_DATA_LEVEL_MAX_BYTES": "1048575"}, "APP_DATA_LEVEL_MAX_BYTES must be an integer"},
+		"no level streams":                {map[string]string{"APP_DATA_LEVEL_MAX_STREAMS": "0"}, "APP_DATA_LEVEL_MAX_STREAMS must be an integer"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -331,5 +337,28 @@ func TestInvalidWriteSettingsFailTheStart(t *testing.T) {
 				t.Fatalf("an error carries the signing key: %v", err)
 			}
 		})
+	}
+}
+
+// Shared reads are on exactly when the writes and the registry path both are: the level streams need
+// the relay client's service token, and the shared routes are the writes' (dark until then).
+// Fails on origin/main: Config has no SharedReads (the test does not compile).
+func TestSharedReadsNeedTheWritesAndTheRegistry(t *testing.T) {
+	both := relayEnv()
+	for k, v := range writesEnv() {
+		if k != "APP_DATA_REST_URL" {
+			both[k] = v
+		}
+	}
+	writesOnly := writesEnv()
+	registryOnly := relayEnv()
+	for name, tc := range map[string]struct {
+		kv   map[string]string
+		want bool
+	}{"writes and registry": {both, true}, "writes alone": {writesOnly, false}, "registry alone": {registryOnly, false}} {
+		c, err := load(tc.kv)
+		if err != nil || c.SharedReads != tc.want {
+			t.Errorf("%s: SharedReads %v (%v), want %v", name, c != nil && c.SharedReads, err, tc.want)
+		}
 	}
 }

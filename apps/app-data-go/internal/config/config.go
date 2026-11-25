@@ -60,6 +60,13 @@ type Config struct {
 	// reads go to REST. Memory held by caches is at most MaxStreams × MaxBytes.
 	MaxRecords int
 	MaxBytes   int
+	// LevelMaxStreams, LevelMaxRecords and LevelMaxBytes bound the shared collections' level streams
+	// (APP_DATA_LEVEL_MAX_STREAMS default 50, APP_DATA_LEVEL_MAX_RECORDS default 3000,
+	// APP_DATA_LEVEL_MAX_BYTES default 16777216), read only with SharedReads. A level stream holds up
+	// to the adapter's own bound (REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS, default 2500, always above
+	// 2000), so LevelMaxRecords must be at least that: a level stream past it is closed here and its
+	// reads answer 503 too_large.
+	LevelMaxStreams, LevelMaxRecords, LevelMaxBytes int
 	// RESTMaxInFlight caps concurrent REST reads (APP_DATA_REST_MAX_INFLIGHT, default 64): when the
 	// registry stalls every read falls back, and this keeps that from becoming unbounded load on the
 	// site. A read over it answers 503.
@@ -85,6 +92,11 @@ type Config struct {
 	// 60, from 1 to 600), kept at or above the adapter's REGISTRY_ADAPTER_POLL_SECONDS: an overlay lives
 	// this plus 30 s, and a floor reopens a stream at most once per it. Zero with Writes off.
 	AdapterPoll time.Duration
+
+	// SharedReads is on with Writes and the registry path together: shared collections and signed-out
+	// viewers are read from the adapter's level and per-viewer streams (package shared), the level
+	// streams under this service's own service token (the relay client, client credentials).
+	SharedReads bool
 
 	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off
 	// (comma-separated, so Config stays comparable); Warnings reports them.
@@ -178,6 +190,7 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 	if err := writesFromEnv(getenv, c); err != nil {
 		return nil, err
 	}
+	c.SharedReads = c.Writes && c.RegistryURL != ""
 	c.BlockJWKSURL = getenv("APP_DATA_BLOCK_JWKS_URL")
 	switch {
 	case c.BlockExchange && c.BlockJWKSURL == "":
@@ -210,6 +223,9 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 	c.MaxRecords = num("APP_DATA_MAX_RECORDS_PER_STREAM", 1_000, 1, 100_000)
 	c.MaxBytes = num("APP_DATA_MAX_BYTES_PER_STREAM", 2<<20, 64<<10, 64<<20)
 	c.RESTMaxInFlight = num("APP_DATA_REST_MAX_INFLIGHT", 64, 1, 10_000)
+	c.LevelMaxStreams = num("APP_DATA_LEVEL_MAX_STREAMS", 50, 1, 1_000)
+	c.LevelMaxRecords = num("APP_DATA_LEVEL_MAX_RECORDS", 3_000, 2_001, 100_000)
+	c.LevelMaxBytes = num("APP_DATA_LEVEL_MAX_BYTES", 16<<20, 1<<20, 256<<20)
 	if err != nil {
 		return nil, err
 	}

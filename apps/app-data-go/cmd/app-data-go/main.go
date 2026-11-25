@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -27,6 +28,8 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/shared"
+	"github.com/civitai/civitai/apps/app-data-go/internal/token"
 	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
 
@@ -43,6 +46,13 @@ const (
 	// overlayMargin is how much longer than one adapter poll an acknowledged write is shown over a
 	// stream that has not caught up with it (WRITES-DESIGN.md: "one poll interval plus 30 s").
 	overlayMargin = 30 * time.Second
+	// levelMaxAge closes a level stream an hour after it opened (a fresh snapshot of the board), and
+	// maxSharedOverlays bounds the acknowledged shared writes held in all.
+	levelMaxAge       = time.Hour
+	maxSharedOverlays = 10_000
+	// serviceTokenScope is the one scope the level streams' service token asks for: the adapter's
+	// service tokens must grant AppsRead (auth.jwt.ts).
+	serviceTokenScope = "AppsRead"
 )
 
 func main() {
@@ -67,14 +77,20 @@ func run(log *slog.Logger) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
-	var mgr *session.Manager
+	// The private streams' manager, and with the shared reads on the level and per-viewer streams'.
+	var mgr, levels, viewers *session.Manager
+	var overlays *shared.Overlays
 	var m *metrics.Metrics
 	stats := func() (int, int, int, int) {
-		if mgr == nil {
-			return 0, 0, 0, 0
+		var sum session.Stats
+		for _, mm := range []*session.Manager{mgr, levels, viewers} {
+			if mm == nil {
+				continue
+			}
+			st := mm.Stats()
+			sum.Streams, sum.Live, sum.Records, sum.Bytes = sum.Streams+st.Streams, sum.Live+st.Live, sum.Records+st.Records, sum.Bytes+st.Bytes
 		}
-		st := mgr.Stats()
-		return st.Streams, st.Live, st.Records, st.Bytes
+		return sum.Streams, sum.Live, sum.Records, sum.Bytes
 	}
 	m = metrics.New(reg, stats)
 
@@ -126,9 +142,53 @@ func run(log *slog.Logger) error {
 			Overlaid:    func(kind string) { m.Overlays.WithLabelValues(kind).Inc() },
 		})
 		srv.Streams = mgr
+		if cfg.SharedReads {
+			sub := session.ClientSubscriber{Client: &registry.Client{
+				BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
+			}}
+			closed := func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() }
+			// The level streams: one per (schema, level), shared by every viewer, under this service's own
+			// token (client credentials, the relay client), whatever subject a read names.
+			svc := token.New(token.Config{URL: cfg.Relay.TokenURL, ClientID: cfg.Relay.ClientID,
+				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource, Scope: serviceTokenScope}, &http.Client{Timeout: exchangeTimeout})
+			levels = session.New(sub, session.Options{
+				MaxStreams: cfg.LevelMaxStreams, MaxPerToken: 1,
+				IdleTTL: cfg.IdleTTL, MaxAge: max(levelMaxAge, cfg.IdleTTL),
+				MaxRecords: cfg.LevelMaxRecords, MaxBytes: cfg.LevelMaxBytes,
+				Cooldown: streamCooldown, NotPrivateCooldown: streamCooldown,
+				Exchange: func(ctx context.Context, _ string) (exchange.Token, error) {
+					// A stream closes expiryMargin before the token's expiry, so it never outlives it.
+					tok, expires, err := svc.TokenExpiring(ctx)
+					return exchange.Token{Access: tok, Expires: expires}, err
+				},
+				ExpiryMargin: expiryMargin, Opened: m.StreamsOpened.Inc, Closed: closed,
+				OverlayTTL: overlayTTL(cfg), ReopenEvery: cfg.AdapterPoll,
+				Accept: shared.AcceptLevel, SubscribeMeta: shared.LevelMeta,
+			})
+			// The per-viewer streams: as the private ones, under each viewer's exchanged token.
+			viewers = session.New(sub, session.Options{
+				MaxStreams: cfg.MaxStreams, MaxPerToken: cfg.MaxStreamsPerToken,
+				IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
+				MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
+				Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
+				Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
+				Opened: m.StreamsOpened.Inc, Closed: closed,
+				OverlayTTL: overlayTTL(cfg), ReopenEvery: cfg.AdapterPoll,
+				Accept: shared.AcceptViewer,
+			})
+			overlays = &shared.Overlays{TTL: overlayTTL(cfg), Max: maxSharedOverlays}
+			srv.Shared = &shared.Reader{Levels: levels, Viewers: viewers, Overlays: overlays}
+			srv.Anonymous = verifier.CheckAnonymous
+		}
 		go func() {
 			defer close(swept)
-			mgr.Run(ctx, sweepInterval(cfg.IdleTTL))
+			var wg sync.WaitGroup
+			for _, mm := range []*session.Manager{mgr, levels, viewers} {
+				if mm != nil {
+					wg.Go(func() { mm.Run(ctx, sweepInterval(cfg.IdleTTL)) })
+				}
+			}
+			wg.Wait()
 		}()
 	} else {
 		close(swept)
@@ -149,6 +209,14 @@ func run(log *slog.Logger) error {
 		}
 		if mgr != nil {
 			fwd.Acked = mgr.Ack
+		}
+		if overlays != nil {
+			// A write is acknowledged to the token's private stream and to its shared overlays alike: this
+			// service does not know a collection's visibility, and each applies only where it reads.
+			fwd.Acked = func(token, schema string, a session.Ack) {
+				mgr.Ack(token, schema, a)
+				overlays.Ack(token, schema, a)
+			}
 		}
 		srv.Writes = fwd
 	}
