@@ -197,14 +197,20 @@ export const reportModalTitle = ({
   entityType,
   selected,
   placementTarget,
+  song,
 }: {
   entityType: ReportEntity;
   selected: { key: string; label: string } | null;
   placementTarget?: ReportModalProps['placementTarget'];
+  song?: ReportModalProps['song'];
 }) =>
   selected?.key === 'sticker-placement' && placementTarget === 'comment'
     ? 'Report this note'
-    : selected?.label ?? `Report ${reportEntityLabels[entityType]}`;
+    : selected?.label ?? `Report ${reportedThingLabel(entityType, song)}`;
+
+/** A song is an Image row, but the person reporting it is reporting a song. */
+const reportedThingLabel = (entityType: ReportEntity, song?: ReportModalProps['song']) =>
+  song ? 'Song' : reportEntityLabels[entityType];
 
 /** The reasons offered for an entity, in display order. */
 export const reportOptionsFor = (entityType: ReportEntity) =>
@@ -261,7 +267,7 @@ export default function ReportModal({
   );
   const reason = selected?.reason;
   const ReportForm = selected?.Element ?? null;
-  const title = reportModalTitle({ entityType, selected, placementTarget });
+  const title = reportModalTitle({ entityType, selected, placementTarget, song });
   const applyTagVotes = useApplyTagVotes({
     entityType: entityType as 'image' | 'model',
     entityId,
@@ -284,7 +290,7 @@ export default function ReportModal({
     },
     async onSuccess(_, variables) {
       showSuccessNotification({
-        title: `${reportEntityLabels[entityType]} reported`,
+        title: `${reportedThingLabel(entityType, song)} reported`,
         message: 'Your request has been received',
       });
       dialog.onClose();

@@ -22,6 +22,19 @@ describe('the report dialog title', () => {
     );
   });
 
+  it('names a song, not an image, when the image reported is a song', () => {
+    expect(
+      reportModalTitle({
+        entityType: ReportEntity.Image,
+        selected: null,
+        song: { durationSec: 90 },
+      })
+    ).toBe('Report Song');
+    expect(reportModalTitle({ entityType: ReportEntity.Image, selected: null })).toBe(
+      'Report Image'
+    );
+  });
+
   it("uses the chosen reason's own label once a reason is picked", () => {
     expect(
       reportModalTitle({

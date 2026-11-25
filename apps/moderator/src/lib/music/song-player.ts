@@ -7,6 +7,8 @@
  * starts a card's song at a given time.
  */
 
+import { formatPlaybackTime } from '@civitai/shared';
+
 /** What the player reads and drives of an `<audio>` element. */
 export type SongMedia = {
   play(): Promise<void> | void;
@@ -21,7 +23,11 @@ export type VolumeStore = { read(): number | null; write(volume: number): void }
 /** Which card a song is on, where the same song shows twice (one card per report). */
 export type SongCardKey = string | number;
 
-type Entry = { media: SongMedia; cardKey?: SongCardKey };
+/** What a card answers when something outside it starts its song at a time (a report's time chip):
+ *  false refuses (the card's file failed, nothing to play); true records that play was asked for. */
+export type SongCardHook = { wantPlay(at: number): boolean };
+
+type Entry = { media: SongMedia; cardKey?: SongCardKey; card?: SongCardHook };
 
 // Closer than this to the playhead, a seek-bar value is the bar echoing the playhead back.
 const SEEK_TOLERANCE_SEC = 0.5;
@@ -56,17 +62,26 @@ export const uniqueCardKey = (): SongCardKey => `song-card-${++keySeq}`;
  */
 export function createPlayIntent() {
   let wanted = false;
+  let startAt: number | null = null;
   return {
-    /** The play button or a lyric line. */
-    requested() {
+    /** The play button, or a time to play from (a lyric line, a report's time or marker). */
+    requested(at?: number) {
       wanted = true;
+      startAt = at ?? null;
+    },
+    /** The element's `playing` event: from here a swap goes on from wherever the song is. */
+    started() {
+      startAt = null;
     },
     /** The element's `pause` event, which `ended` fires too. */
     paused() {
       wanted = false;
+      startAt = null;
     },
     /** Read before the swap: removing the old element pauses it. */
     resumeAfterSwap: () => wanted,
+    /** The time play was asked from, when the song has not started yet: the stored copy starts there. */
+    resumeAt: () => startAt,
   };
 }
 
@@ -83,10 +98,15 @@ export function createSongPlayer(store: VolumeStore) {
   return {
     /** A card's element, which takes the last volume and is never started here. Returns the
      *  cleanup, which stops the song: a card that leaves the page takes its sound with it. */
-    register(imageId: number, media: SongMedia, cardKey?: SongCardKey): () => void {
+    register(
+      imageId: number,
+      media: SongMedia,
+      cardKey?: SongCardKey,
+      card?: SongCardHook
+    ): () => void {
       const volume = store.read();
       if (volume != null) media.volume = volume;
-      cards.set(imageId, [...(cards.get(imageId) ?? []), { media, cardKey }]);
+      cards.set(imageId, [...(cards.get(imageId) ?? []), { media, cardKey, card }]);
       return () => {
         media.pause();
         if (current === media) current = null;
@@ -102,16 +122,17 @@ export function createSongPlayer(store: VolumeStore) {
     },
     /**
      * Starts song `imageId` at `seconds` on the card `cardKey` names, else on a card showing it: the
-     * one already playing it, else the first. False when no card on the page shows that song.
+     * one already playing it, else the first. False when no card on the page shows that song, or
+     * the card refuses (its file failed).
      */
     playAt(imageId: number, seconds: number, cardKey?: SongCardKey): boolean {
       const shown = cards.get(imageId) ?? [];
-      const media = (
-        shown.find((entry) => cardKey != null && entry.cardKey === cardKey) ??
-        shown.find((entry) => entry.media === current) ??
-        shown[0]
-      )?.media;
-      if (!media) return false;
+      const entry =
+        shown.find((e) => cardKey != null && e.cardKey === cardKey) ??
+        shown.find((e) => e.media === current) ??
+        shown[0];
+      if (!entry || (entry.card && !entry.card.wantPlay(Math.max(0, seconds)))) return false;
+      const { media } = entry;
       media.currentTime = Math.max(0, seconds);
       played(media);
       // A refused play (the file failed) is the card's to show, through the element's own events.
@@ -166,4 +187,39 @@ export function playingLyricIndex<L extends { t: number | null }>(
       playing = i;
   });
   return playing;
+}
+
+/** A report's mark on a song's seek bar: where it sits (0 to 100) and its hover text. */
+export type SeekMarker = { timeSec: number; percent: number; title: string };
+
+/**
+ * The seek bar's report markers for a song `durationSec` long, earliest first. Reports at the same
+ * second share one marker naming each reason once. A report without a time, or one outside the song
+ * (the main app refuses those), draws nothing, and nothing is drawn until the length is known.
+ */
+const END_SLACK_SEC = 1;
+
+export function seekMarkers(
+  reports: readonly { timeSec: number | null; label: string }[],
+  durationSec: number
+): SeekMarker[] {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return [];
+  const bySecond = new Map<number, { timeSec: number; labels: Set<string> }>();
+  const timed = reports
+    .filter((r): r is { timeSec: number; label: string } => r.timeSec != null)
+    // A report filed at the upload's stored length stays on the bar when the file reads a little
+    // shorter; the main app refuses anything further.
+    .filter((r) => r.timeSec >= 0 && r.timeSec <= durationSec + END_SLACK_SEC)
+    .sort((a, b) => a.timeSec - b.timeSec);
+  for (const r of timed) {
+    const second = Math.floor(r.timeSec);
+    const mark = bySecond.get(second) ?? { timeSec: r.timeSec, labels: new Set<string>() };
+    mark.labels.add(r.label);
+    bySecond.set(second, mark);
+  }
+  return [...bySecond.values()].map(({ timeSec, labels }) => ({
+    timeSec,
+    percent: (Math.min(timeSec, durationSec) / durationSec) * 100,
+    title: `Report at ${formatPlaybackTime(timeSec)}: ${[...labels].join(' · ')}`,
+  }));
 }

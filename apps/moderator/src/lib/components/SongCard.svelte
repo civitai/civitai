@@ -26,6 +26,7 @@
     isSeek,
     playingLyricIndex,
     playSongAt,
+    seekMarkers,
     songLoading,
     songPlayer,
     uniqueCardKey,
@@ -44,6 +45,7 @@
     item,
     cardKey,
     variant = 'card',
+    reports = [],
     class: className,
   }: {
     item: { id: number; url: string };
@@ -52,6 +54,8 @@
     /** `card` fits a queue tile, its lyrics scrolling inside it. `detail` is a triage pane's middle
      *  column: the player and the lyrics as two panels at reading size, the column scrolling. */
     variant?: 'card' | 'detail';
+    /** Reports on this song: each timed one is a marker on the seek bar that plays from its time. */
+    reports?: readonly { timeSec: number | null; label: string }[];
     class?: string;
   } = $props();
   const detail = $derived(variant === 'detail');
@@ -84,7 +88,13 @@
   );
 
   function register(el: HTMLAudioElement) {
-    const unregister = songPlayer.register(item.id, el, ownKey);
+    const unregister = songPlayer.register(item.id, el, ownKey, {
+      wantPlay: (at) => {
+        if (mode === 'failed') return false;
+        intent.requested(at);
+        return true;
+      },
+    });
     volume = el.volume;
     return unregister;
   }
@@ -93,10 +103,12 @@
     const id = item.id;
     if (mode === 'cdn') {
       const resume = intent.resumeAfterSwap();
+      const at = intent.resumeAt();
       fallback = { id, mode: 'retracted' };
       if (!resume) return;
       await tick();
-      intent.requested();
+      intent.requested(at ?? undefined);
+      if (audio && at != null) audio.currentTime = at;
       audio?.play().catch(() => undefined);
       return;
     }
@@ -185,10 +197,7 @@
           i === playing && 'bg-blue-500/10 font-medium text-white'
         )}
         title="Play from {formatPlaybackTime(at)}"
-        onclick={() => {
-          intent.requested();
-          playSongAt(item.id, at, ownKey);
-        }}
+        onclick={() => playSongAt(item.id, at, ownKey)}
       >
         <span
           class={cn(
@@ -246,17 +255,39 @@
         {#if !detail}{@render playButton('')}{/if}
       </div>
 
-      <Slider
-        type="single"
-        min={0}
-        max={lengthOf(song) || 1}
-        step={0.1}
-        aria-label="Seek"
-        class="h-6"
-        trackClass="bg-dark-4"
-        disabled={mode === 'failed'}
-        bind:value={() => time, seek}
-      />
+      <div class="relative">
+        <Slider
+          type="single"
+          min={0}
+          max={lengthOf(song) || 1}
+          step={0.1}
+          aria-label="Seek"
+          class="h-6"
+          trackClass="bg-dark-4"
+          disabled={mode === 'failed'}
+          bind:value={() => time, seek}
+        />
+        {#if mode !== 'failed'}
+          {#each seekMarkers(reports, lengthOf(song)) as mark (mark.timeSec)}
+            <!-- The line lets pointer events through to the slider, so the thumb still drags across
+                 a marker; the marker is clicked by the cap above the track. -->
+            <span
+              class="pointer-events-none absolute top-1/2 h-4 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-sm bg-red-500"
+              style:left="{mark.percent}%"
+            ></span>
+            <button
+              type="button"
+              class="group absolute -top-1 flex h-2.5 w-3 -translate-x-1/2 justify-center"
+              style:left="{mark.percent}%"
+              title={mark.title}
+              aria-label={mark.title}
+              onclick={() => playSongAt(item.id, mark.timeSec, ownKey)}
+            >
+              <span class="size-2 rounded-full bg-red-500 group-hover:bg-red-400"></span>
+            </button>
+          {/each}
+        {/if}
+      </div>
       {#if detail}
         <!-- The design's controls row: play, the time beside it, the volume at the far end. -->
         <div class="flex items-center gap-3">
@@ -312,7 +343,10 @@
         intent.paused();
       }}
       onwaiting={() => loadEvent('waiting')}
-      onplaying={() => loadEvent('playing')}
+      onplaying={() => {
+        loadEvent('playing');
+        intent.started();
+      }}
       oncanplay={() => loadEvent('canplay')}
       onvolumechange={(e) => {
         volume = e.currentTarget.volume;
