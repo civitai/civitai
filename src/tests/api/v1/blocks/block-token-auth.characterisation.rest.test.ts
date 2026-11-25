@@ -469,8 +469,8 @@ const ROUTES: Record<string, RouteSpec> = {
     body: { name: 'search_models', arguments: { query: 'cat' } },
     scope: null,
   },
-  // The report moderation API, driven as a report. Flag off here, so an admitted request is
-  // answered as an unknown route.
+  // The report moderation API, driven as a report on an undeclared collection (the fixture row has
+  // no manifest), so an admitted request answers 404 collection_not_declared.
   'src/pages/api/v1/blocks/moderation/reports.ts': {
     load: () => import('~/pages/api/v1/blocks/moderation/reports'),
     method: 'POST',
@@ -5808,8 +5808,9 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       []
     ),
   },
-  // Every admitted cell answers 404 not_found: the report API's flag is off (Flipt is
-  // unreachable here), so the path is not a route, before any storage access is resolved.
+  // The report API is always on (no flag). The fixture row has no manifest, so every admitted cell
+  // whose access resolves answers 404 collection_not_declared, before any budget is charged; an
+  // unapproved app is refused by the access resolver, as on the storage route.
   'src/pages/api/v1/blocks/moderation/reports.ts': {
     'no bearer': X(
       401,
@@ -5933,7 +5934,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'anonymous subject': X(
       404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
       true,
       [],
       [],
@@ -5941,31 +5947,51 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'ai:write:budgeted without a positive buzzBudget': X(
       404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
       true,
       [],
-      [],
+      ['hydrate:42'],
       ['apps:storage']
     ),
     'rate limited': X(
       404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
       true,
       [],
-      [],
+      ['hydrate:42'],
       ['apps:storage']
     ),
     'hub OAuth token': X(
       404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
       true,
       [],
-      [],
+      ['hydrate:42'],
       ['apps:storage']
     ),
     'missing approval row': X(
-      404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
       true,
       [],
       [],
@@ -5985,18 +6011,28 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'consent revoked for the route scope': X(
       404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
       true,
       [],
-      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
+      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}', 'hydrate:42'],
       ['apps:storage']
     ),
     'consent marker unavailable': X(
       404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      {
+        code: 'collection_not_declared',
+        message: 'collection prefs is not declared',
+        error: 'collection prefs is not declared',
+        details: { collection: 'prefs' },
+      },
       true,
       [],
-      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
+      ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}', 'hydrate:42'],
       ['apps:storage']
     ),
     'consent marker unavailable AND not approved': X(
@@ -6013,16 +6049,26 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       null
     ),
     'dev token, no approval row': X(
-      404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
       true,
       [],
       [],
       ['apps:storage']
     ),
     'private-run token, row not approved': X(
-      404,
-      { code: 'not_found', message: 'no such route', error: 'no such route' },
+      403,
+      {
+        code: 'not_eligible',
+        message: 'app block is not approved',
+        error: 'app block is not approved',
+        details: { reason: 'app_not_approved' },
+      },
       true,
       [],
       [],

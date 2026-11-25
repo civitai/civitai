@@ -142,28 +142,24 @@ export async function checkSharedReportRateLimit(
 // `DOC_STORE_SHARED_WRITE_BUDGET`), their own, not the one the legacy append/update spend.
 //   reads             — per (app, viewer), or per (app, client IP) for an anonymous viewer;
 //   writes            — per (app, viewer): private document writes, every DELETE (a
-//                       viewer's own shared documents included — see the route), each publish
-//                       and unpublish call, and, only while the app has
-//                       `app-blocks-storage-unchanged-writes-free` on, every shared PUT, changed
-//                       or not, on top of the shared write budget a changed one still spends;
-//   marks + counters  — per (app, viewer), every mark and counter write;
-//   report            — per (app, viewer) per day, on top of the marks + counters bucket.
+//                       viewer's own shared documents included — see the route), and, only
+//                       while the app has `app-blocks-storage-unchanged-writes-free` on, every
+//                       shared PUT, changed or not, on top of the shared write budget a changed
+//                       one still spends;
+//   report            — per (app, viewer) per day: the report API.
+// (The marks + counters bucket went with marks and counters, docs/app-storage-generic-core.md
+// rollout step 5.)
 export const DOC_STORE_READ_RATE_LIMIT_MAX = 300;
 export const DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX = 120;
-// Marks + counters and reports take the legacy vote and report limits (own buckets, same numbers).
-export const DOC_STORE_TALLY_RATE_LIMIT_MAX = SHARED_VOTE_RATE_LIMIT_MAX;
+// Reports take the legacy report limit (own bucket, same numbers).
 export const DOC_STORE_REPORT_RATE_LIMIT_MAX = SHARED_REPORT_RATE_LIMIT_MAX;
 const MINUTE_SECONDS = 60;
 
-export type DocStoreRateBucket = 'read' | 'write' | 'tally' | 'report';
+export type DocStoreRateBucket = 'read' | 'write' | 'report';
 
 const DOC_STORE_BUCKETS: Record<DocStoreRateBucket, { max: number; windowSeconds: number }> = {
   read: { max: DOC_STORE_READ_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
   write: { max: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX, windowSeconds: MINUTE_SECONDS },
-  tally: {
-    max: DOC_STORE_TALLY_RATE_LIMIT_MAX,
-    windowSeconds: SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS,
-  },
   report: {
     max: DOC_STORE_REPORT_RATE_LIMIT_MAX,
     windowSeconds: SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS,
@@ -401,19 +397,3 @@ export async function reserveSharedWrite(
     },
   };
 }
-
-/**
- * Server-side PUBLISH (`POST /storage/_publish/:to`), per (user, app): one token per publish call,
- * whatever the number of documents it copies (up to `DOC_STORE_PUBLISH_BOUNDS.maxKeys`). Its own
- * keyspace, so a publish never spends the ad-hoc shared write budget above, and ad-hoc writes
- * never spend this one. Rejections use the legacy bucket's numbers
- * (`SHARED_WRITE_BUDGET.rejections`), in this keyspace. A publish that changes nothing gives its token
- * back. What it bounds is the moderation scan of every copied document and the rating job each
- * copy becomes once content levels are on, so the key cap is the real per-call ceiling.
- */
-export const DOC_STORE_PUBLISH_BUDGET: SharedWriteBudgetParams = {
-  keyspace: 'docs-publish:v1',
-  burst: { capacity: 10, refillIntervalMs: DAY_MS / 10 },
-  daily: { capacity: 10, refillIntervalMs: DAY_MS / 10 },
-  rejections: SHARED_WRITE_BUDGET.rejections,
-};

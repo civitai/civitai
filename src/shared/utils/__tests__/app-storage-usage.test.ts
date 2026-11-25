@@ -55,36 +55,29 @@ describe('what an Empty leaves', () => {
     private: NONE,
     shared: NONE,
     hidden: NONE,
-    counters: NONE,
     ...parts,
   });
 
-  it('clearable documents are the private ones and the visible shared ones, never hidden posts or counters', () => {
+  it('clearable documents are the private ones and the visible shared ones, never hidden posts', () => {
     expect(
       clearableDocs(
         h({
           private: { bytes: 1, docs: 3 },
           shared: { bytes: 1, docs: 5 },
           hidden: { bytes: 1, docs: 7 },
-          counters: { bytes: 1, docs: 11 },
         })
       )
     ).toBe(8);
-    expect(
-      clearableDocs(h({ hidden: { bytes: 4, docs: 1 }, counters: { bytes: 2, docs: 1 } }))
-    ).toBe(0);
+    expect(clearableDocs(h({ hidden: { bytes: 4, docs: 1 } }))).toBe(0);
   });
 
   it('names what stays, counted in items', () => {
-    expect(keptStorageNote(h({ counters: { bytes: 2, docs: 1 } }))).toBe(
-      '1 item stays: counters you started.'
+    expect(keptStorageNote(h({ hidden: { bytes: 40, docs: 1 } }))).toBe(
+      '1 item stays: posts hidden by moderation.'
     );
     expect(keptStorageNote(h({ hidden: { bytes: 40, docs: 3 } }))).toBe(
       '3 items stay: posts hidden by moderation.'
     );
-    expect(
-      keptStorageNote(h({ hidden: { bytes: 40, docs: 3 }, counters: { bytes: 2, docs: 4 } }))
-    ).toBe('7 items stay: counters you started and posts hidden by moderation.');
   });
 
   it('is null when an Empty can remove everything', () => {

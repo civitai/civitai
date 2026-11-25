@@ -218,8 +218,8 @@ func TestAReadsFloorIsAnsweredOrRefusedNeverReadFromREST(t *testing.T) {
 // The keyed get answers from the stream only: the record (the newer of two rows of one key), a 404 for
 // a key it does not hold or a stream that holds nothing, and each refusal as its code. Writes off it
 // is the mux's 404.
-// Fails on origin/main: with writes on, GET of the key path is the mux's 405 there (only PUT, DELETE,
-// PATCH and OPTIONS are registered), so `g.status != 200` fails.
+// Fails on origin/main: with writes on, GET of the key path is the mux's 405 there (only PUT, DELETE
+// and OPTIONS are registered), so `g.status != 200` fails.
 func TestTheKeyedGetIsAnsweredFromTheStreamOnly(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 0))
 	s.reg.records["civitai_dave"] = []registry.Entity{

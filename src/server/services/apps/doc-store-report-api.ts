@@ -1,12 +1,12 @@
 // THE REPORT MODERATION API: `POST /api/v1/blocks/moderation/reports {collection, key, from?}` →
 // `200 {"reported": true}`, never a count (docs/app-storage-generic-core.md, "The report moderation
-// API"). Its gates are the `report` mark's (`assertReportGate` in `doc-store-api.ts`): the two paths
-// spend ONE daily report budget under the same key. No permission hook ever sees a report and there
-// is no withdrawal. FLAG `app-blocks-storage-report-api` (per requesting app, default off): off, the
-// path answers `404 not_found` for every method.
+// API"). It files the report through `fileReport` (`doc-store-api.ts`), the one code path it shares
+// with the `report` mark alias on the storage route (`PUT /:c/:key/marks/report`, kept for apps
+// bundled with an SDK older than 0.30): the same gates (`assertReportGate`), the same daily report
+// budget under the same key, the same `doc_mark` row and dedupe. No permission hook ever sees a
+// report and there is no withdrawal. It is the way to report, so it is always on: no flag gates it.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.middleware';
 import {
   blockClaimsAppLabel,
@@ -15,13 +15,12 @@ import {
 } from '~/server/metrics/app-block-runtime.metrics';
 import type { DocStore } from '~/server/services/apps/doc-store';
 import {
-  assertReportGate,
   charge,
   collectionOf,
   envelope,
+  fileReport,
   otherAppSource,
   parseBody,
-  requireViewer,
   sendEnvelope,
   sendError,
   STORAGE_ERROR_STATUS,
@@ -41,8 +40,6 @@ const reportBody = z.strictObject({
 
 /** What the route answers for every report it accepts: never a count. */
 export const REPORTED = { reported: true } as const;
-
-const noSuchRoute = () => new DocStoreError('not_found', 'no such route');
 
 /** The JSON body as Next parsed it (an object), or as text when the content type was not JSON. */
 function bodyOf(req: NextApiRequest): unknown {
@@ -67,12 +64,6 @@ export function createReportHandler(deps: ReportApiDeps = {}) {
     try {
       const claims = (req as BlockScopedNextApiRequest).blockClaims;
       if (!claims) throw new DocStoreError('unauthenticated', 'a block token is required');
-      // Off for this app, the path is not a route at all, before any other answer (a 405
-      // included).
-      const served =
-        !!claims.appBlockId &&
-        (await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_REPORT_API, claims.appBlockId));
-      if (!served) throw noSuchRoute();
       if (req.method !== 'POST') {
         res.setHeader('Allow', 'POST');
         sendEnvelope(
@@ -108,13 +99,7 @@ export function createReportHandler(deps: ReportApiDeps = {}) {
           : await resolveImportAccess(own, { from, collection: input.collection, op: 'author' });
 
       const coll = collectionOf(access, input.collection);
-      requireViewer(access);
-      // Before any budget: only a shared document can be reported.
-      if (coll.config.visibility !== 'shared') {
-        throw new DocStoreError('invalid_request', 'reports exist on shared collections only');
-      }
-      await assertReportGate(access, req, true);
-      await getStore().report(access.ctx, coll, input.key);
+      await fileReport(access, coll, input.key, req, getStore());
       res.status(200).json(REPORTED);
     } catch (err) {
       sendError(req, res, err, REPORT_ENDPOINT);

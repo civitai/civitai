@@ -2680,8 +2680,6 @@
   "src/server/services/apps/__tests__/doc-rater.service.pglite.test.ts": 6,
   "src/server/services/apps/__tests__/doc-store-api.contract.test.ts": 5,
   "src/server/services/apps/__tests__/doc-store-api.hooks.test.ts": 6,
-  "src/server/services/apps/__tests__/doc-store-api.publish.test.ts": 5,
-  "src/server/services/apps/__tests__/doc-store-api.tally-operators.test.ts": 4,
   "src/server/services/apps/__tests__/doc-store-api.unchanged-writes.test.ts": 5,
   "src/server/services/apps/__tests__/doc-store.app-purge.test.ts": 1,
   "src/server/services/apps/__tests__/shared-content-safety.category.test.ts": 3,
