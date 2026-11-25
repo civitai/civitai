@@ -12,18 +12,14 @@ const ROOT = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const sorted = (values: string[]) => [...values].sort();
 
-const sqlLists = (source: string) =>
-  [...source.matchAll(/"needsReview" NOT IN \(([^)]*)\)/g)].map((match) =>
-    sorted(match[1].split(',').map((value) => value.trim().replace(/^'|'$/g, '')))
-  );
-
 const NOT_IN = '"needsReview" NOT IN (';
 
 /**
- * The values each `"needsReview" NOT IN (` in Go source binds with `a.add("…")`, read up to the
- * matching `)` however the expression is wrapped. The Go calls inside it balance their own parens.
+ * The values each `"needsReview" NOT IN (` in Go source names, bound with `a.add("…")` or written as
+ * SQL literals, read up to the matching `)` however the expression is wrapped. The Go calls inside it
+ * balance their own parens.
  */
-const boundLists = (source: string) => {
+const notInLists = (source: string) => {
   const lists: string[][] = [];
   for (let at = source.indexOf(NOT_IN); at >= 0; at = source.indexOf(NOT_IN, at + 1)) {
     let depth = 1;
@@ -33,7 +29,9 @@ const boundLists = (source: string) => {
       else if (source[end] === ')') depth--;
     }
     const body = source.slice(at + NOT_IN.length, end - 1);
-    lists.push(sorted([...body.matchAll(/a\.add\("([^"]+)"\)/g)].map((match) => match[1])));
+    const bound = [...body.matchAll(/a\.add\("([^"]+)"\)/g)].map((match) => match[1]);
+    const literal = [...body.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    lists.push(sorted(bound.length ? bound : literal));
   }
   return lists;
 };
@@ -43,20 +41,14 @@ it('every owner-hidden review is a review type the account restore can put back 
 });
 
 describe('copies of the owner-hidden review list', () => {
-  it.each(['apps/feed-go/internal/hydrate/users.go'])(
+  it.each(['apps/feed-go/internal/hydrate/users.go', 'apps/feed-go/internal/feed/query.go'])(
     '%s holds exactly the shared list',
     (file) => {
-      const lists = sqlLists(read(file));
+      const lists = notInLists(read(file));
       expect(lists.length).toBeGreaterThan(0);
       for (const list of lists) expect(list).toEqual(sorted(OWNER_HIDDEN_REVIEWS));
     }
   );
-
-  it('apps/feed-go/internal/feed/query.go binds exactly the shared list', () => {
-    const lists = boundLists(read('apps/feed-go/internal/feed/query.go'));
-    expect(lists.length).toBeGreaterThan(0);
-    for (const list of lists) expect(list).toEqual(sorted(OWNER_HIDDEN_REVIEWS));
-  });
 
   it('reads a bound list that is wrapped over several lines', () => {
     const wrapped = [
@@ -64,7 +56,19 @@ describe('copies of the owner-hidden review list', () => {
       '\ta.add("csam") + `, ` +',
       '\ta.add("minor") + `) OR ` + own() + `)`',
     ].join('\n');
-    expect(boundLists(wrapped)).toEqual([['csam', 'minor']]);
+    expect(notInLists(wrapped)).toEqual([['csam', 'minor']]);
+  });
+
+  it('reads a literal list that is wrapped over several lines, and sees a dropped value', () => {
+    const wrapped = [
+      'AND (i."needsReview" IS NULL OR i."needsReview" NOT IN (',
+      "\t\t'csam',",
+      "\t\t'minor'))",
+    ].join('\n');
+    expect(notInLists(wrapped)).toEqual([['csam', 'minor']]);
+    const dropped = wrapped.replace(",\n\t\t'minor'", '');
+    expect(dropped).not.toEqual(wrapped);
+    expect(notInLists(dropped)).toEqual([['csam']]);
   });
 
   it('the personal-data export excludes exactly the shared list', () => {
