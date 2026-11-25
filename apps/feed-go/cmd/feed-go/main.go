@@ -727,20 +727,26 @@ func run(log *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 	}
-	// One grace period for the whole sequence: first cancel the shadow samples and wait for them to
-	// return (they hold replica connections), then drain the listeners' in-flight requests; the
-	// deferred closes of the pool and both redis clients run after both.
-	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := srv.Close(shutdown); err != nil {
-		log.Warn("shadow samples still running at the end of the grace period", "err", err)
-	}
-	for _, s := range servers {
-		_ = s.Shutdown(shutdown)
-	}
-	// The spans of the drained requests are exported before exit.
-	if err := tp.Shutdown(shutdown); err != nil {
-		log.Warn("trace exporter shutdown", "err", err)
-	}
+	// server.Drain: /readyz fails now, the listeners keep serving for ShutdownDelay (so requests the
+	// router still sends here are answered, not refused), then they close and drain.
+	log.Info("draining: readiness failing, listeners still serving", "FEED_GO_SHUTDOWN_DELAY_MS",
+		cfg.ShutdownDelay.Milliseconds())
+	server.Drain(&srv.Readiness, func() { time.Sleep(cfg.ShutdownDelay) }, func() {
+		// One grace period for the whole sequence: first cancel the shadow samples and wait for them to
+		// return (they hold replica connections), then drain the listeners' in-flight requests; the
+		// deferred closes of the pool and both redis clients run after both.
+		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Close(shutdown); err != nil {
+			log.Warn("shadow samples still running at the end of the grace period", "err", err)
+		}
+		for _, s := range servers {
+			_ = s.Shutdown(shutdown)
+		}
+		// The spans of the drained requests are exported before exit.
+		if err := tp.Shutdown(shutdown); err != nil {
+			log.Warn("trace exporter shutdown", "err", err)
+		}
+	})
 	return nil
 }

@@ -111,9 +111,11 @@ func verifiedCrawler(r *http.Request) bool {
 
 // Server wires a request to the port.
 type Server struct {
-	Resolver *auth.Resolver
-	Deps     *feed.Deps
-	Hosts    browsing.HostColors
+	// Readiness answers the internal /readyz (the zero value is ready); Drain fails it at shutdown.
+	Readiness Readiness
+	Resolver  *auth.Resolver
+	Deps      *feed.Deps
+	Hosts     browsing.HostColors
 	// HostPrimaries is each color's SERVER_DOMAIN_<COLOR> (config.HostPrimaries): the board color of
 	// image.getInfinite's `newCreators` reads it.
 	HostPrimaries map[string]string
