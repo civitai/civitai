@@ -189,6 +189,26 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
     expect(charge.toAccountType).toBe(buzzType);
   });
 
+  it.each(['blue', 'green', 'yellow'] as const)(
+    "records a %s purchase's currency on the grant",
+    async (buzzType) => {
+      seed({ acceptsBlueBuzz: true });
+
+      await earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType,
+      });
+
+      expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meta: expect.objectContaining({ 'download-buzzType': buzzType }),
+        })
+      );
+    }
+  );
+
   it('rejects blue when the creator has not opted in', async () => {
     seed({ acceptsBlueBuzz: false });
 
