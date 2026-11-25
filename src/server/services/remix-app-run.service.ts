@@ -503,9 +503,8 @@ async function advance({
       ? new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD })
       : new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
   };
-  // Loaded on every advance and gated at each submit (`buildRuntimeRequest`), so one blocked or
-  // rerated since it was picked refuses the next segment. Only a submit is gated: a finished run
-  // stays readable and postable whatever its references became.
+  // A finished run stays readable and postable whatever its references became: they are gated
+  // when a segment is built, not when the run is read.
   const references = new Map<number, RemixImage>();
   const referenceRows: RemixSourceImage[] = [];
   /** Recorded answers that no longer load (deleted, or no longer the viewer's): nothing more runs. */

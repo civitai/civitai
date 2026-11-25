@@ -29,7 +29,7 @@ export function resolveRemixAppEngine(
     return { refusal: REMIX_REFERENCE_UNSCANNED };
   if (tier === 'mature' && viewer.isGreen)
     return { refusal: 'Mature images cannot be remixed here.' };
-  // The output of a mature source is mature, and this viewer would never be shown it.
+  // The output takes the run's tier, and this viewer would never be shown a mature one.
   if (tier === 'mature' && !viewer.showNsfw)
     return { refusal: 'Turn on mature content to remix this image.' };
   const engine = app.engine[tier];

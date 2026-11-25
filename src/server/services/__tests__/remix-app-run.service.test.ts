@@ -1712,8 +1712,8 @@ describe('a row-defined app', () => {
   });
 });
 
-// Policy: the reference passes the source's gates, the run takes the tier of its most mature
-// input, and an unscanned reference fails closed (Mod Lead ruling on hub:data:agent_tasks/1a20f84c2123ffede).
+// Policy (civitai/civitai#10375): the reference passes the source's gates, the run takes the tier
+// of its most mature input, and an unscanned reference fails closed.
 describe('an image ask', () => {
   const REF_ID = 21;
   const matureEngine = {
@@ -1832,11 +1832,23 @@ describe('an image ask', () => {
     ['a mature reference beside a minor-flagged source', { minor: true }, { nsfwLevel: 8 }],
     ['a reference of a real person', {}, { poi: true }],
     ['a blocked reference', {}, { blockedFor: 'moderated' }],
+    ['a reference in breach of the terms', {}, { tosViolation: true }],
+    ['a source in breach of the terms', { tosViolation: true }, {}],
+    // A minor is never combined with mature content, whichever input carries which.
+    ['a minor-rated reference beside a mature source', { nsfwLevel: 8 }, { acceptableMinor: true }],
+    ['a minor-rated mature source', { nsfwLevel: 8, acceptableMinor: true }, {}],
   ])('refuses %s', async (_, source, reference) => {
     addImage(SOURCE_ID, source);
     addImage(REF_ID, { userId: USER_ID, ...reference });
     await expect(start([REF_ID])).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(submits()).toHaveLength(0);
+  });
+
+  it('runs a minor-rated reference beside a safe source on the safe engine', async () => {
+    addImage(REF_ID, { userId: USER_ID, acceptableMinor: true });
+    await start([REF_ID], h.price);
+    expect(submits()).toHaveLength(1);
+    expect(JSON.stringify(submits()[0])).not.toContain(String(matureEngine.versionId));
   });
 
   it.each(['Pending', 'Error', null])(
@@ -1849,7 +1861,7 @@ describe('an image ask', () => {
     }
   );
 
-  // Mod Lead ruling 2026-11-24: any pending review refuses use as an input, source or reference.
+  // Any pending review refuses use as an input, source or reference (civitai/civitai#10375).
   it.each([
     ['a reference', SOURCE_ID, REF_ID],
     ['a source', REF_ID, SOURCE_ID],

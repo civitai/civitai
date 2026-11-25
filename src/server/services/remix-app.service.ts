@@ -11,6 +11,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
+import { isImageOwner } from '~/server/services/util.service';
 import {
   getEnabledRemixApps,
   getRemixAppRegistry,
@@ -354,13 +355,9 @@ export async function loadSource(
   return readSource(imageId);
 }
 
-/**
- * An image the viewer answered an `image` ask with: one of their own images, through the source's
- * visibility check. Its rating gate is `resolveRemixAppEngine`, beside the source's.
- */
+/** An image the viewer answered an `image` ask with: one of their own images, through the source's visibility check. */
 export async function loadReference(imageId: number, caller: RemixAppCaller) {
-  const owner = await dbRead.image.findUnique({ where: { id: imageId }, select: { userId: true } });
-  if (owner?.userId !== caller.user.id)
+  if (!(await isImageOwner({ userId: caller.user.id, imageId, allowMods: false })))
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Pick one of your own images' });
   const image = await loadSource(imageId, caller, true);
   if (image.type !== 'image')
@@ -383,6 +380,8 @@ async function readSource(imageId: number) {
       minor: true,
       poi: true,
       needsReview: true,
+      acceptableMinor: true,
+      tosViolation: true,
     },
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });

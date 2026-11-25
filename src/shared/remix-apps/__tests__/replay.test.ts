@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defineRemixApp, type RemixCtx, type RemixImage } from '~/shared/remix-apps/define';
 import {
+  checkRemixReplay,
   REMIX_RUN_LIMITS,
   RemixReplayError,
   replayRemixApp,
@@ -234,5 +235,26 @@ describe('an image answer', () => {
         references
       )
     ).rejects.toThrow('returned an image this run did not make');
+  });
+
+  it('is refused from a user app, whose sandbox would have to be handed the image', () => {
+    const asking = (kind: 'image' | 'text') => ({
+      effects: [
+        {
+          type: 'ask',
+          spec:
+            kind === 'text'
+              ? { kind, prompt: 'Jacket', maxLength: 10 }
+              : { kind, prompt: 'Jacket' },
+        },
+      ],
+    });
+    // POSITIVE CONTROL: a text ask stops the run there.
+    expect(checkRemixReplay('probe', source, [], asking('text')).outcome).toMatchObject({
+      status: 'effect',
+    });
+    expect(() => checkRemixReplay('probe', source, [], asking('image'))).toThrow(
+      'user apps cannot yet'
+    );
   });
 });

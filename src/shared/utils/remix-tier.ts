@@ -27,6 +27,9 @@ export type RemixSourceImage = {
   poi?: boolean;
   /** A moderation review is pending on it. */
   needsReview?: string | null;
+  /** Rated a realistic depiction of a minor by a moderator. */
+  acceptableMinor?: boolean;
+  tosViolation?: boolean;
   hasMeta?: boolean | null;
   hasPositivePrompt?: boolean | null;
 };
@@ -72,11 +75,14 @@ export function getEngineRefusal(
 ): string | undefined {
   const noun = image.type === 'video' ? 'video' : 'image';
   const plural = `${noun}s`;
-  if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor)
+  if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor || image.tosViolation)
     return `This ${noun} was blocked, so it cannot be remixed.`;
   // Any pending review, fail closed. Only use as an input is refused; its owner still sees it.
   if (image.needsReview) return `This ${noun} is waiting on a review, so it cannot be remixed yet.`;
   if (image.minor) return `${capitalize(plural)} that may depict a minor cannot be remixed.`;
+  // A minor is never combined with mature content, whichever input carries which.
+  if (tier === 'mature' && image.acceptableMinor)
+    return `${capitalize(plural)} that may depict a minor cannot be remixed into mature content.`;
   if (image.poi) return `${capitalize(plural)} of real people cannot be remixed.`;
   // Rated mature by a human before the classifiers ran. `minor`/`poi` are NOT
   // NULL columns defaulting to false, so the checks above cannot tell that state
