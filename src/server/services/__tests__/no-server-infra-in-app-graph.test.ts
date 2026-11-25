@@ -153,6 +153,12 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
   },
   {
     file: 'src/pages/_app.tsx',
+    spec: '~/server/services/signed-out-rollout',
+    reason:
+      'the signed-out per-visitor rollout flags, set only on a render for one visitor; server-only because it evaluates Flipt.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
     spec: '~/server/trpc/trpc-pool-cookie',
     reason:
       'the tRPC routing cookie, synced from the viewer flag on a private full render; server-only because it writes a response header.',

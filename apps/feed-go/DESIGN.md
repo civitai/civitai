@@ -908,7 +908,14 @@ path as serving, and compares decoded values:
   `header:<name>`, with kind `value`, `missing-in-go` or `missing-in-node`. The Go side is what the
   public route writes: its Cache-Control is `trpc.ResultCacheControl`, the one function
   `trpc.WriteResult` also calls, and its Vary is `trpc.Vary` (`trpc-accept, accept`, the value tRPC's
-  `resolveResponse` sets on every answer). Noise rules (`shadow.CompareResponse`):
+  `resolveResponse` sets on every answer). For the three tRPC feeds (`as-posts`, `infinite`,
+  `model-getall`) both results are also counted per viewer class (`server.FeedViewerClasses`:
+  `anon` = no session user and no verified crawler, the answer an edge cache may keep; `crawler`;
+  `banned`; `user`; `moderator`): the body's in `feed_go_shadow_compare_viewer_total`, the headers'
+  in `feed_go_shadow_response_viewer_total{result="match|mismatch"}`. A signed-out cohort's gate reads
+  `viewer="anon"` only, since a signed-in sample's headers (no public TTL, a refreshed session
+  cookie) say nothing about what the edge stores for a signed-out visitor. Noise rules
+  (`shadow.CompareResponse`):
   - Cache-Control and Vary compare as sets of lowercased directives or names (`max-age=060` reads as
     `max-age=60`); Cache-Tag as a set of tags; Set-Cookie by presence.
   - An empty value is absent.

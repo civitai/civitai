@@ -395,8 +395,8 @@ export default defineNextConfig(
     // The `feedGoTransport*` client path (`GO_TRANSPORT_URL` in
     // src/utils/trpc-go-transport.ts). An exact-path route in front of this app may send it to a
     // separate Go feed service; whatever reaches this app is served by the ordinary tRPC route, so
-    // the flag can never strand a request (edge rules keyed on `/api/trpc/` still do not match this
-    // path; see `feedGoTransport`).
+    // the flag can never strand a request. A signed-out answer on this path is edge-cached as on
+    // `/api/trpc/` (anonymous probe, 2026-11-25: a miss, then a hit), as its own cache entry.
     // One exact source per procedure in `GO_TRANSPORT_PROCEDURES`, never a wildcard: a wildcard would
     // make `/api/trpc-go/*` an alias of the whole tRPC API. src/utils/__tests__/trpc-go-transport.test.ts
     // pins that this list and that set agree. In local dev `pnpm dev` (scripts/dev-feed-go) sets
