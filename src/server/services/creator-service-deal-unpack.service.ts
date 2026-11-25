@@ -895,6 +895,18 @@ export async function settleFinals() {
   return { finalsFailed: failed, finalsPassed: passed };
 }
 
+/**
+ * Logs how many entries point at an image that is gone, counts only: each refuses and keeps its
+ * file, and a growing count is a backlog someone should look at.
+ */
+export async function countDanglingScanCopies() {
+  const [{ dangling }] = await dbWrite.$queryRaw<{ dangling: number }[]>`
+    SELECT count(*)::int AS dangling FROM "ServiceDealFileEntry" e
+    WHERE e."imageId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;
+  logUnpack('entries pointing at a gone image', { count: dangling }, dangling ? 'warning' : 'info');
+  return dangling;
+}
+
 /** The last entry `deleteEntryScanCopies` tried. Kept in memory: a restart only starts it over. */
 let copiesCursor = 0;
 
@@ -923,13 +935,8 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
       });
-      // A copy kept for its case stays pointed at; one an earlier run deleted is let go.
-      const went =
-        gone?.some(({ id }) => id === row.imageId) ||
-        !(
-          await dbWrite.$queryRaw<unknown[]>`SELECT 1 FROM "Image" WHERE "id" = ${row.imageId}::int`
-        ).length;
-      if (!went) continue;
+      // A copy kept for its case stays pointed at, and so does one gone without this delete.
+      if (!gone?.some(({ id }) => id === row.imageId)) continue;
       if (row.fileId === null)
         await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
       else

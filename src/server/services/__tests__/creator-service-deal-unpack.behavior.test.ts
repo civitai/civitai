@@ -1840,14 +1840,13 @@ describe('copies of scanned images', () => {
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
   });
 
-  it('lets an entry go when its copy is already gone, though the delete reports none', async () => {
+  it('keeps an entry pointed at a copy gone without this delete, and counts it', async () => {
     const { fileId } = await settled();
-    images.deleteImages.mockImplementation(async (ids: number[]) => {
-      await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
-      return [];
-    });
-    expect(await unpack.deleteEntryScanCopies()).toBe(1);
-    expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
+    expect(await unpack.countDanglingScanCopies()).toBe(0);
+    await q(`DELETE FROM "Image" WHERE id = 1`);
+    expect(await unpack.deleteEntryScanCopies()).toBe(0);
+    expect((await entries(fileId))[0]).toMatchObject({ imageId: 1, scanKey: 'scan-key-1' });
+    expect(await unpack.countDanglingScanCopies()).toBe(1);
   });
 
   it('keeps the copy of an image still being scanned, however old and whatever becomes of its file', async () => {
@@ -1902,6 +1901,49 @@ describe('copies of scanned images', () => {
         (await unpack.deleteEntryScanCopies()) + (await unpack.deleteEntryScanCopies());
       expect(deleted).toBe(50);
       expect(await copies()).toEqual([]);
+    });
+  });
+
+  describe('when the seller deletes a file whose passed image is gone', () => {
+    async function removedFinal({ imageGoneFirst }: { imageGoneFirst: boolean }) {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      await unpack.unpackFinals();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned'`);
+      await unpack.settleEntryScans();
+      if (imageGoneFirst) await q(`DELETE FROM "Image"`);
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      return { dealId, fileId };
+    }
+    const disputeToolSees = async (dealId: number, fileId: number) => {
+      const reviewer = {
+        userId: 99,
+        isModerator: true,
+        canReviewCsam: true,
+        moderatorFetch: true,
+        servableLevels: allBrowsingLevelsFlag,
+      };
+      const listed = (await files.listServiceDealFiles({ dealId, ...reviewer })).find(
+        (row) => row.id === fileId
+      );
+      const download = await files.resolveServiceDealFileDownload({ fileId, ...reviewer });
+      return { listed: listed?.canDownload, downloaded: download !== null };
+    };
+
+    it('keeps the pointer, so the file is refused and kept, when the image went some other way', async () => {
+      const { dealId, fileId } = await removedFinal({ imageGoneFirst: true });
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: false, downloaded: false });
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() - interval '1 day'`);
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+    });
+
+    it('lets go of a copy its own delete removed', async () => {
+      const { dealId, fileId } = await removedFinal({ imageGoneFirst: false });
+      expect((await entries(fileId))[0].imageId).toBeNull();
+      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: true, downloaded: true });
     });
   });
 

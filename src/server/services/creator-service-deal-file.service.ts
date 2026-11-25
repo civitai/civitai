@@ -583,13 +583,15 @@ async function deleteImages(imageIds: number[]) {
   return gone;
 }
 
-/** Entries stop pointing at copies that are gone: deleted now, or by an earlier run. */
+/**
+ * Entries stop pointing at the copies this delete removed. An image gone some other way keeps its
+ * pointer, which refuses and keeps the file (`imageGone`).
+ */
 export function clearDeletedCopies(imageIds: number[], fileId: number) {
+  if (!imageIds.length) return Promise.resolve(0);
   return dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
-    WHERE e."imageId" IS NOT NULL AND e."fileId" = ${fileId}::int
-      AND (e."imageId" IN (${Prisma.join(imageIds.length ? imageIds : [-1])})
-        OR NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId"))`;
+    WHERE e."fileId" = ${fileId}::int AND e."imageId" IN (${Prisma.join(imageIds)})`;
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
