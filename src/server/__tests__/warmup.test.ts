@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import client from 'prom-client';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
+import { callerFamily } from '~/server/prom/webhook-token.metrics';
 
 // ---------------------------------------------------------------------------
 // WHY THIS TEST EXISTS
@@ -53,7 +55,7 @@ vi.mock('~/server/prom/client', () => {
   };
 });
 
-// env.NEXTAUTH_URL / env.WEBHOOK_TOKEN are read by warmup.ts; both come from the
+// env.NEXTAUTH_URL / env.WEBHOOK_TOKEN / env.PROBE_TOKEN are read by warmup.ts; they come from the
 // defaults in src/__tests__/setup.ts.
 
 // Helper: a deferred promise that never resolves on its own — used to simulate a
@@ -161,6 +163,44 @@ describe('warmup: state machine', () => {
     const routeWarms = calls.filter((u) => !u.includes('/api/live')).length;
     expect(livePolls).toBeGreaterThanOrEqual(1); // listener became ready on first poll
     expect(routeWarms).toBe(2); // 2 routes × 1 iteration
+  });
+
+  describe('/api/live listener poll credentials', () => {
+    async function livePoll() {
+      process.env.WARMUP_ENABLED = 'true';
+      process.env.WARMUP_ROUTES = '/';
+      process.env.WARM_ITERATIONS = '1';
+      const fetchMock = vi.fn<
+        (url: string, init?: { headers?: Record<string, string> }) => Promise<unknown>
+      >(() => Promise.resolve(okResponse(200)));
+      vi.stubGlobal('fetch', fetchMock);
+      const warmup = await loadWarmup();
+      await warmup.runWarmup();
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/live'));
+      expect(call).toBeDefined();
+      return { url: String(call![0]), headers: call![1]?.headers ?? {} };
+    }
+
+    afterEach(() => resetEnv());
+
+    it('sends PROBE_TOKEN as a Bearer header, not in the query string, as civitai-warmup', async () => {
+      setEnv({ WEBHOOK_TOKEN: 'webhook-value', PROBE_TOKEN: 'probe-value' });
+      const { url, headers } = await livePoll();
+      expect(url).toMatch(/\/api\/live$/);
+      expect(headers.authorization).toBe('Bearer probe-value');
+      expect(headers['user-agent']).toBe('civitai-warmup');
+      expect(callerFamily(headers['user-agent'])).toBe('civitai-warmup');
+    });
+
+    it('falls back to the webhook token while PROBE_TOKEN is unset or blank', async () => {
+      for (const probe of [undefined, '', '   ']) {
+        setEnv({ WEBHOOK_TOKEN: 'webhook-value', PROBE_TOKEN: probe });
+        delete (globalThis as Record<string, unknown>).__civitaiWarmState;
+        const { url, headers } = await livePoll();
+        expect(url).not.toContain('token=');
+        expect(headers.authorization).toBe('Bearer webhook-value');
+      }
+    });
   });
 
   it('success path: WARM_ITERATIONS=2 warms each route twice', async () => {

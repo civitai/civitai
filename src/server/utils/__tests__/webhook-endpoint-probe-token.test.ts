@@ -86,9 +86,9 @@ describe('PROBE_TOKEN', () => {
   });
 });
 
-// Probe manifests carry PROBE_TOKEN as a literal, so it must open the health routes and nothing
-// else. Pinned by who names ProbeEndpoint anywhere in src, outside tests.
-it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
+// Probe manifests and the metrics scrape carry PROBE_TOKEN as a literal, so it must open the health
+// and metrics routes and nothing else. Pinned by who names ProbeEndpoint anywhere in src, outside tests.
+it('only /api/live, /api/ready, /api/health and /api/metrics use ProbeEndpoint', () => {
   const src = path.join(process.cwd(), 'src');
   const users = (fs.readdirSync(src, { recursive: true }) as string[])
     .map((f) => f.split(path.sep).join('/'))
@@ -99,6 +99,7 @@ it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
   expect(users).toEqual([
     'pages/api/health.ts',
     'pages/api/live.ts',
+    'pages/api/metrics.ts',
     'pages/api/ready.ts',
     'server/utils/endpoint-helpers.ts',
   ]);
@@ -107,4 +108,7 @@ it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
     const source = fs.readFileSync(path.join(src, `pages/api/${name}.ts`), 'utf8');
     expect(source, name).toMatch(/^export default ProbeEndpoint\(/m);
   }
+  const metrics = fs.readFileSync(path.join(src, 'pages/api/metrics.ts'), 'utf8');
+  expect(metrics).toMatch(/^const handler = ProbeEndpoint\(/m);
+  expect(metrics).toMatch(/^export default handler;$/m);
 });

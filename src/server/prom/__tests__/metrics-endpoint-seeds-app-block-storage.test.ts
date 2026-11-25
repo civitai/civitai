@@ -10,7 +10,7 @@ import '~/__tests__/mocks/db.mock';
 // `endpoint-helpers` spreads `env.TRPC_ORIGINS` at module load; stub the wrapper so the
 // default export is the bare handler and none of that graph is needed.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 const OPS = 'civitai_app_block_storage_ops_total';

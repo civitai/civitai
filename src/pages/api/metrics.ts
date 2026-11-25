@@ -96,7 +96,7 @@ import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics
 // Seeds civitai_provider_download_total at 0 for every live provider. The providers are read on each
 // scrape, so a new one is seeded by the first scrape after it is minted.
 import { seedProviderDownloadMetrics } from '~/server/prom/provider-download.metrics';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { ProbeEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
 seedGenerationValidationMetrics();
@@ -239,7 +239,7 @@ async function collectRegistryMetrics(
   }
 }
 
-const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
+const handler = ProbeEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockStorageMetrics();
   await seedAppBlockSharedStorageMetrics();
   seedAppBlockDocStoreMetrics();
