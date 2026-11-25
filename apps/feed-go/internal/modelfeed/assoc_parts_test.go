@@ -269,7 +269,8 @@ func TestAssocImageQuerySQL(t *testing.T) {
 	for _, want := range []string{
 		`(i."nsfwLevel" != 0 AND NOT EXISTS (SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."disabled" = FALSE AND toi."tagId" = ANY($2::int[]) ) OR i."userId" = $3)`,
 		`(i."blockedFor" IS NULL OR i."userId" = $4)`, `(i."nsfwLevel" & $5) != 0`,
-		`OR i."userId" = $6)`, `OR NOT i."modelRestricted" OR i."userId" = $7)`,
+		`OR i."userId" = $6)`, `(i."type" != 'audio' OR i."userId" = $7)`,
+		`OR NOT i."modelRestricted" OR i."userId" = $8)`,
 	} {
 		if !strings.Contains(viewer, want) {
 			t.Errorf("viewer: missing %s\n%s", want, viewer)

@@ -19,6 +19,7 @@ describe('createFormGraphStepInput — enhanced compatibility', () => {
     airs: mockAirs as any,
     user: { id: 1, isModerator: false },
     baseStepIndex: 0,
+    canUseMusic: false,
   };
 
   it('should name the comfy engine for single-step SDXL when enhancedCompatibility is true', async () => {

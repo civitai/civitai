@@ -13,7 +13,7 @@ func songsImage(id int64, typ string, userID int64) superjson.Object {
 }
 
 func songsIDs(list []superjson.Object) []int {
-	ids := []int{}
+	ids := make([]int, 0, len(list))
 	for _, img := range list {
 		n, _ := Int(ObjectField(img, "id"))
 		ids = append(ids, n)

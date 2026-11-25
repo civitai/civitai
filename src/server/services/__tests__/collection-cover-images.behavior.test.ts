@@ -326,6 +326,7 @@ async function coversFor(
     imagesPerCollection: 10,
     browsingLevel,
     showsImage,
+    viewer: undefined,
   });
   return rows.map(({ image, src }) => ({ imageId: image?.id ?? null, src }));
 }
@@ -416,6 +417,7 @@ describe('getCollectionCoverImages', () => {
       imagesPerCollection: 10,
       browsingLevel: allBrowsingLevelsFlag,
       showsImage: showsEveryImage,
+      viewer: undefined,
     });
     expect(rows.map(({ id, image }) => [id, image?.id ?? null])).toEqual([
       [SHARED_UPLOAD_OWNER_ADDED, 118],
