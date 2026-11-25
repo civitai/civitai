@@ -2975,6 +2975,9 @@ model AppAccessRequest {
   reviewedAt   DateTime?
   reviewedById Int?
   reviewedBy   User?     @relation("AppAccessRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  /// moderator | system (CHECK `AppAccessRequest_reviewSource_check`). Who decided the row, kept
+  /// apart from `reviewedById`, which a deleted moderator account sets NULL. NULL while pending.
+  reviewSource String?
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
