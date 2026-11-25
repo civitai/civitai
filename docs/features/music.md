@@ -9,9 +9,11 @@ see them all): the image feeds (every feed route loads its rows through `getAllI
 `image.getInfinite`, `image.getImagesAsPostsInfinite`, `/api/v1/images`, collection, profile and model
 galleries), `image.get` and the by-id reads behind `assertImageVisibleToViewer` (generation data,
 detail, contest details), entity and collection covers, post image lists (`getImagesForPosts`) and
-model-version showcases. The clause is `songsHiddenSql` (`image-visibility.service.ts`); the shared
-showcase cache (`imagesForModelVersionsCache`) keeps songs and its readers drop them per viewer
-(`withoutHiddenSongs`), and the collections search index holds no song cover. feed-go reads the
+model-version showcases. The clause is `songsHiddenSql` (`song-visibility-sql.ts`). The shared
+showcase cache (`imagesForModelVersionsCache`) is read by every viewer, so it holds no song: the
+model-version carousel never shows one, and owners see theirs in the gallery. The collections search
+index holds no song cover, and a collection's own cover that is a song is shown only to its owner,
+moderators and `music` flag holders. feed-go reads the
 `music` flag per viewer from Flipt (`internal/server/music.go`) and applies the same rule.
 
 - **Global player:** `src/store/music-player.store.ts` holds the current song, Up next and playback; one
