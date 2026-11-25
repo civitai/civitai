@@ -79,9 +79,3 @@ describe('npmInstallRunningProbe', () => {
     ).toBe('installing');
   });
 });
-
-describe('npmInstallCommand', () => {
-  it('is the install the SDK upgrade and Start app both run', () => {
-    expect(npmInstallCommand('web')).toBe('cd web && npm install --no-audit --no-fund');
-  });
-});

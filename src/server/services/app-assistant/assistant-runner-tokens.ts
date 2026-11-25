@@ -28,12 +28,13 @@ export const RUNNER_VIEWER_TTL_SECONDS = 5 * 60;
  * A preview grant's life. It must outlast one Restart preview, as the runner makes every call of
  * one with it: the steps before the tunnel's start (waiting for an app the page just started,
  * `RESTART_WAIT_MS`; installing its dependencies when they are not, as a woken or remixed app's
- * are not, `NPM_INSTALL_CALL_TIMEOUT_MS`; and maybe starting its dev server) plus
- * `TUNNEL_START_BUDGET_MS`, which owns the arithmetic of everything from the start on (all in
+ * are not, `NPM_INSTALL_CALL_TIMEOUT_MS`; and maybe starting its dev server, `DEV_SERVER_WAIT_MS`)
+ * plus `TUNNEL_START_BUDGET_MS`, which owns the arithmetic of everything from the start on (all in
  * apps/assistant-runner, `preview-restart.ts`, `preview.ts` and `npm-install.ts`). A grant that
- * runs out mid-restart leaves a tunnel open that nothing connects to. Nine minutes: the seven that
- * covered the restart before it installed, and the install's 100 s with room to spare.
- * `CLOCK_SKEW_SECONDS` is for clocks, not part of this.
+ * runs out mid-restart leaves a tunnel open that nothing connects to. The budget test in
+ * `__tests__/assistant-runner-tokens.test.ts` ("a preview grant is still good at the end of the
+ * slowest Restart preview the runner makes") reads those constants from the runner's source and
+ * fails when this no longer covers them. `CLOCK_SKEW_SECONDS` is for clocks, not part of this.
  */
 export const PREVIEW_GRANT_TTL_SECONDS = 9 * 60;
 const ALGORITHM = 'ES256';
