@@ -1,0 +1,130 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { NextApiRequest } from 'next';
+import {
+  anglesMature,
+  getModel3DPostBlock,
+  isModel3DMatureByV2,
+  MODEL3D_RATING_V2_GLOBAL_LIMIT,
+  MODEL3D_RATING_V2_RATE_LIMIT,
+  type Model3dRatingV2Deps,
+} from '~/server/services/model3d-rating-v2.service';
+import {
+  STUDIO_DATASET_RATING_GLOBAL_LIMIT,
+  STUDIO_DATASET_RATING_RATE_LIMIT,
+} from '~/server/services/training-studio-dataset-rating.service';
+import type { SessionUser } from '~/types/session';
+
+const clientEnv = vi.hoisted(() => ({
+  NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: 'https://orchestration.civitai.com',
+}));
+vi.mock('~/env/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  env: clientEnv,
+}));
+
+const user = { id: 7 } as SessionUser;
+const req = {} as NextApiRequest;
+const hosted = (i: number) =>
+  `https://orchestration.civitai.com/v2/consumer/blobs/PREVIEW${i}-0.png?sig=a&exp=2026-11-26T00:00:00Z`;
+const fourAngles = [0, 1, 2, 3].map(hosted);
+
+/** The v2 rater answering one verdict per angle, in order. */
+function deps(verdicts: (boolean | null)[], overrides: Partial<Model3dRatingV2Deps> = {}) {
+  const rate = vi.fn<Model3dRatingV2Deps['rate']>(async ({ items }) =>
+    items.map((item, i) => ({ key: item.key, mature: verdicts[i] ?? null }))
+  );
+  return {
+    rate,
+    deps: {
+      matureLevel: async () => 2,
+      claim: async () => true,
+      rate,
+      ...overrides,
+    } satisfies Model3dRatingV2Deps,
+  };
+}
+
+const glb = { format: 'glb' } as const;
+const gate = (verdicts: (boolean | null)[], previewUrls = fourAngles, overrides = {}) =>
+  getModel3DPostBlock(
+    {
+      primaryModel: glb,
+      effectiveNsfwLevel: 'pg' as never,
+      allowMatureContent: false,
+      user,
+      req,
+      previewUrls,
+      workflowId: 'wf-1',
+    },
+    deps(verdicts, overrides).deps
+  );
+
+describe('3D post gate with the v2 rater', () => {
+  it('blocks a result without mature billing when one of four angles is mature', async () => {
+    expect(await gate([false, false, true, false])).toMatch(/rated mature/);
+  });
+
+  it('works with a single preview angle', async () => {
+    expect(await gate([true], [hosted(0)])).toMatch(/rated mature/);
+    expect(await gate([false], [hosted(0)])).toBeUndefined();
+  });
+
+  it('a partly rated result keeps its current rating', async () => {
+    expect(await gate([true, null, false, false])).toBeUndefined();
+  });
+
+  it('flag off, a refused limit or a rater failure keeps the current rating', async () => {
+    expect(
+      await gate([true, true, true, true], fourAngles, { matureLevel: async () => null })
+    ).toBeUndefined();
+    expect(
+      await gate([true, true, true, true], fourAngles, { claim: async () => false })
+    ).toBeUndefined();
+    expect(
+      await gate([true], [hosted(0)], { rate: async () => Promise.reject(new Error('down')) })
+    ).toBeUndefined();
+  });
+
+  it('is not asked when mature billing is on or the result is already mature', async () => {
+    const { rate, deps: d } = deps([true]);
+    const base = { primaryModel: glb, user, req, previewUrls: [hosted(0)], workflowId: 'wf-1' };
+    expect(
+      await getModel3DPostBlock(
+        { ...base, effectiveNsfwLevel: 'pg' as never, allowMatureContent: true },
+        d
+      )
+    ).toBeUndefined();
+    expect(
+      await getModel3DPostBlock(
+        { ...base, effectiveNsfwLevel: 'r' as never, allowMatureContent: false },
+        d
+      )
+    ).toMatch(/rated mature/);
+    expect(rate).not.toHaveBeenCalled();
+  });
+
+  it('never sends media the orchestrator does not host', async () => {
+    const { rate, deps: d } = deps([true]);
+    expect(
+      await isModel3DMatureByV2(
+        { user, req, previewUrls: ['https://example.com/x.png'], workflowId: 'wf-1' },
+        d
+      )
+    ).toBe(false);
+    expect(rate).not.toHaveBeenCalled();
+  });
+
+  it("draws on its own limits, never the Training Studio's", () => {
+    expect(MODEL3D_RATING_V2_RATE_LIMIT.key).not.toBe(STUDIO_DATASET_RATING_RATE_LIMIT.key);
+    expect(MODEL3D_RATING_V2_GLOBAL_LIMIT.key).not.toBe(STUDIO_DATASET_RATING_GLOBAL_LIMIT.key);
+  });
+});
+
+describe('anglesMature', () => {
+  it('needs every angle rated', () => {
+    expect(anglesMature([])).toBe(false);
+    expect(anglesMature([false, false])).toBe(false);
+    expect(anglesMature([false, true])).toBe(true);
+    expect(anglesMature([null, true])).toBe(false);
+  });
+});

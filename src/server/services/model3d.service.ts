@@ -16,12 +16,13 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
+import type {
+  TagTarget} from '~/shared/utils/prisma/enums';
 import {
   EntityType,
   JobQueueType,
   MetricTimeframe,
-  Model3DStatus,
-  TagTarget,
+  Model3DStatus
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
@@ -66,13 +67,11 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { getModel3DPostBlock } from '~/server/services/model3d-rating-v2.service';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageNotRestrictedWhere, withServableImage } from '~/server/common/image-visibility';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
-import {
-  getPolyGenPostBlock,
-  getPolyGenPrimaryModel,
-} from '~/server/orchestrator/polygen/polygen-output';
+import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
 
@@ -363,10 +362,16 @@ export const ensureModel3DFromWorkflow = async ({
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
-    const postBlock = getPolyGenPostBlock({
+    const postBlock = await getModel3DPostBlock({
       primaryModel,
       effectiveNsfwLevel,
       allowMatureContent: workflow.allowMatureContent,
+      user,
+      req: ctx.req,
+      previewUrls: (previewStep?.output?.images ?? []).flatMap((img) =>
+        img?.url ? [img.url] : []
+      ),
+      workflowId: input.workflowId,
     });
     if (postBlock) throw throwBadRequestError(postBlock);
 

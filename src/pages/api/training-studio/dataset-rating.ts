@@ -1,6 +1,7 @@
 import { buildFliptContext } from '@civitai/flipt/context';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { matureLevelOf } from '~/server/services/rating-v2.service';
 import { studioDatasetRatingSchema } from '~/server/schema/training-studio-dataset-rating.schema';
 import {
   rateStudioDatasetImages,
@@ -69,8 +70,7 @@ async function datasetRatingLevel(user: SessionUser): Promise<number | null> {
     String(user.id),
     buildFliptContext(user)
   ).catch(() => null);
-  const match = typeof variant === 'string' ? /^s([1-4])$/i.exec(variant.trim()) : null;
-  return match ? Number(match[1]) : null;
+  return matureLevelOf(variant);
 }
 
 const DAILY_LIMIT_ID = 'dataset-rating.daily';
