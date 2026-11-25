@@ -723,7 +723,8 @@
         limit: limitPhrase(shown.lockoutWindowSeconds ?? null),
       };
     if (view) return { kind: 'queue-stage' as const, view };
-    return { kind: shown.resetPending ? ('none' as const) : ('clear' as const), daily: shown.daily };
+    if (shown.resetPending) return { kind: 'reset' as const };
+    return { kind: 'clear' as const, daily: shown.daily };
   });
   // The player's own clock and zone: rendered only in the browser, so the server's zone never shows.
   // A primitive, so a stats signal that rebuilds `screen` does not move the time while the countdown holds still.
@@ -877,10 +878,6 @@
   <div class="main">
   {#if !rulingInStage}{@render ruling(false)}{/if}
 
-  {#if shown.mode === 'queue' && shown.resetPending}
-    <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
-  {/if}
-
   {#if screen.kind === 'apprentice-question'}
     {@const apprentice = screen.apprentice}
     <div class="column">
@@ -948,6 +945,13 @@
       <section class="lockout" role="status" aria-label="No more practice items">
         <h2>No more practice items right now</h2>
         <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
+      </section>
+    </div>
+  {:else if screen.kind === 'reset'}
+    <div class="panel">
+      <section class="lockout" role="status" aria-label="Career reset">
+        <h2>Your career is being reset</h2>
+        <p>All your hearts are lost, so the Order is starting your career over. It takes a moment; come back shortly.</p>
       </section>
     </div>
   {:else if screen.kind === 'muted'}
@@ -1061,9 +1065,11 @@
             </button>
           {/if}
         </form>
-        <span class="rowtool">
-          <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
-        </span>
+        {#if !yesNo}
+          <span class="rowtool">
+            <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
+          </span>
+        {/if}
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
@@ -1246,19 +1252,25 @@
     min-width: 0;
     margin: 0;
   }
+  /* One line: a long category is cut short rather than wrapping under "Question" with its separator leading the line. */
   .eyebrow {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0 8px;
+    gap: 8px;
+    min-width: 0;
     color: var(--io-gold);
     font: 600 11px/1.4 var(--io-font-ui);
     letter-spacing: 2px;
     text-transform: uppercase;
+    white-space: nowrap;
   }
   .category {
-    display: inline-flex;
-    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
     color: var(--io-parchment-muted);
+    text-overflow: ellipsis;
+  }
+  .category > [aria-hidden='true'] {
+    margin-right: 8px;
   }
   .text {
     min-width: 0;
