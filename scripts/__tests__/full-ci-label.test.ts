@@ -44,6 +44,8 @@ const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 const FULL = "contains(github.event.pull_request.labels.*.name, 'full-ci')";
 const DRAFT_GATE = `(github.event_name != 'pull_request' || !github.event.pull_request.draft || ${FULL})`;
 const UNIT_PR_GATE = `(github.event_name != 'pull_request' || ${FULL})`;
+// `unit` takes its private ghcr images on civitai-dc, so a fork PR never runs it, labelled or not.
+const SAME_REPO_UNIT_PR_GATE = `(github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && ${FULL}))`;
 const DISPATCH_IF =
   "github.event.label.name == 'full-ci' && github.event.pull_request.head.repo.full_name == github.repository";
 
@@ -141,8 +143,8 @@ describe('the full-ci label', () => {
     }
   );
 
-  it('lint.yml runs the unit job on a PR only when it has the label', () => {
-    expect(conjuncts(load('lint.yml').jobs?.unit?.if ?? '')).toContain(UNIT_PR_GATE);
+  it('lint.yml runs the unit job on a same-repo PR only when it has the label', () => {
+    expect(conjuncts(load('lint.yml').jobs?.unit?.if ?? '')).toContain(SAME_REPO_UNIT_PR_GATE);
   });
 
   // The batched suites (unit above; component, its ledger and the app suites here) take the unit
@@ -208,7 +210,7 @@ describe('the full-ci label', () => {
   });
 
   // The label lifts the draft gate on every job that has one. `eslint` has none (it runs on
-  // drafts already) and `unit` is gated by UNIT_PR_GATE, which implies it.
+  // drafts already) and `unit` is gated by SAME_REPO_UNIT_PR_GATE, which implies it.
   it.each([
     ['lint.yml', 'typecheck'],
     ['lint.yml', 'typecheck-tests'],

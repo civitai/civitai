@@ -775,6 +775,20 @@ describe('getPlannerPostDetail', () => {
     );
   });
 
+  it("hands the owner's view of held images through to the editor read", async () => {
+    getPostEditDetail.mockResolvedValue(editDetail());
+
+    await getPlannerPostDetail({ id: 11, user: OWNER, servableLevels: 1, ownerSeesHeld: true });
+    expect(getPostEditDetail).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ownerSeesHeld: true })
+    );
+
+    await getPlannerPostDetail({ id: 11, user: OWNER, servableLevels: 1 });
+    expect(getPostEditDetail).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ownerSeesHeld: false })
+    );
+  });
+
   it('refuses another user’s post even though the edit loader admits moderators', async () => {
     getPostEditDetail.mockResolvedValue(editDetail({ user: { id: 99 } }));
 

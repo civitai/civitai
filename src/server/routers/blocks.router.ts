@@ -391,6 +391,7 @@ import {
 import {
   recordBlockPostSubjectRefusal,
   recordBlockUnlockChargedNotReleased,
+  recordBlockUnlockOutcomeUnknown,
   recordStepPriceCheck,
   type AppBlockPostSurface,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -15653,6 +15654,10 @@ async function outputUnlockDeps(opts: {
         name: 'app-block-unlock-charged-not-released',
         details: entry,
       });
+    },
+    warnOutcomeUnknown: (entry) => {
+      recordBlockUnlockOutcomeUnknown();
+      logToAxiom({ type: 'warning', name: 'app-block-unlock-outcome-unknown', details: entry });
     },
   };
   return { deps, unlockService };

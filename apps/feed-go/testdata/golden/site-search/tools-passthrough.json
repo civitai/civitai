@@ -1,0 +1,26 @@
+{
+  "name": "tools-passthrough",
+  "description": "Tools never need shaping: with site-search-passthrough on Node sends the backend's bytes unparsed, and feed-go copies them.",
+  "request": {
+    "path": "/api/search/indexes/tools_v2/search",
+    "body": "{\"q\":\"t\"}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": true
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 200,
+    "body": "{\"hits\":[{\"id\":911,\"name\":\"Tool\",\"user\":{\"image\":\"t\"}}],\"query\":\"t\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/tools_v2/search",
+      "body": {
+        "q": "t"
+      }
+    },
+    "body": "{\"hits\":[{\"id\":911,\"name\":\"Tool\",\"user\":{\"image\":\"t\"}}],\"query\":\"t\",\"processingTimeMs\":0,\"limit\":20,\"offset\":0,\"estimatedTotalHits\":1}"
+  }
+}
