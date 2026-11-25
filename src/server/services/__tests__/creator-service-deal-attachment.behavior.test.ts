@@ -356,7 +356,7 @@ beforeEach(async () => {
     q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
   );
   await holder.db.exec(`
-    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
+    TRUNCATE "Report", "ImageReport", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -1896,5 +1896,52 @@ describe('a file holding a held image', () => {
       const { dealId, fileId } = await heldFinal(`minor = true, "blockedFor" = 'CSAM'`);
       expect(await sees(dealId, fileId, SELLER)).toEqual(REFUSED);
     });
+  });
+});
+
+// Decided in civitai/civitai#10422.
+describe('a file whose image is in an open child-safety case', () => {
+  async function inCase() {
+    const dealId = await accepted();
+    const fileId = await delivered(dealId);
+    // The buyer owns the Finals, so only the case can refuse them.
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Completed', "completedAt" = now(), "releaseAt" = now() WHERE id = $1`,
+      [dealId]
+    );
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, ingestion) VALUES ('case', 'Scanned') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         VALUES ($1, $2, 0, 'a.png', 1, $3, 'Passed')`,
+      [fileId, dealId, id]
+    );
+    await q(`INSERT INTO "Report" (status, reason) VALUES ('Pending', 'CSAM')`);
+    await q(
+      `INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, (SELECT max(id) FROM "Report"))`,
+      [id]
+    );
+    return { dealId, fileId };
+  }
+  const sees = async (dealId: number, fileId: number, userId: number, isModerator = false) => ({
+    listed: (await list(dealId, userId, isModerator)).find((row) => row.id === fileId)?.canDownload,
+    downloaded: (await download(fileId, userId, isModerator)) !== null,
+  });
+
+  it('is refused to a moderator and the buyer, and served to its seller as their original', async () => {
+    const { dealId, fileId } = await inCase();
+    expect(await sees(dealId, fileId, MODERATOR, true)).toEqual({
+      listed: false,
+      downloaded: false,
+    });
+    expect(await sees(dealId, fileId, BUYER)).toEqual({ listed: false, downloaded: false });
+    expect(await sees(dealId, fileId, SELLER)).toEqual({ listed: true, downloaded: true });
+  });
+
+  it('is served to the buyer once the case closes', async () => {
+    const { dealId, fileId } = await inCase();
+    await q(`UPDATE "Report" SET status = 'Unactioned'`);
+    expect(await sees(dealId, fileId, BUYER)).toEqual({ listed: true, downloaded: true });
   });
 });

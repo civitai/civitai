@@ -689,6 +689,7 @@ async function deleteFileObjects(
  * since: a rating mismatch, not a verdict on the content. It does not keep a removed file, and its
  * copy is deleted by the purge, with the file. `e` names the entry row.
  */
+// Keeps evidence, so it counts more than csamHeld, which only refuses serving: poi and ingestion too.
 export const entryOnlyOverLevel = (e: Prisma.Sql) => Prisma.sql`(
   ${e}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
   AND ${e}."failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
@@ -1207,8 +1208,10 @@ export type ServiceDealFileDownload = {
 const finalLevelColumns = Prisma.sql`f."scannedEtag",
       (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+        -- Refuses serving; entryOnlyOverLevel, which keeps evidence, also counts poi and ingestion.
         WHERE e."fileId" = f."id" AND (${Prisma.raw(heldItemImageSql('i'))} OR i.minor IS TRUE
-          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))) AS "csamHeld",
+          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
+          OR ${toPrismaSql(childSafetyImageCase('i'))} IS TRUE)) AS "csamHeld",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
         WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
@@ -1228,8 +1231,9 @@ type FinalLevelFacts = {
 /**
  * Whether a Final's rating lets this domain serve it: a video, or a file whose images were rated (an
  * image, or a zip of them), goes only where that rating may be shown. The list and the download
- * share this gate; only the download passes `disputeReview` and checks that the owner is taking the
- * original, not the delivery copy. 'offDomain': rated, but outside this domain's levels.
+ * share this gate; only the download passes `disputeReview`. `ownOriginal` is the uploader taking
+ * back their own original, never the delivery copy. 'offDomain': rated, but outside this domain's
+ * levels.
  */
 function finalLevelGate(
   row: { kind: ServiceDealFileKind; fileName: string } & FinalLevelFacts,
