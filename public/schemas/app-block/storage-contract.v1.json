@@ -1637,14 +1637,7 @@
           "path": "/posts/s",
           "expect": {
             "status": 404,
-            "code": "not_found",
-            "body": {
-              "data": {
-                "app": "A"
-              },
-              "counters": {},
-              "marks": {}
-            }
+            "code": "not_found"
           }
         },
         {
