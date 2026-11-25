@@ -798,19 +798,19 @@ describe('the moderator-view rule, one fact at a time (civitai/civitai#10377)', 
         id + 500
       }}]');`,
     },
+    {
+      leg: 'a moderator delete on its url for CSAM review, no verified report',
+      mark: (id, url) =>
+        `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (${
+          id + 500
+        }, '${url}', NULL, true);`,
+    },
   ];
   const SHOWN: Leg[] = [
     {
       leg: 'a csam hold on its label item',
       mark: (id) =>
         `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${id}, ${id}, 'csam-hold');`,
-    },
-    {
-      leg: 'a held file (a CSAM-review delete on its url with no owner)',
-      mark: (id, url) =>
-        `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (${
-          id + 500
-        }, '${url}', NULL, true);`,
     },
     {
       leg: 'its url retracted by an upgraded deny',

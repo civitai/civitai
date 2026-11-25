@@ -170,11 +170,12 @@ function buildCsamRestrictedSql(image: string): string {
 
 /**
  * Whether the "Image" row aliased `image` is withheld from a moderator without the CSAM grant, in
- * every moderator view (lists, actions, the retracted-media routes): it, or any other row on its url,
- * is in the CSAM queue, blocked as CSAM (CSAM anywhere in its comma list of block reasons), or carries
- * a CSAM hash block or a CSAM vote; or it, or its
- * bytes, are listed on a CSAM report. Postgres only: no scanner read, so a scanner outage withholds
- * nothing. `'false'` for a moderator with the grant. A NULL reads as withheld.
+ * every moderator view (lists, actions, the retracted-media routes). Withheld when it or any other
+ * row on its url is in the CSAM queue, blocked as CSAM (anywhere in its comma list of block
+ * reasons), or carries a CSAM hash block or a CSAM vote; when it or its url is listed on a CSAM
+ * report; or when a moderator deleted a copy on its url for CSAM review that no verified report
+ * covers. Postgres only: no scanner read, so a scanner outage withholds nothing. `'false'` for a
+ * moderator with the grant. A NULL reads as withheld.
  */
 export function moderatorWithheldSql(
   image: string,
@@ -202,6 +203,7 @@ function buildModeratorWithheldSql(image: string): string {
   )}
     )
     OR ${reportListedUrlSql(`${image}."url"`)}
+    OR ${heldUrlSql(`${image}."url"`, { owners: false })}
   ), true)`;
 }
 
