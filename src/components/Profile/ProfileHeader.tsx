@@ -155,6 +155,18 @@ export function ProfileHeader({ username }: { username: string }) {
     </>
   );
 
+  // Redesign: the tabs come right under the banner and scroll with the page, on every screen.
+  const renderTabs = () => (
+    <>
+      {/* The site's sub-navigation has nothing left in it on a redesigned profile. */}
+      <style>{'[data-subnav]:empty{display:none}'}</style>
+      <div data-profile-bar className="rounded-xl bg-gray-1 p-1 dark:bg-dark-6">
+        <ProfileNavigation username={username} placement="header" />
+      </div>
+    </>
+  );
+
+  // Phones: the profile block first, then the banner, the tabs and the page (Ellie's v2).
   if (isMobile && features.profileRedesign) {
     return (
       <div className="flex flex-col gap-3">
@@ -162,6 +174,7 @@ export function ProfileHeader({ username }: { username: string }) {
           <ProfileSidebar username={username} />
         </div>
         {renderCoverImage()}
+        {renderTabs()}
         {renderAnnouncements()}
       </div>
     );
@@ -188,15 +201,7 @@ export function ProfileHeader({ username }: { username: string }) {
   return (
     <Stack>
       {renderCoverImage()}
-      {features.profileRedesign && (
-        <>
-          {/* The site's sub-navigation has nothing left in it on a redesigned profile. */}
-          <style>{'[data-subnav]:empty{display:none}'}</style>
-          <div data-profile-bar className="rounded-xl bg-gray-1 p-1 dark:bg-dark-6">
-            <ProfileNavigation username={username} placement="header" />
-          </div>
-        </>
-      )}
+      {features.profileRedesign && renderTabs()}
       {renderAnnouncements()}
     </Stack>
   );

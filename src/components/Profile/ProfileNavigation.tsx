@@ -19,7 +19,6 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -51,8 +50,8 @@ const openProfileHiddenTabs =
 type ProfileNavigationProps = {
   username: string;
   /**
-   * Where this copy renders. With the redesign on desktop the tabs sit under the banner and scroll
-   * with the page ('header'); otherwise they stay in the site's sub-navigation ('subnav').
+   * Where this copy renders. With the redesign the tabs sit under the banner and scroll with the
+   * page ('header'); otherwise they stay in the site's sub-navigation ('subnav').
    */
   placement?: 'subnav' | 'header';
 };
@@ -62,7 +61,6 @@ const overviewPath = '[username]';
 export const ProfileNavigation = ({ username, placement = 'subnav' }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
-  const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const settings = useCurrentUserSettings();
   const isProfileOwner =
@@ -207,8 +205,7 @@ export const ProfileNavigation = ({ username, placement = 'subnav' }: ProfileNav
     />
   );
 
-  const underBanner = !!features.profileRedesign && !isMobile;
-  if (underBanner !== (placement === 'header')) return null;
+  if (!!features.profileRedesign !== (placement === 'header')) return null;
 
   if (!features.profileRedesign || !isProfileOwner || !user) return segmentedControl;
 
