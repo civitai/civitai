@@ -3212,6 +3212,7 @@ export interface FeaturePageCommentMirror {
   restrictedAt: Date | null;
   scanHiddenAt: Date | null;
   scanHiddenVersion: number | null;
+  scanHideReportId: number | null;
   modHideSentAt: Date | null;
   modHideOrigin: string | null;
   liftGrantedAt: Date | null;

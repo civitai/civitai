@@ -470,12 +470,17 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       authorName: retractAuthorName(row.username),
       at: retractAt(row),
     });
-  // The `at` of the last verdict sent, and the moderator hide recorded with the push.
   let sentAt = '';
+  // Already hidden there when this mirror first hides it: another's hide, never lifted from here.
+  let foreign = false;
   const modHide = () => ({
     modHide: {
       at: new Date(sentAt),
-      origin: row.scanHide ? ('scan' as const) : ('moderator' as const),
+      origin: foreign
+        ? ('foreign' as const)
+        : row.scanHide
+        ? ('scan' as const)
+        : ('moderator' as const),
     },
   });
   /** A verdict at now, on any token: a stale one is resent on the token the platform names. */
@@ -618,6 +623,8 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       if (held.kind === 'retry') return fail(held.status, 'by-source');
       if (held.kind === 'held') {
         if (held.state === 'erased') return erased();
+        foreign =
+          state === 'mod-hidden' && row.pushedState !== 'mod-hidden' && held.state === 'hidden';
         urn = held.urn;
         platformDigest = held.digest;
         steps.push('by-source');
@@ -640,6 +647,14 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
 
   let hidAt = {};
   if (state === 'mod-hidden') {
+    // The platform keeps one moderator source, newest wins, so a later lift of ours would clear a
+    // hide someone else made before ours. Read once, before this mirror's first hide of it: a hide
+    // that lands between this read and the send is not seen here.
+    if (row.pushedState !== 'mod-hidden' && !steps.includes('by-source')) {
+      const held = await readBySource(row.commentId);
+      if (held.kind === 'retry') return fail(held.status, 'by-source');
+      foreign = held.kind === 'held' && held.state === 'hidden';
+    }
     const r = await verdict(PLATFORM_MOD_VERDICT_PATH, 'hidden');
     if (r.kind === 'removed') return removed('mod-hidden');
     if (r.kind === 'erased') return erased();

@@ -1,6 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
-import { grantFpScanLift } from '@civitai/db-queries/feature-page-comments';
+import { unactionReportLiftingScanHide } from '@civitai/db-queries/feature-page-comments';
 import { reportersWithoutReward } from '@civitai/shared/report-reward';
 import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
@@ -554,7 +554,8 @@ export async function setReportStatus({
   noReward?: boolean;
   /**
    * This moderator's own ruling on this one report: set Unactioned, a Feature Pages scan report
-   * lifts the scan's hide (`grantFpScanLift`). Only the per-report status action passes it.
+   * lifts the scan's hide (`unactionReportLiftingScanHide`). Only the per-report status action
+   * passes it.
    */
   liftScanHide?: boolean;
 }) {
@@ -568,6 +569,25 @@ export async function setReportStatus({
     .where('id', '=', id)
     .executeTakeFirst();
   if (!exists) return { ok: false as const, error: 'That report no longer exists. Reload.' };
+
+  if (liftScanHide && status === ReportStatus.Unactioned) {
+    const { changed, held } = await unactionReportLiftingScanHide(dbWrite, {
+      reportId: id,
+      actorId: userId,
+      systemUserId: SYSTEM_USER_ID,
+    });
+    if (held)
+      return {
+        ok: false as const,
+        error:
+          held === 'reported'
+            ? 'Someone else has also reported this comment. Rule on that report first; this one is still open.'
+            : 'This comment is being sent to the platform. Try again in a minute.',
+      };
+    await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
+    await syncResolvedMarker(id, status);
+    return { ok: true as const, changed };
+  }
 
   const updated = await dbWrite
     .updateTable('Report')
@@ -589,10 +609,6 @@ export async function setReportStatus({
   await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
 
   await syncResolvedMarker(id, status);
-
-  // Also when nothing changed: a lift that failed after the status was set is tried again.
-  if (liftScanHide && status === ReportStatus.Unactioned)
-    await grantFpScanLift(dbWrite, { reportId: id, actorId: userId, systemUserId: SYSTEM_USER_ID });
 
   // `updated` is set only when the row actually changed, so re-actioning an already-Actioned report never
   // double-rewards.

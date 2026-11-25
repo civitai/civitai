@@ -7,7 +7,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModerationService from '~/server/services/commentv3/moderation.service';
 import type * as MirrorService from '~/server/services/feature-pages/mirror.service';
-import { grantFpScanLift } from '@civitai/db-queries/feature-page-comments';
+import { unactionReportLiftingScanHide } from '@civitai/db-queries/feature-page-comments';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import {
   AUTHOR,
@@ -114,15 +114,12 @@ const scanHides = async (id: number) => {
   return { hid, reportId, createReport };
 };
 
-/** A moderator rules the report Unactioned on its own, then the grant runs as setReportStatus runs it. */
-const dismiss = async (reportId: number, by = MOD) => {
-  await q(
-    `UPDATE "Report" SET status = 'Unactioned', "statusSetBy" = $2, "statusSetAt" = now()
-     WHERE id = $1`,
-    [reportId, by]
-  );
-  return grantFpScanLift(kysely(), { reportId, actorId: by, systemUserId: SYSTEM });
-};
+/** A moderator sets the report Unactioned, as the per-report status action does. */
+const unaction = (reportId: number, by = MOD) =>
+  unactionReportLiftingScanHide(kysely(), { reportId, actorId: by, systemUserId: SYSTEM });
+const dismiss = async (reportId: number, by = MOD) => (await unaction(reportId, by)).lifted;
+const statusOf = async (reportId: number) =>
+  (await q<{ status: string }>(`SELECT status FROM "Report" WHERE id = $1`, [reportId]))[0].status;
 
 /** A clean, shown comment that the scan then hides, with the hide pushed. */
 const hiddenByScan = async (text = 'a false positive') => {
@@ -219,32 +216,24 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(decided(later.id)).toBe('hidden');
   });
 
-  it("4. lifts nothing for the system user, another moderator's ruling, another report, or the main app's bulk path", async () => {
+  it("4. lifts nothing for the system user, a replayed or re-ruled report, a person's report, or the main app's bulk path", async () => {
     const { id, reportId } = await hiddenByScan();
     expect(await dismiss(reportId, SYSTEM)).toBeNull();
+    // Already Unactioned: a replay, a stale tab, or a re-ruling from Actioned.
+    expect(await dismiss(reportId)).toBeNull();
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
+    expect(await dismiss(reportId)).toBeNull();
 
-    // Ruled by one moderator, granted as another.
-    await q(`UPDATE "Report" SET status = 'Unactioned', "statusSetBy" = 4 WHERE id = $1`, [
-      reportId,
-    ]);
-    expect(
-      await grantFpScanLift(kysely(), { reportId, actorId: MOD, systemUserId: SYSTEM })
-    ).toBeNull();
-
-    // A person's report on the comment, not the scan's.
+    // A person's report on the comment, worded as the scan's.
     const [{ id: userReport }] = await q<{ id: number }>(
-      `INSERT INTO "Report"(status, reason, "userId", details, "statusSetBy")
-       VALUES ('Unactioned', 'AdminAttention', 3, '{"comment":"auto-hidden by scan"}', $1)
-       RETURNING id`,
-      [MOD]
+      `INSERT INTO "Report"(status, reason, "userId", details)
+       VALUES ('Pending', 'AdminAttention', 3, '{"comment":"auto-hidden by scan"}') RETURNING id`
     );
     await q(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
       id,
       userReport,
     ]);
-    expect(
-      await grantFpScanLift(kysely(), { reportId: userReport, actorId: MOD, systemUserId: SYSTEM })
-    ).toBeNull();
+    expect(await dismiss(userReport)).toBeNull();
 
     // The main app's bulk ruling, of this one report: never a grant.
     await q(`UPDATE "Report" SET status = 'Pending', "statusSetBy" = NULL WHERE id = $1`, [
@@ -262,7 +251,20 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(decided(id)).toBe('hidden');
   });
 
-  it("5. never lifts a platform moderator's own hide", async () => {
+  it("5a. never lifts a platform moderator's hide made before this mirror's", async () => {
+    const id = (await seedFpComment(mirror, 'hidden there first')).comment.sourceId;
+    verdictAt('mod', id, 'hidden', new Date(Date.now() - 1_000));
+    expect(decided(id)).toBe('hidden');
+    const { reportId } = await scanHides(id);
+    await runMirror(mirror);
+    expect(await mirrorRow(id)).toMatchObject({ modHideOrigin: 'foreign' });
+    expect(await dismiss(reportId)).not.toBeNull();
+    expect(await settle()).toMatchObject({ moderatorLifts: 0 });
+    expect(modVisibleBySource()).toHaveLength(0);
+    expect(deciding(id)).toMatchObject({ source: 'moderator', verdict: 'hidden' });
+  });
+
+  it("5. never lifts a platform moderator's hide made after this mirror's", async () => {
     const { id, reportId } = await hiddenByScan();
     verdictAt('mod', id, 'hidden', new Date(Date.now() + 1_000));
     expect(await dismiss(reportId)).not.toBeNull();
@@ -382,9 +384,11 @@ describe("a moderator's dismissal of the scan's report", () => {
   it("11. someone else's open report on the comment keeps it hidden until that report is handled", async () => {
     const { id, reportId } = await hiddenByScan('reported by a person too');
     const pending = await personReport(id, 'Pending');
-    expect(await dismiss(reportId)).toBeNull();
+    // The scan's report is left open, so the lift can still be made once that report is ruled.
+    expect(await unaction(reportId)).toEqual({ changed: false, lifted: null, held: 'reported' });
+    expect(await statusOf(reportId)).toBe('Pending');
     await q(`UPDATE "Report" SET status = 'Processing' WHERE id = $1`, [pending]);
-    expect(await dismiss(reportId)).toBeNull();
+    expect(await unaction(reportId)).toMatchObject({ held: 'reported' });
     expect((await commentOf(id)).hidden).toBe(true);
 
     // Handled: the same dismissal lifts it.
@@ -422,21 +426,21 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(decided(id)).toBe('visible');
   });
 
-  it('12. an older scan report ruled again lifts nothing while a later scan report is open', async () => {
-    const { id, reportId } = await hiddenByScan();
-    await dismiss(reportId);
-    await settle();
+  it("12. only the report filed with the current hide lifts it: an earlier version's never does", async () => {
+    const { id, reportId: older } = await hiddenByScan();
+    // A newer text the scan hid again, with its own report, while the older one is still open.
     await q(`UPDATE "CommentV3" SET content = '<p>now a scam</p>' WHERE id = $1`, [id]);
     await q(
       `UPDATE "FeaturePageCommentMirror" SET version = version + 1, "contentAt" = now(),
          "nextPushAt" = now() WHERE "commentId" = $1`,
       [id]
     );
-    await scanHides(id);
-    await runMirror(mirror);
-    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
-    expect(await dismiss(reportId)).toBeNull();
+    await q(`UPDATE "CommentV3" SET hidden = false, "hiddenAt" = NULL WHERE id = $1`, [id]);
+    const { reportId: newer } = await scanHides(id);
+    expect(newer).not.toBe(older);
+    expect(await dismiss(older)).toBeNull();
     expect((await commentOf(id)).hidden).toBe(true);
+    expect(await dismiss(newer)).toEqual({ commentId: id, version: 2 });
   });
 
   it('13a. a lift is not made while a push holds the row, and is made when asked again after', async () => {
@@ -446,7 +450,8 @@ describe("a moderator's dismissal of the scan's report", () => {
        WHERE "commentId" = $1`,
       [id]
     );
-    expect(await dismiss(reportId)).toBeNull();
+    expect(await unaction(reportId)).toMatchObject({ changed: false, held: 'pushing' });
+    expect(await statusOf(reportId)).toBe('Pending');
     expect((await commentOf(id)).hidden).toBe(true);
     await q(`UPDATE "FeaturePageCommentMirror" SET "leaseUntil" = NULL WHERE "commentId" = $1`, [
       id,

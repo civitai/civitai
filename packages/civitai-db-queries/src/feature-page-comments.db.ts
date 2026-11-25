@@ -235,7 +235,7 @@ export type FpPushRecord = {
   /** The platform holds a removal. */
   removeWanted?: boolean;
   /** A moderator hide was sent at this `at`, for the scan's hide or not. */
-  modHide?: { at: Date; origin: 'scan' | 'moderator' };
+  modHide?: { at: Date; origin: 'scan' | 'moderator' | 'foreign' };
 };
 
 /**
@@ -559,48 +559,77 @@ export async function hasOpenPersonFpReport(
 export const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
 
 /**
- * A moderator's own Unactioned on the scan's report lifts the scan's hide of the current text, and
- * nothing else. Unhides and records the grant in one transaction; null when the lift does not apply.
+ * A moderator sets one report Unactioned. When it is the report the scan filed with its current hide
+ * and it moves from open to Unactioned here, it also lifts that hide, in the same transaction.
+ * `changed`: the status moved; `lifted`: the comment shown again, or null. `held`: that report is
+ * left open, unchanged, because the lift has to wait: someone else's report on the comment is open,
+ * or a push holds the row.
  */
-export async function grantFpScanLift(
+export async function unactionReportLiftingScanHide(
   db: Kysely<DB>,
   { reportId, actorId, systemUserId }: { reportId: number; actorId: number; systemUserId: number }
 ) {
-  if (actorId === systemUserId) return null;
   return db.transaction().execute(async (trx) => {
-    const theReport = `SELECT cr."commentId" FROM "Report" r
-       JOIN "CommentV3Report" cr ON cr."reportId" = r.id
-       WHERE r.id = $1 AND r.status = 'Unactioned' AND r."statusSetBy" = $2 AND r."userId" = $3
-         AND r.reason = 'AdminAttention' AND r.details->>'comment' = $4`;
-    const reportParams = [reportId, actorId, systemUserId, FP_AUTO_HIDE_REPORT_COMMENT];
-    const [report] = await rows<{ commentId: number }>(trx, theReport, reportParams);
-    if (!report) return null;
-    const { commentId } = report;
-    // In the order an edit takes them: the hold decision's lock, the comment, its mirror row, then
-    // the report, read again under its lock. Each in a statement of its own, so the check sees what
-    // any writer it waited on committed. Never while a push holds the row: one in flight may send
-    // the scan's hide again after the lift, and the platform would keep it.
-    await rows(trx, `SELECT pg_advisory_xact_lock(hashtext($2), $1::int)`, [
-      commentId,
-      csamHoldLockKey('CommentV3'),
-    ]);
-    await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
-    await rows(trx, `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`, [
-      commentId,
-    ]);
-    const [still] = await rows<{ commentId: number }>(
+    const [link] = await rows<{ commentId: number }>(
       trx,
-      `${theReport} FOR UPDATE OF r`,
-      reportParams
+      `SELECT "commentId" FROM "CommentV3Report" WHERE "reportId" = $1`,
+      [reportId]
     );
-    if (still?.commentId !== commentId) return null;
+    const commentId = link?.commentId;
+    if (commentId !== undefined) {
+      // In the order an edit takes them: the hold decision's lock, the comment, its mirror row, then
+      // the report. Each in a statement of its own, so what is read after sees what any writer it
+      // waited on committed.
+      await rows(trx, `SELECT pg_advisory_xact_lock(hashtext($2), $1::int)`, [
+        commentId,
+        csamHoldLockKey('CommentV3'),
+      ]);
+      await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+      await rows(
+        trx,
+        `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`,
+        [commentId]
+      );
+    }
+    const [prior] = await rows<{ status: string }>(
+      trx,
+      `SELECT status::text AS status FROM "Report" WHERE id = $1 FOR UPDATE`,
+      [reportId]
+    );
+    if (!prior || prior.status === 'Unactioned') return { changed: false, lifted: null };
+    const opened = prior.status === 'Pending' || prior.status === 'Processing';
+    if (commentId !== undefined && opened && actorId !== systemUserId) {
+      const [wait] = await rows<{ reported: boolean; pushing: boolean }>(
+        trx,
+        `SELECT ${openPersonReport('m."commentId"', '$2')} AS reported,
+           COALESCE(m."leaseUntil" > now(), false) AS pushing
+         FROM "FeaturePageCommentMirror" m WHERE m."commentId" = $1 AND m."scanHideReportId" = $3`,
+        [commentId, systemUserId, reportId]
+      );
+      if (wait?.reported) return { changed: false, lifted: null, held: 'reported' as const };
+      if (wait?.pushing) return { changed: false, lifted: null, held: 'pushing' as const };
+    }
+    await rows(
+      trx,
+      `UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = now(), "statusSetBy" = $2
+       WHERE id = $1`,
+      [reportId, actorId]
+    );
+    if (commentId === undefined || !opened || actorId === systemUserId)
+      return { changed: true, lifted: null };
+    // Only the report the scan filed with this hide, for the text it hid. Never while a push holds
+    // the row (one in flight may send the scan's hide again after the lift, and the platform keeps
+    // it) or someone else's report is open: both are checked above, and again here.
     const [lifted] = await rows<{ commentId: number; version: number }>(
       trx,
       `WITH ok AS (
          SELECT m."commentId", m.version FROM "FeaturePageCommentMirror" m
          JOIN "CommentV3" c ON c.id = m."commentId"
          JOIN "User" u ON u.id = c."userId"
+         JOIN "Report" r ON r.id = $4
          WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
+           AND m."scanHideReportId" = r.id AND r."userId" = $3 AND r.reason = 'AdminAttention'
+           AND r.details->>'comment' = $5
            AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
            AND c."hiddenAt" = m."scanHiddenAt" AND m."scanHiddenVersion" = m.version
            AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL
@@ -608,9 +637,6 @@ export async function grantFpScanLift(
            AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND NOT u.muted
            AND NOT ${csamQueueHeldText('CommentV3', 'm."commentId"')}
            AND NOT ${openPersonReport('m."commentId"', '$3')}
-           AND NOT EXISTS (SELECT 1 FROM "CommentV3Report" scr JOIN "Report" sr ON sr.id = scr."reportId"
-             WHERE scr."commentId" = m."commentId" AND sr.id <> $4 AND sr."userId" = $3
-               AND sr.status IN ('Pending', 'Processing') AND sr.details->>'comment' = $5)
        ), shown AS (
          UPDATE "CommentV3" SET hidden = false, "hiddenAt" = NULL, "updatedAt" = now()
          WHERE id = (SELECT "commentId" FROM ok)
@@ -623,9 +649,7 @@ export async function grantFpScanLift(
        RETURNING m."commentId", m."liftGrantedVersion" AS version`,
       [commentId, actorId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
     );
-    if (!lifted) return null;
-    // The moderator's record, in the same transaction: the comment lifted and the report that lifted
-    // it.
+    if (!lifted) return { changed: true, lifted: null };
     await rows(
       trx,
       `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
@@ -633,6 +657,6 @@ export async function grantFpScanLift(
        ON CONFLICT DO NOTHING`,
       [actorId, commentId, reportId]
     );
-    return lifted;
+    return { changed: true, lifted };
   });
 }

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   clearFpRestricted,
-  grantFpScanLift,
+  unactionReportLiftingScanHide,
   leaseFpMirrorRows,
   markFpMirrorDue,
   markFpReconciled,
@@ -1055,8 +1055,8 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
       );
       const [{ id: reportId }] = (
         await c0.query(
-          `INSERT INTO "Report"(status, reason, "userId", details, "statusSetBy")
-           VALUES ('Unactioned', 'AdminAttention', -1, '{"comment":"auto-hidden by scan"}', 1)
+          `INSERT INTO "Report"(status, reason, "userId", details)
+           VALUES ('Pending', 'AdminAttention', -1, '{"comment":"auto-hidden by scan"}')
            RETURNING id`
         )
       ).rows;
@@ -1064,11 +1064,19 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
         currentId,
         reportId,
       ]);
+      await c0.query(
+        `UPDATE "FeaturePageCommentMirror" SET "scanHideReportId" = $2 WHERE "commentId" = $1`,
+        [currentId, reportId]
+      );
 
       await c1.query('BEGIN');
       await hold(txOf(c1), c1);
       const settled = { done: false };
-      const lifted = grantFpScanLift(kysely, { reportId, actorId: 1, systemUserId: -1 });
+      const lifted = unactionReportLiftingScanHide(kysely, {
+        reportId,
+        actorId: 1,
+        systemUserId: -1,
+      }).then((r) => r.lifted);
       void lifted.finally(() => (settled.done = true));
       let waited = false;
       for (let i = 0; i < 200 && !settled.done && !waited; i++) {

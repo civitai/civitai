@@ -225,8 +225,9 @@ export async function hideFlaggedFpComment(
   // The report commits before the hide, so the author's delete is refused from the moment it is
   // hidden. A failed report never holds the hide back: hidden, then thrown for the retry to file.
   let failure: unknown;
+  let reportId: number | null = null;
   try {
-    await createReport({
+    const report = await createReport({
       userId: constants.system.user.id,
       isModerator: true,
       id: commentId,
@@ -235,19 +236,25 @@ export async function hideFlaggedFpComment(
       details: { reason: 'Other', comment: FP_AUTO_HIDE_REPORT_COMMENT },
       foldIntoPendingOnly: true,
     });
+    reportId = report?.id ?? null;
   } catch (e) {
     failure = e;
   }
-  const hid = await client.$transaction((tx) => hideAsScan(prismaRunner(tx), commentId));
+  const hid = await client.$transaction((tx) => hideAsScan(prismaRunner(tx), commentId, reportId));
   if (failure) throw failure;
   return hid;
 }
 
 /**
- * The scan's hide, recorded as the scan's when it is the scan that hides it, or when it was already
- * hidden by the scan (a retry): any other hide clears that record in setCommentFlags.
+ * The scan's hide, recorded as the scan's, with the report filed for it, when it is the scan that
+ * hides it, or when it was already hidden by the scan (a retry): any other hide clears that record in
+ * setCommentFlags. With no report filed, no dismissal can lift it.
  */
-async function hideAsScan(db: ReturnType<typeof prismaRunner>, commentId: number) {
+async function hideAsScan(
+  db: ReturnType<typeof prismaRunner>,
+  commentId: number,
+  reportId: number | null
+) {
   // Locked, then read in a statement of its own, so a lift committed meanwhile is seen.
   await db.query(`SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
   const { rows } = await db.query<{ lifted: boolean; scanHiddenAt: string | null }>(
@@ -263,15 +270,16 @@ async function hideAsScan(db: ReturnType<typeof prismaRunner>, commentId: number
   if (changed.length)
     await db.query(
       `UPDATE "FeaturePageCommentMirror" m SET "scanHiddenAt" = c."hiddenAt",
-         "scanHiddenVersion" = m.version
+         "scanHiddenVersion" = m.version, "scanHideReportId" = $2
        FROM "CommentV3" c WHERE m."commentId" = $1 AND c.id = m."commentId"`,
-      [commentId]
+      [commentId, reportId]
     );
   else if (rows[0]?.scanHiddenAt)
     await db.query(
-      `UPDATE "FeaturePageCommentMirror" SET "scanHiddenAt" = $2::timestamptz
+      `UPDATE "FeaturePageCommentMirror" SET "scanHiddenAt" = $2::timestamptz,
+         "scanHideReportId" = $3
        WHERE "commentId" = $1`,
-      [commentId, rows[0].scanHiddenAt]
+      [commentId, rows[0].scanHiddenAt, reportId]
     );
   return true;
 }

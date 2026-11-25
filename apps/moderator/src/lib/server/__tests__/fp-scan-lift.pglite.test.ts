@@ -59,7 +59,7 @@ CREATE TABLE "CommentV3" ("id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, 
   "hidden" BOOLEAN NOT NULL DEFAULT false, "hiddenAt" TIMESTAMPTZ(6), "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "deletedAt" TIMESTAMPTZ(6), "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT now());
 CREATE TABLE "FeaturePageCommentMirror" ("commentId" INTEGER PRIMARY KEY, "version" INTEGER NOT NULL DEFAULT 1,
-  "goneCause" TEXT, "removeWantedAt" TIMESTAMPTZ(6), "scanHiddenAt" TIMESTAMPTZ(6), "scanHiddenVersion" INTEGER,
+  "goneCause" TEXT, "removeWantedAt" TIMESTAMPTZ(6), "scanHiddenAt" TIMESTAMPTZ(6), "scanHiddenVersion" INTEGER, "scanHideReportId" INTEGER,
   "liftGrantedAt" TIMESTAMPTZ(6), "liftGrantedBy" INTEGER, "liftGrantedVersion" INTEGER,
   "nextPushAt" TIMESTAMPTZ(6), "leaseUntil" TIMESTAMPTZ(6), "pushAttempts" INTEGER NOT NULL DEFAULT 0, "pendingDigest" TEXT,
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT now());
@@ -73,8 +73,8 @@ CREATE TABLE "ModActivity" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity
 INSERT INTO "User" ("id", "username") VALUES (${AUTHOR}, 'author'), (${MOD}, 'mod'),
   (${SYSTEM_USER_ID}, 'civitai');
 INSERT INTO "CommentV3" VALUES (${COMMENT}, 'featurePage', ${AUTHOR}, true, '${HIDDEN_AT}', false, NULL, now());
-INSERT INTO "FeaturePageCommentMirror" ("commentId", "scanHiddenAt", "scanHiddenVersion")
-  VALUES (${COMMENT}, '${HIDDEN_AT}', 1);
+INSERT INTO "FeaturePageCommentMirror" ("commentId", "scanHiddenAt", "scanHiddenVersion", "scanHideReportId")
+  VALUES (${COMMENT}, '${HIDDEN_AT}', 1, ${SCAN_REPORT});
 INSERT INTO "Report" ("id", "reason", "userId", "details") VALUES
   (${SCAN_REPORT}, 'AdminAttention', ${SYSTEM_USER_ID}, '{"reason":"Other","comment":"auto-hidden by scan"}');
 INSERT INTO "CommentV3Report" VALUES (${SCAN_REPORT}, ${COMMENT});
@@ -138,7 +138,7 @@ describe("the scan's report on a Feature Pages comment", () => {
     ]);
   });
 
-  it('already Unactioned by this moderator with the lift not made: asked again, it is made', async () => {
+  it('already Unactioned, then asked again (a replay or a stale tab): it stays hidden', async () => {
     await db.query(
       `UPDATE "Report" SET status = 'Unactioned', "statusSetBy" = $2, "statusSetAt" = now()
        WHERE id = $1`,
@@ -152,7 +152,26 @@ describe("the scan's report on a Feature Pages comment", () => {
         liftScanHide: true,
       })
     ).toEqual({ ok: true, changed: false });
-    expect(await comment()).toEqual({ hidden: false, liftGrantedBy: MOD });
+    expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
+  });
+
+  it("someone else's open report on it: refused with why, and the scan's report stays open", async () => {
+    await db.query(
+      `INSERT INTO "Report" ("id", "reason", "userId") VALUES (101, 'TOSViolation', ${AUTHOR})`
+    );
+    await db.query(`INSERT INTO "CommentV3Report" VALUES (101, ${COMMENT})`);
+    expect(
+      await setReportStatus({
+        id: SCAN_REPORT,
+        status: 'Unactioned',
+        userId: MOD,
+        liftScanHide: true,
+      })
+    ).toEqual({ ok: false, error: expect.stringContaining('Rule on that report first') });
+    expect(
+      (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
+    ).toEqual({ status: 'Pending' });
+    expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
   });
 
   it('ruled through the batch save, or by a caller that does not ask: it stays hidden', async () => {

@@ -3360,6 +3360,7 @@ export type FeaturePageCommentMirror = {
   restrictedAt: Timestamp | null;
   scanHiddenAt: Timestamp | null;
   scanHiddenVersion: number | null;
+  scanHideReportId: number | null;
   modHideSentAt: Timestamp | null;
   modHideOrigin: string | null;
   liftGrantedAt: Timestamp | null;

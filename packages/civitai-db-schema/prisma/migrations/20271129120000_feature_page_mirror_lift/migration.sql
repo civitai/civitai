@@ -8,6 +8,7 @@ SET LOCAL lock_timeout = '3s';
 ALTER TABLE "FeaturePageCommentMirror"
   ADD COLUMN IF NOT EXISTS "scanHiddenAt" TIMESTAMPTZ(6),
   ADD COLUMN IF NOT EXISTS "scanHiddenVersion" INTEGER,
+  ADD COLUMN IF NOT EXISTS "scanHideReportId" INTEGER,
   ADD COLUMN IF NOT EXISTS "modHideSentAt" TIMESTAMPTZ(6),
   ADD COLUMN IF NOT EXISTS "modHideOrigin" TEXT,
   ADD COLUMN IF NOT EXISTS "liftGrantedAt" TIMESTAMPTZ(6),
@@ -17,5 +18,5 @@ ALTER TABLE "FeaturePageCommentMirror"
   DROP CONSTRAINT IF EXISTS "FeaturePageCommentMirror_modHideOrigin_check";
 ALTER TABLE "FeaturePageCommentMirror"
   ADD CONSTRAINT "FeaturePageCommentMirror_modHideOrigin_check"
-  CHECK ("modHideOrigin" IS NULL OR "modHideOrigin" IN ('scan', 'moderator'));
+  CHECK ("modHideOrigin" IS NULL OR "modHideOrigin" IN ('scan', 'moderator', 'foreign'));
 COMMIT;
