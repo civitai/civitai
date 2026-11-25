@@ -22,6 +22,7 @@ vi.mock('~/components/CreatorShop/Services/deals/deal.util', () => ({
 }));
 vi.mock('~/providers/AppProvider', () => ({ useServerDomains: () => ({ red: 'civitai.red' }) }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
+vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/services/deals' }) }));
 vi.mock('~/components/NextLink/NextLink', () => ({
   NextLink: ({ href, children }: { href: string; children: ReactNode }) =>
     createElement('a', { href }, children),

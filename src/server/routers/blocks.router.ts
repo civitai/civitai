@@ -391,6 +391,7 @@ import {
 import {
   recordBlockPostSubjectRefusal,
   recordBlockUnlockChargedNotReleased,
+  recordBlockUnlockOutcomeUnknown,
   recordStepPriceCheck,
   type AppBlockPostSurface,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -430,6 +431,7 @@ import {
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
 import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
@@ -3960,6 +3962,9 @@ export const blocksRouter = router({
       const problemsListing = listing ?? (readsDraft(r) ? draftBySlug.get(r.slug) : undefined);
       return {
         ...rest,
+        // 🔴 The author's own view: a review boot check is reduced to a fixed reason, never the
+        // app's own output (`redactDeployDetailForAuthor`, the one author-facing redaction).
+        deployDetail: redactDeployDetailForAuthor(rest.deployDetail),
         modelInstallCount: pinnedCount,
         userSubscriptionCount: totalSubs,
         // The backing on-site listing id (owner unpublish/republish/history target)
@@ -15649,6 +15654,10 @@ async function outputUnlockDeps(opts: {
         name: 'app-block-unlock-charged-not-released',
         details: entry,
       });
+    },
+    warnOutcomeUnknown: (entry) => {
+      recordBlockUnlockOutcomeUnknown();
+      logToAxiom({ type: 'warning', name: 'app-block-unlock-outcome-unknown', details: entry });
     },
   };
   return { deps, unlockService };

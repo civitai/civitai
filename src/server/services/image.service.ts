@@ -1996,15 +1996,23 @@ export const actionPendingTosReports = async (ids: number[], actorId: number) =>
 const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
 
 /** The image's reports for one reason that are not yet actioned. */
-export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
-  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT r.id FROM "Report" r
-    JOIN "ImageReport" i ON i."reportId" = r.id
-    WHERE i."imageId" = ${id}
-      AND r.reason = ${reason}::"ReportReason"
-      AND r.status <> 'Actioned'::"ReportStatus"
-  `;
-  return rows.map((r) => r.id);
+export const getOpenImageReportIds = async (id: number, reason: ReportReason) =>
+  (await getOpenImageReportIdsByImage([id], reason)).get(id) ?? [];
+
+/** `getOpenImageReportIds` for many images: image id to its open report ids, primary-read. */
+export const getOpenImageReportIdsByImage = async (imageIds: number[], reason: ReportReason) => {
+  const byImage = new Map<number, number[]>();
+  for (const ids of chunk(uniq(imageIds), 1000)) {
+    const rows = await dbWrite.$queryRaw<{ imageId: number; id: number }[]>`
+      SELECT i."imageId", r.id FROM "Report" r
+      JOIN "ImageReport" i ON i."reportId" = r.id
+      WHERE i."imageId" = ANY(${ids}::int[])
+        AND r.reason = ${reason}::"ReportReason"
+        AND r.status <> 'Actioned'::"ReportStatus"
+    `;
+    for (const { imageId, id } of rows) byImage.set(imageId, [...(byImage.get(imageId) ?? []), id]);
+  }
+  return byImage;
 };
 
 export const getImageDetail = async ({

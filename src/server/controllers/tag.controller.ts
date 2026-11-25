@@ -13,6 +13,7 @@ import type {
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
 import { canViewerOpenModel } from '~/server/services/model-visibility.service';
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { getHomeExcludedTags } from '~/server/services/system-cache';
 import {
   addTags,
@@ -125,6 +126,7 @@ export const getVotableTagsHandler = async ({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
+      ownerSeesHeld: isSessionOrFullUserKey(ctx),
     });
 
     return results;

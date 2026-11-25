@@ -21,7 +21,8 @@ endpoint `GET /api/v1/images` (§13), the tRPC procedures `image.getInfinite`, t
 (§14), and `model.getAll`, the model browse feed (§15), and the REST model endpoints
 `GET /api/v1/models` and `GET /api/v1/models/[id]` (§16). (`image.getInfinite`, `model.getAll` and the
 two REST model endpoints each also have a public route that computes nothing unless its own serve
-switch is on, default off: §14.8, §15.8, §16.8.) They share the hydration readers, the caches
+switch is on, default off: §14.8, §15.8, §16.8.) `POST /api/search/[...path]`, the site search, is
+shadowed the same way, with a public route behind its own default-off switch (§18). They share the hydration readers, the caches
 (and the images ports the feed-service client), the shadow queue and the metric families, told
 apart by a `feed_endpoint` label (not `endpoint`: that is a reserved scrape target label, which would
 overwrite ours).
@@ -804,9 +805,17 @@ it is never less correct than not routing it — only its share of fallbacks cha
   procedure, so the main gains are the larger idle pool and the error counter. A failure before the
   Node app's response starts is a 502 and `feed_go_fallback_proxy_errors_total{reason="upstream"}`
   (logged), or `reason="canceled"`; one mid-body aborts the response and is not counted.
-- **Shutdown.** On SIGTERM, within one 15 s grace period: new shadow samples are dropped, the running
-  ones are cancelled and waited for, then both listeners drain their in-flight requests, and only then
-  are the replica pool and both Redis clients closed.
+- **Shutdown.** On SIGTERM, `/readyz` answers 503 at once while both listeners keep serving, for
+  `FEED_GO_SHUTDOWN_DELAY_MS` (default 10 s; 0 = no wait), so the router stops sending new requests
+  before the listener closes instead of having them refused. `/healthz` (liveness) stays 200
+  throughout. Then, within one 15 s grace period: new shadow samples are dropped, the running ones are
+  cancelled and waited for, then both listeners drain their in-flight requests, and only then are the
+  replica pool and both Redis clients closed. The 503 only takes the pod out of rotation early if the
+  readiness probe reads `/readyz` and its period × failure threshold fits inside the delay; with a
+  slower probe (or one still on `/healthz`) the readiness flip does nothing before the listeners
+  close, and the delay alone is the fix: the pod keeps answering for that long after SIGTERM. The
+  termination grace counts from the start of any pre-stop hook, so set it above the pre-stop hook's
+  duration + the delay + 15 s + a margin.
 
 ### 6.2 The API request policy
 
@@ -896,7 +905,8 @@ path as serving, and compares decoded values:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
   `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16, `model-associated`
-  for §17): seven values, so the label at most multiplies a family's cardinality by seven;
+  for §17, `site-search` for §18): eight values, so the label at most multiplies a family's
+  cardinality by eight;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field;
 - numbers compare numerically, except that two integer literals compare **exactly** (int64, else as
   big integers). As float64, an integer above 2^53 cannot be told from its neighbour, and the
@@ -1643,7 +1653,7 @@ None of this is in this PR.
   small variant (a `VERSION` file, or a version-only `package.json` plus its lockfile importer) before
   a release can be cut. Both Dockerfile base images are already pinned by digest.
 - **Workload:** a Deployment on the same pool class as the Node API pods it is compared with, two
-  container ports (public 8080, internal 9090), liveness/readiness on `:9090/healthz`.
+  container ports (public 8080, internal 9090), liveness on `:9090/healthz`, readiness on `:9090/readyz` (fails from SIGTERM on; §6.1 Shutdown).
 - **Services:** an internal Service for 9090 (metrics scrape + shadow posts from the Node pods); a
   public route for 8080 only when serving starts.
 - **Secrets / env:** the replica URL, both Redis URLs (plus `REDIS_SYS_SENTINELS` /
@@ -3048,7 +3058,7 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
 4. The port, with every fallback of §16.2 (unsupported inputs, cache misses, a list session); serving,
    `[id]` reads every origin cache entry within its TTL as Node's handler does (the shadow alone skips
    one younger than `NodeBuiltWindow`, §16.5), and a not-found `[id]` falls back
-   (`v1-models-not-found`: Node's answer is a 404, an answer here is a 200). The Training Data
+   (`v1-models-not-found`) unless it is answered with Node's 404 (below, "Not found"). The Training Data
    listing runs exactly as in the shadow (§16.2, the same compute), with one difference by design: the
    statement-hash header that vouches for this build's rules (`x-feed-go-training-data-sql`) is read
    only off a Node sample, never off a public request (there it would be the client's). On a public
@@ -3076,6 +3086,36 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
 An answer is that body with the headers below, Next's `Content-Type: application/json;
 charset=utf-8`, and `X-Feed-Go-Served: go`, counted `served`, `served_empty` (an empty page) or
 `served_cached` (`[id]` from the origin cache).
+
+**Not found (`FEED_GO_V1_MODELS_ANSWER_NOT_FOUND`, default off).** The `[id]` handler answers a
+model `getModelsWithVersions` returns nothing for with
+``res.status(404).json({ error: `No model with id ${id}` })``, after PublicEndpoint and the
+handler have set the same headers a 200 gets (the `Cache-Control: private, no-store` included), and Next's `res.json` sets that body's ETag (and
+answers a request naming it with a 304, whatever the status). Node never caches a 404 in the origin
+cache. With the switch on, a public `[id]` request is answered with that 404 here
+(`v1models.Answer.Absent`: the body `{"error":"No model with id <id>"}`, the headers of the table
+below over that body, Next's JSON `Content-Type`, `X-Feed-Go-Served: go`; a 304 as below for a
+request naming its ETag), counted under outcome `not_found` (`OutcomeNotFound`: neither `served`
+nor a fallback), only when both hold:
+
+- the model statement returned no row: the statement the golden fixtures hold equal to Node's
+  `getModelsRaw` for the same input, which Node runs on the replica. `[id]` passes Node no viewer,
+  so no owner or moderator carve-out reaches it: an unpublished, deleted or private model the
+  statement leaves out is Node's 404 for every caller. A malformed id never gets here
+  (`v1-models-id`), and an origin cache hit is answered from the cache as before;
+- the model's lag flag (`lag-helper:model:<id>`) reads clean. Node does not consult it for this
+  statement; reading it is stricter than Node, so a model a recent write flagged, or one whose flag
+  cannot be read, is handed to Node.
+
+Every other not-found answer still falls back (`v1-models-not-found`): a statement row that
+`getModelsWithVersions` then drops (no model data, no Published version left, an excluded tag),
+whose decision rests on caches rather than the statement; a set or unreadable lag flag; the switch
+off. The shadow cannot observe the parity of a 404: the Node sampler posts only a 200 (a 404 is
+`skipped_status`), so a Go not-found against a Node 200 is the only disagreement it counts
+(`membership`, ClassifyV1ModelID). The 404's bytes and headers are pinned instead by the goldens
+(`detail-not-found` in `v1-models/` and `v1-models-headers/`, each held to the real Node handler and
+wrappers by `src/server/__tests__/feed-go-v1-models.golden.test.ts`, which also requires the
+status) and by `TestServeV1ModelsAnswersNotFound` in `internal/server`.
 
 **Conditional requests (304).** Next's `res.json` (`sendData`, then `sendEtagResponse` in
 `next/dist/server/send-payload.js`) sets the ETag and answers 304 with no body when
@@ -3459,3 +3499,186 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-assoc
   `src/shared/constants/generation.constants.ts`;
 - the gate rules are read live on every call; Node answers its last good read when the read fails,
   which falls back here.
+
+## 18. `POST /api/search/[...path]` (site search; shadow; served only behind `FEED_GO_SERVE_SEARCH`, default off)
+
+The site's search UI speaks the Meilisearch protocol to `/api/search/*` instead of to the search
+backend: `multi-search`, `indexes/:uid/search` and `indexes/:uid/facet-search`
+(`src/pages/api/search/[...path].ts` → `src/server/services/site-search.service.ts`). A production CPU
+profile showed it the top allocator of the Node pool that serves it, about 8 ms of CPU per request:
+nearly all of it parsing the backend's answer (about 0.8 MB on a multi-search) and writing it again
+with `JSON.stringify`, for every request whose hits need reshaping (every models query does). Ported in
+`internal/sitesearch` (the pure part) and `internal/server/sitesearch.go` (the session, the host, the
+rate limit, the routes); compared at `POST /internal/shadow/api/search`.
+
+### 18.1 What the Node path does
+
+1. **Wrapper** (`MixedAuthEndpoint`, `POST` only): `Vary` (`Authorization`, or `Authorization, Cookie`
+   with a credential), CORS (`*`, `POST`), the session (cookie or API key; a banned session is a 403).
+2. **Policy**: `applyApiRequestPolicy` (the path is outside the proxy matcher): a blocked region's 451;
+   the default `Cache-Control`; the verified-crawler header is REMOVED (the path is not bot-aware), so no
+   crawler ever reaches the answer. Then the handler's own `Cache-Control: private, no-store`.
+3. **Rate limit** (`checkSiteSearchRateLimit`): a fixed 60 s window on the cache cluster,
+   `site-search:rate-limit:user:<id>` (300) or `…:ip:<address>` (600), fail open; past it a 429.
+4. **Profanity** (civitai.com only, `features.isGreen`): any `q` the managed (or shipped) profanity
+   list matches is a 422.
+5. **Viewer** (all of it from the session and the host, never from the body): `userId`, `isModerator`
+   (a session keeps moderator rights), the domain cap (`requestDomainBrowsingLevelCap`: signed out PG,
+   signed in on the SFW site PG|PG-13, else none), `collectionImageLevel` (signed in, no cap, not a
+   moderator: the viewer's own level unless it is every level), `showSfwFace` (the viewer's level has
+   no mature bit).
+6. **Body**: the zod schema of the route (unknown keys stripped, so vector search, ranking details and
+   federation are unreachable); a retired or unknown index is a 403.
+7. **Call** (`withViewer`): the viewer's clauses ANDed on as separate filter-list elements after the
+   client's (so a client string cannot close a parenthesis around them): on models, unless a moderator,
+   `poi != true` and `availability != Private`, each `OR user.id = <viewer>` for a signed-in viewer;
+   under a cap, the index's browsing-level clause (comics by subset). A models query that lists its
+   attributes also fetches `sfwName`.
+8. **Answer**: a backend 4xx is answered as it came; 5xx / unreachable a 503; a refused key a 502.
+   A 200's hits are reshaped per index for the viewer (`shapeHits`): `sfwName` never sent and the
+   civitai.com face swapped in; under a cap images, covers and highlight copies above it dropped and
+   avatars without a rated-inside picture removed; collections at the viewer's own level. With
+   `site-search-passthrough` on and nothing to reshape, the backend's bytes are sent unparsed.
+
+### 18.2 Where it lives, and why here
+
+In feed-go, as one more endpoint: everything the answer depends on is already ported here and held to
+Node by its own tests — the session resolver (§4), the host colours, region rules and domain cap
+(`internal/browsing`), the API-policy region block (§6.2), the shared serve bulkhead and fallback
+proxy (§6.1), the shadow queue, comparator and metric families (§7), the CPU-per-phase measurement
+(§10). A separate service would have to re-port the session and policy rules and their tests, which
+is where a viewer-scoping mistake would come from. The search backend client is the route's own
+(`sitesearch.Client`): Node puts no circuit or limiter on this backend (unlike the model search,
+§16.11), and the serve slots bound the calls in flight.
+
+**The reshaping does not decode the answer.** The answer is scanned into raw members, and only the
+members a rule changes are rebuilt; every other byte is copied as the backend wrote it. That is where
+the CPU goes in Node, and it is the reason for the port.
+
+### 18.3 What is ported, and what falls back
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Route | the three paths, `POST` | another path, `/api/search/token` included (`search-path`), an escaped segment (`search-path`), another method (`method`) |
+| Body | the three zod schemas, key by key (generated into `inputschema/schemas.json`, held by `TestInputKeyLedger`), the windows clamped to 1000 | a value zod refuses or one not proven accepted (`search-input-invalid`), a key the schema lacks (`input-unknown-key`, after the refusals), a duplicate key (`search-input-duplicate`), not JSON or not UTF-8 (`search-input`), not `application/json` UTF-8 (`search-content-type`), past 1 MiB (`search-body-size`) |
+| Viewer | signed out; session cookies (§4) with the session user's saved `browsingLevel` / `showNsfw`; moderators | any API credential, header or `?token=` (`bearer-token`); a banned session, Node's 403 (`search-banned`); preferences of a kind not read as JavaScript reads them (`search-session-shape`) |
+| Host | the colours, the domain cap, region restriction | public route only: **any non-empty `q` on the SFW site** (`search-profanity`: the profanity check is not ported; a shadow sample is computed, Node samples only after its own check passed) |
+| Indexes | the seven searchable ones | a retired or unknown index (`search-index`) |
+| Answer | a 200 reshaped exactly as `shapeHits` does, per index | a non-200 (`search-upstream-status`; Node answers it), no answer (`search-upstream-unavailable`), invalid JSON, invalid UTF-8, a hit that is not an object on an index that reshapes, a duplicate key, a rating or id that is not a plain number (`search-upstream-shape`: each a case where JavaScript's coercion is not reproduced) |
+| Public route only | the rate limit, counted first and refunded on a hand-back (18.6) | a window at its ceiling (`search-rate-limited`: Node answers the 429 and counts it), a signed-out caller without a usable `cf-connecting-ip` (`search-rate-limit-ip`: Node keys it by another derivation), an `etag` query (`search-etag`: the wrapper may add `X-Expires`); a blocked region is ALWAYS handed back (`region-blocked`), whatever `FEED_GO_ANSWER_REGION_BLOCKED` says, because Node's 451 here carries the wrapper's headers |
+
+**Security-relevant parity risks, and what holds each.** The answer is per viewer; a wrong viewer or
+a wrong clause leaks hidden, private or mature results.
+
+- *The viewer is only ever the session's.* The body and the headers cannot name a user, a level or a
+  moderator; the resolver is §4's. `ViewerOf` is pinned case by case against the handler's rules
+  (`TestViewerOf`), and the golden fixtures run the same viewers through both runtimes.
+- *Every clause Node adds, Go adds, and as separate list elements.* `TestClauses` pins the strings;
+  `TestCallKeepsClauseElementsApart` that a client string stays one element. In the shadow, the call
+  itself is compared, so a missing or extra clause on live traffic is a `membership` result (18.5).
+- *Every reshaping rule.* `TestShapeHits` pins one case per rule and index; the golden fixtures pin a
+  multi-search across every index under the PG cap, the SFW-site face, a moderator, the viewer's own
+  collection level. Anything coerced in a way JavaScript does not mirror here falls back rather than
+  guess (`TestShapeHitsRefusesUnreadShapes`).
+- *What Go does not port, it hands back.* Profanity, API keys, banned sessions, the rate-limit edge
+  cases, a blocked region: each is a fallback the public route proxies to Node with the body intact.
+- *A schema key the app adds.* Generated allow-list plus ledger test (§5.1): a Go build never answers
+  as though a key it does not know were absent.
+
+### 18.4 The shadow: the call and the answer, from Node's own backend answer
+
+The Node sampler (flag `feed-go-shadow-site-search`, default OFF; `src/server/trpc/feed-go-shadow.ts`
+`beginSiteSearch`) decides after the rate limit and the profanity refusal, and only for a request with
+no API credential. For a sampled request the site-search service is handed an `onUpstream` hook: it
+reads the backend's 200 body as bytes (parsed exactly as `res.json()` parses it, so the answer is
+unchanged) and keeps them with the call it made. After the response it POSTs
+
+```json
+{ "input": "<the parsed body, JSON>", "path": "/api/search/...",
+  "headers": { "host": "…", "cookie": "<session cookies only>", "cf-ipcountry": "…", … },
+  "upstream": <the backend's 200 body>,
+  "node": { "upstream": { "path": "/indexes/…/search", "body": <the call Node made> },
+            "body": <the answer Node wrote> },
+  "responseHeaders": { … }, "responseHeaderSet": "rest" }
+```
+
+spliced from the bytes Node already holds (the two large members are not parsed or written again).
+
+feed-go rebuilds the request, derives its own viewer from the forwarded session cookie, builds its own
+call, and reshapes the RECORDED backend answer instead of calling the backend: the comparison is
+deterministic (no index churn between the two calls) and costs the backend nothing. It compares the
+document `{upstream: {path, body}, body}` with Node's (`shadow.CompareJSON`) and classifies with
+`ClassifySearch`: `match`; `membership` when any difference is under `upstream` (Go would have sent a
+different query, so the hits could differ: the result that would show a missing clause); `fields`
+when the call is the same and the answer differs (the reshaping). There is no `order` or trivial
+result. Headers compare as the REST routes' do (§16.8) without `etag` (Node's reshaped answer carries
+`res.json`'s ETag, its passthrough answer none, and the route is `no-store`) and `x-expires`.
+
+What the shadow does not exercise: this service's own backend call (host, key, timeouts) and the rate
+limit, both public-route only. The serve-side parity replay (§7.2) is the check for those once a route
+exists. **No Go-first probe**: the probe measures serve-time misses on per-entity caches Node fills while
+it answers (§7.1); this route reads none (the session cache is the one read, and its miss rate is
+already what the other endpoints' probes measure).
+
+### 18.5 Measurement
+
+```promql
+# Go CPU per computed answer (the shadow's compute phase: reshaping a recorded answer).
+sum(rate(feed_go_shadow_phase_cpu_seconds_total{feed_endpoint="site-search",phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{feed_endpoint="site-search",phase="compute",outcome="served"}[1h]))
+
+# Match rate, and the security result kept apart: membership = Go's call differs from Node's.
+sum by (result) (rate(feed_go_shadow_compare_total{feed_endpoint="site-search"}[1h]))
+
+# What blocks serving: fallback reasons. search-profanity is public-route only (mode="serve").
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="site-search",mode="shadow"}[1h])))
+```
+
+Node's side: the route's CPU in the same profile window. The shadow compares SFW-site typed queries
+too (that is where the PG cap applies, so where a missed clause would leak), but the public route hands
+every one back until the profanity check is ported: the go/no-go needs that share of the route's
+traffic first, since the serving saving applies to the rest only.
+
+### 18.6 Serving (`FEED_GO_SERVE_SEARCH`, default off)
+
+With `FEED_GO_SEARCH_FALLBACK_URL` set, the public listener routes `/api/search/` (the subtree) to
+`ServeSearchHTTP`; unset, the path is not mounted. That URL is the route's one upstream. Off, every
+request is the `search-off` fallback: nothing read or computed, no serve slot, proxied as it came. On
+(which also needs `NEXT_PUBLIC_SEARCH_HOST`, startup refuses otherwise), the body is buffered (up to
+1 MiB, and replayed whole to a fallback), a blocked region is handed back, then a serve slot and the
+request budget (§6.1), then the compute with the public-route checks of 18.3.
+
+**The rate limit.** Node counts a request when it arrives (`INCR`, then compares); a request handed to
+Node is counted there. So this route counts it the same way, `INCR` first (the 60 s expiry set on the
+first or re-asserted when lost, as `checkFixedWindowWith`), so concurrent requests each read their own
+count and cannot all pass the last slot; and a request it then hands back for any reason (the ceiling
+included: Node answers the 429) has that charge refunded (`DECR`) before the proxy, so Node's own count
+is the only one. Each request is counted once, by whichever side answers it. The keys are Node's
+(`CACHE_KEY_NAMESPACE` prefix included); a store error fails open, as in Node, and then nothing is
+charged or refunded.
+
+**The answer**: the reshaped body with next.config's `X-Frame-Options`, the wrapper's `Vary` and CORS
+headers, `Cache-Control: private, no-store`, Next's JSON `Content-Type`, and `X-Feed-Go-Served: go`.
+No ETag (Node writes one only on its reshaped path; the answer is not stored).
+
+**Byte-level divergence**: values the rules do not touch are the backend's bytes; Node writes them with
+`JSON.stringify`. A JSON reader sees the same values, but an integral float the backend writes `5.0` is
+`5` in Node's text, and an escape the backend writes is a raw character in Node's. The fixtures are
+written in `JSON.stringify`'s form, so there the bytes are equal.
+
+### 18.7 Settings
+
+| Setting | Effect |
+|---|---|
+| `FEED_GO_SERVE_SEARCH` | the public route computes (default off) |
+| `FEED_GO_SEARCH_FALLBACK_URL` | the Node app answering `/api/search`; mounts the route |
+| `NEXT_PUBLIC_SEARCH_HOST`, `SEARCH_TOKEN_API_KEY` (else `SEARCH_API_KEY`) | the backend and key, the Node app's own values; public route only |
+| `CACHE_KEY_NAMESPACE` | the rate-limit keys' prefix (already read, §3) |
+| Node: `FEED_GO_SHADOW_URL`, `FEED_GO_SHADOW_SAMPLE_RATE`, flag `feed-go-shadow-site-search` | the sampler (default off); shares the rate, in-flight cap and per-second bucket size with the other routes |
+
+### 18.8 Parity evidence
+
+`testdata/golden/site-search` (README "site-search"): each fixture is a request, a viewer, a host and the
+backend's answer, with Node's call and bytes or the fallback Go must take (and the status Node answers
+it with). `src/server/__tests__/feed-go-site-search.golden.test.ts` runs the real Node handler over them;
+`internal/server/sitesearch_golden_test.go` runs this service's compute over the same files.

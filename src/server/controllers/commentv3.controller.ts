@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { commentTrackTypes } from '~/server/clickhouse/tracker';
 import { Availability, type CommentEntityType } from '~/shared/utils/prisma/enums';
@@ -75,6 +76,13 @@ async function assertSectionVisible(section: Entity, ctx: CommentReadContext) {
   await commentSurface(section.entityType).assertVisible?.(section.entityId, ctx);
 }
 
+/** `assertSectionVisible` for a read, which also gives the owner their own held image's thread. */
+async function assertSectionReadable(section: Entity, ctx: Context) {
+  await commentSurface(section.entityType).assertVisible?.(section.entityId, ctx, {
+    ownerSeesHeld: isSessionOrFullUserKey(ctx),
+  });
+}
+
 async function sectionOwnerId({ entityType, entityId }: Entity) {
   const [ownerId] = await getBlockCheckOwnerIds({
     entityType: entityType as Parameters<typeof getBlockCheckOwnerIds>[0]['entityType'],
@@ -124,7 +132,7 @@ export async function getCommentSectionHandler({
   ctx: Context;
   input: GetCommentSectionInput;
 }) {
-  const [, viewer] = await Promise.all([assertSectionVisible(input, ctx), viewerFor(ctx, input)]);
+  const [, viewer] = await Promise.all([assertSectionReadable(input, ctx), viewerFor(ctx, input)]);
   const leavesOutHidden = constants.comments.leavesOutHiddenComments(input);
   const [page, lock, counts] = await Promise.all([
     getCommentSection(kyselyV3Read, input, viewer, {
@@ -147,7 +155,7 @@ export async function getCommentSectionHandler({
 async function resolveComment(ctx: Context, commentId: number) {
   const entity = await getCommentEntity(kyselyV3Read, commentId);
   if (!entity) throw throwNotFoundError('Comment not found');
-  await assertSectionVisible(entity, ctx);
+  await assertSectionReadable(entity, ctx);
   return { entity, viewer: await viewerFor(ctx, entity) };
 }
 
@@ -472,7 +480,7 @@ export async function getSectionLockHandler({
   ctx: Context;
   input: CommentSectionInput;
 }) {
-  await assertSectionVisible(input, ctx);
+  await assertSectionReadable(input, ctx);
   return { locked: (await getCommentLock(kyselyV3Read, input)).locked };
 }
 
@@ -494,7 +502,7 @@ export async function getSectionMutedHandler({
   ctx: ProtectedContext;
   input: CommentSectionInput;
 }) {
-  await assertSectionVisible(input, ctx);
+  await assertSectionReadable(input, ctx);
   return getSectionMuted({ ...input, userId: ctx.user.id });
 }
 

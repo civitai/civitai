@@ -63,7 +63,7 @@ const (
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated, EndpointSearch}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -111,9 +111,11 @@ func verifiedCrawler(r *http.Request) bool {
 
 // Server wires a request to the port.
 type Server struct {
-	Resolver *auth.Resolver
-	Deps     *feed.Deps
-	Hosts    browsing.HostColors
+	// Readiness answers the internal /readyz (the zero value is ready); Drain fails it at shutdown.
+	Readiness Readiness
+	Resolver  *auth.Resolver
+	Deps      *feed.Deps
+	Hosts     browsing.HostColors
 	// HostPrimaries is each color's SERVER_DOMAIN_<COLOR> (config.HostPrimaries): the board color of
 	// image.getInfinite's `newCreators` reads it.
 	HostPrimaries map[string]string
@@ -210,6 +212,15 @@ type Server struct {
 	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
 	// such sample falls back.
 	Associated *modelfeed.AssocDeps
+	// Search serves the public `POST /api/search/*` route (sitesearch.go): the search backend and the
+	// rate-limit store. The shadow needs neither (it reshapes the backend response Node recorded).
+	Search *SearchDeps
+	// ServeSearch is FEED_GO_SERVE_SEARCH (default off); off, every request on the public
+	// `/api/search/*` route is the search-off fallback.
+	ServeSearch bool
+	// SearchFallback serves what the public `/api/search/*` route does not (FEED_GO_SEARCH_FALLBACK_URL:
+	// the Node app answering it). The route is mounted only when it is set.
+	SearchFallback http.Handler
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
@@ -329,8 +340,13 @@ type computed struct {
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
 	cached bool
 	// notFound: the `/api/v1/models/[id]` not-found body, which Node answers with a 404
-	// (v1models.Answer.NotFound). Compared in the shadow; never served (v1models_serve.go).
+	// (v1models.Answer.NotFound). Compared in the shadow. The public route writes it as Node's 404 only
+	// when absent is also set, and falls back on every other one (v1models_serve.go).
 	notFound bool
+	// absent: a notFound answer the public route may write as Node's 404 (v1models.Answer.Absent:
+	// FEED_GO_V1_MODELS_ANSWER_NOT_FOUND on, no statement row, the lag flag clean). Recorded as outcome
+	// not_found (OutcomeNotFound).
+	absent bool
 	// headers are a REST answer's response headers (v1models.ResponseHeaders): what the public route
 	// writes and what the shadow compares. nil for the tRPC answers and for /api/v1/images.
 	headers []v1models.Header
@@ -1076,6 +1092,9 @@ type ShadowRequest struct {
 	// sample (shadow.RESTComparedHeaders), "" for shadow.ComparedHeaders (a tRPC sample, or a REST one
 	// from a sampler that predates the REST list).
 	ResponseHeaderSet string `json:"responseHeaderSet,omitempty"`
+	// Upstream is a site-search sample's search-backend response, as Node received it (its 200 body):
+	// the shadow reshapes it rather than asking the backend again (DESIGN.md §18.4).
+	Upstream json.RawMessage `json:"upstream,omitempty"`
 }
 
 // ResponseHeaderSetREST marks a sample whose ResponseHeaders are shadow.RESTComparedHeaders.
@@ -1290,6 +1309,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if b, c, cl, ok := s.associatedRoute(endpoint); ok {
 		build, computeFn, classify = b, c, cl
 	}
+	if b, c, cl, ok := s.searchRoute(endpoint); ok {
+		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	}
 	span := trace.SpanFromContext(ctx)
 	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
 	// the marker off this context (auth.WithRedactedCredentials).
@@ -1414,6 +1436,9 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 			goHeaders = v1models.HeaderMap(c.headers)
 			if headerSet == ResponseHeaderSetREST {
 				names = shadow.RESTComparedHeaders
+				if endpoint == EndpointSearch {
+					names = SearchComparedHeaders
+				}
 			}
 		}
 		respDiffs = shadow.CompareResponseHeaders(goHeaders, nodeHeaders, names)
@@ -1467,10 +1492,10 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 	}
 }
 
-// isRESTEndpoint: the REST ports (v1-images, v1-models, v1-models-id).
+// isRESTEndpoint: the REST ports (v1-images, v1-models, v1-models-id, site-search).
 func isRESTEndpoint(endpoint string) bool {
 	switch endpoint {
-	case EndpointV1Images, EndpointV1Models, EndpointV1ModelsID:
+	case EndpointV1Images, EndpointV1Models, EndpointV1ModelsID, EndpointSearch:
 		return true
 	}
 	return false

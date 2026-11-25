@@ -1710,6 +1710,9 @@ importers:
       eslint-plugin-svelte:
         specifier: ^2.46.1
         version: 2.46.1(eslint@8.57.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(ts-node@10.9.2(@swc/core@1.15.11(@swc/helpers@0.5.23))(@types/node@20.19.9)(typescript@5.9.3))
+      fake-indexeddb:
+        specifier: ^6.2.8
+        version: 6.2.8
       svelte:
         specifier: ^5.0.0
         version: 5.56.3(@typescript-eslint/types@8.60.1)
@@ -7816,6 +7819,10 @@ packages:
   eyes@0.1.8:
     resolution: {integrity: sha512-GipyPsXO1anza0AOZdy69Im7hGFCNB7Y/NGjDlZGJ3GJJLtwNSb2vrzYrTYJRrRloVx7pl+bhUaTB8yiccPvFQ==}
     engines: {node: '> 0.1.90'}
+
+  fake-indexeddb@6.2.8:
+    resolution: {integrity: sha512-mpVW/HLUqwKXJ6F/s0hMgdK1eQfM4ncTHDioNGHWL0WKV3VcZCoZq1NKgboBbAge07aRCO7L48yziKssL59XEQ==}
+    engines: {node: '>=18'}
 
   fast-check@3.23.2:
     resolution: {integrity: sha512-h5+1OzzfCC3Ef7VbtKdcv7zsstUQwUDlYpUTvjeUsJAssPgLn7QzbboPtL5ro04Mq0rPOsMzl7q5hIbRs2wD1A==}
@@ -19676,6 +19683,8 @@ snapshots:
   extend@3.0.2: {}
 
   eyes@0.1.8: {}
+
+  fake-indexeddb@6.2.8: {}
 
   fast-check@3.23.2:
     dependencies:

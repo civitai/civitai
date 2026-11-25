@@ -28,6 +28,7 @@ internal/modelfeed 92
 internal/safe 100
 internal/server 93
 internal/shadow 95
+internal/sitesearch 70
 internal/superjson 97
 internal/sysredis 88
 internal/tracing 92

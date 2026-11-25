@@ -14,7 +14,7 @@ export type RegistryEntry = {
   staff?: readonly string[];
   others?: readonly string[];
   /** A table-specific rule `postgres.ts` applies. */
-  rule?: 'image-media' | 'restriction-triggers';
+  rule?: 'image-media' | 'restriction-triggers' | 'publish-deploy-detail';
 };
 
 export const REGISTRY: Record<string, RegistryEntry> = {
@@ -76,7 +76,13 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   AppCollaborator: { subject: ['userId'], others: ['invitedBy'] },
   AppOwnershipEvent: { subject: ['actorUserId'], others: ['targetUserId'] },
   AppOwnershipTransfer: { subject: ['fromUserId', 'toUserId'] },
-  AppBlockPublishRequest: { subject: ['submittedByUserId'], staff: ['reviewedByUserId'] },
+  // `deployDetail` goes through the author-facing redaction: a review boot check is exported as its
+  // fixed reason, never the app output it recorded.
+  AppBlockPublishRequest: {
+    subject: ['submittedByUserId'],
+    staff: ['reviewedByUserId'],
+    rule: 'publish-deploy-detail',
+  },
   // Which of the user's App Assistant chats worked on which of their apps.
   AppAssistantSessionLink: { subject: ['userId'] },
   // What a submission of theirs was traced to: the request, slug and chat ids. Its `signals` and

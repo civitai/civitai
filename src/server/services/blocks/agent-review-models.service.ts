@@ -91,6 +91,25 @@ export async function getPickableAgentReviewModels(): Promise<AgentReviewModelOp
   return (await getAgentReviewModelOptions()).filter(isWithinAgentReviewPriceCeiling);
 }
 
+/** Why {@link resolveAgentReviewModel} refused a model. */
+export type AgentReviewModelRefusal =
+  | { reason: 'list-unavailable' }
+  | { reason: 'not-listed' }
+  | { reason: 'over-ceiling'; promptPerM: number };
+
+/**
+ * The error {@link resolveAgentReviewModel} throws. It carries the reason, so a caller that words
+ * the refusal differently (a single-section re-run, where the model was not the moderator's pick)
+ * can say why without repeating the checks.
+ */
+export class AgentReviewModelRefusedError extends TRPCError {
+  readonly refusal: AgentReviewModelRefusal;
+  constructor(refusal: AgentReviewModelRefusal, message: string) {
+    super({ code: 'BAD_REQUEST', message });
+    this.refusal = refusal;
+  }
+}
+
 /**
  * The listed entry for a model a moderator chose, with its price.
  *
@@ -108,24 +127,23 @@ export async function resolveAgentReviewModel(id: string): Promise<AgentReviewMo
   try {
     models = await getAgentReviewModelOptions();
   } catch {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message:
-        "Could not load OpenRouter's model list to price this model, so the cost cap could not be applied. Try again, or leave the model blank to use the default.",
-    });
+    throw new AgentReviewModelRefusedError(
+      { reason: 'list-unavailable' },
+      "Could not load OpenRouter's model list to price this model, so the cost cap could not be applied. Try again, or leave the model blank to use the default."
+    );
   }
   const found = models.find((m) => m.id === id);
   if (!found) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `"${id}" is not a tool-capable model on OpenRouter. Pick one from the list, or leave the model blank to use the default.`,
-    });
+    throw new AgentReviewModelRefusedError(
+      { reason: 'not-listed' },
+      `"${id}" is not a tool-capable model on OpenRouter. Pick one from the list, or leave the model blank to use the default.`
+    );
   }
   if (!isWithinAgentReviewPriceCeiling(found)) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `"${id}" costs $${found.promptPerM} per million input tokens, above the $${AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M} limit for agent reviews. Pick a cheaper model, or leave the model blank to use the default.`,
-    });
+    throw new AgentReviewModelRefusedError(
+      { reason: 'over-ceiling', promptPerM: found.promptPerM },
+      `"${id}" costs $${found.promptPerM} per million input tokens, above the $${AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M} limit for agent reviews. Pick a cheaper model, or leave the model blank to use the default.`
+    );
   }
   return found;
 }

@@ -340,8 +340,7 @@
             ></a>
           {/if}
 
-          <!-- Badge shares the title's line so the second line gets the full card width: it carries the
-               refund notice on a failed run, which must not be lost to truncation. -->
+          <!-- Badge shares the title's line so the second line gets the full card width. -->
           <div class="border-b border-dark-4 p-3.5">
             <div class="flex items-center gap-3">
               <div
