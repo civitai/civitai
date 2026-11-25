@@ -113,3 +113,34 @@ export function parseCollectionSchemaUrn(
   if (!m || !SLUG_RE.test(m[1]) || !COLLECTION_RE.test(m[2])) return null;
   return { slug: m[1], collection: m[2], major: Number(m[3]) };
 }
+
+/**
+ * The suffix that turns a collection's schema URN into its PER-VIEWER stream's
+ * (`viewer-feed.ts`): `urn:schema:apps.civitai.com:<slug>/<collection>.viewer@v<N>`. Unambiguous:
+ * `.` is in neither the slug's nor the collection's grammar, so no collection-schema URN has it,
+ * and {@link parseCollectionSchemaUrn} refuses every per-viewer URN.
+ */
+export const VIEWER_SCHEMA_SUFFIX = '.viewer';
+
+/** The per-viewer stream URN of one major of one shared collection. */
+export function viewerSchemaUrn(ref: { slug: string; collection: string; major: number }): string {
+  return `urn:schema:${REGISTRY_NAMESPACE}:${segment(ref.slug, SLUG_RE, 'slug')}/${segment(
+    ref.collection,
+    COLLECTION_RE,
+    'collection'
+  )}${VIEWER_SCHEMA_SUFFIX}@v${major(ref.major)}`;
+}
+
+/**
+ * The parts of a per-viewer stream URN ({@link viewerSchemaUrn}), or null for any other URN, every
+ * collection-schema URN included.
+ */
+export function parseViewerSchemaUrn(
+  urn: string
+): { slug: string; collection: string; major: number } | null {
+  const prefix = `urn:schema:${REGISTRY_NAMESPACE}:`;
+  if (!urn.startsWith(prefix)) return null;
+  const m = /^([^/@]+)\/([^/@.]+)\.viewer@v([1-9][0-9]{0,8})$/.exec(urn.slice(prefix.length));
+  if (!m || !SLUG_RE.test(m[1]) || !COLLECTION_RE.test(m[2])) return null;
+  return { slug: m[1], collection: m[2], major: Number(m[3]) };
+}

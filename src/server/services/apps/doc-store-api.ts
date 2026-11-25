@@ -1462,8 +1462,12 @@ async function run(
             authorUserId: uid,
           });
         }
-        // `{ deleted }` only on the public route: the tombstone's `seq` is the internal route's.
-        if (service && result.deleted) return ok({ deleted: true, seq: result.seq });
+        // `{ deleted }` only on the public route. The internal route adds the tombstone's `seq` and
+        // the key it removed: for an `@me` delete that is the derived key, which app-data-go never
+        // sent and needs to hide the document from its caches until the streams show the delete.
+        if (service && result.deleted) {
+          return ok({ deleted: true, seq: result.seq, key: route.key });
+        }
         return ok({ deleted: result.deleted });
       };
       if (!shared || route.op === 'delete') {
@@ -1877,13 +1881,17 @@ export type StorageApiDeps = {
 /**
  * What the internal route serves: the writes, the tallies and `info` (WRITES-DESIGN.md, "the write
  * verbs and info only"). Reads stay on the streams. Publish and unpublish wait for the store to
- * answer each copied key's `seq`; until then they are not routes there.
+ * answer each copied key's `seq`; until then they are not routes there. The viewer-keyed writes
+ * (`putMine`, `deleteMine`: `PUT`/`DELETE …/@me[/:parent]`) are writes like any other, and
+ * app-data-go forwards them; `getMine` is a read and stays on the streams.
  */
 const SERVICE_OPS: ReadonlySet<StorageRoute['op']> = new Set<StorageRoute['op']>([
   'info',
   'create',
   'put',
   'delete',
+  'putMine',
+  'deleteMine',
   'patch',
   'increment',
   'mark',
