@@ -494,7 +494,6 @@ func run(log *slog.Logger) error {
 		Blocked: blocked,
 		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
-		// The input shapes and fallback reasons ported behind their own switch, all default off.
 		Ports: feed.InfinitePorts{
 			PublishedOnly:       cfg.InfiniteServeInputPublishedOnly,
 			PostIDs:             cfg.InfiniteServeInputPostIDs,
