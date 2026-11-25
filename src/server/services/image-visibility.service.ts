@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { imageBlockedForConditions } from '~/server/common/image-visibility';
 
 export { imageBlockedForConditions };
@@ -103,14 +102,7 @@ export function entityImageVisibilityConditions({
   return AND;
 }
 
-/**
- * Not listed on a CsamReport, as SQL over `"Image" i`: the bounty search index's exclusion, for a
- * viewer without the held-media grant. Its uploader still sees it.
- */
-export const notReportListedSql = (userId?: number) =>
-  Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
-    userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty
-  })`;
+export { notReportListedSql } from '~/server/services/report-listed-visibility';
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on

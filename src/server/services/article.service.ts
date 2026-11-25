@@ -18,6 +18,11 @@ import {
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { ReportListedViewer } from '~/server/services/report-listed-visibility';
+import {
+  getReportListedHiddenImageIds,
+  reportListedVisibleSql,
+} from '~/server/services/report-listed-visibility';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import {
   CSAM_HELD_REVIEW,
@@ -224,14 +229,17 @@ export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
  * The image a card shows for an article `a`: its cover, else its banner once servable. The article
  * page hides a banner that is not scanned or awaits review, so a card must not show one either.
  * Either is dropped when its model withholds it (taken down, or above a minor or SFW-only model's
- * gallery level); a withheld cover does not fall back to the banner, as on the entity cover read.
+ * gallery level), or hidden from this viewer by the report-listed rule; a withheld cover does not
+ * fall back to the banner, as on the entity cover read.
  */
-export const articleCardCoverIdSql = Prisma.sql`CASE
+export const articleCardCoverIdSql = (viewer: ReportListedViewer) => Prisma.sql`CASE
   WHEN a."coverId" IS NOT NULL THEN
-    CASE WHEN ${imageAllowedByItsModelSql(Prisma.sql`a."coverId"`)} THEN a."coverId" END
+    CASE WHEN ${imageAllowedByItsModelSql(Prisma.sql`a."coverId"`)}
+      AND ${reportListedVisibleSql(Prisma.sql`a."coverId"`, viewer)} THEN a."coverId" END
   ELSE (SELECT b.id FROM "Image" b
     WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL
-      AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
+      AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)}
+      AND ${reportListedVisibleSql(Prisma.sql`b.id`, viewer)})
 END`;
 
 /**
@@ -291,7 +299,10 @@ export const getArticles = async ({
   include,
   forceHidePrivate,
   eventDecorationViewer,
+  reportListedViewer = { seesReportListed: false },
 }: GetInfiniteArticlesSchema & {
+  /** Who sees report-listed covers (`seesReportListed(ctx)`; the owner on a session or full key). */
+  reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
@@ -553,7 +564,7 @@ export const getArticles = async ({
         a.id,
         a.cover,
         a."coverId" AS "storedCoverId",
-        ${articleCardCoverIdSql} AS "coverId",
+        ${articleCardCoverIdSql({ userId, ...reportListedViewer })} AS "coverId",
         a.title,
         a."publishedAt",
         a."nsfwLevel",
@@ -756,7 +767,7 @@ export const getCivitaiNews = async () => {
     SELECT
       c.name as "collection",
       a.id,
-      ${articleCardCoverIdSql} AS "coverId",
+      ${articleCardCoverIdSql({ seesReportListed: false })} AS "coverId",
       title,
       content,
       "publishedAt",
@@ -884,7 +895,13 @@ export const getArticleById = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  reportListedViewer = { seesReportListed: false },
+}: GetByIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** Who sees a report-listed cover or banner (`seesReportListed(ctx)`; the owner on a session or full key). */
+  reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
+}) => {
   try {
     const db = await getDbWithoutLag('article', id);
     const article = await db.article.findFirst({
@@ -934,8 +951,14 @@ export const getArticleById = async ({
       : await getModelWithheldImageIds(
           [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
         );
+    const listedHidden = await getReportListedHiddenImageIds(
+      [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
+      { userId, ...reportListedViewer }
+    );
     const hiddenByModel = (image: { id: number; userId: number } | null) =>
-      !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
+      !!image &&
+      (listedHidden.has(image.id) ||
+        modelHidesArticleImage(image, withheldByModel, userId, article.userId));
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
     const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);

@@ -380,3 +380,51 @@ describe('getArticleById follows the article availability rule', () => {
     await expect(read(Availability.Public, undefined)).resolves.toMatchObject({ id: 1 });
   });
 });
+
+describe('the article page under the report-listed rule', () => {
+  // The rule's per-viewer answer is pinned on real SQL in article-card-cover.behavior.test.ts;
+  // here the database names the image as hidden, and the page must drop it.
+  beforeEach(() => {
+    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: COVER },
+    ]);
+  });
+
+  async function detail(field: 'coverImage' | 'bannerImage', seesReportListed: boolean) {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      nsfwLevel: 1,
+      status: ArticleStatus.Published,
+      ingestion: ArticleIngestionStatus.Scanned,
+      tags: [],
+      content: '',
+      metadata: null,
+      cover: 'cover-key',
+      coverImage: null,
+      bannerImage: null,
+      [field]: cover(1, false),
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
+    return getArticleById({
+      id: 1,
+      userId: STRANGER,
+      reportListedViewer: { seesReportListed },
+    });
+  }
+
+  it.each(['coverImage', 'bannerImage'] as const)('drops a hidden %s', async (field) => {
+    expect((await detail(field, false))[field]).toBeUndefined();
+  });
+
+  it('drops the legacy cover key with a hidden cover', async () => {
+    expect((await detail('coverImage', false)).cover).toBeNull();
+  });
+
+  it.each(['coverImage', 'bannerImage'] as const)(
+    'keeps the %s for a viewer who sees report-listed images',
+    async (field) => {
+      expect((await detail(field, true))[field]).toMatchObject({ id: COVER });
+    }
+  );
+});
