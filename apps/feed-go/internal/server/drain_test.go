@@ -13,7 +13,7 @@ import (
 // listen serves h on a fresh loopback port and returns the server and its base URL.
 func listen(t *testing.T, h http.Handler) (*http.Server, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,11 @@ func listen(t *testing.T, h http.Handler) (*http.Server, string) {
 // dial error rather than being masked by a pooled connection.
 func get(url string) (int, error) {
 	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
-	resp, err := c.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := c.Do(req)
 	if err != nil {
 		return 0, err
 	}
