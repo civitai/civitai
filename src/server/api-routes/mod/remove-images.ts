@@ -48,7 +48,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     let ids = imageIds;
     let held: ReturnType<typeof heldRemovalSummary> = [];
     if (imageIds?.length && !canConfirmReRemoval) {
-      // The image's open TOS reports ride on the hold, so a confirm actions them (as setTosViolation).
       const reportIds = await getOpenImageReportIdsByImage(imageIds, ReportReason.TOSViolation);
       const hold = await holdRemovals(
         imageIds.map((imageId) => ({

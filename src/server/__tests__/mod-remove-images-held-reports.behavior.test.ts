@@ -140,7 +140,6 @@ describe('/api/mod/remove-images held removal', () => {
   it("stores each held image's open TOS reports for the confirm to action", async () => {
     await call({ imageIds: [HELD, OTHER], moderatorId: MODERATOR, violationType: 'gore' });
 
-    // Both are held, so neither image was removed.
     const { rows } = await holder.db.query(
       `SELECT id FROM "Image" WHERE ingestion = 'Scanned' ORDER BY id`
     );
