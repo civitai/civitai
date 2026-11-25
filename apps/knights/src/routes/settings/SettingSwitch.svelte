@@ -24,24 +24,38 @@
   } = $props();
 
   let saving = $state(false);
-  // The switch flips at the click and flips back on a failure; the value the last save stored stays without a reload.
+  // Optimistic: the switch shows the player's choice at the click, at full strength, and only a failure flips it back.
+  // A click while a save is on its way changes what is shown at once; the latest choice is sent when that save returns.
   let pending = $state<boolean | null>(null);
   let savedOn = $state<boolean | null>(null);
+  let form = $state<HTMLFormElement>();
+  let resend = false;
+  // The value a resend carries: the choice on screen, not the flip a click asks for.
+  let forced: boolean | null = null;
   const on = $derived(pending ?? savedOn ?? stored);
 </script>
 
 <form
   method="POST"
   {action}
+  bind:this={form}
   use:enhance={({ formData, cancel }) => {
-    if (saving) return cancel();
-    pending = formData.get(field) === 'on';
+    if (forced !== null) formData.set(field, forced ? 'on' : 'off');
+    forced = null;
+    const wanted = formData.get(field) === 'on';
+    if (saving) {
+      pending = wanted;
+      resend = true;
+      return cancel();
+    }
+    pending = wanted;
     saving = true;
     return async ({ result, update }) => {
+      let saved = false;
       try {
         if (result.type === 'success') {
-          savedOn = pending;
-          onsaved(savedOn === true);
+          savedOn = wanted;
+          saved = true;
         } else if (result.type === 'failure') {
           onerror(String(result.data?.message ?? 'Your choice was not saved. Try again.'));
         } else if (result.type === 'error') {
@@ -53,7 +67,18 @@
         onerror('Your choice was not saved. Try again.');
       } finally {
         saving = false;
+        const latest = pending;
         pending = null;
+        // A click made during the save: send the choice now shown, unless it is what was just stored.
+        if (saved && resend && latest !== null && latest !== savedOn) {
+          pending = latest;
+          resend = false;
+          forced = latest;
+          form?.requestSubmit();
+        } else {
+          resend = false;
+          if (saved) onsaved(savedOn === true);
+        }
       }
     };
   }}
@@ -69,7 +94,7 @@
     aria-checked={on}
     aria-labelledby={labelledby}
     aria-describedby={describedby}
-    aria-disabled={saving}
+    aria-busy={saving}
   >
     <span class="knob"></span>
   </button>
@@ -97,31 +122,16 @@
     background: var(--io-gold);
   }
 
-  .switch:hover:not([aria-disabled='true']) {
+  .switch:hover {
     border-color: var(--io-gold);
     background: var(--io-matte);
   }
 
-  .switch[aria-checked='true']:hover:not([aria-disabled='true']) {
+  .switch[aria-checked='true']:hover {
     border-color: var(--io-parchment);
     background: var(--io-gold);
   }
 
-  .switch[aria-disabled='true'] {
-    cursor: progress;
-    opacity: 0.6;
-  }
-
-  /* While saving, hover keeps the resting look, over the global button hover fill. */
-  .switch[aria-disabled='true']:hover {
-    border-color: color-mix(in srgb, var(--io-gold-muted) 55%, transparent);
-    background: var(--io-matte);
-  }
-
-  .switch[aria-checked='true'][aria-disabled='true']:hover {
-    border-color: var(--io-gold);
-    background: var(--io-gold);
-  }
 
   .switch:focus-visible {
     outline: 2px solid var(--io-gold);

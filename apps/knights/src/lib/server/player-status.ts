@@ -124,6 +124,25 @@ export async function getPlayerStatus(
   });
 }
 
+/**
+ * Rank and hearts only, in two reads at once, for a caller that only gates on them (the `/play/next` refill): the full
+ * status is eight reads. Null when the user has no player row.
+ */
+export async function getRankAndSmites(
+  db: Kysely<DB>,
+  userId: number
+): Promise<{ rank: string; smites: number; maxSmites: number } | null> {
+  const [player, smites] = await Promise.all([
+    db
+      .selectFrom('NewOrderPlayer')
+      .select('rankType')
+      .where('userId', '=', userId)
+      .executeTakeFirst(),
+    activeSmiteCount(db, userId),
+  ]);
+  return player ? { rank: player.rankType, smites, maxSmites: SMITES.max } : null;
+}
+
 /** A player with no row yet is an Acolyte at level 1. */
 export async function getPlayerStatusOrNew(db: Kysely<DB>, userId: number): Promise<PlayerStatus> {
   return (await getPlayerStatus(db, userId)) ?? statusFrom('Acolyte', 0);

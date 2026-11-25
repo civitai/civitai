@@ -9,7 +9,7 @@
 export const KNIGHTS_TAG_GROUPS = [
   {
     key: 'furry',
-    description: 'Anthro and furry',
+    description: 'Anthro and anthropomorphic characters',
     label: 'Furry',
     tags: [
       { id: 5139, name: 'anthro' },
@@ -19,7 +19,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'male-focus',
-    description: 'Male focus, bara and yaoi',
+    description: 'Images centred on men, including bara and yaoi',
     label: 'Male focus',
     tags: [
       { id: 114923, name: 'male focus' },
@@ -29,7 +29,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'feet',
-    description: 'Feet and foot focus',
+    description: 'Images that focus on feet',
     label: 'Feet',
     tags: [
       { id: 5311, name: 'feet' },
@@ -38,7 +38,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'bondage',
-    description: 'Bondage and BDSM',
+    description: 'Restraints, bondage and BDSM',
     label: 'Bondage',
     tags: [
       { id: 511, name: 'bondage' },
@@ -47,7 +47,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'futanari',
-    description: 'Futanari',
+    description: 'Futa and intersex characters',
     label: 'Futanari',
     tags: [
       { id: 279, name: 'futanari' },
@@ -56,7 +56,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'gore',
-    description: 'Blood, gore and body horror',
+    description: 'Blood, corpses, gore and body horror',
     label: 'Gore',
     tags: [
       { id: 2954, name: 'blood' },

@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { openItem, type ItemRef } from '$lib/server/feed-token';
-import { getPlayerStatus } from '$lib/server/player-status';
+import { getRankAndSmites } from '$lib/server/player-status';
+import { playerPrefs } from '$lib/server/player-prefs';
+import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { pauseFor } from '$lib/server/vote-limits/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
@@ -29,7 +31,7 @@ const NOTHING = () => reply([]);
 export const GET: RequestHandler = async ({ url, locals }) => {
   const userId = locals.user.id;
   const [status, { muted }] = await Promise.all([
-    getPlayerStatus(db, userId),
+    getRankAndSmites(db, userId),
     requestStanding(db, locals),
   ]);
   if (!status || muted || status.rank === 'Acolyte' || status.smites >= status.maxSmites)
@@ -59,6 +61,10 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   const wanted = Number.parseInt(url.searchParams.get('count') ?? '1', 10);
   const count = Math.min(Math.max(Number.isFinite(wanted) ? wanted : 1, 1), BUFFER_TARGET);
 
+  // Read once for the whole refill, not once per item.
+  const { playerDefault } = await yesNoConfig();
+  const yesNoOn = (await playerPrefs(db, userId, playerDefault)).yesNo;
+
   const items: PickedItem[] = [];
   const taken = [...named];
   const picked: number[] = [];
@@ -78,7 +84,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
       leaveOut,
       digest.readUInt32BE(0),
       [...ahead, ...picked],
-      [...handedOut, ...taken.slice(named.length)]
+      [...handedOut, ...taken.slice(named.length)],
+      yesNoOn
     );
     const ref = next && openItem(secret, userId, next.item.id);
     if (!next || !ref || taken.some((t) => t.kind === ref.kind && t.id === ref.id)) break;

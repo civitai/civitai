@@ -28,7 +28,9 @@ export async function pickItem(
   /** Yes/no question ids already handed out ahead of the player, oldest first: the stretch counts them. */
   ahead?: number[],
   /** Every item already handed out ahead of the player, oldest first: the cadence counts them as served. */
-  served?: ItemRef[]
+  served?: ItemRef[],
+  /** The player's questions switch, when the caller already read it (a refill picks several items). */
+  yesNoOn?: boolean
 ): Promise<PickedItem | null> {
   // The replica may lag: an item judged a moment ago can come back, and castVote refuses it ('already-voted').
   const feed = await getFeed(dbRead, userId, { limit: 1, exclude: skipped?.queue });
@@ -39,7 +41,7 @@ export async function pickItem(
   // switch in Knights settings covers both: every queue yes/no reaches the player through this one check.
   const due =
     (yesNo.share > 0 || yesNo.tagReview) &&
-    (await playerPrefs(db, userId, yesNo.playerDefault)).yesNo &&
+    (yesNoOn ?? (await playerPrefs(db, userId, yesNo.playerDefault)).yesNo) &&
     (!feed || burstDue(await servedHistory(db, userId, served), burstRoller(secret, userId)));
   const offer = due
     ? await pickYesNo(db, {

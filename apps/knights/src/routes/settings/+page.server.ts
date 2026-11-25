@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
-import { requireMember } from '$lib/server/membership';
+import { requireMemberRank } from '$lib/server/membership';
 import { mutedFailure } from '$lib/server/standing';
 import { requestStanding, requireRequestMember } from '$lib/server/request-reads';
 import {
@@ -53,9 +53,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
   questions: async ({ locals, request }) => {
-    const status = await requireMember(db, locals.user.id);
+    const rank = await requireMemberRank(db, locals.user.id);
     if ((await requestStanding(db, locals)).muted) return mutedFailure();
-    if (!tunesServing(status.rank))
+    if (!tunesServing(rank))
       return fail(403, { message: 'Yes/no questions can be turned off from Knight.' });
     const value = (await request.formData()).get('questions');
     if (value !== 'on' && value !== 'off') return fail(400, { message: 'Choose on or off.' });
@@ -64,9 +64,9 @@ export const actions: Actions = {
     return { questions: on };
   },
   tagGroup: async ({ locals, request }) => {
-    const status = await requireMember(db, locals.user.id);
+    const rank = await requireMemberRank(db, locals.user.id);
     if ((await requestStanding(db, locals)).muted) return mutedFailure();
-    if (!tunesServing(status.rank))
+    if (!tunesServing(rank))
       return fail(403, { message: 'Content groups can be hidden from Knight.' });
     const form = await request.formData();
     const key = form.get('key');

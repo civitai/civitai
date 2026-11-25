@@ -24,7 +24,11 @@ const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
 const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => `cdn/${key}` }));
-vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
+// The refill gates on rank and hearts only; one mock stands for both reads.
+vi.mock('$lib/server/player-status', () => ({
+  getPlayerStatus,
+  getRankAndSmites: getPlayerStatus,
+}));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/vote-limits/runtime', () => ({ pauseFor: pauseFor }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
@@ -218,17 +222,20 @@ describe('GET /play/next', () => {
     it.each([
       ['generated questions', { share: 0.5, tagReview: false }],
       ['Paladin tag review', { share: 0, tagReview: true }],
-    ])('serves no %s to a player who turned it off, even when a burst is due', async (_name, config) => {
-      Object.assign(yesNo, config);
-      playerPrefs.mockResolvedValue({ yesNo: false });
-      pickYesNo.mockResolvedValue(yesNoOffer);
+    ])(
+      'serves no %s to a player who turned it off, even when a burst is due',
+      async (_name, config) => {
+        Object.assign(yesNo, config);
+        playerPrefs.mockResolvedValue({ yesNo: false });
+        pickYesNo.mockResolvedValue(yesNoOffer);
 
-      const { body } = await ask([token('queue', 9)], {}, 3);
+        const { body } = await ask([token('queue', 9)], {}, 3);
 
-      expect(pickYesNo).not.toHaveBeenCalled();
-      expect(body.items.length).toBeGreaterThan(0);
-      for (const picked of body.items) expect(picked.question.kind).not.toBe('bool');
-    });
+        expect(pickYesNo).not.toHaveBeenCalled();
+        expect(body.items.length).toBeGreaterThan(0);
+        for (const picked of body.items) expect(picked.question.kind).not.toBe('bool');
+      }
+    );
 
     it('serves the burst to a player whose switch is on, reading it with the Config page default', async () => {
       yesNo.playerDefault = true;

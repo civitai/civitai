@@ -40,6 +40,11 @@ describe('the preset tag groups', () => {
     expect(tagIdsOfGroups(['feet', 'futanari'])).toEqual([5311, 137120, 279, 3616]);
   });
 
+  it('describe what they hide in other words than their name', () => {
+    for (const group of KNIGHTS_TAG_GROUPS)
+      expect(group.description.toLowerCase()).not.toBe(group.label.toLowerCase());
+  });
+
   it('never hide by an orientation tag alone', () => {
     const names = KNIGHTS_TAG_GROUPS.flatMap((g) => g.tags.map((t) => t.name));
     for (const orientation of ['gay', 'lesbian', 'bisexual', 'transgender'])

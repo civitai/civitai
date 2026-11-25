@@ -11,7 +11,15 @@ const startAtRow = vi.hoisted(() => ({ value: undefined as { startAt: Date } | u
 const PRIMARY = vi.hoisted(() => ({
   client: 'primary',
   selectFrom: () => ({
-    select: () => ({ where: () => ({ executeTakeFirst: async () => startAtRow.value }) }),
+    // The player row: its rank follows the mocked status, so a test sets the rank in one place.
+    select: () => ({
+      where: () => ({
+        executeTakeFirst: async () => {
+          const status = await getPlayerStatus();
+          return status ? { ...startAtRow.value, rankType: status.rank } : undefined;
+        },
+      }),
+    }),
   }),
 }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY }));
@@ -88,17 +96,37 @@ describe('settings load', () => {
     expect((await run()).tagGroups).toEqual({
       available: true,
       groups: [
-        { key: 'furry', label: 'Furry', description: 'Anthro and furry', hidden: false },
+        {
+          key: 'furry',
+          label: 'Furry',
+          description: 'Anthro and anthropomorphic characters',
+          hidden: false,
+        },
         {
           key: 'male-focus',
           label: 'Male focus',
-          description: 'Male focus, bara and yaoi',
+          description: 'Images centred on men, including bara and yaoi',
           hidden: false,
         },
-        { key: 'feet', label: 'Feet', description: 'Feet and foot focus', hidden: false },
-        { key: 'bondage', label: 'Bondage', description: 'Bondage and BDSM', hidden: false },
-        { key: 'futanari', label: 'Futanari', description: 'Futanari', hidden: false },
-        { key: 'gore', label: 'Gore', description: 'Blood, gore and body horror', hidden: true },
+        { key: 'feet', label: 'Feet', description: 'Images that focus on feet', hidden: false },
+        {
+          key: 'bondage',
+          label: 'Bondage',
+          description: 'Restraints, bondage and BDSM',
+          hidden: false,
+        },
+        {
+          key: 'futanari',
+          label: 'Futanari',
+          description: 'Futa and intersex characters',
+          hidden: false,
+        },
+        {
+          key: 'gore',
+          label: 'Gore',
+          description: 'Blood, corpses, gore and body horror',
+          hidden: true,
+        },
       ],
     });
     expect(hiddenTagGroups).toHaveBeenCalledWith(PRIMARY, 7);
