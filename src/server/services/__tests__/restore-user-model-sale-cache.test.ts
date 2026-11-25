@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { recordedOwnership } from './model-ownership-db';
 import type * as AccountDeletionImages from '~/server/services/account-deletion-images';
@@ -171,9 +171,13 @@ describe("restoreUser -> which orphaned models are the account's", () => {
 });
 
 describe('restoreUser -> the purge it disarms', () => {
-  // The real restore, with the real disarm against Postgres: the disarm keys off the grace
-  // breadcrumb, so it has to run before anything in the restore clears one. A step that strips the
-  // breadcrumbs first leaves the grace purge armed.
+  afterEach(() => {
+    dbMock.dbWrite.$executeRaw.mockReset();
+    dbMock.dbWrite.$transaction.mockReset();
+  });
+
+  // The real restore, with the real disarm against Postgres: catches the disarm dropped from the
+  // restore, reverted to every image of the account, or preceded by a breadcrumb strip in the restore.
   it('drops the grace purge and keeps the purge of a block written during the grace period', async () => {
     const db = new PGlite();
     await db.exec(`

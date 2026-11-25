@@ -49,8 +49,8 @@ export const MAX_RESTORE_BATCHES = 5000;
  * a restored account is still counting down to losing every image row and S3 object.
  *
  * Only for images that still carry the grace breadcrumb: a block written during the grace period
- * strips it and outlives the restore, so its purge row stays. The restore clears the breadcrumbs
- * only after this runs (`restore-user-images`, queued once `deletedAt` is cleared).
+ * strips it and keeps its own purge row. Run this before anything clears breadcrumbs, or the grace
+ * purge stays armed.
  *
  * Returns a `PrismaPromise` so the caller can land it in the same transaction as the
  * `deletedAt` clear: a gap between the two is a window where a crash leaves the purge armed on
