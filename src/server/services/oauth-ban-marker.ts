@@ -38,8 +38,6 @@ export async function markBanDisabledClients(
  * - The write is one conditional UPDATE: the client must still be disabled and its owner must not
  *   be banned. A ban that landed after the caller's own ban check therefore re-opens nothing, and
  *   the mark is put back so the client can be re-opened after that ban is lifted.
- * - A Redis error is "no mark": it is logged and nothing is re-opened, and the caller's enable or
- *   mint goes on.
  *
  * Returns whether it re-opened the client.
  */

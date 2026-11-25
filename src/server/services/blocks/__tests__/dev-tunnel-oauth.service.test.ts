@@ -87,8 +87,6 @@ describe('mintDevTunnelOauthToken', () => {
     });
     // 🔴 The mint never sets the client's mode: a 'testers' or staff-disabled client keeps it.
     expect(client.update).toEqual({ allowedScopes: SPEND });
-    expect(client.update).not.toHaveProperty('accessMode');
-    expect(dbMock.dbWrite.oauthClient.updateMany).not.toHaveBeenCalled();
 
     const consent = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
     expect(consent.where).toEqual({

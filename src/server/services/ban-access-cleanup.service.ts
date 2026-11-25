@@ -43,17 +43,10 @@ export type OauthBanCleanup = {
 };
 
 /**
- * The OAuth leg of a ban.
- *
- * Only the account's SELF-ONLY clients (`isSelfOnlyClientFor`: its App Assistant and dev-tunnel
- * clients, which nobody else uses) are disabled, with their tokens expired and every holder revoked
- * at the orchestrator. Any other client it owns is a third-party app other people rely on, so it is
- * left working for them and flagged for a moderator to decide. This leg skips App Block (`appblk-`)
- * clients, and the consents the account gave to them; every other consent it gave is deleted.
- *
- * An unban leaves the self-only clients disabled. Each is marked as ban-disabled once disabled, and
- * its re-enable path (`enableAppAssistant`, the dev-tunnel mint) re-opens only a marked client, so a
- * client staff disabled stays disabled.
+ * The OAuth leg of a ban. Disables only the account's self-only clients (`isSelfOnlyClientFor`);
+ * any other client it owns is a third-party app others rely on, so it is flagged for a moderator
+ * instead. App Block (`appblk-`) clients and their consents are skipped. See oauth-ban-marker.ts for
+ * re-opening.
  */
 export async function disableOauthForBannedUser(
   userId: number,

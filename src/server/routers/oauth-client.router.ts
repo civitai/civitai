@@ -57,7 +57,8 @@ function rejectAppBlockClient(clientId: string): void {
  * is created and kept in shape by `enableAppAssistant` alone. Its owner may not edit it here: a
  * rename would put any name on the consent screen, a redirect URI would make the client usable in
  * an interactive authorization, and wider scopes would let it ask for more than App Assistant
- * needs. Deleting it stays allowed: that turns App Assistant off, and re-enabling recreates it.
+ * needs. Deleting an OPEN one stays allowed (it turns App Assistant off; re-enabling recreates it);
+ * a disabled one is refused, see rejectDeletingDisabledSelfOnlyClient.
  */
 function rejectAppAssistantClient(clientId: string): void {
   if (isAppAssistantClientId(clientId)) {
