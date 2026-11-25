@@ -27,12 +27,14 @@ export async function isAgentReviewLaneEnabled(
  */
 export async function assertAgentReviewAccess(
   user: SessionUser | undefined | null,
-  publishRequestId: string
+  publishRequestId: string,
+  // The lane check, injectable so the gate's own logic is testable without the flag store.
+  isLaneEnabled: typeof isAgentReviewLaneEnabled = isAgentReviewLaneEnabled
 ): Promise<void> {
   if (!user?.isModerator) {
     throw throwAuthorizationError('Agentic review is restricted to civitai team');
   }
-  if (!(await isAgentReviewLaneEnabled(publishRequestId, { user }))) {
+  if (!(await isLaneEnabled(publishRequestId, { user }))) {
     throw throwAuthorizationError('Agentic review is not enabled');
   }
 }
