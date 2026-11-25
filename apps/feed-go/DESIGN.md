@@ -914,10 +914,7 @@ path as serving, and compares decoded values:
   `banned`; `user`; `moderator`): the body's in `feed_go_shadow_compare_viewer_total`, the headers'
   in `feed_go_shadow_response_viewer_total{result="match|mismatch"}`. A signed-out cohort's gate reads
   `viewer="anon"` only, since a signed-in sample's headers (no public TTL, a refreshed session
-  cookie) say nothing about what the edge stores for a signed-out visitor. Edge caching of
-  `/api/trpc-go` (the one dated record; code comments point here): an anonymous probe on 2026-11-25
-  saw `image.getInfinite` and `model.getAll` miss and then hit on both `/api/trpc/` and
-  `/api/trpc-go/`, each path its own cache entry. Re-probe before each signed-out ramp step. Noise rules
+  cookie) say nothing about what the edge stores for a signed-out visitor. Noise rules
   (`shadow.CompareResponse`):
   - Cache-Control and Vary compare as sets of lowercased directives or names (`max-age=060` reads as
     `max-age=60`); Cache-Tag as a set of tags; Set-Cookie by presence.
@@ -933,6 +930,11 @@ path as serving, and compares decoded values:
     computed here is a 200 by construction (a constant, not a status this service decided), so a
     status compare could never fire. Comparing a status needs a sampler that posts its non-200
     answers and a Go side that can answer one.
+
+  **Edge caching of `/api/trpc-go`** (the one dated record; code comments point here): an anonymous
+  probe on 2026-11-25 saw `image.getInfinite` and `model.getAll` miss and then hit on both
+  `/api/trpc/` and `/api/trpc-go/`, each path its own cache entry. Re-probe before each signed-out
+  ramp step.
 
   Expected differences until ported: `header:x-update-required/missing-in-go` (Node tells an
   outdated web bundle to reload; this service does not). They are still counted (as `mismatch`), but
