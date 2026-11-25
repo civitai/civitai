@@ -517,6 +517,51 @@ describe('the reconcile', () => {
     expect(await reconcile()).toMatchObject({ liftsLost: 1 });
   });
 
+  it('lifts a site hide the platform reads back with no time', async () => {
+    await seed('hidden, no time');
+    platform.readback = (items) =>
+      items.map((i) => ({
+        ...(i as object),
+        verdict: { source: 'site', verdict: 'hidden', at: null },
+      }));
+    const sent = verdicts('site').length;
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    await runMirror(mirror);
+    expect(verdicts('site').slice(sent)).toEqual([['visible', null]]);
+  });
+
+  it('a lift is counted only when the reconcile marks its row due', async () => {
+    const id = (await seed('made due first')).comment.sourceId;
+    const hiddenAt = new Date(Date.now() - 1_000).toISOString();
+    platform.readback = (items) =>
+      items.map((i) => ({
+        ...(i as object),
+        verdict: { source: 'site', verdict: 'hidden', at: hiddenAt },
+      }));
+    const fake = redisMock.redis.multi.getMockImplementation() as () => {
+      exec: () => Promise<unknown>;
+    };
+    // Another writer makes the row due between the count and the reconcile's own update.
+    redisMock.redis.multi.mockImplementationOnce(() => {
+      const chain = fake();
+      const exec = chain.exec;
+      chain.exec = async () => {
+        await q(
+          `UPDATE "FeaturePageCommentMirror" SET "nextPushAt" = now() WHERE "commentId" = $1`,
+          [id]
+        );
+        return exec();
+      };
+      return chain;
+    });
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    await runMirror(mirror);
+    for (let i = 0; i < 3; i++) {
+      expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+      await runMirror(mirror);
+    }
+  });
+
   it('counts a visible comment the platform reads back with no verdict (withheld) as a mismatch, and approves it again', async () => {
     const { comment } = await seed('withheld');
     platform.readback = (items) => items.map((i) => ({ ...(i as object), verdict: null }));

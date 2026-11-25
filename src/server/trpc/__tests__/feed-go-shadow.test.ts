@@ -60,6 +60,7 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     probeModelGetAllUrl: undefined,
     probeRate: 0,
     v1ModelsCredentials: false,
+    v1ModelsQuery: false,
     ...overrides,
   };
 }
@@ -176,6 +177,7 @@ describe('readFeedGoShadowConfig', () => {
       probeV1ImagesUrl: undefined,
       probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
+      v1ModelsQuery: false,
     });
   });
 
@@ -208,6 +210,7 @@ describe('readFeedGoShadowConfig', () => {
       probeV1ImagesUrl: 'http://feed-go.internal.test:9090/internal/probe/api/v1/images',
       probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
+      v1ModelsQuery: false,
     });
   });
 
@@ -224,6 +227,22 @@ describe('readFeedGoShadowConfig', () => {
       expect(
         readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_CREDENTIALS: value }).v1ModelsCredentials
       ).toBe(want);
+    }
+  });
+
+  it('reads FEED_GO_SHADOW_V1_MODELS_QUERY as on only for true or 1', () => {
+    for (const [value, want] of [
+      [undefined, false],
+      ['', false],
+      ['false', false],
+      ['on', false],
+      ['true', true],
+      [' True ', true],
+      ['1', true],
+    ] as const) {
+      expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_QUERY: value }).v1ModelsQuery).toBe(
+        want
+      );
     }
   });
 
@@ -1075,6 +1094,30 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     });
     const s = broken.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'));
     expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+  });
+
+  it('a list text query is sampled only with FEED_GO_SHADOW_V1_MODELS_QUERY; an empty one always', () => {
+    const text = (q: string | string[]) =>
+      modelsRequest(`/api/v1/models?query=${encodeURIComponent(String(q))}`, {
+        query: { query: q },
+      });
+    const off = harness();
+    expect(off.shadow.beginRest('v1-models', text('cat'))).toBeUndefined();
+    expect(off.shadow.beginRest('v1-models', text(' '))).toBeUndefined();
+    expect(off.shadow.beginRest('v1-models', text(['', '']))).toBeUndefined();
+    // The empty query is the database path: sampled as before.
+    expect(off.shadow.beginRest('v1-models', text(''))).toBeDefined();
+    // `[id]` has no text search: a `query` key there changes nothing.
+    expect(
+      off.shadow.beginRest(
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1', { query: { query: 'x' } })
+      )
+    ).toBeDefined();
+    const on = harness({ config: { v1ModelsQuery: true } });
+    const sample = on.shadow.beginRest('v1-models', text('cat'));
+    expect(sample).toBeDefined();
+    expect(sample?.input).toBe('query=cat');
   });
 
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {

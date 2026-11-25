@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { retractedMediaUrl } from '$lib/held-media';
+import { RETRACTED_UNAVAILABLE, retractedMediaUrl } from '$lib/held-media';
 
 /**
  * `/api/retracted-media/[imageId]`: a blocked image from storage for a moderator. Eligibility is
@@ -10,6 +10,7 @@ import { retractedMediaUrl } from '$lib/held-media';
 const KEY = '0b9f5a4e-1d2c-4e3f-8a7b-6c5d4e3f2a1b';
 
 const getModeratorMedia = vi.hoisted(() => vi.fn());
+const moderatorMediaUnavailable = vi.hoisted(() => vi.fn(async (_id: number) => false));
 const recordRetractedView = vi.hoisted(() => vi.fn(async () => {}));
 const recordHeldView = vi.hoisted(() => vi.fn(async () => {}));
 const getGetUrl = vi.hoisted(() =>
@@ -23,6 +24,7 @@ vi.mock('$lib/server/access', () => ({
 }));
 vi.mock('$lib/server/retracted-media', () => ({
   getModeratorMedia,
+  moderatorMediaUnavailable,
   recordRetractedView,
   retractedMediaEnabled: () => enabled.on,
 }));
@@ -134,6 +136,21 @@ describe('/api/retracted-media', () => {
     expect((await call()).status).toBe(404);
     expect(getGetUrl).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // A probe is told the file is gone only when the route has no file for it by the image's own
+  // facts; anything else refused reads the same, so a withheld image is not told apart from a missing grant.
+  it('tells a refused probe the file is unavailable only when there is no file to serve', async () => {
+    getModeratorMedia.mockResolvedValue(null);
+    const message = async (query: string) =>
+      ((await (await call({ query })).res?.json()) as { message?: string } | undefined)?.message;
+    moderatorMediaUnavailable.mockResolvedValue(true);
+    expect(await message('?probe=1')).toBe(RETRACTED_UNAVAILABLE);
+    expect(await message('')).not.toBe(RETRACTED_UNAVAILABLE);
+    moderatorMediaUnavailable.mockResolvedValue(false);
+    expect(await message('?probe=1')).not.toBe(RETRACTED_UNAVAILABLE);
+    moderatorMediaUnavailable.mockRejectedValue(new Error('down'));
+    expect(await message('?probe=1')).not.toBe(RETRACTED_UNAVAILABLE);
   });
 
   it('serves held media to a moderator with the CSAM page grant, audited as a held view', async () => {

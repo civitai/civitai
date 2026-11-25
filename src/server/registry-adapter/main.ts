@@ -62,6 +62,16 @@
  *   REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS
  *                                  a level stream's record bound, an integer above 2000 (default
  *                                  2500); past it a stream holds its newest documents by key
+ *   REGISTRY_ADAPTER_VIEWER_STREAMS
+ *                                  "1" (with REGISTRY_ADAPTER_PRIVATE_RELAYS) serves the
+ *                                  shared-collection PER-VIEWER streams to the private relays'
+ *                                  users (`viewer-feed.ts`): each viewer's own documents of a
+ *                                  shared collection and their level mask. Unset (the default):
+ *                                  off, and a per-viewer URN is not served
+ *   REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS
+ *                                  a per-viewer stream's record bound, an integer above 10000
+ *                                  (default 20000); past it the stream ends `too_large`. Read
+ *                                  only while per-viewer streams are on
  *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
  *                                  headers; set only once the gateway sets those keys itself
  *                                  (`request-origin.ts`)
@@ -98,6 +108,7 @@ import {
   resolveFromCatalog,
   resolvePrivateFromCatalog,
   resolveSharedLevelFromCatalog,
+  resolveViewerFromCatalog,
 } from '~/server/registry-adapter/doc-streams';
 import {
   createLevelFeed,
@@ -115,7 +126,13 @@ import {
   liveInstanceRevoked,
   livePrivateDocSource,
   liveRunGateReadable,
+  liveViewerDocSource,
 } from '~/server/registry-adapter/private-feed.live';
+import {
+  createViewerFeed,
+  parseViewerStreamMaxRecords,
+  viewerStreamsOn,
+} from '~/server/registry-adapter/viewer-feed';
 import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import {
@@ -343,7 +360,37 @@ function main() {
       onError,
     });
   }
-  const adapter = composeAdapter(entities, docs, privateDocs, levelDocs);
+  const viewerOn = viewerStreamsOn(process.env.REGISTRY_ADAPTER_VIEWER_STREAMS);
+  console.log(
+    viewerOn && privateRelays.size > 0
+      ? 'registry-adapter: per-viewer streams ON for the private relays'
+      : viewerOn
+      ? 'registry-adapter: WARNING: REGISTRY_ADAPTER_VIEWER_STREAMS=1 but no private relay is listed: per-viewer streams off'
+      : 'registry-adapter: per-viewer streams off (REGISTRY_ADAPTER_VIEWER_STREAMS unset)'
+  );
+  const viewerDocs =
+    viewerOn && privateRelays.size > 0
+      ? createViewerFeed({
+          relays: privateRelays,
+          source: liveViewerDocSource(),
+          resolve: resolveViewerFromCatalog(readApps, isSharedDocLevelsOn),
+          maxRecords: parseViewerStreamMaxRecords(
+            process.env.REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS
+          ),
+          decide: liveDecideCollectionRead,
+          runGateReadable: liveRunGateReadable,
+          instanceRevoked: liveInstanceRevoked,
+          store: createRedisSnapshotStore(
+            undefined,
+            STATES_KEPT_PER_STREAM,
+            PRIVATE_STATE_RETENTION_SECONDS
+          ),
+          pollMs,
+          sleep: abortableSleep,
+          onError,
+        })
+      : undefined;
+  const adapter = composeAdapter(entities, docs, privateDocs, levelDocs, viewerDocs);
 
   const server = createRegistryServer(adapter, {
     onError,

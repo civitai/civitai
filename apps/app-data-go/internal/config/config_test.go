@@ -38,7 +38,10 @@ func TestDefaults(t *testing.T) {
 	}
 	want := Config{Addr: ":8080", RESTURL: "https://site.invalid", MaxStreams: 100, MaxStreamsPerToken: 4,
 		IdleTTL: 5 * time.Minute, MaxAge: 14 * time.Minute, LiveWait: 1500 * time.Millisecond,
-		RequestDeadline: 4 * time.Second, MaxRecords: 1000, MaxBytes: 2 << 20, RESTMaxInFlight: 64}
+		RequestDeadline: 4 * time.Second, MaxRecords: 1000, MaxBytes: 2 << 20, RESTMaxInFlight: 64,
+		MaxSubscriptions: 100, CacheBudgetBytes: 224 << 20, MaxOverlayBytes: 128 << 10,
+		LevelMaxStreams: 10, LevelMaxRecords: 3000, LevelMaxBytes: 8 << 20,
+		ViewerMaxStreams: 40, ViewerMaxRecords: 20000, ViewerMaxBytes: 4 << 20}
 	if *c != want {
 		t.Fatalf("got %+v\nwant %+v", *c, want)
 	}
@@ -58,6 +61,10 @@ func TestEverySettingIsRead(t *testing.T) {
 		"APP_DATA_STREAM_MAX_AGE_MS": "9000", "APP_DATA_LIVE_WAIT_MS": "11",
 		"APP_DATA_REQUEST_DEADLINE_MS": "130", "APP_DATA_MAX_RECORDS_PER_STREAM": "17",
 		"APP_DATA_MAX_BYTES_PER_STREAM": "70000", "APP_DATA_REST_MAX_INFLIGHT": "5",
+		"APP_DATA_LEVEL_MAX_STREAMS": "6", "APP_DATA_LEVEL_MAX_RECORDS": "2501", "APP_DATA_LEVEL_MAX_BYTES": "3000000",
+		"APP_DATA_MAX_SUBSCRIPTIONS": "23", "APP_DATA_CACHE_BUDGET_BYTES": "9000001",
+		"APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM": "100001", "APP_DATA_VIEWER_MAX_STREAMS": "8",
+		"APP_DATA_VIEWER_MAX_RECORDS": "19", "APP_DATA_VIEWER_MAX_BYTES": "80001",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +72,9 @@ func TestEverySettingIsRead(t *testing.T) {
 	want := Config{Addr: ":9", RESTURL: "http://site.ns.svc.cluster.local:3000", RegistryURL: "https://registry.invalid",
 		MaxStreams: 7, MaxStreamsPerToken: 3, IdleTTL: 2 * time.Second, MaxAge: 9 * time.Second,
 		LiveWait: 11 * time.Millisecond, RequestDeadline: 130 * time.Millisecond, MaxRecords: 17, MaxBytes: 70000,
-		RESTMaxInFlight: 5}
+		RESTMaxInFlight: 5, LevelMaxStreams: 6, LevelMaxRecords: 2501, LevelMaxBytes: 3_000_000,
+		MaxSubscriptions: 23, CacheBudgetBytes: 9_000_001, MaxOverlayBytes: 100_001,
+		ViewerMaxStreams: 8, ViewerMaxRecords: 19, ViewerMaxBytes: 80_001}
 	wantRelay := Relay{TokenURL: "http://hub.ns.svc:8080/token", ClientID: "relay-client", //nolint:gosec // G101: a synthetic test fixture, not a credential
 		ClientSecret: "FILE-SECRET-91c2", Resource: "https://apps.invalid"}
 	if c.Relay == nil || *c.Relay != wantRelay {
@@ -107,6 +116,16 @@ func TestInvalidSettingsFailTheStart(t *testing.T) {
 		"wait not under deadline":   {map[string]string{"APP_DATA_LIVE_WAIT_MS": "4000", "APP_DATA_REQUEST_DEADLINE_MS": "4000"}, "less than APP_DATA_REQUEST_DEADLINE_MS"},
 		"tiny byte bound":           {map[string]string{"APP_DATA_MAX_BYTES_PER_STREAM": "100"}, "APP_DATA_MAX_BYTES_PER_STREAM must be"},
 		"block exchange not a bool": {map[string]string{"APP_DATA_BLOCK_EXCHANGE": "yes"}, "APP_DATA_BLOCK_EXCHANGE must be true, 1, false or 0"},
+		// A level stream's bound must exceed the app's own 2,000-row read, as the adapter's does.
+		"level records at the app's read": {map[string]string{"APP_DATA_LEVEL_MAX_RECORDS": "2000"}, "APP_DATA_LEVEL_MAX_RECORDS must be an integer"},
+		"level bytes under 1 MiB":         {map[string]string{"APP_DATA_LEVEL_MAX_BYTES": "1048575"}, "APP_DATA_LEVEL_MAX_BYTES must be an integer"},
+		"no level streams":                {map[string]string{"APP_DATA_LEVEL_MAX_STREAMS": "0"}, "APP_DATA_LEVEL_MAX_STREAMS must be an integer"},
+		"no subscriptions":                {map[string]string{"APP_DATA_MAX_SUBSCRIPTIONS": "0"}, "APP_DATA_MAX_SUBSCRIPTIONS must be an integer"},
+		"overlay bound under one record":  {map[string]string{"APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM": "98303"}, "APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM must be an integer"},
+		"budget under one level stream": {map[string]string{"APP_DATA_WRITES": "true", "APP_DATA_WRITES_SIGNING_KEY": strings.Repeat("k", 32),
+			"APP_DATA_BLOCK_JWKS_URL": "https://site.invalid/jwks", "APP_DATA_CACHE_BUDGET_BYTES": "8388608", "APP_DATA_LEVEL_MAX_BYTES": "8388609"},
+			"must hold at least one level stream"},
+		"budget under one private stream": {map[string]string{"APP_DATA_CACHE_BUDGET_BYTES": "8388608", "APP_DATA_MAX_BYTES_PER_STREAM": "8388609"}, "must hold at least one private stream"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -331,5 +350,69 @@ func TestInvalidWriteSettingsFailTheStart(t *testing.T) {
 				t.Fatalf("an error carries the signing key: %v", err)
 			}
 		})
+	}
+}
+
+// Shared reads are on exactly when the writes and the registry path both are: the level streams need
+// the relay client's service token, and the shared routes are the writes' (dark until then).
+// Fails on origin/main: Config has no SharedReads (the test does not compile).
+func TestSharedReadsNeedTheWritesAndTheRegistry(t *testing.T) {
+	both := relayEnv()
+	for k, v := range writesEnv() {
+		if k != "APP_DATA_REST_URL" {
+			both[k] = v
+		}
+	}
+	writesOnly := writesEnv()
+	registryOnly := relayEnv()
+	for name, tc := range map[string]struct {
+		kv   map[string]string
+		want bool
+	}{"writes and registry": {both, true}, "writes alone": {writesOnly, false}, "registry alone": {registryOnly, false}} {
+		c, err := load(tc.kv)
+		if err != nil || c.SharedReads != tc.want {
+			t.Errorf("%s: SharedReads %v (%v), want %v", name, c != nil && c.SharedReads, err, tc.want)
+		}
+	}
+}
+
+// The defaults' memory arithmetic (config.DefaultCacheBudgetBytes), with the writes and shared reads
+// on: the caches' budget plus the shared overlays' bound is 240 MiB, at most 60% of the deployment's
+// GOMEMLIMIT; the budget holds the full private manager (100 streams, records and overlays) as it did
+// before any budget; and the subscriptions cap is the replica's 100.
+func TestTheDefaultsFitTheDeploymentsMemory(t *testing.T) {
+	kv := relayEnv()
+	kv["APP_DATA_WRITES"], kv["APP_DATA_WRITES_SIGNING_KEY"] = "true", strings.Repeat("k", 32)
+	kv["APP_DATA_BLOCK_JWKS_URL"] = "https://site.invalid/jwks"
+	c, err := load(kv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.SharedReads {
+		t.Fatal("shared reads must be on for this arithmetic")
+	}
+	if got := c.MemoryBudget(); got != 240<<20 {
+		t.Fatalf("memory budget %d, want 240 MiB", got)
+	}
+	if c.MemoryBudget()*100 > DeploymentMemLimit*60 {
+		t.Fatalf("🔴 the caches may hold %d of the %d GOMEMLIMIT: over 60%%", c.MemoryBudget(), DeploymentMemLimit)
+	}
+	if got := c.PrivateReserve(); got != 2<<20+128<<10 {
+		t.Fatalf("private reserve %d", got)
+	}
+	if c.MaxStreams*c.PrivateReserve() > c.CacheBudgetBytes {
+		t.Fatalf("the budget no longer holds the full private manager: %d × %d > %d", c.MaxStreams, c.PrivateReserve(), c.CacheBudgetBytes)
+	}
+	if c.MaxSubscriptions != 100 {
+		t.Fatalf("subscriptions %d, want the replica's 100", c.MaxSubscriptions)
+	}
+	// With the writes off there are no shared overlays: the budget alone.
+	off, err := load(map[string]string{"APP_DATA_REST_URL": "https://site.invalid"})
+	if err != nil || off.MemoryBudget() != 224<<20 || off.PrivateReserve() != 2<<20 {
+		t.Fatalf("writes off: %v %d %d", err, off.MemoryBudget(), off.PrivateReserve())
+	}
+	// The example mix the comment names: 10 level, 20 per-viewer and 30 private streams fit.
+	if mix := 10*c.LevelMaxBytes + 20*c.ViewerMaxBytes + 30*c.PrivateReserve(); mix > c.CacheBudgetBytes {
+		t.Fatalf("the documented mix %d is over the budget %d", mix, c.CacheBudgetBytes)
 	}
 }

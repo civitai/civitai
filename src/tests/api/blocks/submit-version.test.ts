@@ -435,6 +435,17 @@ describe('POST /api/blocks/submit-version', () => {
     expect(res._body).toEqual({ message: refusal.message, storageHookErrors: problems });
   });
 
+  it('🔴 a module-graph refusal returns 400 with the structured moduleGraphErrors', async () => {
+    const { ModuleGraphRefusal } = await import('~/server/services/blocks/bundle-module-graph');
+    const problems = [{ kind: 'bare-specifier' as const, importer: 'main.js', specifier: 'react' }];
+    const refusal = new ModuleGraphRefusal(problems);
+    mockSubmitVersion.mockRejectedValue(refusal);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({ message: refusal.message, moduleGraphErrors: problems });
+  });
+
   // ---------------------------------------------------------------------------
   // #4059 build provenance. The route's job is to pass the client's CLAIM
   // through unchanged and to reject a malformed one with a message that names

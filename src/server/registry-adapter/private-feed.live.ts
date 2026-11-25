@@ -7,6 +7,7 @@ import type {
   PrivateDocSource,
   PrivateFeedOptions,
 } from '~/server/registry-adapter/private-feed';
+import type { ViewerDocSource } from '~/server/registry-adapter/viewer-feed';
 import { sessionClient } from '~/server/auth/session-client';
 import { readAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
@@ -23,6 +24,22 @@ export function livePrivateDocSource(): PrivateDocSource {
       feed.privateVersions(appId, coll, userId, afterKey, limit),
     documents: (appId, coll, userId, afterKey, limit) =>
       feed.privateDocuments(appId, coll, userId, afterKey, limit),
+  };
+}
+
+/**
+ * The per-viewer stream's reads (`viewer-feed.ts`): one user's OWN shared documents, from the same
+ * private-feed object (it is keyed on a caller-supplied user id, so it lives behind the same
+ * ledger), and the same head.
+ */
+export function liveViewerDocSource(): ViewerDocSource {
+  const feed = getDocStorePrivateFeed();
+  return {
+    head: (appId) => feed.privateHead(appId),
+    versions: (appId, coll, userId, domain, afterKey, limit) =>
+      feed.viewerVersions(appId, coll, userId, domain, afterKey, limit),
+    documents: (appId, coll, userId, domain, afterKey, limit) =>
+      feed.viewerDocuments(appId, coll, userId, domain, afterKey, limit),
   };
 }
 

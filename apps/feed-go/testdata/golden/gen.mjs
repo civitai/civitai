@@ -1596,9 +1596,34 @@ function resolveImageModelIds({ modelId, modelVersionId, postId, postIds = [] })
   for (const m of modelIds) T.models.add(m);
   return modelIds;
 }
+/** getGallerySettingsByModelId's rebuild of an absent key (model.service.ts), for what the hold
+ *  reads: `getModel` (getDbWithoutLag('model', id): no lag flag in any fixture, so the replica's row),
+ *  null for no row; `sfwHeld = minor || sfwOnly`; and, when the model has settings or is held,
+ *  getGalleryHiddenPreferences' `level` (`settings.level ?? allBrowsingLevelsFlag`, over the stored
+ *  settings with `level: heldGalleryLevel(stored.level, model)` for a held model). Node then SETs the
+ *  key for a week; feed-go does not (the entry's creatorHiddenUserIds is a primary read), so the write
+ *  is not recorded. The hidden tags, users and images and the pinned posts are not modelled: no reader
+ *  of a rebuilt entry here reads them. */
+function rebuildGallerySettingsHold(modelId) {
+  const model = MODELS[modelId];
+  if (!model) return null;
+  const sfwHeld = model.minor || model.sfwOnly;
+  const stored = model.galleryLevel === null ? {} : { level: model.galleryLevel };
+  if (model.galleryLevel === null && !sfwHeld) return null;
+  if (!sfwHeld) return { level: stored.level ?? allBrowsingLevelsFlag, sfwHeld };
+  // heldGalleryLevel: Flags.intersection(stored ?? 0, limit) || limit (browsingLevel.constants.ts),
+  // limit = modelBrowsingLevelLimit (minorContentBrowsingLevelsFlag = sfwBrowsingLevelsFlag here).
+  const limit = model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  return { level: intersection(stored.level ?? 0, limit) || limit, sfwHeld };
+}
 function gallerySettingsOf(modelId) {
-  T.raw.set(`model:gallery-settings:${modelId}`, JSON.stringify(GALLERY_SETTINGS[modelId]));
+  const key = `model:gallery-settings:${modelId}`;
   T.models.add(modelId);
+  if (T.cold.has(key)) {
+    T.coldRead.add(key);
+    return rebuildGallerySettingsHold(modelId);
+  }
+  T.raw.set(key, JSON.stringify(GALLERY_SETTINGS[modelId]));
   const cached = GALLERY_SETTINGS[modelId];
   if ('none' in cached) return null;
   if (cached.sfwHeld === undefined) throw new Error('rebuild not modelled');
@@ -3285,6 +3310,39 @@ const INFINITE = [
     goConfig: { serveSortRandom: true },
     randomSeed: '494868',
     input: { collectionId: 9101, sort: 'Random', cursor: '0:400000000:9999', browsingLevel: 1, limit: 1 },
+  },
+  // A model's gallery-settings key absent (getShowcaseHeldLevels' miss: getGallerySettingsByModelId
+  // rebuilds it from the model row), answered with FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS on.
+  {
+    name: 'cold-gallery-settings-version-held',
+    description: 'version-held-signed-in with model 5002’s gallery-settings key absent: the rebuild reads the row (SFW-only, stored level 3), held at heldGalleryLevel(3) = PG|PG-13, so the same page. Node also writes the key back; feed-go does not.',
+    viewer: 1003,
+    host: HOST.blue,
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5002'],
+    input: { modelVersionId: 6101, sort: 'Most Reactions', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2&excludedTags=9901&versionIds=6101&excludePoi=1&viewerId=1003&sort=reactions&limit=5': { body: { items: [8301] } },
+    },
+  },
+  {
+    name: 'cold-gallery-settings-ids-held-stranger',
+    description: 'ids-held-stranger with model 5002’s gallery-settings key absent: getHeldLevelsByPost’s hold is rebuilt from the row (SFW-only: PG|PG-13), so 8302 (R) is still left out.',
+    viewer: 1003,
+    host: HOST.blue,
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5002'],
+    input: { ids: [8302, 8301, 8001, 8999], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'cold-gallery-settings-model-unheld',
+    description: 'model-only-db-path with model 5001’s gallery-settings key absent: the rebuild finds it neither minor nor SFW-only, so no hold.',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5001'],
+    input: { modelId: 5001, sort: 'Newest', browsingLevel: 1, limit: 3 },
+    replies: {},
   },
   // Fallbacks.
   {

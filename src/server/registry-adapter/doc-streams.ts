@@ -23,7 +23,12 @@ import type {
   ResolvePrivateStream,
   createPrivateDocFeed,
 } from '~/server/registry-adapter/private-feed';
-import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter/urn';
+import {
+  parseCollectionSchemaUrn,
+  parseViewerSchemaUrn,
+  registryUrn,
+} from '~/server/registry-adapter/urn';
+import type { ResolveViewerStream, createViewerFeed } from '~/server/registry-adapter/viewer-feed';
 import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
 import {
   APP_STORAGE_ALL_FEATURES_ON,
@@ -137,6 +142,39 @@ export function resolveSharedLevelFromCatalog(
 }
 
 /**
+ * The SHARED collection a per-viewer stream's URN names (`viewer-feed.ts`), from the same catalog
+ * read and by the same rule as {@link resolveSharedLevelFromCatalog}: the app's block is approved,
+ * its enforced manifest declares the collection `visibility: "shared"`, and the major exists; with
+ * the app's content-levels mode (`docLevelsOn`, which fails closed). It decides no access; the
+ * per-viewer stream's gates do.
+ */
+export function resolveViewerFromCatalog(
+  readApps: () => Promise<CatalogApp[]>,
+  docLevelsOn: (appBlockId: string) => Promise<boolean>
+): ResolveViewerStream {
+  return async (schema) => {
+    const ref = parseViewerSchemaUrn(schema);
+    if (!ref) return null;
+    const app = (await readApps()).find(
+      (a) => a.block?.blockId === ref.slug && a.block.status === 'approved'
+    );
+    if (!app?.block) return null;
+    const declared = parseManifestStorage(app.block.manifest, APP_STORAGE_ALL_FEATURES_ON);
+    if (declared.collections.get(ref.collection)?.visibility !== 'shared') return null;
+    const family = collectionFamily({ ...app, block: app.block }, ref);
+    if (!family) return null;
+    return {
+      appId: app.block.id,
+      slug: ref.slug,
+      collection: ref.collection,
+      collectionSchema: registryUrn({ kind: 'collection-schema', ...ref }),
+      family,
+      levelsOn: await docLevelsOn(app.block.id),
+    };
+  };
+}
+
+/**
  * Every major's schema document of `ref.collection`, `@v1` first, derived from the app's approved
  * releases and its approved head; null when `ref.major` is not minted.
  */
@@ -173,6 +211,12 @@ export type PrivateDocRoute = Pick<
   'snapshot' | 'changes' | 'routes' | 'issued'
 >;
 
+/** The per-viewer streams (`viewer-feed.ts`), when switched on. */
+export type ViewerDocRoute = Pick<
+  ReturnType<typeof createViewerFeed>,
+  'snapshot' | 'changes' | 'routes' | 'issued'
+>;
+
 /** The shared-collection level streams (`level-feed.ts`), when switched on. */
 export type LevelDocRoute = Pick<
   ReturnType<typeof createLevelFeed>,
@@ -196,13 +240,21 @@ export function composeAdapter(
    * service client naming a level in `meta`, `level-feed.ts`) is routed there, before anything
    * else; every other subscription is routed as without it.
    */
-  levelDocs?: LevelDocRoute
+  levelDocs?: LevelDocRoute,
+  /**
+   * Absent (the default): no per-viewer stream exists, and a per-viewer URN is not served (`end`,
+   * as any schema this source does not serve). Present, every per-viewer URN is routed there, and
+   * every cursor it issued resumes there.
+   */
+  viewerDocs?: ViewerDocRoute
 ): Adapter {
   const isDocStream = (schema: string) => parseCollectionSchemaUrn(schema) !== null;
+  const isViewerStream = (schema: string) => !!viewerDocs?.routes(schema);
   return {
     namespace: entities.namespace,
-    serves: (schema) => isDocStream(schema) || entities.serves(schema),
+    serves: (schema) => isDocStream(schema) || isViewerStream(schema) || entities.serves(schema),
     snapshot: async (schema, ctx) => {
+      if (viewerDocs && isViewerStream(schema)) return viewerDocs.snapshot(schema, ctx);
       if (!isDocStream(schema)) return entities.snapshot(schema, ctx);
       if (levelDocs?.routes(schema, ctx)) return levelDocs.snapshot(schema, ctx);
       if (privateDocs && (await privateDocs.routes(schema))) {
@@ -211,6 +263,13 @@ export function composeAdapter(
       return docs.snapshot(schema, ctx);
     },
     changes: (schema, cursor, ctx) => {
+      // A per-viewer URN resumes only a per-viewer cursor, and a per-viewer cursor resumes only on
+      // a per-viewer URN (its state binds its schema).
+      if (viewerDocs && isViewerStream(schema)) {
+        return viewerDocs.issued(cursor)
+          ? viewerDocs.changes(schema, cursor, ctx)
+          : Promise.reject(cursorExpired('the cursor is not a per-viewer stream cursor'));
+      }
       if (!isDocStream(schema)) return entities.changes(schema, cursor, ctx);
       // A level cursor resumes only as a level stream (its bindings are checked there); a level
       // subscription resumes no other feed's cursor.

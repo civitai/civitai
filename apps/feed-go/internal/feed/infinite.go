@@ -84,8 +84,8 @@ type InfiniteInput struct {
 	PostIDs []int
 }
 
-// InfinitePorts are image.getInfinite's input shapes ported behind their own serve switch, each off
-// by default: off, the shape falls back exactly as before the port.
+// InfinitePorts are image.getInfinite's input shapes and fallback reasons ported behind their own
+// serve switch, each off by default: off, the request falls back exactly as before the port.
 type InfinitePorts struct {
 	// PublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY: compute a request with
 	// `publishedOnly`.
@@ -95,6 +95,10 @@ type InfinitePorts struct {
 	// SortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM: compute a collection's `sort: 'Random'`
 	// (random.go). Off, it is the `input-sort` fallback.
 	SortRandom bool
+	// GallerySettingsMiss is FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS: a model gallery-settings
+	// key absent from the cache (`gallery-settings-miss`) on the hold gates is answered from the
+	// model's row (InfiniteDeps.GalleryHolds), as Node's rebuild decides the hold.
+	GallerySettingsMiss bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
@@ -769,12 +773,24 @@ type InfiniteDeps struct {
 	// NewCreators reads the "new & upcoming" boards (`newCreators`); nil = not configured (a request
 	// with `newCreators: true` falls back).
 	NewCreators *NewCreatorBoards
-	// Ports are the input shapes served behind their own switch (ParseInfiniteWith), all off by
-	// default.
+	// Ports are the input shapes (ParseInfiniteWith) and fallback reasons served behind their own
+	// switch, all off by default.
 	Ports InfinitePorts
 	// RandomSeed reads a collection's Random seed (InfinitePorts.SortRandom); nil = not configured (a
 	// Random request that needs the stored seed falls back).
 	RandomSeed *RandomSeed
+	// GalleryHolds computes a gallery-settings miss's hold (Ports.GallerySettingsMiss); nil = not
+	// configured (the miss falls back).
+	GalleryHolds GalleryHoldSource
+}
+
+// holdGallery is the gallery the hold gates read (heldLevels, heldByPost): the store, computing an
+// absent gallery-settings key's hold when Ports.GallerySettingsMiss is on and GalleryHolds is set.
+func (d *InfiniteDeps) holdGallery() V1Gallery {
+	if d.Ports.GallerySettingsMiss && d.GalleryHolds != nil {
+		return holdComputingGallery{GalleryStore: d.Gallery, holds: d.GalleryHolds}
+	}
+	return d.Gallery
 }
 
 // InfiniteRequest is one call.
@@ -868,7 +884,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		if withheld {
 			return infiniteEmpty(), nil
 		}
-		levels, err := heldLevels(ctx, d.Gallery, modelIDs, "held-level-unset")
+		levels, err := heldLevels(ctx, d.holdGallery(), modelIDs, "held-level-unset")
 		if err != nil {
 			return nil, err
 		}
@@ -1242,7 +1258,7 @@ func withoutHeldFromViewer(ctx context.Context, d *InfiniteDeps, images []Image,
 	if len(postIDs) == 0 {
 		return images, nil
 	}
-	holds, err := heldByPost(ctx, d.Sources, d.Gallery, postIDs, "held-level-unset")
+	holds, err := heldByPost(ctx, d.Sources, d.holdGallery(), postIDs, "held-level-unset")
 	if err != nil || len(holds) == 0 {
 		return images, err
 	}

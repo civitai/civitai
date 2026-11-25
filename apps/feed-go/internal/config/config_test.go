@@ -299,6 +299,25 @@ func TestLoadInfiniteServeSortRandomDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS is off unless set, and FEED_GO_SERVE_INFINITE does not
+// turn it on.
+func TestLoadInfiniteGallerySettingsMissDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeGallerySettingsMiss != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS=%q -> %v, want %v", in, c.InfiniteServeGallerySettingsMiss, want)
+		}
+	}
+}
+
 // The model.getAll input ports' switches default off, and each turns on only its own port.
 func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {

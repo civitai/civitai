@@ -110,6 +110,10 @@ type Metrics struct {
 	// CacheWrites counts the cache writes of write-back (feed_go_cache_writes_total: cache, result:
 	// written | nx_lost | error), per key. Seeded only for the written-back caches (SeedCacheWrites).
 	CacheWrites *prometheus.CounterVec
+	// SearchRejected counts the text searches of GET /api/v1/models the search guard did not make
+	// (feed_go_search_rejected_total: why = open | busy; v1models.MeiliClient.OnReject). Each is a
+	// `v1-models-query` fallback too, which alone would not tell it from the switch being off.
+	SearchRejected *prometheus.CounterVec
 }
 
 // MetricsHandler is the /metrics handler over g. With openMetrics (on with tracing) it answers a scrape
@@ -237,6 +241,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_cache_writes_total",
 			Help: "Cache writes of write-back (FEED_GO_CACHE_WRITEBACK), per key, by cache and result: written, nx_lost (a SET NX found the key filled by another writer since the read; nothing written) or error (the write failed). Series exist only for the written-back caches.",
 		}, []string{"cache", "result"}),
+		SearchRejected: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_search_rejected_total",
+			Help: "Text searches (GET /api/v1/models `query`) not made, by why: open (the search circuit is open, or its half-open trial is in flight) or busy (the per-process concurrency cap is reached). Each is handed back to the app as a v1-models-query fallback.",
+		}, []string{"why"}),
 		Errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_errors_total",
 			Help: "Compute errors (mode serve|shadow|probe) and fallback-proxy errors (mode proxy), by the error's class (fallback.ErrorClasses: deadline, canceled, pg_no_rows, pg_<SQLSTATE class>, redis_nil, timeout, conn_refused, http_5xx, ...). Every error is counted, whether or not its log line was rate-limited.",
@@ -338,10 +346,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight,
+		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,
 		m.SessionCookieSlot, m.DevalueWrites)
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
+	}
+	for _, why := range []string{v1models.SearchRejectedOpen, v1models.SearchRejectedBusy} {
+		m.SearchRejected.WithLabelValues(why)
 	}
 	return m
 }

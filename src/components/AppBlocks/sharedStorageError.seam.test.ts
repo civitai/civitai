@@ -6,6 +6,7 @@ import { errorFormatter } from '~/server/trpc/error-formatter';
 import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
 import { buildTransformer, clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { sharedStorageErrorReply } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import { getRateLimit } from '~/utils/rate-limit';
 
 /**
@@ -24,6 +25,9 @@ const t = initTRPC.create({ transformer: buildTransformer(), errorFormatter });
 const appRouter = t.router({
   append: t.procedure.mutation((): { key: string } =>
     throwAppRateLimited('apps.shared-storage', 17, MESSAGE)
+  ),
+  createPost: t.procedure.mutation((): { postId: number } =>
+    throwAppRateLimited('apps.post', 17, MESSAGE)
   ),
   forbidden: t.procedure.mutation((): { key: string } => {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' });
@@ -73,6 +77,22 @@ describe('rate-limit refusal → host SHARED_APPEND_RESULT reply', () => {
         retryAfterSeconds: 17,
         retryAt: RETRY_AT,
         id: 'apps.shared-storage',
+        kind: 'abuse',
+      },
+    });
+  });
+
+  it('a refusal by a non-storage limiter carries its rateLimit into any bridge error reply', async () => {
+    // 'apps.post' is CREATE_POST_FROM_APP's limiter.
+    const err = await rejection(() => client.createPost.mutate());
+
+    expect({ requestId: 'rq_seam', error: 'x', ...rateLimitReplyFields(err) }).toEqual({
+      requestId: 'rq_seam',
+      error: 'x',
+      rateLimit: {
+        retryAfterSeconds: 17,
+        retryAt: RETRY_AT,
+        id: 'apps.post',
         kind: 'abuse',
       },
     });

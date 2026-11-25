@@ -463,13 +463,15 @@ describe('levels mode: every level stream names it, and a stream that cannot be 
     seedBoard();
     const run = await open(2);
     expect(metaOf(run.events, 'live')).toEqual([
-      { head: { seq: 10 }, levels: 'on', block: APP_ID },
+      { head: { seq: 10 }, levels: 'on', block: APP_ID, truncated: false },
     ]);
     // A write on another bit moves the head: the progress names it, and nothing else.
     put('01KC0R', { t: 'r-doc-2' }, 4);
     const batch = await poll(run);
     expect(keysOf(batch)).toEqual([]);
-    expect(metaOf(batch, 'progress')).toEqual([{ head: { seq: 11 }, levels: 'on', block: APP_ID }]);
+    expect(metaOf(batch, 'progress')).toEqual([
+      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false },
+    ]);
     await close(run);
   });
 
@@ -496,7 +498,7 @@ describe('levels mode: every level stream names it, and a stream that cannot be 
     ]);
     // The mode is derived from the level: `none` is only ever served with levels off.
     expect(metaOf(run.events, 'live')).toEqual([
-      { head: { seq: 10 }, levels: 'off', block: APP_ID },
+      { head: { seq: 10 }, levels: 'off', block: APP_ID, truncated: false },
     ]);
     levelsOn = true;
     const batch = await poll(run);
@@ -545,7 +547,9 @@ describe('changes on a level stream', () => {
       11,
     ]);
     expect(after.seq).toBeGreaterThan(before.seq ?? 0);
-    expect(metaOf(batch, 'progress')).toEqual([{ head: { seq: 11 }, levels: 'on', block: APP_ID }]);
+    expect(metaOf(batch, 'progress')).toEqual([
+      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false },
+    ]);
     await close(run);
   });
 
@@ -589,11 +593,15 @@ describe('changes on a level stream', () => {
     expect(reads[0]).toBe('head');
     // What the head names is exactly what was read: seq 11, never the later write.
     expect(keysOf(batch)).toEqual(['01KAXXX']);
-    expect(metaOf(batch, 'progress')).toEqual([{ head: { seq: 11 }, levels: 'on', block: APP_ID }]);
+    expect(metaOf(batch, 'progress')).toEqual([
+      { head: { seq: 11 }, levels: 'on', block: APP_ID, truncated: false },
+    ]);
     // For every head sent, each write at or below it was sent.
     const next = await poll(run);
     expect(keysOf(next)).toEqual(['01KBXXX']);
-    expect(metaOf(next, 'progress')).toEqual([{ head: { seq: 12 }, levels: 'on', block: APP_ID }]);
+    expect(metaOf(next, 'progress')).toEqual([
+      { head: { seq: 12 }, levels: 'on', block: APP_ID, truncated: false },
+    ]);
     await close(run);
   });
 });
@@ -726,6 +734,24 @@ describe('the bound: a board past it keeps each stream’s newest documents by k
     const batch = await poll(run);
     expect([deleted(batch), keysOf(batch)]).toEqual([[urnOf(key(2))], [key(BOUND + 2)]]);
     expect(fill.byLevel().get('4')).toEqual({ records: BOUND, ratio: 1 });
+    await close(run);
+  });
+
+  it('🔴 live and progress name whether the window is truncated: true past the bound, false once the stream holds the whole board', async () => {
+    seedMany(BOUND + 1);
+    const run = await open(4);
+    // head = BOUND + 1 writes; key(0) lies beyond the window.
+    expect(metaOf(run.events, 'live')).toEqual([
+      { head: { seq: BOUND + 1 }, levels: 'on', block: APP_ID, truncated: true },
+    ]);
+    // Two deletes inside the window: the backfill takes key(0) and reaches the bottom of the board.
+    remove(key(BOUND));
+    remove(key(BOUND - 1));
+    const batch = await poll(run);
+    expect(keysOf(batch)).toEqual([key(0)]);
+    expect(metaOf(batch, 'progress')).toEqual([
+      { head: { seq: BOUND + 3 }, levels: 'on', block: APP_ID, truncated: false },
+    ]);
     await close(run);
   });
 

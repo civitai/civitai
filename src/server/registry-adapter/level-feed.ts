@@ -293,14 +293,18 @@ export const levelRev = (d: LevelStreamDocument, schemas: readonly string[]) =>
   ).slice(0, 16);
 
 /**
- * What a level stream's `live` and `progress` carry: its head, its mode and its block. The mode
- * is fixed by the level for the stream's whole life (`none` is served only while levels are off,
- * a bit only while they are on; any change ends the stream), so it is derived, never stored.
+ * What a level stream's `live` and `progress` carry: its head, its mode, its block, and whether
+ * its window is truncated (documents on the stream lay beyond the bound when it was read), so a
+ * consumer can tell a key below the window's floor, which may exist, from a key that does not.
+ * The mode is fixed by the level for the stream's whole life (`none` is served only while levels
+ * are off, a bit only while they are on; any change ends the stream), so it is derived, never
+ * stored.
  */
-const levelMeta = (state: Pick<LevelState, 'seq' | 'level' | 'appBlockId'>) => ({
+const levelMeta = (state: Pick<LevelState, 'seq' | 'level' | 'appBlockId' | 'truncated'>) => ({
   ...headMeta(state.seq),
   levels: state.level === 'none' ? 'off' : 'on',
   block: state.appBlockId,
+  truncated: state.truncated,
 });
 
 /** An `end` naming why the stream ended; the reason alone says which mode ended it. */

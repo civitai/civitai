@@ -53,12 +53,10 @@ export function runNpmInstall(
  * `idle`, reading every process's `/proc/<pid>/cmdline` with node (the image may have no `pgrep`).
  * `procRoot` is for tests only.
  *
- * It cannot see itself. Neither this node process nor the shell the sandbox runs it in (whose
- * command line holds this whole text) matches, as the script never spells an install out: the only
- * `npm` in it is the pattern's own, `[\s\/])npm(-cli\.js)?\s+`, where `npm` follows `)` (the
- * pattern wants the start, whitespace or `/`) and is followed by `(` (it wants whitespace). Pinned
- * by running it against a process list holding its own two command lines (`npm-install.test.ts`).
- * It also skips its own pid, and every entry of `procRoot` that is not a number.
+ * It cannot see itself: the script never spells an install out, so neither its own command line
+ * nor that of the shell the sandbox runs it in matches (`npm-install.test.ts` runs it against a
+ * process list holding both). Entries of `procRoot` that are not a number (`self`, `sys`) are
+ * passed over, whatever their `cmdline` says (pinned by the same tests).
  */
 export function npmInstallRunningProbe(procRoot = '/proc'): string {
   const script =

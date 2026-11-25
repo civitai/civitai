@@ -50,7 +50,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 120
+	goldenMinInfinite = 123
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -110,6 +110,9 @@ type goldenFixture struct {
 		// ServeSortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM (feed.InfinitePorts.SortRandom; absent:
 		// off, a collection's Random sort falls back).
 		ServeSortRandom bool `json:"serveSortRandom"`
+		// ServeGallerySettingsMiss is FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS (infinite/
+		// fixtures; absent: off, a gallery-settings miss falls back).
+		ServeGallerySettingsMiss bool `json:"serveGallerySettingsMiss"`
 		// ServeInputIDs / ServeInputFollowed are the model.getAll input ports' switches
 		// (FEED_GO_GETALL_SERVE_INPUT_IDS / _FOLLOWED; absent: off, the fixture's shape falls back).
 		ServeInputIDs      bool `json:"serveInputIds"`
@@ -245,6 +248,29 @@ func goldenTimeVal(t goldenTime) any {
 		return nil
 	}
 	return *t.T
+}
+
+// goldenJSONTypeText is jsonb_typeof and `->>` of a JSON value: nil, nil for none (SQL NULL), else its
+// type and its text (a string unquoted).
+func goldenJSONTypeText(r json.RawMessage) (any, any) {
+	if len(r) == 0 || string(r) == "null" {
+		return nil, nil
+	}
+	var v any
+	if err := json.Unmarshal(r, &v); err != nil {
+		return nil, nil
+	}
+	switch t := v.(type) {
+	case string:
+		return "string", t
+	case float64:
+		return "number", string(r)
+	case bool:
+		return "boolean", string(r)
+	case []any:
+		return "array", string(r)
+	}
+	return "object", string(r)
 }
 
 func goldenJSONVal(r json.RawMessage) any {
@@ -1236,6 +1262,18 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 			}
 			return testkit.NewRows([]string{"userId", "mode"}, rows...), nil
 		}},
+		// The gallery-hold computation of a gallery-settings miss (getGallerySettingsByModelId's
+		// rebuild): each existing model's flags and its stored level's JSON type and text.
+		{Match: `SELECT id, minor, "sfwOnly", jsonb_typeof("gallerySettings"->'level')`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, m := range db.Models {
+				if goldenHas(goldenInts(args[0]), m.ID) {
+					typ, text := goldenJSONTypeText(m.GalleryLevel)
+					rows = append(rows, []any{m.ID, m.Minor, m.SfwOnly, typ, text})
+				}
+			}
+			return testkit.NewRows([]string{"id", "minor", "sfwOnly", "levelType", "level"}, rows...), nil
+		}},
 		{Match: `SELECT minor, "sfwOnly"`, Rows: func(args []any) (*testkit.Rows, error) {
 			for _, m := range db.Models {
 				if m.ID == goldenInt(args[0]) {
@@ -1627,8 +1665,9 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
 		Ports: feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly, PostIDs: fx.Config.ServePostIDs,
-			SortRandom: fx.Config.ServeSortRandom},
-		RandomSeed: &feed.RandomSeed{Sys: sys}}
+			SortRandom: fx.Config.ServeSortRandom, GallerySettingsMiss: fx.Config.ServeGallerySettingsMiss},
+		RandomSeed:   &feed.RandomSeed{Sys: sys},
+		GalleryHolds: sources}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
