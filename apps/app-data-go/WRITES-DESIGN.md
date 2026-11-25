@@ -1,6 +1,7 @@
 # app-data-go: the writes service (P3b), design
 
-**Status:** design, decided by the operator on 2026-11-22 (see "Decided"); nothing built. This follows
+**Status:** design, decided by the operator on 2026-11-22 (see "Decided"); amended by the generic core
+on 2026-11-24 ("Delta: the generic core"), which wins where the two disagree. This follows
 the reads in [DESIGN.md](DESIGN.md), which lists "Any write path (P3b)" under "Not built"
 (`DESIGN.md:568`). Direction from the operator (2026-11-19): the complete app platform runs via the
 registry, and writes go through a registered write service, as a follow-up after reads.
@@ -17,6 +18,65 @@ storage at once: its private `kv` collection and its shared `records` collection
 shared`, `write: own`, `marks: [vote]`, scope `apps:storage:publish`; its `block.manifest.json`),
 reads and writes, signed-in and signed-out. Code citations are to civitai `main` at `1d4f7a0f`; the
 app's to its `main` at `65ce42f`.
+
+## Delta: the generic core (2026-11-24)
+
+[`docs/app-storage-generic-core.md`](../../docs/app-storage-generic-core.md) removes marks, counters,
+tallies, `write: "none"` and publish from the store, and adds viewer-keyed documents (`keyedBy`,
+`@me[/<parent>]`), which are plain shared documents. Where this document and that one disagree, that
+one wins. What it makes of migration step 1:
+
+**Obsolete; not built, and what was built goes with the tally ops (generic core, rollout step 5):**
+
+- the app-wide mark sequence, `mark_head`, `doc_tally.mark_seq`, locks (1b) and (1c), `markSeq` in
+  answers, the mark head in `meta`, the `minMarkSeq` floor, and the count and held overlays (#10130,
+  merged dark, inert);
+- `tallies` on level-stream entities, the `level: counters` stream, `viewer.marks`, and the
+  per-viewer stream's mark rows;
+- vote read-back: `vote` and `unvote` become `PUT` / `DELETE …/records/@me/<recordKey>` on a
+  `keyedBy: "parent+viewer"` collection, and a count is a `keyPrefix=<recordKey>:` list; `report`
+  leaves storage for the moderation API, which this service does not carry;
+- forwarding `PATCH` (`$inc`, `$mark`, `$unmark`), `_publish` and `_unpublish`;
+- the step-1 tests about votes: "an acknowledged vote read back", "a vote changes the tally and
+  `viewer.marks` for the voter only", "a `kv` read after a vote meets the mark floor", "a vote leaves
+  the document's `seq` unchanged".
+
+**What remains, simplified** (one sequence, `seq`; a vote is a write like any other):
+
+| Piece | Where | State |
+|---|---|---|
+| Write routes, `info`, signature, `504`/`503` semantics | here | built, #10143 |
+| `PUT` / `DELETE …/records/@me[/<parent>]` forwarding | here | #10393 |
+| Private keyed get, record overlay, floors and the bounded reopen | here | built, #10158 |
+| Shared reads: the union of the level streams in the viewer's mask and the per-viewer stream; `@me` gets; `keyPrefix`, `author=me`, key-sorted pages | here | #10393 |
+| Signed-out reads from the level streams | here | #10393 |
+| No REST fallback (the step-1 table) | here | #10393: with `APP_DATA_WRITES` on, every read |
+| Region forwarding on the per-viewer subscription | here | not built: until it is, the adapter holds every signed-in viewer behind this service to SFW |
+| Second replica, header-hash sticky routing | deployment | not built |
+| Internal route, store `seq`/`recordId`, `app_storage_requests_total{via}` | site | built, #10128, #10142 |
+| The internal route's delete answer names its key (an `@me` delete's derived key) | site | #10392 |
+| `Entity.seq`, `k2`, the private head | adapter | built, #10128 |
+| Level streams of plain documents, the shared-level allowlist | adapter | built, dark, #10302, #10343 |
+| `meta.truncated` on level streams | adapter | #10392 |
+| The per-viewer stream | adapter | #10392 |
+| The fifth block-exchange claim | hub | built, #10163, #10192 |
+
+**The per-viewer stream, as simplified.** It carries **every** document of the collection the token's
+user authored, at every rating state REST shows its author (not only the ones no level stream gives
+them): a document is the viewer's own (`author.isViewer`) when this stream holds its key, and `@me`
+is answered from it without the derivation key, which stays the site's. Its `live` and `progress`
+`meta` name `{head, mask, levels, keyedBy}`; a `meta` with no `mask` is the explicit refusal (`401
+refused`); a resolution failure is an `end` with `reason: not_resolved` (`503`). Cursor `v1.`.
+
+**Session decisions in this delta** (each reversible by flag-off; none overrules "Decided"):
+
+1. The union's overlays are dropped once every stream the read used names a head at or above them,
+   not when one does: the level streams poll apart from the per-viewer stream.
+2. A shared read never reopens a stream for its floor: the level streams are every viewer's, so a
+   reopen per viewer is a full re-read of the board. An unmet floor is `503 floor_not_met`.
+3. app-data-go evaluates no flag. With `APP_DATA_WRITES` on, every read is a cut-over app's and never
+   falls back to REST; the per-app flag `app-data-writes-via-service` decides whether the site hands
+   an app this service at all. The shadow's registry-only answer is unchanged.
 
 ## What is fixed before we start
 
