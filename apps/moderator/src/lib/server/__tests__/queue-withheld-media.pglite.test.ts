@@ -328,3 +328,23 @@ describe('/audit/scanner-audit focused item content', () => {
     expect(await content(WITH_GRANT, WITHHELD)).toMatchObject({ imageUrl: KEY });
   });
 });
+
+describe('/audit/scanner-audit raw workflow', () => {
+  const raw = async (user: User) => {
+    const { GET } = await import(
+      '../../../routes/audit/scanner-audit/[mode]/[label]/workflow/+server'
+    );
+    const url = new URL('http://moderator.test/audit/scanner-audit/media/x/workflow');
+    url.searchParams.set('workflowId', 'wf-1');
+    return GET({ url, locals: { user, grants: {} } } as never);
+  };
+
+  // It answers for any workflow id, and a scan's inputs can be a withheld image.
+  it('is refused to a moderator without the grant', async () => {
+    await expect(raw(WITHOUT_GRANT)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('answers a moderator with the grant', async () => {
+    expect((await raw(WITH_GRANT)).status).toBe(200);
+  });
+});

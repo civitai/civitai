@@ -6,10 +6,9 @@ import { getComicReviewQueue } from '$lib/server/comic-review.service';
 import { acceptImage, blockImage } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { heldRemovalMessage } from '$lib/server/removal-hold';
-import { withheldRefusal } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRows } from '$lib/server/retracted-media';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 import type { RequestEvent } from './$types';
-import { withheldRows } from '$lib/server/retracted-media';
 
 const REVIEW_REASONS = [
   { value: 'all', label: 'Any reason' },
