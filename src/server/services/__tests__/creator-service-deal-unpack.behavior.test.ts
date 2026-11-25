@@ -25,6 +25,7 @@ import {
   webmClip,
   type FixtureEntry,
 } from '~/server/utils/__tests__/zip-fixture';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -396,6 +397,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
   // The deal holds a party's delete reads.
   await holder.db.exec(`
     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
@@ -435,11 +437,11 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImages.mockImplementation(async (ids: number[]) => {
-    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
-  });
+  images.deleteImages.mockImplementation(async (ids: number[]) =>
+    q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
+  );
   await holder.db.exec(`
-    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "Report", "ImageReport", "CsamReport", "CsamQueueSetAside" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -1788,28 +1790,10 @@ describe('copies of scanned images', () => {
       expect((await orphans()).map((r) => r.imageId)).toEqual([null, 2, null]);
     });
 
-    it("drops the copy of the image that comes back above the deal's limit; the rejected one's stays", async () => {
+    it("leaves the copy of the image that comes back above the deal's limit to the purge", async () => {
       await threeImages();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4 WHERE id = 3`);
       await unpack.settleEntryScans();
-      expect(await unpack.deleteEntryScanCopies()).toBe(1);
-      expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 2 }]);
-      expect((await orphans()).map((r) => [r.scanStatus, r.imageId])).toEqual([
-        ['Passed', null],
-        ['Failed', 2],
-        ['Failed', null],
-      ]);
-    });
-
-    it.each([
-      ['flagged as a minor since', ', minor = true'],
-      ['listed on a child-safety report since', ''],
-    ])("keeps the copy of an image above the deal's limit that is %s", async (_n, flags) => {
-      await threeImages();
-      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4 WHERE id = 3`);
-      await unpack.settleEntryScans();
-      if (flags) await q(`UPDATE "Image" SET ${flags.slice(2)} WHERE id = 3`);
-      else await q(`INSERT INTO "CsamReport" ("userId", images) VALUES (9, '[{"id": 3}]')`);
       expect(await unpack.deleteEntryScanCopies()).toBe(0);
       expect((await orphans()).map((r) => r.imageId)).toEqual([null, 2, 3]);
     });
@@ -1840,18 +1824,70 @@ describe('copies of scanned images', () => {
       expect((await entries(fileId))[0].imageId).not.toBeNull();
     });
 
-    it('is purged once removed, with its copy', async () => {
-      const fileId = await overLevelFinal();
-      expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
+    const purgedWithCopy = async (fileId: number) => {
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
       expect(await files.purgeRemovedFiles()).toBe(1);
+      expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toEqual([]);
+    };
+    const keptWithCopy = async (fileId: number, copies = 1) => {
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(copies);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+    };
+
+    it('is purged once removed, its copy with it', async () => {
+      await purgedWithCopy(await overLevelFinal());
     });
 
-    it('is kept, with its copy, when the image is also flagged', async () => {
-      const fileId = await overLevelFinal(', minor = true');
-      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
-      expect(await files.purgeRemovedFiles()).toBe(0);
-      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
+    it('is kept, with its copy, while a hold is on its deal', async () => {
+      const fileId = await overLevelFinal();
+      await q(`INSERT INTO "Report" (status) VALUES ('Pending')`);
+      await q(
+        `INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, (SELECT max(id) FROM "Report"))`
+      );
+      await keptWithCopy(fileId);
+      await q(
+        `UPDATE "Report" SET status = 'Unactioned', "createdAt" = now() - interval '400 days', "statusSetAt" = now() - interval '400 days'`
+      );
+      await purgedWithCopy(fileId);
+    });
+
+    it.each([
+      ['flagged as a minor', `UPDATE "Image" SET minor = true`],
+      ['flagged as a real person', `UPDATE "Image" SET poi = true`],
+      ['held for review', `UPDATE "Image" SET "needsReview" = 'tag'`],
+      ['blocked', `UPDATE "Image" SET "blockedFor" = 'TOS'`],
+      ['sent back to be scanned', `UPDATE "Image" SET ingestion = 'Rescan'`],
+      [
+        'listed on a CSAM report',
+        `INSERT INTO "CsamReport" ("userId", images) VALUES (9, '[{"id": 1}]')`,
+      ],
+      [
+        'under an open child-safety report',
+        `INSERT INTO "Report" (status, reason) VALUES ('Pending', 'CSAM');
+         INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (1, (SELECT max(id) FROM "Report"))`,
+      ],
+    ])('is kept, with its copy, when its image is %s since', async (_n, sql) => {
+      const fileId = await overLevelFinal();
+      await holder.db.exec(sql);
+      await keptWithCopy(fileId);
+    });
+
+    it('is kept, with its copy, when the image delete keeps the copy for its case', async () => {
+      const fileId = await overLevelFinal();
+      images.deleteImages.mockResolvedValueOnce([]);
+      await keptWithCopy(fileId);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+    });
+
+    it('is kept when its image row is gone or was never recorded', async () => {
+      const fileId = await overLevelFinal();
+      await q(`DELETE FROM "Image"`);
+      await keptWithCopy(fileId, 0);
+      await q(`UPDATE "ServiceDealFileEntry" SET "imageId" = NULL`);
+      await keptWithCopy(fileId, 0);
     });
   });
 });

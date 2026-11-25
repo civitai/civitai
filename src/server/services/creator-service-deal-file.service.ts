@@ -1,4 +1,6 @@
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
+import { childSafetyImageCase } from '@civitai/db-queries/child-safety-case';
+import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
@@ -529,15 +531,11 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     // so an unpack still attaching copies waits for this to finish.
     await tx.$queryRaw`
       SELECT 1 FROM "ServiceDealFileEntry" e WHERE e."fileId" = ${fileId}::int FOR UPDATE OF e`;
-    // An image that passed, or was refused only for its rating, has no more use for its copy.
-    const copyDone = Prisma.sql`(e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-      OR ${entryOnlyOverLevel(Prisma.sql`e`)})`;
+    // An image that passed has no more use for its copy.
     const copies = await tx.$queryRaw<{ imageId: number }[]>`
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
-      WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL AND ${copyDone}`;
-    await tx.$executeRaw`
-      UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
-      WHERE e."fileId" = ${fileId}::int AND ${copyDone}`;
+      WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
+        AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
     // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below must depend
     // on the file alone, never on what keeps it.
     const [file] = await tx.$queryRaw<
@@ -549,7 +547,7 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     return { file, copies };
   });
 
-  await deleteImages(removed.copies.map(({ imageId }) => imageId));
+  await clearDeletedCopies(await deleteImages(removed.copies.map(({ imageId }) => imageId)));
   const { file } = removed;
   // An upload never completed still sits at the uploader's key, which they can write to: the
   // server keeps its own copy instead.
@@ -567,13 +565,28 @@ type FileObjects = {
   imageId: number | null;
 };
 
+/** Deletes scan copies one by one; returns the ids that went. A copy kept for its case stays. */
 async function deleteImages(imageIds: number[]) {
-  if (!imageIds.length) return;
+  const gone: number[] = [];
+  if (!imageIds.length) return gone;
   const service = await import('~/server/services/image.service');
-  for (const id of imageIds)
-    await service
+  for (const id of imageIds) {
+    const deleted = await service
       .deleteImages([id], { updatePosts: false, actor: { system: 'creator-service-deal-file' } })
       .catch(() => null);
+    if (deleted?.some((row) => row.id === id)) gone.push(id);
+  }
+  return gone;
+}
+
+/** Entries stop pointing at copies that are gone: deleted now, or by an earlier run. */
+export function clearDeletedCopies(imageIds: number[], fileId?: number) {
+  return dbWrite.$executeRaw`
+    UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
+    WHERE e."imageId" IS NOT NULL
+      AND ${fileId === undefined ? Prisma.sql`TRUE` : Prisma.sql`e."fileId" = ${fileId}::int`}
+      AND (e."imageId" IN (${Prisma.join(imageIds.length ? imageIds : [-1])})
+        OR NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId"))`;
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
@@ -671,15 +684,18 @@ async function deleteFileObjects(
 /**
  * An image entry refused only for a rating above its deal's level, whose image nothing has flagged
  * since: a rating mismatch, not a verdict on the content. It does not keep a removed file, and its
- * copy goes with the file. `e` names the entry row.
+ * copy is deleted by the purge, with the file. `e` names the entry row.
  */
 export const entryOnlyOverLevel = (e: Prisma.Sql) => Prisma.sql`(
   ${e}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
   AND ${e}."failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
-  AND NOT EXISTS (SELECT 1 FROM "Image" oi WHERE oi."id" = ${e}."imageId"
-    AND (oi."ingestion" <> 'Scanned'::"ImageIngestionStatus" OR oi."needsReview" IS NOT NULL
-      OR oi."poi" OR oi."minor" OR oi."blockedFor" IS NOT NULL
-      OR (oi."id")::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})))
+  -- An image row that is gone, or cannot be read, keeps it: only one seen unflagged lets it go.
+  AND ${e}."imageId" IS NOT NULL
+  AND EXISTS (SELECT 1 FROM "Image" oi WHERE oi."id" = ${e}."imageId"
+    AND oi."ingestion" = 'Scanned'::"ImageIngestionStatus" AND oi."needsReview" IS NULL
+    AND NOT oi."poi" AND NOT oi."minor" AND oi."blockedFor" IS NULL
+    AND ((oi."id")::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})) IS NOT TRUE
+    AND ${toPrismaSql(childSafetyImageCase('oi'))} IS NOT TRUE)
 )`;
 
 /** An image entry whose copy is still the moderators' evidence. `e` names the entry row. */
@@ -738,9 +754,11 @@ const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
     OR (${f}."kind" = 'Preview'::"ServiceDealFileKind"
       AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"))
   AND NOT ${mustKeep(f)}
-  -- Scan copies of its images go first (deleteEntryScanCopies).
+  -- Scan copies of its images go first (deleteEntryScanCopies); one refused only for its rating
+  -- goes in the purge, behind the same holds as the file.
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-    WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL)
+    WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL
+      AND NOT ${entryOnlyOverLevel(Prisma.sql`e`)})
 )`;
 
 const purgeable = (f: Prisma.Sql) => Prisma.sql`(${purgeableState(f)} AND NOT ${dealHeld(f)})`;
@@ -787,6 +805,18 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
       ).length > 0;
     const deleted = await deleteFileObjects(file, stillDeletable);
     if (!deleted) continue;
+    // A copy of an image refused only for its rating goes with its file. One that stays (kept for
+    // its case) keeps the row, for the next run to judge again.
+    const copies = await dbWrite.$queryRaw<{ imageId: number }[]>`
+      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+      WHERE e."fileId" = ${file.id}::int AND ${entryOnlyOverLevel(Prisma.sql`e`)}`;
+    if (copies.length) {
+      if (!(await stillDeletable())) continue;
+      const ids = copies.map(({ imageId }) => imageId);
+      const gone = await deleteImages(ids);
+      await clearDeletedCopies(gone, file.id);
+      if (gone.length !== ids.length) continue;
+    }
     const done = await dbWrite.$transaction(async (tx) => {
       await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
       const gone = await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;

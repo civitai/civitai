@@ -14,7 +14,6 @@ import {
 } from '~/server/services/creator-service-deal-file-scan';
 import {
   createScanImage,
-  entryOnlyOverLevel,
   fileExtension,
   isFinalVideoName,
   readObject,
@@ -803,9 +802,9 @@ export async function settleFinals() {
 }
 
 /**
- * Step 5: the copy of an image that passed has done its job, as has, once its file is removed, the
- * copy of one refused only for its rating. The copy of an image whose scan has not finished, or that
- * was rejected, is KEPT, even after its file was deleted: its Image row is what
+ * Step 5: the copy of an image that passed has done its job (one refused only for its rating goes
+ * in the purge, with its file). The copy of an image whose scan has not finished, or that was
+ * rejected, is KEPT, even after its file was deleted: its Image row is what
  * the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
  * is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
  * passes. A delete that fails stays pointed at and is retried.
@@ -813,21 +812,24 @@ export async function settleFinals() {
 export async function deleteEntryScanCopies({ limit = 50 } = {}) {
   const rows = await dbWrite.$queryRaw<{ id: number; imageId: number; fileId: number | null }[]>`
     SELECT e."id", e."imageId", e."fileId" FROM "ServiceDealFileEntry" e
-    WHERE e."imageId" IS NOT NULL
-      AND (e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-        -- Refused only for its rating: kept while its file is, for a dispute review to see.
-        OR (${entryOnlyOverLevel(Prisma.sql`e`)} AND NOT EXISTS (SELECT 1 FROM "ServiceDealFile" f
-          WHERE f."id" = e."fileId" AND f."removedAt" IS NULL)))
+    WHERE e."imageId" IS NOT NULL AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
     ORDER BY e."id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
   const { deleteImages } = await import('~/server/services/image.service');
   let deleted = 0;
   for (const row of rows) {
     try {
-      await deleteImages([row.imageId], {
+      const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
       });
+      // A copy kept for its case stays pointed at; one an earlier run deleted is let go.
+      const went =
+        gone?.some(({ id }) => id === row.imageId) ||
+        !(
+          await dbWrite.$queryRaw<unknown[]>`SELECT 1 FROM "Image" WHERE "id" = ${row.imageId}::int`
+        ).length;
+      if (!went) continue;
       if (row.fileId === null)
         await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
       else
