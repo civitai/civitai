@@ -101,9 +101,9 @@ const featureFlags = createFeatureFlags({
   // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down.
   trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
-  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Edge rules keyed on
-  // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
-  // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Enable only once the edge
+  // routes that path. A signed-out answer there is edge-cached as on `/api/trpc/` (anonymous probe,
+  // 2026-11-25: a miss, then a hit), as its own cache entry. See `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
   // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
   // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes

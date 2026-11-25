@@ -17,7 +17,11 @@
  */
 export const SIGNED_OUT_ROLLOUT_COOKIE = 'civitai-so-bucket';
 
-/** How many buckets there are: a rollout percentage moves in steps of 0.1%. */
+/**
+ * How many buckets there are. Flipt hashes each bucket's entity id into its percentage rollout, so
+ * a percentage does not select an exact share of buckets: a step is lumpy, and 1% is about 10 ± 3
+ * buckets, not exactly 10.
+ */
 export const SIGNED_OUT_ROLLOUT_BUCKETS = 1000;
 
 /** One year, in seconds. */

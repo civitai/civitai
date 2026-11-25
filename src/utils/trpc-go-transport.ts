@@ -83,9 +83,10 @@ export function setFeedGoTransportSignedOutInfiniteEnabled(enabled: boolean) {
 /**
  * The separate path. `next.config.mjs` rewrites `<this>/<procedure>` back to `/api/trpc/<procedure>`
  * for each procedure above (only those), so with no route in front of it the request still reaches
- * this app and is served: a flag can never strand a request. It can still MOVE one — edge rules
- * keyed on the `/api/trpc/` prefix do not match this path (see `feedGoTransport` in
- * feature-flags.service.ts).
+ * this app and is served: a flag can never strand a request. Edge caching applies here as on
+ * `/api/trpc/`: an anonymous probe on 2026-11-25 saw a signed-out answer on this path stored at the
+ * edge (a miss, then a hit) for `image.getInfinite` and `model.getAll`. It is a separate cache entry
+ * from the same query on `/api/trpc/`.
  */
 export const GO_TRANSPORT_URL = '/api/trpc-go';
 
