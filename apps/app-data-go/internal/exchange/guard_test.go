@@ -230,3 +230,273 @@ func TestTheExchangeForwardsTheViewersAddressOnly(t *testing.T) {
 		t.Fatalf("X-Forwarded-For %q", got)
 	}
 }
+
+// madeUp is n exchanges of distinct made-up tokens named prefix-i, each from the address at(i); it is
+// how many reached the hub.
+func madeUp(g *Guard, h *guardHub, prefix string, n int, at func(i int) string) int {
+	before := h.total()
+	for i := range n {
+		_, _ = g.Exchange(from(at(i)), fmt.Sprintf("%s-%03d", prefix, i))
+	}
+	return h.total() - before
+}
+
+// One host holds a whole IPv6 /64: its addresses share one budget. Two /64s do not, and IPv4 stays per
+// address. The hub is still told the viewer's own address, not the prefix.
+func TestTheGuardChargesAnIPv6AddressToItsSlash64(t *testing.T) {
+	g, h, _ := newGuard()
+	var forwarded []string
+	hub := g.Hub
+	g.Hub = func(ctx context.Context, subject string) (Token, error) {
+		forwarded = append(forwarded, ClientIP(ctx))
+		return hub(ctx, subject)
+	}
+	// 3×burst addresses of one /64, each with one made-up token.
+	sent := madeUp(g, h, "civitai_v6", 3*NewTokenBurst, func(i int) string { return fmt.Sprintf("2001:db8:1:2::%x", i+1) })
+	if sent != NewTokenBurst {
+		t.Fatalf("🔴 one /64 rotating its addresses reached the hub %d times, want the burst %d", sent, NewTokenBurst)
+	}
+	if forwarded[0] != "2001:db8:1:2::1" || forwarded[NewTokenBurst-1] != "2001:db8:1:2::14" {
+		t.Fatalf("the hub was told %q … %q, want each viewer's own address", forwarded[0], forwarded[NewTokenBurst-1])
+	}
+	// Another /64 of the same /48 has its own budget.
+	if sent := madeUp(g, h, "civitai_v6-other", 1, func(int) string { return "2001:db8:1:3::1" }); sent != 1 {
+		t.Fatalf("another /64 was charged to the first: reached the hub %d times, want 1", sent)
+	}
+	// IPv4 neighbours do not share one.
+	g4, h4, _ := newGuard()
+	if sent := madeUp(g4, h4, "civitai_v4", 3*NewTokenBurst, func(i int) string { return fmt.Sprintf("198.51.100.%d", i+1) }); sent != 3*NewTokenBurst {
+		t.Fatalf("IPv4 addresses shared a budget: %d of %d reached the hub", sent, 3*NewTokenBurst)
+	}
+	// An address that does not parse is its own budget, as it was named.
+	if sent := madeUp(g4, h4, "civitai_odd", 3*NewTokenBurst, func(int) string { return "not-an-address" }); sent != NewTokenBurst {
+		t.Fatalf("an unparsed address: %d reached the hub, want the burst %d", sent, NewTokenBurst)
+	}
+}
+
+// A full address table never admits a new address untracked: that would turn the throttle off for
+// everyone once one attacker filled it. The least recently charged address makes room.
+func TestAFullAddressTableStillThrottlesANewAddress(t *testing.T) {
+	g, h, now := newGuard()
+	_, _ = g.Exchange(context.Background(), "civitai_alice") // the maps exist
+	for i := range MaxThrottledAddresses {
+		g.mu.Lock()
+		g.charge(fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255), *now)
+		g.mu.Unlock()
+		if i == 0 {
+			*now = now.Add(time.Millisecond) // 10.0.0.0 is the least recently charged
+		}
+	}
+	sent := madeUp(g, h, "civitai_late", 3*NewTokenBurst, func(int) string { return "203.0.113.200" })
+	if sent != NewTokenBurst {
+		t.Fatalf("🔴 a new address past a full table reached the hub %d times, want the burst %d", sent, NewTokenBurst)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, oldest := g.addrs["10.0.0.0"]
+	_, newer := g.addrs["10.0.0.1"]
+	if len(g.addrs) != MaxThrottledAddresses || oldest || !newer {
+		t.Fatalf("table %d (bound %d), oldest kept %v, the next kept %v", len(g.addrs), MaxThrottledAddresses, oldest, newer)
+	}
+}
+
+// Many viewers behind one address (an office, a carrier NAT) each present a token the hub exchanges:
+// none of them is charged, so the address's budget is left for tokens the hub cannot find.
+func TestTokensTheHubExchangesAreNotChargedToTheAddress(t *testing.T) {
+	g, h, _ := newGuard()
+	const shared = "198.51.100.7"
+	for i := range 3 * NewTokenBurst {
+		h.valid[fmt.Sprintf("civitai_viewer-%03d", i)] = true
+	}
+	for i := range 3 * NewTokenBurst {
+		if _, err := g.Exchange(from(shared), fmt.Sprintf("civitai_viewer-%03d", i)); err != nil {
+			t.Fatalf("🔴 viewer %d behind a shared address: %v", i, err)
+		}
+	}
+	// The budget is whole: the burst of made-up tokens, and no more.
+	if sent := madeUp(g, h, "civitai_made-up", 2*NewTokenBurst, func(int) string { return shared }); sent != NewTokenBurst {
+		t.Fatalf("after %d exchanged viewers, %d made-up tokens reached the hub, want the burst %d", 3*NewTokenBurst, sent, NewTokenBurst)
+	}
+}
+
+// heldHub is a fake user exchange answering every call the hub's 429: per client (the Exchanger's
+// hold) or, scoped, per viewer. calls counts them.
+type heldHub struct {
+	scoped bool
+	calls  int
+}
+
+func (h *heldHub) exchange(context.Context, string) (Token, error) {
+	h.calls++
+	return Token{}, &RateLimitedError{RetryAfter: time.Second, Scoped: h.scoped}
+}
+
+// While the hub holds every exchange (its per-client 429), no subject is looked up, so nothing is
+// charged. The hub's per-viewer 429 on subjects it could not find follows lookups made: charged.
+func TestAnExchangeTheHubHoldsIsNotCharged(t *testing.T) {
+	g, h, _ := newGuard()
+	held := &heldHub{}
+	g.Hub = held.exchange
+	for i := range 3 * NewTokenBurst {
+		_, _ = g.Exchange(from("198.51.100.7"), fmt.Sprintf("civitai_held-%03d", i))
+	}
+	if held.calls != 3*NewTokenBurst {
+		t.Fatalf("🔴 %d of %d held exchanges were let through: the hold was charged to the address", held.calls, 3*NewTokenBurst)
+	}
+	g.Hub = h.exchange
+	if sent := madeUp(g, h, "civitai_made-up", 2*NewTokenBurst, func(int) string { return "198.51.100.7" }); sent != NewTokenBurst {
+		t.Fatalf("after the hold, %d made-up tokens reached the hub, want the burst %d", sent, NewTokenBurst)
+	}
+	// Control: the per-viewer 429 is charged.
+	g2, _, _ := newGuard()
+	missed := &heldHub{scoped: true}
+	g2.Hub = missed.exchange
+	for i := range 3 * NewTokenBurst {
+		_, _ = g2.Exchange(from("198.51.100.7"), fmt.Sprintf("civitai_missed-%03d", i))
+	}
+	if missed.calls != NewTokenBurst {
+		t.Fatalf("the hub's per-viewer 429 was let through %d times, want the burst %d", missed.calls, NewTokenBurst)
+	}
+}
+
+// blockingHub is a fake user exchange that waits for release (or the call's context) before it
+// answers as h does; entered counts the calls.
+type blockingHub struct {
+	h       *guardHub
+	release chan struct{}
+	mu      sync.Mutex
+	entered int
+}
+
+func (b *blockingHub) exchange(ctx context.Context, subject string) (Token, error) {
+	b.mu.Lock()
+	b.entered++
+	b.mu.Unlock()
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return Token{}, ctx.Err()
+	}
+	return b.h.exchange(ctx, subject)
+}
+
+func (b *blockingHub) calls() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.entered
+}
+
+// A first load opens several streams at once, each exchanging the same new token: one hub call, one
+// charge (and that one refunded, as the hub exchanged the token).
+func TestConcurrentExchangesOfOneTokenAreOneHubCall(t *testing.T) {
+	g, h, _ := newGuard()
+	b := &blockingHub{h: h, release: make(chan struct{})}
+	g.Hub = b.exchange
+	var mu sync.Mutex
+	var outcomes []string
+	g.Observe = func(o string) { mu.Lock(); outcomes = append(outcomes, o); mu.Unlock() }
+	const streams = 8
+	errs := make(chan error, streams)
+	var wg sync.WaitGroup
+	for range streams {
+		wg.Go(func() {
+			tok, err := g.Exchange(from("198.51.100.7"), "civitai_alice")
+			if err == nil && tok.Access != "x.civitai_alice" {
+				err = fmt.Errorf("token %q", tok.Access)
+			}
+			errs <- err
+		})
+	}
+	// Wait (bounded) until every stream is either at the hub or waiting on another's call.
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		mu.Lock()
+		joined := len(outcomes)
+		mu.Unlock()
+		if b.calls()+joined >= streams {
+			break
+		}
+	}
+	close(b.release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := b.calls(); n != 1 {
+		t.Fatalf("🔴 %d concurrent exchanges of one token made %d hub calls, want 1", streams, n)
+	}
+	if len(outcomes) != streams-1 || outcomes[0] != "joined" {
+		t.Fatalf("observed %v, want %d joined", outcomes, streams-1)
+	}
+	// Nothing stayed charged: the address has its whole burst for made-up tokens.
+	g.Hub = h.exchange
+	if sent := madeUp(g, h, "civitai_made-up", 2*NewTokenBurst, func(int) string { return "198.51.100.7" }); sent != NewTokenBurst {
+		t.Fatalf("%d made-up tokens reached the hub after the concurrent exchange, want the burst %d", sent, NewTokenBurst)
+	}
+}
+
+// A caller waiting on another's call for the same token stops waiting when its own context ends.
+func TestAWaitingExchangeEndsWithItsContext(t *testing.T) {
+	g, h, _ := newGuard()
+	b := &blockingHub{h: h, release: make(chan struct{})}
+	g.Hub = b.exchange
+	leader := make(chan error, 1)
+	go func() {
+		_, err := g.Exchange(from("198.51.100.7"), "civitai_alice")
+		leader <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if b.calls() > 0 {
+			break
+		}
+	}
+	ctx, cancel := context.WithCancel(from("198.51.100.8"))
+	cancel()
+	if _, err := g.Exchange(ctx, "civitai_alice"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled waiter: %v", err)
+	}
+	close(b.release)
+	if err := <-leader; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Distinct made-up tokens sent at once from one address are bounded as when sent one by one: the
+// charge is taken before the hub is asked. (An invariant guard: it held before the refund too.)
+func TestConcurrentMadeUpTokensFromOneAddressAreStillBounded(t *testing.T) {
+	g, h, _ := newGuard()
+	var wg sync.WaitGroup
+	for i := range 3 * NewTokenBurst {
+		wg.Go(func() { _, _ = g.Exchange(from("198.51.100.7"), fmt.Sprintf("civitai_made-up-%03d", i)) })
+	}
+	wg.Wait()
+	if n := h.total(); n != NewTokenBurst {
+		t.Fatalf("🔴 %d concurrent made-up tokens reached the hub %d times, want the burst %d", 3*NewTokenBurst, n, NewTokenBurst)
+	}
+}
+
+// Only a refusal of the subject token is remembered for it. A refusal of this service's own client
+// (its secret, its listing for the resource) or of the request says nothing about the token: answering
+// it from memory would keep refusing every viewer after the client is fixed.
+func TestOnlyARefusalOfTheSubjectIsRemembered(t *testing.T) {
+	for code, remembered := range map[string]bool{
+		"invalid_grant": true, "invalid_scope": true,
+		"invalid_client": false, "unauthorized_client": false, "invalid_target": false, "invalid_request": false,
+	} {
+		calls := 0
+		g := &Guard{Hub: func(context.Context, string) (Token, error) {
+			calls++
+			return Token{}, &RefusedError{Status: 400, Code: code}
+		}}
+		for range 3 {
+			if _, err := g.Exchange(context.Background(), "civitai_alice"); RefusalCode(err) != code {
+				t.Fatalf("%s: answered %v", code, err)
+			}
+		}
+		if want := map[bool]int{true: 1, false: 3}[remembered]; calls != want {
+			t.Errorf("🔴 %s: the hub was asked %d times for 3 exchanges, want %d", code, calls, want)
+		}
+	}
+}

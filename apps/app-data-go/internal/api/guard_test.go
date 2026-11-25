@@ -86,6 +86,52 @@ func TestTheSameMadeUpTokenIsRefusedFromMemoryNotReExchanged(t *testing.T) {
 	}
 }
 
+// One host rotating through the addresses of its IPv6 /64 is one budget; the hub is told each viewer's
+// own address.
+func TestAnIPv6HostRotatingItsAddressesIsThrottledBeforeTheHub(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	frozen := time.Unix(1_700_000_000, 0)
+	s.guard.Now = func() time.Time { return frozen }
+	const flood = 3 * exchange.NewTokenBurst
+	for i := range flood {
+		s.hub.refuse[fmt.Sprintf("civitai_v6-%03d", i)] = true
+	}
+	for i := range flood {
+		s.getFrom(t, notesPath, fmt.Sprintf("civitai_v6-%03d", i), fmt.Sprintf("2001:db8:7:7::%x", i+1))
+	}
+	n, fwd := s.hubAsked("civitai_v6-")
+	if n != exchange.NewTokenBurst {
+		t.Fatalf("🔴 one /64 reached the hub %d times, want the burst %d", n, exchange.NewTokenBurst)
+	}
+	if len(fwd) != n || fwd["2001:db8:7:7::1"] != 1 {
+		t.Fatalf("X-Forwarded-For %v, want each viewer's own address", fwd)
+	}
+}
+
+// Many viewers behind one address, each with a real token the hub exchanges, are not throttled; the
+// address's budget still binds made-up tokens.
+func TestManyViewersBehindOneAddressAreNotThrottled(t *testing.T) {
+	s := newStack(t, true, session.Options{MaxStreams: 200})
+	frozen := time.Unix(1_700_000_000, 0)
+	s.guard.Now = func() time.Time { return frozen }
+	const shared, viewers = "198.51.100.7", 3 * exchange.NewTokenBurst
+	for i := range 2 * exchange.NewTokenBurst {
+		s.hub.refuse[fmt.Sprintf("civitai_made-up-%03d", i)] = true
+	}
+	for i := range viewers {
+		s.getFrom(t, notesPath, fmt.Sprintf("civitai_viewer-%03d", i), shared)
+	}
+	if n, _ := s.hubAsked("civitai_viewer-"); n != viewers || guarded(s, exchange.GuardThrottled) != 0 {
+		t.Fatalf("🔴 %d viewers behind one address: %d reached the hub, %v throttled", viewers, n, guarded(s, exchange.GuardThrottled))
+	}
+	for i := range 2 * exchange.NewTokenBurst {
+		s.getFrom(t, notesPath, fmt.Sprintf("civitai_made-up-%03d", i), shared)
+	}
+	if n, _ := s.hubAsked("civitai_made-up-"); n != exchange.NewTokenBurst {
+		t.Fatalf("made-up tokens from the shared address reached the hub %d times, want the burst %d", n, exchange.NewTokenBurst)
+	}
+}
+
 // The hub's 429 on one viewer's made-up subjects (its per-viewer `token-exchange-miss` limit) is that
 // viewer's answer: another viewer's exchange still reaches the hub.
 func TestAHubLimitOnOneViewersMadeUpTokensHoldsNoOtherViewer(t *testing.T) {
