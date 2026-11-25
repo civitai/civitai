@@ -1419,7 +1419,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const appStorageRequestsTotal = getOrCreateCounter(
     reg,
     'app_storage_requests_total',
-    'App Blocks document-store requests whose caller access resolved, by app, op (the storage route op: info|list|get|getMany|create|put|delete|getMine|putMine|deleteMine, and report on the report API), via (direct = the public /api/v1/blocks/storage route; service = the signed internal route app-data-go forwards to), viewer (signed_in|signed_out) and token_kind (app|hub|dev|review). Counting one via creates the other via of the same series at 0. app="dev" is every dev token',
+    'App Blocks document-store requests whose caller access resolved, by app, op (the storage route op: info|list|get|getMany|create|put|delete|getMine|putMine|deleteMine, and reportMark|unreportMark for the report mark alias; report on the report API), via (direct = the public /api/v1/blocks/storage route; service = the signed internal route app-data-go forwards to), viewer (signed_in|signed_out) and token_kind (app|hub|dev|review). Counting one via creates the other via of the same series at 0. app="dev" is every dev token',
     ['app', 'op', 'via', 'viewer', 'token_kind']
   );
 

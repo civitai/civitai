@@ -1420,8 +1420,8 @@ describe('rate limits: separate buckets', () => {
   });
 });
 
-// The tally routes were removed (rollout step 5), the report-withdrawal path with them: each is no
-// route at all, answered before any budget or trust lookup.
+// The tally routes were removed (rollout step 5): each is no route at all, answered before any budget
+// or trust lookup. The report mark alias's withdrawal is refused 400 at the same point, as before.
 describe('a removed tally path is no route, before any budget or trust lookup', () => {
   it('an untrusted viewer gets 404 not_found, not 403, and spends nothing', async () => {
     const { A } = freshApps();
@@ -1451,7 +1451,6 @@ describe('a removed tally path is no route, before any budget or trust lookup', 
     const before = [...kv.keys()].filter((k) => k.includes(':docs-')).length;
     const evals = lua.calls.length;
     for (const [method, path] of [
-      ['DELETE', '/posts/w/marks/report'],
       ['PUT', '/posts/w/marks/vote'],
       ['POST', '/posts/w/counters/views'],
     ] as const) {
@@ -1462,6 +1461,11 @@ describe('a removed tally path is no route, before any budget or trust lookup', 
         code: 'not_found',
       });
     }
+    const withdraw = await call({ token: newbie, method: 'DELETE', path: '/posts/w/marks/report' });
+    expect({ status: withdraw.status, code: (withdraw.body as { code?: unknown }).code }).toEqual({
+      status: 400,
+      code: 'invalid_request',
+    });
     expect([...kv.keys()].filter((k) => k.includes(':docs-')).length).toBe(before);
     expect(lua.calls.length).toBe(evals);
   });
@@ -4170,7 +4174,6 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     const removed = [
       { method: 'POST', path: '/plays/p1/counters/plays', body: { by: 1 } },
       { method: 'PUT', path: '/board/b1/marks/vote' },
-      { method: 'PUT', path: '/board/b1/marks/report' },
       { method: 'DELETE', path: '/board/b1/marks/vote' },
     ];
     for (const t of removed) {
@@ -4185,6 +4188,23 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
         code: 'not_found',
       });
     }
+    // The report mark alias is the one mark path kept: through the import it files the report in
+    // the SOURCE, as the report API does.
+    const reported = await call({
+      token: c,
+      method: 'PUT',
+      path: '/board/b1/marks/report',
+      query: { from: S.blockId },
+    });
+    expect({ status: reported.status, body: reported.body }).toEqual({
+      status: 200,
+      body: { marked: true },
+    });
+    const reporters = await harness.raw(
+      `SELECT user_id FROM appdata.doc_mark WHERE app_id = $1 AND name = 'report'`,
+      [S.id]
+    );
+    expect(reporters.map((r) => Number(r.user_id))).toEqual([VIEWER_IDS.v1]);
     // With the source's publish consent held, a document write to its `write: "none"`
     // collection is still refused: the policy is read-only, never `own`.
     const none = await call({
@@ -5795,9 +5815,10 @@ describe('(b) an approved manifest declaring marks, counters or write "none" kee
       indexes: {},
       showAuthor: false,
     });
-    expect((goneBody(info).limits as { rate: Record<string, unknown> }).rate).not.toHaveProperty(
-      'marksAndCountersPerMinute'
-    );
+    // Kept at 0, never dropped: every SDK from 0.14 to 0.31 types it as a required number.
+    expect(
+      (goneBody(info).limits as { rate: Record<string, unknown> }).rate.marksAndCountersPerMinute
+    ).toBe(0);
     const put = await goneOk(
       call({ token: t, method: 'PUT', path: '/picks/pick-1', body: { data: { choice: 'b' } } })
     );
@@ -5892,7 +5913,6 @@ describe('(c) every removed route answers exactly as an unknown route does', () 
       ['POST', '/posts/k1/counters/views', { by: 1 }],
       ['PUT', '/posts/k1/marks/vote', undefined],
       ['DELETE', '/posts/k1/marks/vote', undefined],
-      ['PUT', '/posts/k1/marks/report', undefined],
       ['POST', '/_publish/posts', { from: 'prefs', keys: ['k1'] }],
       ['POST', '/_unpublish/posts', { keys: ['k1'] }],
     ] as const;

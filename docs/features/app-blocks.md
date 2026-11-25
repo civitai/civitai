@@ -270,13 +270,20 @@ viewer-keyed documents (above); reports go through the report API
 
 - **Routes:** the removed ones answer exactly as an unknown route: `PATCH /:c/:key` is `405
   method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
-  `/:c/:key/marks/:name`, `/_publish/:to` and `/_unpublish/:to` are `404 not_found`. A list refuses
+  `/:c/:key/marks/:name`, `/_publish/:to` and `/_unpublish/:to` are `404 not_found`, except the
+  `report` mark (below). A list refuses
   `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
   sort field. No `Deprecation` header is sent any more; the preflight no longer allows PATCH.
 - **SDK compatibility:** every presented document still carries `counters: {}`, `marks: {}` and
   `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` up to 0.30 refuses a
   document without them (`PresentedDoc` in `doc-store-api.ts`). Info lists every collection's
-  `counters` and `marks` as `[]` and no longer has `rate.marksAndCountersPerMinute`.
+  `counters` and `marks` as `[]` and keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
+  0.31 type it as a required number).
+- **The `report` mark alias:** `PUT /:c/:key/marks/report`, which SDKs older than 0.30 send for
+  `mark(key, 'report')`, stays. It files the report through the report API's own code
+  (`fileReport`: same gates, budget, row, dedupe and moderator queue) and answers `{marked: true}`;
+  `DELETE` on it answers `400 invalid_request` "a report cannot be withdrawn", as before. Every
+  other mark name is `404`. The report API is always on (its flag is no longer read).
 - **Approved manifests that still declare them** keep parsing (the parser is unchanged, so schema
   majors replay as before) and serving: `marks` and `counters` are inert, and a `write: "none"`
   collection is READ-ONLY (every viewer create, put and delete is `403 write_policy`), never

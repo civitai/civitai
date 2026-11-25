@@ -16,6 +16,7 @@
 //   [c, key]                         GET    get     PUT put     DELETE delete
 //   [c, '@me']                       GET    getMine PUT putMine DELETE deleteMine  (keyedBy viewer)
 //   [c, '@me', parent]               the same, for keyedBy parent+viewer (`viewerKeyedRoute`)
+//   [c, key, 'marks', 'report']      PUT    reportMark DELETE unreportMark  (compatibility alias)
 // `@me` sits at the KEY position and is outside the key grammar (`@`), so it is never a key.
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
@@ -24,11 +25,20 @@
 // server-side publish. Their routes are not routes any more and answer exactly as any unknown
 // one: `PATCH /:c/:key` (the tally operators) a `405` naming the methods the path has,
 // `/:c/:key/counters/:name` and `/:c/:key/marks/:name` a `404 not_found`, `_publish` /
-// `_unpublish` a `404 not_found`. A list naming `markedBy` or `mark` is refused as any unknown
-// parameter, and `sort=counter:` / `sort=mark:` as any undeclared sort field. A document is
+// `_unpublish` a `404 not_found`, with ONE exception below. A list naming `markedBy` or `mark` is
+// refused as any unknown parameter, and `sort=counter:` / `sort=mark:` as any undeclared sort field. A document is
 // still presented with `counters: {}`, `marks: {}` and `viewer` (`presentDocs`), because
 // published SDK releases refuse a document without them. Reports go through the report API
 // (`doc-store-report-api.ts`); votes and per-viewer entries are viewer-keyed documents (`@me`).
+//
+// THE REPORT MARK ALIAS. Apps bundled with an SDK older than 0.30 report with
+// `collection.mark(key, 'report')`, i.e. `PUT /:c/:key/marks/report`, and the `report` mark worked
+// on every shared collection without being declared. So that path, and ONLY that mark name, stays:
+// a `PUT` files a report through `fileReport`, exactly the code the report API runs (same gates,
+// same budget, same `doc_mark` row and dedupe, same moderator queue), and answers `{marked: true}`,
+// the shape those SDKs read; a `DELETE` answers what it always did, `400 invalid_request` "a report
+// cannot be withdrawn", before any budget or trust lookup. Every other mark name is still no route.
+// It is public-route only: the internal route never served it.
 //
 // IMPORTS. Every collection route takes an optional `?from=<source blockId>`. A `from` naming the
 // token's OWN app (its blockId) is an own call, exactly as if `from` were omitted: same access,
@@ -104,7 +114,11 @@ import {
   VIEWER_KEYED_SEGMENT,
   viewerKeyedDocKey,
 } from '~/server/services/apps/doc-store-viewer-keyed';
-import { DOC_STORE_BOUNDS, DocStoreError } from '~/server/services/apps/doc-store.types';
+import {
+  DOC_STORE_BOUNDS,
+  DocStoreError,
+  REPORT_MARK,
+} from '~/server/services/apps/doc-store.types';
 import {
   emitSharedBlockAlert,
   enforcedBlockingHit,
@@ -152,6 +166,8 @@ import {
 
 /** Every literal path segment, and the one position each may occupy. */
 const GET_MANY_SEGMENT = '_get';
+/** The removed per-mark path's segment, kept for the report mark alias only. */
+const MARKS_SEGMENT = 'marks';
 export const STORAGE_RESERVED_SEGMENTS = [
   { segment: GET_MANY_SEGMENT, position: 0 },
   { segment: VIEWER_KEYED_SEGMENT, position: 1 },
@@ -164,7 +180,10 @@ export type StorageRoute =
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
   // The viewer's own document in a viewer-keyed collection; run as get / put / delete at the
   // derived key (`viewerKeyedRoute`). `parent` is the raw path segment, checked there.
-  | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null };
+  | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null }
+  // The report mark alias (`PUT`/`DELETE /:c/:key/marks/report`, see the header): a report filed
+  // as the report API files it, and its refused withdrawal.
+  | { op: 'reportMark' | 'unreportMark'; collection: string; key: string };
 
 /** A route `run` executes. */
 type OperationRoute = StorageRoute;
@@ -176,7 +195,7 @@ type Match = { route: StorageRoute } | { methods: string[] } | null;
  * path exists but not for this method; `null` when the path does not exist. Pure.
  */
 export function matchStorageRoute(method: string, segments: readonly string[]): Match {
-  const [a, b, c] = segments;
+  const [a, b, c, d] = segments;
   const pick = (table: Record<string, StorageRoute>): Match =>
     table[method] ? { route: table[method] } : { methods: Object.keys(table) };
   const pickMine = (collection: string, parent: string | null): Match =>
@@ -203,6 +222,13 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
     case 3:
       if (a.startsWith('_') || b !== VIEWER_KEYED_SEGMENT) return null;
       return pickMine(a, c);
+    case 4:
+      // Only the `report` mark: every other mark name, and every counter, is no route.
+      if (a.startsWith('_') || c !== MARKS_SEGMENT || d !== REPORT_MARK) return null;
+      return pick({
+        PUT: { op: 'reportMark', collection: a, key: b },
+        DELETE: { op: 'unreportMark', collection: a, key: b },
+      });
     default:
       return null;
   }
@@ -213,6 +239,7 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   const m = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
   const op = m && 'route' in m ? m.route.op : 'info';
   if (op === 'info') return 'storage_info';
+  if (op === 'reportMark' || op === 'unreportMark') return 'storage_report';
   if (op === 'list' || op === 'get' || op === 'getMany' || op === 'getMine') return 'storage_read';
   // create, put, delete, putMine, deleteMine.
   return 'storage_write';
@@ -522,6 +549,9 @@ export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   return parsed.data;
 }
 
+// The report mark alias's body: none, or `{}` (a mark never carried a payload).
+const markBody = z.strictObject({});
+
 const LIST_PARAMS = new Set(['sort', 'author', 'keyPrefix', 'limit', 'cursor']);
 const WHERE_PARAM = /^where\[([^\]]+)\]$/;
 
@@ -784,6 +814,30 @@ export async function assertReportGate(
   await charge('report', access, req);
   if (shared) await assertTrusted(uid);
   return uid;
+}
+
+/**
+ * FILE ONE REPORT: the one code path behind the report API (`doc-store-report-api.ts`) and the
+ * report mark alias (`PUT /:c/:key/marks/report`). `access` is the access the report runs with (the
+ * source's, through an import) and `coll` its collection. In this order: a signed-in viewer; a
+ * shared collection, refused `400 invalid_request` before any budget; the report gate
+ * (`assertReportGate`); then the store's `report`, which writes the viewer's one `report` row in
+ * `appdata.doc_mark` (a repeat adds none) on a document that exists and is not hidden, and is what
+ * the moderator queue reads. No permission hook is asked: a hook must never silence a report.
+ */
+export async function fileReport(
+  access: StorageAccess,
+  coll: DocCollection,
+  key: string,
+  req: NextApiRequest,
+  store: DocStore
+): Promise<void> {
+  requireViewer(access);
+  if (coll.config.visibility !== 'shared') {
+    throw new DocStoreError('invalid_request', 'reports exist on shared collections only');
+  }
+  await assertReportGate(access, req, true);
+  await store.report(access.ctx, coll, key);
 }
 
 export async function charge(
@@ -1130,6 +1184,9 @@ async function run(
           // `app-blocks-storage-unchanged-writes-free` is on for the app — every shared PUT,
           // changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
+          // The marks-and-counters bucket is gone with marks and counters (rollout step 5). Kept at
+          // 0, not dropped: every SDK from 0.14 to 0.31 types it as a required number.
+          marksAndCountersPerMinute: 0,
           // The report API's daily budget (`assertReportGate`).
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
           sharedWritesBurst: DOC_STORE_SHARED_WRITE_BUDGET.burst.capacity,
@@ -1151,6 +1208,19 @@ async function run(
   };
 
   switch (route.op) {
+    case 'reportMark': {
+      // A mark carries no payload, `report` included: a body other than none or `{}` is refused.
+      parseBody(markBody, body);
+      await fileReport(access, coll, route.key, req, store);
+      // The shape the `report` mark always answered (SDK `toMarkResult`): never a count.
+      return ok({ marked: true });
+    }
+    case 'unreportMark':
+      // As the removed route answered it: a report cannot be withdrawn (re-filing after a
+      // moderator's dismissal would re-open it), refused before any budget or trust lookup.
+      throw new DocStoreError('invalid_request', 'a report cannot be withdrawn', {
+        mark: REPORT_MARK,
+      });
     case 'list': {
       const query = parseListQuery(req, decl);
       const result = await store.list(ctx, coll, query);

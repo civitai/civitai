@@ -466,11 +466,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
   // `storage-migration-run.service.ts`.
   APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
-  // The REPORT MODERATION API (`POST /api/v1/blocks/moderation/reports`, the replacement for the
-  // removed `report` mark; `doc-store-report-api.ts`). EVALUATED PER APP like the moderation pair
-  // above (entityId = the REQUESTING app's block id, NO context). DEFAULT-OFF — absent or Flipt
-  // unreachable, the path answers as an unknown route.
-  APP_BLOCKS_STORAGE_REPORT_API = 'app-blocks-storage-report-api',
   // A shared document PUT that would change no stored row is free of the shared-write budget:
   // when the body's content hash and index rows equal the stored document's (the caller's own,
   // visible, at the version any `ifVersion` names), the route answers with the stored document

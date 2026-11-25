@@ -29,9 +29,10 @@ import { createPgliteHarness, type Harness } from './doc-store.harness';
  * chains are built with the pages' own `withBlockScope` options (the pages' options are pinned by
  * `scoped-endpoints-cors-wiring.test.ts`). Replaced at the process boundary only: the Postgres rows
  * the resolver reads, Redis (an in-memory map), Flipt (the App Blocks runtime flags on, shared-data
- * moderation off, the report flag per case) and the auth hub's by-id user read. The old path,
- * the `report` mark on the storage route, was removed (docs/app-storage-generic-core.md, rollout
- * step 5): the API is the only way to file a report, which the last describe pins.
+ * moderation off, the retired report flag OFF) and the auth hub's by-id user read. The old path,
+ * the `report` mark on the storage route, stays as a compatibility alias for apps bundled with an
+ * SDK older than 0.30 (docs/app-storage-generic-core.md, rollout step 5): it files through the
+ * same code as the API, which the last describe pins; every other mark name is still no route.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 120_000 });
@@ -39,11 +40,12 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 120_000 });
 const h = vi.hoisted(() => ({
   store: undefined as unknown as DocStore,
   users: new Map<number, unknown>(),
-  /** `app-blocks-storage-report-api`, for every app; and every entity it was evaluated for. */
-  reportFlag: true,
-  reportFlagEntities: [] as (string | undefined)[],
+  /** How often the retired `app-blocks-storage-report-api` flag was read: it must never be. */
+  reportFlagReads: 0,
 }));
 
+// The flag that once gated the API (and failed closed with Flipt unreachable). Answered OFF here, so
+// a route that still read it would answer 404.
 const REPORT_FLAG = 'app-blocks-storage-report-api';
 /** The App Blocks runtime, viewer and author flags the middleware and the resolver read. */
 const ON_FLAGS = new Set(['app-blocks-runtime-enabled', 'app-blocks-enabled', 'app-blocks-author']);
@@ -53,8 +55,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     ...real,
     isFlipt: async (flag: string, entityId?: string, context?: unknown) => {
       if (flag === REPORT_FLAG) {
-        h.reportFlagEntities.push(entityId);
-        return h.reportFlag;
+        h.reportFlagReads += 1;
+        return false;
       }
       if (ON_FLAGS.has(flag)) return true;
       if (flag === 'app-blocks-storage-hook-runner-offline') return false;
@@ -378,8 +380,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   apps = [];
-  h.reportFlag = true;
-  h.reportFlagEntities = [];
+  h.reportFlagReads = 0;
   h.users.clear();
   for (const name of Object.keys(UID) as Viewer[]) h.users.set(UID[name], user(name));
   installRedis();
@@ -398,8 +399,6 @@ describe('POST /moderation/reports', () => {
     expect({ status: r.status, body: r.body }).toEqual({ status: 200, body: { reported: true } });
     expect(await openQueue(app)).toEqual(['posts/q1:1']);
     expect(await reportRows(app, 'q1')).toEqual({ reporters: [UID.v2] });
-    // The flag was read for the REQUESTING app.
-    expect(h.reportFlagEntities).toEqual([app.id]);
   });
 
   it('answers exactly {reported: true}, never a count; the same viewer twice is one row', async () => {
@@ -479,20 +478,19 @@ describe('POST /moderation/reports', () => {
     }
   });
 
-  it('flag off: 404 not_found for every method, nothing written, no budget spent', async () => {
+  it('is always on: the retired flag answers off and is never read, and the report lands', async () => {
     const app = freshApp();
     await putPost(app, 'q7');
-    h.reportFlag = false;
-    for (const method of ['POST', 'DELETE']) {
-      const r = await report(
-        await mint(app, UID.v2),
-        { collection: 'posts', key: 'q7' },
-        { method }
-      );
-      expect({ status: r.status, code: r.body.code }).toEqual({ status: 404, code: 'not_found' });
-    }
-    expect(await reportRows(app, 'q7')).toEqual({ reporters: [] });
-    expect(kv.get(reportBucketKey(app, 'v2'))).toBeUndefined();
+    const r = await reportAs(app, 'v2', 'q7');
+    expect({ status: r.status, body: r.body }).toEqual({ status: 200, body: { reported: true } });
+    expect(await reportRows(app, 'q7')).toEqual({ reporters: [UID.v2] });
+    // A wrong method is a 405 naming POST, not a 404.
+    const del = await report(await mint(app, UID.v2), undefined, { method: 'DELETE' });
+    expect({ status: del.status, allow: del.headers.allow }).toEqual({
+      status: 405,
+      allow: 'POST',
+    });
+    expect(h.reportFlagReads).toBe(0);
   });
 });
 
@@ -783,32 +781,172 @@ describe('a permission hook never sees a report', () => {
   });
 });
 
-// docs/app-storage-generic-core.md, rollout step 5: the `report` mark route is gone, so the API is
-// the only way a report is filed. A collection that still declares marks changes nothing.
-describe('the removed report mark route', () => {
-  it('PUT …/marks/report is 404 and PATCH {$mark: report} 405, writing no row; the API writes exactly one', async () => {
-    const app = freshApp();
-    await putPost(app, 'rm1');
-    const token = await mint(app, UID.v2);
-    const viaMark = await storage({ token, method: 'PUT', path: '/posts/rm1/marks/report' });
-    const viaPatch = await storage({
-      token,
-      method: 'PATCH',
-      path: '/posts/rm1',
-      body: { $mark: 'report' },
+// docs/app-storage-generic-core.md, rollout step 5: the `report` mark is the ONE mark route kept, as
+// a compatibility alias for apps bundled with an SDK older than 0.30 (`collection.mark(key,
+// 'report')` sends `PUT …/marks/report` with no body). It files through the API's own code
+// (`fileReport`); every other mark name stays no route.
+describe('the report mark alias (PUT …/marks/report)', () => {
+  /** A literal port of the old SDKs' `toMarkResult` (`@civitai/sdk` 0.14 to 0.29). */
+  function toMarkResult(reply: unknown, marked: boolean) {
+    const r = (reply ?? {}) as { marked?: unknown; count?: unknown };
+    if (r.marked !== marked || (r.count !== undefined && typeof r.count !== 'number')) {
+      throw new Error('malformed reply');
+    }
+    return r.count === undefined ? { marked } : { marked, count: r.count };
+  }
+
+  const markReport = async (
+    app: AppRow,
+    who: Viewer,
+    key: string,
+    coll = 'posts',
+    body?: unknown
+  ) =>
+    storage({
+      token: await mint(app, UID[who]),
+      method: 'PUT',
+      path: `/${coll}/${key}/marks/report`,
+      body,
     });
-    expect([
-      [viaMark.status, viaMark.body.code],
-      [viaPatch.status, viaPatch.body.code],
-    ]).toEqual([
-      [404, 'not_found'],
-      [405, 'method_not_allowed'],
+
+  it('the SDK port refuses a reply that is not a mark answer (instrument control)', () => {
+    expect(() => toMarkResult({ reported: true }, true)).toThrow('malformed reply');
+    expect(() => toMarkResult({ marked: true, count: '1' }, true)).toThrow('malformed reply');
+    expect(toMarkResult({ marked: true }, true)).toEqual({ marked: true });
+  });
+
+  it('files the same report row as the API, in the same queue, on the same budget, deduped across both paths', async () => {
+    const app = freshApp();
+    await putPost(app, 'al1');
+    const first = await markReport(app, 'v2', 'al1');
+    expect({ status: first.status, body: first.body }).toEqual({
+      status: 200,
+      body: { marked: true },
+    });
+    expect(toMarkResult(first.body, true)).toEqual({ marked: true });
+    expect(await reportRows(app, 'al1')).toEqual({ reporters: [UID.v2] });
+    expect(await openQueue(app)).toEqual(['posts/al1:1']);
+    expect(kv.get(reportBucketKey(app, 'v2'))?.value).toBe('1');
+    // The same viewer through the API: no second row, one more token of the SAME budget.
+    expect((await reportAs(app, 'v2', 'al1')).body).toEqual({ reported: true });
+    expect(await reportRows(app, 'al1')).toEqual({ reporters: [UID.v2] });
+    expect(kv.get(reportBucketKey(app, 'v2'))?.value).toBe('2');
+    // And the alias again, after the API: still one row, still answered as a mark.
+    expect((await markReport(app, 'v2', 'al1')).body).toEqual({ marked: true });
+    expect(await reportRows(app, 'al1')).toEqual({ reporters: [UID.v2] });
+    // Another viewer through the alias is a second report.
+    expect((await markReport(app, 'v3', 'al1')).status).toBe(200);
+    expect(await reportRows(app, 'al1')).toEqual({ reporters: [UID.v2, UID.v3] });
+    expect(await openQueue(app)).toEqual(['posts/al1:2']);
+    // Only report rows: the alias never wrote a mark of another name.
+    expect(await markRowCount(app)).toBe(2);
+  });
+
+  it('works on a shared collection that declares no marks at all; a `{}` body is accepted', async () => {
+    const app = freshApp({
+      scopes: SCOPES,
+      storage: { collections: { board: { visibility: 'shared', write: 'own' } } },
+    });
+    const made = await storage({
+      token: await mint(app, UID.v1),
+      method: 'PUT',
+      path: '/board/nb1',
+      body: { data: { title: 'plain' } },
+    });
+    expect(made.status).toBe(200);
+    const r = await markReport(app, 'v4', 'nb1', 'board', {});
+    expect({ status: r.status, body: r.body }).toEqual({ status: 200, body: { marked: true } });
+    expect(await reportRows(app, 'nb1', 'board')).toEqual({ reporters: [UID.v4] });
+  });
+
+  it('runs the API gates: anonymous 401, a new account 403 after its token, private 400 before any budget, a missing document 404, a payload 400', async () => {
+    const app = freshApp();
+    await putPost(app, 'al2');
+    const anon = await storage({
+      token: await mint(app, null),
+      method: 'PUT',
+      path: '/posts/al2/marks/report',
+    });
+    expect({ status: anon.status, code: anon.body.code }).toEqual({
+      status: 401,
+      code: 'sign_in_required',
+    });
+    const newbie = await markReport(app, 'newbie', 'al2');
+    expect({ status: newbie.status, code: newbie.body.code }).toEqual({
+      status: 403,
+      code: 'not_eligible',
+    });
+    expect(kv.get(reportBucketKey(app, 'newbie'))?.value).toBe('1');
+    const priv = await markReport(app, 'v3', 'mine', 'prefs');
+    expect({ status: priv.status, code: priv.body.code }).toEqual({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(kv.get(reportBucketKey(app, 'v3'))).toBeUndefined();
+    expect((await markReport(app, 'v3', 'nope')).body.code).toBe('not_found');
+    const payload = await markReport(app, 'v4', 'al2', 'posts', { reason: 'spam' });
+    expect({ status: payload.status, code: payload.body.code }).toEqual({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(await reportRows(app, 'al2')).toEqual({ reporters: [] });
+  });
+
+  it('DELETE …/marks/report answers as the old route did: 400 "a report cannot be withdrawn", before any budget, removing nothing', async () => {
+    const app = freshApp();
+    await putPost(app, 'al3');
+    expect((await markReport(app, 'v2', 'al3')).status).toBe(200);
+    // An untrusted viewer: the refusal comes before the trust gate and the budget.
+    for (const who of ['v2', 'newbie'] as Viewer[]) {
+      const r = await storage({
+        token: await mint(app, UID[who]),
+        method: 'DELETE',
+        path: '/posts/al3/marks/report',
+      });
+      expect({ who, status: r.status, body: r.body }).toEqual({
+        who,
+        status: 400,
+        body: {
+          code: 'invalid_request',
+          message: 'a report cannot be withdrawn',
+          error: 'a report cannot be withdrawn',
+          details: { mark: 'report' },
+        },
+      });
+    }
+    expect(await reportRows(app, 'al3')).toEqual({ reporters: [UID.v2] });
+    expect(kv.get(reportBucketKey(app, 'v2'))?.value).toBe('1');
+    expect(kv.get(reportBucketKey(app, 'newbie'))).toBeUndefined();
+  });
+
+  it('every other mark stays removed: a declared mark is 404, PATCH {$mark: report} 405, POST on the alias 405, nothing written', async () => {
+    const app = freshApp();
+    await putPost(app, 'al4');
+    const token = await mint(app, UID.v2);
+    const calls = [
+      { method: 'PUT', path: '/posts/al4/marks/vote' },
+      { method: 'DELETE', path: '/posts/al4/marks/vote' },
+      { method: 'PUT', path: '/posts/al4/marks/Report' },
+      { method: 'PUT', path: '/posts/al4/marks/reports' },
+      { method: 'POST', path: '/posts/al4/counters/report' },
+      { method: 'PATCH', path: '/posts/al4', body: { $mark: 'report' } },
+      { method: 'POST', path: '/posts/al4/marks/report' },
+    ];
+    const answers = [];
+    for (const c of calls) {
+      const r = await storage({ token, ...c });
+      answers.push([`${c.method} ${c.path}`, r.status, r.body.code, r.headers.allow]);
+    }
+    expect(answers).toEqual([
+      ['PUT /posts/al4/marks/vote', 404, 'not_found', undefined],
+      ['DELETE /posts/al4/marks/vote', 404, 'not_found', undefined],
+      ['PUT /posts/al4/marks/Report', 404, 'not_found', undefined],
+      ['PUT /posts/al4/marks/reports', 404, 'not_found', undefined],
+      ['POST /posts/al4/counters/report', 404, 'not_found', undefined],
+      ['PATCH /posts/al4', 405, 'method_not_allowed', 'GET, PUT, DELETE'],
+      ['POST /posts/al4/marks/report', 405, 'method_not_allowed', 'PUT, DELETE'],
     ]);
     expect(await markRowCount(app)).toBe(0);
     expect(kv.get(reportBucketKey(app, 'v2'))).toBeUndefined();
-    // The API, same viewer and document: exactly one row.
-    expect((await reportAs(app, 'v2', 'rm1')).body).toEqual({ reported: true });
-    expect(await markRowCount(app)).toBe(1);
-    expect(await reportRows(app, 'rm1')).toEqual({ reporters: [UID.v2] });
   });
 });
