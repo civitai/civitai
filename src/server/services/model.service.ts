@@ -9,7 +9,7 @@ import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-ga
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import type { ArticleReader } from '~/server/services/article-read';
-import { canReadArticle } from '~/server/services/article-read';
+import { articleReadSelect, canReadArticle } from '~/server/services/article-read';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
@@ -6282,11 +6282,7 @@ export const getAssociatedResourcesSimple = async (
           title: true,
           nsfwLevel: true,
           user: { select: simpleUserSelect },
-          userId: true,
-          publishedAt: true,
-          status: true,
-          ingestion: true,
-          availability: true,
+          ...articleReadSelect,
         },
       },
     },
@@ -6314,7 +6310,7 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true, toModelId: true },
+        select: { id: true, toModelId: true, toArticle: { select: articleReadSelect } },
         orderBy: { index: 'asc' },
       },
     },
@@ -6324,7 +6320,11 @@ export const setAssociatedResources = async (
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
-  const existingAssociations = fromModel.associations.map((x) => x.id);
+  // The editor never lists an article the caller cannot read, so its absence from the payload
+  // is not a removal.
+  const existingAssociations = fromModel.associations
+    .filter((x) => !x.toArticle || canReadArticle(x.toArticle, user))
+    .map((x) => x.id);
   const existingModelTargets = new Set(
     fromModel.associations.map((x) => x.toModelId).filter(isDefined)
   );

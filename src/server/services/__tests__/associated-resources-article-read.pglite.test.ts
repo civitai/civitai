@@ -8,10 +8,16 @@ import {
   canViewArticle,
   type ArticleReader,
 } from '~/server/services/article-read';
-import { getAssociatedResourcesSimple } from '~/server/services/model.service';
+import {
+  getAssociatedResourcesSimple,
+  setAssociatedResources,
+} from '~/server/services/model.service';
+import type { SessionUser } from '~/types/session';
 
 const OWNER = 7;
 const MODEL = 100;
+const MODEL_OWNER = 20;
+const OTHER_MODEL = 200;
 
 // One article per state the read rule distinguishes.
 const ARTICLES = {
@@ -72,6 +78,13 @@ const ARTICLES = {
     published: true,
     availability: 'Unsearchable',
   },
+  earlyAccess: {
+    id: 10,
+    status: 'Published',
+    ingestion: 'Scanned',
+    published: true,
+    availability: 'EarlyAccess',
+  },
 } as const;
 
 const VIEWERS: Record<string, ArticleReader> = {
@@ -101,6 +114,8 @@ beforeAll(async () => {
       type "AssociationType" NOT NULL, index int
     );
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    INSERT INTO "Model" VALUES (${MODEL}, ${OWNER}), (${OTHER_MODEL}, ${MODEL_OWNER});
   `);
   for (const [key, a] of Object.entries(ARTICLES)) {
     await h.pg.query(
@@ -120,8 +135,16 @@ beforeAll(async () => {
       [a.id, MODEL]
     );
   }
-  dbMock.dbWrite.modelAssociations.findMany.mockImplementation(((args: unknown) =>
-    h.prisma.modelAssociations.findMany(args as Prisma.ModelAssociationsFindManyArgs)) as never);
+  // dbWrite is the PGlite client for every call these services make.
+  const { model, modelAssociations, $transaction } = dbMock.dbWrite;
+  model.findUnique.mockImplementation(((args: never) => h.prisma.model.findUnique(args)) as never);
+  modelAssociations.findMany.mockImplementation(((args: never) =>
+    h.prisma.modelAssociations.findMany(args)) as never);
+  modelAssociations.deleteMany.mockImplementation(((args: never) =>
+    h.prisma.modelAssociations.deleteMany(args)) as never);
+  modelAssociations.upsert.mockImplementation(((args: never) =>
+    h.prisma.modelAssociations.upsert(args)) as never);
+  $transaction.mockImplementation(((ops: never) => h.prisma.$transaction(ops)) as never);
 }, 60_000);
 
 afterAll(() => h?.stop());
@@ -133,8 +156,8 @@ describe('getAssociatedResourcesSimple article side', () => {
     );
 
   it('lists only live, viewable articles to anyone but the author and moderators', async () => {
-    expect(await listed(VIEWERS.anon)).toEqual(['live', 'unsearchable']);
-    expect(await listed(VIEWERS.stranger)).toEqual(['live', 'unsearchable']);
+    expect(await listed(VIEWERS.anon)).toEqual(['live', 'unsearchable', 'earlyAccess']);
+    expect(await listed(VIEWERS.stranger)).toEqual(['live', 'unsearchable', 'earlyAccess']);
   });
 
   it('lists every one of their own articles to the author, and all to a moderator', async () => {
@@ -146,6 +169,29 @@ describe('getAssociatedResourcesSimple article side', () => {
   it('returns the same article fields as before', async () => {
     const [first] = await getAssociatedResourcesSimple({ fromId: MODEL, type: 'Suggested' });
     expect(Object.keys(first.item).sort()).toEqual(['id', 'nsfwLevel', 'title', 'user']);
+  });
+});
+
+describe('setAssociatedResources and articles the editor cannot list', () => {
+  const ids = async () =>
+    (
+      await h.prisma.modelAssociations.findMany({
+        where: { fromModelId: OTHER_MODEL },
+        select: { toArticleId: true },
+        orderBy: { id: 'asc' },
+      })
+    ).map((x) => x.toArticleId);
+
+  it('keeps a link to an article the owner cannot read, and removes one they dropped', async () => {
+    await h.pg.query(
+      `INSERT INTO "ModelAssociations" (id, "fromModelId", "toArticleId", type, index)
+       VALUES (201, $1, ${ARTICLES.live.id}, 'Suggested', 0), (202, $1, ${ARTICLES.draft.id}, 'Suggested', 1)`,
+      [OTHER_MODEL]
+    );
+    await setAssociatedResources({ fromId: OTHER_MODEL, type: 'Suggested', associations: [] }, {
+      id: MODEL_OWNER,
+    } as SessionUser);
+    expect(await ids()).toEqual([ARTICLES.draft.id]);
   });
 });
 

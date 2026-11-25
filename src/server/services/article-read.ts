@@ -34,6 +34,15 @@ export function articleReadableWhere(viewer: ArticleReader): Prisma.ArticleWhere
   };
 }
 
+/** The columns `canReadArticle` reads. */
+export const articleReadSelect = {
+  userId: true,
+  publishedAt: true,
+  status: true,
+  ingestion: true,
+  availability: true,
+} satisfies Prisma.ArticleSelect;
+
 /** Whether a viewer may read an article at all: live and available, or theirs, or a moderator. */
 export function canReadArticle(article: ReadableArticle, viewer: ArticleReader) {
   if (viewer?.isModerator) return true;
