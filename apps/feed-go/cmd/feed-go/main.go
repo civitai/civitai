@@ -539,6 +539,9 @@ func run(log *slog.Logger) error {
 		search = mcl
 	}
 	log.Info("GET /api/v1/models text search", "configured", search != nil, "serve", mc.ServeQuery)
+	if err := mc.ValidateMisses(cfg.ComputeMisses); err != nil {
+		return err
+	}
 	v1Models := &server.V1ModelsDeps{
 		Deps: &v1models.Deps{
 			DB:      pool,
@@ -555,6 +558,7 @@ func run(log *slog.Logger) error {
 				CoverageNext:         cfg.CoverageNext,
 				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
 				ComputeMisses:        cfg.ComputeMisses,
+				ServeDataMiss:        mc.ServeDataMiss,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
 				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
