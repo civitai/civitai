@@ -23,7 +23,7 @@ const runs = (served: Served[]) => {
 
 describe('burstDue', () => {
   it('serves ratings until the rolled gap is reached, then starts a burst', () => {
-    // The lowest roll: a gap of 5 and a burst of 1.
+    // The lowest roll: a gap of 5 and a burst of 5.
     const low = always(0);
     expect(burstDue([], low)).toBe(false);
     expect(burstDue([r(1), r(2), r(3), r(4)], low)).toBe(false);
@@ -31,13 +31,14 @@ describe('burstDue', () => {
   });
 
   it('keeps the burst going for its rolled length, then goes back to ratings', () => {
-    // The highest roll: a gap of 10 and a burst of 5.
+    // The highest roll: a gap of 10 and a burst of 10.
     const high = always(0.999);
     const gap = Array.from({ length: 10 }, (_, i) => r(i));
+    const burst = (n: number) => Array.from({ length: n }, (_, i) => y(i));
     expect(burstDue(gap.slice(0, 9), high)).toBe(false);
     expect(burstDue(gap, high)).toBe(true);
-    expect(burstDue([...gap, y(1), y(2), y(3), y(4)], high)).toBe(true);
-    expect(burstDue([...gap, y(1), y(2), y(3), y(4), y(5)], high)).toBe(false);
+    expect(burstDue([...gap, ...burst(9)], high)).toBe(true);
+    expect(burstDue([...gap, ...burst(10)], high)).toBe(false);
   });
 
   it('rolls each gap and burst from the item that ended the run before it, so the same history gives the same answer', () => {
@@ -52,22 +53,22 @@ describe('burstDue', () => {
     expect(seen).toEqual(['gap:y7', 'burst:r3', 'gap:start']);
   });
 
-  it('only offers the gaps 5, 8 and 10 and bursts of 1 to 5', () => {
+  it('only offers the gaps 5, 8 and 10 and bursts of 5 to 10', () => {
     expect(BURSTS.gaps).toEqual([5, 8, 10]);
-    expect(BURSTS.burst).toEqual({ min: 1, max: 5 });
+    expect(BURSTS.burst).toEqual({ min: 5, max: 10 });
   });
 
-  it('over a long session, mixes about 28% questions in bursts of 1-5 between 5, 8 or 10 ratings', () => {
+  it('over a long session, mixes about half questions in bursts of 5-10 between 5, 8 or 10 ratings', () => {
     const served = play(5000, burstRoller('secret', 42));
     const share = served.filter((s) => s.yesno).length / served.length;
-    expect(share).toBeGreaterThan(0.24);
-    expect(share).toBeLessThan(0.32);
+    expect(share).toBeGreaterThan(0.45);
+    expect(share).toBeLessThan(0.53);
 
     // The last run is cut off where the session ends.
     const all = runs(served).slice(0, -1);
     const bursts = all.filter((run) => run.yesno).map((run) => run.length);
     const gaps = all.filter((run) => !run.yesno).map((run) => run.length);
-    expect(new Set(bursts)).toEqual(new Set([1, 2, 3, 4, 5]));
+    expect(new Set(bursts)).toEqual(new Set([5, 6, 7, 8, 9, 10]));
     expect(new Set(gaps)).toEqual(new Set([5, 8, 10]));
   });
 
