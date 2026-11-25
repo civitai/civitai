@@ -3,9 +3,10 @@
 #
 # Ratchet: each floor is a measured value rounded DOWN to a whole percent. To raise one, read the
 # measured value the "Coverage floors" step prints and set the floor to it. Never lower a floor to
-# get a red run green. Packages without unit tests (cmd/app-data-go, metrics) are not listed; they
-# count in the total.
+# get a red run green. Packages without unit tests (metrics) are not listed; they count in the total.
+# cmd/app-data-go's tests cover its service-token wiring only (serviceSource), not run.
 total 91
+cmd/app-data-go 11
 internal/api 99
 internal/config 99
 internal/exchange 100

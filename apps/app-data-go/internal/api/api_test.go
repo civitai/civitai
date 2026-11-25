@@ -48,12 +48,16 @@ type fakeRegistry struct {
 	schemas    sync.Map // token → schema last asked
 	// heads is the head a token's Live names in its meta, as the adapter's private feed does.
 	heads map[string]int64
+	// regions are the region headers each of a token's subscriptions carried, in order, as
+	// "cf-ipcountry,cf-region-code,x-isuk".
+	regions map[string][]string
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
 	f := &fakeRegistry{records: map[string][]registry.Entity{}, stall: map[string]bool{},
-		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}, heads: map[string]int64{}}
+		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}, heads: map[string]int64{},
+		regions: map[string][]string{}}
 	t.Cleanup(func() {
 		if n := f.raw.Load(); n != 0 {
 			t.Errorf("🔴 the adapter was shown %d tokens the hub did not issue", n)
@@ -88,6 +92,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			cursor = "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"
 		}
 		f.revokes[tok] = append(f.revokes[tok], ch)
+		f.regions[tok] = append(f.regions[tok], r.Header.Get("cf-ipcountry")+","+r.Header.Get("cf-region-code")+","+r.Header.Get("x-isuk"))
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl := w.(http.Flusher)

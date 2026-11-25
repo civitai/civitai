@@ -39,7 +39,11 @@
 //
 // THE SERVICE TOKEN. A level stream refused `invalid_token` is this service's own token refused, never
 // the viewer's: the read is ErrServiceToken (a 503, not a 401), and the level manager re-mints the
-// token (session.Options.InvalidToken).
+// token (session.Options.InvalidToken). The token is minted as this service's own service client;
+// with none configured every read is ErrNoServiceClient before any stream opens. A hub that refuses
+// to mint it (a client that is not a service client, a revoked secret) is ErrServiceTokenRefused, and
+// one that cannot be reached or fails is ErrServiceTokenUnavailable, never the stream's generic
+// failure: each answers its own 503 reason (ClassifyServiceToken).
 //
 // READ-YOUR-WRITES. Each write the store acknowledged for a token (Ack) is an overlay over that
 // token's union, by key, at the write's seq: a record, or a delete marker. An overlay is applied only
@@ -99,6 +103,12 @@ var (
 	ErrSignInRequired = errors.New("shared: sign in required")
 	// ErrServiceToken: the registry refused this service's own token on a level stream.
 	ErrServiceToken = errors.New("shared: the registry refused the service token")
+	// ErrNoServiceClient: no service client is configured, so no level stream can be opened.
+	ErrNoServiceClient = errors.New("shared: no service client is configured for the level streams")
+	// ErrServiceTokenRefused: the hub refused to mint this service's own token.
+	ErrServiceTokenRefused = errors.New("shared: the hub refused to mint the service token")
+	// ErrServiceTokenUnavailable: the hub could not be asked for this service's own token, or failed.
+	ErrServiceTokenUnavailable = errors.New("shared: the service token could not be minted")
 	// ErrSignedOutBusy: the slug already has ProbesPerApp signed-out probes running.
 	ErrSignedOutBusy = errors.New("shared: too many signed-out reads of unknown collections at once")
 )
@@ -218,6 +228,8 @@ type Reader struct {
 	ProbesPerApp int
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
+	// NoServiceClient refuses every read ErrNoServiceClient (THE SERVICE TOKEN).
+	NoServiceClient bool
 
 	mu     sync.Mutex
 	off    map[string]time.Time // schemas known in levels-off mode, until
@@ -234,6 +246,10 @@ func (r *Reader) now() time.Time {
 
 // Read answers the board of one shared collection major for v. minSeq > 0 is the read's floor.
 func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, major int, minSeq int64) (Board, error) {
+	if r.NoServiceClient {
+		// Before the per-viewer stream: nothing the read could open would answer it.
+		return Board{}, ErrNoServiceClient
+	}
 	schema, err := urn.CollectionSchema(slug, collection, major)
 	if err != nil {
 		return Board{}, err
