@@ -7,7 +7,7 @@ export const isProfileHideableTab = (key: string): key is ProfileHideableTab =>
   hideableTabs.has(key);
 
 /**
- * Disables the nav tabs the profile owner hid, for visitors only. Hiding is a nav choice, not
+ * Disables the nav tabs the profile owner hid, for everyone but moderators. Hiding is a nav choice, not
  * privacy: the tab pages still resolve by URL. Keys outside `profileHideableTabs` (Overview, Shop,
  * About) are never touched, whatever the stored list holds.
  */
@@ -19,7 +19,7 @@ export function applyHiddenProfileTabs<T extends { disabled?: boolean }>(
     enabled,
   }: {
     hiddenTabs: readonly string[] | null | undefined;
-    /** The owner and moderators. */
+    /** Moderators. */
     viewerSeesAll: boolean;
     /** `profileRedesign` for the viewer. */
     enabled: boolean;

@@ -144,6 +144,32 @@ export const showcaseItemSchema = z.object({
 });
 
 export const profileAboutMaxLength = 5000;
+
+// No colour means the theme's own panel colour, at the opacity given.
+const profileThemeColorSchema = z
+  .object({
+    color: z
+      .string()
+      .regex(/^#[0-9a-f]{6}$/i)
+      .optional(),
+    opacity: z.number().int().min(60).max(100).optional(),
+  })
+  .refine((theme) => theme.color != null || theme.opacity != null, 'Pick a colour or an opacity');
+/**
+ * A member's card colours, per theme (light mode falls back to dark when it has none), and the
+ * sidebar's own colour, which the cards' colour never touches.
+ */
+export const profilePageThemeSchema = z.object({
+  dark: profileThemeColorSchema.optional(),
+  light: profileThemeColorSchema.optional(),
+  sidebar: z
+    .object({
+      color: z.string().regex(/^#[0-9a-f]{6}$/i),
+    })
+    .optional(),
+});
+export type ProfilePageTheme = z.infer<typeof profilePageThemeSchema>;
+export type ProfileThemeMode = 'dark' | 'light';
 const profileAboutAllowedTags = [
   'p',
   'br',
@@ -218,11 +244,7 @@ export const userProfileUpdateSchema = z.object({
   // Profile redesign. Background, card colour and opacity are members only; `null` clears.
   backgroundImage: imageReferenceInputSchema.nullish(),
   sfwBackgroundImage: imageReferenceInputSchema.nullish(),
-  cardColor: z
-    .string()
-    .regex(/^#[0-9a-f]{6}$/i)
-    .nullish(),
-  cardOpacity: z.number().int().min(60).max(100).nullish(),
+  pageTheme: profilePageThemeSchema.nullish(),
   // Text only: media here would never be scanned or rated, and shows on every domain.
   about: getSanitizedStringSchema({ allowedTags: profileAboutAllowedTags })
     .refine((html) => html.length <= profileAboutMaxLength, 'Your About text is too long')
@@ -258,4 +280,12 @@ export type GetProfileCustomizationSchema = z.infer<typeof getProfileCustomizati
 export const getProfileCustomizationSchema = getProfilePartSchema.extend({
   // The viewer's browsing level: a background outside it is not sent.
   browsingLevel: z.number().int().min(0).optional(),
+});
+
+export const profilePinnedItemsLimit = 3;
+export type SetPinnedItemSchema = z.infer<typeof setPinnedItemSchema>;
+export const setPinnedItemSchema = z.object({
+  entityType: z.enum(['Image', 'Model']),
+  entityId: z.number().int().positive(),
+  pinned: z.boolean(),
 });

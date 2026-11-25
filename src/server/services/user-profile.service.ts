@@ -13,6 +13,7 @@ import type {
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
+  SetPinnedItemSchema,
   SetShowcaseSectionsSchema,
   ShowcaseItemSchema,
   ShowcaseSectionSchema,
@@ -21,6 +22,7 @@ import type {
 import {
   customShowcaseKey,
   customShowcaseKeyPrefix,
+  profilePinnedItemsLimit,
   showcaseSectionLimits,
   showcaseSectionTypes,
 } from '~/server/schema/user-profile.schema';
@@ -71,6 +73,7 @@ import { ownsAllContent } from '~/server/services/owned-content';
 import {
   assertPageCustomizationAllowed,
   imagesHiddenFromModerator,
+  parsePinnedItems,
 } from '~/server/services/profile-customization.service';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
@@ -509,6 +512,7 @@ export const updateUserProfile = async ({
   sfwCoverImage,
   backgroundImage,
   sfwBackgroundImage,
+  pageTheme,
   // leaderboardShowcase,
   // profilePicture,
   creatorCardStatsPreferences,
@@ -558,8 +562,7 @@ export const updateUserProfile = async ({
     profileRedesign,
     backgroundImage,
     sfwBackgroundImage,
-    cardColor: profile.cardColor,
-    cardOpacity: profile.cardOpacity,
+    pageTheme,
     about: profile.about,
   });
 
@@ -752,6 +755,8 @@ export const updateUserProfile = async ({
         where: { userId },
         data: {
           ...profile,
+          // A Json column is cleared with DbNull; a plain null is not a JSON value to Prisma.
+          pageTheme: pageTheme === null ? Prisma.DbNull : pageTheme,
           messageAddedAt:
             profile.message === undefined || profile.message === current?.profile?.defaultMessage
               ? undefined
@@ -844,4 +849,70 @@ async function withoutRestrictedPictureFor<T extends { id: number; nsfwLevel: nu
 ) {
   if (sameUser || !(await isPictureModelRestricted(picture))) return picture;
   return null;
+}
+
+/**
+ * Pins one of the owner's own images or models to their About tab, or unpins it. At most
+ * `profilePinnedItemsLimit`; a pin past that is refused rather than dropping an older one.
+ */
+export async function setPinnedItem({
+  userId,
+  entityType,
+  entityId,
+  pinned,
+}: SetPinnedItemSchema & { userId: number }) {
+  // A profile row is created on first visit; pinning from a menu may come first.
+  const profile = await dbWrite.userProfile.upsert({
+    where: { userId },
+    create: { userId },
+    update: {},
+    select: { pinnedItems: true },
+  });
+  // Pins whose item was deleted no longer show and could not be unpinned, so they free their slot.
+  const current = await withoutGonePins(userId, parsePinnedItems(profile.pinnedItems));
+  const item = { entityType, entityId } as ShowcaseItemSchema;
+  const isPinned = current.some((pin) => isSameShowcaseItem(pin, item));
+  if (pinned === isPinned) return current;
+
+  if (pinned) {
+    if (current.length >= profilePinnedItemsLimit)
+      throw throwBadRequestError(
+        `You can pin up to ${profilePinnedItemsLimit} items. Unpin one first.`
+      );
+    await assertShowcaseItemsOwned({
+      userId,
+      showcaseItems: [item],
+      currentShowcaseItems: [],
+      allowedTypes: ['Model', 'Image'],
+    });
+  }
+  const next = pinned
+    ? [...current, item]
+    : current.filter((pin) => !isSameShowcaseItem(pin, item));
+
+  // Only over the list just read, so two pins at once cannot push it past the limit.
+  const { count } = await dbWrite.userProfile.updateMany({
+    where: { userId, pinnedItems: { equals: profile.pinnedItems ?? [] } },
+    data: { pinnedItems: next },
+  });
+  if (!count) throw throwConflictError('Your pinned items changed while saving. Try again.');
+  return next;
+}
+
+/** The pins whose image or model still exists and is still the owner's. */
+async function withoutGonePins(userId: number, pins: ShowcaseItemSchema[]) {
+  if (!pins.length) return pins;
+  const idsOf = (type: ShowcaseItemSchema['entityType']) =>
+    pins.filter((pin) => pin.entityType === type).map((pin) => pin.entityId);
+  const [images, models] = await Promise.all([
+    // primary: decides what the write that follows keeps.
+    dbWrite.image.findMany({ where: { id: { in: idsOf('Image') }, userId }, select: { id: true } }),
+    // primary: as above.
+    dbWrite.model.findMany({
+      where: { id: { in: idsOf('Model') }, userId, status: { not: ModelStatus.Deleted } },
+      select: { id: true },
+    }),
+  ]);
+  const live = { Image: new Set(images.map((i) => i.id)), Model: new Set(models.map((m) => m.id)) };
+  return pins.filter((pin) => live[pin.entityType as 'Image' | 'Model']?.has(pin.entityId));
 }

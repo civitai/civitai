@@ -21,7 +21,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
+import { SubnavProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import { ProfilePageCustomization } from '~/components/Profile/ProfilePageCustomization';
 import { usePathname } from 'next/navigation';
@@ -191,17 +191,19 @@ export function ProfileLayout2({
         left={
           blockedByThem || deferredShell ? null : (
             <div
-              data-profile-card
-              className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6 [&:has([data-profile-redesign])]:overscroll-none"
+              data-profile-sidebar
+              // Redesign, dark theme: the design's dark sidebar, fading darker downwards. A member's
+              // sidebar colour replaces the base (ProfilePageCustomization).
+              className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6 [&:has([data-profile-redesign])]:overscroll-none dark:[&:has([data-profile-redesign])]:[background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.45)),rgb(28_29_32)]"
             >
               <ProfileSidebar username={username} />
             </div>
           )
         }
-        subNav={blockedByThem ? null : <ProfileNavigation username={username} />}
+        subNav={blockedByThem ? null : <SubnavProfileNavigation username={username} />}
         announcements={false}
       >
-        <div className="min-h-full px-3" data-profile-content>
+        <div className="isolate min-h-full px-3" data-profile-content>
           {blockedByThem && user ? (
             <BlockedByThemPanel user={user} />
           ) : isBlocked ? (

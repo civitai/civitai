@@ -7,6 +7,7 @@ import {
   getUserContentOverviewHandler,
   getUserProfileHandler,
   setShowcaseSectionsHandler,
+  setPinnedItemHandler,
   setProfileBackgroundHandler,
   updateUserProfileHandler,
 } from '~/server/controllers/user-profile.controller';
@@ -15,6 +16,7 @@ import {
   getProfileCustomizationSchema,
   getProfilePartSchema,
   getUserProfileSchema,
+  setPinnedItemSchema,
   setProfileBackgroundSchema,
   setShowcaseSectionsSchema,
   showcaseItemSchema,
@@ -46,6 +48,11 @@ export const userProfileRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setProfileBackgroundSchema)
     .mutation(setProfileBackgroundHandler),
+  setPinned: guardedProcedure
+    .use(isFlagProtected('profileRedesign'))
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(setPinnedItemSchema)
+    .mutation(setPinnedItemHandler),
   update: guardedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(userProfileUpdateSchema)

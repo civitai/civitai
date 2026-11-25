@@ -186,7 +186,8 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     | undefined;
   const tabs = applyHiddenProfileTabs(opts, {
     hiddenTabs: privacySettings?.hiddenTabs,
-    viewerSeesAll: isProfileOwner || isModerator,
+    // The owner sees their tabs as visitors do, and unhides them from the gear.
+    viewerSeesAll: !!isModerator,
     enabled: !!features.profileRedesign,
   });
 
@@ -230,4 +231,10 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       </LegacyActionIcon>
     </div>
   );
+};
+
+/** The tabs in the site's sub-navigation; with the redesign they render under the banner instead. */
+export const SubnavProfileNavigation = ({ username }: ProfileNavigationProps) => {
+  const features = useFeatureFlags();
+  return features.profileRedesign ? null : <ProfileNavigation username={username} />;
 };

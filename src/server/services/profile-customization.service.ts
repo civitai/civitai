@@ -1,6 +1,16 @@
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { UserProfileUpdateSchema } from '~/server/schema/user-profile.schema';
+import type {
+  ProfilePageTheme,
+  UserProfileUpdateSchema,
+} from '~/server/schema/user-profile.schema';
+import * as z from 'zod';
+import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
+import {
+  profilePageThemeSchema,
+  profilePinnedItemsLimit,
+  showcaseItemSchema,
+} from '~/server/schema/user-profile.schema';
 import { isMemberTier, isMemberTierCached } from '~/server/services/subscriptions.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -37,14 +47,16 @@ export async function assertPageCustomizationAllowed({
   profileRedesign,
   backgroundImage,
   sfwBackgroundImage,
-  cardColor,
-  cardOpacity,
+  pageTheme,
   about,
 }: Pick<
   UserProfileUpdateSchema,
-  'backgroundImage' | 'sfwBackgroundImage' | 'cardColor' | 'cardOpacity' | 'about'
-> & { userId: number; profileRedesign: boolean }) {
-  const touched = [backgroundImage, sfwBackgroundImage, cardColor, cardOpacity, about].some(
+  'backgroundImage' | 'sfwBackgroundImage' | 'pageTheme' | 'about'
+> & {
+  userId: number;
+  profileRedesign: boolean;
+}) {
+  const touched = [backgroundImage, sfwBackgroundImage, pageTheme, about].some(
     (value) => value !== undefined
   );
   if (!touched) return;
@@ -56,22 +68,27 @@ export async function assertPageCustomizationAllowed({
     select: {
       backgroundImageId: true,
       sfwBackgroundImageId: true,
-      cardColor: true,
-      cardOpacity: true,
+      pageTheme: true,
     },
   });
   const setsImage = (
     image: UserProfileUpdateSchema['backgroundImage'],
     storedId: number | null | undefined
   ) => !!image && image.id !== storedId;
-  const setsValue = <T>(value: T | null | undefined, storedValue: T | null | undefined) =>
-    value != null && value !== storedValue;
+  // A theme colour counts as set only where it differs from what is stored for that theme.
+  const storedTheme = parsePageTheme(stored?.pageTheme);
+  const setsTheme =
+    (['dark', 'light'] as const).some((mode) => {
+      const next = pageTheme?.[mode];
+      const prev = storedTheme?.[mode];
+      return !!next && (next.color !== prev?.color || next.opacity !== prev?.opacity);
+    }) ||
+    (!!pageTheme?.sidebar && pageTheme.sidebar.color !== storedTheme?.sidebar?.color);
 
   const raises =
     setsImage(backgroundImage, stored?.backgroundImageId) ||
     setsImage(sfwBackgroundImage, stored?.sfwBackgroundImageId) ||
-    setsValue(cardColor, stored?.cardColor) ||
-    setsValue(cardOpacity, stored?.cardOpacity);
+    setsTheme;
   if (raises && !(await isMemberTier(userId))) throw throwAuthorizationError(MEMBERS_ONLY);
 }
 
@@ -128,26 +145,22 @@ export async function getProfileCustomization({
     select: {
       backgroundImageId: true,
       sfwBackgroundImageId: true,
-      cardColor: true,
-      cardOpacity: true,
+      pageTheme: true,
       backgroundImage: { select: backgroundImageSelect },
       sfwBackgroundImage: { select: backgroundImageSelect },
     },
   });
   const empty = {
     background: null,
-    cardColor: null,
-    cardOpacity: null,
+    pageTheme: null as ProfilePageTheme | null,
     // The customizer's own values; only for someone who can edit the profile.
     stored: null,
   };
   if (!profile) return empty;
+  const pageTheme = parsePageTheme(profile.pageTheme);
 
   const isSet =
-    profile.backgroundImageId != null ||
-    profile.sfwBackgroundImageId != null ||
-    profile.cardColor != null ||
-    profile.cardOpacity != null;
+    profile.backgroundImageId != null || profile.sfwBackgroundImageId != null || !!pageTheme;
   if (!isSet) return empty;
 
   const canEdit = sameUser || !!isModerator;
@@ -159,8 +172,7 @@ export async function getProfileCustomization({
     ? {
         backgroundImage: editable(profile.backgroundImage),
         sfwBackgroundImage: editable(profile.sfwBackgroundImage),
-        cardColor: profile.cardColor,
-        cardOpacity: profile.cardOpacity,
+        pageTheme,
       }
     : null;
 
@@ -185,20 +197,19 @@ export async function getProfileCustomization({
 
   return {
     background: visible,
-    cardColor: profile.cardColor,
-    cardOpacity: profile.cardOpacity,
+    pageTheme,
     stored,
   };
 }
 
-/** The About tab's text: kept out of the main profile read, which every visitor pays for. */
+/** The About tab's text and pinned items: kept out of the main profile read, which every visitor pays for. */
 export async function getProfileAbout({ userId, viewerId }: { userId: number; viewerId?: number }) {
   // primary: only for the owner, whose save is read back at once.
   const profile = await (viewerId === userId ? dbWrite : dbRead).userProfile.findUnique({
     where: { userId },
-    select: { about: true },
+    select: { about: true, pinnedItems: true },
   });
-  return { about: profile?.about ?? null };
+  return { about: profile?.about ?? null, pinnedItems: parsePinnedItems(profile?.pinnedItems) };
 }
 
 /**
@@ -226,4 +237,21 @@ export async function imagesHiddenFromModerator(userId: number) {
     backgroundImage: hidden(profile?.backgroundImage ?? null),
     sfwBackgroundImage: hidden(profile?.sfwBackgroundImage ?? null),
   };
+}
+
+/** A stored theme, or null when it is missing or not the shape the schema allows. */
+function parsePageTheme(value: unknown): ProfilePageTheme | null {
+  const parsed = profilePageThemeSchema.safeParse(value);
+  const { dark, light, sidebar } = parsed.success ? parsed.data : {};
+  return parsed.success && (dark || light || sidebar) ? parsed.data : null;
+}
+
+/** A stored pinned list, keeping only entries of the allowed shape, at most the limit. */
+export function parsePinnedItems(value: unknown): ShowcaseItemSchema[] {
+  const parsed = z.array(showcaseItemSchema).safeParse(value);
+  return parsed.success
+    ? parsed.data
+        .filter((item) => item.entityType === 'Image' || item.entityType === 'Model')
+        .slice(0, profilePinnedItemsLimit)
+    : [];
 }

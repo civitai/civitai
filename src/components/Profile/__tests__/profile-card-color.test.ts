@@ -1,6 +1,11 @@
 import { encode } from 'blurhash';
 import { describe, expect, it } from 'vitest';
-import { profileCardBackground, suggestedCardColor } from '~/components/Profile/profile-card-color';
+import {
+  profileBarBackground,
+  profileCardBackground,
+  profileCardInk,
+  suggestedCardColor,
+} from '~/components/Profile/profile-card-color';
 
 const solid = (r: number, g: number, b: number) => {
   const pixels = new Uint8ClampedArray(4 * 4 * 4);
@@ -24,5 +29,30 @@ describe('profileCardBackground', () => {
     expect(profileCardBackground('#112233', 60)).toBe('#11223399');
     expect(profileCardBackground('#112233', null)).toBe('#112233cc');
     expect(profileCardBackground(null, 70)).toBeUndefined();
+  });
+});
+
+describe('profileBarBackground', () => {
+  it('is the card colour nearly opaque, and nothing without one', () => {
+    expect(profileBarBackground('#112233')).toBe('#112233ed');
+    expect(profileBarBackground(null)).toBeUndefined();
+  });
+});
+
+describe('profileCardInk', () => {
+  it('picks dark text on a light card and light text on a dark one', () => {
+    expect(profileCardInk('#f3ead7', 100, 'dark')).toBe('dark'); // cream
+    expect(profileCardInk('#7fd1c4', 100, 'dark')).toBe('dark'); // teal
+    expect(profileCardInk('#1b2a4a', 100, 'dark')).toBe('light'); // navy
+  });
+
+  it('accounts for the theme showing through a translucent card', () => {
+    // A mid-light colour at 60% over the dark theme renders dark enough for light text.
+    expect(profileCardInk('#9aa0a6', 60, 'dark')).toBe('light');
+    expect(profileCardInk('#9aa0a6', 60, 'light')).toBe('dark');
+  });
+
+  it('leaves the theme alone without a colour', () => {
+    expect(profileCardInk(null, 80, 'dark')).toBeUndefined();
   });
 });

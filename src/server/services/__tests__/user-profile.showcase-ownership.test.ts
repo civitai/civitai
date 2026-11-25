@@ -20,6 +20,7 @@ vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
 
 import {
   assertShowcaseItemsOwned,
+  setPinnedItem,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
 import { addEntityToShowcaseHandler } from '~/server/controllers/user-profile.controller';
@@ -360,5 +361,68 @@ describe('addEntityToShowcaseHandler — ownership', () => {
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(db.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('setPinnedItem', () => {
+  let stored: ShowcaseItemSchema[];
+  beforeEach(() => {
+    stored = [];
+    db.userProfile.upsert.mockImplementation((async () => ({ pinnedItems: stored })) as never);
+    Object.assign(ownedBy.image, { 11: OWNER_ID, 12: OWNER_ID, 13: OWNER_ID });
+    db.userProfile.updateMany.mockImplementation((async ({ data }: never) => {
+      stored = (data as { pinnedItems: ShowcaseItemSchema[] }).pinnedItems;
+      return { count: 1 };
+    }) as never);
+  });
+  const pin = (entityType: 'Image' | 'Model', entityId: number, pinned = true) =>
+    setPinnedItem({ userId: OWNER_ID, entityType, entityId, pinned });
+
+  it("pins the owner's own image and model, and unpins them", async () => {
+    await pin('Image', OWN_IMAGE);
+    await pin('Model', OWN_MODEL);
+    expect(stored).toEqual([
+      { entityType: 'Image', entityId: OWN_IMAGE },
+      { entityType: 'Model', entityId: OWN_MODEL },
+    ]);
+    await pin('Image', OWN_IMAGE, false);
+    expect(stored).toEqual([{ entityType: 'Model', entityId: OWN_MODEL }]);
+  });
+
+  it("refuses another user's image and writes nothing", async () => {
+    await expect(pin('Image', STRANGER_IMAGE)).rejects.toThrow();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a fourth pin instead of dropping one', async () => {
+    stored = [
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: 13 },
+    ];
+    await expect(pin('Image', OWN_IMAGE)).rejects.toThrow(/up to 3/);
+    expect(stored).toHaveLength(3);
+  });
+
+  it('frees the slot of a pinned item that was deleted, so a new pin fits', async () => {
+    stored = [
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: 999 }, // deleted: no longer found among the owner's images
+    ];
+    await pin('Image', OWN_IMAGE);
+    expect(stored).toEqual([
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: OWN_IMAGE },
+    ]);
+  });
+
+  it('refuses a save over pins that changed since they were read', async () => {
+    db.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
+    await expect(pin('Image', OWN_IMAGE)).rejects.toThrow(/changed while saving/);
+    expect(db.userProfile.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: OWNER_ID, pinnedItems: { equals: [] } } })
+    );
   });
 });

@@ -57,8 +57,7 @@ beforeEach(() => {
   dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
     backgroundImageId: null,
     sfwBackgroundImageId: null,
-    cardColor: null,
-    cardOpacity: null,
+    pageTheme: null,
   } as never);
 });
 
@@ -67,36 +66,63 @@ describe('assertPageCustomizationAllowed', () => {
     assertPageCustomizationAllowed({ userId: OWNER, profileRedesign, ...input });
 
   it('refuses a non-member setting a colour, opacity or background', async () => {
-    await expect(save({ cardColor: '#112233' })).rejects.toThrow(/for members/);
-    await expect(save({ cardOpacity: 70 })).rejects.toThrow(/for members/);
+    await expect(save({ pageTheme: { dark: { color: '#112233' } } })).rejects.toThrow(
+      /for members/
+    );
     await expect(save({ backgroundImage: { url: 'new.jpg' } })).rejects.toThrow(/for members/);
+  });
+
+  it('treats the sidebar colour as members-only too', async () => {
+    await expect(save({ pageTheme: { sidebar: { color: '#1b2a4a' } } })).rejects.toThrow(
+      /for members/
+    );
+  });
+
+  it('treats the light-mode colour and opacity as members-only too', async () => {
+    await expect(save({ pageTheme: { light: { color: '#f3ead7', opacity: 90 } } })).rejects.toThrow(
+      /for members/
+    );
   });
 
   it('lets a paying member, and a comped member, set them', async () => {
     subscriptions = [subscription('gold')];
-    await expect(save({ cardColor: '#112233' })).resolves.toBeUndefined();
+    await expect(
+      save({ pageTheme: { dark: { color: '#112233', opacity: 70 } } })
+    ).resolves.toBeUndefined();
     subscriptions = [];
     override = { tier: 'silver' };
-    await expect(save({ cardColor: '#112233' })).resolves.toBeUndefined();
+    await expect(
+      save({ pageTheme: { dark: { color: '#112233', opacity: 70 } } })
+    ).resolves.toBeUndefined();
   });
 
   it('does not count a free override as a membership', async () => {
     override = { tier: 'free' };
-    await expect(save({ cardColor: '#112233' })).rejects.toThrow(/for members/);
+    await expect(save({ pageTheme: { dark: { color: '#112233', opacity: 70 } } })).rejects.toThrow(
+      /for members/
+    );
   });
 
   it('lets a lapsed member re-save the values they already have, and clear them', async () => {
     dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
       backgroundImageId: 70,
       sfwBackgroundImageId: null,
-      cardColor: '#112233',
-      cardOpacity: 70,
+      pageTheme: { dark: { color: '#112233', opacity: 70 } },
     } as never);
     await expect(
-      save({ cardColor: '#112233', cardOpacity: 70, backgroundImage: { id: 70, url: 'bg.jpg' } })
+      save({
+        pageTheme: { dark: { color: '#112233', opacity: 70 } },
+        backgroundImage: { id: 70, url: 'bg.jpg' },
+      })
     ).resolves.toBeUndefined();
-    await expect(save({ cardColor: null, backgroundImage: null })).resolves.toBeUndefined();
-    await expect(save({ cardColor: '#445566' })).rejects.toThrow(/for members/);
+    await expect(save({ pageTheme: null, backgroundImage: null })).resolves.toBeUndefined();
+    // Only the opacity changes: still a new setting.
+    await expect(save({ pageTheme: { dark: { color: '#112233', opacity: 90 } } })).rejects.toThrow(
+      /for members/
+    );
+    await expect(save({ pageTheme: { dark: { color: '#445566', opacity: 70 } } })).rejects.toThrow(
+      /for members/
+    );
   });
 
   it('refuses any redesign field without the flag, and passes a save that touches none', async () => {
@@ -112,8 +138,7 @@ describe('getProfileCustomization', () => {
     const row = {
       backgroundImageId: 70,
       sfwBackgroundImageId: null,
-      cardColor: '#112233',
-      cardOpacity: 70,
+      pageTheme: { dark: { color: '#112233', opacity: 70 } },
       backgroundImage: scannedImage(NsfwLevel.PG),
       sfwBackgroundImage: null,
       ...over,
@@ -126,24 +151,66 @@ describe('getProfileCustomization', () => {
     subscriptions = [subscription('gold')];
     stored();
     const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
-    expect(result).toMatchObject({ background: { id: 70 }, cardColor: '#112233', cardOpacity: 70 });
+    expect(result).toMatchObject({
+      background: { id: 70 },
+      pageTheme: { dark: { color: '#112233', opacity: 70 } },
+    });
     expect(result.stored).toBeNull();
+  });
+
+  it('returns the light-mode pair beside the dark one', async () => {
+    subscriptions = [subscription('gold')];
+    stored({
+      pageTheme: {
+        dark: { color: '#112233', opacity: 70 },
+        light: { color: '#f3ead7', opacity: 90 },
+      },
+    });
+    const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(result.pageTheme).toEqual({
+      dark: { color: '#112233', opacity: 70 },
+      light: { color: '#f3ead7', opacity: 90 },
+    });
+  });
+
+  it('returns a sidebar colour set on its own, to visitors and to the owner to edit', async () => {
+    subscriptions = [subscription('gold')];
+    stored({
+      backgroundImageId: null,
+      backgroundImage: null,
+      pageTheme: { sidebar: { color: '#1b2a4a' } },
+    });
+    const visitor = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(visitor.pageTheme).toEqual({ sidebar: { color: '#1b2a4a' } });
+    const owner = await getProfileCustomization({ userId: OWNER, viewerId: OWNER });
+    expect(owner.stored?.pageTheme).toEqual({ sidebar: { color: '#1b2a4a' } });
+  });
+
+  it('ignores a stored theme that is not the allowed shape', async () => {
+    subscriptions = [subscription('gold')];
+    stored({
+      backgroundImageId: null,
+      backgroundImage: null,
+      pageTheme: { dark: { color: 'red' } },
+    });
+    const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(result.pageTheme).toBeNull();
   });
 
   it('hides them while the owner is not a member, but keeps them for the owner to edit', async () => {
     stored();
     const visitor = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
-    expect(visitor).toMatchObject({ background: null, cardColor: null, cardOpacity: null });
+    expect(visitor).toMatchObject({ background: null, pageTheme: null });
     const owner = await getProfileCustomization({ userId: OWNER, viewerId: OWNER });
     expect(owner.background).toBeNull();
-    expect(owner.stored).toMatchObject({ cardColor: '#112233' });
+    expect(owner.stored).toMatchObject({ pageTheme: { dark: { color: '#112233', opacity: 70 } } });
   });
 
   it('hides them when the membership lookup fails', async () => {
     stored();
     dbMock.dbWrite.customerSubscription.findMany.mockRejectedValue(new Error('down'));
     const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
-    expect(result.cardColor).toBeNull();
+    expect(result.pageTheme).toBeNull();
   });
 
   it('never sends a mature background on civitai.com, even to its owner', async () => {
@@ -211,8 +278,7 @@ describe("the customizer's stored values", () => {
     const row = {
       backgroundImageId: 70,
       sfwBackgroundImageId: null,
-      cardColor: null,
-      cardOpacity: null,
+      pageTheme: null,
       backgroundImage: restricted,
       sfwBackgroundImage: null,
     };

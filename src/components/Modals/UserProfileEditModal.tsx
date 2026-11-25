@@ -7,8 +7,6 @@ import {
   Chip,
   CloseButton,
   Collapse,
-  ColorInput,
-  Slider,
   Divider,
   Group,
   Input,
@@ -38,12 +36,11 @@ import {
 } from '~/libs/form';
 import { useFormContext } from 'react-hook-form';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { suggestedCardColor } from '~/components/Profile/profile-card-color';
+import { CardColorPicker } from '~/components/Profile/CardColorPicker';
+import { SidebarColorPicker } from '~/components/Profile/SidebarColorPicker';
 import { CREATOR_STUDIO_URL } from '~/shared/constants/creator-studio.constants';
-import {
-  profileAboutMaxLength,
-  profileCardOpacityDefault,
-} from '~/server/schema/user-profile.schema';
+import { profileAboutMaxLength } from '~/server/schema/user-profile.schema';
+import type { ProfilePageTheme } from '~/server/schema/user-profile.schema';
 import type {
   ProfileSectionSchema,
   PrivacySettingsSchema,
@@ -367,6 +364,7 @@ export default function UserProfileEditModal() {
     profileSectionsSettings,
     creatorCardStatsPreferences,
     privacySettings,
+    sfwBackgroundImage,
   ] = form.watch([
     'badge',
     'nameplateId',
@@ -383,6 +381,7 @@ export default function UserProfileEditModal() {
     'profileSectionsSettings',
     'creatorCardStatsPreferences',
     'privacySettings',
+    'sfwBackgroundImage',
   ]);
   // Every owned badge, before the one-per-image dedupe: a duplicate-image badge has no tile but is owned.
   const ownedBadgeIds = useMemo(
@@ -472,8 +471,7 @@ export default function UserProfileEditModal() {
             null) as unknown as FormDataSchema['backgroundImage'],
           sfwBackgroundImage: (customization?.stored?.sfwBackgroundImage ??
             null) as unknown as FormDataSchema['sfwBackgroundImage'],
-          cardColor: customization?.stored?.cardColor ?? null,
-          cardOpacity: customization?.stored?.cardOpacity ?? null,
+          pageTheme: customization?.stored?.pageTheme ?? null,
           about: aboutData?.about ?? null,
         }),
       };
@@ -663,19 +661,6 @@ export default function UserProfileEditModal() {
                   label="Creator Card Glow"
                   description="Select it again to turn the glow off"
                   data={cardDecorations}
-                />
-              )}
-              {featureFlags.profileRedesign && (
-                <InputCosmeticSelect
-                  name="sidebarBackground"
-                  label="Profile Sidebar Background"
-                  description="Shown behind the top of your profile sidebar. Select it again to remove it"
-                  shopUrl={`/shop?cosmeticTypes=${CosmeticType.SidebarBackground}`}
-                  nothingFound={
-                    <Text size="xs">You don&rsquo;t have any sidebar backgrounds yet</Text>
-                  }
-                  data={sidebarBackgrounds}
-                  onShopClick={handleClose}
                 />
               )}
             </>
@@ -898,7 +883,7 @@ export default function UserProfileEditModal() {
           withLinkValidation
         />
       )}
-      {redesign && <PageCustomizationFields cover={user?.profile?.defaultCoverImage ?? null} />}
+      {redesign && <PageCustomizationFields />}
     </>
   );
   const civitaiComGroup = (
@@ -919,6 +904,7 @@ export default function UserProfileEditModal() {
           name="sfwBackgroundImage"
           label="Page background (civitai.com)"
           description="Leave empty to use the page background above. Only a safe-for-work image shows on civitai.com."
+          aspectRatio={previewRatio(sfwBackgroundImage)}
           previewWidth={constants.profile.coverImageWidth}
         />
       )}
@@ -1001,13 +987,29 @@ export default function UserProfileEditModal() {
           limit={constants.profile.showcaseItemsLimit}
           // The search finds the owner's own items; without a username it is not shown.
           username={featureFlags.profileRedesign ? user?.username ?? undefined : undefined}
+          ownerId={featureFlags.profileRedesign ? user?.id : undefined}
           description={
             featureFlags.profileRedesign
-              ? `Search your models and images, or use "Add to showcase" on them, to showcase up to ${constants.profile.showcaseItemsLimit} items on your profile.`
+              ? `Pick up to ${constants.profile.showcaseItemsLimit} of your images and models below, or use "Add to showcase" on them.`
               : `Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`
           }
         />
       )}
+    </>
+  );
+
+  const sidebarGroup = (
+    <>
+      <InputCosmeticSelect
+        name="sidebarBackground"
+        label="Sidebar background"
+        description="Shown behind your profile picture, fading into the sidebar below. Select it again to remove it"
+        shopUrl={`/shop?cosmeticTypes=${CosmeticType.SidebarBackground}`}
+        nothingFound={<Text size="xs">You don&rsquo;t have any sidebar backgrounds yet</Text>}
+        data={sidebarBackgrounds}
+        onShopClick={handleClose}
+      />
+      <SidebarColorField />
     </>
   );
 
@@ -1024,7 +1026,6 @@ export default function UserProfileEditModal() {
         'profileBackground',
         'profileDecoration',
         'profilePicture',
-        'sidebarBackground',
       ],
       content: profileGroup,
     },
@@ -1037,18 +1038,19 @@ export default function UserProfileEditModal() {
     {
       value: 'page',
       label: 'Profile page',
-      fields: [
-        'bio',
-        'coverImage',
-        'location',
-        'message',
-        'about',
-        'backgroundImage',
-        'cardColor',
-        'cardOpacity',
-      ],
+      fields: ['bio', 'coverImage', 'location', 'message', 'about', 'backgroundImage', 'pageTheme'],
       content: profilePageGroup,
     },
+    ...(redesign
+      ? [
+          {
+            value: 'sidebar',
+            label: 'Sidebar',
+            fields: ['sidebarBackground'],
+            content: sidebarGroup,
+          },
+        ]
+      : []),
     {
       value: 'com',
       label: 'Civitai.com',
@@ -1197,17 +1199,10 @@ export function ProfilePreview({
 }
 
 /** Members-only page background, card colour and opacity (profile redesign). */
-function PageCustomizationFields({ cover }: { cover: { hash?: string | null } | null }) {
+function PageCustomizationFields() {
   const currentUser = useCurrentUser();
   const form = useFormContext<FormDataSchema>();
-  const [background, cardColor, cardOpacity] = form.watch([
-    'backgroundImage',
-    'cardColor',
-    'cardOpacity',
-  ]);
-  const suggestion = suggestedCardColor(
-    (background as { hash?: string | null } | null | undefined)?.hash ?? cover?.hash
-  );
+  const [cover, background, pageTheme] = form.watch(['coverImage', 'backgroundImage', 'pageTheme']);
 
   if (!currentUser?.isPaidMember)
     return (
@@ -1230,32 +1225,44 @@ function PageCustomizationFields({ cover }: { cover: { hash?: string | null } | 
       <InputSimpleImageUpload
         name="backgroundImage"
         label="Page background"
-        description="Shown behind your whole profile page."
+        description="Shown behind your profile. A new upload appears once it has been scanned."
+        aspectRatio={previewRatio(background)}
         previewWidth={constants.profile.coverImageWidth}
       />
-      <ColorInput
-        label="Card colour"
-        format="hex"
-        value={cardColor ?? ''}
-        onChange={(value) => form.setValue('cardColor', value || null, { shouldDirty: true })}
-        swatches={suggestion ? [suggestion] : undefined}
-        description={
-          suggestion && suggestion !== cardColor
-            ? 'The swatch is a colour taken from your background or cover.'
-            : undefined
-        }
-        error={form.formState.errors.cardColor?.message}
+      <CardColorPicker
+        value={pageTheme ?? null}
+        cover={cover as { hash?: string | null } | null}
+        background={background as { hash?: string | null } | null}
+        onChange={(next) => form.setValue('pageTheme', next, { shouldDirty: true })}
       />
-      <Input.Wrapper label="Card opacity">
-        <Slider
-          min={60}
-          max={100}
-          step={5}
-          value={cardOpacity ?? profileCardOpacityDefault}
-          onChange={(value) => form.setValue('cardOpacity', value, { shouldDirty: true })}
-          label={(value) => `${value}%`}
-        />
-      </Input.Wrapper>
     </Stack>
+  );
+}
+
+/** The preview's height over width: the picture's own shape, or 16:9 until a new upload's size is known. */
+function previewRatio(image: unknown) {
+  const { width, height } = (image ?? {}) as { width?: number | null; height?: number | null };
+  return width && height ? height / width : 9 / 16;
+}
+
+/** The sidebar's own colour, members only; it lives in pageTheme beside the card colours. */
+function SidebarColorField() {
+  const currentUser = useCurrentUser();
+  const form = useFormContext<FormDataSchema>();
+  const [cover, background, pageTheme] = form.watch(['coverImage', 'backgroundImage', 'pageTheme']);
+  if (!currentUser?.isPaidMember) return null;
+  return (
+    <SidebarColorPicker
+      value={pageTheme?.sidebar?.color ?? null}
+      cover={cover as { hash?: string | null } | null}
+      background={background as { hash?: string | null } | null}
+      onChange={(color) => {
+        const { sidebar: _sidebar, ...rest } = pageTheme ?? {};
+        const next: ProfilePageTheme = color ? { ...rest, sidebar: { color } } : rest;
+        form.setValue('pageTheme', next.dark || next.light || next.sidebar ? next : null, {
+          shouldDirty: true,
+        });
+      }}
+    />
   );
 }
