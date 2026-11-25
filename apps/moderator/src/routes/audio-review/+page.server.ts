@@ -6,6 +6,7 @@ import {
   AUDIO_TABS,
   DEFAULT_AUDIO_TAB,
   DISPUTE_FILTERS,
+  DISPUTE_STATUSES,
   type DisputeSort,
   HELD_FILTERS,
   type HeldSort,
@@ -59,6 +60,7 @@ const querySchema = z.object({
   kind: z.enum(APPEAL_FILTERS).catch('all'),
   held: z.enum(HELD_FILTERS).catch('all'),
   ask: z.enum(DISPUTE_FILTERS).catch('all'),
+  status: z.enum(DISPUTE_STATUSES).catch('pending'),
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   selected: int4Id.optional().catch(undefined),
@@ -104,13 +106,33 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   if (tab === 'disputes') {
     const disputeSort: DisputeSort = sort === 'newest' ? 'newest' : 'oldest';
     const [disputes, counts] = await Promise.all([
-      getSongDisputes({ sort: disputeSort, filter: parsed.ask, q, page, user }),
+      getSongDisputes({
+        sort: disputeSort,
+        filter: parsed.ask,
+        status: parsed.status,
+        q,
+        page,
+        user,
+        owner: parsed.owner,
+      }),
       songTabCounts(),
     ]);
     return {
       tab,
-      disputes: { ...disputes, filters: { sort: disputeSort, ask: parsed.ask } },
-      counts: { ...counts, disputes: disputes.facets.all },
+      disputes: {
+        ...disputes,
+        filters: {
+          sort: disputeSort,
+          ask: parsed.ask,
+          status: parsed.status,
+          owner: parsed.owner ?? null,
+        },
+      },
+      // The badge counts what is waiting: a Resolved list is not.
+      counts: {
+        ...counts,
+        disputes: parsed.status === 'pending' ? disputes.facets.all : counts.disputes,
+      },
       ...shared,
     };
   }

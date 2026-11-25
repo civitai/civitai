@@ -4,6 +4,7 @@ import { storedSongDurationSec } from '@civitai/shared';
 import { songNeverReviewable, songScanStateOf } from '@civitai/shared/rating-review';
 import {
   type AudioTab,
+  type CheckState,
   checkState,
   DEFAULT_AUDIO_TAB,
   LYRICS_SOURCE_LABELS,
@@ -15,6 +16,7 @@ import {
   type DisputeFilter,
   type DisputeSongState,
   type DisputeSort,
+  type DisputeStatus,
   type HeldFilter,
   type HeldKind,
   type HeldSongRow,
@@ -36,6 +38,8 @@ import {
   pendingSongReports,
   songAppealImages,
 } from './audio-review-count';
+import { logAxiomError } from './axiom';
+import { getClickhouse } from './clickhouse';
 import { dbRead } from './db';
 import { getAppealImageQueue, ruleBlockedSql } from './image-review.service';
 import { visibleSongLinks } from './song-links.service';
@@ -334,9 +338,12 @@ export async function getSongDetails(
       's.postId',
       's.meta',
       's.metadata',
+      's.nsfwLevelLocked',
+      's.scannedAt',
       't.genre',
       'p.publishedAt',
       'l.source as lyricsSource',
+      'l.imageId as lyricsId',
       'c.id as coverId',
       'c.url as coverUrl',
       'c.nsfwLevel as coverNsfwLevel',
@@ -376,13 +383,19 @@ export async function getSongDetails(
     getActiveStrikes(song.userId),
     song.coverId != null ? withheldImageIds(user, [song.coverId]) : [],
   ]);
-  const [otherReported, otherHeld] = await Promise.all([
+  const [otherReported, otherHeld, lyrics, ownerDisputes, rating, activity] = await Promise.all([
     pendingSongReports()
       .select(sql<number>`count(DISTINCT i.id)::int`.as('n'))
       .where('i.userId', '=', song.userId)
       .where('i.id', '<>', imageId)
       .executeTakeFirst(),
     tab === 'held' ? otherHeldOf(song.userId, imageId, user) : null,
+    song.lyricsId != null ? lyricsCheck(imageId) : null,
+    tab === 'disputes' ? songDisputeTally(song.userId) : null,
+    tab === 'disputes'
+      ? songRatingSource(imageId, { locked: song.nsfwLevelLocked, scannedAt: song.scannedAt })
+      : null,
+    tab === 'disputes' || tab === 'reported' ? songActivity(imageId) : null,
   ]);
 
   const cover =
@@ -408,6 +421,7 @@ export async function getSongDetails(
         needsReview: song.needsReview,
         blockedFor: song.blockedFor,
       }),
+      lyrics,
       cover:
         song.coverId != null
           ? checkState({
@@ -436,9 +450,131 @@ export async function getSongDetails(
           strikes: strikes.count,
           otherReported: otherReported?.n ?? 0,
           otherHeld,
+          disputes: ownerDisputes,
         }
       : null,
+    rating,
+    activity,
   };
+}
+
+/** The lyrics scan's state: held while a CSAM text hold is Pending, else the text moderation's
+ *  verdict (`EntityModeration`, as the main app's song decision reads it). */
+async function lyricsCheck(songId: number): Promise<CheckState> {
+  const [hold, moderation] = await Promise.all([
+    dbRead
+      .selectFrom('TextScanHold')
+      .select('id')
+      .where('entityType', '=', 'TrackLyrics')
+      .where('entityId', '=', songId)
+      .where('label', '=', 'csam')
+      .where(sql<boolean>`status = 'Pending'`)
+      .executeTakeFirst(),
+    dbRead
+      .selectFrom('EntityModeration')
+      .select(['status', 'blocked'])
+      .where('entityType', '=', 'TrackLyrics')
+      .where('entityId', '=', songId)
+      .executeTakeFirst(),
+  ]);
+  if (hold) return 'held';
+  if (!moderation || moderation.status === 'Pending') return 'pending';
+  if (moderation.status !== 'Succeeded') return 'failed';
+  return moderation.blocked ? 'blocked' : 'passed';
+}
+
+/** An owner's rating disputes on songs, by outcome. */
+async function songDisputeTally(ownerId: number) {
+  const rows = await dbRead
+    .selectFrom('RatingReview')
+    .select(['status', sql<number>`count(*)::int`.as('n')])
+    .where('entityType', '=', SONG_ENTITY_TYPE)
+    .where('userId', '=', ownerId)
+    .groupBy('status')
+    .execute();
+  const of = (status: string) => rows.find((r) => String(r.status) === status)?.n ?? 0;
+  return {
+    total: rows.reduce((n, r) => n + r.n, 0),
+    pending: of(ReportStatus.Pending),
+    approved: of(ReportStatus.Actioned),
+    rejected: of(ReportStatus.Unactioned),
+  };
+}
+
+// The rating writer records its activity after the ruling commits: a ruling this close before the
+// latest rating activity is that same change.
+const RULING_ACTIVITY_SLACK_MS = 60_000;
+
+/** Who set the song's current level: its scans while it is unlocked, else the moderator rating
+ *  writer's latest `setNsfwLevel` activity or a dispute ruling that applied a level. */
+async function songRatingSource(
+  songId: number,
+  song: { locked: boolean; scannedAt: Date | null }
+): Promise<NonNullable<SongDetails['rating']>> {
+  if (!song.locked) return { source: 'scan', by: null, at: song.scannedAt, before: null };
+  const [activity, ruling] = await Promise.all([
+    dbRead
+      .selectFrom('ModActivity as a')
+      .leftJoin('User as u', 'u.id', 'a.userId')
+      .select(['u.username', 'a.createdAt'])
+      .where('a.entityType', '=', 'image')
+      .where('a.entityId', '=', songId)
+      .where('a.activity', '=', 'setNsfwLevel')
+      .orderBy('a.createdAt', 'desc')
+      .limit(1)
+      .executeTakeFirst(),
+    dbRead
+      .selectFrom('RatingReview as rr')
+      .leftJoin('User as u', 'u.id', 'rr.resolvedBy')
+      .select(['u.username', 'rr.resolvedAt', 'rr.currentLevel'])
+      .where('rr.entityType', '=', SONG_ENTITY_TYPE)
+      .where('rr.entityId', '=', songId)
+      .where('rr.appliedLevel', 'is not', null)
+      .where('rr.resolvedAt', 'is not', null)
+      .orderBy('rr.resolvedAt', 'desc')
+      .limit(1)
+      .executeTakeFirst(),
+  ]);
+  const rulingAt = ruling?.resolvedAt ? new Date(ruling.resolvedAt).getTime() : null;
+  if (
+    ruling &&
+    rulingAt != null &&
+    (!activity || rulingAt >= new Date(activity.createdAt).getTime() - RULING_ACTIVITY_SLACK_MS)
+  )
+    return {
+      source: 'moderator',
+      by: ruling.username ?? null,
+      at: ruling.resolvedAt,
+      before: ruling.currentLevel,
+    };
+  if (activity)
+    return {
+      source: 'moderator',
+      by: activity.username ?? null,
+      at: activity.createdAt,
+      before: null,
+    };
+  return { source: 'unknown', by: null, at: null, before: null };
+}
+
+/** All-time plays, Like reactions and comments of one song from the image metrics the site counts
+ *  (`entityMetricDailyAgg_v2`, summed per day as the main app's metric reader does); null when
+ *  ClickHouse cannot answer, so the card leaves the row out rather than show zeros. */
+async function songActivity(songId: number): Promise<SongDetails['activity']> {
+  try {
+    const rows = await getClickhouse().$query<{ metricType: string; value: string | number }>(`
+      SELECT metricType, sum(total) AS value
+      FROM entityMetricDailyAgg_v2
+      WHERE entityType = 'Image' AND entityId = ${songId}
+        AND metricType IN ('Play', 'Like', 'commentCount')
+      GROUP BY metricType
+    `);
+    const of = (type: string) => Number(rows.find((r) => r.metricType === type)?.value ?? 0);
+    return { plays: of('Play'), likes: of('Like'), comments: of('commentCount') };
+  } catch (error) {
+    logAxiomError(error, { name: 'audio-review-song-activity' });
+    return null;
+  }
 }
 
 /** Every browsing level, Blocked included: a removed song or cover is what an appeal is about. */
@@ -843,30 +979,37 @@ export async function flaggedCoverOf(songId: number, flag: string): Promise<numb
   return row?.id ?? null;
 }
 
-/** The disputes read at once; past this the oldest are listed. */
+/** The disputes read at once: past this, the oldest Pending ones, or the newest otherwise. */
 const DISPUTES_READ = 500;
 
 /**
- * One page of the Disputes tab: owners' Pending rating disputes on songs, each with its song, the
- * owner's ask and words, and the last ruling on an earlier dispute of the same song. Filtered here
- * like the other tabs, since a dispute on a song withheld from this moderator matches only its exact
- * id (the dispute's or the song's), never its title or owner.
+ * One page of the Disputes tab: owners' rating disputes on songs (Pending by default; Resolved ones
+ * carry their ruling), each with its song, the owner's ask and words, which of the song's disputes
+ * it is, and the last ruling on one filed before it. Filtered here like the other tabs, since a
+ * dispute on a song withheld from this moderator matches only its exact id (the dispute's or the
+ * song's), never its title or owner, and so is never listed under an owner either.
  */
 export async function getSongDisputes({
   sort,
   filter,
+  status = 'pending',
   q,
   page,
   user,
+  owner,
 }: {
   sort: DisputeSort;
   filter: DisputeFilter;
+  status?: DisputeStatus;
   q: string;
   page: number;
   user: App.Locals['user'] | undefined;
+  owner?: number;
 }) {
-  const disputes = await pendingSongDisputes()
+  const disputes = await dbRead
+    .selectFrom('RatingReview as rr')
     .innerJoin('User as owner', 'owner.id', 'rr.userId')
+    .leftJoin('User as resolver', 'resolver.id', 'rr.resolvedBy')
     .leftJoin('Image as s', (join) =>
       join.onRef('s.id', '=', 'rr.entityId').on('s.type', '=', 'audio')
     )
@@ -876,9 +1019,14 @@ export async function getSongDisputes({
       'rr.id',
       'rr.entityId as songId',
       'rr.createdAt',
+      'rr.status',
       'rr.currentLevel',
       'rr.suggestedLevel',
+      'rr.appliedLevel',
+      'rr.resolvedAt',
       'rr.userComment',
+      'rr.modComment',
+      'resolver.username as resolverUsername',
       'owner.id as ownerId',
       'owner.username as ownerUsername',
       's.id as foundId',
@@ -892,34 +1040,45 @@ export async function getSongDisputes({
         playerSongCoverText('c')
       )} THEN c.url END`.as('coverUrl'),
     ])
-    .orderBy('rr.createdAt')
-    .orderBy('rr.id')
+    .where('rr.entityType', '=', SONG_ENTITY_TYPE)
+    .$if(status === 'pending', (qb) => qb.where('rr.status', '=', ReportStatus.Pending))
+    .$if(status === 'resolved', (qb) => qb.where('rr.status', '<>', ReportStatus.Pending))
+    .$if(owner != null, (qb) => qb.where('rr.userId', '=', owner!))
+    .orderBy('rr.createdAt', status === 'pending' ? 'asc' : 'desc')
+    .orderBy('rr.id', status === 'pending' ? 'asc' : 'desc')
     .limit(DISPUTES_READ)
     .execute();
+  if (status !== 'pending') disputes.reverse();
 
   const songIds = [...new Set(disputes.map((d) => d.songId))];
   const [history, withheldList, coversWithheld] = await Promise.all([
     songIds.length
       ? dbRead
           .selectFrom('RatingReview')
-          .select(['entityId', 'status', 'appliedLevel', 'resolvedAt'])
+          .select(['id', 'entityId', 'status', 'currentLevel', 'appliedLevel', 'resolvedAt'])
           .where('entityType', '=', SONG_ENTITY_TYPE)
           .where('entityId', 'in', songIds)
-          .where('status', '<>', ReportStatus.Pending)
-          .orderBy('createdAt', 'desc')
+          .orderBy('createdAt')
+          .orderBy('id')
           .execute()
       : [],
     songIds.length ? withheldImageIds(user, songIds) : [],
     withheldCovers(disputes, user),
   ]);
   const withheld = new Set(withheldList);
-  // Newest first, so the first ruling seen per song is its last.
-  const earlierOf = new Map<number, (typeof history)[number]>();
-  const decidedOf = new Map<number, number>();
-  for (const h of history) {
-    if (!earlierOf.has(h.entityId)) earlierOf.set(h.entityId, h);
-    decidedOf.set(h.entityId, (decidedOf.get(h.entityId) ?? 0) + 1);
-  }
+  const historyOf = new Map<number, (typeof history)[number][]>();
+  for (const h of history) historyOf.set(h.entityId, [...(historyOf.get(h.entityId) ?? []), h]);
+  const ruling = (h: {
+    status: string;
+    currentLevel: number;
+    appliedLevel: number | null;
+    resolvedAt: Date | null;
+  }) => ({
+    status: h.status,
+    currentLevel: h.currentLevel,
+    appliedLevel: h.appliedLevel,
+    resolvedAt: h.resolvedAt,
+  });
 
   const rows = disputes.map((d): SongDisputeRow & { asks: 'lower' | 'higher' | null } => {
     const asks: 'lower' | 'higher' | null =
@@ -934,15 +1093,19 @@ export async function getSongDisputes({
         : d.ingestion === 'Scanned'
         ? 'reviewed'
         : 'unreviewed';
+    const songHistory = historyOf.get(d.songId) ?? [];
+    const index = songHistory.findIndex((h) => h.id === d.id);
+    const before = songHistory.slice(0, Math.max(index, 0));
     const base = {
       id: d.id,
       songId: d.songId,
       waitingSince: d.createdAt,
+      status: String(d.status),
       state,
-      disputes: (decidedOf.get(d.songId) ?? 0) + 1,
+      disputes: (index === -1 ? songHistory.length : index) + 1,
       asks,
     };
-    // Nothing about the song: not its levels (so no ask chip), its scan state or its disputes.
+    // Nothing about the song: not its levels (so no ask chip), its scan state, its disputes or rulings.
     if (withheld.has(d.songId))
       return {
         ...base,
@@ -959,8 +1122,9 @@ export async function getSongDisputes({
         songLevel: null,
         message: null,
         earlier: null,
+        ruling: null,
       };
-    const earlier = earlierOf.get(d.songId);
+    const earlier = before.filter((h) => h.status !== ReportStatus.Pending).at(-1);
     return {
       ...base,
       withheld: false,
@@ -972,27 +1136,29 @@ export async function getSongDisputes({
       suggestedLevel: d.suggestedLevel,
       songLevel: d.nsfwLevel,
       message: d.userComment || null,
-      earlier: earlier
-        ? {
-            status: earlier.status,
-            appliedLevel: earlier.appliedLevel,
-            resolvedAt: earlier.resolvedAt,
-          }
-        : null,
+      earlier: earlier ? ruling(earlier) : null,
+      ruling:
+        d.status === ReportStatus.Pending
+          ? null
+          : {
+              ...ruling({ ...d, status: String(d.status) }),
+              by: d.resolverUsername,
+              comment: d.modComment || null,
+            },
     };
   });
 
   const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
   const term = q.toLowerCase();
-  const searched = !q
-    ? rows
-    : rows.filter((r) =>
-        asId?.success
-          ? r.id === asId.data || r.songId === asId.data
-          : !r.withheld &&
-            (!!r.title?.toLowerCase().includes(term) ||
-              !!r.owner?.username?.toLowerCase().startsWith(term))
-      );
+  const searched = rows.filter((r) => {
+    if (owner != null && r.withheld) return false;
+    if (!q) return true;
+    return asId?.success
+      ? r.id === asId.data || r.songId === asId.data
+      : !r.withheld &&
+          (!!r.title?.toLowerCase().includes(term) ||
+            !!r.owner?.username?.toLowerCase().startsWith(term));
+  });
   const facets = {
     all: searched.length,
     lower: searched.filter((r) => r.asks === 'lower').length,

@@ -21,6 +21,7 @@
   import {
     dismissDecision,
     reportedDecisionsEnabled,
+    songActivityText,
     songRemovedTitle,
     songRatingLabel,
     SONG_RATING_LEVELS,
@@ -330,6 +331,9 @@
               </span>
             </div>
             {@render fact('Remix', d.facts.allowRemix ? 'Allowed' : 'Not allowed', SONG_FACT_ROW)}
+            {#if d.activity}
+              {@render fact('Activity', songActivityText(d.activity), SONG_FACT_ROW)}
+            {/if}
           </TriageCard>
         {:catch}
           <p class="m-0 text-sm text-dark-2">

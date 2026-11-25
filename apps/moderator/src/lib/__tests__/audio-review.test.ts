@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkState,
+  disputeRulingText,
+  disputeTallyText,
   dismissDecision,
   heldDecisions,
   heldDecisionsEnabled,
@@ -206,5 +208,29 @@ describe('the decision keys on a held song', () => {
 
   it('link a lyrics hold to its pending hold in CSAM holds', () => {
     expect(lyricsHoldHref(701)).toBe('/csam/text-holds?entityType=TrackLyrics&q=701');
+  });
+});
+
+describe('a dispute ruling, as the Disputes tab words it', () => {
+  it('reads an approval, a keep, a rejection to another level, and a close with nothing applied', () => {
+    expect(disputeRulingText({ status: 'Actioned', currentLevel: 2, appliedLevel: 1 })).toBe(
+      'approved: PG'
+    );
+    expect(disputeRulingText({ status: 'Unactioned', currentLevel: 2, appliedLevel: 2 })).toBe(
+      'kept PG-13'
+    );
+    expect(disputeRulingText({ status: 'Unactioned', currentLevel: 2, appliedLevel: 4 })).toBe(
+      'rejected: set R'
+    );
+    expect(disputeRulingText({ status: 'Unactioned', currentLevel: 2, appliedLevel: null })).toBe(
+      'closed, nothing applied'
+    );
+  });
+
+  it("tallies an owner's disputes by outcome, leaving out the empty ones", () => {
+    expect(disputeTallyText({ total: 2, pending: 1, approved: 0, rejected: 1 })).toBe(
+      '2 (1 rejected, 1 pending)'
+    );
+    expect(disputeTallyText({ total: 0, pending: 0, approved: 0, rejected: 0 })).toBe('0');
   });
 });

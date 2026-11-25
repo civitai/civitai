@@ -4,6 +4,7 @@
   import EdgeImage from '$lib/components/EdgeImage.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import {
+    disputeTallyText,
     otherHeldText,
     ownerFilterHref,
     type CheckState,
@@ -102,7 +103,13 @@
 
 <TriageCard title="Automated checks" dense>
   <div class="flex flex-wrap gap-1.5">
-    {@render chip(`Song scan: ${CHECK_LOOK[d.checks.song].label}`, CHECK_LOOK[d.checks.song].class)}
+    {@render chip(`Audio scan: ${CHECK_LOOK[d.checks.song].label}`, CHECK_LOOK[d.checks.song].class)}
+    {#if d.checks.lyrics}
+      {@render chip(
+        `Lyrics scan: ${CHECK_LOOK[d.checks.lyrics].label}`,
+        CHECK_LOOK[d.checks.lyrics].class
+      )}
+    {/if}
     {#if d.checks.cover}
       {@render chip(
         `Cover scan: ${CHECK_LOOK[d.checks.cover].label}`,
@@ -139,6 +146,9 @@
     {@render fact('Removed songs', String(d.owner.removedSongs))}
     {@render fact('Strikes', String(d.owner.strikes))}
     {@render fact('Other reported', plural(d.owner.otherReported, 'song'))}
+    {#if d.owner.disputes}
+      {@render fact('Rating disputes', disputeTallyText(d.owner.disputes))}
+    {/if}
     {#if d.owner.otherHeld}
       {@const others = d.owner.otherHeld.songs + d.owner.otherHeld.covers}
       <div class={FACT_ROW}>

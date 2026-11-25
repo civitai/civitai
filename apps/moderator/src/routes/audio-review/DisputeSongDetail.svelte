@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { IconExternalLink, IconSearch, IconUser } from '@tabler/icons-svelte';
+  import { IconExternalLink, IconScale, IconUser } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SongBadge from '$lib/components/SongBadge.svelte';
   import SongCard from '$lib/components/SongCard.svelte';
@@ -9,8 +9,13 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import {
     disputeRowTitle,
+    disputeRulingText,
+    ownerFilterHref,
+    songActivityText,
     songRatingLabel,
     SONG_RATING_LEVELS,
+    SONG_SCAN_LEVEL,
+    type SongDetails,
     type SongDisputeRow,
   } from '$lib/audio-review';
   import { entityUrl, userUrl } from '$lib/entity-url';
@@ -61,14 +66,29 @@
         }
       : null
   );
-  const decides = $derived(canAct && !row.withheld && row.state !== 'unreviewed' && !!dispute);
+  const pending = $derived(row.status === 'Pending');
+  const decides = $derived(
+    canAct && pending && !row.withheld && row.state !== 'unreviewed' && !!dispute
+  );
   const songHref = $derived(entityUrl(civitaiUrl, 'image', row.songId));
   const level = (value: number | null) => (value == null ? '—' : songRatingLabel(value));
-  const EARLIER_VERDICT: Record<string, string> = { Actioned: 'approved', Unactioned: 'rejected' };
-  const earlierText = (e: NonNullable<SongDisputeRow['earlier']>) =>
-    `${e.resolvedAt ? `Ruled ${shortDate(e.resolvedAt)}` : 'Ruled'}: ${
-      EARLIER_VERDICT[e.status] ?? e.status.toLowerCase()
-    }${e.appliedLevel != null ? `, applied ${level(e.appliedLevel)}` : ''}`;
+  const rulingText = (r: NonNullable<SongDisputeRow['earlier']>) =>
+    `${r.resolvedAt ? `Ruled ${shortDate(r.resolvedAt)}` : 'Ruled'}: ${disputeRulingText(r)}`;
+  const nth = (n: number) => (n > 1 ? `${ordinal(n)} dispute` : 'first dispute');
+  const STATUS_CHIP: Record<string, { label: string; class: string }> = {
+    Pending: { label: 'Pending', class: 'bg-amber-500/15 text-amber-300' },
+    Actioned: { label: 'Approved', class: 'bg-green-500/15 text-green-300' },
+    Unactioned: { label: 'Rejected', class: 'bg-dark-5 text-dark-0' },
+  };
+  const statusChip = $derived(
+    STATUS_CHIP[row.status] ?? { label: row.status, class: 'bg-dark-5 text-dark-0' }
+  );
+  const setBy = (r: NonNullable<SongDetails['rating']>) =>
+    r.source === 'scan'
+      ? 'Its scans'
+      : r.source === 'moderator'
+        ? `Moderator: ${r.by ?? 'unknown'}`
+        : 'Not recorded';
 </script>
 
 {#snippet chip(text: string, tone = 'bg-dark-5 text-dark-0')}
@@ -108,7 +128,7 @@
       {#snippet chips()}
         <SongBadge class="h-[17px] px-1.5 text-[11px]" />
         {@render chip('Rating dispute', 'bg-blue-500/15 text-blue-300')}
-        {@render chip('Pending', 'bg-amber-500/15 text-amber-300')}
+        {@render chip(statusChip.label, statusChip.class)}
         {#if (row.disputes ?? 0) > 1}{@render chip(`Repeat ×${row.disputes}`, 'bg-amber-500/15 text-amber-300')}{/if}
       {/snippet}
       {#snippet links()}
@@ -136,20 +156,26 @@
             >
               <IconUser aria-hidden="true" /> Owner
             </Button>
+          {/if}
+          {#if row.owner}
             <Button
               variant="outline"
               size="sm"
               class={LINK_BUTTON}
-              href={userUrl(civitaiUrl, row.owner.username, 'music')}
-              target="_blank"
-              rel="noreferrer"
+              href={ownerFilterHref('disputes', row.owner.id, '&status=all')}
             >
-              <IconSearch aria-hidden="true" /> Owner's songs
+              <IconScale aria-hidden="true" /> Owner's disputes
             </Button>
           {/if}
         {/if}
       {/snippet}
     </TriageDetailHeader>
+    {#if row.owner && row.disputes != null}
+      <p class="m-0 mt-1 text-[13px] text-dark-2" title={dateTime(row.waitingSince)}>
+        by {row.owner.username ?? `User #${row.owner.id}`} · disputed {shortAge(row.waitingSince)} ago
+        · {nth(row.disputes)}
+      </p>
+    {/if}
   {/snippet}
 
   {#snippet evidence()}
@@ -197,6 +223,7 @@
               </div>
               {@render fact('Rating', level(row.songLevel))}
               {@render fact('Remix', d.facts.allowRemix ? 'Allowed' : 'Not allowed')}
+              {#if d.activity}{@render fact('Activity', songActivityText(d.activity))}{/if}
             </TriageCard>
           {:catch}
             <p class="m-0 text-sm text-dark-2">
@@ -210,7 +237,7 @@
 
   {#snippet info()}
     {#if !row.withheld}
-      <div class="grid grid-cols-2 gap-2">
+      <div class="grid grid-cols-3 gap-2">
         {@render levelCard(
           'Current',
           level(row.songLevel ?? row.currentLevel),
@@ -218,7 +245,17 @@
             ? `${level(row.currentLevel)} when disputed`
             : 'current rating'
         )}
-        {@render levelCard('Owner asks', level(row.suggestedLevel), 'approving applies this', 'blue')}
+        {@render levelCard(
+          'Owner asks',
+          level(row.suggestedLevel),
+          pending ? 'approving applies this' : 'what the owner asked for',
+          'blue'
+        )}
+        {@render levelCard(
+          'Scan default',
+          row.state === 'reviewed' ? level(SONG_SCAN_LEVEL) : '—',
+          row.state === 'reviewed' ? 'what the scan gave it' : 'no scan verdict'
+        )}
       </div>
 
       {#if row.message}
@@ -235,14 +272,17 @@
     <TriageCard title="This dispute" dense accent="blue">
       {@render fact(
         'Filed',
-        `${shortAge(row.waitingSince)} ago${
-          row.disputes == null
-            ? ''
-            : ` · ${row.disputes > 1 ? `${ordinal(row.disputes)} dispute` : 'first dispute'}`
-        }`
+        `${shortAge(row.waitingSince)} ago${row.disputes == null ? '' : ` · ${nth(row.disputes)}`}`
       )}
+      {#if row.ruling}
+        {@render fact(
+          'Ruling',
+          `${rulingText(row.ruling)}${row.ruling.by ? ` by ${row.ruling.by}` : ''}`
+        )}
+        {#if row.ruling.comment}{@render fact('Moderator note', row.ruling.comment)}{/if}
+      {/if}
       {#if row.earlier}
-        {@render fact('Earlier dispute', earlierText(row.earlier))}
+        {@render fact('Earlier dispute', rulingText(row.earlier))}
       {/if}
     </TriageCard>
 
@@ -250,6 +290,13 @@
       {#await details.current}
         <p class="m-0 text-sm text-dark-2">Loading the cover, checks and owner…</p>
       {:then d}
+        {#if d.rating}
+          <TriageCard title="Current rating" dense>
+            {@render fact('Set by', setBy(d.rating))}
+            {@render fact('Set on', d.rating.at ? shortDate(d.rating.at) : '—')}
+            {@render fact('Before', d.rating.before != null ? level(d.rating.before) : 'Not recorded')}
+          </TriageCard>
+        {/if}
         <SongSideCards
           details={d}
           {civitaiUrl}

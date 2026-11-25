@@ -222,7 +222,10 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   with its rating and scan state, the automated checks as states only (passed, held, blocked, not
   finished, failed), the generation details the song stored (model, seed, prompt, music description,
   lyrics source) and the owner (account age, removed songs, active strikes, other reported songs).
-  Play, like and comment counts are not shown.
+  The checks are "Audio scan" (the song's own verdict), "Lyrics scan" (a song with lyrics: held
+  while a CSAM text hold is Pending, else the lyrics' text moderation verdict) and "Cover scan". The
+  Song card's Activity row has the song's all-time plays, Like reactions and comments, from the
+  image metrics the site counts (ClickHouse, read for the open song only; left out when unread).
 - **Decisions** (`image.moderate`, as on Image reports): 1 Dismiss reports closes the song's shown
   reports as Unactioned (Image reports' Unaction); 2 Remove song is Image reports' removal and asks for a
   violation type, closing the reports as Actioned; 4 Set rating opens PG to XXX (the next digit picks)
@@ -280,13 +283,23 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   song withheld from the moderator (`withheldImageIds`) carries only its id and kind, and takes no
   decision. Every decision needs `image.moderate`. The sidebar badge counts the flagged songs and
   covers decided here, not lyrics holds, which CSAM holds counts; the tab's own count includes them.
-- **Disputes** lists owners' Pending rating disputes on songs (`RatingReview` entity type `Song`, see
+- **Disputes** lists owners' rating disputes on songs (`RatingReview` entity type `Song`, see
   "Rating disputes" below), one row per dispute: the level the owner saw and the level they ask
   for, "Repeat ×n" from the second dispute on the same song, and the owner with whether they
-  commented. Chips for All, Asks lower and Asks higher; sort by oldest or newest; search by title,
-  owner, the song's id or the dispute's. The open dispute has the song card (player and lyrics), its
-  facts, the two levels, the owner's comment, "This dispute" (when it was filed and the last ruling
-  on an earlier dispute of the song) and the song's side cards. Keys 1 to 5 pick PG to XXX, then a
+  commented. Status Pending (the default, and the tab's badge), Resolved or All: a resolved row shows
+  Approved or Rejected and its ruling read-only, and takes no key. Chips for All, Asks lower and Asks
+  higher; sort by oldest or newest; search by title, owner, the song's id or the dispute's;
+  `owner=<userId>` lists one owner's disputes (never one on a withheld song). The open dispute has
+  "by <owner> · disputed <age> ago · <nth> dispute" under its title, an "Owner's disputes" link
+  (that owner, every status), the song card (player and lyrics), its facts, three level cards
+  (Current, Owner asks, and Scan default: PG, the level a song's own scans give every clean song,
+  which nothing stores per song), the owner's comment, "This dispute" (when it was filed, its
+  ruling once resolved, and the last ruling on a dispute of the song filed before it: "Ruled Oct 30:
+  kept PG-13"), "Current rating" (set by its scans while unlocked, else the moderator from the
+  rating writer's latest `setNsfwLevel` activity or the dispute ruling that applied it; set on; and
+  the level before it, known only after a ruling, since no writer stores what a direct rating
+  replaced) and the song's side cards, whose owner card adds "Rating disputes" (the owner's song
+  disputes by outcome). The tallies and the rating card are read on this tab only, for the open song. Keys 1 to 5 pick PG to XXX, then a
   note and Enter apply it, as on `/ratings` (the same decision form): applying the owner's ask
   approves the dispute, any other level rejects it, and keeping the current level needs a reason.
   The ruling goes through the moderator rating-review resolver (`resolveRatingReview`, with
