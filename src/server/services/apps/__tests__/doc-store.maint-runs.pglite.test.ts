@@ -160,7 +160,9 @@ describe('reading the runs', () => {
     await seedRuns(app);
     const runs = await maint.listMaintRuns(app);
     expect(
-      runs.map((r) => [r.kind, r.name, r.status, r.actorUid]).sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      runs
+        .map((r) => [r.kind, r.name, r.status, r.actorUid])
+        .sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1))
     ).toEqual([
       ['mark_migration', 'played', 'verified', MOD],
       ['purge', RUN, 'purged', MOD],

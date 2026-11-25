@@ -31,7 +31,7 @@ import {
   type Harness,
 } from '~/server/services/apps/__tests__/doc-store.harness';
 
-const mockWrite = dbMock.dbWrite;
+const mockRead = dbMock.dbRead;
 
 // Pairwise distinct, and distinct from the store suites'.
 const MOD = { id: 8_911, isModerator: true, deletedAt: null, bannedAt: null };
@@ -71,7 +71,7 @@ afterAll(async () => {
 beforeEach(() => {
   seq += 1;
   appId = `apb_MAINT${seq}`;
-  mockWrite.appBlock.findUnique.mockImplementation(async ({ where }: any) =>
+  mockRead.appBlock.findUnique.mockImplementation(async ({ where }: any) =>
     where.id === appId ? { id: appId } : null
   );
 });
