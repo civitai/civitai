@@ -83,6 +83,7 @@ describe('setStatus action', () => {
       status: ReportStatus.Actioned,
       userId: 7,
       ip: '203.0.113.9',
+      liftScanHide: true,
     });
     expect(result).toEqual({ success: true });
   });

@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
+import { withheldRows, withheldUrls } from '$lib/server/retracted-media';
 import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import {
   addCoreImage,
@@ -14,6 +15,7 @@ import {
   spotCheckItem,
   updateCoreItem,
   type Outcome,
+  type SpotCheckItem,
 } from '$lib/server/knights/coreset.service';
 import { CORESET, type ListPage, type ListQuery } from '$lib/server/knights/coreset.config';
 import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
@@ -90,6 +92,43 @@ const query = z.object({
 
 const blank = <T>(): ListPage<T> => ({ items: [], total: 0, page: 1 });
 
+type Served<T> = T & { restricted: boolean };
+
+/** The page with each item whose image is withheld from `user` sent without its key or name. */
+async function withholding<T extends { imageId: number; imageKey: string }>(
+  page: ListPage<T>,
+  user: App.Locals['user'],
+  list: string
+): Promise<ListPage<Served<T>>> {
+  const items = await withheldRows(
+    page.items.map((item) => ({ ...item, restricted: false })),
+    user,
+    list,
+    (item) => item.imageId,
+    (item) => ({ ...item, imageKey: '', imageName: null, restricted: true })
+  );
+  return { ...page, items };
+}
+
+/** The spot-check carries no image id, so it is withheld by its key. */
+async function withholdingKeys<T extends { imageKey: string }>(
+  page: ListPage<T>,
+  user: App.Locals['user'],
+  list: string
+): Promise<ListPage<Served<T>>> {
+  const withheld = await withheldUrls(
+    page.items.map((item) => item.imageKey),
+    user,
+    list
+  );
+  const items = page.items.map((item) =>
+    withheld.has(item.imageKey)
+      ? { ...item, imageKey: '', restricted: true }
+      : { ...item, restricted: false }
+  );
+  return { ...page, items };
+}
+
 const AXIS_PREFIX = 'knights.yesno.';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -103,8 +142,13 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // The question list also searches the prompt, so text that is not an image reference is not an error there.
   const searchError = q && imageId === null && !questionsTab ? BAD_IMAGE : null;
   const list: ListQuery = imageId === null ? { page } : { page, imageId };
-  const read = <T>(wanted: Tab, get: (q: ListQuery) => Promise<ListPage<T>>) =>
-    tab === wanted && !searchError ? get(list) : Promise.resolve(blank<T>());
+  const read = <T extends { imageId: number; imageKey: string }>(
+    wanted: Tab,
+    get: (q: ListQuery) => Promise<ListPage<T>>
+  ) =>
+    tab === wanted && !searchError
+      ? get(list).then((found) => withholding(found, locals.user, `knights-trials-${wanted}`))
+      : Promise.resolve(blank<Served<T>>());
 
   // A bare number is an image id or a number in the question; a URL is only ever an image.
   const questionQuery = (): YesNoQuestionQuery => {
@@ -120,12 +164,18 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       getYesNoReferenceCount(),
       read('core', getCoreItems),
       read('fresh', getFreshItems),
-      read('spot-check', getSpotCheckItems),
+      tab === 'spot-check' && !searchError
+        ? getSpotCheckItems(list).then((found) =>
+            withholdingKeys(found, locals.user, 'knights-trials-spot-check')
+          )
+        : Promise.resolve(blank<Served<SpotCheckItem>>()),
       read('yes-no', getYesNoReferences),
       tab === 'yes-no' ? getYesNoQuestions() : Promise.resolve([]),
       questionsTab
-        ? getYesNoQuestionItems(questionQuery())
-        : Promise.resolve(blank<YesNoQuestionItem>()),
+        ? getYesNoQuestionItems(questionQuery()).then((found) =>
+            withholding(found, locals.user, 'knights-trials-questions')
+          )
+        : Promise.resolve(blank<Served<YesNoQuestionItem>>()),
       questionsTab ? getYesNoAxes() : Promise.resolve([]),
     ]);
   const shown = { core, fresh, 'spot-check': spotCheck, 'yes-no': yesNo, questions: queue }[tab];

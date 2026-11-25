@@ -74,8 +74,9 @@
   const statusForm = new FormState({
     onSubmit: ({ formData }) =>
       (statusChange = { id: Number(formData.get('id')), status: String(formData.get('status')) }),
-    onSuccess: () => {
-      if (statusChange) toast.success(`Report #${statusChange.id} set to ${statusChange.status}`);
+    onSuccess: (result) => {
+      if (result?.notice) toast.warning(String(result.notice));
+      else if (statusChange) toast.success(`Report #${statusChange.id} set to ${statusChange.status}`);
     },
     reload: true,
     onSettled: reloadIfGone,

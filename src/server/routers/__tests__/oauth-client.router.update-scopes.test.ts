@@ -79,3 +79,26 @@ describe('oauthClient.update scopes', () => {
     expect(written().allowedScopes).toBe(TokenScope.Full);
   });
 });
+
+/**
+ * The owner of an App Assistant client (`appassist-<their id>`) cannot edit it here: a rename, a
+ * redirect URI, origins or scopes would turn the platform's client into one they control.
+ */
+describe('oauthClient.update on an App Assistant client', () => {
+  it.each([
+    ['a rename', { name: 'Totally Official App' }],
+    ['a redirect URI', { redirectUris: ['https://attacker.example/cb'] }],
+    ['allowed origins', { allowedOrigins: ['https://attacker.example'] }],
+    ['wider scopes', { allowedScopes: Number(TokenScope.Full) }],
+  ])('🔴 refuses %s and writes nothing', async (_what, change) => {
+    dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({
+      id: 'appassist-7',
+      userId: OWNER.id,
+      allowedScopes: TokenScope.UserRead,
+    });
+    await expect(caller().update({ id: 'appassist-7', ...change })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(dbMock.dbWrite.oauthClient.update).not.toHaveBeenCalled();
+  });
+});

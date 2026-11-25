@@ -6043,8 +6043,8 @@ export const getEntityCoverImage = async ({
   include?: ['tags'];
   // Covers follow the parent entity's visibility for this viewer; undefined is signed out.
   viewer: CoverImageViewer;
-  // A bounty's own images follow the bounty search index's exclusions (its uploader keeps theirs)
-  // unless this is set.
+  // Bounty, entry and article covers follow the bounty search index's exclusions (their uploader
+  // keeps theirs) unless this is set.
   seesReportListed?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
   // where the result is never cached for someone else.
@@ -6088,7 +6088,11 @@ export const getEntityCoverImage = async ({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
-  const bountyNotReportListed = notReportListedSql(signedIn ? viewerId ?? undefined : undefined);
+  // A report-listed image is its uploader's and `seesReportListed` viewers' alone, on every branch
+  // that can pick a bounty, entry or article cover.
+  const reportListedVisible = Prisma.sql`(${seesReportListed}::boolean OR ${notReportListedSql(
+    signedIn ? viewerId ?? undefined : undefined
+  )})`;
   // A blocked or ToS-violating cover is its owner's and moderators' alone.
   const coverNotBlocked = Prisma.join(
     [
@@ -6283,6 +6287,7 @@ export const getEntityCoverImage = async ({
               AND ${withinHeldGallery}
               AND ${baseModelAllowed}
               AND ${coverNotBlocked}
+              AND ${reportListedVisible}
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned'
               AND a.availability != 'Private')
@@ -6385,7 +6390,7 @@ export const getEntityCoverImage = async ({
             AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
-            AND (e."entityType" <> 'Bounty' OR ${seesReportListed}::boolean OR ${bountyNotReportListed})
+            AND ${reportListedVisible}
             AND (
               ${isModerator}::boolean
               -- canViewBounty

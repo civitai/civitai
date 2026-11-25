@@ -1,12 +1,9 @@
-import { postTextCsamHeldText } from '@civitai/shared/held-url';
+import { csamHoldLockKey, postTextCsamHeldText } from '@civitai/shared/held-url';
 import { sql } from 'kysely';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { updatePostNsfwLevels } from '~/server/services/nsfwLevels.service';
-import {
-  csamHoldLockKey,
-  pendingCsamHoldFields,
-} from '~/server/services/text-scan/actions/csam-hold';
+import { pendingCsamHoldFields } from '~/server/services/text-scan/actions/csam-hold';
 import { postTextTextScanSubject } from '~/server/services/text-scan/profiles/post-text.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
@@ -114,9 +111,9 @@ async function unchanged(textId: number): Promise<PostTextModerationResult | nul
 }
 
 /**
- * A second writer of pending csam holds beside the scan's `writePendingHold`: the lock key and the
- * row's author and text come from csam-hold.ts (`csamHoldLockKey`, `pendingCsamHoldFields`); only the
- * policy on existing holds differs.
+ * A second writer of pending csam holds beside the scan's `writePendingHold`: the lock key
+ * (`csamHoldLockKey`) and the row's author and text (`pendingCsamHoldFields`, csam-hold.ts) are the
+ * scan's; only the policy on existing holds differs.
  *
  * Sends a reported text to the CSAM text-hold queue: a Pending csam hold on its current words, and
  * `csamHeld` set, which hides it from every reader and keeps it from being edited or deleted until

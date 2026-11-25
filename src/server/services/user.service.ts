@@ -42,6 +42,10 @@ import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { assertNotMemorialized, metaWithoutMemorialSql } from '~/server/services/memorial.service';
 import { notifyModAlert } from '~/server/common/mod-alert';
+import {
+  disableOauthForBannedUser,
+  revokeAppAccessForBannedUser,
+} from '~/server/services/ban-access-cleanup.service';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
@@ -3277,6 +3281,31 @@ export const toggleBan = async ({
             message: (error as Error).message,
           })
         ),
+
+      // Their OAuth apps and app access: see ban-access-cleanup.service.ts.
+      disableOauthForBannedUser(id)
+        .then(({ disabled, flagged, consents }) =>
+          logToAxiom({
+            type: 'info',
+            name: 'ban-user-disable-oauth',
+            message: `disabled ${disabled.length} self-only oauth client(s), flagged ${flagged.length} for review and deleted ${consents} consent(s) for banned user ${id}`,
+          })
+        )
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-disable-oauth',
+            message: (error as Error).message,
+          })
+        ),
+
+      revokeAppAccessForBannedUser({ userId: id, actorId: userId }).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-revoke-app-access',
+          message: (error as Error).message,
+        })
+      ),
 
       // Group B: External operations (subscription + search indexes)
       Promise.all([
