@@ -765,7 +765,8 @@ describe("a bounty's image listed on a report", () => {
     }
   ) => {
     const covers = await getEntityCoverImage({
-      entities: [entity],
+      // BountyEntry is outside the request schema's entity types; the query serves it all the same.
+      entities: [entity] as Parameters<typeof getEntityCoverImage>[0]['entities'],
       viewer,
       seesReportListed,
     });
