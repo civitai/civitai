@@ -1,5 +1,5 @@
 import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
-import { getRateLimit } from '~/utils/rate-limit';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 
 /**
  * Reduce a thrown storage error to one short string the block can surface. A
@@ -19,6 +19,5 @@ export function sharedStorageErrorReply(err: unknown): {
   error: string;
   rateLimit?: RateLimitMeta;
 } {
-  const rateLimit = getRateLimit(err);
-  return { error: storageErrorMessage(err), ...(rateLimit ? { rateLimit } : {}) };
+  return { error: storageErrorMessage(err), ...rateLimitReplyFields(err) };
 }
