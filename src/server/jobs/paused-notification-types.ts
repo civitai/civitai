@@ -2,8 +2,9 @@ import { dbWrite } from '~/server/db/client';
 
 /**
  * `KeyValue` row holding a JSON array of processor keys `send-notifications` skips, e.g.
- * `["new-model-version"]`. Delete the row to resume. A resumed type sends only what its query's
- * own lookback still reaches.
+ * `["new-model-version"]`. Delete the row to resume. A paused type's cursor does not move, so on
+ * resume a cursor-only query sends the whole backlog since the pause, while one with a wall-clock
+ * floor (new-model-version: 30 minutes) sends only what that floor still reaches.
  */
 export const PAUSED_NOTIFICATION_TYPES_KEY = 'paused-notification-types';
 

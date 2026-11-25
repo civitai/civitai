@@ -39,6 +39,19 @@ describe('notification-cursor-monitor and paused types', () => {
     expect(flaggedKeys()).toEqual(['last-sent-notification-new-model-from-following']);
   });
 
+  it('a malformed pause row exempts nothing and does not stop the monitor', async () => {
+    dbMock.dbWrite.keyValue.findUnique.mockResolvedValue({
+      key: PAUSED_NOTIFICATION_TYPES_KEY,
+      value: 'new-model-version',
+    } as never);
+    await notificationCursorMonitor.run();
+
+    expect(flaggedKeys()).toEqual([
+      'last-sent-notification-new-model-version',
+      'last-sent-notification-new-model-from-following',
+    ]);
+  });
+
   it('flags both when nothing is paused', async () => {
     dbMock.dbWrite.keyValue.findUnique.mockResolvedValue(null as never);
     await notificationCursorMonitor.run();
