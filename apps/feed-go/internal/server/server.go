@@ -329,8 +329,13 @@ type computed struct {
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
 	cached bool
 	// notFound: the `/api/v1/models/[id]` not-found body, which Node answers with a 404
-	// (v1models.Answer.NotFound). Compared in the shadow; never served (v1models_serve.go).
+	// (v1models.Answer.NotFound). Compared in the shadow. The public route writes it as Node's 404 only
+	// when absent is also set, and falls back on every other one (v1models_serve.go).
 	notFound bool
+	// absent: a notFound answer the public route may write as Node's 404 (v1models.Answer.Absent:
+	// FEED_GO_V1_MODELS_ANSWER_NOT_FOUND on, no statement row, the lag flag clean). Recorded as outcome
+	// not_found (OutcomeNotFound).
+	absent bool
 	// headers are a REST answer's response headers (v1models.ResponseHeaders): what the public route
 	// writes and what the shadow compares. nil for the tRPC answers and for /api/v1/images.
 	headers []v1models.Header

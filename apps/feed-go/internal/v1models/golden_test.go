@@ -38,7 +38,7 @@ import (
 const (
 	goldenDir = "../../testdata/golden/v1-models"
 	// The fixture count gen-v1-models.mjs writes: fewer found means the glob matched the wrong place.
-	goldenMin = 38
+	goldenMin = 40
 )
 
 type goldenEntry struct {
@@ -71,9 +71,12 @@ type goldenFixture struct {
 	Redis    map[string]goldenEntry     `json:"redis"`
 	SysRedis map[string]goldenEntry     `json:"sysRedis"`
 	Expect   struct {
-		Fallback string     `json:"fallback"`
-		Body     *string    `json:"body"`
-		SQL      *goldenSQL `json:"sql"`
+		Fallback string `json:"fallback"`
+		// Status is the status Node answers with (0: 200); the `[id]` not-found answer is a 404,
+		// which Go marks Answer.NotFound.
+		Status int        `json:"status"`
+		Body   *string    `json:"body"`
+		SQL    *goldenSQL `json:"sql"`
 		// TrainingDataSQL is trainingDataListing's statement, when Node sent one.
 		TrainingDataSQL *goldenSQL `json:"trainingDataSql"`
 		// Search is the text search's call, when Node made one.
@@ -644,6 +647,9 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 	if fx.Expect.Body == nil {
 		t.Fatalf("the fixture has no expected body yet: run the Node golden test and copy its GOLDEN-ACTUAL")
 	}
+	if err := fx.sameStatus(ans); err != nil {
+		t.Error(err)
+	}
 	got, err := superjson.Plain(ans.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -681,6 +687,21 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 		paths = append(paths, d.Kind+":"+d.Path)
 	}
 	t.Fatalf("not the bytes Node writes (structural match %v, diffs %v)\n go:   %s\n node: %s", rep.Match, paths, got, want)
+}
+
+// sameStatus is nil when ans is marked as Node's answer is: NotFound exactly when Node answers 404.
+func (fx *goldenFixture) sameStatus(ans *Answer) error {
+	status := fx.Expect.Status
+	if status == 0 {
+		status = 200
+	}
+	if status != 200 && status != 404 {
+		return fmt.Errorf("Node answers %d: not a status the port answers", status)
+	}
+	if ans.NotFound != (status == 404) {
+		return fmt.Errorf("NotFound=%v, Node answers %d", ans.NotFound, status)
+	}
+	return nil
 }
 
 func TestGoldenV1Models(t *testing.T) {
