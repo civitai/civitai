@@ -10,6 +10,7 @@ export const PAUSED_NOTIFICATION_TYPES_KEY = 'paused-notification-types';
 
 /** Throws on a malformed row so the run sends nothing rather than ignoring an intended pause. */
 export async function getPausedNotificationTypes() {
+  // primary: an operator's pause must hold from the very next run, not after replica lag.
   const row = await dbWrite.keyValue.findUnique({ where: { key: PAUSED_NOTIFICATION_TYPES_KEY } });
   if (!row) return new Set<string>();
   const value = row.value;
