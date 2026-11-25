@@ -147,7 +147,9 @@ default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). 
 `model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
 `user-cosmetics-miss` fallback; DESIGN.md §15.2.5), and an owner's creator-membership miss only with
 `FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off: the `membership-miss` fallback; DESIGN.md §15.2.6),
-reading the tier under the app's own `TIER_METADATA_KEY`. The `feed_endpoint`
+reading the tier under the app's own `TIER_METADATA_KEY`. `image.getInfinite`'s
+`publishedOnly` input is computed only behind `FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY` (default
+off: the `input-publishedOnly` fallback; DESIGN.md §14.2.1). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 

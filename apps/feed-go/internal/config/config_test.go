@@ -350,6 +350,34 @@ func TestLoadAnswerRegionBlockedDefaultsOff(t *testing.T) {
 	}
 }
 
+// The publishedOnly port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not
+// turn it on, nor it FEED_GO_SERVE_INFINITE.
+func TestLoadInfinitePublishedOnlyPortDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeInputPublishedOnly != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY=%q -> %v, want %v", in, c.InfiniteServeInputPublishedOnly, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	if c, err := Load(); err != nil || c.InfiniteServeInputPublishedOnly || !c.ServeInfinite {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: port=%v ServeInfinite=%v err=%v, want false, true", c.InfiniteServeInputPublishedOnly, c.ServeInfinite, err)
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	if c, err := Load(); err != nil || !c.InfiniteServeInputPublishedOnly || c.ServeInfinite {
+		t.Fatalf("the port's switch alone: port=%v ServeInfinite=%v err=%v, want true, false", c.InfiniteServeInputPublishedOnly, c.ServeInfinite, err)
+	}
+}
+
 // TRPC_WRITE_DEVALUE is read as the main app reads it (`=== 'true'`): only the exact string turns it
 // on, and unset is off.
 func TestLoadWriteDevalue(t *testing.T) {
