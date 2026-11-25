@@ -21,10 +21,12 @@ import {
   type AgentReviewLane,
 } from '~/shared/constants/connect-agent-review.constants';
 import {
+  AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M,
   fromRunnerModelId,
   toRunnerModelId,
   type AgentReviewModelOption,
 } from '~/shared/constants/agent-review-model.constants';
+import type { AgentReviewModelRefusal } from '~/server/services/blocks/agent-review-models.service';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
@@ -151,13 +153,21 @@ export async function startAgentReview(
   // Resolved (and priced) before anything is staged or written, so an unknown model costs nothing.
   let analysisModel: AgentReviewModelOption | null = null;
   if (args.model) {
-    const { resolveAgentReviewModel } = await import('./agent-review-models.service');
+    const { resolveAgentReviewModel, AgentReviewModelRefusedError } = await import(
+      './agent-review-models.service'
+    );
     try {
       analysisModel = await resolveAgentReviewModel(args.model);
     } catch (err) {
       // On a targeted re-run the model was not the moderator's choice but the latest run's, and
-      // it can no longer be used (retired, unlisted, or the list is unreachable).
-      if (targeted) throw cannotRerunOnLatestModel(args.model);
+      // it can no longer be used (retired, unlisted, over the price ceiling, or the list is
+      // unreachable). The refusal says which, from the resolver's own reason.
+      if (targeted) {
+        throw cannotRerunOnLatestModel(
+          args.model,
+          err instanceof AgentReviewModelRefusedError ? err.refusal : undefined
+        );
+      }
       throw err;
     }
   }
@@ -275,10 +285,26 @@ export async function startAgentReview(
 const RERUN_ALL_HINT =
   'Use "Re-run all analyses" (with a model chosen if you like) to get a fresh report instead.';
 
-function cannotRerunOnLatestModel(id: string): TRPCError {
+/** Why the report's model cannot be used, as the tail of the single-section refusal. */
+function whyModelUnusable(refusal: AgentReviewModelRefusal | undefined): string {
+  switch (refusal?.reason) {
+    case 'over-ceiling':
+      return `that model costs $${refusal.promptPerM} per million input tokens, above the $${AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M} limit for agent reviews`;
+    case 'not-listed':
+      return 'that model is no longer a tool-capable model on OpenRouter';
+    case 'list-unavailable':
+      return "OpenRouter's model list could not be loaded to price that model (try again shortly)";
+    default:
+      return 'that model cannot be used now';
+  }
+}
+
+function cannotRerunOnLatestModel(id: string, refusal?: AgentReviewModelRefusal): TRPCError {
   return new TRPCError({
     code: 'BAD_REQUEST',
-    message: `This analysis can only be re-run on the model that wrote the rest of the report (${id}), and that model cannot be used now. ${RERUN_ALL_HINT}`,
+    message: `This analysis can only be re-run on the model that wrote the rest of the report (${id}), and ${whyModelUnusable(
+      refusal
+    )}. ${RERUN_ALL_HINT}`,
   });
 }
 
