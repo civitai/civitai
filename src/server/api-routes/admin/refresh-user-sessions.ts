@@ -23,25 +23,28 @@ const schema = z.object({
   ),
 });
 
-export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextApiResponse) {
-  const source = req.method === 'POST' ? req.body : req.query;
-  const result = schema.safeParse(source);
-  if (!result.success) {
-    return res.status(400).json({ ok: false, error: result.error.flatten() });
-  }
-
-  const { userIds } = result.data;
-  const refreshed: number[] = [];
-  const failed: { userId: number; error: string }[] = [];
-
-  for (const userId of userIds) {
-    try {
-      await refreshSession(userId, { caller: 'admin' });
-      refreshed.push(userId);
-    } catch (error) {
-      failed.push({ userId, error: error instanceof Error ? error.message : 'unknown' });
+export default WebhookEndpoint(
+  async function (req: AxiomAPIRequest, res: NextApiResponse) {
+    const source = req.method === 'POST' ? req.body : req.query;
+    const result = schema.safeParse(source);
+    if (!result.success) {
+      return res.status(400).json({ ok: false, error: result.error.flatten() });
     }
-  }
 
-  return res.status(200).json({ ok: true, refreshedCount: refreshed.length, refreshed, failed });
-});
+    const { userIds } = result.data;
+    const refreshed: number[] = [];
+    const failed: { userId: number; error: string }[] = [];
+
+    for (const userId of userIds) {
+      try {
+        await refreshSession(userId, { caller: 'admin' });
+        refreshed.push(userId);
+      } catch (error) {
+        failed.push({ userId, error: error instanceof Error ? error.message : 'unknown' });
+      }
+    }
+
+    return res.status(200).json({ ok: true, refreshedCount: refreshed.length, refreshed, failed });
+  },
+  { audit: 'refresh-user-sessions' }
+);
