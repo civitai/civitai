@@ -73,10 +73,40 @@ refused`); a resolution failure is an `end` with `reason: not_resolved` (`503`).
 1. The union's overlays are dropped once every stream the read used names a head at or above them,
    not when one does: the level streams poll apart from the per-viewer stream.
 2. A shared read never reopens a stream for its floor: the level streams are every viewer's, so a
-   reopen per viewer is a full re-read of the board. An unmet floor is `503 floor_not_met`.
+   reopen per viewer is a full re-read of the board. An unmet floor is `503 floor_not_met`. The
+   consequence: a hub-token viewer that sends `minSeq` right after its own write gets `503
+   floor_not_met` until every stream the read uses names a head at or above the write, which is up to
+   one adapter poll (`REGISTRY_ADAPTER_POLL_SECONDS`, default 60 s); the SDK retries a `503` with
+   backoff, so the write reads back late, never wrong. A block token's floor is met sooner, by the
+   overlay this replica acknowledged for it (a hub token's write may have landed on another replica).
 3. app-data-go evaluates no flag. With `APP_DATA_WRITES` on, every read is a cut-over app's and never
    falls back to REST; the per-app flag `app-data-writes-via-service` decides whether the site hands
    an app this service at all. The shadow's registry-only answer is unchanged.
+
+**Stream and memory budget (#10393).** Every stream this service opens, private, level or
+per-viewer, takes one slot and its manager's per-stream byte bound from one budget per replica:
+
+| Setting | Default | Bounds |
+|---|---|---|
+| `APP_DATA_MAX_SUBSCRIPTIONS` | 100 | adapter subscriptions per replica, all three kinds together (the replica's share of the adapter's caps, `DESIGN.md`, "Stream budget against the adapter's caps") |
+| `APP_DATA_CACHE_BUDGET_BYTES` | 224 MiB | the byte bounds the open streams reserve together |
+| private: `MAX_STREAMS`, `MAX_BYTES_PER_STREAM`, `MAX_OVERLAY_BYTES_PER_STREAM` | 100, 2 MiB, 128 KiB | a private stream reserves 2 MiB, or 2.125 MiB with the writes on |
+| level: `LEVEL_MAX_STREAMS`, `LEVEL_MAX_RECORDS`, `LEVEL_MAX_BYTES` | 10, 3,000, 8 MiB | a level stream reserves 8 MiB |
+| per-viewer: `VIEWER_MAX_STREAMS`, `VIEWER_MAX_RECORDS`, `VIEWER_MAX_BYTES` | 40, 20,000, 4 MiB | a per-viewer stream reserves 4 MiB; 20,000 records is the adapter's own per-viewer bound |
+| shared overlays (fixed) | 10,000, 16 MiB | apart from the budget; only writes to a collection whose level stream reached `Live` |
+
+The arithmetic, against the deployment's `GOMEMLIMIT` of 400 MiB under a 512 Mi limit: the budget
+plus the shared overlays is 224 + 16 = 240 MiB of cache, 60%, leaving 160 MiB to the runtime, each
+record's overhead past its counted bytes, and in-flight requests. The budget holds the private manager
+alone as before (100 × 2 MiB = 200 MiB with the writes off, 100 × 2.125 MiB = 212.5 MiB on), or, for
+example, 10 level streams (80 MiB), 20 per-viewer (80 MiB) and 30 private (63.75 MiB). A read whose
+stream would pass either the slot count or the bytes opens nothing: `capacity`, `503` on the shared
+path. This replaces the per-cutover sum in "Size, count and alert": the budget bounds the whole
+process, whatever the mix of apps. A read of the level streams the registry refuses `invalid_token`
+is this service's own token refused: `503 service_token_refused`, and the token is re-minted.
+A signed-out read of a collection major not yet seen to resolve on the replica opens one level stream
+first (at most 2 such probes per app at once, then `503 capacity`), so a made-up collection or major
+costs one stream, which the adapter ends `not_resolved`.
 
 ## What is fixed before we start
 
@@ -699,7 +729,8 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
    - the hub: the fifth block-exchange claim, `civitai_viewer_browsing_level`, in the deploy order of
      "The level mask";
    - **a cut-over app's reads never fall back**: each of today's fallback reasons
-     (`apps/app-data-go/internal/metrics/metrics.go:24-26`) gets its answer, behind the app's flag:
+     (`apps/app-data-go/internal/metrics/metrics.go:24-26`) gets its answer, for every read with
+     `APP_DATA_WRITES` on (app-data-go evaluates no flag, decision 3 of the delta):
 
      | Reason | Answer for a cut-over app |
      |---|---|
