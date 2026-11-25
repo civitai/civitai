@@ -254,6 +254,19 @@ describe('resolveBundlePath', () => {
 });
 
 describe('the refusal the author reads', () => {
+  it('a missing file: the whole message', () => {
+    expect(
+      describeModuleGraphProblem({
+        kind: 'missing',
+        importer: 'main.js',
+        specifier: './gone.js',
+        resolved: 'gone.js',
+      })
+    ).toBe(
+      'main.js imports "./gone.js", but gone.js is not in the bundle. Add the file or fix the import path.'
+    );
+  });
+
   it('a bare specifier: the whole message', () => {
     expect(
       describeModuleGraphProblem({
@@ -262,7 +275,7 @@ describe('the refusal the author reads', () => {
         specifier: 'react',
       })
     ).toBe(
-      'main.js imports "react", a bare package name that a browser cannot load without an import map. Add a package.json whose build script bundles it (the platform builds every bundle that has one), map it in an import map, or import it by a relative path or full URL.'
+      'main.js imports "react", a bare package name that a browser cannot load without an import map. Map it in an import map, import it by a relative path or full URL, or have the platform bundle it: add a package.json with a build script, a committed lockfile, and output in dist/, build/ or the manifest\'s outputDir (the platform builds every bundle that has a package.json).'
     );
   });
 
@@ -275,7 +288,7 @@ describe('the refusal the author reads', () => {
         resolved: 'x.ts',
       })
     ).toBe(
-      'main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or add a package.json whose build script produces them (the platform builds every bundle that has one).'
+      'main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or have the platform build them: add a package.json with a build script, a committed lockfile, and output in dist/, build/ or the manifest\'s outputDir (the platform builds every bundle that has a package.json).'
     );
   });
 });
@@ -322,7 +335,7 @@ describe('assertBundleModuleGraphLoads (a submitted ZIP)', () => {
       { kind: 'non-js-extension', importer: 'main.js', specifier: './x.ts', resolved: 'x.ts' },
     ]);
     expect((err as Error).message).toBe(
-      'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or add a package.json whose build script produces them (the platform builds every bundle that has one).'
+      'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or have the platform build them: add a package.json with a build script, a committed lockfile, and output in dist/, build/ or the manifest\'s outputDir (the platform builds every bundle that has a package.json).'
     );
   });
 

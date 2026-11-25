@@ -329,16 +329,23 @@ export async function checkModuleGraph(source: ModuleGraphSource): Promise<Modul
 const SERVED_EXTS = APP_STATIC_SERVER_JS_EXTENSIONS.map((e) => `.${e}`);
 const SERVED_TYPES = SERVED_EXTS.join(' and ');
 const SERVED_CHOICE = SERVED_EXTS.join(' or ');
+/**
+ * What makes the platform build a bundle, as the build step requires it: a package.json with a
+ * build script, a committed lockfile (it installs strictly from one, and refuses to build
+ * without it), and output in dist/, build/ or the manifest's outputDir.
+ */
+const PLATFORM_BUILD_RECIPE =
+  "add a package.json with a build script, a committed lockfile, and output in dist/, build/ or the manifest's outputDir (the platform builds every bundle that has a package.json)";
 
 /** One problem as the sentence the author reads. */
 export function describeModuleGraphProblem(p: ModuleGraphProblem): string {
   switch (p.kind) {
     case 'non-js-extension':
-      return `${p.importer} imports "${p.specifier}" (${p.resolved}), but the app server sends only ${SERVED_TYPES} files as JavaScript, so the browser will not run it. Ship browser-ready ${SERVED_CHOICE} files, or add a package.json whose build script produces them (the platform builds every bundle that has one).`;
+      return `${p.importer} imports "${p.specifier}" (${p.resolved}), but the app server sends only ${SERVED_TYPES} files as JavaScript, so the browser will not run it. Ship browser-ready ${SERVED_CHOICE} files, or have the platform build them: ${PLATFORM_BUILD_RECIPE}.`;
     case 'missing':
       return `${p.importer} imports "${p.specifier}", but ${p.resolved} is not in the bundle. Add the file or fix the import path.`;
     case 'bare-specifier':
-      return `${p.importer} imports "${p.specifier}", a bare package name that a browser cannot load without an import map. Add a package.json whose build script bundles it (the platform builds every bundle that has one), map it in an import map, or import it by a relative path or full URL.`;
+      return `${p.importer} imports "${p.specifier}", a bare package name that a browser cannot load without an import map. Map it in an import map, import it by a relative path or full URL, or have the platform bundle it: ${PLATFORM_BUILD_RECIPE}.`;
   }
 }
 
