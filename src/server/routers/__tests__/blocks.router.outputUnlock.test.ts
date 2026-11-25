@@ -1,4 +1,5 @@
 import client from 'prom-client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BridgeAuthModule from '~/server/services/blocks/block-bridge-auth.service';
 import type * as TokenAccessModule from '~/server/services/blocks/block-token-access.service';
@@ -425,12 +426,31 @@ async function outcomeUnknown(): Promise<number> {
 }
 
 describe('blocks.unlockOutput — an unlock whose outcome is unknown', () => {
-  it('🔴 a write with no answer is counted once for support', async () => {
+  it('🔴 a write with no answer is counted once and logged for support', async () => {
     h.lift.mockImplementation(async () => ({ outcome: 'no-response' }));
+    loggingMock.logToAxiom.mockClear();
     const before = await outcomeUnknown();
     const result = await unlock();
     expect(result.outcome).toBe('unavailable');
     expect(await outcomeUnknown()).toBe(before + 1);
+    const warns = loggingMock.logToAxiom.mock.calls.filter(
+      ([row]) => (row as { name?: string })?.name === 'app-block-unlock-outcome-unknown'
+    );
+    expect(warns).toEqual([
+      [
+        {
+          type: 'warning',
+          name: 'app-block-unlock-outcome-unknown',
+          details: {
+            userId: expect.any(Number),
+            workflowId: WF,
+            position: 1,
+            unlockBuzz: UNLOCK_PRICE,
+            plannedLevel: expect.anything(),
+          },
+        },
+      ],
+    ]);
   });
 
   it('CONTROL: a confirmed unlock counts nothing', async () => {
