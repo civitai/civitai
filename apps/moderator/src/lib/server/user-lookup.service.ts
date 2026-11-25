@@ -307,26 +307,42 @@ export async function withheldProfileMedia(
   profile: UserProfileText | null,
   viewer: App.Locals['user'] | undefined
 ) {
+  // The legacy `User.image` can hold the same key as an Image row; a url no Image row carries is
+  // nothing the rule could withhold, so it shows as it is.
+  const legacyIds = identity?.image
+    ? (
+        await dbRead
+          .selectFrom('Image')
+          .select('id')
+          .where('url', '=', identity.image)
+          .limit(100)
+          .execute()
+      ).map((r) => r.id)
+    : [];
   const ids = [
     identity?.profilePictureId,
     profile?.coverImage?.id,
     profile?.sfwCoverImage?.id,
+    ...legacyIds,
   ].filter((id): id is number => id != null);
   const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(viewer) }, 'user-card');
+  const legacyWithheld = legacyIds.some((id) => withheld.has(id));
   const media = (m: ProfileMedia | null): ProfileMedia | null =>
     m?.id != null && withheld.has(m.id)
       ? { ...blankCover({ id: m.id, nsfwLevel: m.nsfwLevel }), type: null }
       : m;
+  const avatarWithheld =
+    identity?.profilePictureId != null && withheld.has(identity.profilePictureId);
   return {
-    identity:
-      identity?.profilePictureId != null && withheld.has(identity.profilePictureId)
-        ? {
-            ...identity,
-            profilePictureUrl: null,
-            profilePictureType: null,
-            profilePictureRestricted: true as const,
-          }
-        : identity,
+    identity: identity && {
+      ...identity,
+      ...(legacyWithheld && { image: null }),
+      ...(avatarWithheld && {
+        profilePictureUrl: null,
+        profilePictureType: null,
+        profilePictureRestricted: true as const,
+      }),
+    },
     profile: profile && {
       ...profile,
       coverImage: media(profile.coverImage),

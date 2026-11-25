@@ -225,6 +225,31 @@ describe('profile avatar and covers', () => {
   });
 });
 
+describe('legacy profile image', () => {
+  const shown = async (image: string, viewer: never) => {
+    const { withheldProfileMedia } = await import('../user-lookup.service');
+    return (await withheldProfileMedia({ image, profilePictureId: null } as never, null, viewer))
+      .identity;
+  };
+
+  it('sends a url matching a withheld image as null to a moderator without the grant', async () => {
+    expect(await shown(KEY, WITHOUT_GRANT)).toMatchObject({ image: null });
+  });
+
+  it('sends it to a moderator with the grant', async () => {
+    expect(await shown(KEY, WITH_GRANT)).toMatchObject({ image: KEY });
+  });
+
+  it('sends a url of an open image as it is', async () => {
+    expect(await shown(CONTROL_KEY, WITHOUT_GRANT)).toMatchObject({ image: CONTROL_KEY });
+  });
+
+  it('sends a url no image carries as it is, since nothing could withhold it', async () => {
+    const url = 'https://avatars.example.com/a.png';
+    expect(await shown(url, WITHOUT_GRANT)).toMatchObject({ image: url });
+  });
+});
+
 describe('/reports/serviceOffering review images', () => {
   const reviews = async (viewer: never) => {
     await db.exec(`
