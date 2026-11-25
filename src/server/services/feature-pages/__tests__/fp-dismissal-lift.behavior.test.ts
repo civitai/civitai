@@ -359,6 +359,62 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(decided(id)).toBe('visible');
   });
 
+  /** A person's report on the comment, in `status`. */
+  const personReport = async (commentId: number, status: string) => {
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Report"(status, reason, "userId") VALUES ($1, 'TOSViolation', 3) RETURNING id`,
+      [status]
+    );
+    await q(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+      commentId,
+      id,
+    ]);
+    return id;
+  };
+
+  it("11. someone else's open report on the comment keeps it hidden until that report is handled", async () => {
+    const { id, reportId } = await hiddenByScan('reported by a person too');
+    const pending = await personReport(id, 'Pending');
+    expect(await dismiss(reportId)).toBeNull();
+    await q(`UPDATE "Report" SET status = 'Processing' WHERE id = $1`, [pending]);
+    expect(await dismiss(reportId)).toBeNull();
+    expect((await commentOf(id)).hidden).toBe(true);
+
+    // Handled: the same dismissal lifts it.
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [pending]);
+    expect(await dismiss(reportId)).toEqual({ commentId: id, version: 1 });
+  });
+
+  it("11b. an open report on another comment, or the system's own, does not hold this one", async () => {
+    const reported = await hiddenByScan('reported by a person');
+    await personReport(reported.id, 'Pending');
+    const { id, reportId } = await hiddenByScan('not reported');
+    // The system's own open report on it is not a person's.
+    const [{ id: automated }] = await q<{ id: number }>(
+      `INSERT INTO "Report"(status, reason, "userId") VALUES ('Pending', 'Automated', $1) RETURNING id`,
+      [SYSTEM]
+    );
+    await q(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+      id,
+      automated,
+    ]);
+    expect(await dismiss(reportId)).toEqual({ commentId: id, version: 1 });
+  });
+
+  it('11c. a report filed after the lift holds the platform send until it is handled', async () => {
+    const { id, reportId } = await hiddenByScan();
+    expect(await dismiss(reportId)).not.toBeNull();
+    await runMirror(mirror);
+    const later = await personReport(id, 'Pending');
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0 });
+    expect(modVisibleBySource()).toHaveLength(0);
+    expect(decided(id)).toBe('hidden');
+
+    await q(`UPDATE "Report" SET status = 'Unactioned' WHERE id = $1`, [later]);
+    expect(await settle()).toMatchObject({ moderatorLifts: 1 });
+    expect(decided(id)).toBe('visible');
+  });
+
   it('10. a pipeline hide the moderator did not see still decides after the lift', async () => {
     const { id, reportId } = await hiddenByScan();
     pipelineVerdict(id, 'hidden');

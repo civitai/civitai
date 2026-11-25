@@ -10,6 +10,7 @@ import {
   type FpPushRecord,
   type FpReconcileAction,
   fpMirrorTableExists,
+  hasOpenPersonFpReport,
   leaseFpMirrorRow,
   leaseFpMirrorRows,
   markFpAuthorErased,
@@ -28,6 +29,7 @@ import {
   recordFpScanAttempt,
   releaseFpLeases,
 } from '@civitai/db-queries/feature-page-comments';
+import { constants } from '~/server/common/constants';
 import { dbKV } from '~/server/db/db-helpers';
 import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
@@ -981,6 +983,16 @@ export async function runFpReconcile() {
       });
       if (!on || action === 'counted') continue;
       if (action === 'moderator-lift') {
+        // Someone reported it since the lift: it stays hidden there until that report is handled.
+        if (
+          await hasOpenPersonFpReport(kyselyWrite, {
+            commentId: row.commentId,
+            systemUserId: constants.system.user.id,
+          })
+        ) {
+          moderatorHidden += 1;
+          continue;
+        }
         // By sourceId: it lifts the moderator hide and decides for no version, so the site and the
         // pipeline decide after it, a pipeline hide included. The push then lifts the site's.
         const r = await send(PLATFORM_MOD_VERDICT_PATH, {

@@ -536,16 +536,35 @@ export async function readFpRunbookCounts(db: Kysely<DB>) {
   };
 }
 
+/** An open report on `comment` from anyone but the system user (`system`, a parameter). */
+const openPersonReport = (comment: string, system: string) => `EXISTS (
+  SELECT 1 FROM "CommentV3Report" pcr JOIN "Report" pr ON pr.id = pcr."reportId"
+  WHERE pcr."commentId" = ${comment} AND pr.status IN ('Pending', 'Processing')
+    AND pr."userId" <> ${system})`;
+
+/** Whether anyone but the system user still has an open report on this comment. */
+export async function hasOpenPersonFpReport(
+  db: Kysely<DB>,
+  { commentId, systemUserId }: { commentId: number; systemUserId: number }
+) {
+  const [row] = await rows<{ open: boolean }>(
+    db,
+    `SELECT ${openPersonReport('$1', '$2')} AS open`,
+    [commentId, systemUserId]
+  );
+  return !!row?.open;
+}
+
 /** The details.comment of the report the scan files when it hides a Feature Pages comment. */
 export const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
 
 /**
  * A moderator's own dismissal of the scan's report lifts the scan's hide, and nothing else: the
  * report is the scan's, set Unactioned by this moderator (never the system user); the current hide is
- * the one the scan made for the current text version; the comment is not ToS-removed, held or gone;
- * and its author is not banned or muted. Then, in one transaction under the hold decision's lock and
- * the comment's, it unhides the comment and records the grant, timed under the lock, and the
- * moderator's activity. Returns the lifted comment, or null when any of that does not hold.
+ * the one the scan made for the current text version; the comment is not ToS-removed, held or gone,
+ * and no one else's report on it is still open; and its author is not banned or muted. Then, in one
+ * transaction under the hold decision's lock and the comment's, it unhides the comment and records
+ * the grant, timed under the lock, and the moderator's activity. Returns the lifted comment, or null when any of that does not hold.
  */
 export async function grantFpScanLift(
   db: Kysely<DB>,
@@ -585,6 +604,7 @@ export async function grantFpScanLift(
            AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL
            AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND NOT u.muted
            AND NOT ${csamQueueHeldText('CommentV3', 'm."commentId"')}
+           AND NOT ${openPersonReport('m."commentId"', '$3')}
        ), shown AS (
          UPDATE "CommentV3" SET hidden = false, "hiddenAt" = NULL, "updatedAt" = now()
          WHERE id = (SELECT "commentId" FROM ok)
@@ -595,7 +615,7 @@ export async function grantFpScanLift(
          "pushAttempts" = 0, "pendingDigest" = NULL, "updatedAt" = now()
        FROM ok, shown WHERE m."commentId" = ok."commentId" AND shown.id = ok."commentId"
        RETURNING m."commentId", m."liftGrantedVersion" AS version`,
-      [commentId, actorId]
+      [commentId, actorId, systemUserId]
     );
     if (!lifted) return null;
     // The moderator's record, in the same transaction: the comment lifted and the report that lifted
