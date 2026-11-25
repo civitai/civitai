@@ -65,6 +65,9 @@ export const ratedSet = (urls: string[]) =>
     .map((u) => new URL(u).pathname)
     .sort()
     .join('\n');
+/** A clear verdict holds only for the same level and the same images: a tightened level rates again. */
+export const clearStamp = (matureLevel: number, urls: string[]) =>
+  `${matureLevel}\n${ratedSet(urls)}`;
 const pendingPreviewKey = (userId: number, workflowId: string) =>
   `${REDIS_KEYS.GENERATION.MODEL3D_PREVIEW_V2_PENDING}:${userId}:${workflowId}` as const;
 /** How long a mature v2 verdict holds the gate for that workflow without asking again. */
@@ -90,7 +93,8 @@ export type Model3dRatingV2Deps = {
   /** A mature verdict already given for this workflow. */
   remembered: (workflowId: string) => Promise<boolean>;
   remember: (workflowId: string) => Promise<void>;
-  /** The images this user's result was last rated clear on, as `ratedSet` gives them. */
+  /** What this user's result was last rated clear on: the level and the images, as `clearStamp` gives
+   *  them. */
   rememberedClear: (userId: number, workflowId: string) => Promise<string | null>;
   rememberClear: (userId: number, workflowId: string, rated: string) => Promise<void>;
   /** The preview this user already asked for on this result. */
@@ -301,10 +305,10 @@ export async function rateModel3DByV2(
     });
     return 'unrateable';
   }
-  const rated = ratedSet(angles);
+  const rated = clearStamp(matureLevel, angles);
   if ((await deps.rememberedClear(user.id, workflowId).catch(() => null)) === rated) return 'clear';
   // The user's own limit is theirs to spend, so its refusal blocks the post (try again shortly) rather
-  // than letting it through unrated; a system-side refusal or failure keeps today's rating.
+  // than letting it through unrated; a system-side refusal or failure keeps the post's current rating.
   const claimed = await deps.claim(user, req).catch((e) => {
     if (e instanceof TRPCError && e.code === 'TOO_MANY_REQUESTS') throw e;
     return false;

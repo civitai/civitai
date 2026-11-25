@@ -100,8 +100,8 @@ describe('ensureModel3DFromWorkflow source image', () => {
   });
 });
 
-// The post's four-angle render is asked for, and its pending entry read, only after the posting user's
-// own token has read the result.
+// Ownership is proven by the user's own token reading the result; the render and pending read must
+// come after it.
 describe('ensureModel3DFromWorkflow four-angle render', () => {
   const pendingKey = (userId: number) => expect.stringMatching(new RegExp(`:${userId}:wf-1$`));
 

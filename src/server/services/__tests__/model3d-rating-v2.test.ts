@@ -6,7 +6,7 @@ import {
   getModel3DPostBlock,
   model3DPostImages,
   rateModel3DByV2,
-  ratedSet,
+  clearStamp,
   MODEL3D_PREVIEW_PENDING,
   MODEL3D_RATING_V2_GLOBAL_LIMIT,
   PREVIEW_EXPIRY_SECONDS,
@@ -299,7 +299,7 @@ describe('3D post gate with a four-angle render', () => {
       d
     );
 
-  it('rates the render, not the existing previews, and asks with four explicit poses', async () => {
+  it("rates the render of the result's own mesh, not the existing previews", async () => {
     const submitPreview = vi.fn<Model3dRatingV2Deps['submitPreview']>(async () => ({
       workflowId: 'pv-1',
       state: { status: 'done', urls: rendered.slice(0, 4) },
@@ -465,8 +465,38 @@ describe('3D post gate with a four-angle render', () => {
       partial.deps
     );
     expect(rememberClear).not.toHaveBeenCalled();
-    const other = deps([true], { rememberedClear: async () => ratedSet([hosted(9)]) });
+    const other = deps([true], { rememberedClear: async () => clearStamp(2, [hosted(9)]) });
     expect(await post(other.deps)).toMatch(/rated mature/);
+  });
+
+  it('a clear verdict kept at one level is rated again when the level tightens', async () => {
+    let kept: string | null = null;
+    let level = 3;
+    const store = {
+      matureLevel: async () => level,
+      rememberedClear: async () => kept,
+      rememberClear: async (_u: number, _w: string, stamp: string) => {
+        kept = stamp;
+      },
+    };
+    expect(await gate([false], [hosted(0)], store)).toBeUndefined();
+    level = 2;
+    const { rate, deps: d } = deps([true], store);
+    expect(
+      await getModel3DPostBlock(
+        {
+          primaryModel: glb,
+          effectiveNsfwLevel: 'pg' as never,
+          allowMatureContent: false,
+          user,
+          req,
+          previewUrls: [hosted(0)],
+          workflowId: 'wf-1',
+        },
+        d
+      )
+    ).toMatch(/rated mature/);
+    expect(rate).toHaveBeenCalledTimes(1);
   });
 
   it('the cover is rated with the render angles: a mature cover over clear angles is mature', async () => {
@@ -512,8 +542,7 @@ describe('3D post gate with a four-angle render', () => {
     expect(rate).not.toHaveBeenCalled();
   });
 
-  // None of the render back is the system-side gap: the renders the result already has decide, as
-  // they did before. Never a pass on no rating at all.
+  // No render back falls to the renders the result already has; never a pass on no rating at all.
   it.each([
     ['the render failed', {}],
     ['the global window refused', { claimPreview: async () => false }],
