@@ -7,6 +7,7 @@ import { readWithoutJit } from '@civitai/db/knights';
 import {
   createQueueDb,
   IMAGE_GATE_MIGRATION,
+  IMAGE_GATE_REVOKES_MIGRATION,
   SKILL_CHECK_GATE_UNREADABLE,
   TABLE_OWNER,
 } from '../../test/pglite-kysely';
@@ -294,10 +295,7 @@ describe('knights_ensure_vote_partition', () => {
 });
 
 describe('the revoke migration', () => {
-  const REVOKES = IMAGE_GATE_MIGRATION.replace(
-    '20271127120000_knights_image_gate',
-    '20271127120100_knights_image_gate_revokes'
-  );
+  const REVOKES = IMAGE_GATE_REVOKES_MIGRATION;
   const apply = async () => {
     await pg.exec(`SET ROLE ${TABLE_OWNER}`);
     try {
@@ -335,5 +333,91 @@ describe('the image gate migration', () => {
       /not a superuser/
     );
     await pg.exec('ROLLBACK');
+  });
+});
+
+describe('"KnightsImageGate" on a file another image row shares', () => {
+  const OUT: Answers = {
+    servable: false,
+    sweepServable: false,
+    skillCheckEligible: false,
+    skillCheckLasting: false,
+  };
+
+  /** Image 2 is clean; image 3 is on image 2's stored url and gets the state `apply` gives it. */
+  async function seedSharedFile(apply: (id: number) => Promise<unknown>) {
+    await seedImage(pg, 2);
+    await seedImage(pg, 3);
+    await pg.query(`UPDATE "Image" SET url='key-2' WHERE id=3`);
+    await apply(3);
+  }
+
+  const heldSiblings: [string, (id: number) => Promise<unknown>][] = [
+    [
+      'in the CSAM queue',
+      (id) => pg.query(`UPDATE "Image" SET "needsReview"='csam' WHERE id=$1`, [id]),
+    ],
+    [
+      'blocked as CSAM',
+      (id) => pg.query(`UPDATE "Image" SET "blockedFor"='CSAM' WHERE id=$1`, [id]),
+    ],
+    [
+      'owned by a user a CsamReport names',
+      async (id) => {
+        await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES (45)`);
+        await pg.query(`UPDATE "Image" SET "userId"=45 WHERE id=$1`, [id]);
+      },
+    ],
+    [
+      "owned by a CsamReport's secondary user",
+      async (id) => {
+        await pg.query(`INSERT INTO "CsamReport" ("details") VALUES ('{"secondaryUserId":46}')`);
+        await pg.query(`UPDATE "Image" SET "userId"=46 WHERE id=$1`, [id]);
+      },
+    ],
+    [
+      'listed on a CsamReport',
+      (id) =>
+        pg.query(
+          `INSERT INTO "CsamReport" ("images") VALUES (jsonb_build_array(jsonb_build_object('id',$1::int)))`,
+          [id]
+        ),
+    ],
+  ];
+
+  it.each(heldSiblings)(
+    'puts an image out of every column when a row on its file is %s',
+    async (_l, apply) => {
+      await seedSharedFile(apply);
+      expect((await fromView([2])).get(2)).toEqual(OUT);
+      expect((await fromTables([2])).get(2)).toEqual(OUT);
+    }
+  );
+
+  it('keeps serving an image whose file a clean row shares, or whose held neighbour is on another file', async () => {
+    await seedSharedFile(async () => undefined);
+    await seedImage(pg, 4);
+    await pg.query(`UPDATE "Image" SET "needsReview"='csam' WHERE id=4`);
+    const answers = await fromView([2, 3]);
+    expect(answers.get(2)?.servable).toBe(true);
+    expect(answers.get(3)?.servable).toBe(true);
+  });
+
+  it('answers differently without the shared-file leg (the cases above can fail)', async () => {
+    const full = imageGateViewSql();
+    const leg = 'WHERE sf_i.url = img.url';
+    expect(full.split(leg).length - 1).toBe(IMAGE_GATE_COLUMNS.length);
+    const mutant = full.split(leg).join(`WHERE false AND sf_i.url = img.url`);
+    await pg.exec(`CREATE VIEW "KnightsImageGateMutant" AS ${mutant};
+      GRANT SELECT ON "KnightsImageGateMutant" TO ${KNIGHTS_APP_ROLE};`);
+    try {
+      await seedSharedFile((id) =>
+        pg.query(`UPDATE "Image" SET "blockedFor"='CSAM' WHERE id=$1`, [id])
+      );
+      expect((await fromView([2], 'KnightsImageGateMutant')).get(2)?.servable).toBe(true);
+      expect((await fromView([2])).get(2)?.servable).toBe(false);
+    } finally {
+      await pg.exec('DROP VIEW "KnightsImageGateMutant"');
+    }
   });
 });
