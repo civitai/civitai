@@ -378,8 +378,6 @@ export async function clearBlockInstancesForPublisher({
     return global.length + subjectScoped.length;
   } finally {
     await clearQueuedBanRevoke(userId);
-    // The ban's "*" revoke held the user's sandboxes; the unban lifts the hold (queued and retried,
-    // never throws; until it lands the sandboxes stay kept).
     await releaseHoldsForUnbannedUser(userId);
   }
 }

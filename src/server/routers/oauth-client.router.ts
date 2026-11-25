@@ -69,15 +69,15 @@ function rejectAppAssistantClient(clientId: string): void {
 }
 
 /**
- * A self-only client (App Assistant, dev tunnel) that staff or a ban disabled cannot be deleted by
- * its owner: the next App Assistant enable or dev-tunnel mint would recreate it, open, and so undo
- * the disable. Only staff re-open it. An open one deletes as before (turning the feature off).
+ * A disabled self-only client (App Assistant, dev tunnel) cannot be deleted by its owner: deleting
+ * would let the next App Assistant enable or dev-tunnel mint recreate it open, undoing the disable.
+ * An open one deletes as before.
  */
 function rejectDeletingDisabledSelfOnlyClient(client: { id: string; accessMode: string }): void {
   if (isSelfOnlyClientId(client.id) && client.accessMode === 'disabled') {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'This app was disabled by staff and cannot be removed here',
+      message: 'This app is disabled and cannot be removed here',
     });
   }
 }

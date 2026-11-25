@@ -9,7 +9,6 @@ import { redis } from '~/server/redis/client';
 // cache Redis; a lost mark, or one that cannot be read (read as "no mark"), fails closed: the client
 // stays disabled until staff re-open it.
 
-/** An expired mark means the client fails closed (stays disabled). */
 const BAN_DISABLED_TTL_SECONDS = 365 * 24 * 60 * 60;
 
 /**
@@ -77,6 +76,7 @@ export async function reopenBanDisabledClient(clientId: string): Promise<boolean
     FROM "OauthClient" c JOIN "User" u ON u."id" = c."userId"
     WHERE c."id" = ${clientId} AND c."accessMode" = 'disabled'
   `;
-  if (owner?.banned) await markBanDisabledClients([{ id: clientId, priorMode }]).catch(() => {});
+  if (owner?.banned)
+    await markBanDisabledClients([{ id: clientId, priorMode }]).catch(() => undefined);
   return false;
 }

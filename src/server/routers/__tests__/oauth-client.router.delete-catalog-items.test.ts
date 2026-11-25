@@ -128,7 +128,10 @@ describe('oauthClient.delete on a self-only client', () => {
         userId: OWNER_ID,
         accessMode: 'disabled',
       });
-      await expect(caller.delete({ id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(caller.delete({ id })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'This app is disabled and cannot be removed here',
+      });
       expect(dbMock.dbWrite.oauthClient.delete).not.toHaveBeenCalled();
     }
   );

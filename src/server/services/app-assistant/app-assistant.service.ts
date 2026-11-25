@@ -221,9 +221,8 @@ export async function enableAppAssistant(userId: number): Promise<void> {
   const clientId = appAssistantClientId(userId);
   const scope = appAssistantTokenScope('chat');
 
-  // The whole shape on every call, so a hand-edited row is put back. `accessMode` is deliberately
-  // absent so the upsert never undoes a staff or ban disable; reopenBanDisabledClient is the only
-  // re-open path.
+  // The whole shape on every call, so a hand-edited row is put back.
+  // accessMode is deliberately absent so the upsert never undoes a staff or ban disable.
   const shape = {
     secret: null,
     name: 'App Assistant',
