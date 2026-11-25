@@ -2,6 +2,7 @@ import { env } from '$env/dynamic/private';
 import { createRemoteLinkTracker, setEmailLinkTracker } from '@civitai/email';
 import { logToAxiom } from '$lib/server/axiom';
 import { tryCivitaiInternalUrl } from '$lib/server/civitai-url';
+import { mainAppHostFetch } from '$lib/server/main-app-fetch';
 
 /**
  * Registers the moderator app's email link tracker: at render, each email's web links are sent to
@@ -13,6 +14,7 @@ import { tryCivitaiInternalUrl } from '$lib/server/civitai-url';
 export function registerEmailLinkTracker(): boolean {
   const tracker = createRemoteLinkTracker({
     baseUrl: tryCivitaiInternalUrl() ?? '',
+    fetch: mainAppHostFetch,
     token: env.AUTH_INTERNAL_TOKEN ?? '',
     onError: (reason) =>
       void logToAxiom({
