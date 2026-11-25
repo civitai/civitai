@@ -185,6 +185,7 @@ const MIGRATIONS = [
 
 const SELLER = 1;
 const BUYER = 2;
+const MODERATOR = 9;
 const STRANGER = 3;
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
@@ -1807,5 +1808,77 @@ describe('reviews on the offering page', () => {
       cursor: first.nextCursor,
     });
     expect(second.items.map((i) => i.id)).toEqual([older]);
+  });
+});
+
+// Decided in civitai/civitai#10422.
+describe('a file holding a held image', () => {
+  /** Points an entry of the file at a new image, with `set` applied to it. */
+  async function holding(dealId: number, fileId: number, set?: string) {
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, ingestion) VALUES ('held', 'Scanned') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         VALUES ($1, $2, 0, 'a.png', 1, $3, 'Passed')`,
+      [fileId, dealId, id]
+    );
+    if (set) await q(`UPDATE "Image" SET ${set} WHERE id = $1`, [id]);
+  }
+  /** What `userId` is offered of the file in the list, and whether the download serves it. */
+  const sees = async (dealId: number, fileId: number, userId: number, isModerator = false) => ({
+    listed: (await list(dealId, userId, isModerator)).find((row) => row.id === fileId)?.canDownload,
+    downloaded: (await download(fileId, userId, isModerator)) !== null,
+  });
+  const SERVED = { listed: true, downloaded: true };
+  const REFUSED = { listed: false, downloaded: false };
+
+  async function scannedAttachment() {
+    const dealId = await accepted();
+    const fileId = await attach(dealId, 'notes.txt', TEXT);
+    await scanned([fileId]);
+    return { dealId, fileId };
+  }
+
+  it('an attachment with nothing held is served to the seller', async () => {
+    const { dealId, fileId } = await scannedAttachment();
+    await holding(dealId, fileId);
+    expect(await sees(dealId, fileId, SELLER)).toEqual(SERVED);
+  });
+
+  it('an attachment held for CSAM is refused to the seller, and its buyer still gets it back', async () => {
+    const { dealId, fileId } = await scannedAttachment();
+    await holding(dealId, fileId, `"needsReview" = 'csam'`);
+    expect(await sees(dealId, fileId, SELLER)).toEqual(REFUSED);
+    expect(await sees(dealId, fileId, BUYER)).toEqual(SERVED);
+  });
+
+  it('a removed attachment holding a minor is refused to a CSAM reviewer', async () => {
+    const { dealId, fileId } = await scannedAttachment();
+    await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+    await holding(dealId, fileId);
+    expect(await sees(dealId, fileId, MODERATOR, true)).toEqual(SERVED);
+    await q(`UPDATE "Image" SET minor = true`);
+    expect(await sees(dealId, fileId, MODERATOR, true)).toEqual(REFUSED);
+  });
+
+  describe('a Final', () => {
+    async function heldFinal(set: string) {
+      const dealId = await accepted();
+      const fileId = await delivered(dealId);
+      await holding(dealId, fileId, set);
+      return { dealId, fileId };
+    }
+
+    it('held only on suspicion is served to its seller, and refused to a moderator', async () => {
+      const { dealId, fileId } = await heldFinal('minor = true');
+      expect(await sees(dealId, fileId, SELLER)).toEqual(SERVED);
+      expect(await sees(dealId, fileId, MODERATOR, true)).toEqual(REFUSED);
+    });
+
+    it('with a blocked image is refused to its seller too', async () => {
+      const { dealId, fileId } = await heldFinal(`minor = true, "blockedFor" = 'CSAM'`);
+      expect(await sees(dealId, fileId, SELLER)).toEqual(REFUSED);
+    });
   });
 });

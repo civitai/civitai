@@ -691,13 +691,18 @@ async function deleteFileObjects(
 export const entryOnlyOverLevel = (e: Prisma.Sql) => Prisma.sql`(
   ${e}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
   AND ${e}."failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
-  -- An image row that is gone, or cannot be read, keeps it: only one seen unflagged lets it go.
-  AND ${e}."imageId" IS NOT NULL
-  AND EXISTS (SELECT 1 FROM "Image" oi WHERE oi."id" = ${e}."imageId"
-    AND oi."ingestion" = 'Scanned'::"ImageIngestionStatus" AND oi."needsReview" IS NULL
-    AND NOT oi."poi" AND NOT oi."minor" AND oi."blockedFor" IS NULL
-    AND ((oi."id")::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})) IS NOT TRUE
-    AND ${toPrismaSql(childSafetyImageCase('oi'))} IS NOT TRUE)
+  AND (
+    -- An image row that is gone, or cannot be read, keeps it: only one seen unflagged lets it go.
+    (${e}."imageId" IS NOT NULL
+      AND EXISTS (SELECT 1 FROM "Image" oi WHERE oi."id" = ${e}."imageId"
+        AND oi."ingestion" = 'Scanned'::"ImageIngestionStatus" AND oi."needsReview" IS NULL
+        AND NOT oi."poi" AND NOT oi."minor" AND oi."blockedFor" IS NULL
+        AND ((oi."id")::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})) IS NOT TRUE
+        AND ${toPrismaSql(childSafetyImageCase('oi'))} IS NOT TRUE))
+    -- Or the purge already deleted its copy, so a run that stops part-way does not strand the file.
+    OR (${e}."imageId" IS NULL
+      AND EXISTS (SELECT 1 FROM "ServiceDealFilePurge" p WHERE p."fileId" = ${e}."fileId"))
+  )
 )`;
 
 /** An image entry whose copy is still the moderators' evidence. `e` names the entry row. */
@@ -812,7 +817,8 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
     // its case) keeps the row, for the next run to judge again.
     const copies = await dbWrite.$queryRaw<{ imageId: number }[]>`
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
-      WHERE e."fileId" = ${file.id}::int AND ${entryOnlyOverLevel(Prisma.sql`e`)}`;
+      WHERE e."fileId" = ${file.id}::int AND e."imageId" IS NOT NULL
+        AND ${entryOnlyOverLevel(Prisma.sql`e`)}`;
     if (copies.length) {
       if (!(await stillDeletable())) continue;
       const ids = copies.map(({ imageId }) => imageId);
@@ -1095,7 +1101,6 @@ export async function listServiceDealFiles({
           failReason: row.failReason,
           scanStatus: row.scanStatus,
           previewUrl: null,
-          // Refused as the download refuses it.
           canDownload:
             canReviewCsam &&
             !isUploaderKey(row.s3Key) &&
@@ -1124,7 +1129,10 @@ export async function listServiceDealFiles({
           failReason: owner ? row.failReason : null,
           scanStatus: row.scanStatus,
           previewUrl: null,
-          canDownload: row.status === 'Ready' && (owner || cleared),
+          canDownload:
+            row.status === 'Ready' &&
+            (owner || cleared) &&
+            finalLevelGate(row, servableLevels, false, isBuyer) === 'served',
         },
       ];
     }
@@ -1139,7 +1147,7 @@ export async function listServiceDealFiles({
       row.status === 'Ready' &&
       (privileged ||
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
-    const levelGate = allowed ? finalLevelGate(row, servableLevels, false) : 'refused';
+    const levelGate = allowed ? finalLevelGate(row, servableLevels, false, isSeller) : 'refused';
     const downloadable = levelGate === 'served';
     const lockedFinal = buyerOnly && row.kind === 'Final' && !allowed;
     const offDomain =
@@ -1200,6 +1208,8 @@ const finalLevelColumns = Prisma.sql`f."scannedEtag",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
         WHERE e."fileId" = f."id" AND (${Prisma.raw(heldItemImageSql('i'))} OR i.minor IS TRUE
           OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))) AS "csamHeld",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+        WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone"`;
@@ -1209,22 +1219,27 @@ type FinalLevelFacts = {
   /** The highest rating among the file's scanned images; null for a file with none. */
   contentLevel: number | null;
   csamHeld: boolean;
+  /** An image in it is blocked, for any reason. */
+  imageBlocked: boolean;
   ratedImageGone: boolean;
 };
 
 /**
  * Whether a Final's rating lets this domain serve it: a video, or a file whose images were rated (an
- * image, or a zip of them), goes only where that rating may be shown. The list and the download read
- * the same answer. `offDomain` is rated and refused here only for this domain's levels.
+ * image, or a zip of them), goes only where that rating may be shown. The site's list and download
+ * read the same answer. `offDomain` is rated and refused here only for this domain's levels.
  */
 function finalLevelGate(
   row: { kind: ServiceDealFileKind; fileName: string } & FinalLevelFacts,
   servableLevels: number,
-  disputeReview: boolean
+  disputeReview: boolean,
+  /** The uploader taking back their own original, never the delivery copy. */
+  ownOriginal = false
 ): 'served' | 'offDomain' | 'refused' {
+  // A file of any kind held for CSAM or a minor goes only through the CSAM path, never this route,
+  // rated or not. Its uploader still gets their own original back, unless an image in it is blocked.
+  if (row.csamHeld && !(ownOriginal && !row.imageBlocked)) return 'refused';
   if (row.kind !== 'Final') return 'served';
-  // Held for CSAM or a minor, it goes only through the CSAM path, never this route, rated or not.
-  if (row.csamHeld) return 'refused';
   const video = isFinalVideoName(row.fileName);
   if (!video && row.contentLevel === null) return 'served';
   // A video never stamped (refused, or not scanned yet) goes only to dispute review.
@@ -1339,7 +1354,10 @@ export async function resolveServiceDealFileDownload({
   const role: ServiceDealAccessRole =
     row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
   const bucket = await getBucket();
-  if (finalLevelGate(row, servableLevels, isModerator && !!moderatorFetch) !== 'served')
+  const ownOriginal = userId === uploaderId && key === row.s3Key;
+  if (
+    finalLevelGate(row, servableLevels, isModerator && !!moderatorFetch, ownOriginal) !== 'served'
+  )
     return null;
   // A video is served only as the version its scan copy was made from.
   if (row.kind === 'Final' && row.scannedEtag && isFinalVideoName(row.fileName))

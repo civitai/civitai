@@ -441,7 +441,7 @@ beforeEach(async () => {
     q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
   );
   await holder.db.exec(`
-    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "Report", "ImageReport", "CsamReport", "CsamQueueSetAside" RESTART IDENTITY;
+    TRUNCATE "ServiceDealFilePurge", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "Report", "ImageReport", "CsamReport", "CsamQueueSetAside" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -1859,9 +1859,9 @@ describe('copies of scanned images', () => {
   // Decided in civitai/civitai#10422.
   describe("a Final refused only for a rating above the deal's level", () => {
     /** A one-image zip Final rated `flags` above the PG-13 deal, settled, then deleted by its seller. */
-    async function overLevelFinal(flags = '') {
+    async function overLevelFinal(flags = '', items = [{ name: 'a.png', data: IMAGE_A }]) {
       const dealId = await accepted();
-      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      const fileId = await zipFinal(dealId, items);
       await unpack.unpackFinals();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4${flags}`);
       await unpack.settleEntryScans();
@@ -1910,6 +1910,35 @@ describe('copies of scanned images', () => {
         `UPDATE "Report" SET status = 'Unactioned', "createdAt" = now() - interval '400 days', "statusSetAt" = now() - interval '400 days'`
       );
       await purgedWithCopy(fileId);
+    });
+
+    it('is purged by a later run when one of its copies failed to delete', async () => {
+      const fileId = await overLevelFinal('', [
+        { name: 'a.png', data: IMAGE_A },
+        { name: 'b.png', data: IMAGE_B },
+      ]);
+      images.deleteImages.mockRejectedValueOnce(new Error('store down'));
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
+      expect(await files.purgeRemovedFiles()).toBe(1);
+      expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toEqual([]);
+    });
+
+    it.each([
+      ['no purge was tried', ''],
+      [
+        'its entry failed for another reason',
+        `UPDATE "ServiceDealFileEntry" SET "failReason" = 'Rejected';
+         INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size") SELECT id, "dealId", size FROM "ServiceDealFile"`,
+      ],
+    ])('is kept when its copy is gone and %s', async (_n, sql) => {
+      const fileId = await overLevelFinal();
+      await holder.db.exec(
+        `UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL; DELETE FROM "Image"; ${sql}`
+      );
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
     });
 
     it('keeps its copy when a hold lands after its objects are deleted', async () => {
