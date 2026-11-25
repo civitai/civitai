@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseIdList, parseQuery } from '$lib/server/query';
 import { getImageTagReviewQueue, moderateImageTags } from '$lib/server/image-tags.service';
-import { withheldRow, withheldRows } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
@@ -35,6 +35,8 @@ export const actions: Actions = {
     if (!imageId) return fail(400, { error: 'Missing image id.' });
     if (tagId !== undefined && !Number.isFinite(tagId))
       return fail(400, { error: 'Invalid tag id.' });
+    const withheld = await withheldRefusal(locals.user, [imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     const { tagIds } = await moderateImageTags({
       imageId,
@@ -50,6 +52,8 @@ export const actions: Actions = {
     const form = await request.formData();
     const disable = form.get('disable') === 'true';
     const imageIds = parseIdList(String(form.get('imageIds') ?? ''));
+    const withheld = await withheldRefusal(locals.user, imageIds);
+    if (withheld) return fail(403, { error: withheld });
 
     await Promise.all(
       imageIds.map((imageId) => moderateImageTags({ imageId, disable, userId: locals.user.id }))

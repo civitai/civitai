@@ -2,8 +2,8 @@ import { sql } from 'kysely';
 import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 
 /**
- * Which of `imageIds` the relabel set must never contain, because a CSAM report or CSAM block
- * touches the image or its owner. Run against the main database, at build time and again each time
+ * Which of `imageIds` the relabel set must never contain: images a CSAM report or block touches (or
+ * whose owner it touches), and images the moderator views withhold without the CSAM grant. Run against the main database, at build time and again each time
  * an item is served, since a report can arrive after the item was sampled.
  *
  * Every signal is used, because none is complete on its own: a later moderator removal

@@ -22,6 +22,11 @@ vi.mock('../mod-activity', () => ({ recordModActivity: h.recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn() }));
 vi.mock('../storage', () => ({ getStorage: vi.fn(), getMediaProbeStorage: vi.fn() }));
+// The withheld-image gate is pinned in withheld-actions.pglite.test.ts.
+vi.mock('../retracted-media', () => ({
+  withheldRefusal: async () => null,
+  listWithheldIds: async () => new Set(),
+}));
 
 const { rescanStuckImages, MAX_RESCAN_PER_REQUEST } = await import('../ingestion.service');
 
@@ -50,7 +55,11 @@ describe('rescanStuckImages', () => {
   it('moves only still-stuck, unlocked rows from the selection to Rescan', async () => {
     cannedRows(11, 12);
 
-    const result = await rescanStuckImages({ imageIds: [11, 12, 12], userId: 7 });
+    const result = await rescanStuckImages({
+      imageIds: [11, 12, 12],
+      userId: 7,
+      viewer: undefined,
+    });
 
     expect(h.sql).toHaveLength(1);
     const update = flat(0);
@@ -59,13 +68,13 @@ describe('rescanStuckImages', () => {
     expect(update).toContain(`"nsfwLevelLocked" = $5`);
     expect(update).toMatch(/returning "id"$/);
     expect(h.params[0]).toEqual(['Rescan', 11, 12, STUCK_CUTOFF, false]);
-    expect(result).toEqual({ ok: true, count: 2 });
+    expect(result).toEqual({ ok: true, count: 2, skipped: 0 });
   });
 
   it('records one mod-activity row per image it actually moved', async () => {
     cannedRows(11);
 
-    await rescanStuckImages({ imageIds: [11, 12], userId: 7 });
+    await rescanStuckImages({ imageIds: [11, 12], userId: 7, viewer: undefined });
 
     expect(h.recordModActivity).toHaveBeenCalledTimes(1);
     expect(h.recordModActivity).toHaveBeenCalledWith({
@@ -79,7 +88,7 @@ describe('rescanStuckImages', () => {
   it('without ids, picks the oldest stuck unlocked images up to the cap, then updates those', async () => {
     cannedRows(21, 22);
 
-    const result = await rescanStuckImages({ userId: 7 });
+    const result = await rescanStuckImages({ userId: 7, viewer: undefined });
 
     expect(h.sql).toHaveLength(2);
     const pick = flat(0);
@@ -89,25 +98,27 @@ describe('rescanStuckImages', () => {
     expect(pick).toMatch(/order by "id" limit \$3$/);
     expect(h.params[0]).toEqual([STUCK_CUTOFF, false, MAX_RESCAN_PER_REQUEST]);
     expect(h.params[1]).toEqual(['Rescan', 21, 22, STUCK_CUTOFF, false]);
-    expect(result).toEqual({ ok: true, count: 2 });
+    expect(result).toEqual({ ok: true, count: 2, skipped: 0 });
   });
 
   it('with nothing stuck, stops after the pick and records nothing', async () => {
-    const result = await rescanStuckImages({ userId: 7 });
+    const result = await rescanStuckImages({ userId: 7, viewer: undefined });
 
     expect(h.sql).toHaveLength(1);
-    expect(result).toEqual({ ok: true, count: 0 });
+    expect(result).toEqual({ ok: true, count: 0, skipped: 0 });
     expect(h.recordModActivity).not.toHaveBeenCalled();
   });
 
   it('refuses an empty or oversized selection without touching the database', async () => {
     const tooMany = Array.from({ length: MAX_RESCAN_PER_REQUEST + 1 }, (_, i) => i + 1);
 
-    expect(await rescanStuckImages({ imageIds: [], userId: 7 })).toEqual({
+    expect(await rescanStuckImages({ imageIds: [], userId: 7, viewer: undefined })).toEqual({
       ok: false,
       error: 'Select at least one image.',
     });
-    expect(await rescanStuckImages({ imageIds: tooMany, userId: 7 })).toMatchObject({ ok: false });
+    expect(
+      await rescanStuckImages({ imageIds: tooMany, userId: 7, viewer: undefined })
+    ).toMatchObject({ ok: false });
     expect(h.sql).toHaveLength(0);
   });
 });

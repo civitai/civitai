@@ -10,7 +10,7 @@ import {
   getOpenHelpRequests,
   resolveHelpRequest,
 } from '$lib/server/image-help.service';
-import { withheldRow, withheldRows } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   request: z.coerce.number().int().positive().optional().catch(undefined),
@@ -53,6 +53,12 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const images = await getHelpRequestImages(input.requestId);
+    const withheld = await withheldRefusal(
+      locals.user,
+      images.map((i) => i.id)
+    );
+    if (withheld) return fail(403, { error: withheld });
 
     const result = await resolveHelpRequest({
       requestId: input.requestId,

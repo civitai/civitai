@@ -5,6 +5,8 @@ const { callModEndpoint } = vi.hoisted(() => ({ callModEndpoint: vi.fn() }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/version-showcase.service', () => ({ listFeaturedImages: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ callModEndpoint }));
+// The withheld-image gate is pinned in image-action-access.pglite.test.ts.
+vi.mock('$lib/server/retracted-media', () => ({ withheldRefusal: async () => null }));
 
 const { actions } = await import('../+page.server');
 
@@ -15,6 +17,7 @@ const remove = (fields: Record<string, string>) => {
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
   const event = {
     request: new Request('http://x/models/version-showcases', { method: 'POST', body }),
+    locals: { user: { id: 1 } },
   };
   return actions.remove(event as unknown as ActionEvent) as Promise<Record<string, unknown>>;
 };

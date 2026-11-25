@@ -9,7 +9,7 @@ import {
   moderatorWithheldSql,
   retractedImageWhereSql,
 } from '@civitai/shared/retracted-media-tier';
-import { dbWrite } from './db';
+import { dbRead, dbWrite } from './db';
 import { holdsCsamReview } from './held-media';
 import { WITHHELD_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
@@ -279,6 +279,38 @@ export async function listWithheldIds(
     });
     return new Set(imageIds);
   });
+}
+
+const MEDIA_UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+/** The most Image rows `withheldUrls` reads; past it, every url is treated as withheld. */
+const URL_MATCH_CAP = 1000;
+
+/** Of `urls` (each a bare `Image.url` or a CDN link carrying one), those naming an image withheld
+ *  from `user`. A url no Image row carries is nothing the rule could withhold, so it is not in the
+ *  set. */
+export async function withheldUrls(
+  urls: readonly (string | null | undefined)[],
+  user: App.Locals['user'] | undefined,
+  list: string
+): Promise<Set<string>> {
+  const keysOf = (url: string) => [url, url.match(MEDIA_UUID)?.[0]].filter((k): k is string => !!k);
+  const given = [...new Set(urls.filter((u): u is string => !!u))];
+  const keys = [...new Set(given.flatMap(keysOf))];
+  if (!keys.length) return new Set();
+  const rows = await dbRead
+    .selectFrom('Image')
+    .select(['id', 'url'])
+    .where('url', 'in', keys)
+    .limit(URL_MATCH_CAP + 1)
+    .execute();
+  if (rows.length > URL_MATCH_CAP) return new Set(given);
+  const withheld = await listWithheldIds(
+    rows.map((r) => r.id),
+    { csamReview: holdsCsamReview(user) },
+    list
+  );
+  const withheldKeys = new Set(rows.filter((r) => withheld.has(r.id)).map((r) => r.url));
+  return new Set(given.filter((url) => keysOf(url).some((k) => withheldKeys.has(k))));
 }
 
 /** `rows` with each row whose image is withheld from `user` replaced by `blank(row)`; a row with
