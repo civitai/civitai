@@ -199,7 +199,8 @@ One file per `POST /api/search/*` case: `request` (`path`, the JSON `body` as te
 user's `id`, `isModerator`, `browsingLevel`, `showNsfw`; null when signed out), `config.passthrough`
 (`site-search-passthrough`), `upstream` (the search backend's `status` and `body` text), and
 `expect`: either `call` (the backend path and the JSON body Node sends, compared as values) and `body`
-(the exact text Node writes), or `fallback` (the reason feed-go must hand the request back with) and
+(the exact text Node writes), or `fallback` (the reason feed-go's public route must hand the
+request back with; the harness runs those fixtures as the public route) and
 `nodeStatus` (what Node then answers). Written by hand from the Node code; held to the real handler by
 `src/server/__tests__/feed-go-site-search.golden.test.ts`, whose failure prints `GOLDEN-ACTUAL` — set a
 fixture's expectation from that output only. `internal/server/sitesearch_golden_test.go` runs feed-go

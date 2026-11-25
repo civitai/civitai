@@ -3524,7 +3524,7 @@ the CPU goes in Node, and it is the reason for the port.
 | Route | the three paths, `POST` | another path, `/api/search/token` included (`search-path`), an escaped segment (`search-path`), another method (`method`) |
 | Body | the three zod schemas, key by key (generated into `inputschema/schemas.json`, held by `TestInputKeyLedger`), the windows clamped to 1000 | a value zod refuses or one not proven accepted (`search-input-invalid`), a key the schema lacks (`input-unknown-key`, after the refusals), a duplicate key (`search-input-duplicate`), not JSON or not UTF-8 (`search-input`), not `application/json` UTF-8 (`search-content-type`), past 1 MiB (`search-body-size`) |
 | Viewer | signed out; session cookies (§4) with the session user's saved `browsingLevel` / `showNsfw`; moderators | any API credential, header or `?token=` (`bearer-token`); a banned session, Node's 403 (`search-banned`); preferences of a kind not read as JavaScript reads them (`search-session-shape`) |
-| Host | the colours, the domain cap, region restriction | **any non-empty `q` on the SFW site** (`search-profanity`: the profanity check is not ported) |
+| Host | the colours, the domain cap, region restriction | public route only: **any non-empty `q` on the SFW site** (`search-profanity`: the profanity check is not ported; a shadow sample is computed, Node samples only after its own check passed) |
 | Indexes | the seven searchable ones | a retired or unknown index (`search-index`) |
 | Answer | a 200 reshaped exactly as `shapeHits` does, per index | a non-200 (`search-upstream-status`; Node answers it), no answer (`search-upstream-unavailable`), invalid JSON, invalid UTF-8, a hit that is not an object on an index that reshapes, a duplicate key, a rating or id that is not a plain number (`search-upstream-shape`: each a case where JavaScript's coercion is not reproduced) |
 | Public route only | the rate limit, read before and counted after an answer (18.6) | a window at its ceiling (`search-rate-limited`: Node answers the 429 and counts it), a signed-out caller without a usable `cf-connecting-ip` (`search-rate-limit-ip`: Node keys it by another derivation), an `etag` query (`search-etag`: the wrapper may add `X-Expires`); a blocked region is ALWAYS handed back (`region-blocked`), whatever `FEED_GO_ANSWER_REGION_BLOCKED` says, because Node's 451 here carries the wrapper's headers |
@@ -3592,13 +3592,14 @@ sum(rate(feed_go_shadow_phase_cpu_seconds_total{feed_endpoint="site-search",phas
 # Match rate, and the security result kept apart: membership = Go's call differs from Node's.
 sum by (result) (rate(feed_go_shadow_compare_total{feed_endpoint="site-search"}[1h]))
 
-# What blocks serving: fallback reasons (expect search-profanity to dominate on the SFW site).
+# What blocks serving: fallback reasons. search-profanity is public-route only (mode="serve").
 topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="site-search",mode="shadow"}[1h])))
 ```
 
-Node's side: the route's CPU in the same profile window. The go/no-go needs the `search-profanity`
-share read first: on the SFW site every typed query falls back until the profanity check is ported, so
-the saving applies to the other share only.
+Node's side: the route's CPU in the same profile window. The shadow compares SFW-site typed queries
+too (that is where the PG cap applies, so where a missed clause would leak), but the public route hands
+every one back until the profanity check is ported: the go/no-go needs that share of the route's
+traffic first, since the serving saving applies to the rest only.
 
 ### 18.6 Serving (`FEED_GO_SERVE_SEARCH`, default off)
 

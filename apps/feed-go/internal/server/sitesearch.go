@@ -255,8 +255,9 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		}
 		color := s.Hosts.ColorOf(r.Host)
 		// civitai.com refuses a profane search (isProfaneSearch: the managed list, the shipped one, the
-		// moderators' benign words). Not ported: any text there is handed back.
-		if color == "green" {
+		// moderators' benign words). Not ported: serving, any text there is handed back. A shadow sample
+		// is computed: Node samples a request only after its own check has passed it.
+		if serving && color == "green" {
 			for _, q := range req.QueryTexts() {
 				if q != "" {
 					return nil, fallback.New("search-profanity")

@@ -317,6 +317,24 @@ func TestServeSearchFallbacks(t *testing.T) {
 	}
 }
 
+// The profanity hand-back is the public route's alone: a shadow sample on the SFW site with text is
+// computed and compared, since Node samples a request only after its own check passed it — and that
+// is the PG-capped traffic where a missed clause would leak.
+func TestSearchShadowComputesTextOnTheSFWSite(t *testing.T) {
+	s := &Server{Resolver: &auth.Resolver{}, Hosts: siteSearchGoldenHosts}
+	up := &recordingUpstream{res: &sitesearch.Response{Status: 200, Body: []byte(searchToolsHits)}}
+	ctx := context.WithValue(withSearchBody(context.Background(), []byte(`{"q":"cat"}`)), searchRecordedKey{}, sitesearch.Upstream(up))
+	r := httptest.NewRequestWithContext(ctx, http.MethodPost, searchToolsPath, strings.NewReader(`{"q":"cat"}`))
+	r.Host = "green.example.test"
+	r.Header.Set("Content-Type", "application/json")
+	if _, err := s.searchCompute(false)(ctx, r); err != nil {
+		t.Fatalf("shadow, SFW site, text: %v, want computed", err)
+	}
+	if _, err := s.searchCompute(true)(ctx, r); fallback.Reason(err) != "search-profanity" {
+		t.Fatalf("serving, SFW site, text: %v, want search-profanity", err)
+	}
+}
+
 // A GET (or a preflight) is Node's 405 or CORS answer: handed back. So is a body past Next's limit,
 // replayed whole.
 func TestServeSearchMethodAndBodySize(t *testing.T) {

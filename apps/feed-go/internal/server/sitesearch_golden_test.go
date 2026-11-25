@@ -116,19 +116,28 @@ func goldenSessionUser(t *testing.T, v map[string]any) *auth.SessionUser {
 	return u
 }
 
-func runSiteSearchFixture(t *testing.T, fx siteSearchFixture) (*computed, *recordingUpstream, error) {
+// runSiteSearchFixture computes a fixture as the shadow does (the backend answer on the context), or,
+// serving, as the public route does (the backend client and a rate store): a fallback fixture is
+// one the public route must hand back, so it is run serving.
+func runSiteSearchFixture(t *testing.T, fx siteSearchFixture, serving bool) (*computed, *recordingUpstream, error) {
 	t.Helper()
-	s := &Server{Resolver: &auth.Resolver{}, Hosts: siteSearchGoldenHosts}
 	up := &recordingUpstream{}
 	if fx.Upstream != nil {
 		up.res = &sitesearch.Response{Status: fx.Upstream.Status, Body: []byte(fx.Upstream.Body)}
 	}
+	s := &Server{Resolver: &auth.Resolver{}, Hosts: siteSearchGoldenHosts}
 	ctx := auth.WithResolved(context.Background(), goldenSessionUser(t, fx.Viewer), nil)
-	ctx = context.WithValue(withSearchBody(ctx, []byte(fx.Request.Body)), searchRecordedKey{}, sitesearch.Upstream(up))
+	ctx = withSearchBody(ctx, []byte(fx.Request.Body))
+	if serving {
+		s.Search = &SearchDeps{Upstream: up, Rate: newFakeRate()}
+	} else {
+		ctx = context.WithValue(ctx, searchRecordedKey{}, sitesearch.Upstream(up))
+	}
 	r := httptest.NewRequestWithContext(ctx, http.MethodPost, fx.Request.Path, strings.NewReader(fx.Request.Body))
 	r.Host = fx.Request.Host
 	r.Header.Set("Content-Type", "application/json")
-	c, err := s.searchCompute(false)(ctx, r)
+	r.Header.Set("Cf-Connecting-Ip", "192.0.2.7")
+	c, err := s.searchCompute(serving)(ctx, r)
 	return c, up, err
 }
 
@@ -136,7 +145,7 @@ func TestSiteSearchGolden(t *testing.T) {
 	served := 0
 	for _, fx := range loadSiteSearchFixtures(t) {
 		t.Run(fx.Name, func(t *testing.T) {
-			c, up, err := runSiteSearchFixture(t, fx)
+			c, up, err := runSiteSearchFixture(t, fx, fx.Expect.Fallback != "")
 			if fx.Expect.Fallback != "" {
 				if got := fallback.Reason(err); got != fx.Expect.Fallback {
 					t.Fatalf("fallback %q (err %v), want %q", got, err, fx.Expect.Fallback)
