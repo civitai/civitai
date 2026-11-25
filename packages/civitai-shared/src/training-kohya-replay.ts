@@ -43,8 +43,9 @@ export const KOHYA_CONTINUE_KEYS = [
 export const KOHYA_REPLAY_KEYS = [...KOHYA_CONTINUE_KEYS, 'maxTrainEpochs', 'steps'] as const;
 
 /**
- * Workflow metadata stamped on every Training Studio run submitted once an SDXL-family clip skip of 1
- * became selectable. On a run without it, an SDXL-family 1 stands for 2, not a choice.
+ * Workflow metadata stamped on Training Studio submits and continuations, and on retrains, once an
+ * SDXL-family clip skip of 1 became selectable. A Kohya run without it may predate that, and its
+ * SDXL-family 1 then stands for 2.
  */
 export const CLIP_SKIP_AS_SENT = { clipSkipAsSent: true } as const;
 

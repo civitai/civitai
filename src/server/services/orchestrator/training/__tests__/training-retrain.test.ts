@@ -256,6 +256,7 @@ describe('runRetrainSource', () => {
       v: 3,
       sourceWorkflowId: SOURCE,
       retrainOf: SOURCE,
+      clipSkipAsSent: true,
     });
     expect(body.upgradeMode).toBe('manual');
     expect(body.currencies).toEqual(['blue', 'yellow']);
@@ -305,7 +306,7 @@ describe('runRetrainSource', () => {
     w.setKohyaFlag(false);
     const body = (await w.run(false)).body!;
     expect(body.tags).toEqual(['own-tag']);
-    expect(body.metadata).toEqual({ retrainOf: SOURCE });
+    expect(body.metadata).toEqual({ retrainOf: SOURCE, clipSkipAsSent: true });
     expect(body).not.toHaveProperty('callbacks');
 
     const studio = createWorld(sourceRun());
