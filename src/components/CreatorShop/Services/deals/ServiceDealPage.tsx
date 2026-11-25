@@ -237,6 +237,36 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
                   <Text size="sm" className="whitespace-pre-line break-words">
                     {deal.requestText}
                   </Text>
+                  {deal.formAnswers?.map((line, index) => (
+                    <div key={index}>
+                      <Text size="xs" c="dimmed">
+                        {line.label}
+                      </Text>
+                      <Text size="sm" className="whitespace-pre-line break-words">
+                        {line.answer}
+                      </Text>
+                    </div>
+                  ))}
+                  {deal.priceBreakdown && (
+                    <Stack gap={2} mt={4}>
+                      {deal.priceBreakdown.map((line, index) => (
+                        <Group key={index} justify="space-between" gap="xs">
+                          <Text size="xs" c="dimmed">
+                            {line.label}
+                          </Text>
+                          <Text size="xs">{line.price.toLocaleString()}</Text>
+                        </Group>
+                      ))}
+                      <Group justify="space-between" gap="xs">
+                        <Text size="sm" fw={600}>
+                          Total
+                        </Text>
+                        <Text size="sm" fw={600}>
+                          ⚡ {deal.price.toLocaleString()}
+                        </Text>
+                      </Group>
+                    </Stack>
+                  )}
                 </Stack>
               </Paper>
               {deal.license && (

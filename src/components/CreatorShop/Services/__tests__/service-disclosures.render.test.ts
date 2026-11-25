@@ -228,3 +228,45 @@ describe('seller confirmation before publishing', () => {
     expect(out).toMatch(/<button[^>]*disabled[^>]*>(?:(?!<\/button>).)*Publish service/);
   });
 });
+
+describe('the request modal for a service with a request form', () => {
+  const offering = {
+    id: 9,
+    title: 'Badge',
+    price: 2500,
+    deliveryDays: 4,
+    revisionsIncluded: 1,
+    requestFormVersion: 2,
+    requestForm: {
+      questions: [
+        {
+          type: 'pickOne',
+          id: 'size',
+          label: 'Size',
+          options: [
+            { id: 'm', label: 'Medium', price: 300, days: 1 },
+            { id: 'l', label: 'Large', price: 900, days: 2 },
+          ],
+        },
+      ],
+    },
+  };
+  // Outside the rollout: once a seller sets a form, every buyer answers it.
+  const out = html(
+    createElement(ServiceRequestModal, { offering, sellerUsername: 'seller' } as never)
+  );
+
+  it('holds, and discloses, the total its starting answers give, not the base price', () => {
+    expect(out).toContain('2,800 Buzz is held now.');
+    expect(out).toContain('Delivery within 5 days of acceptance.');
+    expect(out).toContain('Hold 2,800 Buzz and send request');
+    expect(out).not.toContain('2,500 Buzz is held now.');
+  });
+
+  it('asks its questions and shows the price line by line', () => {
+    expect(out).toContain('Size');
+    expect(out).toContain('Large');
+    expect(out).toContain('Base');
+    expect(out).toContain('Total · ~5 days');
+  });
+});

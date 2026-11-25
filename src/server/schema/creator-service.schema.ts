@@ -15,6 +15,7 @@ import {
 import { SERVICE_LICENSE_CUSTOM_TEXT_MAX } from '~/shared/constants/creator-service-license.constants';
 import { ServiceLicensePreset, ServicePreviewKind } from '~/shared/utils/prisma/enums';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
+import { serviceRequestFormSchema } from '~/shared/utils/service-request-form';
 import type { ServiceOfferingTakedownReason } from '~/server/common/moderation-helpers';
 import { serviceOfferingTakedownReasons } from '~/server/common/moderation-helpers';
 
@@ -64,6 +65,9 @@ export const upsertServiceOfferingSchema = z.object({
   licensePreset: z.enum(ServiceLicensePreset).nullish(),
   licenseCustomText: z.string().trim().max(SERVICE_LICENSE_CUSTOM_TEXT_MAX).nullish(),
   licenseAllowResale: z.boolean().optional(),
+  // Questions whose answers add to the price; null removes the form, omitted leaves it. Only a
+  // seller with `creatorServicesNext` may set it.
+  requestForm: serviceRequestFormSchema.nullish(),
   // Saves as a draft unless set; publishing goes through the same sell gate as activating.
   publish: z.boolean().default(false),
   // The seller-terms version the seller ticked; publishing is refused without the current one.

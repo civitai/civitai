@@ -21,7 +21,7 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { ComponentProps, ReactNode } from 'react';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -53,6 +53,11 @@ import {
   buyerHoldButtonLabel,
 } from '~/shared/constants/creator-service-terms.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { priceServiceRequest, serviceRequestFormSchema } from '~/shared/utils/service-request-form';
+import {
+  initialServiceFormAnswers,
+  ServiceRequestFormFields,
+} from '~/components/CreatorShop/Services/deals/ServiceRequestFormFields';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -80,6 +85,8 @@ export function ServiceRequestModal({
     | 'licensePreset'
     | 'licenseCustomText'
     | 'licenseAllowResale'
+    | 'requestForm'
+    | 'requestFormVersion'
   >;
   sellerUsername: string;
 }) {
@@ -91,6 +98,15 @@ export function ServiceRequestModal({
   const [text, setText] = useState('');
   const [licenseAgreed, setLicenseAgreed] = useState(false);
   const licensed = hasServiceLicense(offering);
+  const form = useMemo(
+    () => serviceRequestFormSchema.safeParse(offering.requestForm).data ?? null,
+    [offering.requestForm]
+  );
+  const [answers, setAnswers] = useState(() => (form ? initialServiceFormAnswers(form) : {}));
+  const priced = form ? priceServiceRequest(form, offering, answers) : null;
+  const terms = priced?.ok
+    ? { ...offering, price: priced.price, deliveryDays: priced.deliveryDays }
+    : offering;
   // Each request is a separate hold, so a second click must never fire before the first settles.
   const inFlight = useRef(false);
 
@@ -131,15 +147,16 @@ export function ServiceRequestModal({
   });
 
   const trimmed = text.trim();
-  const disabled = !trimmed || (licensed && !licenseAgreed);
+  const disabled = !trimmed || (licensed && !licenseAgreed) || (!!priced && !priced.ok);
   const sendRequest = () => {
     if (inFlight.current) return;
     inFlight.current = true;
     request.mutate({
       offeringId: offering.id,
-      expectedPrice: offering.price,
+      expectedPrice: terms.price,
       expectedRevisionsIncluded: offering.revisionsIncluded,
-      expectedDeliveryDays: offering.deliveryDays,
+      expectedDeliveryDays: terms.deliveryDays,
+      ...(form ? { formVersion: offering.requestFormVersion, formAnswers: answers } : {}),
       expectedLicense: {
         licensePreset: offering.licensePreset,
         licenseCustomText: offering.licenseCustomText,
@@ -157,7 +174,7 @@ export function ServiceRequestModal({
     <Modal {...dialog} size="lg" title={`Request: ${offering.title}`}>
       <Stack gap="md">
         <ServiceOfferingTerms
-          offering={offering}
+          offering={terms}
           sellerUsername={sellerUsername}
           seller={seller}
           sellerId={sellerId}
@@ -172,7 +189,15 @@ export function ServiceRequestModal({
           maxLength={REQUEST_MAX}
           withAsterisk
         />
-        <ServiceBuyerDisclosure offering={offering} />
+        {form && priced && (
+          <ServiceRequestFormFields
+            form={form}
+            answers={answers}
+            onChange={setAnswers}
+            priced={priced}
+          />
+        )}
+        <ServiceBuyerDisclosure offering={terms} />
         <ServiceOfferingLicense offering={offering}>
           <Checkbox
             label={SERVICE_LICENSE_AGREE_LABEL}
@@ -193,9 +218,9 @@ export function ServiceRequestModal({
           </Button>
           {features?.creatorServicesNext ? (
             <BuzzTransactionButton
-              buzzAmount={offering.price}
+              buzzAmount={terms.price}
               colorType={buzzType}
-              {...serviceHoldButtonProps(offering.price)}
+              {...serviceHoldButtonProps(terms.price)}
               disabled={disabled}
               loading={request.isPending}
               onPerformTransaction={sendRequest}
@@ -207,7 +232,7 @@ export function ServiceRequestModal({
               loading={request.isPending}
               onClick={sendRequest}
             >
-              {buyerHoldButtonLabel(offering.price)}
+              {buyerHoldButtonLabel(terms.price)}
             </Button>
           )}
         </Group>

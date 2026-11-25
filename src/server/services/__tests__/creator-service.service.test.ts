@@ -967,3 +967,98 @@ describe('license terms', () => {
     expect(written()).toMatchObject({ status: ServiceOfferingStatus.Active });
   });
 });
+
+describe('a request form', () => {
+  const FORM = {
+    questions: [
+      {
+        type: 'pickOne' as const,
+        id: 'style',
+        label: 'Style',
+        options: [
+          { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+          { id: 'color', label: 'Full color', price: 2_000, days: 1 },
+        ],
+      },
+    ],
+  };
+  const saved = (extra: object = {}) =>
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Draft,
+      sellerAffirmation: { version: SERVICES_TERMS_VERSION },
+      title: fields.title,
+      description: fields.description,
+      ingestion: 'Scanned',
+      licensePreset: null,
+      licenseCustomText: null,
+      requestForm: null,
+      requestFormVersion: 2,
+      ...extra,
+    } as never);
+  const written = () =>
+    (dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1) as [{ data: object }])[0].data;
+  const save = (input: object, licenseEditor = true) =>
+    upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 5, publish: false, ...input },
+      licenseEditor,
+    });
+
+  it('stores the form, its cheapest total as the "from" price, and a new version', async () => {
+    seller();
+    saved();
+    await save({ requestForm: FORM });
+    expect(written()).toMatchObject({ requestForm: FORM, fromPrice: 4_000, requestFormVersion: 3 });
+  });
+
+  it('refuses a form whose dearest answers pass the price cap, and writes nothing', async () => {
+    seller();
+    saved();
+    const dear = structuredClone(FORM);
+    dear.questions[0].options[1].price = 999_000;
+    expect(await rejects(save({ requestForm: dear }))).toMatch(/at most/);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('checks a form left as it is again when the base price moves', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    await save({ price: 5_000 });
+    expect(written()).toMatchObject({ fromPrice: 5_000, requestFormVersion: 2 });
+    expect(await rejects(save({ price: 999_000 }))).toMatch(/at most/);
+  });
+
+  it('is left as it is for a seller outside the rollout', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    await save({ requestForm: null }, false);
+    expect(written()).toMatchObject({ requestForm: FORM, requestFormVersion: 2 });
+  });
+
+  it('sends its labels through the text check, and a new label to the content check', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    const renamed = structuredClone(FORM);
+    renamed.questions[0].options[1].label = 'Painted';
+    await save({ requestForm: renamed });
+    expect(vi.mocked(throwOnBlockedUserContent).mock.calls.at(-1)?.[0]).toContain('Painted');
+    expect(written()).toMatchObject({ ingestion: 'Pending' });
+  });
+
+  it('writes the price as the least a buyer pays on a new service without a form', async () => {
+    seller();
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
+    expect(dbMock.dbWrite.serviceOffering.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ fromPrice: fields.price, requestFormVersion: 0 }),
+      })
+    );
+  });
+
+  it('removes the form when cleared, leaving the price as the least a buyer pays', async () => {
+    seller();
+    saved({ requestForm: FORM });
+    await save({ requestForm: null });
+    expect(written()).toMatchObject({ fromPrice: fields.price, requestFormVersion: 3 });
+  });
+});
