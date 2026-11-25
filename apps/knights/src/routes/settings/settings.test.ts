@@ -88,10 +88,17 @@ describe('settings load', () => {
     expect((await run()).tagGroups).toEqual({
       available: true,
       groups: [
-        { key: 'anime', label: 'Anime', description: 'Anime and manga', hidden: false },
         { key: 'furry', label: 'Furry', description: 'Anthro and furry', hidden: false },
-        { key: 'gore', label: 'Gore', description: 'Gore and body horror', hidden: true },
-        { key: 'political', label: 'Political', description: 'Political content', hidden: false },
+        {
+          key: 'male-focus',
+          label: 'Male focus',
+          description: 'Male focus, bara and yaoi',
+          hidden: false,
+        },
+        { key: 'feet', label: 'Feet', description: 'Feet and foot focus', hidden: false },
+        { key: 'bondage', label: 'Bondage', description: 'Bondage and BDSM', hidden: false },
+        { key: 'futanari', label: 'Futanari', description: 'Futanari', hidden: false },
+        { key: 'gore', label: 'Gore', description: 'Blood, gore and body horror', hidden: true },
       ],
     });
     expect(hiddenTagGroups).toHaveBeenCalledWith(PRIMARY, 7);
@@ -163,16 +170,16 @@ describe('the tag group action', () => {
 
   it('refuses a group that is not a preset one, or a value but on or off, storing nothing', async () => {
     expect(await postGroup({ key: 'sexual', hidden: 'on' })).toMatchObject({ status: 400 });
-    expect(await postGroup({ key: 'anime', hidden: 'maybe' })).toMatchObject({ status: 400 });
+    expect(await postGroup({ key: 'feet', hidden: 'maybe' })).toMatchObject({ status: 400 });
     expect(setTagGroupHidden).not.toHaveBeenCalled();
   });
 
   it('refuses a muted player and an Acolyte, storing nothing', async () => {
     getStanding.mockResolvedValue({ banned: false, muted: true });
-    expect(await postGroup({ key: 'anime', hidden: 'on' })).toMatchObject({ status: 403 });
+    expect(await postGroup({ key: 'feet', hidden: 'on' })).toMatchObject({ status: 403 });
     getStanding.mockResolvedValue({ banned: false, muted: false });
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 3 });
-    expect(await postGroup({ key: 'anime', hidden: 'on' })).toMatchObject({ status: 403 });
+    expect(await postGroup({ key: 'feet', hidden: 'on' })).toMatchObject({ status: 403 });
     expect(setTagGroupHidden).not.toHaveBeenCalled();
   });
 });

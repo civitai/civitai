@@ -498,8 +498,8 @@ describe('a yes/no question on an image in a tag group the player hides', () => 
   it('is offered to other players only, and the answer is refused', async () => {
     const ids = await seed([row('a')]);
     await knights(2);
-    await tagImage(pg, 10, 2470);
-    await hideTagGroups(pg, 1, ['political']);
+    await tagImage(pg, 10, 511);
+    await hideTagGroups(pg, 1, ['bondage']);
     const offer = (userId: number) =>
       pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
 

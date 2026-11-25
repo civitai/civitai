@@ -82,13 +82,13 @@ describe('the hidden tag groups', () => {
   });
 
   it('hides and shows a group, once each however often it is sent, and leaves the other groups alone', async () => {
-    await setTagGroupHidden(db, 1, 'anime', true, NOW);
+    await setTagGroupHidden(db, 1, 'feet', true, NOW);
     await setTagGroupHidden(db, 1, 'gore', true, NOW);
-    await setTagGroupHidden(db, 1, 'anime', true, NOW);
-    expect(await hiddenTagGroups(db, 1)).toEqual(['anime', 'gore']);
+    await setTagGroupHidden(db, 1, 'feet', true, NOW);
+    expect(await hiddenTagGroups(db, 1)).toEqual(['feet', 'gore']);
 
-    await setTagGroupHidden(db, 1, 'anime', false, NOW);
-    await setTagGroupHidden(db, 1, 'anime', false, NOW);
+    await setTagGroupHidden(db, 1, 'feet', false, NOW);
+    await setTagGroupHidden(db, 1, 'feet', false, NOW);
     expect(await hiddenTagGroups(db, 1)).toEqual(['gore']);
   });
 

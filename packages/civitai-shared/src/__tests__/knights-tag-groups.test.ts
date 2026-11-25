@@ -28,9 +28,22 @@ describe('the preset tag groups', () => {
         for (const word of SEXUAL_TAG_WORDS) expect(tag.name.toLowerCase()).not.toContain(word);
   });
 
-  it('are the main-site topics a player can already hide: anime, furry, gore and political', () => {
-    expect(KNIGHTS_TAG_GROUPS.map((g) => g.key)).toEqual(['anime', 'furry', 'gore', 'political']);
-    expect(tagIdsOfGroups(['anime', 'political'])).toEqual([4, 413, 2470]);
+  it('are the groups agreed with Moderation, in settings order', () => {
+    expect(KNIGHTS_TAG_GROUPS.map((g) => g.key)).toEqual([
+      'furry',
+      'male-focus',
+      'feet',
+      'bondage',
+      'futanari',
+      'gore',
+    ]);
+    expect(tagIdsOfGroups(['feet', 'futanari'])).toEqual([5311, 137120, 279, 3616]);
+  });
+
+  it('never hide by an orientation tag alone', () => {
+    const names = KNIGHTS_TAG_GROUPS.flatMap((g) => g.tags.map((t) => t.name));
+    for (const orientation of ['gay', 'lesbian', 'bisexual', 'transgender'])
+      expect(names).not.toContain(orientation);
   });
 
   it('have unique keys and no tag in two groups', () => {

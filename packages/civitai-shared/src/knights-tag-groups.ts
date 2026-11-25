@@ -1,19 +1,11 @@
 /**
- * Tag groups a person can hide: Knights players in Knights settings (an image carrying an enabled tag of a hidden group
- * is not served to them), and viewers in the main site's browsing settings (`toggleableBrowsingCategories`), built from
- * this one list. Never a browsing level or sexual content: Knights exists for the community to rate mature content, so it
- * must stay served.
+ * Tag groups a Knights player can hide in Knights settings: an image carrying an enabled tag of a hidden group is not
+ * served to them, and stays open for everyone else. Chosen from the open queue's tags and the players' comments, and
+ * agreed with Moderation (2026-11-25). The main site's browsing categories are a separate list. Never a browsing level or
+ * a whole kind of sexual content: Knights exists for the community to rate mature content, so it must stay served. Nor a
+ * tag that only names an orientation.
  */
 export const KNIGHTS_TAG_GROUPS = [
-  {
-    key: 'anime',
-    description: 'Anime and manga',
-    label: 'Anime',
-    tags: [
-      { id: 4, name: 'anime' },
-      { id: 413, name: 'manga' },
-    ],
-  },
   {
     key: 'furry',
     description: 'Anthro and furry',
@@ -21,22 +13,57 @@ export const KNIGHTS_TAG_GROUPS = [
     tags: [
       { id: 5139, name: 'anthro' },
       { id: 5140, name: 'furry' },
+      { id: 116764, name: 'anthropomorphic' },
+    ],
+  },
+  {
+    key: 'male-focus',
+    description: 'Male focus, bara and yaoi',
+    label: 'Male focus',
+    tags: [
+      { id: 114923, name: 'male focus' },
+      { id: 313, name: 'bara' },
+      { id: 3822, name: 'yaoi' },
+    ],
+  },
+  {
+    key: 'feet',
+    description: 'Feet and foot focus',
+    label: 'Feet',
+    tags: [
+      { id: 5311, name: 'feet' },
+      { id: 137120, name: 'foot focus' },
+    ],
+  },
+  {
+    key: 'bondage',
+    description: 'Bondage and BDSM',
+    label: 'Bondage',
+    tags: [
+      { id: 511, name: 'bondage' },
+      { id: 882, name: 'bdsm' },
+    ],
+  },
+  {
+    key: 'futanari',
+    description: 'Futanari',
+    label: 'Futanari',
+    tags: [
+      { id: 279, name: 'futanari' },
+      { id: 3616, name: 'futa' },
     ],
   },
   {
     key: 'gore',
-    description: 'Gore and body horror',
+    description: 'Blood, gore and body horror',
     label: 'Gore',
     tags: [
+      { id: 2954, name: 'blood' },
       { id: 1282, name: 'gore' },
+      { id: 122352, name: 'guro' },
+      { id: 123088, name: 'corpse' },
       { id: 789, name: 'body horror' },
     ],
-  },
-  {
-    key: 'political',
-    description: 'Political content',
-    label: 'Political',
-    tags: [{ id: 2470, name: 'political' }],
   },
 ] as const;
 

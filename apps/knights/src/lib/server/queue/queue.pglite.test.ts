@@ -3041,42 +3041,42 @@ describe('a preset tag group the player hides in Knights settings', () => {
     await player(2, 'Knight');
     await image(10);
     await image(11);
-    return { anime: await item(10), other: await item(11) };
+    return { feet: await item(10), other: await item(11) };
   }
 
   it('serves an image carrying a tag of the group to other players only, refuses the vote and gives no late credit', async () => {
-    const { anime, other } = await taggedItems();
-    await tagImage(pg, 10, 413);
-    await hideTagGroups(pg, 1, ['anime']);
+    const { feet, other } = await taggedItems();
+    await tagImage(pg, 10, 137120);
+    await hideTagGroups(pg, 1, ['feet']);
 
     expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
-    expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([anime, other].sort());
-    expect(await vote(1, anime, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
-    expect(await verdicts(anime)).toEqual([]);
+    expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([feet, other].sort());
+    expect(await vote(1, feet, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect(await verdicts(feet)).toEqual([]);
 
     await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
-      anime,
+      feet,
       NOW,
     ]);
-    expect(await creditLateJudgment(db, { userId: 1, itemId: anime, answer: '4', now: NOW })).toBe(
+    expect(await creditLateJudgment(db, { userId: 1, itemId: feet, answer: '4', now: NOW })).toBe(
       false
     );
   });
 
   it('does not hide an image whose tag of the group is disabled, nor one tagged only with another group', async () => {
-    const { anime, other } = await taggedItems();
-    await tagImage(pg, 10, 413, true);
+    const { feet, other } = await taggedItems();
+    await tagImage(pg, 10, 137120, true);
     await tagImage(pg, 11, 1282);
-    await hideTagGroups(pg, 1, ['anime']);
+    await hideTagGroups(pg, 1, ['feet']);
 
-    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([anime, other].sort());
-    expect(await vote(1, anime, '4')).toMatchObject({ status: 'recorded' });
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([feet, other].sort());
+    expect(await vote(1, feet, '4')).toMatchObject({ status: 'recorded' });
   });
 
   it('filters nothing when there are no preset groups at all, whatever the player stored', async () => {
     await taggedItems();
-    await tagImage(pg, 10, 4);
-    await hideTagGroups(pg, 1, ['anime']);
+    await tagImage(pg, 10, 5311);
+    await hideTagGroups(pg, 1, ['feet']);
     const ids = async (groups?: []) =>
       (
         await db
@@ -3092,11 +3092,11 @@ describe('a preset tag group the player hides in Knights settings', () => {
   });
 
   it('changes nothing for a player who hides no group', async () => {
-    const { anime, other } = await taggedItems();
-    await tagImage(pg, 10, 4);
+    const { feet, other } = await taggedItems();
+    await tagImage(pg, 10, 5311);
     await hideTagGroups(pg, 1, []);
 
-    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([anime, other].sort());
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([feet, other].sort());
   });
 });
 
