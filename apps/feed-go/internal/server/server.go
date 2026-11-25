@@ -466,7 +466,7 @@ func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (fe
 	if in.HubID != 0 {
 		// getInfiniteImagesHandler's first step: the `userHubs` feature gate.
 		if err := s.userHubs(ctx, user); err != nil {
-			return feed.InfiniteRequest{}, false, err
+			return feed.InfiniteRequest{}, nil, false, err
 		}
 	}
 	authorized := user != nil && !user.Banned
