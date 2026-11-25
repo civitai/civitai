@@ -139,6 +139,10 @@ type fakeHub struct {
 	refuse   map[string]bool
 	subjects []string
 	blocks   map[string]int // block-token exchanges asked, by subject
+	// limited answers a subject 429 naming this `rateLimit.id`; forwarded is each request's
+	// X-Forwarded-For ("" when none), in order.
+	limited   map[string]string
+	forwarded []string
 }
 
 // blockExchanges is how many times the hub was asked to exchange block token tok.
@@ -150,7 +154,7 @@ func (h *fakeHub) blockExchanges(tok string) int {
 
 func newFakeHub(t *testing.T) *fakeHub {
 	t.Helper()
-	h := &fakeHub{refuse: map[string]bool{}, blocks: map[string]int{}}
+	h := &fakeHub{refuse: map[string]bool{}, blocks: map[string]int{}, limited: map[string]string{}}
 	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, secret, _ := r.BasicAuth()
 		_ = r.ParseForm()
@@ -158,7 +162,9 @@ func newFakeHub(t *testing.T) *fakeHub {
 		block := r.PostForm.Get("subject_token_type") == exchange.BlockTokenType
 		h.mu.Lock()
 		h.subjects = append(h.subjects, subject)
+		h.forwarded = append(h.forwarded, r.Header.Get("X-Forwarded-For"))
 		refused := h.refuse[subject]
+		limit := h.limited[subject]
 		replay := false
 		if block {
 			h.blocks[subject]++
@@ -167,6 +173,10 @@ func newFakeHub(t *testing.T) *fakeHub {
 		h.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case limit != "":
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":"rate_limited","retry_after":60,"rateLimit":{"retryAfterSeconds":60,"id":"`+limit+`","kind":"abuse"}}`)
 		case id != "relay-client" || secret != "relay-secret":
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
@@ -260,6 +270,7 @@ func newFakeStore(t *testing.T) *fakeStore {
 }
 
 type stack struct {
+	guard *exchange.Guard
 	hub   *fakeHub
 	reg   *fakeRegistry
 	store *fakeStore
@@ -292,7 +303,8 @@ func newStackWith(t *testing.T, registryOn, blockOn bool, opts session.Options) 
 	opts.NotPrivateCooldown, opts.ExpiryMargin = time.Hour, 30*time.Second
 	ex := &exchange.Exchanger{Config: exchange.Config{URL: s.hub.srv.URL, ClientID: "relay-client",
 		ClientSecret: "relay-secret", Resource: "https://apps.invalid"}}
-	router := &exchange.Router{User: ex.Exchange}
+	var router *exchange.Router
+	router, s.guard = exchange.NewRouter(ex.Exchange, func(o string) { s.m.UserExchangeGuard.WithLabelValues(o).Inc() })
 	if blockOn {
 		router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: opts.ExpiryMargin,
 			Observe: func(outcome, code string) {
@@ -331,7 +343,16 @@ type got struct {
 
 func (s *stack) get(t *testing.T, path, token string) got {
 	t.Helper()
+	return s.getFrom(t, path, token, "")
+}
+
+// getFrom is get with the edge naming the viewer's address ip (exchange.ClientIPHeader; "" none).
+func (s *stack) getFrom(t *testing.T, path, token, ip string) got {
+	t.Helper()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, http.NoBody)
+	if ip != "" {
+		req.Header.Set(exchange.ClientIPHeader, ip)
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

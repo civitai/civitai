@@ -195,3 +195,44 @@ func TestExchangeWaitsOutA429BeforeAskingTheHubAgain(t *testing.T) {
 		})
 	}
 }
+
+// The hub's 429 on subjects it could not find is keyed by this client AND the viewer's address
+// (apps/auth `token-exchange-miss`): it holds nothing back here, so a flood of made-up tokens from
+// one viewer never stops another viewer's exchange. The per-client budget's 429 still holds all.
+func TestAHubLimitOnSubjectsItCannotFindHoldsNoOtherExchange(t *testing.T) {
+	cases := []struct {
+		id   string
+		held bool
+	}{
+		{"oauth.token-exchange-miss", false},
+		{"oauth.token-exchange", true},
+		{"", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			var calls atomic.Int32
+			e := hub(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				_ = r.ParseForm()
+				if r.PostForm.Get("subject_token") == "civitai_made-up" {
+					w.Header().Set("Retry-After", "60")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = io.WriteString(w, `{"error":"rate_limited","retry_after":60,"rateLimit":{"retryAfterSeconds":60,"id":"`+tc.id+`","kind":"abuse"}}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"access_token":"eyJexchanged","expires_in":900}`)
+			})
+			var rl *RateLimitedError
+			if _, err := e.Exchange(context.Background(), "civitai_made-up"); !errors.As(err, &rl) || errors.Is(err, ErrRefused) {
+				t.Fatalf("the 429: %v", err)
+			}
+			_, err := e.Exchange(context.Background(), "civitai_alice")
+			if held := err != nil; held != tc.held {
+				t.Fatalf("🔴 after a 429 naming %q, another viewer's exchange: %v (held %v, want %v)", tc.id, err, held, tc.held)
+			}
+			if want := map[bool]int32{true: 1, false: 2}[tc.held]; calls.Load() != want {
+				t.Fatalf("the hub was asked %d times, want %d", calls.Load(), want)
+			}
+		})
+	}
+}

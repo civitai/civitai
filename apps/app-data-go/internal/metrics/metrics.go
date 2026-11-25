@@ -52,6 +52,9 @@ var BlockOutcomes = []string{
 	exchange.BlockRateLimited,
 }
 
+// GuardOutcomes are the `outcome` values of app_data_user_exchange_guarded_total (exchange.Guard*).
+var GuardOutcomes = []string{exchange.GuardThrottled, exchange.GuardRemembered, exchange.GuardJoined}
+
 // WriteOps are the `op` values of app_data_writes_total and app_data_write_forward_seconds (the
 // write routes, WRITES-DESIGN.md "The API"). The tally PATCH (increment, mark, unmark) was removed
 // with App Storage's tallies (docs/app-storage-generic-core.md, rollout step 5).
@@ -77,6 +80,8 @@ type Metrics struct {
 	// BlockExchanges counts App Block token exchanges by outcome and refusal code; zero while the block
 	// exchange is off.
 	BlockExchanges *prometheus.CounterVec
+	// UserExchangeGuard counts hub-token exchanges not sent to the hub, by outcome (GuardOutcomes).
+	UserExchangeGuard *prometheus.CounterVec
 	// Writes counts the write routes' answers by op and outcome (WriteOps, WriteOutcomes); zero while
 	// APP_DATA_WRITES is off.
 	Writes *prometheus.CounterVec
@@ -123,6 +128,10 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Name: "app_data_block_exchanges_total",
 			Help: "App Block token exchanges at the hub, by outcome (issued, reused, refused, remembered, failed, spent, full, unverifiable) and the refusal code (local: refused here, never sent).",
 		}, []string{"outcome", "error"}),
+		UserExchangeGuard: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_user_exchange_guarded_total",
+			Help: "Hub-token exchanges not sent to the hub, by outcome (throttled: the viewer's address presented too many tokens not seen exchanged; remembered: the hub refused this token moments ago; joined: the same token's exchange was in flight, its answer shared).",
+		}, []string{"outcome"}),
 		Writes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_writes_total",
 			Help: "Write-route answers (and info), by op and outcome (2xx, 4xx, 501: the store's; refused_here; unavailable, signature: 503 not_forwarded; unknown: 504, the outcome lost).",
@@ -150,7 +159,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			return float64(pick(stats()))
 		})
 	}
-	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges,
+	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges, m.UserExchangeGuard,
 		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays, m.SignedOutReads,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
@@ -188,6 +197,9 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		for _, o := range WriteOutcomes {
 			m.Writes.WithLabelValues(op, o)
 		}
+	}
+	for _, o := range GuardOutcomes {
+		m.UserExchangeGuard.WithLabelValues(o)
 	}
 	for _, o := range BlockOutcomes {
 		if o != exchange.BlockRefused && o != exchange.BlockRemembered {
