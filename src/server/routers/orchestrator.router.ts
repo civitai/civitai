@@ -44,6 +44,7 @@ import {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { callerTagsRefusal } from '~/shared/utils/app-block-tags';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
@@ -476,6 +477,9 @@ export const orchestratorRouter = router({
       } = input;
       // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
       assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
+      // `.input(z.any())` leaves tags unchecked.
+      const tagsRefusal = callerTagsRefusal(inputTags);
+      if (tagsRefusal) throw new TRPCError({ code: 'BAD_REQUEST', message: tagsRefusal });
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(

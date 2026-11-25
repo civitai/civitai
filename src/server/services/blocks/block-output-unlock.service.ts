@@ -91,7 +91,7 @@ export const OUTPUT_UNLOCK_READ_BACK_FAILED_MESSAGE =
   "The unlock went through, but we couldn't load the output. Check again in a few minutes.";
 
 /**
- * The write got no response (our timeout): it may still land. Not retryable from here: the
+ * The write got no response (our timeout) or a 5xx: it may still land. Not retryable from here: the
  * workflow's lock is KEPT until its TTL, so a retry is refused as in progress until then.
  */
 export const OUTPUT_UNLOCK_MAY_BE_PENDING_MESSAGE =
@@ -260,7 +260,7 @@ export type OutputUnlockDeps = {
   /**
    * `allowMatureContent: true` at the orchestrator, bounded (`liftWorkflowMatureRestriction`).
    * The orchestrator's Yellow balance check (its 403) is `insufficient-funds`; no response at
-   * all (our timeout) is `no-response`, the write possibly still in flight; any other failure
+   * all (our timeout) or a 5xx is `no-response`, the write possibly still in flight; any other failure
    * throws.
    */
   liftRestriction: () => Promise<{ outcome: 'lifted' | 'insufficient-funds' | 'no-response' }>;
@@ -330,7 +330,7 @@ export type OutputUnlockResult = {
    * success lands here), nothing was charged. `not-released`: the orchestrator accepted the
    * unlock (its swap stands) but the output is still restricted at this token's ceiling, or
    * reading it back after the charge failed; `message` says which. `refused`: the orchestrator refused the yellow charge (the viewer's
-   * Yellow balance is short); `message` says so. `unavailable`: the write got no response, so it
+   * Yellow balance is short); `message` says so. `unavailable`: the write got no response or a 5xx, so it
    * may still land; the lock is kept until its TTL and `message` says to check back.
    */
   outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused' | 'unavailable';
