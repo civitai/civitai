@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { loadAuthEnv } from '@civitai/auth';
-import { MAIL_CLASSES, type EmailSendRecord } from '@civitai/email';
+import { isSendId, MAIL_CLASSES, type EmailSendRecord } from '@civitai/email';
 import { insertEmailSend } from '~/server/email/send-tracking';
 import { TokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -21,7 +21,8 @@ const MAX_CLOCK_SKEW_MS = 60 * 60 * 1000;
 
 // Strict: a row naming anything beyond the send's tags (an address, say) is refused whole.
 const sendRow = z.strictObject({
-  sendId: z.uuid(),
+  // Lowercase, as every sender's transport writes it (resolveSendId).
+  sendId: z.string().refine(isSendId),
   sentAt: z.iso.datetime(),
   template: z.string().min(1).max(100),
   mailClass: z.union([z.enum(MAIL_CLASSES), z.literal('')]),

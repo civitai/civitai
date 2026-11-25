@@ -1,4 +1,4 @@
-import type { EmailSendRecord } from '@civitai/email';
+import { isSendId, type EmailSendRecord } from '@civitai/email';
 import type { CustomClickHouseClient } from '@civitai/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -84,14 +84,13 @@ export type EmailEvent = {
   campaign: string;
   variant: string;
   userId: number;
-  /** click rows: the link's 1-based place among the email's tracked links; 0 otherwise. */
+  /** click rows: the link's place, 1-based (0 for the digest's 'See all' button); 0 on other rows. */
   position?: number;
   /** click rows: the request's User-Agent. */
   userAgent?: string;
 };
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const EMAIL_EVENT_USER_AGENT_MAX = 512;
 
 /**
@@ -102,7 +101,7 @@ export function emailEventRow(e: EmailEvent, at: Date) {
   return {
     time: formatClickhouseDateTime64(at),
     event: e.event,
-    sendId: UUID.test(e.sendId) ? e.sendId : NIL_UUID,
+    sendId: isSendId(e.sendId) ? e.sendId : NIL_UUID,
     template: e.template,
     mailClass: e.mailClass,
     campaign: e.campaign,

@@ -1,3 +1,4 @@
+import { isSendId } from '@civitai/email';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { safeSitePath, sitePathOf } from '~/server/email/link-tracking';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -62,8 +63,6 @@ const clickMessage = (c: DigestClick) =>
     ...(c.sendId === undefined ? [] : [c.sendId]),
   ])}`;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
 /** The tracked link for one digest link. Throws when `to` is not a same-site path. */
 export function getDigestClickUrl(click: DigestClick) {
   const to = safeSitePath(click.to);
@@ -97,14 +96,14 @@ export function verifyDigestClick(query: Record<string, unknown>): DigestClick |
   if (userId === null || cycleMs === null || position === null || to === null) return null;
   if (typeof notificationType !== 'string' || notificationType.length > 100) return null;
   if (typeof query.s !== 'string') return null;
-  if (query.e !== undefined && (typeof query.e !== 'string' || !UUID.test(query.e))) return null;
+  if (query.e !== undefined && !isSendId(query.e)) return null;
   const click: DigestClick = {
     userId,
     cycleStartedAt: new Date(cycleMs),
     position,
     notificationType,
     to,
-    ...(query.e === undefined ? {} : { sendId: query.e as string }),
+    ...(isSendId(query.e) ? { sendId: query.e } : {}),
   };
   // `to` is signed as the link carried it: a link whose path normalises to something else fails.
   if (to !== query.to) return null;

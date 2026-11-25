@@ -14,6 +14,7 @@ export {
   MAIL_CLASSES,
   SEND_ID_HEADER,
   resolveSendId,
+  isSendId,
 } from './client';
 export {
   createRemoteSendRecorder,

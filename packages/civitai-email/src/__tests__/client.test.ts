@@ -287,6 +287,10 @@ describe('send rows', () => {
       await mod[fn]({ ...input, sendId: mine });
       expect(headerOf(seen.messages[0])).toBe(mine.toLowerCase());
       expect(rows.map((r) => r.sendId)).toEqual([mine.toLowerCase()]);
+      // The one validity rule: lowercase only, which is what resolveSendId produced above.
+      expect(mod.isSendId(mine.toLowerCase())).toBe(true);
+      expect(mod.isSendId(mine)).toBe(false);
+      expect(mod.isSendId('not-a-uuid')).toBe(false);
       // Anything else is replaced by a fresh one, never sent as given.
       await mod[fn]({ ...input, sendId: 'not-a-uuid' });
       expect(headerOf(seen.messages[1])).toMatch(UUID);

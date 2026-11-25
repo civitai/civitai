@@ -1,6 +1,6 @@
 import { decode as decodeHtml, escape as escapeHtml } from 'he';
 import { safeReturnPath } from '@civitai/auth/client';
-import { MAIL_CLASSES, type MailClass } from '@civitai/email';
+import { isSendId, MAIL_CLASSES, type MailClass } from '@civitai/email';
 import { signEmailLink, verifyEmailLinkSignature } from '~/server/email/link-signing';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
@@ -27,8 +27,9 @@ export const EMAIL_CLICK_PATH = '/api/email/click';
 export const EMAIL_CLICK_FALLBACK_PATH = '/';
 
 /**
- * Paths never rewritten: the click route itself, the digest's own click route (its links already
- * record, in notificationDigestEvents and emailEvents) and the email unsubscribe route. Literal here
+ * Paths never rewritten: the click route itself, the digest's own click route (its links record in
+ * notificationDigestEvents, and in emailEvents when they carry a send id) and the email unsubscribe
+ * route. Literal here
  * so this module imports neither route's module; a test pins them to those modules' constants.
  */
 export const NEVER_WRAPPED_PATHS = [
@@ -41,7 +42,6 @@ const MAX_PATH_LENGTH = 2048;
 const MAX_TAG_LENGTH = 200;
 const MAX_POSITION = 0xffff;
 const MAX_USER_ID = 0xffffffff;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * `to` as a same-site path to redirect to, or null: the shared return-path rule (no scheme, no
@@ -130,7 +130,7 @@ const tagParam = (v: unknown, { required = false } = {}) =>
 
 /** The click a tracked link names, or null when any part of it is missing, malformed or unsigned. */
 export function verifyEmailClick(query: Record<string, unknown>): EmailClick | null {
-  const sendId = typeof query.e === 'string' && UUID.test(query.e) ? query.e : null;
+  const sendId = isSendId(query.e) ? query.e : null;
   const template = tagParam(query.k, { required: true });
   const mailClass = MAIL_CLASSES.find((m) => m === query.m) ?? null;
   const campaign = tagParam(query.c);
@@ -177,7 +177,7 @@ const ANCHOR_HREF = /(<a\b[^>]*?\shref=")([^"]*)(")/gi;
 /** Whether every field of `ctx` is one verifyEmailClick accepts, so a link signed with it works. */
 function verifiable(ctx: EmailLinkContext) {
   return (
-    UUID.test(ctx.sendId) &&
+    isSendId(ctx.sendId) &&
     ctx.template.length > 0 &&
     ctx.template.length <= MAX_TAG_LENGTH &&
     ctx.campaign.length <= MAX_TAG_LENGTH &&

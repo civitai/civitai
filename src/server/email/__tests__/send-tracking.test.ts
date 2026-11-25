@@ -117,6 +117,13 @@ describe('click and unsubscribe rows', () => {
     });
   });
 
+  it('a send id not in our lowercase form is the nil UUID', () => {
+    expect(emailEventRow({ ...click, sendId: click.sendId.toUpperCase() }, at).sendId).toBe(
+      '00000000-0000-0000-0000-000000000000'
+    );
+    expect(emailEventRow(click, at).sendId).toBe(click.sendId);
+  });
+
   it('an unsubscribe row has no position or user agent; a malformed send id is the nil UUID', () => {
     const row = emailEventRow(
       { ...click, event: 'unsubscribe', sendId: 'junk', mailClass: 'lifecycle', userId: -1 },

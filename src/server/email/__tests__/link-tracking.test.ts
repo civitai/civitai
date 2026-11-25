@@ -121,6 +121,7 @@ describe('verifyEmailClick', () => {
     ['a forged signature', { s: '0'.repeat(32) }],
     ['no signature', { s: '' }],
     ['a malformed send id', { e: 'not-a-uuid' }],
+    ['an uppercased send id', { e: SEND_ID.toUpperCase() }],
     ['position 0', { p: '0' }],
     ['an unknown class', { m: 'marketing' }],
   ])('a link edited to name %s is refused', (_, edit) => {
@@ -314,6 +315,7 @@ describe('the internal send-row route', () => {
     ['no rows', { sends: [] }],
     ['a field beyond the tags (an address)', { sends: [{ ...row, to: 'a@b.test' }] }],
     ['a malformed send id', { sends: [{ ...row, sendId: 'x' }] }],
+    ['an uppercased send id', { sends: [{ ...row, sendId: SEND_ID.toUpperCase() }] }],
     ['a bad class', { sends: [{ ...row, mailClass: 'marketing' }] }],
     ['too many rows', { sends: Array.from({ length: 51 }, () => row) }],
     ['no body', undefined],

@@ -128,11 +128,23 @@ function recordSend(record: EmailSendRecord) {
   }
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SEND_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** The send id a message goes out with: the sender's own when it is a UUID, otherwise a fresh one. */
+/**
+ * Whether `value` is a send id as we write it: a UUID in lowercase, the form randomUUID mints and
+ * resolveSendId produces. The one rule every reader of a send id (a link, a row) checks against.
+ */
+export function isSendId(value: unknown): value is string {
+  return typeof value === 'string' && SEND_ID.test(value);
+}
+
+/**
+ * The send id a message goes out with: the sender's own, lowercased, when it is a UUID in any case;
+ * otherwise a fresh one.
+ */
 export function resolveSendId(given: unknown): string {
-  return typeof given === 'string' && UUID.test(given) ? given.toLowerCase() : randomUUID();
+  const lower = typeof given === 'string' ? given.toLowerCase() : undefined;
+  return isSendId(lower) ? lower : randomUUID();
 }
 
 function compose(
