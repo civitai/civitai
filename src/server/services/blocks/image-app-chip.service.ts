@@ -40,6 +40,7 @@
  * viewer cannot open.
  */
 import { TRPCError } from '@trpc/server';
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-image-upload.service';
@@ -79,6 +80,7 @@ export async function readImageAppChip({
           id: imageId,
           userId: ctx.user?.id,
           isModerator: ctx.user?.isModerator,
+          ownerSeesHeld: isSessionOrFullUserKey(ctx),
         });
       } catch (err) {
         // Not visible (or blocked) — the helper's only refusal is NOT_FOUND. Anything
