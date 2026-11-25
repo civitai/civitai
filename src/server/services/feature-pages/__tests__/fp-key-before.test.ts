@@ -17,6 +17,10 @@ describe('keyBefore', () => {
     expect(keys.filter((k) => k > cursor)[0]).toBe(key);
   });
 
+  it('the all-zero key pages from the start', () => {
+    expect(keyBefore('0'.repeat(32))).toBe('');
+  });
+
   it('borrows across zeros', () => {
     expect(keyBefore('ab00')).toBe('aaff');
     expect(keyBefore('a0')).toBe('9f');

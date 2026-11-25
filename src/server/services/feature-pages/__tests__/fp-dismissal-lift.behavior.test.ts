@@ -179,15 +179,27 @@ describe("a moderator's dismissal of the scan's report", () => {
   it("2. lifts nothing when the current hide is not the scan's: ToS-removed, or hidden at another time", async () => {
     const tos = await hiddenByScan('removed as well');
     await moderation.setFlagsInBatches([tos.id], { tosViolation: true });
-    expect(await dismiss(tos.reportId)).toBeNull();
+    // Closed, and said why: its hide was replaced.
+    expect(await unaction(tos.reportId)).toEqual({
+      changed: true,
+      lifted: null,
+      superseded: 'hidden',
+    });
     expect(await commentOf(tos.id)).toMatchObject({ hidden: true, tosViolation: true });
 
     const other = await hiddenByScan('hidden again later');
     await q(`UPDATE "CommentV3" SET "hiddenAt" = "hiddenAt" + interval '1 second' WHERE id = $1`, [
       other.id,
     ]);
-    expect(await dismiss(other.reportId)).toBeNull();
+    expect(await unaction(other.reportId)).toMatchObject({ changed: true, superseded: 'hidden' });
     expect((await commentOf(other.id)).hidden).toBe(true);
+
+    const gone = await hiddenByScan('removed since');
+    await q(
+      `UPDATE "FeaturePageCommentMirror" SET "removeWantedAt" = now() WHERE "commentId" = $1`,
+      [gone.id]
+    );
+    expect(await unaction(gone.reportId)).toMatchObject({ changed: true, superseded: 'removed' });
 
     await settle();
     expect(modVisibleBySource()).toHaveLength(0);
@@ -260,10 +272,9 @@ describe("a moderator's dismissal of the scan's report", () => {
       reportId,
     ]);
     const { bulkSetReportStatus } = await import('~/server/services/report.service');
+    // It skips the scan's report on its hide: left open for its own dismissal.
     await bulkSetReportStatus({ ids: [reportId], status: ReportStatus.Unactioned, userId: MOD });
-    expect((await q(`SELECT status FROM "Report" WHERE id = $1`, [reportId]))[0]).toEqual({
-      status: 'Unactioned',
-    });
+    expect(await statusOf(reportId)).toBe('Pending');
 
     expect((await commentOf(id)).hidden).toBe(true);
     await settle();

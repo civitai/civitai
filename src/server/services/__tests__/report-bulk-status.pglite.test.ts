@@ -39,6 +39,7 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "FeaturePageCommentMirror" ("commentId" int PRIMARY KEY, "scanHideReportId" int);
     CREATE TABLE "Report" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,

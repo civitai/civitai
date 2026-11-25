@@ -1,6 +1,9 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
-import { unactionReportLiftingScanHide } from '@civitai/db-queries/feature-page-comments';
+import {
+  scanHideReportIds,
+  unactionReportLiftingScanHide,
+} from '@civitai/db-queries/feature-page-comments';
 import { reportersWithoutReward } from '@civitai/shared/report-reward';
 import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
@@ -544,6 +547,12 @@ const SCAN_LIFT_HELD = {
   version: 'The comment changed since the scan hid it, so it stays hidden.',
 } as const;
 
+/** Why the scan's report closed with nothing shown again: its hide was replaced since. */
+const SCAN_LIFT_SUPERSEDED = {
+  hidden: 'Closed, but the comment stays hidden: it was hidden by another action since.',
+  removed: 'Closed, but nothing was restored: the comment was removed.',
+} as const;
+
 export async function setReportStatus({
   id,
   status,
@@ -580,7 +589,7 @@ export async function setReportStatus({
   if (!exists) return { ok: false as const, error: 'That report no longer exists. Reload.' };
 
   if (liftScanHide && status === ReportStatus.Unactioned) {
-    const { changed, lifted, held } = await unactionReportLiftingScanHide(dbWrite, {
+    const { changed, lifted, held, superseded } = await unactionReportLiftingScanHide(dbWrite, {
       reportId: id,
       actorId: userId,
       systemUserId: SYSTEM_USER_ID,
@@ -589,7 +598,12 @@ export async function setReportStatus({
       return { ok: false as const, error: `${SCAN_LIFT_HELD[held]} This report is still open.` };
     await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
     await syncResolvedMarker(id, status);
-    return { ok: true as const, changed, lifted: !!lifted };
+    return {
+      ok: true as const,
+      changed,
+      lifted: !!lifted,
+      ...(superseded ? { notice: SCAN_LIFT_SUPERSEDED[superseded] } : {}),
+    };
   }
 
   const updated = await dbWrite
@@ -643,19 +657,35 @@ export async function setReportStatus({
 export async function setReportStatuses(
   decisions: { id: number; status: ReportStatus }[],
   { userId, ip }: { userId: number; ip?: string }
-): Promise<{ changed: number; unchanged: number; failed: { id: number; error: string }[] }> {
+): Promise<{
+  changed: number;
+  unchanged: number;
+  skipped: number;
+  failed: { id: number; error: string }[];
+}> {
   let changed = 0;
   let unchanged = 0;
+  let skipped = 0;
   const failed: { id: number; error: string }[] = [];
+  // A batch lifts no scan hide, so the scan's report on its hide is left open for its own dismissal.
+  const scanHides = await scanHideReportIds(
+    dbWrite,
+    decisions.filter((d) => d.status === ReportStatus.Unactioned).map((d) => d.id)
+  );
 
   for (const { id, status } of decisions) {
+    if (status === ReportStatus.Unactioned && scanHides.has(id)) {
+      skipped += 1;
+      failed.push({ id, error: 'Scan-hidden reports must be dismissed one at a time.' });
+      continue;
+    }
     const result = await setReportStatus({ id, status, userId, ip });
     if (!result.ok) failed.push({ id, error: result.error });
     else if (result.changed) changed += 1;
     else unchanged += 1;
   }
 
-  return { changed, unchanged, failed };
+  return { changed, unchanged, skipped, failed };
 }
 
 /**

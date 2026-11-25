@@ -210,13 +210,49 @@ describe("the scan's report on a Feature Pages comment", () => {
     expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
   });
 
-  it('ruled through the batch save, or by a caller that does not ask: it stays hidden', async () => {
+  it("the scan's hide replaced since (ToS): it closes, nothing is shown, and the moderator is told", async () => {
+    await db.query(`UPDATE "CommentV3" SET "tosViolation" = true WHERE id = $1`, [COMMENT]);
     expect(
-      await setReportStatuses([{ id: SCAN_REPORT, status: 'Unactioned' as never }], { userId: MOD })
-    ).toEqual({ changed: 1, unchanged: 0, failed: [] });
+      await setReportStatus({
+        id: SCAN_REPORT,
+        status: 'Unactioned',
+        userId: MOD,
+        liftScanHide: true,
+      })
+    ).toEqual({
+      ok: true,
+      changed: true,
+      lifted: false,
+      notice: expect.stringContaining('hidden by another action'),
+    });
     expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
+  });
 
-    await db.query(`UPDATE "Report" SET status = 'Pending' WHERE id = $1`, [SCAN_REPORT]);
+  it('ruled through the batch save: skipped with why, left open, and nothing lifted', async () => {
+    await db.query(
+      `INSERT INTO "Report" ("id", "reason", "userId") VALUES (102, 'TOSViolation', ${AUTHOR})`
+    );
+    expect(
+      await setReportStatuses(
+        [
+          { id: SCAN_REPORT, status: 'Unactioned' as never },
+          { id: 102, status: 'Unactioned' as never },
+        ],
+        { userId: MOD }
+      )
+    ).toEqual({
+      changed: 1,
+      unchanged: 0,
+      skipped: 1,
+      failed: [{ id: SCAN_REPORT, error: 'Scan-hidden reports must be dismissed one at a time.' }],
+    });
+    expect(
+      (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
+    ).toEqual({ status: 'Pending' });
+    expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
+  });
+
+  it('ruled by a caller that does not ask: it stays hidden', async () => {
     expect(await setReportStatus({ id: SCAN_REPORT, status: 'Unactioned', userId: MOD })).toEqual({
       ok: true,
       changed: true,

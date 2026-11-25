@@ -855,6 +855,13 @@ export async function bulkSetReportStatus({
       }
     WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
       ${fromStatus ? Prisma.sql`AND status = ${fromStatus}::"ReportStatus"` : Prisma.empty}
+      ${
+        // A batch lifts no scan hide: the scan's report on its hide waits for its own dismissal.
+        status === ReportStatus.Unactioned
+          ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM "FeaturePageCommentMirror" m
+              WHERE m."scanHideReportId" = "Report".id)`
+          : Prisma.empty
+      }
     RETURNING id, "userId", "alsoReportedBy", details
   `;
 

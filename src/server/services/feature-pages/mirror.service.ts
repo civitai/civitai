@@ -930,11 +930,13 @@ const takeLift = (commentId: number, by?: number) =>
 /**
  * The key just before `key` in the platform's key order, so the page after it starts at `key`. A
  * comment key is 32 lowercase hex (HMAC-SHA256 of its sourceId, truncated): one less, at the same
- * width, has no key between it and `key`. Any other shape falls back to `key` short of its last
- * character, which another key can sort between, and then the read names that one and confirms nothing.
+ * width, has no key between it and `key`; the all-zero key pages from the start. Any other shape
+ * falls back to `key` short of its last character, which another key can sort between, and then the
+ * read names that one and confirms nothing.
  */
 export function keyBefore(key: string) {
-  if (!/^[0-9a-f]+$/.test(key) || /^0+$/.test(key)) return key.slice(0, -1);
+  if (/^0+$/.test(key)) return '';
+  if (!/^[0-9a-f]+$/.test(key)) return key.slice(0, -1);
   const digits = key.split('');
   let i = digits.length - 1;
   while (digits[i] === '0') digits[i--] = 'f';

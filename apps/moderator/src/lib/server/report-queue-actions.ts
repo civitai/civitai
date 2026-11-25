@@ -42,7 +42,10 @@ export const reportStatusActions = ({ rulingsOnly = false } = {}) => ({
     if (!result.ok) return fail(410, { error: result.error, gone: true });
     if (!result.changed)
       return fail(409, { error: 'Someone else already set that status. Reload.' });
-    return { success: true };
+    return {
+      success: true,
+      ...('notice' in result && result.notice ? { notice: result.notice } : {}),
+    };
   },
 
   saveNotes: saveNotesAction(),

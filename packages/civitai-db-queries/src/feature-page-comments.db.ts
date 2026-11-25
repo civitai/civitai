@@ -562,7 +562,8 @@ export const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
  * A moderator sets one report Unactioned. When it is the report the scan filed with its current hide
  * and it moves from open to Unactioned here, it also lifts that hide, in the same transaction.
  * `changed`: the status moved; `lifted`: the comment shown again, or null. `held`: that report is
- * left open, unchanged, because the lift cannot be made now, and why.
+ * left open, unchanged, because the lift cannot be made now, and why. `superseded`: it was the
+ * scan's report, but its hide has since been replaced (another hide, or the comment removed).
  */
 export async function unactionReportLiftingScanHide(
   db: Kysely<DB>,
@@ -597,6 +598,8 @@ export async function unactionReportLiftingScanHide(
     );
     if (!prior || prior.status === 'Unactioned') return { changed: false, lifted: null };
     const opened = prior.status === 'Pending' || prior.status === 'Processing';
+    // The scan's own report whose hide something else has since replaced: closed, and said so.
+    let superseded: 'removed' | 'hidden' | undefined;
     if (commentId !== undefined && opened && actorId !== systemUserId) {
       // The scan's own report on the scan's current hide: a lift it cannot make now leaves it open
       // and says why, so the hide is never left with nobody told.
@@ -628,6 +631,20 @@ export async function unactionReportLiftingScanHide(
         (why) => wait?.[why]
       );
       if (held) return { changed: false, lifted: null, held };
+      if (!wait) {
+        const [bound] = await rows<{ removed: boolean }>(
+          trx,
+          `SELECT (c.id IS NULL OR c."deletedAt" IS NOT NULL OR m."goneCause" IS NOT NULL
+             OR m."removeWantedAt" IS NOT NULL) AS removed
+           FROM "FeaturePageCommentMirror" m
+           JOIN "Report" r ON r.id = m."scanHideReportId"
+           LEFT JOIN "CommentV3" c ON c.id = m."commentId"
+           WHERE m."commentId" = $1 AND m."scanHideReportId" = $3
+             AND r."userId" = $2 AND r.reason = 'AdminAttention' AND r.details->>'comment' = $4`,
+          [commentId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
+        );
+        if (bound) superseded = bound.removed ? 'removed' : 'hidden';
+      }
     }
     await rows(
       trx,
@@ -635,8 +652,8 @@ export async function unactionReportLiftingScanHide(
        WHERE id = $1`,
       [reportId, actorId]
     );
-    if (commentId === undefined || !opened || actorId === systemUserId)
-      return { changed: true, lifted: null };
+    if (commentId === undefined || !opened || actorId === systemUserId || superseded)
+      return { changed: true, lifted: null, superseded };
     // A push may send the scan's hide again after the lift, and the platform keeps it, so the lease
     // and person-report conditions repeat the checks above.
     const [lifted] = await rows<{ commentId: number; version: number }>(
@@ -678,4 +695,16 @@ export async function unactionReportLiftingScanHide(
     );
     return { changed: true, lifted };
   });
+}
+
+/** Of these reports, those the scan filed with its comment's current hide: one dismissal each. */
+export async function scanHideReportIds(db: Kysely<DB>, reportIds: number[]) {
+  if (!reportIds.length) return new Set<number>();
+  const found = await rows<{ id: number }>(
+    db,
+    `SELECT "scanHideReportId" AS id FROM "FeaturePageCommentMirror"
+     WHERE "scanHideReportId" = ANY($1::int[])`,
+    [reportIds]
+  );
+  return new Set(found.map((r) => r.id));
 }
