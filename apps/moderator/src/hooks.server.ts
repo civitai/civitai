@@ -13,6 +13,7 @@ import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
 import { registerEmailSendRecorder } from '$lib/server/emails/send-recorder';
+import { registerEmailLinkTracker } from '$lib/server/emails/link-tracker';
 import {
   batchPathTier,
   reviewBatchesEnabled,
@@ -156,6 +157,8 @@ function logCredentialAttribution(
 export const init: ServerInit = async () => {
   // Every send this app makes is a send row in the main app's emailEvents, through its internal route.
   registerEmailSendRecorder();
+  // Its links to the main app go out tracked, signed by the main app (its internal route).
+  registerEmailLinkTracker();
   try {
     const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
     await releaseLeasesAtBoot();

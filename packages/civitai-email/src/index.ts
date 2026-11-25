@@ -22,6 +22,20 @@ export {
   REMOTE_RECORDER_TIMEOUT_MS,
 } from './remote-recorder';
 export type { RemoteSendRecorderOptions } from './remote-recorder';
+export {
+  createRemoteLinkTracker,
+  setEmailLinkTracker,
+  getEmailLinkTracker,
+  trackLinksVia,
+  trackableHrefs,
+  EMAIL_LINKS_INTERNAL_PATH,
+  EMAIL_CLICK_PATH,
+  EMAIL_LINKS_MAX,
+  EMAIL_LINK_MAX_LENGTH,
+  LINK_TRACKER_TIMEOUT_MS,
+  LINK_TRACKER_PAUSE_MS,
+} from './link-tracker';
+export type { EmailLinkSend, EmailLinkTracker, RemoteLinkTrackerOptions } from './link-tracker';
 export type {
   SendEmailInput,
   SendEmailStrictInput,
