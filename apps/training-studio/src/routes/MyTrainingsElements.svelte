@@ -51,7 +51,6 @@
   // button never looks like a dead click (it navigates away on success).
   let remixingId = $state<string | null>(null);
   let remixError = $state('');
-  // A stable placeholder colour per run, so cards without samples don't all look alike.
   const placeholderIndex = (r: TrainingRow) =>
     [...(r.workflowId ?? r.name)].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
   const remixLabel = (r: TrainingRow) => (r.state === 'failed' ? 'Retry' : 'Remix');
@@ -151,7 +150,6 @@
 {#snippet cardCover(r: TrainingRow)}
   {#if r.sampleUrls.length > 0 && r.media !== 'audio'}
     {@const shown = r.sampleUrls.slice(0, 4)}
-    <!-- One sample fills the cover; more show as a 2×2 grid of the run's samples. -->
     <div class="grid size-full gap-0.5 bg-dark-8 {shown.length > 1 ? 'grid-cols-2 grid-rows-2' : ''}">
       {#each shown as url, i (i)}
         {#if r.isVideo}
@@ -335,8 +333,6 @@
       </civitai-table>
     </div>
   {:else}
-    <!-- The main app's model-card grid: a cover per run, status on the media, actions behind the kebab,
-         title on a scrim (src/components/Cards/ModelCard.tsx). -->
     <div class="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-4">
       {#each visibleRows as r (r.workflowId ?? r.name)}
         {@const badge = RUN_STATE_BADGE[r.state]}
@@ -398,7 +394,6 @@
             <div class="line-clamp-2 text-lg font-bold leading-tight text-white [text-shadow:1px_1px_1px_rgb(0_0_0/0.8)]">
               {r.name}
             </div>
-            <!-- Wraps rather than truncates: on a failed run it carries the refund notice. -->
             <div class="break-words text-xs text-white/80 [text-shadow:1px_1px_1px_rgb(0_0_0/0.8)]">
               <span class="font-semibold text-white">{r.base}</span>{r.sub ? ` · ${r.sub}` : ''}
             </div>

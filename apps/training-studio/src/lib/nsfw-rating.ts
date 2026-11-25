@@ -28,7 +28,7 @@ export function isMatureNsfwLevel(level: string | null | undefined): boolean {
   return !!rating && MATURE_NSFW_LEVELS.has(rating);
 }
 
-/** A scan rating as users see it on civitai.com; undefined when unrated (`na`) or unknown. */
+/** The display label for `level`; undefined when unrated or unknown. */
 export function nsfwLevelLabel(level: string | null | undefined): string | undefined {
   const rating = asNsfwRating(level);
   return rating && NSFW_LEVEL_LABELS[rating];
