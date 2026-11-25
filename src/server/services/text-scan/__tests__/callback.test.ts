@@ -368,6 +368,38 @@ describe('handleTextScanCallback', () => {
     ).toHaveLength(0);
   });
 
+  describe('a late result for text the owner has since edited', () => {
+    // The row is pending on the edited text: it holds that submit's marker, which carries its hash.
+    const PENDING = 'ts-Post-7-edited-0-0';
+    beforeEach(() => {
+      updateMany.mockImplementation((async ({ where }: { where: { workflowId?: unknown } }) => {
+        const w = where.workflowId as string | { in: string[] } | undefined;
+        const hit =
+          w === undefined || (typeof w === 'string' ? w === PENDING : w.in.includes(PENDING));
+        return { count: hit ? 1 : 0 };
+      }) as never);
+    });
+    const callback = (externalId: string) => {
+      vi.mocked(getWorkflow).mockResolvedValue(
+        workflow({ nsfw: { level: 'none', reason: 'clean' } }, undefined, {
+          ...metadata,
+          externalId,
+        }) as any
+      );
+      return handleTextScanCallback({ workflowId: 'wf-late', status: 'succeeded' });
+    };
+
+    it('is not recorded or applied, so it cannot release the pending scan', async () => {
+      await callback('ts-Post-7-older-0-0');
+      expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    });
+
+    it('is applied when it is the result for the pending text (control)', async () => {
+      await callback(PENDING);
+      expect(adapter.applyTextScan).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('expects one step from a workflow without segments, so a second step is malformed', async () => {
     const wf = segmented([
       { nsfw: { level: 'none', reason: 'a' } },

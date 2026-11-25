@@ -21,6 +21,10 @@ vi.mock('$lib/server/queue/runtime', () => ({
 vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
+const inquisitorQueue = vi.hoisted(() => ({ enabled: true }));
+vi.mock('$lib/server/skill-check/runtime', () => ({
+  skillChecks: async () => ({ enabled: inquisitorQueue.enabled, poolCap: 500, serveJudged: true }),
+}));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   hiddenItemId: (id: number) => -id,
@@ -93,6 +97,32 @@ describe('apprentice action', () => {
     );
   });
 
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    'checks the answer against the same skill-check rate the item was served with (inquisitor queue on: %s)',
+    async (enabled, skillCheckRate) => {
+      answerApprentice.mockResolvedValue({
+        status: 'recorded',
+        correct: true,
+        xp: 0,
+        promoted: false,
+      });
+      inquisitorQueue.enabled = enabled;
+      try {
+        await post(valid);
+      } finally {
+        inquisitorQueue.enabled = true;
+      }
+      expect(answerApprentice).toHaveBeenCalledWith(
+        {},
+        expect.anything(),
+        expect.objectContaining({ skillCheckRate })
+      );
+    }
+  );
+
   it('hands the version the item was served with to the ledger', async () => {
     answerApprentice.mockResolvedValue({ status: 'rejected', reason: 'not-current' });
 
@@ -113,6 +143,15 @@ describe('apprentice action', () => {
   it('refuses a malformed submission before touching the ledger', async () => {
     expect(await post({ ...valid, kind: 'other' })).toMatchObject({ status: 400 });
     expect(await post({ ...valid, referenceId: 'x' })).toMatchObject({ status: 400 });
+    expect(answerApprentice).not.toHaveBeenCalled();
+  });
+
+  it('refuses a body with no answer before touching the ledger', async () => {
+    const { answer: _answer, ...noAnswer } = valid;
+    expect(await post(noAnswer)).toMatchObject({
+      status: 400,
+      data: { message: 'Pick an answer.' },
+    });
     expect(answerApprentice).not.toHaveBeenCalled();
   });
 

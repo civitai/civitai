@@ -361,17 +361,23 @@ describe('listStoreGrid', () => {
     expect(await requestsMoved()).toEqual(['db_fallback/db_error:1']);
   });
 
-  it('a viewer who may see r/x listings is never sent to the index', async () => {
-    for (const viewerBrowsingLevel of [NsfwLevel.R, NsfwLevel.X, NsfwLevel.PG | NsfwLevel.R]) {
-      const res = await listStoreGrid(
-        INPUT,
-        { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel },
-        { indexSearch: true }
-      );
-      expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: false });
-    }
-    expect(await requestsMoved()).toEqual(['db_fallback/mature_viewer:3']);
-    expect(fetchCalls).toEqual([]);
+  // The index holds every rating, so a mature-allowing viewer is routed, and the call names
+  // exactly the mature ratings the viewer may see.
+  it.each<[string, number, string]>([
+    ['every mature level', NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX, 'r,x,xxx'],
+    ['X only', NsfwLevel.X, 'x'],
+    ['PG and R', NsfwLevel.PG | NsfwLevel.R, 'r'],
+  ])('a viewer who may see %s is sent to the index with mature=%s', async (_, level, want) => {
+    const res = await listStoreGrid(
+      INPUT,
+      { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel: level },
+      { indexSearch: true }
+    );
+    expect(res.search).toBe('index');
+    expect(res.indexSearchRoutable).toBe(true);
+    expect(fetchCalls).toHaveLength(1);
+    expect(new URL(fetchCalls[0]).searchParams.getAll('mature')).toEqual([want]);
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
   });
 
   it('an SFW level on a mature-capable host is still routed', async () => {
@@ -777,6 +783,27 @@ describe('the store grid request, end to end', () => {
     expect(await requestsMoved()).toEqual(['index/ok:1']);
   });
 
+  it('a red-capable viewer at R and X: the same search, naming those ratings', async () => {
+    const res = await grid(
+      { ...STORE_INPUT, query: 'lumen' },
+      {
+        ...SFW_VIEWER,
+        redCapable: true,
+        viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
+      }
+    );
+    expect(fetchCalls).toEqual([
+      'http://app-index.invalid/base/search?q=lumen&limit=48&mature=r%2Cx',
+    ]);
+    expect(res).toEqual({
+      items: [ORBIT, LUMEN, SUB_LUMEN],
+      nextCursor: undefined,
+      search: 'index',
+      indexSearchRoutable: true,
+    });
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
+  });
+
   it('sub-listings flag off: an index answer carries no sub-listing card', async () => {
     const res = await grid(
       { ...STORE_INPUT, query: 'lumen' },
@@ -804,11 +831,6 @@ describe('the store grid request, end to end', () => {
   });
 
   it.each<[string, Partial<StoreGridViewer>, AppIndexSearchReason]>([
-    [
-      'a viewer who may see R listings',
-      { redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R },
-      'mature_viewer',
-    ],
     [
       'a moderator',
       { floor: 'moderators', viewer: { userId: 1, isModerator: true } },

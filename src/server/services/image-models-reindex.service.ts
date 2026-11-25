@@ -108,12 +108,19 @@ async function queueChanged({ levelImageIds = [], minorImageIds = [] }: ImageMin
 
 async function queueModels(imageIds: number[]) {
   // Primary: the image or its post may be moments old.
+  // A model can also show someone else's image, featured in its version showcase (and so maybe its
+  // cover); the showcase table is indexed by image, the model's cover columns are not.
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
-    SELECT DISTINCT p."modelVersionId", mv."modelId"
+    SELECT p."modelVersionId", mv."modelId"
     FROM "Image" i
     JOIN "Post" p ON p.id = i."postId"
     JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
     WHERE i.id = ANY(${imageIds}::int[])
+    UNION
+    SELECT s."modelVersionId", mv."modelId"
+    FROM "ModelVersionShowcaseItem" s
+    JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
+    WHERE s."imageId" = ANY(${imageIds}::int[]) AND s.source = 'Community' AND NOT s."removed"
   `;
   if (!rows.length) return;
 

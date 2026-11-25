@@ -10,7 +10,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
@@ -61,9 +61,9 @@ export function MysteryPacksManagePanel({
   } = trpc.creatorShop.getMyMysteryPacks.useQuery({ userId });
   const { withdrawMysteryPackRevision } = useMutateCreatorShop();
   const withdraw = (pack: MyMysteryPack) =>
-    openConfirmModal({
+    openConfirm({
       title: pack.listing?.status === 'Published' ? 'Withdraw this edit?' : 'Withdraw this pack?',
-      children: (
+      message: (
         <Text size="sm">
           {pack.listing?.status === 'Published'
             ? 'The live version keeps selling.'

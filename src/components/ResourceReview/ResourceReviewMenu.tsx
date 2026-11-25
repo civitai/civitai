@@ -1,7 +1,6 @@
 import type { MenuProps } from '@mantine/core';
 import { ActionIcon, Loader, Text } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconCalculator,
   IconCalculatorOff,
@@ -23,6 +22,11 @@ import type { ResourceReviewPagedModel } from '~/types/router';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+
+const DELETE_REVIEW_DIALOG_ID = 'delete-resource-review';
+const EXCLUDE_REVIEW_DIALOG_ID = 'exclude-resource-review';
 
 export function ResourceReviewMenu({
   reviewId,
@@ -56,21 +60,21 @@ export function ResourceReviewMenu({
   const queryUtils = trpc.useUtils();
   const deleteMutation = trpc.resourceReview.delete.useMutation({
     onSuccess: async () => {
-      closeAllModals();
+      dialogStore.closeById(DELETE_REVIEW_DIALOG_ID);
       dialog.onClose();
       await queryUtils.resourceReview.invalidate();
     },
   });
   const handleDelete = () => {
-    openConfirmModal({
+    openConfirm({
+      id: DELETE_REVIEW_DIALOG_ID,
       title: 'Delete Review',
-      children: (
+      message: (
         <Text size="sm">
           Are you sure you want to delete this review? This action is destructive and cannot be
           reverted.
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Delete Review', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', loading: deleteMutation.isPending },
       closeOnConfirm: false,
@@ -83,7 +87,7 @@ export function ResourceReviewMenu({
   const excludeMutation = trpc.resourceReview.toggleExclude.useMutation({
     async onSuccess() {
       await queryUtils.resourceReview.invalidate();
-      closeAllModals();
+      dialogStore.closeById(EXCLUDE_REVIEW_DIALOG_ID);
     },
     onError(error) {
       showErrorNotification({
@@ -93,15 +97,15 @@ export function ResourceReviewMenu({
     },
   });
   const handleExcludeReview = () => {
-    openConfirmModal({
+    openConfirm({
+      id: EXCLUDE_REVIEW_DIALOG_ID,
       title: 'Exclude Review',
-      children: (
+      message: (
         <Text size="sm">
           Are you sure you want to exclude this review from the count of this model? You will not be
           able to revert this.
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Exclude Review', cancel: "No, don't exclude it" },
       confirmProps: { color: 'red', loading: deleteMutation.isPending },
       closeOnConfirm: false,

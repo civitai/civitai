@@ -45,6 +45,18 @@ describe('personal-data-export column policy, over every planned read', () => {
     expect(selected('Session')).toContain('expires');
   });
 
+  it('App Assistant tracing: the trace row’s ids are exported, its moderation analysis is not', () => {
+    // Invariant guard (JSON is withheld by default), named literally. The frozen transcripts are
+    // bundle-store objects, which no export source reads.
+    expect(selected('AppPublishRequestTrace')).toEqual(
+      expect.arrayContaining(['publishRequestId', 'slug', 'conversationIds', 'createdAt'])
+    );
+    expect(selected('AppPublishRequestTrace')).not.toContain('signals');
+    expect(selected('AppAssistantSessionLink')).toEqual(
+      expect.arrayContaining(['conversationId', 'appSlug', 'turnCount', 'lastModel'])
+    );
+  });
+
   /**
    * Named literally, not through the policy's own lists and patterns: a check that judges the plan
    * with the same rules that made it moves with them, and stays green when one is weakened.
@@ -213,6 +225,36 @@ describe('personal-data-export row rules', () => {
     expect(transformRow(planFor('UserRestriction'), { triggers }, SUBJECT).out.triggers).toEqual([
       { category: 'prompt', prompt: 'my prompt', time: '2026-01-01' },
     ]);
+  });
+
+  // 🔴 The export is an author-facing exit too: a review boot check goes out as its fixed reason,
+  // never the app output it recorded. The marker is a value no constant can equal.
+  it("exports an app submission's boot check as its fixed reason, never the app's output", () => {
+    const MARKER = 'zq-bootcheck-marker-5e1d0a7c93';
+    const plan = planFor('AppBlockPublishRequest');
+    expect(selected('AppBlockPublishRequest')).toContain('deployDetail');
+    const deployDetail = JSON.stringify({
+      sha: 'd'.repeat(40),
+      bootCheck: {
+        result: 'failed',
+        ms: 4000,
+        messagesSeen: [`${MARKER}-msg`],
+        firstError: `${MARKER}-err`,
+        checkedAt: '2026-01-01T00:00:00.000Z',
+        mode: 'enforce',
+      },
+      error: `Boot check: the app loaded but never sent BLOCK_READY within 10s. First error: ${MARKER}-err. Fix and resubmit.`,
+    });
+    const out = transformRow(plan, { id: 'pubreq_1', deployDetail }, SUBJECT).out;
+    expect(JSON.stringify(out)).not.toContain(MARKER);
+    expect(JSON.parse(out.deployDetail as string).bootCheck).toEqual({
+      result: 'failed',
+      mode: 'enforce',
+      reason: 'page-error',
+    });
+    // A plain-text build failure is the author's own detail and goes out unchanged.
+    const plain = 'Build Failed\n\nnpm ERR! missing script: build';
+    expect(transformRow(plan, { deployDetail: plain }, SUBJECT).out.deployDetail).toBe(plain);
   });
 
   it("shows a staff removal of a placement as staff, and keeps the owner's own decision", () => {

@@ -13,7 +13,6 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
-  TALLIES,
 } from '~/server/services/apps/__tests__/doc-store.functional';
 import { APPDATA_TABLES } from '~/server/services/apps/__tests__/doc-store.sql-scan';
 
@@ -93,7 +92,6 @@ async function app(
     const c = ctx(id, NS_PROD, uid);
     await store.put(c, PREFS, 'p', { uid });
     await store.put(c, POSTS, `post-${uid}`, { status: 'open' });
-    await store.increment(c, TALLIES, 'game', 'plays', 1);
   }
   await store.put(ctx(id, `dev:${USERS[0]}`, USERS[0]), PREFS, 'dev', { a: 1 });
   await main.query(

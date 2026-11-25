@@ -55,6 +55,9 @@ const offering = {
   licensePreset: null,
   licenseCustomText: null,
   licenseAllowResale: false,
+  requestForm: null,
+  requestFormVersion: 0,
+  fromPrice: null,
 };
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({

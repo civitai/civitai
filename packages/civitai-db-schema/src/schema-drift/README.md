@@ -144,8 +144,9 @@ Migrations here are applied by hand, per environment. For each writable environm
 1. **Dry run** the migration inside a transaction that is rolled back, against the target:
    `BEGIN;` … the migration … `ROLLBACK;`. Before wrapping, strip the file's own top-level
    transaction control (`BEGIN` / `START TRANSACTION`, `COMMIT` / `END`, `ROLLBACK`): a `COMMIT`
-   or `END;` inside the wrapper commits, and everything after it autocommits. Leave `BEGIN`/`END`
-   inside a function, procedure or `DO` body (`$$ … $$`); they are not transaction control.
+   or `END;` inside the wrapper commits what ran before it, and what follows autocommits too when
+   statements are sent one at a time (as psql does). Leave `BEGIN`/`END` inside a function,
+   procedure or `DO` body (`$$ … $$`); they are not transaction control.
    - A file that contains `CREATE INDEX CONCURRENTLY` cannot run in a transaction block;
      dry-run the rest and apply that statement on its own.
    - Run `ALTER TYPE … ADD VALUE` as its own step and dry-run it alone. Statements that use

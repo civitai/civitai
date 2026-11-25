@@ -1,6 +1,5 @@
 import { Text } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import { IconShieldCancel, IconTrash } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
@@ -13,6 +12,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /**
  * The two removal controls, in their own module so the hover card can load them
@@ -91,9 +91,9 @@ export function OwnerRemove({
           disabled={locked}
           loading={remove.isPending}
           onClick={() =>
-            openConfirmModal({
+            openConfirm({
               title: 'Remove this sticker',
-              children: <Text size="sm">{removalConsequence(free)}</Text>,
+              message: <Text size="sm">{removalConsequence(free)}</Text>,
               labels: { confirm: 'Remove', cancel: 'Cancel' },
               confirmProps: { color: 'red' },
               onConfirm: () => remove.mutate({ placementIds: [placementId], action: 'remove' }),
@@ -172,9 +172,9 @@ export function ModeratorRemove({
         aria-label="Take down placement as moderator"
         loading={remove.isPending}
         onClick={() =>
-          openConfirmModal({
+          openConfirm({
             title: 'Take this placement down',
-            children: <Text size="sm">{moderatorTakedownConsequence({ pending, free })}</Text>,
+            message: <Text size="sm">{moderatorTakedownConsequence({ pending, free })}</Text>,
             labels: { confirm: 'Take down', cancel: 'Cancel' },
             confirmProps: { color: 'red' },
             onConfirm: () => remove.mutate({ placementId }),

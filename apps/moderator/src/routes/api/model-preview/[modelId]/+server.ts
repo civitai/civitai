@@ -8,6 +8,7 @@ import {
   MODEL_FLAGS_NEEDS_REVIEW_PATH,
 } from '$lib/minor-flags/paths';
 import { getModelPreview } from '$lib/server/model-preview.service';
+import { withheldPreviewImages } from '$lib/server/retracted-media';
 
 // `ModelPreview`'s data, for the model report queue and every Model Flags tab, which are granted
 // separately. `/api/*` is exempt from the global route gate, so this checks those pages itself.
@@ -28,5 +29,5 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 
   const preview = await getModelPreview(modelId, reportId);
   if (!preview) error(404, 'No such model.');
-  return json(preview);
+  return json(await withheldPreviewImages(preview, locals.user));
 };

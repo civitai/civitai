@@ -2,6 +2,7 @@ import { imageUrl } from '$lib/server/image-url';
 import { sealItem, type ItemRef } from '$lib/server/feed-token';
 import { hiddenItemId, pickHiddenCheck } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { skillChecks } from '$lib/server/skill-check/runtime';
 import { getFeed } from '$lib/server/queue/queue.service';
 import { feedSecret } from '$lib/server/smites/runtime';
 import type { Skipped } from '$lib/server/skips';
@@ -33,8 +34,9 @@ export async function pickItem(
   const secret = feedSecret();
 
   const yesNo = await yesNoConfig();
+  // The tag review source is served on the same cadence when it is switched on, whatever the yes/no share.
   const due =
-    yesNo.share > 0 &&
+    (yesNo.share > 0 || yesNo.tagReview) &&
     (!feed || burstDue(await servedHistory(db, userId, served), burstRoller(secret, userId)));
   const offer = due
     ? await pickYesNo(db, {
@@ -42,6 +44,7 @@ export async function pickItem(
         rank,
         secret,
         share: yesNo.share,
+        tagReview: yesNo.tagReview,
         stretch: yesNo.stretch,
         force: true,
         exclude: skipped?.yesno,
@@ -81,6 +84,8 @@ export async function pickItem(
     probationShare: hiddenConfig.probationShare,
     exclude: skipped?.hidden,
     slot,
+    serveJudged: (await skillChecks()).serveJudged,
+    skillChecks: (await skillChecks()).enabled,
   });
   if (hidden) {
     return {

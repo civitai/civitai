@@ -6,8 +6,12 @@
  * decisions here — the public-catalog scope first, an empty catalog when it is withheld — can be
  * tested without a database.
  */
-import type { ListingMediaItem } from '~/server/registry-adapter/catalog-media';
+import type {
+  ListingMediaItem,
+  ListingSubListingItem,
+} from '~/server/registry-adapter/catalog-media';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
+import { compareCodeUnits } from '~/server/registry-adapter/release';
 import type {
   ListingActionsRunSource,
   ListingCard,
@@ -76,6 +80,13 @@ export type ListingExtras = {
   connectClientId: string | null;
   /** The listing's fork facts (`readListingForkProvenance`); {@link readCatalog} names the parent. */
   fork: { isFork: boolean; forkOfListingId: string | null };
+  /**
+   * The listing's sub-listings the store grid could show, whatever the viewer, in id order
+   * (`readStoreSubListingsOfParents`, `registrySubListing`); empty when it has none.
+   */
+  subListings: ListingSubListingItem[];
+  /** How many more items the grid shows than `subListings` carries (`capSubListings`); usually 0. */
+  subListingsOmitted: number;
 };
 
 /**
@@ -230,7 +241,7 @@ export async function readCatalog(
   }
   const reviewOrder = (a: CatalogApprovedRequest, b: CatalogApprovedRequest) => {
     const at = (a.reviewedAt?.getTime() ?? 0) - (b.reviewedAt?.getTime() ?? 0);
-    return at !== 0 ? at : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    return at !== 0 ? at : compareCodeUnits(a.id, b.id);
   };
 
   const blockOf = (l: CatalogListing) =>

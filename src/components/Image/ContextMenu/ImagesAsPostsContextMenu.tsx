@@ -10,12 +10,13 @@ import {
 } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { constants } from '~/server/common/constants';
-import { IconPinned, IconPinnedOff } from '@tabler/icons-react';
+import { IconLayoutGrid, IconPinned, IconPinnedOff } from '@tabler/icons-react';
+import { openVersionShowcaseEditor } from '~/components/Dialog/triggers/version-showcase-editor';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ImageContextMenuWrapper } from '~/components/Image/ContextMenu/ContextMenu';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export function ImagesAsPostsContextMenu({ image }: { image: ImageContextMenuProps['image'] }) {
   return (
@@ -38,6 +39,7 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
   const queryUtils = trpc.useUtils();
 
   const currentModelVersionId = filters.modelVersionId as number;
+  const showcaseEnabled = !!useFeatureFlags().modelVersionShowcase;
 
   const hiddenImageIds =
     (model
@@ -76,24 +78,21 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
   // The toggle unhides every id it is given when ANY of them is already hidden, so hiding
   // must send only the post's not-yet-hidden images and unhiding only its hidden ones.
   const handleTogglePostHidden = ({ postId, hide }: { postId: number; hide: boolean }) => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: hide ? 'Hide post from gallery' : 'Unhide post from gallery',
-        message: hide
-          ? 'Every image in this post will be hidden from this gallery.'
-          : 'Every image in this post will be shown in this gallery again.',
-        labels: { cancel: 'Cancel', confirm: hide ? 'Hide post' : 'Unhide post' },
-        onConfirm: async () => {
-          const postImageIds = await queryUtils.post.getImageIds
-            .fetch({ id: postId })
-            .catch((error: Error) => {
-              showErrorNotification({ title: 'Unable to load post images', error });
-              return [];
-            });
-          const imageIds = postImageIds.filter((id) => hiddenImageIds.includes(id) !== hide);
-          if (imageIds.length) await handleUpdateGallerySettings({ imageIds });
-        },
+    openConfirm({
+      title: hide ? 'Hide post from gallery' : 'Unhide post from gallery',
+      message: hide
+        ? 'Every image in this post will be hidden from this gallery.'
+        : 'Every image in this post will be shown in this gallery again.',
+      labels: { cancel: 'Cancel', confirm: hide ? 'Hide post' : 'Unhide post' },
+      onConfirm: async () => {
+        const postImageIds = await queryUtils.post.getImageIds
+          .fetch({ id: postId })
+          .catch((error: Error) => {
+            showErrorNotification({ title: 'Unable to load post images', error });
+            return [];
+          });
+        const imageIds = postImageIds.filter((id) => hiddenImageIds.includes(id) !== hide);
+        if (imageIds.length) await handleUpdateGallerySettings({ imageIds });
       },
     });
   };
@@ -209,6 +208,20 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
                 )}
               </Stack>
             )}
+          </Menu.Item>
+        ) : null}
+        {showcaseEnabled && model && image.user?.id !== model.user.id ? (
+          <Menu.Item
+            key="feature-in-showcase"
+            leftSection={<IconLayoutGrid size={16} stroke={1.5} />}
+            onClick={() =>
+              openVersionShowcaseEditor({
+                modelVersionId: currentModelVersionId,
+                addImageId: image.id,
+              })
+            }
+          >
+            Feature in showcase
           </Menu.Item>
         ) : null}
         {hideImageItems}

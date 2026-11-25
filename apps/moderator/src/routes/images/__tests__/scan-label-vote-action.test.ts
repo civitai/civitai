@@ -15,8 +15,10 @@ const {
   getOpenFlaggerVersions,
   isControlFlaggerVersion,
   itemForToken,
+  itemWithheld,
 } = vi.hoisted(() => ({
   itemForToken: vi.fn(),
+  itemWithheld: vi.fn(),
   getVotedItemOwner: vi.fn(),
   claimNext: vi.fn(),
   getCounters: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock('$lib/server/scan-label.service', () => ({
   getVotedItemOwner,
   isControlFlaggerVersion,
   itemForToken,
+  itemWithheld,
 }));
 
 const { actions, load } = await import('../scan-labels/+page.server');
@@ -70,6 +73,7 @@ beforeEach(() => {
   applyMajorityBlocks.mockResolvedValue({ blocked: [], failed: [] });
   getVotedItemOwner.mockResolvedValue(OWNER);
   itemForToken.mockResolvedValue(5);
+  itemWithheld.mockResolvedValue(false);
 });
 
 describe('vote action', () => {
@@ -244,6 +248,17 @@ describe('vote action', () => {
     expect(castVote).not.toHaveBeenCalled();
   });
 
+  it('refuses a vote on an item whose image became withheld after the claim, recording nothing', async () => {
+    itemWithheld.mockResolvedValue(true);
+    const result = (await actions.vote(event({ token: TOKEN, block: '0' }))) as {
+      status: number;
+      data: { error: string };
+    };
+    expect(result.status).toBe(409);
+    expect(itemWithheld).toHaveBeenCalledWith(5, false);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
   it('tells a page from before the claim token to reload, recording nothing', async () => {
     const result = (await actions.vote(event({ itemId: '5', block: '0' }))) as {
       status: number;
@@ -284,7 +299,10 @@ describe('load', () => {
     const data = await open('?day=2026-10-12&version=control-sample%402026-10-17');
 
     expect(isControlFlaggerVersion).toHaveBeenCalledWith('control-sample@2026-10-17');
-    expect(claimNext).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
+    expect(claimNext).toHaveBeenCalledWith(
+      { userId: 7, csamReview: false },
+      { day: '2026-10-12', flaggerVersion: undefined }
+    );
     expect(getCounters).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
     expect(data.version).toBe('');
   });
@@ -323,7 +341,10 @@ describe('load', () => {
 
     const data = await open('?version=scan%401');
 
-    expect(claimNext).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: 'scan@1' });
+    expect(claimNext).toHaveBeenCalledWith(
+      { userId: 7, csamReview: false },
+      { day: undefined, flaggerVersion: 'scan@1' }
+    );
     expect(data.version).toBe('scan@1');
   });
 });

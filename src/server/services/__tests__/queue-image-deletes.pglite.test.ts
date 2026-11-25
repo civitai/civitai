@@ -1,14 +1,12 @@
 import { PGlite } from '@electric-sql/pglite';
 import {
-  cleanupBlocked,
   deleteImageRows,
   IMAGE_USES,
   imageNotUsed,
   queueImageDeletes,
   queueImageStorageDelete,
-  readDueDeletes,
-  settleDeletes,
 } from '@civitai/db-queries/content-deletion';
+import { cleanupBlocked, readDueDeletes, settleDeletes } from '@civitai/db-queries/pending-deletes';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
@@ -38,7 +36,7 @@ beforeAll(async () => {
   `);
   await pg.exec(imageUseTablesSql);
   // Returned by `deleteImageRows`.
-  await pg.exec(`ALTER TABLE "Image" ADD COLUMN metadata jsonb`);
+  await pg.exec(`ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS metadata jsonb`);
 });
 afterAll(() => pg.close());
 
@@ -182,7 +180,7 @@ describe('queueImageDeletes', () => {
     await queue([1, 2]);
     await pg.exec(`INSERT INTO "Article" ("coverId") VALUES (1)`);
 
-    const deleted = await deleteImageRows(db, {
+    const { deleted } = await deleteImageRows(db, {
       ids: [1, 2],
       actor: { system: 'test' },
       where: imageNotUsed(),

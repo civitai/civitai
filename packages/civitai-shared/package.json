@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./media-key": "./src/media-key.ts",
+    "./memorial": "./src/memorial.ts",
     "./iso-datetime-compat": "./src/iso-datetime-compat.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
     "./feedback.constants": "./src/feedback.constants.ts",
@@ -21,6 +22,7 @@
     "./moderator-paths": "./src/moderator-paths.ts",
     "./missing-media": "./src/missing-media.ts",
     "./owner-hidden-reviews": "./src/owner-hidden-reviews.ts",
+    "./restricted-lead-revision": "./src/restricted-lead-revision.ts",
     "./image-review-types": "./src/image-review-types.ts",
     "./image-ingestion": "./src/image-ingestion.ts",
     "./training-audio": "./src/training-audio.ts",
@@ -29,6 +31,7 @@
     "./training-options": "./src/training-options.ts",
     "./training-kohya-replay": "./src/training-kohya-replay.ts",
     "./training-text-encoder": "./src/training-text-encoder.ts",
+    "./training-flow-draft": "./src/training-flow-draft.ts",
     "./job-queue": "./src/job-queue.ts",
     "./account-deletion-grace": "./src/account-deletion-grace.ts",
     "./search-index-queue": "./src/search-index-queue.ts",
@@ -57,7 +60,7 @@
     "./held-media": "./src/held-media.ts",
     "./held-url": "./src/held-url.ts",
     "./retracted-media": "./src/retracted-media.ts",
-    "./legal-hold-texts": "./src/legal-hold-texts.ts",
+    "./account-action-texts": "./src/account-action-texts.ts",
     "./media-signals": "./src/media-signals.ts",
     "./retracted-media-tier": "./src/retracted-media-tier.ts",
     "./review-batch": "./src/review-batch.ts",
@@ -66,7 +69,8 @@
     "./new-order": "./src/new-order.ts",
     "./knights-shop": "./src/knights-shop.ts",
     "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts",
-    "./usage-limit-view": "./src/usage-limit-view.ts"
+    "./usage-limit-view": "./src/usage-limit-view.ts",
+    "./html-escape": "./src/html-escape.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -11,6 +11,7 @@ import { assertBlockSubjectIsSessionUser } from '~/server/services/block-token-s
 import { subjectUserIdOrNull } from '~/server/services/block-token-subject';
 import { protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * App Blocks (Phase-2a PR-C) — the SESSION-AUTHED block image-upload bridge behind
@@ -35,13 +36,7 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
  */
 export const blockImageUploadRouter = router({
   persist: protectedProcedure
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many image uploads — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-uploads')))
     .input(
       persistBlockUploadImageSchema.extend({
         share: z.boolean().optional(),

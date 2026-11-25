@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { NO_SERVICE_LICENSE } from '~/shared/constants/creator-service-license.constants';
 import { ServiceLicensePreset } from '~/shared/utils/prisma/enums';
+import { serviceFormAnswersSchema } from '~/shared/utils/service-request-form';
 import {
   SERVICE_DEAL_CANCELLATION_REASON_CODES,
   SERVICE_DEAL_DECLINE_REASON_CODES,
@@ -32,8 +33,16 @@ export const requestServiceDealSchema = z.object({
   /** The license checkbox; required when the offering has a license. */
   licenseAgreed: z.boolean().default(false),
   requestText: text(5000),
+  /** The form version the buyer answered, and the answers; both left out for a service without one. */
+  formVersion: z.number().int().min(0).optional(),
+  formAnswers: serviceFormAnswersSchema.optional(),
   /** The buyer-disclosure version the buyer was shown; the service refuses a request without the current one. */
   disclosureVersion: z.string(),
+  /**
+   * Which disclosure the buyer was shown: with reviews or without. Must match the deal's. Optional so
+   * an old page that sends none gets the service's terms refusal, not a validation error.
+   */
+  disclosureReviewEnabled: z.boolean().optional(),
 });
 
 export const getServiceDealSchema = dealId;

@@ -4,6 +4,7 @@ import type * as BuzzPackage from '@civitai/buzz';
 // Setup-order import: shared db/redis/env/prom mocks and the REAL test RSA keypair, so the
 // tokens below are really signed and the procedures really verify them.
 import '~/__tests__/setup';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as ConsentRevocationModule from '~/server/services/blocks/consent-revocation.service';
 import type * as DevTunnelModule from '~/server/services/blocks/dev-tunnel.service';
@@ -394,6 +395,8 @@ function procFn(path: string): (input: unknown) => Promise<unknown> {
 
 type Outcome = {
   result: { ok: true } | { error: string; code?: string; message: string };
+  /** A TOO_MANY_REQUESTS refusal's `rateLimit` meta, as the tRPC formatter lifts it. */
+  rateLimit?: unknown;
   limiter: string[];
   /** The positive anchors this call passed through, in order (see the spies above). */
   reached: string[];
@@ -403,10 +406,12 @@ async function invoke(path: string, token: string): Promise<Outcome> {
   h.limiterCalls.length = 0;
   h.reached.length = 0;
   let result: Outcome['result'];
+  let rateLimit: unknown;
   try {
     await procFn(path)({ blockToken: token, ...INPUTS[path] });
     result = { ok: true };
   } catch (err) {
+    rateLimit = rateLimitMetaOf(err);
     const e = err as { constructor?: { name?: string }; code?: unknown; message?: unknown };
     result = {
       error: e?.constructor?.name ?? typeof err,
@@ -414,8 +419,25 @@ async function invoke(path: string, token: string): Promise<Outcome> {
       message: String(e?.message),
     };
   }
-  return { result, limiter: [...h.limiterCalls], reached: [...h.reached] };
+  return { result, rateLimit, limiter: [...h.limiterCalls], reached: [...h.reached] };
 }
+
+/**
+ * The id each stub limiter's refusal must name, by the limiter the cell calls. Literal: the ids a
+ * client reads, not derived from the code under test.
+ */
+const REFUSAL_ID_BY_LIMITER: Record<string, string> = {
+  checkBlockCatalogRateLimit: 'apps.catalog',
+  checkBlockGenerationSourceUserRateLimit: 'apps.generation-source',
+  checkBlockPostRateLimit: 'apps.post',
+  checkBlockPublishRateLimit: 'apps.publish',
+  checkBlockSubmitRateLimit: 'apps.submit',
+  checkBlockUploadAppRateLimit: 'apps.upload-app',
+  checkSharedReportRateLimit: 'apps.shared-storage',
+  checkSharedVoteRateLimit: 'apps.shared-storage',
+  checkSharedWithdrawRateLimit: 'apps.shared-storage',
+  reserveSharedWrite: 'apps.shared-storage',
+};
 
 // ── population, derived from the routers themselves ──────────────────────────────────────
 
@@ -2621,6 +2643,17 @@ describe('block-token tRPC procedures — characterisation table', () => {
             code: want.code,
             message: want.message,
           });
+          // Every bridge 429 carries the house meta: the stub limiter's 7 s at the frozen clock,
+          // and the id of the limit that refused, with no counts (all of these are abuse limits).
+          if (want.code === 'TOO_MANY_REQUESTS') {
+            const limiter = want.limiter[want.limiter.length - 1]?.split('(')[0] ?? '';
+            expect(got.rateLimit, 'the refusal carries no rateLimit meta').toEqual({
+              retryAfterSeconds: 7,
+              retryAt: new Date(FROZEN_NOW.getTime() + 7_000).toISOString(),
+              id: REFUSAL_ID_BY_LIMITER[limiter],
+              kind: 'abuse',
+            });
+          }
         } else {
           const r = got.result as { code?: string; message?: string };
           expect(REFUSAL_CODES, `refused: ${r.code} ${r.message}`).not.toContain(r.code);

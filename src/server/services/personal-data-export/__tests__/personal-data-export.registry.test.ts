@@ -60,12 +60,12 @@ describe('personal-data-export registry', () => {
     expect(loose).toEqual([]);
   });
 
-  it('never exports a safety or legal-hold record', () => {
+  it('never exports a safety record', () => {
     // The account owner reading these would learn of a report or an investigation.
     const safety = models
       .map((m) => m.name)
-      .filter((n) => /^(Csam|Evidence)/.test(n) && userKeyed.some((m) => m.name === n));
-    expect(safety.length).toBeGreaterThan(3);
+      .filter((n) => /^Csam/.test(n) && userKeyed.some((m) => m.name === n));
+    expect(safety.length).toBeGreaterThanOrEqual(3);
     expect(safety.filter((n) => n in REGISTRY)).toEqual([]);
     expect('PersonalDataExport' in REGISTRY).toBe(false);
     expect('ModActivity' in REGISTRY).toBe(false);

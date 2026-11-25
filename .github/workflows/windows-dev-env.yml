@@ -1,7 +1,7 @@
 name: Windows dev-env smoke
 
-# Canary for the DEFAULT (non-Nix) contributor setup on native Windows. Runs on a
-# push to `main` that touches the install path, and on dispatch; not on PRs.
+# Canary for the DEFAULT (non-Nix) contributor setup on native Windows. Runs in the
+# 2-hour main batch when the install path changed, and on dispatch; not on PRs or pushes.
 #
 # WHY: every other job in this repo runs on ubuntu-latest, so nothing validates
 # Windows — while Windows support is real and actively maintained:
@@ -25,15 +25,24 @@ name: Windows dev-env smoke
 # the TODO above was Git-Bash-specific. A pwsh-only job would not reproduce it, and
 # would report green over the one case we have written evidence about.
 #
-# ── NOT RUN ON PULL REQUESTS: PUSH TO `main` AND DISPATCH ONLY ───────────────
+# ── NOT RUN ON PULL REQUESTS OR PUSHES: THE 2-HOUR MAIN BATCH AND DISPATCH ───
+#
+# It ran on a push to `main` that touched the install path until it moved to the 2-hour main
+# batch: lint.yml's `batch-suites` job dispatches it on `main` with `batch: true` when a path
+# below changed since the last green batch. A push run's red reached nobody; a batch red turns the
+# `Batch suites (main batch)` commit status red, which opens a CI-watch item naming the commit
+# range (nothing bisects it automatically). Across its last 9 runs it caught nothing.
+#
+# The push trigger stays, with a job that skips on it, ONLY so the paths list keeps one copy
+# here, next to the steps it was derived from: the batch reads `on.push.paths`. A skipped job
+# starts no runner.
 #
 # It used to run on every PR that touched the install path, report-only
 # (`continue-on-error` on `pull_request`), so a PR run never blocked anything.
 # It still cost real capacity: each run holds two Windows job slots against the
 # org's concurrent-job limit, which queues everyone else's jobs. Measured over
-# the 24h to 2026-10-30: 145 PR runs, ~930 Windows job-minutes. A push to `main` that touches the install path
-# still gets a real verdict (no `continue-on-error`: a red step turns the run
-# red on the commit that caused it).
+# the 24h to 2026-10-30: 145 PR runs, ~930 Windows job-minutes. A batch run still
+# gets a real verdict (no `continue-on-error`: a red step turns the run red).
 #
 # WANT A VERDICT ON A BRANCH BEFORE MERGING? Dispatch it:
 #   gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>
@@ -48,18 +57,28 @@ name: Windows dev-env smoke
 #
 # ── THE pnpm STORE CACHE: ONE ENTRY, ON `main` ───────────────────────────────
 #
-# `setup-node` with `cache: pnpm` writes an Actions cache entry keyed
-# `node-cache-Windows-x64-pnpm-<lockfile-hash>`. Actions caches are SCOPED TO A
-# REF: a run can READ an entry saved on the default branch, and it saves into
-# its own ref's scope.
+# The store is cached under `node-cache-Windows-x64-pnpm-<lockfile-hash>` (the key
+# setup-node's `cache: pnpm` used). Actions caches are SCOPED TO A REF: a run can
+# READ an entry saved on the default branch, and it saves into its own ref's scope.
 #
 # When this workflow was `pull_request`-only there was no entry on
 # `refs/heads/main` to restore from, so EVERY PR missed and saved its own
 # ~518 MB copy in its own scope. Measured 2026-08-25: 20 such copies, 9.65 GB —
 # 95.3% of the repo's 10 GB cache budget — so LRU eviction was dropping the
-# useful entries. The push leg fixed that by giving `main` the one entry. With
-# no PR runs left, the push runs keep that entry fresh and a dispatch on a
-# branch restores from it.
+# useful entries. The push leg fixed that by giving `main` the one entry. The
+# batch runs are dispatched ON `main` (ref refs/heads/main), so they save into
+# the same `main` scope and keep that one entry fresh; a dispatch on a branch
+# restores from it. Do not move the batch dispatch to another ref: that is the
+# leak again.
+#
+# That still leaked while setup-node did the caching: its post step saves on ANY
+# run that misses, and a branch dispatch misses whenever its lockfile differs from
+# the last one `main` saved (a branch that changed it, or every branch between a
+# lockfile change landing and the next batch), and each such dispatch saved its own
+# full copy of the store under the same new key. So the store is
+# now restored by ./.github/actions/pnpm-store-restore and saved by
+# ./.github/actions/pnpm-store-save, which saves only on `main`; a branch run that
+# misses installs from the registry and saves nothing.
 #
 # The two matrix shells share one cache key (same OS, arch and lockfile), so on
 # `main` they race to save it and one logs "another job may be creating this
@@ -118,10 +137,15 @@ on:
       - 'packages/*/package.json'
       - 'packages/civitai-db-schema/**'
       - 'apps/**'
-  # With the path filter above, most `main` pushes skip this workflow, so a
-  # release can't count on a push run for its pin. Dispatch it on the pin's
+  # A release can't count on a batch run for its pin. Dispatch it on the pin's
   # branch instead; the run groups by that branch's ref, apart from `main`.
   workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.
+      batch:
+        description: Set by the main batch. Leave unset.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -137,14 +161,18 @@ permissions:
 # its push trigger is path-filtered, so `main` runs here are rare and bursts of
 # them rarer, and the queue-vs-cancel replay that moved those three did not
 # cover this workflow.
+#
+# A batch dispatch has a group of its own (the run id), so a hand dispatch on `main` cannot cancel it.
 concurrency:
-  group: windows-dev-env-${{ github.ref }}
+  group: windows-dev-env-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.ref }}
   cancel-in-progress: true
 
 jobs:
   smoke:
     name: Windows dev-env (${{ matrix.shell }})
     runs-on: windows-latest
+    # Dispatch only (see the header): a push run would skip here.
+    if: github.event_name == 'workflow_dispatch'
     # No `continue-on-error`. It used to be `${{ github.event_name == 'pull_request' }}`
     # (report-only on PRs); with no PR trigger that is always false. A literal `true`
     # would make a push run read `success` while a step underneath failed, a green
@@ -172,7 +200,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       # Report rather than assume. `engines.node` is ADVISORY — pnpm prints
       # `WARN Unsupported engine` and exits 0 on a wrong major — so a mismatch here
@@ -185,6 +214,8 @@ jobs:
       # THE STEP UNDER TEST. Both lifecycle hooks run here.
       - name: pnpm install (runs preinstall + postinstall)
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # POSITIVE CONTROL — the half that makes the green mean something.
       #

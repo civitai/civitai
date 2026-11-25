@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
@@ -27,9 +28,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useCurrentUser: () => ({ id: 1, username: 'fox' }),
-}));
-vi.mock('~/components/Dialog/triggers/add-to-showcase', () => ({
-  openAddToShowcaseModal: state.openModal,
 }));
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -79,6 +77,7 @@ beforeEach(() => {
   ])
     fn.mockReset();
   state.addToTop.mockResolvedValue({});
+  vi.spyOn(dialogStore, 'trigger').mockImplementation(({ props }) => state.openModal({ props }));
   state.addToSection.mockResolvedValue({ added: true, sections: [] });
 });
 

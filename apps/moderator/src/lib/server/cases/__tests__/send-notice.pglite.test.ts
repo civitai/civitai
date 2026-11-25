@@ -181,6 +181,47 @@ describe('sendNotice', () => {
     );
   });
 
+  it("sends a filed case's notice from its own process's sender and mailbox", async () => {
+    const [first] = await notices();
+    const d = await pg.query<{ id: number }>(
+      "INSERT INTO process_definition (key) VALUES ('intimate-image-removal') RETURNING id"
+    );
+    const v = await pg.query<{ id: number }>(
+      'INSERT INTO process_definition_version (definition_id, definition, created_by_id) VALUES ($1, $2, 1) RETURNING id',
+      [d.rows[0].id, JSON.stringify({ mailbox: 'digital-likeness@civitai.com' })]
+    );
+    await pg.query(
+      "UPDATE case_record SET process_key = 'intimate-image-removal', definition_version_id = $1 WHERE id = $2",
+      [v.rows[0].id, first.case_id]
+    );
+    await sendNotice(first.id, deps());
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: 'Civitai <notices@civitai.com>',
+        replyTo: 'digital-likeness@civitai.com',
+      })
+    );
+  });
+
+  it("sends a filed case's notice from its process's sender even when its definition has no mailbox", async () => {
+    const [first] = await notices();
+    const d = await pg.query<{ id: number }>(
+      "INSERT INTO process_definition (key) VALUES ('intimate-image-removal') RETURNING id"
+    );
+    const v = await pg.query<{ id: number }>(
+      'INSERT INTO process_definition_version (definition_id, definition, created_by_id) VALUES ($1, $2, 1) RETURNING id',
+      [d.rows[0].id, JSON.stringify({})]
+    );
+    await pg.query(
+      "UPDATE case_record SET process_key = 'intimate-image-removal', definition_version_id = $1 WHERE id = $2",
+      [v.rows[0].id, first.case_id]
+    );
+    await sendNotice(first.id, deps());
+    const sent = send.mock.calls[0][0];
+    expect(sent.from).toBe('Civitai <notices@civitai.com>');
+    expect(sent.replyTo).toBe('inbox@example.test');
+  });
+
   it('claims and sends nothing while the brake is on', async () => {
     const [first] = await notices();
     const outcome = await sendNotice(

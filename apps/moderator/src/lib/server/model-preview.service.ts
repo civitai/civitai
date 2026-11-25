@@ -30,6 +30,8 @@ export type ModelPreviewImage = {
   /** Tagged as depicting a minor, or as a minor in an acceptable context: the evidence a minor flag
    *  is judged on. */
   minor: boolean;
+  /** Withheld from this moderator (`withheldPreviewImages`): no key, no flags. */
+  restricted?: boolean;
   acceptableMinor: boolean;
 };
 

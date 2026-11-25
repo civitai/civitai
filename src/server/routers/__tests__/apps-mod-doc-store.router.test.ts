@@ -57,7 +57,6 @@ import {
   ctx as sctx,
   NS_PROD,
   POSTS,
-  TALLIES,
   VIEWER_1,
   VIEWER_2,
 } from '~/server/services/apps/__tests__/doc-store.functional';
@@ -139,8 +138,8 @@ afterAll(async () => {
 
 async function reset() {
   await harness.raw(
-    `TRUNCATE appdata.doc, appdata.doc_index, appdata.doc_tally, appdata.doc_mark,
-       appdata.doc_tomb, appdata.usage_app, appdata.usage_user`
+    `TRUNCATE appdata.doc, appdata.doc_index, appdata.doc_mark, appdata.doc_tomb,
+       appdata.usage_app, appdata.usage_user`
   );
   audit = [];
 }
@@ -178,7 +177,7 @@ beforeEach(async () => {
 
 const v = (app: { id: string }, uid: number | null = VIEWER_1) => sctx(app.id, NS_PROD, uid);
 async function report(app: { id: string }, coll: typeof POSTS, key: string, n: number) {
-  for (const u of R.slice(0, n)) await h.store.mark(v(app, u), coll, key, 'report');
+  for (const u of R.slice(0, n)) await h.store.report(v(app, u), coll, key);
 }
 
 /**
@@ -730,6 +729,18 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
     ]);
   });
 
+  it('the audit total counts report-mark AND report-API reports once each', async () => {
+    await seedQueue();
+    // a1 holds three report-mark reports (R[0..2]). Two report-API reports join it: one from a
+    // viewer who had not reported (a new row, no tally) and one from R[0], who had (no new row).
+    await h.store.report(v(APP_A, VIEWER_2), POSTS, 'a1');
+    await h.store.report(v(APP_A, R[0]), POSTS, 'a1');
+    await caller().setHidden({ ...A1, hidden: true, reason: 'mixed reports' });
+    expect(audit.map((r) => [r.action, r.before.reports, r.before.reportsTotal])).toEqual([
+      ['storage-doc-hide', 4, 4],
+    ]);
+  });
+
   it('a reason is required and bounded', async () => {
     await seedQueue();
     await expect(caller().delete({ ...A1, reason: '  ' })).rejects.toMatchObject({
@@ -778,8 +789,17 @@ describe("the item's App Store card follows a moderator hide or delete, as for l
   });
 
   it('a document no user authored backs no card: hiding or deleting it touches none', async () => {
-    // A counter document's recorded uid is its first incrementer, not an author.
-    await h.store.increment(v(APP_A), TALLIES, 'a1', 'plays', 1);
+    // An app-authored document (seeded directly: no viewer writes one), charged to the app only.
+    await harness.raw(
+      `INSERT INTO appdata.doc (app_id, ns, coll, scope_uid, key, data, version, seq, author_kind)
+       VALUES ($1, 'prod', 'tallies', 0, 'a1', '{}', 1, 1, 'app')`,
+      [APP_A.id]
+    );
+    await harness.raw(
+      `INSERT INTO appdata.usage_app (app_id, ns, bytes, docs, last_seq)
+       SELECT d.app_id, d.ns, d.size_bytes, 1, 1 FROM appdata.doc d WHERE d.app_id = $1`,
+      [APP_A.id]
+    );
     const counter = { appBlockId: APP_A.id, collection: 'tallies', key: 'a1' };
     await caller().setHidden({ ...counter, hidden: true, reason: 'spam report' });
     await caller().delete({ ...counter, reason: 'illegal content' });
@@ -829,21 +849,16 @@ describe('the moderation operations are reachable from the moderator service onl
         'delete',
         'get',
         'getMany',
-        'increment',
         'isUsable',
         'limits',
         'list',
-        'mark',
-        'unmark',
+        // The report API's write: the VIEWER's own report row, which moderators then read.
+        'report',
         'put',
         // A shared put that would change nothing: the caller's OWN document only.
         'putIfUnchanged',
         'usage',
         'viewerLimits',
-        // Server-side publish: the viewer's OWN documents only, never a moderator operation.
-        'previewPublish',
-        'publishCopies',
-        'unpublishCopies',
       ].sort()
     );
   });

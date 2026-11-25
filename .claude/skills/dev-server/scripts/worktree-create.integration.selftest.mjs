@@ -303,6 +303,29 @@ try {
   check('refuses a local --base', localBase.code, 1);
   check('creates nothing on refusal', existsSync(join(reposRoot, 'worktrees', 'three')), false);
 
+  // A stray local branch named origin/main shadows the bare name and wins over the remote ref.
+  git(['branch', '-f', 'origin/main', localOnly], primary);
+  const strayRun = run(primary, 'stray', 'feat/stray');
+  check('with a stray refs/heads/origin/main: still creates the worktree', strayRun.code, 0);
+  check(
+    '... and forks from the remote commit, not the stray branch',
+    gitQuiet(['rev-parse', 'HEAD'], join(reposRoot, 'worktrees', 'stray')),
+    remoteTip
+  );
+  git(['branch', '-D', 'origin/main'], primary);
+
+  // The second positional is the NEW branch name. A remote ref there once created refs/heads/origin/main.
+  for (const bad of ['origin/main', 'refs/heads/x']) {
+    const asBranch = run(primary, 'asbranch', bad);
+    check(`refuses ${bad} as the branch name`, asBranch.code, 1);
+    check('... showing the --base form', asBranch.out.includes('--base origin/'), true);
+    check('... creating no ref', gitQuiet(['rev-parse', '--verify', '--quiet', `refs/heads/${bad}`], primary), null);
+    check('... and no worktree', existsSync(join(reposRoot, 'worktrees', 'asbranch')), false);
+  }
+  const doubled = run(primary, 'doubled', 'feat/doubled', 'refs/remotes/origin/main');
+  check('refuses a fully qualified --base', doubled.code, 1);
+  check('... without making refs/remotes/refs/remotes/...', gitQuiet(['for-each-ref', 'refs/remotes/refs'], primary), '');
+
   // WORKTREE_ROOT set: new trees go there; the tree made under the old root stays listed and working.
   const newRoot = join(scratch, 'elsewhere');
   const moved = run(primary, 'moved', 'feat/moved', undefined, newRoot);

@@ -1,4 +1,4 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { asksBlockReason, blockReasonProblem } from '../../block-reasons';
@@ -49,6 +49,11 @@ export type VoteSubject = {
    * apart by their prompt, so (image, question key) is not the unit there.
    */
   ownJudgmentRule?: boolean;
+  /**
+   * A mod-confirmed skill check under `skillCheckServeJudged`: the player may already have judged its image in the queue.
+   * The same check (`itemId`) is still never answered twice.
+   */
+  judgedImageAllowed?: boolean;
 };
 
 export type InsertedVote = {
@@ -120,7 +125,7 @@ export async function insertVote(
     .executeTakeFirst();
   if (already) return rejected('already-voted');
 
-  if (!subject.ownJudgmentRule) {
+  if (!subject.ownJudgmentRule && !subject.judgedImageAllowed) {
     const judged = await trx
       .selectFrom('KnightsVote')
       .select('playerId')
@@ -227,6 +232,24 @@ export async function creditVote(
 }
 
 /** How recently an item must have settled for a judgment that arrives after it to count toward the Daily Watch. */
+/**
+ * Leaves out images whose creator the player has hidden or blocked. Who blocked the player is not read. Expects
+ * `Image as img`. With `perRow` (`OFFSET 0` keeps it a correlated subplan) it is one primary-key probe per row read: for
+ * a player with many such rows the plain anti-join can turn into a hash of all of them, which costs a short ordered read
+ * its early exit. A subplan also rules out a parallel plan, so a long scan takes the plain form.
+ */
+export const notHiddenCreator =
+  (userId: number, { perRow = true }: { perRow?: boolean } = {}) =>
+  (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) => {
+    const engaged = eb
+      .selectFrom('UserEngagement as ue')
+      .select(sql<number>`1`.as('one'))
+      .where('ue.userId', '=', userId)
+      .whereRef('ue.targetUserId', '=', 'img.userId')
+      .where('ue.type', 'in', ['Hide', 'Block']);
+    return eb.not(eb.exists(perRow ? engaged.offset(0) : engaged));
+  };
+
 export const LATE_JUDGMENT_WINDOW_MS = 10 * 60_000;
 
 /**
@@ -260,6 +283,7 @@ export async function creditLateJudgment(
       ])
       .where('i.id', '=', itemId)
       .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+      .where(notHiddenCreator(userId))
       .executeTakeFirst();
     if (!item || item.status === 'Open' || item.ownerId === userId) return false;
     // A settled rating still waiting on its write-back can be rerouted, and a reroute regrades every vote on the item

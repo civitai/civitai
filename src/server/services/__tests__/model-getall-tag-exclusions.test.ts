@@ -15,6 +15,7 @@ import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
 import type { SessionUser } from '~/types/session';
 import { MODEL, OWNER, VERSION, cardImage, stubPackedRedis } from './getall-feed-harness';
+import * as homeBlockSource from '~/server/services/home-block.service';
 
 /**
  * Card images on `model.getAll` and the featured-models home block drop an image carrying a tag
@@ -167,13 +168,13 @@ describe('featured models home block and browsing-settings tag exclusions', () =
   });
 
   it('drops the image from the shared cached block', async () => {
-    const block = await getHomeBlockCached(featuredBlock, undefined, {});
+    const block = await getHomeBlockCached(featuredBlock, undefined, {}, homeBlockSource);
     expect(blockImages(block)).toEqual([1, 3]);
   });
 
   it('keeps the image when no addon excludes the tag', async () => {
     vi.mocked(getBrowsingSettingAddons).mockResolvedValue([]);
-    const block = await getHomeBlockCached(featuredBlock, undefined, {});
+    const block = await getHomeBlockCached(featuredBlock, undefined, {}, homeBlockSource);
     expect(blockImages(block)).toEqual([1, 2, 3]);
   });
 });

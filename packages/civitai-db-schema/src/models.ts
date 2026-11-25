@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText" | "featurePage";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -738,6 +738,7 @@ export interface User {
   blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
   blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
+  appAssistantSessionLinks?: AppAssistantSessionLink[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
@@ -1128,6 +1129,7 @@ export interface ModelVersionShowcaseItem {
   source: string;
   position: number | null;
   excluded: boolean;
+  removed: boolean;
   addedById: number;
   createdAt: Date;
 }
@@ -1542,24 +1544,6 @@ export interface ComicProjectReport {
   comicProject?: ComicProject;
   reportId: number;
   report?: Report;
-}
-
-export interface HeldResourceReview {
-  id: number;
-  modelId: number;
-  modelVersionId: number;
-  userId: number;
-  rating: number;
-  recommended: boolean;
-  details: string | null;
-  exclude: boolean;
-  nsfw: boolean;
-  tosViolation: boolean;
-  metadata: JsonValue | null;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
 }
 
 export interface ResourceReview {
@@ -2227,6 +2211,7 @@ export interface AppAccessRequest {
   reviewedAt: Date | null;
   reviewedById: number | null;
   reviewedBy?: User | null;
+  reviewSource: string | null;
 }
 
 export interface ApiKey {
@@ -2450,6 +2435,7 @@ export interface AppBlockPublishRequest {
   deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  assistantTrace?: AppPublishRequestTrace | null;
 }
 
 export interface AppBlockBuildAttempt {
@@ -2463,6 +2449,34 @@ export interface AppBlockBuildAttempt {
   failedStep: string | null;
   failedReason: string | null;
   failureClass: string | null;
+  createdAt: Date;
+}
+
+export interface AppAssistantSessionLink {
+  id: number;
+  userId: number;
+  user?: User;
+  conversationId: string;
+  appSlug: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  turnCount: number;
+  lastModel: string | null;
+  buzzTotal: number;
+  lastRunId: string | null;
+}
+
+export interface AppPublishRequestTrace {
+  id: number;
+  publishRequestId: string;
+  publishRequest?: AppBlockPublishRequest;
+  slug: string;
+  userId: number;
+  conversationIds: string[];
+  snapshots: JsonValue;
+  signals: JsonValue;
+  signalsVersion: number;
+  snapshotError: string | null;
   createdAt: Date;
 }
 
@@ -3167,6 +3181,41 @@ export interface AnswerMetric {
   commentCount: number;
 }
 
+export interface FeaturePageTopic {
+  id: number;
+  urn: string;
+  kind: string;
+  createdAt: Date;
+}
+
+export interface FeaturePageCommentMirror {
+  commentId: number;
+  userId: number;
+  requestId: string;
+  urn: string | null;
+  goneCause: string | null;
+  version: number;
+  pushedState: string | null;
+  pushedDigest: string | null;
+  platformDigest: string | null;
+  pendingDigest: string | null;
+  pushAttempts: number;
+  scanAttempts: number;
+  scanHash: string | null;
+  editRequestIds: string[];
+  postAttemptedAt: Date | null;
+  postSeq: number;
+  goneAt: Date | null;
+  subjectMissingAt: Date | null;
+  contentAt: Date;
+  removeWantedAt: Date | null;
+  restrictedAt: Date | null;
+  nextPushAt: Date | null;
+  leaseUntil: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface CommentTopic {
   entityType: CommentEntityType;
   entityId: number;
@@ -3196,6 +3245,7 @@ export interface CommentV3 {
   deletedAt: Date | null;
   tosViolation: boolean;
   hidden: boolean;
+  hiddenAt: Date | null;
   locked: boolean;
   pinnedAt: Date | null;
   reactionCount: number;
@@ -4302,52 +4352,6 @@ export interface PersonalDataExport {
   requestedAt: Date | null;
 }
 
-export interface EvidenceHold {
-  id: number;
-  userId: number;
-  csamReportId: number | null;
-  role: string;
-  reportSentAt: Date | null;
-  releaseAt: Date | null;
-  extendedUntil: Date | null;
-  extensionRequestedBy: string | null;
-  extensionReference: string | null;
-  reason: string;
-  createdAt: Date;
-  createdById: number | null;
-  releasedAt: Date | null;
-  releasedById: number | null;
-  releaseReason: string | null;
-}
-
-export interface EvidenceHoldImage {
-  imageId: number;
-  userId: number;
-  postId: number | null;
-  keptAt: Date;
-  priorIngestion: string | null;
-  priorBlockedFor: string | null;
-  priorNsfwLevel: number | null;
-}
-
-export interface EvidenceHoldPost {
-  postId: number;
-  userId: number;
-  title: string | null;
-  detail: string | null;
-  createdAt: Date | null;
-  publishedAt: Date | null;
-  modelVersionId: number | null;
-  collectionId: number | null;
-  metadata: JsonValue | null;
-  keptAt: Date;
-}
-
-export interface EvidenceHeldUser {
-  userId: number;
-  heldUntil: Date | null;
-}
-
 export interface Link {
   id: number;
   url: string;
@@ -5316,6 +5320,11 @@ export interface KnightsPlayer {
   recapPopupOptOut: boolean;
 }
 
+export interface KnightsLegacyPlayerDay {
+  playerId: number;
+  day: Date;
+}
+
 export interface KnightsPlayerDay {
   playerId: number;
   day: Date;
@@ -5361,6 +5370,28 @@ export interface KnightsReferenceImage {
   failures: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface KnightsInquisitorReview {
+  id: number;
+  queueItemId: number;
+  imageId: number;
+  questionKey: string;
+  consensusValue: string;
+  status: string;
+  confirmedValue: string | null;
+  claimedBy: number | null;
+  claimExpiresAt: Date | null;
+  createdAt: Date;
+  closedAt: Date | null;
+  checkedAt: Date | null;
+}
+
+export interface KnightsInquisitorVote {
+  reviewId: number;
+  moderatorId: number;
+  answer: string;
+  createdAt: Date;
 }
 
 export interface KnightsYesNoReference {
@@ -7165,6 +7196,9 @@ export interface ServiceOffering {
   removedById: number | null;
   sellerAffirmation: JsonValue | null;
   allowReviewWork: boolean;
+  requestForm: JsonValue | null;
+  requestFormVersion: number;
+  fromPrice: number | null;
   happyCount: number;
   reviewCount: number;
   happySortKey: number;
@@ -7202,12 +7236,17 @@ export interface ServiceDeal {
   licenseCustomText: string | null;
   licenseAllowResale: boolean;
   licenseAgreedAt: Date | null;
+  buyerDisclosureVersion: string | null;
+  buyerDisclosureLines: string[];
   maxNsfwLevel: number;
   status: ServiceDealStatus;
   heldAt: Date | null;
   settledAt: Date | null;
   chatId: number | null;
   requestText: string;
+  formVersion: number | null;
+  formAnswers: JsonValue | null;
+  priceBreakdown: JsonValue | null;
   requestedAt: Date;
   acceptedAt: Date | null;
   dueAt: Date | null;

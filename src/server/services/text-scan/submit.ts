@@ -17,6 +17,7 @@ import {
 import {
   getTextScanProfile,
   resolveTextScanProfileLabels,
+  unansweredTextScanLabels,
 } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -42,6 +43,7 @@ import type {
   TextScanLabel,
   TextScanMode,
   TextScanOutput,
+  TextScanProfile,
   TextScanSubject,
 } from '~/server/services/text-scan/types';
 
@@ -71,7 +73,8 @@ export type ScanEntityResult =
         | 'too-short'
         | 'unchanged'
         | 'in-flight'
-        | 'missing-prompt';
+        | 'missing-prompt'
+        | 'incomplete';
     }
   | { status: 'submitted'; workflowId: string }
   | { status: 'failed' };
@@ -312,6 +315,95 @@ export function planTextScanPasses(
   ];
 }
 
+/** Drops csam while its prompt is blank: the gate can open before the prompt exists. */
+function withoutPromptlessLabels(
+  labels: TextScanLabel[],
+  prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>
+) {
+  return labels.includes('csam') && !prompts[CSAM_PROMPT_KEY]?.content?.trim()
+    ? labels.filter((label) => label !== 'csam')
+    : labels;
+}
+
+/**
+ * Whether a scan of this profile can ask every label it requires right now. Global state (csam
+ * gate, csam prompt) decides it, so it is the same for every entity of a profile without
+ * `labelsFor`.
+ */
+export async function textScanCanAskEveryLabel(
+  profile: Pick<TextScanProfile, 'labels' | 'labelsFor' | 'requireEveryLabel'>
+) {
+  if (!profile.requireEveryLabel) return true;
+  const resolved = await resolveTextScanProfileLabels(profile);
+  // Only csam needs its prompt read; a failed read must not refuse a profile that never asks it.
+  const labels = resolved.includes('csam')
+    ? withoutPromptlessLabels(resolved, await getActiveTextScanPrompts())
+    : resolved;
+  return !unansweredTextScanLabels(
+    profile,
+    Object.fromEntries(labels.map((label) => [label, true]))
+  ).length;
+}
+
+const passContentHash = (
+  composed: ReturnType<typeof composeTextScanMessages>,
+  config: Awaited<ReturnType<typeof getTextScanConfig>>,
+  variant?: TextScanVariant
+) =>
+  textScanContentHash({
+    user: composed.text,
+    promptIds: composed.promptIds,
+    model: config.model,
+    thinking: config.thinking,
+    variant,
+    segmentBudget: config,
+  });
+
+/**
+ * The contentHash an active main-pass scan of each entity would record now, from the same labels,
+ * prompts and config `scanEntity` uses. A stored verdict is about the current text only when its
+ * contentHash equals this, so an edit or a scan config change makes the old verdict stale. Entities
+ * with no active main pass, or nothing to scan, are left out.
+ */
+export async function currentScanContentHashes(
+  entityType: TextScanEntityType,
+  entityIds: number[]
+): Promise<Map<number, string>> {
+  const hashes = new Map<number, string>();
+  const profile = getTextScanProfile(entityType);
+  if (!profile || !entityIds.length) return hashes;
+  const [subjects, config, prompts] = await Promise.all([
+    profile.load(entityIds),
+    getTextScanConfig(),
+    getActiveTextScanPrompts(),
+  ]);
+  for (const [entityId, subject] of subjects) {
+    if (subject.notPublic || subjectTextLength(subject) < (profile.minChars ?? 1)) continue;
+    const mode = await getTextScanMode(entityType, entityId);
+    if (mode !== 'active') continue;
+    const labels = withoutPromptlessLabels(
+      await resolveTextScanProfileLabels(profile, subject),
+      prompts
+    );
+    const searchMode = await getTextScanWebSearchMode(entityType, entityId, mode);
+    const [main] = labels.length ? planTextScanPasses(labels, mode, searchMode) : [];
+    if (!main || main.variant) continue;
+    try {
+      const composed = composeTextScanMessages({
+        prompts,
+        labels: main.labels,
+        subject,
+        maxInputChars: config.maxInputChars,
+        maxSegments: config.maxSegments,
+      });
+      if (composed.text.trim()) hashes.set(entityId, passContentHash(composed, config));
+    } catch (e) {
+      if (!(e instanceof MissingTextScanPromptError)) throw e;
+    }
+  }
+  return hashes;
+}
+
 export async function scanEntity({
   entityType,
   entityId,
@@ -376,12 +468,30 @@ export async function scanEntity({
   }
 
   const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
-  // The csam gate can open before its prompt exists; that must not stop the other labels.
-  if (labels.includes('csam') && !prompts[CSAM_PROMPT_KEY]?.content?.trim()) {
+  const askable = withoutPromptlessLabels(labels, prompts);
+  if (askable.length < labels.length) {
     await logMissingPrompts({ entityType, entityId, keys: [CSAM_PROMPT_KEY] }).catch(() => null);
-    labels = labels.filter((label) => label !== 'csam');
+    labels = askable;
     passes = planPasses(labels);
     if (!passes.length) return { status: 'skipped', reason: 'off' };
+  }
+  // Only an active scan settles the entity; shadow scans record verdicts without settling.
+  if (mode === 'active') {
+    const unanswerable = unansweredTextScanLabels(
+      profile,
+      Object.fromEntries(labels.map((label) => [label, true]))
+    );
+    if (unanswerable.length) {
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'scan cannot ask every required label; not submitted',
+        entityType,
+        entityId,
+        payload: { labels: unanswerable },
+      });
+      return { status: 'skipped', reason: 'incomplete' };
+    }
   }
   const ctx = { entityType, entityId, subject, config, prompts, force };
 
@@ -464,14 +574,7 @@ async function submitTextScanPass({
     return { status: 'skipped', reason: 'too-short' };
   }
 
-  const contentHash = textScanContentHash({
-    user: composed.text,
-    promptIds: composed.promptIds,
-    model: config.model,
-    thinking: config.thinking,
-    variant,
-    segmentBudget: config,
-  });
+  const contentHash = passContentHash(composed, config, variant);
 
   const emEntityType = textScanEmEntityType(entityType, mode, variant);
   // Primary, not replica: the retry cron bumps retryCount on dbWrite, and a lagging read

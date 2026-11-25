@@ -72,7 +72,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/creator-mystery-pack.service.ts': 1,
   'src/server/services/creator-service-deal-file.service.ts': 2,
   'src/server/services/creator-service-deal-review.service.ts': 1,
-  'src/server/services/creator-service-deal.service.ts': 2,
+  'src/server/services/creator-service-deal.service.ts': 3,
   'src/server/services/creator-service.service.ts': 1,
   'src/server/services/creator-shop-pack.service.ts': 2,
   'src/server/services/creator-shop.service.ts': 2,
@@ -179,7 +179,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   // `assertDealText` is the shared check every deal-event comment writer calls.
   'src/server/services/creator-service-deal.service.ts': {
     assertDealText: 1,
-    requestServiceDeal: 1,
+    requestServiceDeal: 2,
   },
   'src/server/services/creator-service.service.ts': { upsertServiceOffering: 1 },
   'src/server/services/creator-shop-pack.service.ts': {

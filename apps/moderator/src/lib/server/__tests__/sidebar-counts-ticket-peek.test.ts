@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { countPendingCsamHolds, countEvidenceHoldsEnding, peek } = vi.hoisted(() => ({
+const { countPendingCsamHolds, peek } = vi.hoisted(() => ({
   peek: vi.fn(),
   countPendingCsamHolds: vi.fn(),
-  countEvidenceHoldsEnding: vi.fn(),
 }));
 
 vi.mock('../cache', () => ({
@@ -68,10 +67,6 @@ vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 })
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals: async () => 0 }));
 vi.mock('../tickets/snapshot', () => ({ ticketSnapshot: { peek } }));
 vi.mock('../csam-holds.queries', () => ({ countPendingCsamHolds }));
-vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  countEvidenceHoldsEnding,
-}));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
 
@@ -80,7 +75,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
   countPendingCsamHolds.mockResolvedValue(0);
-  countEvidenceHoldsEnding.mockResolvedValue(null);
 });
 
 describe('sidebar ticket counts', () => {

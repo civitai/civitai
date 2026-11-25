@@ -204,7 +204,7 @@ image.step              // parent StepData
 - `createWorkflowStepsFromGraph()` returns `{ steps, workflowMetadata }` — workflow metadata is the form input snapshot
 - Standard gen steps write empty metadata (`additionalMetadata ?? {}`), not full params/resources
 - `isPrivateGeneration` and `remixOfId` live on `workflowMetadata`, not per-step
-- `generateFromGraph()` reads `isPrivateGeneration` from `workflowMetadata`
+- `generateFromGraph()` takes the output cap from `createWorkflowStepsFromGraph`'s `capOutput` (private generation included), not from `workflowMetadata`
 - `sourceMetadataMap` supports per-image source for batch upscale
 - `needsSourceMetadata` flag (on workflow config) determines whether to build source context
 

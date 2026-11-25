@@ -8,8 +8,7 @@ import {
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
-import { useServerDomains } from '~/providers/AppProvider';
+import { useRedHref } from '~/hooks/useRedHref';
 import { formatDate } from '~/utils/date-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 
@@ -32,12 +31,11 @@ export function ServiceDealsList({
 }) {
   const { deals, hiddenOffDomain, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useMyServiceDeals({ role, status, enabled: true });
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   // Mature deals are left out off red; say where they went so a party doesn't think one vanished.
   const offDomainLine = hiddenOffDomain > 0 && (
     <Text size="sm" c="dimmed">
-      <Anchor href={syncAccount(`//${redDomain}/services/deals`)} inherit>
+      <Anchor href={redHref('/services/deals')} inherit>
         {pluralize(hiddenOffDomain, 'deal')} on civitai.red
       </Anchor>
     </Text>

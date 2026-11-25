@@ -1,8 +1,9 @@
 import { ZodError } from 'zod';
 import { parseAiToolkitOptions, type AiToolkitOptions } from '@civitai/shared/training-options';
 import {
+  CLIP_SKIP_AS_SENT,
   KOHYA_CONTINUE_KEYS as SHARED_KOHYA_CONTINUE_KEYS,
-  pickDefinedKeys,
+  copyKohyaInput,
 } from '@civitai/shared/training-kohya-replay';
 import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { buildKohyaInput } from './kohya-training';
@@ -38,6 +39,7 @@ import {
   forEachPooled,
   isTrainingDataNotReady,
   isFlux2,
+  MAX_DATASET_BLOBS,
   queryRecentWorkflows,
   readWorkflow,
   resolveCurrencies,
@@ -78,7 +80,9 @@ import {
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import type { DatasetRating, StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
+import { MAX_RUNS } from '$lib/submit-limits';
 import { MatureRepriceError } from '$lib/mature-charge';
+import { isMatureNsfwLevel } from '$lib/nsfw-rating';
 import type { TrainingTextCheck } from '$lib/training-text';
 
 /** Captions remain raw until the engine-specific submit builder applies the trigger word. */
@@ -348,7 +352,7 @@ export async function submitTraining(
   /** The server's rating found the dataset mature: the charge stays out of Green. */
   mature = false
 ): Promise<string> {
-  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
+  const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION, ...CLIP_SKIP_AS_SENT };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
   const key = run.submitKey && SUBMIT_KEY.test(run.submitKey) ? run.submitKey : undefined;
 
@@ -551,6 +555,8 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
     fail(`${field}.items`, 'must be a non-empty array.');
+  if (run.items.length > MAX_DATASET_BLOBS)
+    fail(`${field}.items`, `must hold at most ${MAX_DATASET_BLOBS} items.`);
   if (run.editTraining !== undefined && typeof run.editTraining !== 'boolean')
     fail(`${field}.editTraining`, 'must be a boolean.');
   if (run.editTraining) validatePairs(run, field);
@@ -734,6 +740,8 @@ export async function submitTrainingBatch(
 ): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
+  if (runs.length > MAX_RUNS)
+    throw new TrainingBatchValidationError(`At most ${MAX_RUNS} runs can start together.`);
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
   if (opts.kohyaAllowed !== true && runs.some((run) => run.engine === 'kohya'))
     throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
@@ -810,7 +818,6 @@ export interface ContinueOpts {
 
 export { MatureRepriceError };
 
-const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const PROBE_CONCURRENCY = 8;
 const PROBE_TTL_MS = 10 * 60 * 1000;
 const PROBE_CACHE_MAX = 200;
@@ -854,8 +861,7 @@ async function countMatureBlobs(
         return;
       }
       if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
-      const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
-      if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
+      if (isMatureNsfwLevel(response?.headers.get('x-nsfw-level'))) mature++;
     } catch {
       failed++;
     }
@@ -986,15 +992,23 @@ async function buildContinuation(
       ? srcMeta.matureCount
       : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
+  // Publish state belongs to the source's model; carried over, the new run shows as published and can't be published.
+  const {
+    published: _published,
+    modelId: _modelId,
+    modelVersionId: _modelVersionId,
+    ...inherited
+  } = srcMeta;
   // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the
   // source's own metadata would skip a link in the chain.
   const metadata: TrainingStudioMeta = {
-    ...srcMeta,
+    ...inherited,
     name: name ?? srcMeta.name,
     v: META_VERSION,
     sourceWorkflowId: opts.workflowId,
     sourceEpoch: opts.fromEpoch,
     matureCount,
+    ...CLIP_SKIP_AS_SENT,
   };
   const slug = name ? slugify(name) : '';
 
@@ -1002,7 +1016,7 @@ async function buildContinuation(
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
   const continuedInput =
     input.engine === 'kohya'
-      ? continueKohyaInput(input, addEpochs, steps, continueFrom, traceMode)
+      ? continueKohyaInput(input, srcMeta, addEpochs, steps, continueFrom, traceMode)
       : {
           engine: 'ai-toolkit',
           ecosystem: input.ecosystem,
@@ -1081,6 +1095,7 @@ const KOHYA_CONTINUE_KEYS = SHARED_KOHYA_CONTINUE_KEYS satisfies readonly (keyof
 
 function continueKohyaInput(
   input: Record<string, unknown>,
+  sourceMeta: TrainingStudioMeta,
   epochs: number,
   steps: number | undefined,
   continueFrom: string,
@@ -1091,7 +1106,7 @@ function continueKohyaInput(
       'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
     );
   return {
-    ...pickDefinedKeys(input, KOHYA_CONTINUE_KEYS),
+    ...copyKohyaInput(input, KOHYA_CONTINUE_KEYS, sourceMeta),
     engine: 'kohya',
     maxTrainEpochs: epochs,
     ...(steps ? { steps } : {}),

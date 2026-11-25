@@ -18,7 +18,6 @@ import {
   Text,
 } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -47,15 +46,15 @@ import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
 import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useServerDomains } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const A_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -241,8 +240,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   // Owner-only, and null for everyone else — `maxSubmissionLevel` beside it is
   // the submitter's copy and is null for the owner, so the two are not
   // interchangeable.
-  const serverDomains = useServerDomains();
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   const features = useFeatureFlags();
   const acceptedMaxLevel = visibility?.acceptedMaxLevel ?? null;
   // Above the band the owner set, which is a state the submit mutation refuses
@@ -396,9 +394,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                             className="shrink-0"
                             loading={declineOutOfBand.isPending}
                             onClick={() =>
-                              openConfirmModal({
+                              openConfirm({
                                 title: 'Decline everything out of band?',
-                                children: (
+                                message: (
                                   <Text size="sm">
                                     Every pending submission rated above{' '}
                                     {getBrowsingLevelLabel(acceptedMaxLevel)} is declined. Paid ones
@@ -424,7 +422,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                           {countLabel(withheld.length)} rated above what this site shows (
                           {ratingsOf(withheld)}). Decline here, or open this image on{' '}
                           <Anchor
-                            href={syncAccount(`//${serverDomains.red}/images/${imageId}`)}
+                            href={redHref(`/images/${imageId}`)}
                             target="_blank"
                             rel="noreferrer"
                           >
@@ -558,7 +556,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                           >
                             <Button
                               component="a"
-                              href={syncAccount(`//${serverDomains.red}/images/${imageId}`)}
+                              href={redHref(`/images/${imageId}`)}
                               target="_blank"
                               rel="noreferrer"
                               size="compact-sm"
@@ -733,9 +731,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                         // submitter's Buzz, a moderator removal keeps it. Nothing
                         // undoes that, and the row records who did it.
                         if (!moderating) return remove();
-                        openConfirmModal({
+                        openConfirm({
                           title: 'Remove this entry',
-                          children: (
+                          message: (
                             <Text size="sm">
                               This removes the remix from{' '}
                               {isOwner ? 'your' : `${visibility?.ownerUsername ?? 'the creator'}'s`}{' '}

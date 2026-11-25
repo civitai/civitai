@@ -33,14 +33,17 @@ export type AppReviewAgentReportStatus = (typeof APP_REVIEW_AGENT_REPORT_STATUSE
 
 /**
  * The agent report for a given review (publish request), or null. If a review
- * was re-run and has more than one report, the most recently started one wins.
+ * was re-run and has more than one report, the most recently started one wins —
+ * unless `reportId` names one of them. A `reportId` belonging to another request
+ * finds nothing: the lookup is always scoped to `publishRequestId`.
  */
 export async function getAgentReport(
-  publishRequestId: string
+  publishRequestId: string,
+  reportId?: string
 ): Promise<AgentReportWithChecks | null> {
   if (!publishRequestId) return null;
   const report = await dbRead.appReviewAgentReport.findFirst({
-    where: { publishRequestId },
+    where: reportId ? { publishRequestId, id: reportId } : { publishRequestId },
     orderBy: { startedAt: 'desc' },
   });
   // Connect lane: the "Checked by Civitai" view, from its own server-written table (never from
@@ -49,6 +52,40 @@ export async function getAgentReport(
   const { getConnectChecksView } = await import('./connect-agent-review.service');
   return { ...report, civitaiChecks: await getConnectChecksView(report.id, publishRequestId) };
 }
+
+/** How many runs the report picker lists for one request, newest first. */
+export const AGENT_REPORT_LIST_LIMIT = 50;
+
+/**
+ * Every run for a review (publish request), newest first, in the report picker's shape: enough
+ * to tell the runs apart (model, status, when, cost), none of the report content.
+ */
+export async function listAgentReports(publishRequestId: string): Promise<AgentReportListItem[]> {
+  if (!publishRequestId) return [];
+  const rows = await dbRead.appReviewAgentReport.findMany({
+    where: { publishRequestId },
+    orderBy: { startedAt: 'desc' },
+    take: AGENT_REPORT_LIST_LIMIT,
+    select: {
+      id: true,
+      model: true,
+      status: true,
+      startedAt: true,
+      completedAt: true,
+      costUsd: true,
+    },
+  });
+  return rows.map((r) => ({ ...r, costUsd: r.costUsd == null ? null : Number(r.costUsd) }));
+}
+
+export type AgentReportListItem = {
+  id: string;
+  model: string | null;
+  status: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  costUsd: number | null;
+};
 
 /** A report row, plus (connect lane only) what Civitai checked itself. */
 export type AgentReportWithChecks = AppReviewAgentReport & {

@@ -36,11 +36,32 @@ export function setClientShadowCompareEnabled(enabled: boolean) {
   clientShadowCompareEnabled = enabled;
 }
 
+/**
+ * `clientShadowCompareSignedOut`, the signed-out cohort's own switch (a signed-out browser never
+ * reads `clientShadowCompare`, a signed-in one never reads this). Written by `FeatureFlagsProvider`.
+ */
+let clientShadowCompareSignedOutEnabled = false;
+
+/** `clientShadowCompareSignedOut`. Written by `FeatureFlagsProvider`, browser only. */
+export function setClientShadowCompareSignedOutEnabled(enabled: boolean) {
+  clientShadowCompareSignedOutEnabled = enabled;
+}
+
 /** Whether a query for `path` may be shadowed now: browser, flag on, allowlisted, cap not spent. */
 export function isShadowCompareEnabledFor(path: string): boolean {
   return (
     typeof window !== 'undefined' &&
     clientShadowCompareEnabled &&
+    SHADOW_COMPARE_PROCEDURES.has(path) &&
+    comparesStarted < SHADOW_COMPARE_SESSION_CAP
+  );
+}
+
+/** `isShadowCompareEnabledFor` for a signed-out browser: its own flag, the same list and cap. */
+export function isSignedOutShadowCompareEnabledFor(path: string): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    clientShadowCompareSignedOutEnabled &&
     SHADOW_COMPARE_PROCEDURES.has(path) &&
     comparesStarted < SHADOW_COMPARE_SESSION_CAP
   );

@@ -1,7 +1,7 @@
 import { branch, defineGraph } from 'form-graph';
 import { animaControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_FULL_AR_2MP, SEED, controlNetsDef, selectDef } from '../defs';
+import { SDXL_FULL_AR_2MP, SEED, comfySamplerAliases, controlNetsDef, selectDef } from '../defs';
 import {
   familyResources,
   familyScope,
@@ -74,7 +74,12 @@ export const anima = defineGraph<FamilyExt>({ scope: familyScope })
   .use(variants)
   .field(
     'sampler',
-    selectDef({ options: animaSamplers, default: 'euler_ancestral', presets: animaSamplerPresets })
+    selectDef({
+      options: animaSamplers,
+      default: 'euler_ancestral',
+      presets: animaSamplerPresets,
+      aliases: comfySamplerAliases,
+    })
   )
   .field('scheduler', selectDef({ options: animaSchedules, default: 'simple' }))
   .field('controlNets', ({ _ext }) =>

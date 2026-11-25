@@ -1,0 +1,852 @@
+{
+  "name": "fallback-user-cosmetics-miss",
+  "description": "The same user cosmetics entries absent with the switch off (the default): not served.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"sort\":\"Highest Rated\",\"limit\":2,\"browsingLevel\":31}}",
+    "headers": {
+      "host": "blue.example.test"
+    },
+    "session": {
+      "userId": 1003
+    }
+  },
+  "redis": {
+    "packed:caches:basic-tags:701": {
+      "value": {
+        "id": 701,
+        "name": "anime",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQK9pG5hbWWlYW5pbWWpbnNmd0xldmVsAaR0eXBlrVVzZXJHZW5lcmF0ZWSoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:basic-tags:702": {
+      "value": {
+        "id": 702,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQK+pG5hbWWlc3R5bGWpbnNmd0xldmVsAaR0eXBlrVVzZXJHZW5lcmF0ZWSoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:basic-tags:799": {
+      "value": {
+        "id": 799,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADomlkzQMfqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "image": "00000000-0000-4000-8000-000000000901",
+        "deletedAt": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWlaW1hZ2XZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDkwMalkZWxldGVkQXTAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1002": {
+      "value": {
+        "id": 1002,
+        "username": "artist_two",
+        "image": null,
+        "deletedAt": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+laW1hZ2XAqWRlbGV0ZWRBdMCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:cosmetics2:301": {
+      "value": {
+        "id": 301,
+        "name": "Golden Badge",
+        "type": "Badge",
+        "data": {
+          "url": "00000000-0000-4000-8000-000000003011"
+        },
+        "source": "Trophy",
+        "flags": 0,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAHomlkzQEtpG5hbWWsR29sZGVuIEJhZGdlpHR5cGWlQmFkZ2WkZGF0Yd4AAaN1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMzAxMaZzb3VyY2WmVHJvcGh5pWZsYWdzAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:cosmetics2:302": {
+      "value": {
+        "id": 302,
+        "name": "Golden Frame",
+        "type": "ContentDecoration",
+        "data": {
+          "url": "00000000-0000-4000-8000-000000003021"
+        },
+        "source": "Purchase",
+        "flags": 0,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAHomlkzQEupG5hbWWsR29sZGVuIEZyYW1lpHR5cGWxQ29udGVudERlY29yYXRpb26kZGF0Yd4AAaN1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMzAyMaZzb3VyY2WoUHVyY2hhc2WlZmxhZ3MAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:cosmetics2:Model:5001": {
+      "value": {
+        "equippedToId": 5001,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0Tiahub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:cosmetics2:Model:5002": {
+      "value": {
+        "cosmeticId": 302,
+        "equippedToId": 5002,
+        "userData": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAEqmNvc21ldGljSWTNAS6sZXF1aXBwZWRUb0lkzROKqHVzZXJEYXRhwKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:cosmetics2:Model:5009": {
+      "value": {
+        "equippedToId": 5009,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0Tkahub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:creator-membership-valid:1001": {
+      "value": true,
+      "packed": "ww=="
+    },
+    "packed:caches:data-for-model-2:5001": {
+      "value": {
+        "modelId": 5001,
+        "hashes": [
+          "HASH5001"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6001,
+            "index": 0,
+            "name": "v6001",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 32,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6001</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          },
+          {
+            "id": 6002,
+            "index": 0,
+            "name": "v6002",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 4,
+            "description": "<p>about 6002</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE4mmaGFzaGVzkahIQVNINTAwMaR0YWdzkKh2ZXJzaW9uc5LeABKiaWTNF3GlaW5kZXgApG5hbWWldjYwMDG0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKhTRFhMIDEuMK1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/ah1YIK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2oeqaCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncyCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9usTxwPmFib3V0IDYwMDE8L3A+rHRyYWluZWRXb3Jkc5Gkd29yZKV2YWVJZMCnY292ZXJlZMOrY292ZXJlZE5leHTD3gASomlkzRdypWluZGV4AKRuYW1lpXY2MDAytGVhcmx5QWNjZXNzVGltZUZyYW1lAKliYXNlTW9kZWykUG9uea1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/ah1YIK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2oeqaCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwEq2Rlc2NyaXB0aW9usTxwPmFib3V0IDYwMDI8L3A+rHRyYWluZWRXb3Jkc5Gkd29yZKV2YWVJZMCnY292ZXJlZMOrY292ZXJlZE5leHTDqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:data-for-model-2:5002": {
+      "value": {
+        "modelId": 5002,
+        "hashes": [
+          "HASH5002"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6003,
+            "index": 0,
+            "name": "v6003",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6003</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": true
+          },
+          {
+            "id": 6004,
+            "index": 0,
+            "name": "v6004",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Illustrious",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6004</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE4qmaGFzaGVzkahIQVNINTAwMqR0YWdzkKh2ZXJzaW9uc5LeABKiaWTNF3OlaW5kZXgApG5hbWWldjYwMDO0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKRQb255rWJhc2VNb2RlbFR5cGWoU3RhbmRhcmSpY3JlYXRlZEF01v9qHVggrnRyYWluaW5nU3RhdHVzwKtwdWJsaXNoZWRBdNb/ah6poKZzdGF0dXOpUHVibGlzaGVkpWZsYWdzAKxhdmFpbGFiaWxpdHmmUHVibGljqW5zZndMZXZlbAGrZGVzY3JpcHRpb26xPHA+YWJvdXQgNjAwMzwvcD6sdHJhaW5lZFdvcmRzkaR3b3JkpXZhZUlkwKdjb3ZlcmVkwqtjb3ZlcmVkTmV4dMPeABKiaWTNF3SlaW5kZXgApG5hbWWldjYwMDS0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKtJbGx1c3RyaW91c61iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/ah1YIK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2oeqaCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9usTxwPmFib3V0IDYwMDQ8L3A+rHRyYWluZWRXb3Jkc5Gkd29yZKV2YWVJZMCnY292ZXJlZMOrY292ZXJlZE5leHTDqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:data-for-model-2:5009": {
+      "value": {
+        "modelId": 5009,
+        "hashes": [
+          "HASH5009"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6012,
+            "index": 0,
+            "name": "v6012",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6012</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE5GmaGFzaGVzkahIQVNINTAwOaR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF3ylaW5kZXgApG5hbWWldjYwMTK0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKRQb255rWJhc2VNb2RlbFR5cGWoU3RhbmRhcmSpY3JlYXRlZEF01v9qHVggrnRyYWluaW5nU3RhdHVzwKtwdWJsaXNoZWRBdNb/ah6poKZzdGF0dXOpUHVibGlzaGVkpWZsYWdzAKxhdmFpbGFiaWxpdHmmUHVibGljqW5zZndMZXZlbAGrZGVzY3JpcHRpb26xPHA+YWJvdXQgNjAxMjwvcD6sdHJhaW5lZFdvcmRzkaR3b3JkpXZhZUlkwKdjb3ZlcmVkw6tjb3ZlcmVkTmV4dMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:images-for-model-version-2:6001": {
+      "value": {
+        "modelVersionId": 6001,
+        "images": [
+          {
+            "id": 8011,
+            "userId": 1001,
+            "name": "img-8011.png",
+            "url": "00000000-0000-4000-8000-000000008011",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8011",
+            "modelVersionId": 6001,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8012,
+            "userId": 1001,
+            "name": "img-8012.png",
+            "url": "00000000-0000-4000-8000-000000008012",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8012",
+            "modelVersionId": 6001,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8013,
+            "userId": 1001,
+            "name": "img-8013.png",
+            "url": "00000000-0000-4000-8000-000000008013",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8013",
+            "modelVersionId": 6001,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8014,
+            "userId": 1002,
+            "name": "img-8014.png",
+            "url": "00000000-0000-4000-8000-000000008014",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8014",
+            "modelVersionId": 6001,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": true,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRdxpmltYWdlc5TeABKiaWTNH0umdXNlcklkzQPppG5hbWWsaW1nLTgwMTEucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDExqW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDExrm1vZGVsVmVyc2lvbklkzRdxpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywt4AEqJpZM0fTKZ1c2VySWTNA+mkbmFtZaxpbWctODAxMi5wbmejdXJs2SQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgwMTKpbnNmd0xldmVsAaV3aWR0aM0DQKZoZWlnaHTNBMCkaGFzaKlVSEFTSDgwMTKubW9kZWxWZXJzaW9uSWTNF3GkdHlwZaVpbWFnZahtZXRhZGF0Yd4AAqV3aWR0aM0DQKZoZWlnaHTNBMCsYXZhaWxhYmlsaXR5plB1YmxpY6ZvblNpdGXCp2hhc01ldGHDqXJlbWl4T2ZJZMCxaGFzUG9zaXRpdmVQcm9tcHTDo3BvacKlbWlub3LC3gASomlkzR9NpnVzZXJJZM0D6aRuYW1lrGltZy04MDEzLnBuZ6N1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODAxM6luc2Z3TGV2ZWwEpXdpZHRozQNApmhlaWdodM0EwKRoYXNoqVVIQVNIODAxM65tb2RlbFZlcnNpb25JZM0XcaR0eXBlpWltYWdlqG1ldGFkYXRh3gACpXdpZHRozQNApmhlaWdodM0EwKxhdmFpbGFiaWxpdHmmUHVibGljpm9uU2l0ZcKnaGFzTWV0YcOpcmVtaXhPZklkwLFoYXNQb3NpdGl2ZVByb21wdMOjcG9pwqVtaW5vcsLeABKiaWTNH06mdXNlcklkzQPqpG5hbWWsaW1nLTgwMTQucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDE0qW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDE0rm1vZGVsVmVyc2lvbklkzRdxpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nDpW1pbm9ywqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:images-for-model-version-2:6003": {
+      "value": {
+        "modelVersionId": 6003,
+        "images": [
+          {
+            "id": 8030,
+            "userId": 1002,
+            "name": "img-8030.png",
+            "url": "00000000-0000-4000-8000-000000008030",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8030",
+            "modelVersionId": 6003,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRdzpmltYWdlc5HeABKiaWTNH16mdXNlcklkzQPqpG5hbWWsaW1nLTgwMzAucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDMwqW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDMwrm1vZGVsVmVyc2lvbklkzRdzpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:images-for-model-version-2:6004": {
+      "value": {
+        "modelVersionId": 6004,
+        "images": [
+          {
+            "id": 8031,
+            "userId": 1002,
+            "name": "img-8031.png",
+            "url": "00000000-0000-4000-8000-000000008031",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8031",
+            "modelVersionId": 6004,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8032,
+            "userId": 1002,
+            "name": "img-8032.png",
+            "url": "00000000-0000-4000-8000-000000008032",
+            "nsfwLevel": 2,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8032",
+            "modelVersionId": 6004,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRd0pmltYWdlc5LeABKiaWTNH1+mdXNlcklkzQPqpG5hbWWsaW1nLTgwMzEucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDMxqW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDMxrm1vZGVsVmVyc2lvbklkzRd0pHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywt4AEqJpZM0fYKZ1c2VySWTNA+qkbmFtZaxpbWctODAzMi5wbmejdXJs2SQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgwMzKpbnNmd0xldmVsAqV3aWR0aM0DQKZoZWlnaHTNBMCkaGFzaKlVSEFTSDgwMzKubW9kZWxWZXJzaW9uSWTNF3SkdHlwZaVpbWFnZahtZXRhZGF0Yd4AAqV3aWR0aM0DQKZoZWlnaHTNBMCsYXZhaWxhYmlsaXR5plB1YmxpY6ZvblNpdGXCp2hhc01ldGHDqXJlbWl4T2ZJZMCxaGFzUG9zaXRpdmVQcm9tcHTDo3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:model-tags:5001": {
+      "value": {
+        "modelId": 5001,
+        "tagIds": [
+          701,
+          702,
+          799
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE4mmdGFnSWRzk80Cvc0Cvs0DH6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:model-tags:5002": {
+      "value": {
+        "modelId": 5002,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE4qmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:model-tags:5009": {
+      "value": {
+        "modelId": 5009,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE5GmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKhVUFJPRklMRaZ1c2VySWTNA+mpaW5nZXN0aW9up1NjYW5uZWSkdHlwZaVpbWFnZaV3aWR0aM0CAKZoZWlnaHTNAgCobWV0YWRhdGHeAAKld2lkdGjNAgCmaGVpZ2h0zQIAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:profile-pictures:v4:1002": {
+      "value": {
+        "userId": 1002,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D6qhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8011": {
+      "value": {
+        "imageId": 8011,
+        "tags": [
+          9911
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0ukdGFnc5HNJreoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8012": {
+      "value": {
+        "imageId": 8012,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0ykdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8013": {
+      "value": {
+        "imageId": 8013,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH02kdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8014": {
+      "value": {
+        "imageId": 8014,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH06kdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8030": {
+      "value": {
+        "imageId": 8030,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH16kdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8031": {
+      "value": {
+        "imageId": 8031,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH1+kdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8032": {
+      "value": {
+        "imageId": 8032,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH2CkdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-metric-privacy-defaults:1001": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": true
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPD"
+    },
+    "packed:caches:user-metric-privacy-defaults:1002": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "session:data2:1003": {
+      "value": {
+        "id": 1003,
+        "username": "viewer_three",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPrqHVzZXJuYW1lrHZpZXdlcl90aHJlZatpc01vZGVyYXRvcsKoYmFubmVkQXTApHRpZXLA"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[{\"id\":703,\"name\":\"BlockedName\"}]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [
+      {
+        "cursor": null,
+        "bound": null,
+        "rows": [
+          {
+            "id": 5001,
+            "name": "Golden model 5001",
+            "sfwName": null,
+            "coverImageId": 8012,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-12T10:00:00.250Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 100,
+              "thumbsUpCount": 90,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1001,
+            "cursorId": "90|100|5001"
+          },
+          {
+            "id": 5002,
+            "name": "Golden model 5002",
+            "sfwName": null,
+            "coverImageId": 8031,
+            "sfwCoverImageId": null,
+            "type": "LORA",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-11T10:00:00.125Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 80,
+              "thumbsUpCount": 70,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1002,
+            "cursorId": "70|80|5002"
+          },
+          {
+            "id": 5009,
+            "name": "Golden model 5009",
+            "sfwName": null,
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-03T10:00:00.000Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 4,
+              "thumbsUpCount": 4,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1002,
+            "cursorId": "4|4|5009"
+          }
+        ]
+      }
+    ],
+    "paidAccess": [
+      {
+        "modelId": 5001,
+        "deadline": {
+          "$date": "2026-06-30T10:00:00.000Z"
+        },
+        "versionIds": [
+          6001
+        ]
+      }
+    ],
+    "coverImages": [
+      {
+        "id": 8031,
+        "userId": 1002,
+        "modelVersionId": 6004,
+        "modelId": 5002
+      }
+    ],
+    "tags": [],
+    "creators": [],
+    "userCosmetics": [
+      {
+        "userId": 1001,
+        "cosmeticId": 301,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      }
+    ]
+  },
+  "expect": {
+    "fallback": "user-cosmetics-miss"
+  }
+}

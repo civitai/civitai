@@ -30,9 +30,8 @@ vi.mock('~/server/events/turf/turf.service', () => ({
 const { swapFlagDay, pickCutAt, flagPot, flagSummaryKey } = await import(
   '~/server/events/turf/flag-day'
 );
-const { freezeEventAwards, flagRaceConfigKey } = await import(
-  '~/server/events/scoring/award-results'
-);
+const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
+const { freezeEventAwards } = await import('~/server/events/scoring/freeze-event-awards');
 const { loadTeamAwards } = await import('~/server/events/scoring/team-awards');
 const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
 

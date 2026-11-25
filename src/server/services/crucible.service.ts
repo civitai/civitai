@@ -80,6 +80,7 @@ import type {
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
 import {
+  clipDisplaySeconds,
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   crucibleHasEnded,
@@ -145,9 +146,11 @@ import {
 import { CacheTTL, constants } from '~/server/common/constants';
 import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import {
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
+  noBlockMarkerWhere,
   isImageServable,
   withServableImage,
 } from '~/server/common/image-visibility';
@@ -207,7 +210,10 @@ import {
 } from '~/utils/crucible-helpers';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
+import {
+  assertCanCreateCrucible,
+  getCrucibleJudgeEligibility,
+} from '~/server/services/crucible-eligibility.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
 import {
   matureBrowsingLevelsFlag,
@@ -960,6 +966,71 @@ export const assertCrucibleVisible = async (crucibleId: number, viewer: Crucible
   )
     throw throwNotFoundError('Crucible not found');
 };
+
+/** Creators who blocked the viewer and creators the viewer blocked; empty for moderators. */
+export const getBlockLists = async (user?: { id: number; isModerator?: boolean } | null) => {
+  if (!user || user.isModerator) return { blockedBy: [], blocked: [] };
+  const [blockedBy, blocked] = await Promise.all([
+    BlockedByUsers.getCached({ userId: user.id }),
+    BlockedUsers.getCached({ userId: user.id }),
+  ]);
+  return { blockedBy: blockedBy.map((u) => u.id), blocked: blocked.map((u) => u.id) };
+};
+
+/** `getBlockLists` as one unbounded set, for the crucible visibility checks. */
+export const getAllBlockedCreatorIds = async (
+  user?: { id: number; isModerator?: boolean } | null
+) => {
+  const { blockedBy, blocked } = await getBlockLists(user);
+  return [...new Set([...blockedBy, ...blocked])];
+};
+
+/**
+ * The crucibles this viewer may judge right now in which image `imageId` is someone else's entry
+ * that judging can serve, short of the viewer's browsing level: `getJudgingPair`'s rules.
+ */
+export async function getJudgingCrucibleIdsForImage({
+  imageId,
+  viewerId,
+  isModerator,
+  isGreen,
+}: {
+  imageId: number;
+  viewerId: number;
+  isModerator?: boolean;
+  isGreen?: boolean;
+}): Promise<number[]> {
+  // From the active crucibles: CrucibleEntry has no imageId index.
+  const entries = await dbRead.$queryRaw<{ crucibleId: number }[]>`
+    SELECT DISTINCT ce."crucibleId"
+    FROM "Crucible" c
+    JOIN "CrucibleEntry" ce ON ce."crucibleId" = c.id
+    JOIN "Image" i ON i.id = ce."imageId"
+    WHERE c.status = 'Active'::"CrucibleStatus"
+      AND (c."endAt" IS NULL OR c."endAt" > now())
+      AND ce."imageId" = ${imageId}
+      AND ce."userId" != ${viewerId}
+      AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0)}
+  `;
+  if (!entries.length) return [];
+  const { canJudge } = await getCrucibleJudgeEligibility({ userId: viewerId, isModerator });
+  if (!canJudge) return [];
+  const viewer = {
+    viewerId,
+    isModerator,
+    isGreen,
+    blockedCreatorIds: await getAllBlockedCreatorIds({ id: viewerId, isModerator }),
+  };
+  const visible = await Promise.all(
+    entries.map(({ crucibleId }) =>
+      assertCrucibleVisible(crucibleId, viewer).then(
+        () => crucibleId,
+        () => null
+      )
+    )
+  );
+  return visible.filter(isDefined);
+}
 
 const greenSiteSql = (isGreen: boolean) =>
   isGreen
@@ -2735,13 +2806,12 @@ export const submitEntry = async ({
 
     const clipSeconds = (image.metadata as VideoMetadata | null)?.duration ?? null;
     if (!clipLengthAllowed(clipSeconds, crucible.maxClipSeconds)) {
-      // Ceiling on the actual duration: durations are fractional and `formatDuration` rounds, so a
-      // 120.01s clip against a 120s limit rendered both halves as "2:00" — the entrant was told the
-      // entry was too long and shown two identical numbers.
       return throwBadRequestError(
         `Entries in this crucible can be at most ${formatDuration(
           crucible.maxClipSeconds as number
-        )}; this one is ${formatDuration(Math.ceil(clipSeconds as number))}.`
+        )}; this one is ${formatDuration(
+          clipDisplaySeconds(clipSeconds as number, crucible.maxClipSeconds)
+        )}.`
       );
     }
 
@@ -4321,6 +4391,7 @@ const rankableEntryWhere = (
         nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
       },
       imageNotRestrictedWhere(),
+      noBlockMarkerWhere(),
     ],
   },
 });

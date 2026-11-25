@@ -1,0 +1,213 @@
+// Registers the GENERIC `<civitai-*>` kit (stack, group, text, badge, button,
+// alert, inputs, …) — NOT every element in @civitai/components:
+//   - the civitai-specific elements (avatar, media-card, rating-badge, reaction,
+//     tag) need `import '@civitai/components/register-site';` instead, which
+//     registers this kit too;
+//   - the two SDK-backed buttons each need their own define:
+//     `import '@civitai/components/civitai-sign-in-button/define';` and
+//     `import '@civitai/components/civitai-workflow-button/define';`.
+// An element that is never defined renders as an unstyled, inert tag with no
+// error. test/elements.test.ts fails on any `<civitai-*>` this app uses that no
+// import defines — keep it passing when you add elements. To trim the bundle,
+// swap this for per-element defines (e.g.
+// `import '@civitai/components/civitai-text/define';`), one per element used.
+import '@civitai/components/register';
+
+import { BridgeError, initialize, type BlockAppClient } from '@civitai/sdk';
+import { isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
+
+/**
+ * Replace the markup and `fill` with your app's actual UI.
+ *
+ * The starter demo:
+ * - `initialize()` from `@civitai/sdk` waits for the host's `BLOCK_INIT` and
+ *   resolves with `app` — slot context, viewer, theme, settings, and `app.host`
+ *   for host UI. Until it resolves, the boot skeleton in index.html is what the
+ *   viewer sees, so there is no separate loading state to render.
+ * - The view is BUILT ONCE and then UPDATED IN PLACE: `app.onChange` fires on
+ *   every snapshot change — a theme toggle, a route change, and also every
+ *   token rotation, which changes nothing on screen — so it only re-syncs the
+ *   theme and rewrites the text of the `data-field` elements. Rebuilding the
+ *   view there would throw away anything the viewer typed every few minutes.
+ * - This app declares a full PAGE (`page` in block.manifest.json), and a page
+ *   fills the host surface rather than sizing to its content — so, unlike a
+ *   model-slot block, it does NOT call `app.host.autoResize(root)`. Add that
+ *   call only if you add a model-slot `targets` entry, where the host honours it.
+ * - `context` is a union keyed on `slotId`, so narrowing is what makes a slot's
+ *   fields readable. The page receives `app.page`, narrowed with
+ *   `isPageSlotContext` to read the app's slug and the path below its root.
+ *
+ * On the viewer: this calls `isSignedIn(app.viewer)` — a SIGN-IN GATE, which is
+ * all most blocks need. 🔴 CALL THE PREDICATE; DO NOT OPEN-CODE THE GATE. This
+ * file gets copied, so a gate spelled inline here becomes the gate the ecosystem
+ * writes; the wire contract has moved before, and `isSignedIn` is where that
+ * argument lives, once, in the SDK. If your block genuinely needs the viewer's
+ * identity, read it from the block route, `app.site.get('blocks/me')`, rather
+ * than from `app.viewer` — and add `user:read:self` to `scopes` in
+ * block.manifest.json: the route requires it, and the scope is consent-gated,
+ * so the token lacks it until the viewer grants it (ask first with
+ * `app.requestGrants(['user:read:self'])`). The plain `me` route does not accept
+ * a block token at all.
+ */
+export async function mountBlock(root: HTMLElement): Promise<BlockAppClient> {
+  const app = await waitForHost();
+
+  const view = createView();
+  const update = () => {
+    syncTheme(app);
+    fill(view, app);
+  };
+  update();
+  // Replacing #root's children — once — is also what removes the boot skeleton.
+  root.replaceChildren(view.root);
+  app.onChange(update);
+  return app;
+}
+
+/**
+ * Starts the app and makes a failure VISIBLE: an app that cannot start (a
+ * malformed host payload, a bug in `fill`) shows an error in place of the boot
+ * skeleton, which would otherwise stay up forever with nothing said. This is
+ * what `src/main.ts` calls.
+ */
+export async function startBlock(root: HTMLElement): Promise<void> {
+  try {
+    await mountBlock(root);
+  } catch (error) {
+    console.error('[civitai-block] could not start:', error);
+    renderStartError(root);
+  }
+}
+
+function renderStartError(root: HTMLElement): void {
+  const alert = document.createElement('civitai-alert');
+  alert.setAttribute('color', 'error');
+  alert.setAttribute('heading', 'This app could not start');
+  alert.setAttribute('role', 'alert');
+  alert.dataset.blockError = '';
+  // A fixed sentence, not the error's message: a message can carry host data,
+  // and the details are in the console.
+  alert.textContent = 'Reload the page to try again.';
+  const wrapper = document.createElement('div');
+  wrapper.dataset.blockRoot = '';
+  wrapper.append(alert);
+  root.replaceChildren(wrapper);
+}
+
+/**
+ * Keeps the PAGE (`<html>`) in step with the host theme, so a live THEME_CHANGE
+ * repaints the background behind the app too — and the `<civitai-*>` elements
+ * with it, since they read the `--civitai-*` tokens that `[data-theme]` selects.
+ * index.html's inline script seeds the same attribute from the URL fragment
+ * before first paint; from BLOCK_INIT onward this owns it (the payload is
+ * authoritative — it must be able to correct a stale fragment).
+ */
+function syncTheme(app: BlockAppClient): void {
+  document.documentElement.dataset.theme = app.theme;
+}
+
+/**
+ * The markup is STATIC — no value is ever interpolated into it. Everything that
+ * comes from the host (anything user-authored above all) is
+ * written with `textContent`, so it can never be parsed as HTML. Keep it that
+ * way when you extend it: `innerHTML` with a template literal that includes host
+ * data is an XSS hole.
+ */
+const VIEW = document.createElement('template');
+VIEW.innerHTML = `
+  <civitai-stack gap="sm" data-block-root>
+    <civitai-text as="h2" size="md" weight="bold">Civitai App starter</civitai-text>
+    <civitai-text size="xs" data-dimmed>slot: <code data-field="slot"></code></civitai-text>
+    <civitai-text size="sm">
+      Running as <strong data-field="app-slug"></strong>, at
+      <code data-field="sub-path"></code>
+    </civitai-text>
+    <civitai-group gap="sm">
+      <civitai-text size="sm">Viewer:</civitai-text>
+      <civitai-badge variant="light" data-field="viewer"></civitai-badge>
+    </civitai-group>
+    <civitai-group gap="sm">
+      <civitai-text-input label="Message" placeholder="Type something" data-field="message"></civitai-text-input>
+      <civitai-button variant="light" data-field="echo">Echo</civitai-button>
+    </civitai-group>
+    <civitai-text size="sm" data-field="echoed"></civitai-text>
+  </civitai-stack>
+`;
+
+interface View {
+  root: HTMLElement;
+  field(name: string): HTMLElement;
+}
+
+function createView(): View {
+  const fragment = VIEW.content.cloneNode(true) as DocumentFragment;
+  const root = fragment.querySelector<HTMLElement>('[data-block-root]')!;
+  const view: View = {
+    root,
+    field: (name) => root.querySelector<HTMLElement>(`[data-field="${name}"]`)!,
+  };
+  wireControls(view);
+  return view;
+}
+
+/**
+ * The demo's one interaction: the button copies the text input's value into the
+ * line below it. Wired ONCE, here, not in `fill` — so what the viewer typed
+ * survives every `onChange`. The value goes in with `textContent`, like all
+ * other text in this view.
+ */
+function wireControls(view: View): void {
+  const message = view.field('message') as HTMLElement & { value: string };
+  view.field('echo').addEventListener('click', () => {
+    view.field('echoed').textContent = message.value ? `You said: ${message.value}` : '';
+  });
+}
+
+/**
+ * Writes the current snapshot into the view's fields. Runs on mount and on
+ * every `onChange`, so it must only UPDATE: set text and visibility, never
+ * replace nodes — anything you add to the view keeps its state across calls.
+ */
+function fill(view: View, app: BlockAppClient): void {
+  const { context } = app;
+  view.field('slot').textContent = context.slotId;
+
+  if (isPageSlotContext(context)) {
+    view.field('app-slug').textContent = context.slug;
+    // `subPath` is '' on the app's own index.
+    view.field('sub-path').textContent = `/${context.subPath}`;
+  }
+
+  view.field('viewer').textContent = isSignedIn(app.viewer) ? 'signed in' : 'anonymous';
+}
+
+/**
+ * Resolves once the host has sent `BLOCK_INIT`.
+ *
+ * It never gives up: `initialize()` rejects with `unavailable` when no host has
+ * answered within its timeout, and a slow host is not a missing one, so that one
+ * error is retried while the viewer keeps the boot skeleton. A late `BLOCK_INIT`
+ * still mounts the app.
+ *
+ * The first `unavailable` is logged ONCE. A BLOCK_INIT from an origin the
+ * bridge does not allow is dropped without a trace, which looks exactly like no
+ * host at all — so the log names the allowlist to check.
+ */
+async function waitForHost(): Promise<BlockAppClient> {
+  let logged = false;
+  for (;;) {
+    try {
+      return await initialize();
+    } catch (error) {
+      // Only "no host answered yet" is retried; anything else is a real failure.
+      if (!(error instanceof BridgeError) || error.code !== 'unavailable') throw error;
+      if (!logged) {
+        logged = true;
+        console.info(
+          '[civitai-block] still waiting for the Civitai host. If it is running, check that ' +
+            'VITE_BLOCK_ALLOWED_PARENT_ORIGINS names its origin — a BLOCK_INIT from any other origin is dropped.',
+        );
+      }
+    }
+  }
+}

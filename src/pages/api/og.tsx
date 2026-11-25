@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import {
-  bountyNsfwFlagLevel,
+  bountyImageNsfwLevel,
   getTextRatedBountyLevels,
   mayBeTextRated,
 } from '~/server/services/bounty-rated-level';
@@ -18,6 +18,7 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
+  notReportListedSql,
 } from '~/server/services/image-visibility.service';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import type { MediaType } from '~/shared/utils/prisma/enums';
@@ -32,8 +33,16 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
-import { getShowcaseHeldLevels } from '~/server/services/model.service';
+import { siteForCoverId } from '~/shared/constants/version-showcase.constants';
+import {
+  getShowcaseHeldLevels,
+  withinHeldLevel as withinHeldLevelFilter,
+} from '~/server/services/model.service';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
@@ -206,6 +215,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       sfwDescription: true,
       coverImageId: true,
       sfwCoverImageId: true,
+      nsfw: true,
       meta: true,
       mode: true,
       userId: true,
@@ -243,8 +253,10 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   });
 
   // Run metric + image queries in parallel
-  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on.
-  const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on, or
+  // whenever the model isn't mature (its .com showcase sets that cover).
+  const coverId =
+    (model.sfwName != null || !model.nsfw ? model.sfwCoverImageId : null) ?? model.coverImageId;
   // A taken-down model's card is drawn without any of its images.
   const withheld = isModelWithheld(model);
   const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
@@ -306,6 +318,21 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
         })
       : null,
   ]);
+  const featuredCover =
+    !coverImage && coverId && !withheld
+      ? isShowcaseCoverImage(
+          await getShowcaseCommunityCovers([{ modelId: id, imageId: coverId }]),
+          {
+            modelId: id,
+            imageId: coverId,
+            site: siteForCoverId(model, coverId),
+          }
+        )
+      : undefined;
+  const communityCover =
+    featuredCover && withinHeldLevelFilter([featuredCover], heldLevel).length
+      ? featuredCover
+      : undefined;
 
   const stats: StatItem[] = metric
     ? [
@@ -327,9 +354,15 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
 
   return {
     title: sfwName ?? model.name,
-    description: cleanDescription(description),
+    description: cleanDescription(
+      communityCover?.authorUsername
+        ? `Cover image by @${communityCover.authorUsername}. ${description}`
+        : description
+    ),
     creator: model.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(coverImage) ?? getSafeImage(defaultImage)),
+    ...buildEntityImage(
+      getSafeImage(coverImage) ?? getSafeImage(communityCover) ?? getSafeImage(defaultImage)
+    ),
     stats,
   };
 }
@@ -343,6 +376,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         status: ArticleStatus.Published,
         tosViolation: false,
         ingestion: ArticleIngestionStatus.Scanned,
+        availability: { not: Availability.Private },
       },
       select: {
         title: true,
@@ -551,8 +585,8 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
       FROM "ImageConnection" ic
       JOIN "Image" i ON i.id = ic."imageId"
       WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${id}
-        AND i."tosViolation" IS NOT TRUE
         AND ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
+        AND ${notReportListedSql()}
       LIMIT 1
     `,
   ]);
@@ -563,11 +597,10 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
   const textRated = mayBeTextRated(bounty)
     ? await getTextRatedBountyLevels([id])
     : new Map<number, number>();
-  const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(id));
-  const image =
-    images[0] && flagLevel != null
-      ? { ...images[0], nsfwLevel: Math.max(images[0].nsfwLevel, flagLevel) }
-      : images[0];
+  const image = images[0] && {
+    ...images[0],
+    nsfwLevel: bountyImageNsfwLevel(bounty, textRated.get(id), images[0].nsfwLevel),
+  };
 
   const stats: StatItem[] = metric
     ? [

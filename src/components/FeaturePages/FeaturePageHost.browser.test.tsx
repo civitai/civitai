@@ -15,8 +15,15 @@ const deps = {
   theme: 'dark' as const,
   signedIn: false,
   openLogin: vi.fn(),
+  maskProfanity: false,
+  discussion: false,
+  viewerAuthor: null,
   vote: vi.fn(),
   mine: vi.fn(),
+  comment: vi.fn(),
+  editComment: vi.fn(),
+  retractComment: vi.fn(),
+  reportComment: vi.fn(),
   navigate: vi.fn(),
 };
 

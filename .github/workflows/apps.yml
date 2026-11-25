@@ -4,6 +4,16 @@ name: App suites
 # `App unit tests` job and the `Typecheck apps` step of `Package unit tests`) and ran on every
 # PR. Moved here so a `paths:` filter can keep them off PRs that cannot change their verdict.
 #
+# 🔴 THE APP SUITES ARE VERIFIED IN BATCHES, NOT PER PR OR PER PUSH. `App unit tests` runs on a
+# dispatch (and on a PR only with the `full-ci` label); `App typecheck` still runs on every PR and
+# push the filter matches. The main batch (lint.yml's `batch-suites` job, from BATCH_WORKFLOWS in
+# scripts/ci/unit-batched.mjs) dispatches this workflow on `main` when its paths changed since the
+# last green batch, and `apps-verify` posts the verdict as an `App tests (main batch)` commit
+# status, re-running the failed files and bisecting a red to the first bad commit, exactly as
+# lint.yml's `unit-verify` does for the unit suite. `batch-suites` then re-posts that status with
+# the lint batch run as its target_url (lint.yml's header, "THE `(main batch)` STATUS CONTRACT").
+# The paths filter below still decides which PRs and pushes run the typecheck.
+#
 # Why: the plan's org-wide concurrent-job limit is saturated by Lint, so every job a PR run
 # starts queues someone else's. Replayed over the last 80 PRs merged to `main` (2026-10-29), the
 # filter below matches 30; the other 50 could not change these suites' verdict and start no run.
@@ -22,7 +32,8 @@ name: App suites
 #       `vitest --project 'app:*'` loads the ROOT config (which imports these) before any app
 #       config, and its root-level sequencer applies to the whole run.
 #   scripts/ci/assert-workspace-suites-ran.mjs, scripts/ci/typecheck-apps.mjs,
-#   scripts/ci/assert-apps-paths-filter.mjs, scripts/ci/app-suite-scope.mjs
+#   scripts/ci/assert-apps-paths-filter.mjs, scripts/ci/app-suite-scope.mjs,
+#   scripts/ci/merge-component-shard-reports.mjs (+ assert-component-suite-ran.mjs, its import)
 #       what the steps below run. (The test step calls vitest itself rather than
 #       `test:apps:run`/queued-check; see it.)
 #   scripts/generate-slim-schema.js, scripts/prisma-*-generator.mjs
@@ -60,22 +71,22 @@ name: App suites
 #
 # ── THE `full-ci` LABEL ──────────────────────────────────────────────────────────────────────
 #
-# Same label as lint.yml (read its header): on a PR carrying `full-ci` the draft gate is lifted.
+# Same label as lint.yml (read its header): on a PR carrying `full-ci` the draft gate is lifted
+# and `App unit tests` runs (it is a batch suite: the label runs the batch on the branch).
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
-# added to a draft PR (on a ready PR, the PR's own run here is not draft-gated, so nothing is
-# dispatched). That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
-# events only); later pushes are: a PR that touches nothing these suites read starts no PR run
-# here, label or not.
+# added, draft or not, when the PR's files reach this filter (a BATCH_WORKFLOWS entry). That
+# first, dispatched run is NOT path-filtered by GitHub (`paths:` applies to pull_request events
+# only); later pushes are: a PR that touches nothing these suites read starts no PR run here,
+# label or not.
 #
 # ── PUSH TO `main` USES THE SAME FILTER ────────────────────────────────────────────────────────
 #
 # `push:` reads the same list as `pull_request:` (the `app-inputs` YAML anchor), so a push to
-# `main` that touches nothing these suites read starts no run. Push used to be unfiltered, as the
-# backstop for a filter entry that is missing. That backstop still holds, later: a push run is
-# never scoped (every app suite runs, see below), so the next push that touches anything in the
-# list goes red on such a break, and scripts/ci/assert-apps-paths-filter.mjs names the missing
-# entry when its scan can see it. What is lost is attribution: the red lands on that later
-# commit, not on the one that caused it.
+# `main` that touches nothing these suites read starts no run. A push now runs only the app
+# typecheck. The suites' backstop for a missing filter entry is gone with their push run: the
+# batch applies the same filter (since the last green batch), so a missing entry can now go
+# unseen until a change does match it. scripts/ci/assert-apps-paths-filter.mjs (in the `apps`
+# job) still names the missing entry when its scan can see it.
 #
 # Why: once push runs queued instead of cancelling (#8877), every push run that started reached
 # its end (a pending one is still replaced by a newer push) and this job's push cost doubled. docs/testing/reading-ci-results.md has the measurement.
@@ -106,6 +117,7 @@ on:
       - 'tsconfig.json'
       - '.github/workflows/apps.yml'
       - 'vitest.config.mts'
+      - 'scripts/ci/unit-batched.mjs'
       - 'scripts/test-cache/core.mjs'
       - 'scripts/test-cache/sequencer.mjs'
       - 'scripts/test-cache/load-core.mjs'
@@ -113,6 +125,8 @@ on:
       - 'scripts/ci/typecheck-apps.mjs'
       - 'scripts/ci/assert-apps-paths-filter.mjs'
       - 'scripts/ci/app-suite-scope.mjs'
+      - 'scripts/ci/merge-component-shard-reports.mjs'
+      - 'scripts/ci/assert-component-suite-ran.mjs'
       - 'scripts/generate-slim-schema.js'
       - 'scripts/prisma-enum-generator.mjs'
       - 'scripts/prisma-updated-at-generator.mjs'
@@ -131,6 +145,13 @@ on:
     branches: [main]
     paths: *app-inputs
   workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.
+      # `apps-verify` posts `App tests (main batch)` only on such a run, on `main`.
+      batch:
+        description: Set by the main batch. Leave unset.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -139,9 +160,10 @@ permissions:
 # group queues instead, for the reason in lint.yml's `concurrency` comment: the running push run
 # finishes and only the newest waiting push runs after it. A `ready_for_review` run shares the PR's group, so
 # it cancels a still-running draft run, which is what we want. Dispatches get their own
-# `dispatch-` groups so one on `main` cannot cancel the push run.
+# `dispatch-` groups so one on `main` cannot cancel the push run. A batch dispatch (`batch: true`)
+# has a group of its own run, so no other dispatch can cancel the batch verification.
 concurrency:
-  group: apps-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  group: apps-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
@@ -166,10 +188,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Deliberately ONE step driving a script, not one `pnpm --filter` step per app. Per-app
       # steps abort at the first red app, so a shared type change that breaks several of them
@@ -183,14 +208,17 @@ jobs:
 
   apps:
     # Renaming is safe: neither `main` nor `release` has any required_status_checks (re-verified
-    # 2026-10-29), so no merge gate keys on it. It was `App unit tests + typecheck` until the
-    # typecheck moved to `apps-typecheck`.
-    name: App unit tests
+    # 2026-10-29, and again 2026-11-23 when this job was sharded), so no merge gate keys on it. It
+    # was `App unit tests + typecheck` until the typecheck moved to `apps-typecheck`, and
+    # `App unit tests` until it was sharded; that name now belongs to `apps-ledger` below.
+    name: App unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
     # Hosted, not civitai-dc: the pglite suites here (knights apprenticeship, event-engine
     # collection-item-adder) hit their 5s test timeout under civitai-dc load while hosted stays green.
     # App typecheck stays on civitai-dc.
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    # Batched (see the header): skipped on a push, and on a PR without the `full-ci` label (draft
+    # or not). The same gate as lint.yml's `unit` job.
+    if: github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across
     # five apps then): the root config registered `packages/*/vitest.config.*` as projects and
     # nothing for `apps/*`. And the root `pnpm run typecheck` is bounded by the root tsconfig
@@ -204,8 +232,42 @@ jobs:
     # took it down with it: 16 of 162 runs were cancelled at 15m (2026-10-19/20). It now runs in
     # `apps-typecheck`, so this limit bounds the tests alone (test step 253-936 s over 6 green PR
     # runs, 2026-11-18). Nearly all of the test time is the moderator app's pglite suites: speed
-    # those up or shard this job before raising the limit.
-    timeout-minutes: 30
+    # those up or add a shard before raising the limit.
+    #
+    # ── SHARDED ACROSS 3 RUNNERS ────────────────────────────────────────────
+    #
+    # Unsharded, this job was the critical path of the slowest PR suite: p50 960 s / p90 1169 s
+    # (2026-11-21..23). Vitest's `--shard` cuts the selected files into equal file COUNTS, which
+    # suits this suite: the moderator app is most of the time and most of the files (659 of
+    # ~1,160 test files, 2026-11-23), so every shard draws a similar share of it. Setup
+    # (checkout, install, Postgres) is paid again by every shard and does not shard. 3, as for
+    # the component suite: each extra shard is one more slot of the plan's org-wide concurrent-job
+    # limit (see lint.yml's `unit` job for that trade). READ THE THREE DURATIONS after any
+    # change to this matrix or to the suite's heaviest files.
+    #
+    # Every app suite is still accounted for: `apps-ledger` below merges the shard reports,
+    # fails on a missing shard, on a test file in more than one shard (`--shard` not reaching
+    # vitest) and on a report beyond the shard total, then runs the suites ledger on the union,
+    # the same gate the unsharded job had. Only the union can be checked: which shard holds an
+    # app's files is vitest's hash, so a single shard cannot be held to the ledger.
+    #
+    # 🔴 THE SHARD COUNT IS WRITTEN ONCE, in `matrix.shard` below. The `--shard` denominator, the
+    # check names and the ledger's expected count all read `strategy.job-total` (the ledger via
+    # the `shard_total` output), so growing the matrix cannot leave a `/3` behind that silently
+    # drops the new shard's files.
+    #
+    # `fail-fast: false`: a red shard must not cancel its siblings, or their files go
+    # unreported and the ledger can only say "missing".
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    # Every shard writes the same value; `apps-ledger` reads it as its expected shard count. Empty
+    # if no shard got far enough to set it, and the merge then fails on bad usage, not green.
+    outputs:
+      shard_total: ${{ strategy.job-total }}
+    # Per shard. A third of the old 253-936 s test step, plus setup, with room for a slow runner.
+    timeout-minutes: 20
     # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
     # files fail in CI without the URL (they skip only outside CI). The suites create and drop their
     # own databases on this throwaway server.
@@ -235,11 +297,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         id: install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Which app suites this run selects. On a pull_request it may leave moderator out; on push
       # and dispatch it always selects `app:*`. See the header and the script.
@@ -254,35 +319,112 @@ jobs:
       # the same command with `--project app:*` fixed in front: vitest keeps a project when ANY
       # `--project` pattern matches it, so that fixed pattern would make leaving one out
       # impossible. The scope step's output is `--project=app:*` when nothing is left out. If the
-      # scope step fails, this does not run and the ledger below fails on the missing report.
-      # `set -f`: the arguments carry a `*` that must reach vitest, not the shell's globbing.
+      # scope step fails, this does not run and the ledger in `apps-ledger` fails on the missing
+      # report. `set -f`: the arguments carry a `*` that must reach vitest, not the shell's globbing.
+      #
+      # Every shard runs the same scope step, so all three shard the same selection: `--shard`
+      # applies after `--project`. 🔴 NO `--` SEPARATOR before `--shard` (see lint.yml's `unit`
+      # job: vitest discards everything after a bare `--`).
       - name: App unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
         env:
           VITEST_PROJECT_ARGS: ${{ steps.scope.outputs.vitest_args }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           set -f
-          pnpm exec vitest run $VITEST_PROJECT_ARGS --reporter=default --reporter=json --outputFile=apps-report.json
+          pnpm exec vitest run $VITEST_PROJECT_ARGS --shard="$SHARD/$SHARD_TOTAL" --reporter=default --reporter=json --reporter=github-actions --outputFile="$RUNNER_TEMP/app-unit-report.json"
+
+      # For `apps-ledger`. `!cancelled()` so a RED shard still hands over its report: the ledger
+      # must account for its files either way. A shard that wrote no report uploads nothing
+      # (`warn`: the shard is already red, and the ledger then names it as missing).
+      - name: Upload app unit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-unit-report-${{ matrix.shard }}
+          path: ${{ runner.temp }}/app-unit-report.json
+          if-no-files-found: warn
+          retention-days: 3
+          # A re-run of a failed shard uploads again under the same name.
+          overwrite: true
+
+      # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
+      # entry. See the header and the script. It reads the tree, not the tests, so one shard pays it.
+      # It runs where this job runs (the batch, a labelled PR, a dispatch), so on `main` a red here
+      # reaches `App tests (main batch)` from the batch, possibly long after the PR that dropped the
+      # entry; its message says the problem is the filter, not an app test.
+      - name: Paths filter covers what the app suites read
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
+        run: node scripts/ci/assert-apps-paths-filter.mjs
+
+  # Named `App unit tests`, the unsharded job's check name, so anything that reads that check by
+  # name keeps reading the whole suite's verdict. Red when any shard job did not succeed, when a
+  # shard's report is missing, when the reports do not split the suite (a file in two shards, a
+  # shard beyond the total), or when the merged report fails the suites ledger. Same shape as
+  # lint.yml's `component-ledger`.
+  apps-ledger:
+    name: App unit tests
+    needs: apps
+    runs-on: ubuntu-latest
+    # 🔴 FOLLOWS the shards rather than copying their gate: runs whenever they ran, whatever
+    # decided that. A copied gate goes stale the first time the shards' `if` changes, and then
+    # this runs over skipped shards and goes red ("concluded 'skipped'") on every such run.
+    # `!cancelled()` rather than the default, so a FAILED shard still gets a ledger verdict
+    # (red); a cancelled run gets none, as for lint.yml's `component-ledger`.
+    if: ${{ !cancelled() && needs.apps.result != 'skipped' }}
+    timeout-minutes: 10
+    steps:
+      # Depth 2 and no install: the ledger re-derives the PR's changed files from git (the merge
+      # commit against its first parent, as the scope step does) and imports scripts/ci only.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download app unit reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: app-unit-report-*
+          path: ${{ runner.temp }}/app-unit-reports
+
+      # The same decision the shards ran under (same commit, same event), so the ledger can
+      # re-check any suite it excuses. See `Scope app suites` in the `apps` job.
+      - name: Scope app suites
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/app-suite-scope.mjs --out app-suite-scope.json
 
       # A green vitest run is a claim, not evidence, and this positive control earns its keep
       # harder here than for packages: the projects are named by hand (`app:auth`, ...), so an
       # app that loses its `test.name` stops being selected while the others keep the run green
-      # and exit 0. Measured, not assumed — see the script header. `always()` so it runs after
-      # a red suite, which is the case it exists for.
+      # and exit 0. Measured, not assumed — see the script header. Both checks always run, so a
+      # missing shard and a missing suite are both named; the ledger reads the merged report,
+      # which the merge writes even when it fails.
       - name: Assert every app suite actually ran
-        if: always()
-        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json
+        if: ${{ !cancelled() }}
+        env:
+          SHARD_TOTAL: ${{ needs.apps.outputs.shard_total }}
+        run: |
+          rc=0
+          node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/app-unit-reports" "$SHARD_TOTAL" apps-report.json app-unit-report || rc=1
+          node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json || rc=1
+          exit $rc
 
       # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
-      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
-      # own `test-times-` name so no artifact download can match it — lint.yml's `unit-verify`
+      # and flaky tests across runs. The merged report of the three shards (no extra test run),
+      # under the unsharded job's artifact name, so the reader finds it as before. Its own
+      # `test-times-` name so no artifact download can match it — lint.yml's `unit-verify`
       # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
-      # missing report is already failed, by name, by this suite's own ledger step.
+      # missing report is already failed, by name, by the ledger step above.
       - name: Upload test timings
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
-        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
-        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
-        continue-on-error: ${{ github.event_name != 'push' }}
+        if: ${{ !cancelled() }}
+        # Telemetry: never turns a PR or a branch dispatch red. The app suites no longer run on a
+        # push; on `main` they run as the batch (`batch: true`), and there a failed upload fails the
+        # job, so a broken uploader shows rather than reading green.
+        continue-on-error: ${{ !(github.event_name == 'workflow_dispatch' && inputs.batch && github.ref == 'refs/heads/main') }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-apps-a${{ github.run_attempt }}
@@ -292,8 +434,106 @@ jobs:
           # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
           # and its passing re-run on the same commit is exactly the flake the reader counts.
 
-      # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
-      # entry. See the header and the script.
-      - name: Paths filter covers what the app suites read
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: node scripts/ci/assert-apps-paths-filter.mjs
+      - name: Every shard succeeded
+        if: ${{ !cancelled() }}
+        env:
+          SHARDS: ${{ needs.apps.result }}
+        run: |
+          if [ "$SHARDS" != success ]; then
+            echo "::error title=App unit shard did not succeed::the app unit shard jobs concluded '$SHARDS'. Open the red 'App unit tests (n/N)' job for the cause."
+            exit 1
+          fi
+
+  # ── THE BATCHED APP VERDICT, AS A COMMIT STATUS ──────────────────────────────────────────────
+  #
+  # lint.yml's `unit-verify`, for the app suites (scripts/ci/unit-batched.mjs `verify ... apps`):
+  # only on the batch dispatch on `main` (`batch: true`, which only lint.yml's `batch-suites` sets;
+  # the ref is checked too, so a dispatch on a branch never posts). Green: a success `App tests (main batch)` status on
+  # HEAD. Red: re-runs the failed files at HEAD (a pass = flaky), else bisects from the last
+  # commit whose `App tests (main batch)` status this job posted green, and posts a failure on the
+  # first bad commit (and on HEAD). The reports are the shards' own (`app-unit-report-*`, one per
+  # shard, `needs.apps.outputs.shard_total` of them); the verdict is red when a shard or the ledger
+  # (`apps-ledger`: a missing shard, a duplicate file, a suite that did not run) is not green.
+  # A crash posts `error` on HEAD, which the next batch re-verifies. `batch-suites` re-posts the
+  # verdict on this commit with the lint batch run as target_url (lint.yml's header).
+  apps-verify:
+    name: App tests verified (main batch)
+    needs: [apps, apps-ledger]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.batch && github.ref == 'refs/heads/main' }}
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    # The re-run and the bisect run app suites, so the `apps` job's Postgres and env.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Red when a shard is red, or when every shard passed and the ledger is not green.
+      SUITE_RESULT: ${{ needs.apps.result != 'success' && needs.apps.result || needs.apps-ledger.result }}
+      SHARD_TOTAL: ${{ needs.apps.outputs.shard_total }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ env.SUITE_RESULT == 'failure' && '0' || '1' }}
+
+      - id: pnpm
+        uses: pnpm/action-setup@v6
+        if: env.SUITE_RESULT == 'failure'
+
+      - id: node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install
+        id: install
+        if: env.SUITE_RESULT == 'failure'
+        run: pnpm install --frozen-lockfile
+
+      - name: Download app unit reports
+        id: download
+        if: env.SUITE_RESULT == 'failure'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: app-unit-report-*
+          path: ${{ runner.temp }}/reports
+
+      - name: Post the verdict (bisect on red)
+        id: verdict
+        timeout-minutes: 50
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/unit-batched.mjs verify "$SUITE_RESULT" "$RUNNER_TEMP/reports" "$SHARD_TOTAL" apps
+
+      - name: Post error on HEAD if this job crashed
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOMES: >-
+            checkout=${{ steps.checkout.outcome }}
+            setup-pnpm=${{ steps.pnpm.outcome }}
+            setup-node=${{ steps.node.outcome }}
+            install=${{ steps.install.outcome }}
+            download-reports=${{ steps.download.outcome }}
+            post-verdict=${{ steps.verdict.outcome }}
+        run: |
+          step=unknown
+          for pair in $OUTCOMES; do
+            if [ "${pair#*=}" = failure ]; then step=${pair%%=*}; break; fi
+          done
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f "context=App tests (main batch)" \
+            -f "description=Batch verification crashed at step: $step. The next batch run re-verifies." \
+            -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::error title=App batch verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"

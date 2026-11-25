@@ -1,6 +1,6 @@
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SDXL_FULL_AR, SEED, type ResourceData } from '../defs';
+import { img2imgImages, SDXL_FULL_AR_2MP, SEED, type ResourceData } from '../defs';
 import {
   versionModeOf,
   familyScope,
@@ -74,6 +74,6 @@ export const fibo2 = defineGraph<FamilyExt>({ scope: familyScope })
     };
   })
   .use(modes)
-  .field('aspectRatio', SDXL_FULL_AR)
+  .field('aspectRatio', SDXL_FULL_AR_2MP)
   .field('seed', SEED)
   .use(makeTextBlock({ negativePromptRegistersTarget: false }));

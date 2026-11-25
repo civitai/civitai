@@ -38,13 +38,13 @@ const paintBody = `{"app":"urn:apps.civitai.com:app/paint","id":"apl_paint_9","s
 "serialId":812,"collaborators":[{"id":43,"username":"helper","image":"https://img.invalid/helper"}],
 "sourceRepoUrl":"https://github.com/paint-org/paint","issueTrackerUrl":"https://paint.invalid/issues",
 "actionsRunSource":{"repository":"paint-org/paint","tag":"v1.2.0","sha":"0123456789abcdef0123456789abcdef01234567"},
-"scopes":["models:read:self"],"connectScopes":[],"betaMessage":"Paint is new","forkable":true,"forkOf":{"slug":"night"}}`
+"scopes":["models:read:self"],"connectScopes":[],"betaMessage":"Paint is new","forkable":true,"forkOf":{"slug":"night"},"subListings":[]}`
 
 const linksBody = `{"app":"urn:apps.civitai.com:app/links","id":"apl_links_2","slug":"links","name":"Links","kind":"offsite","contentRating":null,"listingContentRating":null,
 "tagline":null,"category":"tools","description":null,"iconUrl":null,"media":[],"creator":null,"isBeta":false,"isOfficial":true,
 "externalUrl":"https://example.invalid/app","connectClientId":"links-client-7",
 "stats":{"recommendedCount":0,"notRecommendedCount":0,"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9},
-"createdAt":"2026-03-01T00:00:00.000Z","updatedAt":null}`
+"createdAt":"2026-03-01T00:00:00.000Z","updatedAt":null,"subListings":[]}`
 
 const nightBody = `{"app":"urn:apps.civitai.com:app/night","id":"apl_night_5","slug":"night","name":"Night","kind":"onsite","contentRating":"r","listingContentRating":"r",
 "tagline":"After dark","category":"generation","description":"d","iconUrl":null,
@@ -52,7 +52,7 @@ const nightBody = `{"app":"urn:apps.civitai.com:app/night","id":"apl_night_5","s
 "creator":{"id":7,"username":"owl","image":"https://img.invalid/owl"},"isBeta":false,"isOfficial":false,"hasPage":false,
 "liveUrl":"https://night.apps.invalid",
 "stats":{"recommendedCount":1,"notRecommendedCount":0,"recommendPct":null,"reviewCount":1,"openCount":3,"installCount":0},
-"createdAt":"2026-03-02T00:00:00.000Z","updatedAt":"2026-03-02T00:00:00.000Z"}`
+"createdAt":"2026-03-02T00:00:00.000Z","updatedAt":"2026-03-02T00:00:00.000Z","subListings":[]}`
 
 func readyListings(t *testing.T, bodies ...string) *store.ListingsMemory {
 	t.Helper()
@@ -380,6 +380,13 @@ func (f failingListings) State(ctx context.Context) (store.State, error) {
 	return f.Listings.State(ctx)
 }
 
+func (f failingListings) StaleCount(ctx context.Context, gen int64) (int, error) {
+	if f.fail == "stale" {
+		return 0, f.err
+	}
+	return f.Listings.StaleCount(ctx, gen)
+}
+
 func (f failingListings) Keys(ctx context.Context, gen int64) ([]store.Listing, error) {
 	if f.fail == "keys" {
 		return nil, f.err
@@ -416,6 +423,8 @@ func TestListingStoreFailures(t *testing.T) {
 		want       int
 	}{
 		{"state", "/listings", boom, http.StatusInternalServerError},
+		{"stale", "/listings", boom, http.StatusInternalServerError},
+		{"stale", "/listings/paint", store.ErrNoGeneration, http.StatusServiceUnavailable},
 		{"keys", "/listings", boom, http.StatusInternalServerError},
 		{"keys", "/listings", store.ErrNoGeneration, http.StatusServiceUnavailable},
 		{"many", "/listings", boom, http.StatusInternalServerError},
@@ -442,6 +451,30 @@ func TestListingStoreFailures(t *testing.T) {
 		if code, _, b := getAs(t, srv.URL+p, &sfwViewer); code != http.StatusInternalServerError {
 			t.Errorf("%s with an unreadable body: %d %s", p, code, b)
 		}
+	}
+}
+
+// While the serving generation holds a stale row (an upsert it could not use kept the row as it
+// was), both routes answer 503 not_ready, counted `stale`, and read nothing else; a valid upsert of
+// that listing ends it.
+func TestListingStaleRowIsNotReady(t *testing.T) {
+	ls := readyListings(t, paintBody, linksBody)
+	srv := newListingServer(t, readyStore(t), ls, viewerKey)
+	gen := servingGen(t, ls)
+	if err := ls.Apply(t.Context(), gen, store.Change{Kind: store.ChangeStale, URN: "urn:apps.civitai.com:store-listing/links", Cursor: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/listings", "/listings/paint"} {
+		if code, _, b := getAs(t, srv.URL+p, &sfwViewer); code != http.StatusServiceUnavailable || string(b) != "{\"error\":\"not_ready\"}\n" {
+			t.Errorf("%s with a stale row: %d %q, want 503 not_ready", p, code, b)
+		}
+	}
+	if got := testutilCount(t, srv, "list", "stale") + testutilCount(t, srv, "detail", "stale"); got != 2 {
+		t.Errorf("stale outcomes = %v, want 2", got)
+	}
+	upsert(t, ls, gen, "links", linksBody, "c2")
+	if code, _, b := getAs(t, srv.URL+"/listings/paint", &sfwViewer); code != http.StatusOK {
+		t.Errorf("after a valid upsert of the stale listing: %d %s", code, b)
 	}
 }
 

@@ -90,7 +90,7 @@ function readPredicate() {
 
 /**
  * The primary's queries: the per-batch version lookup answers with `versions(batch)`, the model
- * DELETE with `deleteModels(batch)` (by default every model asked for, as no owner is held here),
+ * DELETE with `deleteModels(batch)` (by default every model asked for),
  * and the lookup of models the DELETE left with `stillThere(ids)`.
  */
 const write = {
@@ -359,24 +359,24 @@ describe('removeOldDrafts', () => {
     });
   });
 
-  // The DELETE itself keeps a held owner's model (behaviour on a real database:
-  // remove-old-drafts-legal-hold.behavior.test.ts); these pin what the job does with what it left.
+  // What the DELETE keeps is pinned on a real database in remove-old-drafts-keep.behavior.test.ts;
+  // these pin what the job does with what it left.
   describe('models the DELETE left', () => {
-    it('reports a kept model as held and neither logs nor deregisters it as removed', async () => {
+    it('reports a kept model and neither logs nor deregisters it as removed', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
       write.versions = () => [versionRow({ id: 100, modelId: 42 })];
       write.deleteModels = async () => [];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
+      expect(axiomEvents('Kept old draft models tied to a CsamReport')).toEqual([
         expect.objectContaining({ modelIds: [42] }),
       ]);
       expect(axiomEvents('Removed old draft models')).toEqual([]);
       expect(mockDeregisterBatch).not.toHaveBeenCalled();
     });
 
-    it('does not report a model another delete removed first as held', async () => {
+    it('does not report a model another delete removed first as kept', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
       write.versions = () => [versionRow({ id: 100, modelId: 42 })];
       write.deleteModels = async () => [];
@@ -384,7 +384,7 @@ describe('removeOldDrafts', () => {
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
+      expect(axiomEvents('Kept old draft models tied to a CsamReport')).toEqual([]);
     });
 
     // The deletes have committed by then, so the batch must still be recorded and deregistered.

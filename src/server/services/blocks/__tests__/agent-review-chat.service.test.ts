@@ -104,6 +104,28 @@ describe('agentReviewChat — groundability guard', () => {
   );
 });
 
+describe('agentReviewChat — which report it grounds on', () => {
+  it('grounds on the run the moderator is viewing, looked up within the request', async () => {
+    mockGetAgentReport.mockResolvedValue(REPORT({ id: 'arar_old', summaryMd: 'the OLD run' }));
+    await agentReviewChat({
+      publishRequestId: PUBREQ,
+      reportId: 'arar_old',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(mockGetAgentReport).toHaveBeenCalledWith(PUBREQ, 'arar_old');
+    expect(mockGetTextCompletion.mock.calls[0][0].messages[0].content).toContain('the OLD run');
+  });
+
+  it('with no reportId it grounds on the latest run, as before', async () => {
+    mockGetAgentReport.mockResolvedValue(REPORT());
+    await agentReviewChat({
+      publishRequestId: PUBREQ,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(mockGetAgentReport).toHaveBeenCalledWith(PUBREQ, undefined);
+  });
+});
+
 describe('agentReviewChat — request shape', () => {
   it('calls getTextCompletion with the model + a server-authored system-grounding message', async () => {
     mockGetAgentReport.mockResolvedValue(REPORT());
@@ -166,7 +188,10 @@ describe('agentReviewChat — failure containment (no 500, no leak)', () => {
     ).rejects.toMatchObject({ code: 'BAD_GATEWAY', message: 'the review agent did not respond' });
 
     try {
-      await agentReviewChat({ publishRequestId: PUBREQ, messages: [{ role: 'user', content: 'hi' }] });
+      await agentReviewChat({
+        publishRequestId: PUBREQ,
+        messages: [{ role: 'user', content: 'hi' }],
+      });
     } catch (e) {
       expect((e as Error).message).not.toContain('boom secret');
     }

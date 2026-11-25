@@ -1317,5 +1317,300 @@
         }
       }
     }
+  },
+  "subListings": {
+    "$comment": "Sub-listing cards (store-listing@v1 subListings). Each item is an app_sub_listings row under a fixture listing (`parent`, whose own icon and cover are the card's fallbacks; never its civitai.red overrides or screenshots), with its own rating, the card rating the adapter publishes for it (`cardContentRating`, the stricter of parent and item) and its own image (a key and level; null for none). `expected` is, per viewer and item, null when the store grid does not show the item's card to that viewer (the parent's gate, and the item's own rating under the mature rule), else the card's rating (the stricter of parent and item) and the keys of its cover (the item image, else the parent's own cover) and of its parent icon, each gated at subListingImageCeiling. Read by parity_test.go (TestSubListingParity) and listing-media-parity.test.ts.",
+    "items": [
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS001",
+        "parent": "pg-mixed",
+        "contentRating": null,
+        "cardContentRating": "pg",
+        "image": {
+          "key": "img/sub/01-pg13",
+          "nsfwLevel": 2
+        }
+      },
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS002",
+        "parent": "pg-mixed",
+        "contentRating": "r",
+        "cardContentRating": "r",
+        "image": {
+          "key": "img/sub/02-r",
+          "nsfwLevel": 4
+        }
+      },
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS003",
+        "parent": "r-listing",
+        "contentRating": "x",
+        "cardContentRating": "x",
+        "image": null
+      },
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS004",
+        "parent": "pg13-plain",
+        "contentRating": "pg13",
+        "cardContentRating": "pg13",
+        "image": {
+          "key": "img/sub/04-x",
+          "nsfwLevel": 8
+        }
+      },
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS005",
+        "parent": "null-rating",
+        "contentRating": null,
+        "cardContentRating": null,
+        "image": {
+          "key": "img/sub/05-pg",
+          "nsfwLevel": 1
+        }
+      },
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS006",
+        "parent": "g-listing",
+        "contentRating": "xxx",
+        "cardContentRating": "xxx",
+        "image": {
+          "key": "img/sub/06-xxx",
+          "nsfwLevel": 16
+        }
+      },
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS007",
+        "parent": "pg13-red-safe",
+        "contentRating": "pg13",
+        "cardContentRating": "pg13",
+        "image": null
+      },
+      {
+        "id": "asl_01J9ZK3Q4R5S6T7V8W9X0YS008",
+        "parent": "no-media",
+        "contentRating": "pg",
+        "cardContentRating": "pg13",
+        "image": {
+          "key": "img/sub/08-pg",
+          "nsfwLevel": 1
+        }
+      }
+    ],
+    "expected": {
+      "anonymous SFW": {
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS001": {
+          "contentRating": "pg",
+          "cover": null,
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS002": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS003": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS004": {
+          "contentRating": "pg13",
+          "cover": null,
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS005": {
+          "contentRating": null,
+          "cover": "img/sub/05-pg",
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS006": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS007": {
+          "contentRating": "pg13",
+          "cover": "img/pg13-red-safe/cover-pg",
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS008": {
+          "contentRating": "pg13",
+          "cover": "img/sub/08-pg",
+          "icon": null
+        }
+      },
+      "PG13 main": {
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS001": {
+          "contentRating": "pg",
+          "cover": null,
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS002": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS003": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS004": {
+          "contentRating": "pg13",
+          "cover": null,
+          "icon": "img/pg13-plain/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS005": {
+          "contentRating": null,
+          "cover": "img/sub/05-pg",
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS006": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS007": {
+          "contentRating": "pg13",
+          "cover": "img/pg13-red-safe/cover-pg",
+          "icon": "img/pg13-red-safe/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS008": {
+          "contentRating": "pg13",
+          "cover": "img/sub/08-pg",
+          "icon": null
+        }
+      },
+      "R main": {
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS001": {
+          "contentRating": "pg",
+          "cover": null,
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS002": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS003": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS004": {
+          "contentRating": "pg13",
+          "cover": null,
+          "icon": "img/pg13-plain/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS005": {
+          "contentRating": null,
+          "cover": "img/sub/05-pg",
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS006": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS007": {
+          "contentRating": "pg13",
+          "cover": "img/pg13-red-safe/cover-pg",
+          "icon": "img/pg13-red-safe/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS008": {
+          "contentRating": "pg13",
+          "cover": "img/sub/08-pg",
+          "icon": null
+        }
+      },
+      "anonymous red": {
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS001": {
+          "contentRating": "pg",
+          "cover": null,
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS002": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS003": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS004": {
+          "contentRating": "pg13",
+          "cover": null,
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS005": {
+          "contentRating": null,
+          "cover": "img/sub/05-pg",
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS006": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS007": {
+          "contentRating": "pg13",
+          "cover": "img/pg13-red-safe/cover-pg",
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS008": {
+          "contentRating": "pg13",
+          "cover": "img/sub/08-pg",
+          "icon": null
+        }
+      },
+      "X red": {
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS001": {
+          "contentRating": "pg",
+          "cover": "img/sub/01-pg13",
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS002": {
+          "contentRating": "r",
+          "cover": "img/sub/02-r",
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS003": {
+          "contentRating": "x",
+          "cover": "img/r-listing/cover-r",
+          "icon": "img/r-listing/icon-pg"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS004": {
+          "contentRating": "pg13",
+          "cover": "img/sub/04-x",
+          "icon": "img/pg13-plain/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS005": {
+          "contentRating": null,
+          "cover": "img/sub/05-pg",
+          "icon": "img/null-rating/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS006": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS007": {
+          "contentRating": "pg13",
+          "cover": "img/pg13-red-safe/cover-pg",
+          "icon": "img/pg13-red-safe/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS008": {
+          "contentRating": "pg13",
+          "cover": "img/sub/08-pg",
+          "icon": null
+        }
+      },
+      "XXX red": {
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS001": {
+          "contentRating": "pg",
+          "cover": "img/sub/01-pg13",
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS002": {
+          "contentRating": "r",
+          "cover": "img/sub/02-r",
+          "icon": "img/pg-mixed/icon"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS003": {
+          "contentRating": "x",
+          "cover": "img/r-listing/cover-r",
+          "icon": "img/r-listing/icon-pg"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS004": {
+          "contentRating": "pg13",
+          "cover": "img/sub/04-x",
+          "icon": "img/pg13-plain/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS005": {
+          "contentRating": null,
+          "cover": "img/sub/05-pg",
+          "icon": "img/null-rating/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS006": {
+          "contentRating": "xxx",
+          "cover": "img/sub/06-xxx",
+          "icon": "img/g-listing/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS007": {
+          "contentRating": "pg13",
+          "cover": "img/pg13-red-safe/cover-pg",
+          "icon": "img/pg13-red-safe/icon-pg13"
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS008": {
+          "contentRating": "pg13",
+          "cover": "img/sub/08-pg",
+          "icon": null
+        }
+      },
+      "anonymous SFW, public-external": {
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS001": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS002": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS003": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS004": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS005": {
+          "contentRating": null,
+          "cover": "img/sub/05-pg",
+          "icon": null
+        },
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS006": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS007": null,
+        "asl_01J9ZK3Q4R5S6T7V8W9X0YS008": null
+      }
+    }
   }
 }

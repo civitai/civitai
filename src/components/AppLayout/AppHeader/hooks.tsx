@@ -37,11 +37,10 @@ import {
   IconVideoPlus,
   IconWriting,
 } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { myShopNavVisible } from '~/components/AppLayout/AppHeader/myShopNavVisibility';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { enabledInventoryTypes } from '~/components/Inventory/inventory-types';
 import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
@@ -92,10 +91,6 @@ type UserMenuItemGroup = {
   visible?: boolean;
   items: UserMenuItem[];
 };
-
-const FeatureIntroductionModal = dynamic(
-  () => import('~/components/FeatureIntroduction/FeatureIntroduction')
-);
 
 export function useGetMenuItems(): UserMenuItemGroup[] {
   const router = useRouter();
@@ -386,12 +381,9 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconPlayerPlayFilled,
           label: 'Getting Started',
           onClick: () => {
-            dialogStore.trigger({
-              component: FeatureIntroductionModal,
-              props: {
-                feature: 'getting-started',
-                contentSlug: ['feature-introduction', 'welcome'],
-              },
+            openDialog(() => import('~/components/FeatureIntroduction/FeatureIntroduction'), {
+              feature: 'getting-started',
+              contentSlug: ['feature-introduction', 'welcome'],
             });
           },
         },

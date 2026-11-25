@@ -48,6 +48,7 @@ import type {
   ListingForkOf,
   ListingKind,
   ListingSort,
+  SubListingCard,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
   cardOpenCount,
@@ -76,7 +77,7 @@ import {
 } from '~/server/services/blocks/listing-media-split.service';
 import {
   hydrateSubListingCards,
-  PARENT_LINK_TEMPLATE_SQL,
+  subListingStoreArmWhere,
 } from '~/server/services/blocks/app-sub-listing-store.service';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { idsInSlugOrder } from '~/server/services/blocks/store-slug-order';
@@ -1682,16 +1683,7 @@ export async function listAvailableListings(
       LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
       LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
       WHERE ${eligibility(levelFilter)}
-        -- A banned or deleted author's items leave the store with them.
-        AND ${storeOwnerEligibleWhere(Prisma.sql`s.author_user_id`)}
-        AND sp.enabled
-        AND s.status = 'approved'
-        -- An on-site child opens under the parent's run route, which serves only an approved
-        -- block (a suspended or re-submitted block would make every child link a 404). An
-        -- off-site child opens the parent's link template instead.
-        AND CASE WHEN al.kind = 'offsite'
-              THEN ${PARENT_LINK_TEMPLATE_SQL} IS NOT NULL
-              ELSE ab.status = 'approved' END
+        AND ${subListingStoreArmWhere(storeOwnerEligibleWhere(Prisma.sql`s.author_user_id`))}
         AND ${subListingMatureFilter(mature)}
         AND ${armKeyset(childKeyExpr, Prisma.sql`s.id`, 1)}
       ORDER BY sort_key ${dir}, s.id ${dir}
@@ -1894,6 +1886,66 @@ export async function listStoreListingsBySlugs(
     viewerBrowsingLevel: opts.viewerBrowsingLevel,
   });
   return items.filter((item): item is ListingCard => !isAppSubListingId(item.id));
+}
+
+/**
+ * The sub-listing cards of `ids`, in that order and each once: only those this viewer could find in
+ * the store grid with sub-listings on and the same filters. `userId` names the PARENT's owner, as
+ * the grid's child arm reads it. An id not found is dropped. Not cached. With the sub-listing tables
+ * absent (manual-apply migration), none.
+ */
+export async function listStoreSubListingsByIds(
+  ids: string[],
+  input: Pick<ListAppListingsInput, 'kind' | 'category' | 'userId'>,
+  opts: ListAvailableListingsOpts = {}
+): Promise<SubListingCard[]> {
+  const wanted = ids.filter((id) => isAppSubListingId(id));
+  if (wanted.length === 0) return [];
+  const redCapable = opts.redCapable ?? false;
+  const floor: ListingAudienceFloor = opts.floor ?? 'public';
+  const scope = narrowStoreScope(opts.scope);
+  const mature = matureRatingsAllowed(redCapable, opts.viewerBrowsingLevel);
+  const idsFor = (levelFilter: Prisma.Sql) =>
+    dbRead.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT s.id
+    FROM app_sub_listings s
+    JOIN app_listings al ON al.id = s.parent_listing_id
+    JOIN app_sub_listing_parents sp ON sp.parent_listing_id = s.parent_listing_id
+    LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
+    WHERE ${storeEligibilityWhere({
+      levelFilter,
+      kind: input.kind === 'all' ? null : input.kind,
+      category: input.category ?? null,
+      mature,
+      scope,
+      userId: input.userId ?? null,
+    })}
+      AND ${subListingStoreArmWhere(storeOwnerEligibleWhere(Prisma.sql`s.author_user_id`))}
+      AND ${subListingMatureFilter(mature)}
+      AND s.id = ANY(${wanted}::text[])
+  `);
+  const read = () =>
+    idsFor(listingLevelVisibilityFilter(floor)).catch((err: unknown) => {
+      if (!isMissingColumnError(err)) throw err;
+      noteDegradedRead(VISIBILITY_READ_DEGRADED_EVENT, err);
+      return idsFor(Prisma.sql`al.status = 'approved'`);
+    });
+  const rows = await read().catch(async (err: unknown) => {
+    const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
+    if (!isMissingTableError(err)) throw err;
+    return [] as { id: string }[];
+  });
+  const found = new Set(rows.map((r) => r.id));
+  const items = await hydrateStoreGridItems(
+    [...new Set(wanted)].filter((id) => found.has(id)),
+    {
+      redCapable,
+      floor,
+      viewer: opts.viewer ?? ANONYMOUS_LISTING_VIEWER,
+      viewerBrowsingLevel: opts.viewerBrowsingLevel,
+    }
+  );
+  return items.filter((item): item is SubListingCard => isAppSubListingId(item.id));
 }
 
 /**

@@ -568,6 +568,374 @@
       "LORA"
     ]
   },
+  "gateEcosystems": {
+    "ACE Audio": [
+      "Ace"
+    ],
+    "Anima": [
+      "Anima"
+    ],
+    "AuraFlow": [
+      "AuraFlow"
+    ],
+    "Boogu": [
+      "Boogu"
+    ],
+    "Chroma": [
+      "Chroma"
+    ],
+    "CogVideoX": [
+      "CogVideoX"
+    ],
+    "Ernie": [
+      "Ernie"
+    ],
+    "Fibo 2.0": [
+      "Fibo2"
+    ],
+    "Fibo 2.0 Turbo": [
+      "Fibo2"
+    ],
+    "Flux 3 Video": [
+      "Flux3Video"
+    ],
+    "Flux.1 D": [
+      "Flux1"
+    ],
+    "Flux.1 Kontext": [
+      "Flux1Kontext"
+    ],
+    "Flux.1 Krea": [
+      "FluxKrea"
+    ],
+    "Flux.1 S": [
+      "Flux1"
+    ],
+    "Flux.2 D": [
+      "Flux2"
+    ],
+    "Flux.2 Klein 4B": [
+      "Flux2Klein_4B"
+    ],
+    "Flux.2 Klein 4B-base": [
+      "Flux2Klein_4B_base"
+    ],
+    "Flux.2 Klein 9B": [
+      "Flux2Klein_9B"
+    ],
+    "Flux.2 Klein 9B-base": [
+      "Flux2Klein_9B_base"
+    ],
+    "Flux.3": [
+      "Flux3"
+    ],
+    "Flux.3 Klein": [
+      "Flux3Klein"
+    ],
+    "Flux.3 Klein-base": [
+      "Flux3Klein_base"
+    ],
+    "Gemini Omni": [
+      "GeminiOmni"
+    ],
+    "Grok": [
+      "Grok"
+    ],
+    "HappyHorse": [
+      "HappyHorse"
+    ],
+    "HiDream": [
+      "HiDream"
+    ],
+    "HiDream-O1": [
+      "HiDream-O1"
+    ],
+    "Hunyuan 1": [
+      "HyDit1"
+    ],
+    "Hunyuan Video": [
+      "HyV1"
+    ],
+    "Hunyuan3D": [
+      "Hunyuan3D"
+    ],
+    "Ideogram 4.0": [
+      "Ideogram"
+    ],
+    "Ideogram 4.5": [
+      "Ideogram"
+    ],
+    "Ideogram 4.6": [
+      "Ideogram"
+    ],
+    "Illustrious": [
+      "Illustrious"
+    ],
+    "Imagen4": [
+      "Imagen4"
+    ],
+    "Kling": [
+      "Kling"
+    ],
+    "Kolors": [
+      "Kolors"
+    ],
+    "Krea 2": [
+      "Krea2"
+    ],
+    "Krea 2 Turbo": [
+      "Krea2"
+    ],
+    "Krea 3": [
+      "Krea3"
+    ],
+    "LTXV": [
+      "LTXV"
+    ],
+    "LTXV 2.3": [
+      "LTXV23"
+    ],
+    "LTXV 2.5": [
+      "LTXV25"
+    ],
+    "LTXV2": [
+      "LTXV2"
+    ],
+    "Lens": [
+      "Lens"
+    ],
+    "Lumina": [
+      "Lumina"
+    ],
+    "MAI": [
+      "MAI"
+    ],
+    "MOSS Image": [
+      "MossImage"
+    ],
+    "MageFlow": [
+      "MageFlow"
+    ],
+    "Ming Image Design 0.1": [
+      "Ming"
+    ],
+    "Ming Image Design Layer 0.1": [
+      "MingLayer"
+    ],
+    "MiniMax H3": [
+      "MiniMaxH3"
+    ],
+    "MiniMax H3 Image": [
+      "MiniMaxH3Image"
+    ],
+    "MiniMax Music 3": [
+      "MiniMaxMusic3"
+    ],
+    "Mochi": [
+      "Mochi"
+    ],
+    "Muse Image": [
+      "MuseImage"
+    ],
+    "Nano Banana": [
+      "NanoBanana"
+    ],
+    "NoobAI": [
+      "NoobAI"
+    ],
+    "ODOR": [
+      "ODOR"
+    ],
+    "OpenAI": [
+      "OpenAI"
+    ],
+    "Other": [
+      "Other"
+    ],
+    "PixArt E": [
+      "PixArtE"
+    ],
+    "PixArt a": [
+      "PixArtA"
+    ],
+    "Pixal3D": [
+      "Pixal3D"
+    ],
+    "Playground v2": [
+      "PlaygroundV2"
+    ],
+    "PolyGen": [
+      "PolyGen"
+    ],
+    "Pony": [
+      "Pony"
+    ],
+    "Pony V7": [
+      "PonyV7"
+    ],
+    "Qwen": [
+      "Qwen"
+    ],
+    "Qwen 2": [
+      "Qwen2"
+    ],
+    "Qwen 2.1": [
+      "Qwen21"
+    ],
+    "Qwen 3": [
+      "Qwen3"
+    ],
+    "Reve": [
+      "Reve"
+    ],
+    "SD 1.4": [
+      "SD1"
+    ],
+    "SD 1.5": [
+      "SD1"
+    ],
+    "SD 1.5 Hyper": [
+      "SD1"
+    ],
+    "SD 1.5 LCM": [
+      "SD1"
+    ],
+    "SD 2.0": [
+      "SD2"
+    ],
+    "SD 2.0 768": [
+      "SD2"
+    ],
+    "SD 2.1": [
+      "SD2"
+    ],
+    "SD 2.1 768": [
+      "SD2"
+    ],
+    "SD 2.1 Unclip": [
+      "SD2"
+    ],
+    "SD 3": [
+      "SD3"
+    ],
+    "SD 3.5": [
+      "SD3"
+    ],
+    "SD 3.5 Large": [
+      "SD3"
+    ],
+    "SD 3.5 Large Turbo": [
+      "SD3"
+    ],
+    "SD 3.5 Medium": [
+      "SD3_5M"
+    ],
+    "SDXL 0.9": [
+      "SDXL"
+    ],
+    "SDXL 1.0": [
+      "SDXL"
+    ],
+    "SDXL 1.0 LCM": [
+      "SDXL"
+    ],
+    "SDXL Distilled": [
+      "SDXLDistilled"
+    ],
+    "SDXL Hyper": [
+      "SDXL"
+    ],
+    "SDXL Lightning": [
+      "SDXL"
+    ],
+    "SDXL Turbo": [
+      "SDXL"
+    ],
+    "SVD": [
+      "SVD"
+    ],
+    "SVD XT": [
+      "SVD"
+    ],
+    "Seedance": [
+      "Seedance"
+    ],
+    "Seedream": [
+      "Seedream"
+    ],
+    "Sonilo": [
+      "Sonilo"
+    ],
+    "Sora 2": [
+      "Sora2"
+    ],
+    "Stable Cascade": [
+      "SCascade"
+    ],
+    "Trellis.2": [
+      "Trellis2"
+    ],
+    "Tripo": [
+      "Tripo"
+    ],
+    "Upscaler": [
+      "Upscaler"
+    ],
+    "Veo 3": [
+      "Veo3"
+    ],
+    "Vidu Q1": [
+      "Vidu"
+    ],
+    "Wan Image 2.7": [
+      "WanImage27"
+    ],
+    "Wan Video": [
+      "WanVideo"
+    ],
+    "Wan Video 1.3B t2v": [
+      "WanVideo1_3B_T2V"
+    ],
+    "Wan Video 14B i2v 480p": [
+      "WanVideo14B_I2V_480p"
+    ],
+    "Wan Video 14B i2v 720p": [
+      "WanVideo14B_I2V_720p"
+    ],
+    "Wan Video 14B t2v": [
+      "WanVideo14B_T2V"
+    ],
+    "Wan Video 2.2 I2V-A14B": [
+      "WanVideo-22-I2V-A14B"
+    ],
+    "Wan Video 2.2 T2V-A14B": [
+      "WanVideo-22-T2V-A14B"
+    ],
+    "Wan Video 2.2 TI2V-5B": [
+      "WanVideo-22-TI2V-5B"
+    ],
+    "Wan Video 2.5 I2V": [
+      "WanVideo-25-I2V"
+    ],
+    "Wan Video 2.5 T2V": [
+      "WanVideo-25-T2V"
+    ],
+    "Wan Video 2.7": [
+      "WanVideo27"
+    ],
+    "Wan Video 3.0": [
+      "WanVideo30"
+    ],
+    "YuE2": [
+      "YuE2"
+    ],
+    "ZImageBase": [
+      "ZImageBase"
+    ],
+    "ZImageTurbo": [
+      "ZImageTurbo"
+    ]
+  },
   "modelLocked": [
     "ACE Audio",
     "Ernie",
@@ -632,6 +1000,7 @@
     "YuE2"
   ],
   "generationDisabled": [
+    "Hunyuan3D",
     "Ideogram 4.0",
     "SD 3",
     "SD 3.5",

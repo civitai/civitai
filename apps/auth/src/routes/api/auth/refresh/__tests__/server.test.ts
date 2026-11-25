@@ -13,6 +13,10 @@ const h = vi.hoisted(() => ({
   users: new Map<number, Record<string, unknown> | null>(),
 }));
 
+// No user rows: the account checks at each mint pass, as for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../../test/kysely-fake')).createKyselyFake({}),
+}));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   isSecureCookie: () => false,

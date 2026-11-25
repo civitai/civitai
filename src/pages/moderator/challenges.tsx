@@ -29,8 +29,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -261,60 +260,51 @@ export default function ModeratorChallengesPage() {
   };
 
   const handleEndAndPickWinners = (challengeId: number, title: string) => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'End & Pick Winners',
-        message: (
-          <Stack gap="xs">
-            <Text>
-              Are you sure you want to end <strong>&ldquo;{title}&rdquo;</strong> and pick winners
-              now?
-            </Text>
-            <Text size="sm" c="dimmed">
-              This will close the collection, run the winner selection process, and award prizes.
-            </Text>
-          </Stack>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
-        onConfirm: () => endAndPickWinnersMutation.mutateAsync({ id: challengeId }),
-      },
+    openConfirm({
+      title: 'End & Pick Winners',
+      message: (
+        <Stack gap="xs">
+          <Text>
+            Are you sure you want to end <strong>&ldquo;{title}&rdquo;</strong> and pick winners
+            now?
+          </Text>
+          <Text size="sm" c="dimmed">
+            This will close the collection, run the winner selection process, and award prizes.
+          </Text>
+        </Stack>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'End & Pick Winners' },
+      onConfirm: () => endAndPickWinnersMutation.mutateAsync({ id: challengeId }),
     });
   };
 
   const handleVoidChallenge = (challengeId: number, title: string) => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Void Challenge',
-        message: (
-          <Stack gap="xs">
-            <Text>
-              Are you sure you want to void <strong>&ldquo;{title}&rdquo;</strong>?
-            </Text>
-            <Text size="sm" c="dimmed">
-              This will cancel the challenge without picking winners. Users will keep their entry
-              prizes (if any were awarded).
-            </Text>
-          </Stack>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => voidChallengeMutation.mutateAsync({ id: challengeId }),
-      },
+    openConfirm({
+      title: 'Void Challenge',
+      message: (
+        <Stack gap="xs">
+          <Text>
+            Are you sure you want to void <strong>&ldquo;{title}&rdquo;</strong>?
+          </Text>
+          <Text size="sm" c="dimmed">
+            This will cancel the challenge without picking winners. Users will keep their entry
+            prizes (if any were awarded).
+          </Text>
+        </Stack>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Void Challenge' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => voidChallengeMutation.mutateAsync({ id: challengeId }),
     });
   };
 
   const handleDelete = (challengeId: number) => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete Challenge',
-        message: <Text>Are you sure you want to delete this challenge?</Text>,
-        labels: { cancel: 'Cancel', confirm: 'Delete' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => deleteMutation.mutateAsync({ id: challengeId }),
-      },
+    openConfirm({
+      title: 'Delete Challenge',
+      message: <Text>Are you sure you want to delete this challenge?</Text>,
+      labels: { cancel: 'Cancel', confirm: 'Delete' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => deleteMutation.mutateAsync({ id: challengeId }),
     });
   };
 

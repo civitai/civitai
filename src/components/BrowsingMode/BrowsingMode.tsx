@@ -3,20 +3,17 @@ import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
 import { IconAlertTriangle, IconEye, IconSword } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 // import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { getKnightsLink } from '~/shared/constants/knights.constants';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
-
-const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'), { ssr: false });
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const { isRestricted } = useIsRegionRestricted();
@@ -144,7 +141,9 @@ export function BrowsingModeMenu({
                   onClick={(e: React.MouseEvent) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    dialogStore.trigger({ component: HiddenTagsModal, target: '#browsing-mode' });
+                    openDialog(() => import('~/components/Tags/HiddenTagsModal'), undefined, {
+                      target: '#browsing-mode',
+                    });
                   }}
                   span
                 >

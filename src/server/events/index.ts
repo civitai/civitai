@@ -15,6 +15,8 @@ import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
+import { readFlagRaceJson } from '~/server/events/scoring/award-results';
+import { awardEventPrizes } from '~/server/events/scoring/event-prizes';
 import { REFEREE_CLICKHOUSE_BUDGET_S, runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
 import { pointTypesFor } from '~/server/events/points/types';
@@ -188,6 +190,21 @@ export const eventEngine = {
         }
 
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
+
+        if (eventDef.scoring) {
+          const prizes = await readFlagRaceJson(eventDef.name)
+            .then((json) => awardEventPrizes(eventDef, winner, json))
+            .catch((error) => {
+              logToAxiom({
+                type: 'error',
+                name: 'event-prizes',
+                event: eventDef.name,
+                message: (error as Error).message,
+              });
+              return { pending: true };
+            });
+          if (prizes.pending) continue;
+        }
 
         // Mark cleanup as complete, only after every step succeeded so a failure retries tomorrow.
         await redis.set(cleanupKey, `true`, { EX: CLEANUP_MARKER_TTL_S });

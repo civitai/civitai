@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * Handler-level coverage for POST /api/v1/blocks/withdraw — the token-auth,
@@ -127,6 +128,14 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { BLOCKS: { WITHDRAW_RATE_LIMIT: 'system:blocks:withdraw-rate-limit' } },
 }));
 
+const { mockFliptVariant } = vi.hoisted(() => ({
+  mockFliptVariant: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten' },
+  getFliptVariant: mockFliptVariant,
+}));
+
 import handler from '~/pages/api/v1/blocks/withdraw';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -172,7 +181,9 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author capability defaults to the mod-floor (mirrors isAppBlocksAuthorEnabled
   // when the app-blocks-author Flipt flag is absent): mods pass, non-mods don't.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator);
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
   mockWithdrawRequest.mockResolvedValue(undefined);
 });
 
@@ -369,6 +380,19 @@ describe('POST /api/v1/blocks/withdraw', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    // An abuse limit: the house meta names it and the wait, and carries no counts (the
+    // route's own top-level fields are kept as it always sent them).
+    expect(res._getJSONData()).toMatchObject({
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: { retryAfterSeconds: 60, id: 'apps.listing-withdrawals', kind: 'abuse' },
+    });
+    expect(Object.keys((res._getJSONData() as { rateLimit: object }).rateLimit).sort()).toEqual([
+      'id',
+      'kind',
+      'retryAfterSeconds',
+      'retryAt',
+    ]);
     expect(mockWithdrawRequest).not.toHaveBeenCalled();
   });
 
@@ -398,5 +422,86 @@ describe('POST /api/v1/blocks/withdraw', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     expect(mockSysRedis.expire).toHaveBeenCalledWith('system:blocks:withdraw-rate-limit:u:7', 60);
+  });
+});
+
+describe('/api/v1/blocks/withdraw under bearer-scope-tighten', () => {
+  beforeEach(() => {
+    mockFliptVariant.mockReset();
+  });
+
+  // A personal key narrower than Full.
+  const NARROW_KEY_SESSION = {
+    ...MOD_SESSION,
+    apiKeyType: 'User',
+    tokenScope: TokenScope.UserRead | TokenScope.ModelsRead,
+  };
+  const FULL_KEY_SESSION = { ...MOD_SESSION, apiKeyType: 'User' };
+
+  it('enforce: 403s a narrow personal key before any other work', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect((res._getJSONData() as { message: string }).message).toContain('Full Access');
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expect(mockFliptVariant).toHaveBeenCalledWith('bearer-scope-tighten');
+  });
+
+  it('log: lets a narrow personal key through and logs it', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockWithdrawRequest).toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({
+          mode: 'log',
+          route: '/api/v1/blocks/withdraw',
+          credentialKind: 'apiKey',
+          apiKeyId: NARROW_KEY_SESSION.apiKeyId,
+        }),
+      })
+    );
+  });
+
+  it('off (any unknown variant): lets a narrow personal key through without logging', async () => {
+    mockFliptVariant.mockResolvedValue('bogus');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'bearer-scope-refused' })
+    );
+  });
+
+  it('off when the flag read fails', async () => {
+    mockFliptVariant.mockRejectedValue(new Error('flipt down'));
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+  });
+
+  it('enforce: a Full Access personal key passes without reading the flag', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(FULL_KEY_SESSION);
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockFliptVariant).not.toHaveBeenCalled();
+  });
+
+  it('enforce: an OAuth token carrying AppBlocksSubmit passes', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(OAUTH_SCOPED_SESSION);
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
   });
 });

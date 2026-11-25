@@ -18,6 +18,49 @@ export const reportAcceptedReward = createBuzzEvent({
       type,
     };
   },
+  // A report earns once, on its first acceptance. A later acceptance of the same report writes a
+  // new pending row under the same key at a lower version than the one already settled; a payment
+  // retry is reset to pending at a HIGHER version than its settled row, so it still pays.
+  // A failed read throws, leaving the events pending for the job to retry.
+  preprocess: async ({ ch, toProcess }) => {
+    if (!toProcess.length) return;
+    const rows = await ch
+      .query({
+        query: `
+          SELECT toUserId, forId, max(version) AS version
+          FROM buzzEvents
+          WHERE type = {type:String}
+            AND status != 'pending'
+            AND toUserId IN {toUserIds:Array(Int32)}
+            AND forId IN {forIds:Array(Int32)}
+          GROUP BY toUserId, forId
+        `,
+        // Two flat arrays, not one Array(Tuple) param: the client sends a nested JS array as
+        // [[a,b]], which ClickHouse rejects for a tuple type. The pairs this over-reads are dropped
+        // by the exact-key lookup below.
+        query_params: {
+          type,
+          toUserIds: [...new Set(toProcess.map((event) => Number(event.toUserId)))],
+          forIds: [...new Set(toProcess.map((event) => Number(event.forId)))],
+        },
+        format: 'JSONEachRow',
+      })
+      .then((result) => result.json<{ toUserId: number; forId: number; version: number }>());
+
+    const settled = new Map(
+      rows.map((row) => [`${row.toUserId}:${row.forId}`, Number(row.version)])
+    );
+    for (const event of toProcess) {
+      const settledVersion = settled.get(`${Number(event.toUserId)}:${Number(event.forId)}`);
+      if (settledVersion === undefined || settledVersion < (event.version ?? 0)) continue;
+      event.status = 'unqualified';
+      event.awardAmount = 0;
+      // The job writes this row back at version + 1. It shares the settled row's key, and buzzEvents
+      // keeps the highest version per key, so it must land BELOW the settled row: at an equal version
+      // the later insert replaces the original payment, which then drops out of the cap sum.
+      event.version = Math.max(settledVersion - 2, -1);
+    }
+  },
 });
 
 type ReportEvent = {

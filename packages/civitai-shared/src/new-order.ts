@@ -69,6 +69,8 @@ export type KnightsSourcesConfig = {
   yesNoShare?: number;
   /** Knights game tuning saved on the moderator Config page. Absent when nothing is stored. */
   game?: KnightsGameSettings;
+  /** Paladins judge the moderator tag review queue as yes/no questions. Absent reads as off. */
+  modTagReview?: boolean;
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -77,7 +79,7 @@ const isFiniteNumber = (value: unknown): value is number =>
 /**
  * Each Knights game setting the moderator Config page can store, with the environment variable it overrides. A field
  * that is not stored leaves Knights on that variable (or its built-in default). Number ranges match the Knights
- * environment readers (`hidden/config.ts`, `yesno/config.ts`, `trials/config.ts`), so a stored value is never one the environment would refuse.
+ * environment readers (`hidden/config.ts`, `yesno/config.ts`, `trials/config.ts`, `skill-check/config.ts`), so a stored value is never one the environment would refuse.
  */
 export const KNIGHTS_GAME_SETTINGS = {
   hiddenCheckRate: {
@@ -156,6 +158,30 @@ export const KNIGHTS_GAME_SETTINGS = {
     range: 'from 0 to 1',
     valid: (n: number) => n >= 0 && n <= 1,
   },
+  skillCheckPoolCap: {
+    kind: 'number',
+    env: 'KNIGHTS_SKILL_CHECK_POOL_CAP',
+    label: 'Mod-confirmed checks kept',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
+  skillCheckServeJudged: {
+    kind: 'toggle',
+    env: 'KNIGHTS_SKILL_CHECK_SERVE_JUDGED',
+    label: 'Checks on images already seen',
+  },
+  inquisitorQueue: {
+    kind: 'toggle',
+    env: 'KNIGHTS_INQUISITOR_QUEUE',
+    label: 'In-game inquisitor queue',
+  },
+  inquisitorMaxOpen: {
+    kind: 'number',
+    env: 'KNIGHTS_INQUISITOR_MAX_OPEN',
+    label: 'Open inquisitor reviews kept',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
 } as const;
 
 type GameSettingSpec = (typeof KNIGHTS_GAME_SETTINGS)[keyof typeof KNIGHTS_GAME_SETTINGS];
@@ -230,6 +256,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
     const maxOpen = readCap(config.maxOpen);
     const yesNoShare = readShare(config.yesNoShare);
     const game = readGame(config.game);
+    const modTagReview = typeof config.modTagReview === 'boolean' ? config.modTagReview : undefined;
     return {
       stored: true,
       config: {
@@ -240,6 +267,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
         ...(maxOpen === undefined ? {} : { maxOpen }),
         ...(yesNoShare === undefined ? {} : { yesNoShare }),
         ...(game === undefined ? {} : { game }),
+        ...(modTagReview === undefined ? {} : { modTagReview }),
       },
     };
   } catch {

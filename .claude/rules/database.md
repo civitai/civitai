@@ -38,7 +38,7 @@ Event and activity records (downloads, views, accesses, clicks: anything appende
 - A human applies each environment's SQL directly (psql, retool, etc.). The `_prisma_migrations` table is not the source of truth; don't rely on it.
 - **After writing a migration, list these steps for the human applier**, per writable environment (procedure, flags and limits: "After applying a migration" in `packages/civitai-db-schema/src/schema-drift/README.md`):
 
-  1. Dry run: strip the file's own top-level `BEGIN`/`START TRANSACTION`, `COMMIT`/`END` and `ROLLBACK` (a file `COMMIT` ends the wrapper and makes everything permanent), then run it inside `BEGIN; … ROLLBACK;` against the target.
+  1. Dry run: strip the file's own top-level `BEGIN`/`START TRANSACTION`, `COMMIT`/`END` and `ROLLBACK` (a file `COMMIT` ends the wrapper: what ran before it is permanent, and so is what follows when statements are sent one at a time), then run it inside `BEGIN; … ROLLBACK;` against the target.
      - Dry-run `ALTER TYPE … ADD VALUE` alone, as its own step; statements that use the new value fail until it is committed, so test those on a disposable database.
      - Never dry-run on prod a file whose procedures or `DO` blocks `COMMIT` (including a procedure it `CALL`s): those commits cannot be rolled back. Use a disposable database.
      - `BEGIN`/`END` inside a function, procedure or `DO` body are not transaction control; leave them.

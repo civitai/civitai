@@ -11,6 +11,7 @@ import {
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
 import { isClusterLocalServiceUrl } from './cluster-local-url';
+import { isPlainHttpsUrl } from './plain-https-url';
 
 // Strict integer env values: digits only, so '', ' 3', '2.5' and '-1' are rejected instead of being
 // coerced (z.coerce turns '' into 0). Mirrors packages/civitai-db/src/env.ts — both schemas are
@@ -415,6 +416,12 @@ export const serverSchema = z
     // per-id populate locks within seconds. Keep it above CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and
     // the server-side lookup cap. .int().positive() for the same reason as that timeout.
     CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    // Dedicated downloads replica (`~/server/clickhouse/downloads-client`); unset HOST or USERNAME: no client.
+    CLICKHOUSE_DOWNLOADS_HOST: z.string().optional(),
+    CLICKHOUSE_DOWNLOADS_USERNAME: z.string().optional(),
+    CLICKHOUSE_DOWNLOADS_PASSWORD: z.string().optional(),
+    // Must equal the key the replica's address hashes were made with; unset: address branch stays shared.
+    CLICKHOUSE_DOWNLOADS_IP_HASH_KEY: z.string().optional(),
     // OAuth LOGIN provider secrets now live ONLY in the hub (apps/auth) — the spoke fetches the enabled-provider
     // list from GET {hub}/api/auth/providers and never holds login secrets. Discord's creds REMAIN here because
     // the Discord ROLE-CONNECTION integration (src/server/integrations/discord.ts) uses them — that's a separate
@@ -467,8 +474,6 @@ export const serverSchema = z
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
-    // Recipients of evidence-hold-expiry-alert. Unset or empty: it logs an error instead of sending.
-    EVIDENCE_HOLD_ALERT_EMAILS: commaDelimitedStringArray().default([]),
     // Server-to-server base for the moderator app, for callers that never hand the URL to a browser.
     // SEPARATE from MODERATOR_APP_URL on purpose: that one also feeds the /moderator/* redirect's
     // Location header, so it must stay publicly resolvable. Optional — unset, moderator-app.service.ts
@@ -691,11 +696,36 @@ export const serverSchema = z
       .optional()
       .transform((raw) => (raw !== undefined && isClusterLocalServiceUrl(raw) ? raw : undefined))
       .catch(undefined),
+    // The app-data service's PUBLIC base URL, as an app's frame reaches it: sent to the app as
+    // `BLOCK_INIT.appData.url` when the `app-data-writes-via-service` flag is on for that app
+    // (`app-data-writes-routing.ts`). Unset = never sent, whatever the flag says. Only a plain
+    // https URL with no credentials, query or fragment is taken (the SDK's own rule for that field,
+    // `plain-https-url.ts`); anything else reads as UNSET rather than failing the env parse.
+    APP_DATA_SERVICE_PUBLIC_URL: z
+      .string()
+      .optional()
+      .transform((raw) => (raw !== undefined && isPlainHttpsUrl(raw) ? raw : undefined))
+      .catch(undefined),
     // The fraction (0-1) of eligible lists, of apps the flag is on for, also asked of app-data-go;
     // the most such reads in flight per process (more are dropped, not queued); each read's timeout.
     APP_DATA_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(1),
     APP_DATA_SHADOW_MAX_IN_FLIGHT: z.coerce.number().int().min(1).max(64).default(4),
     APP_DATA_SHADOW_TIMEOUT_MS: z.coerce.number().int().min(50).max(10_000).default(2000),
+    // The HMAC key app-data-go signs its forwarded writes with (the document store's internal
+    // route, `doc-store-internal-route.ts`). Unset = that route is off (`404 service_route_off` on
+    // every path). Set, it must be at least 32 bytes: a shorter value (an empty one included) fails
+    // the env parse. It authenticates the caller only; the user's own token is still the authority.
+    APP_DATA_WRITES_SIGNING_KEY: z.string().min(32).optional(),
+    // HMAC secret for viewer-keyed document keys (`doc-store-viewer-keyed.ts`), 32+ chars.
+    // Byte-identical in every deployment sharing the database; never rotate.
+    // Unset or blank: an `@me` op that passes its other checks (`keyedBy`, parent, the write
+    // switch, sign-in) answers 503; there is no fallback key.
+    APP_STORAGE_VIEWER_KEY_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_STORAGE_VIEWER_KEY_SECRET must be at least 32 characters',
+      })
+      .optional(),
     // With the `app-listings-read-model` flag at its `serve` variant: how long a store grid or
     // public REST list page waits for the read model before it is read from the database instead.
     APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS: z.coerce
@@ -1499,6 +1529,11 @@ export const serverSchema = z
     // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
     // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
+    // Base URL of the App Block review boot-check service, which loads a review preview the way
+    // a host does and reports whether the app sent BLOCK_READY (see review-boot-check.service).
+    // OPTIONAL: when unset, every boot check reads `unavailable` (fail-open) and the review is
+    // never blocked on it. Only read while the `app-blocks-review-boot-check` flag is not off.
+    APP_BLOCK_BOOT_CHECK_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
     // dev-uploaded ZIP bundles. Production points at an in-cluster MinIO

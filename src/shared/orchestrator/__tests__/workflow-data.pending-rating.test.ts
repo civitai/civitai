@@ -24,7 +24,7 @@ const build = (
       metadata: {},
       steps: [{ $type: 'comfy', name: '$0', status: 'succeeded', metadata: stepMetadata, output }],
     } as any,
-    { domain: { green: false } as any, nsfwEnabled: true, holdUnrated }
+    { domain: { green: false } as any, holdUnrated }
   );
 
 describe('WorkflowData unrated outputs', () => {
@@ -110,7 +110,7 @@ describe('WorkflowData unrated outputs', () => {
           },
         ],
       } as any,
-      { domain: { green: true } as any, nsfwEnabled: false, holdUnrated: true }
+      { domain: { green: true } as any, holdUnrated: true }
     );
 
     expect(wf.steps[0].output[0].blockedReason).toBeFalsy();
@@ -134,7 +134,7 @@ describe('WorkflowData unrated outputs', () => {
             { $type, name: '$0', status: 'succeeded', metadata: stepMetadata, output: [output] },
           ],
         } as any,
-        { domain: { green: true } as any, nsfwEnabled: true, holdUnrated: true }
+        { domain: { green: true } as any, holdUnrated: true }
       );
     const held = (wf: WorkflowData) => wf.steps[0].output[0].pendingRating;
     const video = blob({ type: 'video' });

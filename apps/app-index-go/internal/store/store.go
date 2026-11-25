@@ -56,6 +56,22 @@ type App struct {
 	Tagline  string
 	IconURL  string
 	Release  string
+	// ListingRating is the listing's own content rating (the body's listingContentRating, "" for
+	// null), and ListingRated whether the body carried that field at all: an adapter that predates
+	// it sends none. GateRating says which rating search filters on.
+	ListingRating string
+	ListingRated  bool
+}
+
+// GateRating is the rating search filters on (Mature.Admits): the listing's own when the body
+// carries it, as the site's database search filters on the listing's content_rating
+// (listingMatureFilter), never on the block rating the app entity's contentRating falls back to;
+// otherwise the app entity's contentRating. Postgres.Search applies the same rule in SQL.
+func (a App) GateRating() string {
+	if a.ListingRated {
+		return a.ListingRating
+	}
+	return a.Rating
 }
 
 // ChangeKind is what a change does to a generation.
@@ -66,16 +82,21 @@ const (
 	ChangeUpsert ChangeKind = iota + 1
 	ChangeDelete
 	ChangeProgress
+	// ChangeStale marks the row of URN stale and leaves it as it is: the listings read model's
+	// answer to an upsert of URN its serving generation cannot use (Listings.StaleCount). Nothing
+	// changes when the generation holds no row of URN. The next upsert of URN writes its row
+	// unmarked; a delete removes it, mark and all.
+	ChangeStale
 )
 
-// Change is one event's effect on a generation: replace the row (Upsert), remove it (Delete) or
-// nothing (Progress), and in every case store Cursor. An upsert carries the row of its store's
-// stream: App for the app index, Listing for the listings read model.
+// Change is one event's effect on a generation: replace the row (Upsert), remove it (Delete), mark
+// it stale (Stale) or nothing (Progress), and in every case store Cursor. An upsert carries the row
+// of its store's stream: App for the app index, Listing for the listings read model.
 type Change struct {
 	Kind    ChangeKind
 	App     App     // ChangeUpsert, app index
 	Listing Listing // ChangeUpsert, listings read model
-	URN     string  // ChangeDelete
+	URN     string  // ChangeDelete, ChangeStale
 	Cursor  string
 	// Dropped is what decoding an upsert left out of the row (a Listing's Drops); the consumer logs
 	// and counts it. Never stored.
@@ -129,12 +150,15 @@ type appBody struct {
 	IconURL       json.RawMessage `json:"iconUrl"`
 	Creator       json.RawMessage `json:"creator"`
 	Release       json.RawMessage `json:"release"`
+	// Optional: absent from a body the adapter built before it published the field.
+	ListingContentRating json.RawMessage `json:"listingContentRating"`
 }
 
 // AppFromEntity checks the fields of an app@v1 body this index relies on and copies them out.
 // An error means the body is not one this index can use: the consumer treats such an entity as
 // deleted (registry spec, "Validity" rule 2). Checked by hand against the fields app@v1 declares
-// (required slug, name, kind, contentRating; nullable strings otherwise), not against the
+// (required slug, name, kind, contentRating; nullable strings otherwise, listingContentRating
+// included, which may also be absent), not against the
 // schema document from the schema stream.
 func AppFromEntity(urn, rev string, body json.RawMessage) (App, error) {
 	var b appBody
@@ -165,6 +189,7 @@ func AppFromEntity(urn, rev string, body json.RawMessage) (App, error) {
 		{"iconUrl", b.IconURL, &a.IconURL},
 		{"creator", b.Creator, &a.Creator},
 		{"release", b.Release, &a.Release},
+		{"listingContentRating", b.ListingContentRating, &a.ListingRating},
 	} {
 		s, err := nullableString(f.raw)
 		if err != nil {
@@ -172,6 +197,7 @@ func AppFromEntity(urn, rev string, body json.RawMessage) (App, error) {
 		}
 		*f.dst = s
 	}
+	a.ListingRated = b.ListingContentRating != nil
 	return a, nil
 }
 

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mediaForToken = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/scan-label.service', () => ({ mediaForToken }));
+// The route reads the grant through held-media, which loads the db client.
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 const publicEnv = vi.hoisted(() => ({
   PUBLIC_IMAGE_LOCATION: 'https://cdn.test' as string | undefined,
 }));
@@ -48,7 +50,7 @@ describe('GET /images/scan-labels/media/[token]', () => {
     const r = await res;
     expect(r.status).toBe(200);
     expect(await r.text()).toBe('bytes');
-    expect(mediaForToken).toHaveBeenCalledExactlyOnceWith(TOKEN, 7);
+    expect(mediaForToken).toHaveBeenCalledExactlyOnceWith(TOKEN, { userId: 7, csamReview: false });
     expect(fetch).toHaveBeenCalledOnce();
     expect(String((fetch.mock.calls[0] as unknown[])[0])).toContain('media-key-x7');
   });

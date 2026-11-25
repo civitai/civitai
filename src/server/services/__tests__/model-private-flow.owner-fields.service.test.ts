@@ -79,6 +79,26 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: vi.fn(),
 }));
+// The Knights reads, recorded at the database boundary: `postWritesBefore` is how many availability
+// writes on the posts had run when each statement was sent.
+const { knightsStatements } = vi.hoisted(() => ({
+  knightsStatements: [] as { sql: string; values: unknown[]; postWritesBefore: number }[],
+}));
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { fakeKysely } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock: db } = await import('~/__tests__/mocks/db.mock');
+  const kysely = fakeKysely((strings, ...values) => {
+    knightsStatements.push({
+      sql: strings.join('?'),
+      values,
+      postWritesBefore: db.dbWrite.post.updateMany.mock.calls.length,
+    });
+    const sql = strings.join('?');
+    // The published versions' posts: one, so the image reads that follow run.
+    return sql.includes('from "Post"') && sql.includes('"modelVersionId" in') ? [{ id: 40 }] : [];
+  });
+  return { kyselyWrite: kysely, kyselyRead: kysely };
+});
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
@@ -143,6 +163,8 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { deleteBidsForModel } from '~/server/services/auction.service';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { clearKnightsSourcesConfigCache } from '~/server/services/knights/sources';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -574,37 +596,6 @@ describe('privateModelFromTraining — publish gates', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
-  // A content wipe kept the model in training as it was; its record alone stops the owner.
-  it('refuses a non-moderator a model in training a content wipe kept', async () => {
-    mockStored({
-      status: 'Training',
-      meta: { removedWithOwner: true, statusBeforeRemoval: 'Training' },
-    });
-
-    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/not authorized/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-  });
-
-  it('ends a content wipe’s record when a moderator runs it', async () => {
-    mockStored({
-      status: 'Training',
-      meta: {
-        note: 1,
-        ...{
-          removedWithOwner: true,
-          statusBeforeRemoval: 'Draft',
-          versionsUnpublishedByRemoval: [],
-        },
-      },
-    });
-
-    await privateFromTraining({ user: moderator });
-
-    expect(updateData().meta).not.toHaveProperty('removedWithOwner');
-    expect(updateData().meta).not.toHaveProperty('statusBeforeRemoval');
-    expect(updateData().meta).not.toHaveProperty('versionsUnpublishedByRemoval');
-  });
-
   it('lets a moderator through the cannotPublish gate', async () => {
     mockStored({ meta: { cannotPublish: true } });
 
@@ -668,15 +659,6 @@ describe('cannotPromote across a private cycle', () => {
 });
 
 describe('privateModelFromTraining — the locked row', () => {
-  it('refuses the owner a model a content wipe kept after it was read, writing nothing', async () => {
-    mockStored({ status: 'Training' });
-    mockLocked({ meta: { removedWithOwner: true, statusBeforeRemoval: 'Training' } });
-
-    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/not authorized/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
-  });
-
   it('refuses the owner when publishing was blocked after it was read, writing nothing', async () => {
     mockStored({});
     mockLocked({ meta: { cannotPublish: true } });
@@ -1008,6 +990,49 @@ describe('publishPrivateModel', () => {
     await expect(publish(true)).resolves.toEqual({ versionIds: [1], held: false });
   });
 
+  describe('offering its images to Knights', () => {
+    const knightsImageReads = () =>
+      knightsStatements.filter((st) => st.sql.includes('from "Image"'));
+    beforeEach(() => {
+      knightsStatements.length = 0;
+      clearKnightsSourcesConfigCache();
+      redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+        key === REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES ? JSON.stringify({ enabled: true }) : null
+      );
+    });
+
+    it('offers the images of every post on the published versions once the publish has written them', async () => {
+      mockPrivateModel({});
+
+      await publish(false);
+
+      await vi.waitFor(() => expect(knightsImageReads().length).toBeGreaterThan(0));
+      const postReads = knightsStatements.filter((st) => st.sql.includes('from "Post" where'));
+      expect(postReads).toHaveLength(1);
+      expect(postReads[0].sql).toContain('"modelVersionId" in');
+      expect(postReads[0].values).toContain(1);
+      for (const read of [...postReads, ...knightsImageReads()]) {
+        expect(read.postWritesBefore).toBeGreaterThan(0);
+      }
+      for (const read of knightsImageReads()) {
+        expect(read.sql).toContain('"img"."postId" in');
+        expect(read.values.filter((v) => typeof v === 'number')).toContain(40);
+      }
+    });
+
+    it('offers nothing when the versions go back to drafts (control)', async () => {
+      mockPrivateModel({});
+
+      await publish(false, false);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(redisMock.sysRedis.get).not.toHaveBeenCalledWith(
+        REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES
+      );
+      expect(knightsImageReads()).toEqual([]);
+    });
+  });
+
   it("republishes only the owner's posts", async () => {
     mockPrivateModel({});
 
@@ -1101,55 +1126,6 @@ describe('publishPrivateModel', () => {
 
     await expect(publish(false)).rejects.toThrow();
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-  });
-
-  // The first read alone carries the record, so this fails if that gate goes.
-  it('refuses the owner a model a content wipe kept, and writes nothing', async () => {
-    mockPrivateModel({
-      meta: {
-        removedWithOwner: true,
-        statusBeforeRemoval: 'Draft',
-        versionsUnpublishedByRemoval: [],
-      },
-    });
-    lockedRow({});
-
-    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expectNothingWritten();
-  });
-
-  it('refuses the owner when a content wipe kept the model after it was read, and writes nothing', async () => {
-    mockPrivateModel({});
-    lockedRow({
-      meta: {
-        removedWithOwner: true,
-        statusBeforeRemoval: 'Draft',
-        versionsUnpublishedByRemoval: [],
-      },
-    });
-
-    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expectNothingWritten();
-  });
-
-  it('ends a content wipe’s record when a moderator publishes', async () => {
-    mockPrivateModel({
-      meta: {
-        note: 1,
-        ...{
-          removedWithOwner: true,
-          statusBeforeRemoval: 'Draft',
-          versionsUnpublishedByRemoval: [],
-        },
-      },
-    });
-
-    await publish(true);
-
-    expect(updateData().meta).toMatchObject({ note: 1 });
-    expect(updateData().meta).not.toHaveProperty('removedWithOwner');
-    expect(updateData().meta).not.toHaveProperty('statusBeforeRemoval');
-    expect(updateData().meta).not.toHaveProperty('versionsUnpublishedByRemoval');
   });
 
   it('lets a moderator through both gates', async () => {

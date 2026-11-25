@@ -14,7 +14,10 @@ import { WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph'
 import { BLOB_KEY_RE } from '~/server/services/blocks/media-input-reference';
 import { isWeightFile } from '~/server/services/huggingface.service';
 import { capsGenerationOutput } from '~/server/services/orchestrator/form-graph/output-restrictions';
-import { canAccessGenerationResource } from '~/server/utils/resource-access';
+import {
+  canAccessGenerationResource,
+  isRestrictedGenerationResource,
+} from '~/server/utils/resource-access';
 
 // The resource rule for an orchestrator step an app builds itself: a pass-through `kind:'step'`,
 // every step of a `kind:'workflow'`, and a customComfy graph. Apps load weights only from Civitai
@@ -455,5 +458,10 @@ export async function checkAppStepResources(
 
   const baseModels = versions.map((v) => v.baseModel);
   assertNoRestrictedBaseModels({ baseModels });
-  return { capOutput: capsGenerationOutput({ baseModels }) };
+  return {
+    capOutput: capsGenerationOutput({
+      isPrivateGeneration: versions.some(isRestrictedGenerationResource),
+      baseModels,
+    }),
+  };
 }

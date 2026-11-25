@@ -279,11 +279,11 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
   it("runs the site's own unlock guards before spending", async () => {
     const f = fakes([LOCKED], {
       assertUnlockAllowed: vi.fn<D['assertUnlockAllowed']>(() => {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'mature content off' });
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'green domain' });
       }),
     });
     const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f));
-    expect(error.message).toBe('mature content off');
+    expect(error.message).toBe('green domain');
     expectNothingSpent(f);
   });
 });

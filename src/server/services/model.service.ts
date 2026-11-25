@@ -1,3 +1,5 @@
+import type { withCuratedShowcases } from '~/server/services/version-showcase.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
@@ -6,7 +8,6 @@ import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
-import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import {
@@ -22,15 +23,9 @@ import type { VersionReadiness } from '~/shared/generation/generator-readiness';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
-  assertOwnersNotUnderLegalHold,
-  HOLD_UNCONFIRMED,
-  LegalHoldError,
-  legalHoldMessage,
-  modelDataHeldSql,
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
-} from '~/server/services/legal-hold.service';
-import { isRemovedWithOwner, withoutRemovedWithOwner } from '~/server/utils/legal-hold';
+} from '~/server/services/model-ownership.sql';
 import type { ManipulateType } from 'dayjs';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -365,6 +360,10 @@ import {
   updateModelVersionNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
+import {
+  showcaseSiteForBrowsingLevel,
+  siteForCoverId,
+} from '~/shared/constants/version-showcase.constants';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
   hasSfwFaceParts,
@@ -2069,6 +2068,7 @@ export const getModelsWithImagesAndModelVersions = async ({
       ownerId: model.user.id,
       shownVersionId: model.modelVersions[0]?.id,
       coverId: pickCoverImageId(model, showSfwFace),
+      site: siteForCoverId(model, pickCoverImageId(model, showSfwFace)),
     })),
     modelVersionImages,
     // Under a base-model filter or Hide Paid the card shows a chosen version, so a cover from another
@@ -2626,13 +2626,6 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   return { id, userId: result.userId };
 };
 
-/** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
-export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
-
-const holdUnconfirmed = (e: unknown): never => {
-  throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
-};
-
 const PERMA_DELETE_ACTOR = { system: 'perma-delete-model' } as const;
 
 export const permaDeleteModelById = async ({
@@ -2644,13 +2637,6 @@ export const permaDeleteModelById = async ({
   // afterwards there is nothing left to read. The resolver is non-throwing, so a failure costs the
   // reindex, not the deletion.
   const collectionsToRebuild = await getCollectionIdsForModelCascade({ modelId: id });
-
-  // A hold is refused up front, so nothing goes; the model's DELETE checks again.
-  const [held] = await dbWrite.$queryRaw<{ held: boolean }[]>`
-    SELECT ${modelDataHeldSql(Prisma.sql`${id}::int`, true)} AS held
-  `.catch(holdUnconfirmed);
-  if (held?.held !== false)
-    throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
 
   // primary: these reads pick what the deletes below remove.
   const model = await dbWrite.model.findUnique({
@@ -2687,19 +2673,12 @@ export const permaDeleteModelById = async ({
   const [deletedModel] = await dbWrite.$queryRaw<
     { id: number; userId: number; nsfwLevel: number }[]
   >`
-    WITH ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
     DELETE FROM "Model" m
     WHERE m.id = ${id}
-      AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
     RETURNING m.id, m."userId", m."nsfwLevel"
-  `.catch(holdUnconfirmed);
-  if (!deletedModel) {
-    // Gone already, by a concurrent delete, is not a hold.
-    // primary: tells a delete that just missed from a hold.
-    const stillThere = await dbWrite.model.findUnique({ where: { id }, select: { id: true } });
-    if (!stillThere) throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-    throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
-  }
+  `;
+  // Gone already, by a concurrent delete.
+  if (!deletedModel) throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
 
   // Each step after the deletes is independently best-effort. The rows are
   // gone, so a downstream failure in bid cleanup or search-index
@@ -4037,9 +4016,6 @@ function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
   return rest;
 }
 
-export const removedWithOwnerEditError = () =>
-  throwAuthorizationError('You are not authorized to edit this model');
-
 const cannotPublishError = () =>
   throwBadRequestError('This model cannot be published due to moderation restrictions.');
 
@@ -4171,7 +4147,8 @@ async function assertScanRatingKept({
     sfwCoverImageId: after('sfwCoverImageId'),
   });
   if (after('nsfw')) return;
-  // A row already not mature (an older one): only removing the face that listed it.
+  // A row already not mature: a marked row (an older one) is refused only for removing the face that
+  // listed it.
   if (!before.nsfw && (held || faceAfter || !hasFace(before))) return;
   // A held verdict whose time cannot be read has no ruling to compare against: it holds.
   const ratedAt = markedAt ?? held?.at;
@@ -4320,11 +4297,15 @@ export const upsertModel = async (
   if (coverChanged) {
     if (!beforeUpdate || !id)
       throw throwBadRequestError('Covers can be picked once the model has published images.');
+    // Only the cover this save changes: an unchanged one may be a featured image a reader skips
+    // for now (waiting on a review, showcases paused), and must not refuse the rest of the edit.
+    const changed = (next: number | null | undefined, stored: number | null | undefined) =>
+      next !== undefined && next !== (stored ?? null) ? next : undefined;
     await assertCoverImagesValid({
       modelId: id,
       ownerId: beforeUpdate.userId,
-      coverImageId: data.coverImageId,
-      sfwCoverImageId: data.sfwCoverImageId,
+      coverImageId: changed(data.coverImageId, beforeUpdate.coverImageId),
+      sfwCoverImageId: changed(data.sfwCoverImageId, beforeUpdate.sfwCoverImageId),
     });
   }
 
@@ -4547,7 +4528,6 @@ export const upsertModel = async (
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
     if (!isOwner) return null;
-    if (!isModerator && isRemovedWithOwner(beforeUpdate.meta)) throw removedWithOwnerEditError();
 
     // Going public skips `publishPrivateModel`'s checks and going private skips the
     // `maxPrivateModels` cap, so availability only changes through those flows.
@@ -4587,7 +4567,6 @@ export const upsertModel = async (
         // since the read above, and a merge over that read would write it back.
         const locked = await lockModelRow(tx, id);
         const prevMeta = locked?.meta ?? null;
-        if (!isModerator && isRemovedWithOwner(prevMeta)) throw removedWithOwnerEditError();
         // Locks are enforced again against this locked row: the enforcement above read the row
         // before the transaction, and a lock set since then wins over the owner's value. The
         // profanity lock is built from this row too, so it keeps every lock the row has now.
@@ -4651,13 +4630,29 @@ export const upsertModel = async (
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
         // The cover gate compared against the first read; a cover written since then (the listing
         // re-check clearing it) would be overwritten without the gate running.
+        // The showcase writes both covers too, so either one changing since the first read conflicts.
         const lockedCover =
-          !isModerator && data.sfwCoverImageId !== undefined
-            ? await tx.model.findUnique({ where: { id }, select: { sfwCoverImageId: true } })
+          !isModerator && (data.sfwCoverImageId !== undefined || data.coverImageId !== undefined)
+            ? await tx.model.findUnique({
+                where: { id },
+                select: { sfwCoverImageId: true, coverImageId: true },
+              })
             : null;
-        if (lockedCover && lockedCover.sfwCoverImageId !== (beforeUpdate.sfwCoverImageId ?? null))
+        if (
+          lockedCover &&
+          data.sfwCoverImageId !== undefined &&
+          lockedCover.sfwCoverImageId !== (beforeUpdate.sfwCoverImageId ?? null)
+        )
           throw throwConflictError(
             'This model’s civitai.com card changed while you were editing. Reload and save again.'
+          );
+        if (
+          lockedCover &&
+          data.coverImageId !== undefined &&
+          lockedCover.coverImageId !== (beforeUpdate.coverImageId ?? null)
+        )
+          throw throwConflictError(
+            'This model’s cover changed while you were editing. Reload and save again.'
           );
         // A .com cover this save changed (through the gate, for an owner) ends the re-check's
         // removal, and so does turning the face off: there is no face left to have removed.
@@ -4892,8 +4887,7 @@ export const upsertModel = async (
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
-    // the old level listed, and even when a step before it throws.
+    // The owner's notice follows the level refresh, so a slow notice cannot keep the old level listed.
     try {
       // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
       // the gate ran: it read the description before blurb expansion, not the text stored.
@@ -4993,8 +4987,10 @@ export const upsertModel = async (
       tagsChanged: !!tagsOnModels,
     });
 
-    // The face and the .com cover feed the model's level, which decides whether .com lists it.
-    if (sfwFaceChanged || coverChanged) {
+    // The face, the .com cover and maturity feed the model's level, which decides whether .com
+    // lists it.
+    const maturityChanged = result.nsfw !== beforeUpdate.nsfw;
+    if (sfwFaceChanged || coverChanged || maturityChanged) {
       await updateModelNsfwLevels([result.id]);
       await bustPublicModelResponseCache(result.id);
     }
@@ -5277,7 +5273,6 @@ export const publishModelById = async ({
   meta,
   republishing,
   enforceModelRules,
-  refuseRemovedWithOwner,
 }: PublishModelSchema & {
   /**
    * The meta to write. A builder gets the stored meta as it is under the publish's lock; plain meta
@@ -5287,8 +5282,6 @@ export const publishModelById = async ({
   republishing?: boolean;
   /** Hold the model for review instead of publishing it when its text literally matches a Model rule. */
   enforceModelRules?: boolean;
-  /** Refuse a model a content wipe kept: only a moderator may publish it. */
-  refuseRemovedWithOwner?: boolean;
 }) => {
   // The literal-rules check below may write, so a blocked model is refused before it.
   const snapshot =
@@ -5297,9 +5290,6 @@ export const publishModelById = async ({
           ?.meta as ModelMeta | null)
       : meta;
   if (snapshot?.cannotPublish) throw cannotPublishError();
-  // Plain meta is the caller's, not the row's, so only a builder's snapshot says the model was kept.
-  if (refuseRemovedWithOwner && typeof meta === 'function' && isRemovedWithOwner(snapshot))
-    throw throwAuthorizationError('You are not authorized to publish this model');
   // Publish only touches this model's own versions; ids of versions on any other model are ignored.
   const ownVersions = requestedVersionIds?.length
     ? await dbWrite.modelVersion.findMany({
@@ -5345,8 +5335,6 @@ export const publishModelById = async ({
       // The caller read the meta before this: a wipe, a moderator or a scan may have written the
       // model since, and what they wrote must be refused on or kept, not written over.
       const stored = (await lockModelRow(tx, id))?.meta ?? null;
-      if (refuseRemovedWithOwner && isRemovedWithOwner(stored))
-        throw throwAuthorizationError('You are not authorized to publish this model');
       if (stored?.cannotPublish) throw cannotPublishError();
       const writtenMeta =
         typeof meta === 'function' ? meta(stored) : withStoredPublishKeys(meta ?? {}, stored);
@@ -5649,9 +5637,7 @@ export const unpublishModelById = async ({
       const updatedMeta = preserveModStatus
         ? meta
         : {
-            // A violation take-down of a model a content wipe hid ends the wipe's record: from here
-            // on it is an ordinary take-down, which a restore must not undo.
-            ...(reason ? withoutRemovedWithOwner(meta ?? {}) : meta),
+            ...meta,
             ...(reason
               ? {
                   unpublishedReason: reason,
@@ -6968,6 +6954,7 @@ export async function getModelsWithVersions({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
+  curate,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -6982,6 +6969,8 @@ export async function getModelsWithVersions({
   ownerUserId?: number;
   /** See `getModelsRaw`. */
   publicVersionsOnly?: boolean;
+  /** Puts each version's curated showcase in place of its default images. */
+  curate?: typeof withCuratedShowcases;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
@@ -6996,8 +6985,12 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
+  curate ??= (await import('~/server/services/version-showcase.service')).withCuratedShowcases;
   const images = await holdShowcaseImages(
-    await getImagesForModelVersionCache(modelVersionIds),
+    await curate(
+      await getImagesForModelVersionCache(modelVersionIds),
+      showcaseSiteForBrowsingLevel(input.browsingLevel ?? sfwBrowsingLevelsFlag)
+    ),
     new Map(
       items.flatMap((model) =>
         model.modelVersions.map(
@@ -7329,8 +7322,6 @@ export async function setModelShowcaseCollection({
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
-  if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
-
   // Add first so a refused add leaves the showcase unchanged.
   if (collectionId != null && !modelAlreadyInCollection)
     await addModelToShowcaseCollection({ modelId: id, collectionId, userId, isModerator });
@@ -7338,11 +7329,8 @@ export async function setModelShowcaseCollection({
   const updated = await updateModelById({
     id,
     data: {},
-    meta: (stored) => {
-      if (!isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
-      // A null collectionId clears the showcase.
-      return { ...stored, showcaseCollectionId: collectionId } as ModelMeta;
-    },
+    // A null collectionId clears the showcase.
+    meta: (stored) => ({ ...stored, showcaseCollectionId: collectionId } as ModelMeta),
   });
 
   await dataForModelsCache.refresh(updated.id);
@@ -7485,8 +7473,7 @@ export async function migrateResourceToCollection({
     },
     { timeout: 60000, maxWait: 10000 }
   );
-  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
-  // notice cannot keep the old level listed, and even when one of them throws.
+  // The owners' notices follow the level refresh, as in upsertModel.
   try {
     // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
     // each was given its version's stored level. Versions first: the model level reads them.
@@ -7777,7 +7764,7 @@ function assertPrivateFlowPublishable({
   isModerator?: boolean;
 }) {
   if (isModerator) return;
-  if (constants.modPublishOnlyStatuses.includes(status) || isRemovedWithOwner(meta))
+  if (constants.modPublishOnlyStatuses.includes(status))
     throw throwAuthorizationError('You are not authorized to publish this model');
   if ((meta as ModelMeta | null)?.cannotPublish)
     throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
@@ -7960,10 +7947,9 @@ export const privateModelFromTraining = async ({
                 ...(stripServerOwnedMeta(
                   stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
                 ) ?? {}),
-                // Only a moderator gets here with a wipe's record; their publish ends it.
                 ...(moderatorChangesNsfwLock
-                  ? withoutSystemNsfwLock(withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)))
-                  : withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta))),
+                  ? withoutSystemNsfwLock(pickServerOwnedMeta(storedMeta))
+                  : pickServerOwnedMeta(storedMeta)),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
                 ...intentMeta,
                 // Makes it so these models cannot go into auctions or be promoted
@@ -8201,9 +8187,8 @@ export const publishPrivateModel = async (
     // Back to what a moderator had set before the private cycle forced cannotPromote on.
     const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (current.meta ??
       {}) as ModelMeta & Record<string, unknown>;
-    // Only a moderator gets here with a wipe's record; their publish ends it.
     const publishedMeta = {
-      ...withoutRemovedWithOwner(storedMeta),
+      ...storedMeta,
       cannotPromote: restoreCannotPromote === true,
     };
     const stillPublished = await tx.$queryRaw<{ id: number }[]>`
@@ -8326,6 +8311,8 @@ export const publishPrivateModel = async (
       description: model.description,
       rules: false,
     }).catch(() => null);
+    // Every post on the versions, not only the owner's: all of them left Private above.
+    void queueLeftPrivateForKnights({ modelVersionIds: versionIds });
     const posts = await dbWrite.post.findMany({
       where: { modelVersionId: { in: versionIds }, userId: model.userId },
       select: { id: true },
@@ -8485,14 +8472,6 @@ export async function transferModelOwnership({
   const sourceUserIds = Array.from(new Set(models.map((m) => m.userId)));
   if (models.some((m) => m.userId === targetUserId))
     throw throwBadRequestError('One or more models already belong to the target user');
-
-  // Every hold is keyed on the owner, so moving a held owner's models, posts and images to another
-  // account would take them out of it. For a marker-held owner the database refuses the moves too.
-  await assertOwnersNotUnderLegalHold(sourceUserIds).catch((e: unknown) => {
-    if (e instanceof LegalHoldError)
-      throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
-    throw e;
-  });
 
   const affectedPosts = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT p.id

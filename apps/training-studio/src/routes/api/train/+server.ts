@@ -1,5 +1,6 @@
-import { error, json } from '@sveltejs/kit';
+import { error, isHttpError, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { logToAxiom } from '$lib/server/axiom';
 import { requireToken } from '$lib/server/token';
 import { submitTrainingBatch, type TrainingRunInput } from '$lib/server/train';
 import {
@@ -8,10 +9,31 @@ import {
   TrainingSubmitError,
   type SubmittedBatch,
 } from '$lib/train-core';
+import { DATASET_TOO_LARGE_MESSAGE } from '$lib/submit-limits';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
 import { isKohyaAllowed } from '$lib/server/flipt';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
+
+export const POST: RequestHandler = async (event) => {
+  try {
+    return await submit(event);
+  } catch (err) {
+    // A refusal's reason otherwise reaches only the browser.
+    if (isHttpError(err) && err.status >= 400 && err.status < 500) {
+      const body = err.body as { message: string; code?: string };
+      void logToAxiom({
+        name: 'training-studio-train-refused',
+        type: 'warning',
+        userId: event.locals.user?.id,
+        status: err.status,
+        message: body.message,
+        code: body.code,
+      });
+    }
+    throw err;
+  }
+};
 
 // Submit the real training workflow(s) — one per run — and return their ids. This spends Buzz, so it's
 // the single write in the whole flow. HTTP mapping over core.submitTrainingBatch: a batch refused by us or
@@ -20,13 +42,19 @@ import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processi
 // clears on its own, so the client offers a retry; a batch where nothing landed otherwise is a 502 (safe
 // to retry whole); a partial batch returns the landed ids and the failure's reason with 200, so the
 // client navigates to them instead of re-submitting — and re-charging — them.
-export const POST: RequestHandler = async ({ locals, request }) => {
+async function submit({ locals, request }: Parameters<RequestHandler>[0]) {
   const token = await requireToken(
     locals,
     'Training is unavailable right now — no orchestrator token.'
   );
 
-  const body = (await request.json().catch(() => null)) as { runs?: TrainingRunInput[] } | null;
+  let body: { runs?: TrainingRunInput[] } | null = null;
+  try {
+    body = (await request.json()) as { runs?: TrainingRunInput[] } | null;
+  } catch (err) {
+    // Over BODY_SIZE_LIMIT the server errors the body, and an empty batch would be the wrong reason.
+    if ((err as { status?: number } | null)?.status === 413) error(413, DATASET_TOO_LARGE_MESSAGE);
+  }
   const runs = body?.runs;
   // A continuation starts only through /api/continue-training, which checks its source run.
   if (Array.isArray(runs) && runs.some((r) => r && typeof r === 'object' && 'continueFrom' in r))
@@ -62,4 +90,4 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   }
 
   return json({ ...batch, requested: runs?.length ?? 0 });
-};
+}

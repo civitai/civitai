@@ -25,7 +25,6 @@ import { imageRouter } from '../image.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const OWNER = 10;
-const HELD_OWNER = 11;
 const OTHER = 12;
 const FILED_ON_OWNER = 13;
 
@@ -53,24 +52,17 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text, "needsReview" text);
-    -- Stand in for the hold-marker view and its kept-image record.
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     INSERT INTO "Image" VALUES
       (1, ${OWNER}, 'moderated', NULL),     -- ordinary moderator block
-      (2, ${OWNER}, 'moderated', NULL),     -- kept by a hold
-      (3, ${HELD_OWNER}, 'moderated', NULL),-- owner under a hold marker
       (4, ${OWNER}, 'moderated', 'appeal'), -- already under appeal
       (5, ${OWNER}, 'AiNotVerified', NULL), -- not a moderator block
       (6, ${OWNER}, 'moderated', NULL),     -- named in a CSAM report
       (7, ${FILED_ON_OWNER}, 'moderated', NULL); -- owner a CSAM report is filed on
     INSERT INTO "CsamReport" (images) VALUES ('[{"id": 6}]');
     INSERT INTO "CsamReport" ("userId") VALUES (${FILED_ON_OWNER});
-    INSERT INTO "EvidenceHoldImage" VALUES (2, ${OWNER});
-    INSERT INTO "EvidenceHeldUser" VALUES (${HELD_OWNER});
   `);
 });
 
@@ -93,27 +85,14 @@ describe('image.getAppealState', () => {
   });
 
   it.each([
-    ['an image a hold kept', OWNER, 2],
     ['an image a CSAM report names', OWNER, 6],
     ['an image of an owner a CSAM report is filed on', FILED_ON_OWNER, 7],
-    ['an image of an owner under a hold marker', HELD_OWNER, 3],
     ['an image already under appeal', OWNER, 4],
     ['an image not blocked by a moderator', OWNER, 5],
     ['another user’s appealable image', OTHER, 1],
     ['an image that does not exist', OWNER, 99],
   ])('refuses %s', async (_, userId, id) => {
     await expect(callerFor({ id: userId }).getAppealState({ id })).resolves.toStrictEqual({
-      canAppeal: false,
-    });
-  });
-
-  it('refuses when the hold tables cannot be read', async () => {
-    dbMock.dbWrite.$queryRaw
-      .mockImplementationOnce((async () => [
-        { blockedFor: 'moderated', needsReview: null },
-      ]) as never)
-      .mockImplementationOnce((async () => []) as never);
-    await expect(callerFor({ id: OWNER }).getAppealState({ id: 1 })).resolves.toStrictEqual({
       canAppeal: false,
     });
   });
@@ -127,5 +106,85 @@ describe('image.getAppealState', () => {
     await expect(callerFor(undefined).getAppealState({ id: 1 })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+  });
+});
+
+describe('image.rescan', () => {
+  const db2 = { db: null as unknown as PGlite };
+  const sent: number[] = [];
+
+  beforeAll(async () => {
+    db2.db = new PGlite();
+    await db2.db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
+    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, ingestion "ImageIngestionStatus", "blockedFor" text,
+      "nsfwLevel" int NOT NULL DEFAULT 0, "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "needsReview" text,
+      minor boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb, url text, type text NOT NULL DEFAULT 'image',
+      width int, height int, meta jsonb, "scanRequestedAt" timestamp(3));
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3), "archivedAt" timestamp(3));
+    CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+    INSERT INTO "User" (id) VALUES (20), (22);`);
+  });
+
+  beforeEach(async () => {
+    await db2.db.exec(`
+    TRUNCATE "Image";
+    INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", minor, url) VALUES
+      (101, 20, 'Blocked', 'moderated', 32, false, 'https://example.invalid/101.jpeg'),
+      (102, 20, 'Blocked', 'moderated', 32, true, 'https://example.invalid/102.jpeg'),
+      (103, 22, 'Blocked', 'CSAM', 32, false, 'https://example.invalid/103.jpeg');`);
+    sent.length = 0;
+    const run = async (strings: TemplateStringsArray, values: unknown[]) => {
+      const flat = Prisma.sql(strings, ...(values as never[]));
+      const at = /WHERE id = \$(\d+)/.exec(flat.text);
+      // The refused submit's own write: recorded, not applied.
+      if (flat.text.includes('"scanRequestedAt" =') && at) {
+        sent.push(flat.values[Number(at[1]) - 1] as number);
+        return { rows: [], affectedRows: 1 };
+      }
+      return db2.db.query(flat.text, flat.values as unknown[]);
+    };
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        (await run(strings, values)).rows) as never
+    );
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        (await run(strings, values)).affectedRows ?? 0) as never
+    );
+  });
+
+  const ingestion = async (id: number) =>
+    (
+      await db2.db.query<{ ingestion: string; blockedFor: string | null }>(
+        'SELECT ingestion, "blockedFor" FROM "Image" WHERE id = $1',
+        [id]
+      )
+    ).rows[0];
+  const moderator = () => callerFor({ id: 1, isModerator: true } as { id: number });
+
+  it('case 1', async () => {
+    await moderator().rescan({ id: 101 });
+    expect(await ingestion(101)).toEqual({ ingestion: 'Rescan', blockedFor: 'moderated' });
+    expect(sent).toEqual([101]);
+  });
+
+  it.each([
+    ['1', 102],
+    ['2', 103],
+  ])('case 2.%s', async (_label, id) => {
+    await moderator().rescan({ id });
+    expect((await ingestion(id)).ingestion).toBe('Blocked');
+    expect(sent).toEqual([id]);
+  });
+
+  it('case 3', async () => {
+    await expect(callerFor({ id: 20 }).rescan({ id: 101 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect((await ingestion(101)).ingestion).toBe('Blocked');
   });
 });

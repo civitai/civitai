@@ -33,6 +33,11 @@ import {
   refundBannedEntrantReviews,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import {
+  getDailyPlanFlags,
+  resolveDailyPlan,
+  type DailyPlanFlags,
+} from '~/server/games/daily-challenge/daily-plan';
 import { getIncompatibleEntryImageIds } from '~/server/games/daily-challenge/challenge-resource-compat';
 import {
   buildJudgingEngineContext,
@@ -80,10 +85,8 @@ import {
   FIXED_JUDGING_CATEGORIES,
   normalizeJudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge-scoring';
-import {
-  getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { usesNsfwRubrics } from '~/server/services/challenge-category.service';
 import {
   DEFAULT_REVIEW_MODEL,
   REVIEW_FALLBACK_MODEL,
@@ -95,7 +98,17 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { reviewWithFallback } from '~/server/games/daily-challenge/review-fallback';
-import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
+import {
+  reviewWithShadow,
+  shadowCreatorLabel,
+  shadowFor,
+} from '~/server/games/daily-challenge/review-shadow';
+import type { OpenRouterProvider } from '~/server/services/ai/openrouter';
+import {
+  getRecentWinnerIdeas,
+  hasFreshnessCategory,
+  SOLE_WINNER_REASON,
+} from '~/server/games/daily-challenge/recent-winners';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeCompleted,
@@ -161,6 +174,8 @@ async function getJudgingConfigForChallenge(
 // ----------------------------------------------
 type ChallengeCreationContext = {
   config: ChallengeConfig;
+  /** Read once per batch so one batch never mixes two flag states. */
+  planFlags: DailyPlanFlags;
   judgingConfig: JudgingConfig;
   sourceCollectionId: number;
   availableUsers: { userId: number }[];
@@ -237,6 +252,7 @@ async function preComputeContext(): Promise<ChallengeCreationContext> {
 
   return {
     config,
+    planFlags: await getDailyPlanFlags(),
     judgingConfig,
     sourceCollectionId,
     availableUsers,
@@ -247,6 +263,24 @@ async function preComputeContext(): Promise<ChallengeCreationContext> {
       entryPrizeRequirement: config.entryPrizeRequirement,
     },
   };
+}
+
+/** The featured model as the content steps describe it: name, creator, description. */
+export async function getChallengeResource(
+  modelId: number
+): Promise<SelectedResource | undefined> {
+  const [resource] = await dbRead.$queryRaw<SelectedResource[]>`
+    SELECT
+      m.id as "modelId",
+      u."username" as creator,
+      m.name as title,
+      m.description
+    FROM "Model" m
+    JOIN "User" u ON u.id = m."userId"
+    WHERE m.id = ${modelId}
+    LIMIT 1
+  `;
+  return resource;
 }
 
 // Select a resource for a specific date, respecting cooldowns + batch exclusions
@@ -295,17 +329,7 @@ async function selectResourceForDate(
     if (!resourceIds.length) continue;
 
     const randomResourceId = getRandom(resourceIds);
-    [resource] = await dbRead.$queryRaw<SelectedResource[]>`
-      SELECT
-        m.id as "modelId",
-        u."username" as creator,
-        m.name as title,
-        m.description
-      FROM "Model" m
-      JOIN "User" u ON u.id = m."userId"
-      WHERE m.id = ${randomResourceId.id}
-      LIMIT 1
-    `;
+    resource = await getChallengeResource(randomResourceId.id);
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
@@ -343,8 +367,13 @@ async function createChallengeFromSelection(
 ): Promise<number> {
   const { resource, image, showcaseImages, challengeDate, modelVersionIds, resourceUserId } =
     selection;
-  const { judgingConfig, config, prizeConfig } = ctx;
+  const { config, prizeConfig } = ctx;
   const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+  const plan = await resolveDailyPlan(challengeDate, {
+    defaultJudge: ctx.judgingConfig,
+    flags: ctx.planFlags,
+  });
+  const { judgingConfig } = plan;
 
   // Sequenced before the article on purpose: the article's theme and themeElements ARE the judge's
   // scoring anchor, and this is the only step that knows what the resource depicts.
@@ -362,6 +391,7 @@ async function createChallengeFromSelection(
     generateArticle({
       resource,
       resourceConcept,
+      occasion: plan.occasion,
       image,
       challengeDate: endsAt,
       allowedNsfwLevel: sfwBrowsingLevelsFlag,
@@ -428,13 +458,15 @@ async function createChallengeFromSelection(
     createdById: judgingConfig.userId,
     source: ChallengeSource.System,
     status: ChallengeStatus.Scheduled,
-    judgeId: config.defaultJudgeId,
+    judgeId: plan.judgeId,
+    judgingCategories: plan.judgingCategories,
     metadata: {
       challengeType: config.challengeType,
       resourceUserId,
       resourceModelId: resource.modelId,
       themeElements: challengeContent.themeElements,
       resourceConcept,
+      ...(plan.record ? { dailyPlan: plan.record } : {}),
     },
   });
 
@@ -742,6 +774,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     challengeRecord?.judgingCategories
   );
   const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+  const recentWinnerIdeas =
+    challengeRecord?.source === ChallengeSource.System && hasFreshnessCategory(userCategories)
+      ? await getRecentWinnerIdeas(currentChallenge.challengeId, {
+          sfwOnly: !usesNsfwRubrics(allowedNsfwLevel),
+        }).catch((e) => {
+          log('Recent winner ideas unavailable:', (e as Error).message);
+          return undefined;
+        })
+      : undefined;
 
   const judgingEngine = await resolveJudgingEngine(challengeRecord?.judgingEngine);
   const engineContext = buildJudgingEngineContext({
@@ -968,7 +1009,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."userId",
       u."username",
       i."url",
-      i."nsfwLevel"
+      i."nsfwLevel",
+      i."ingestion",
+      i."blockedFor",
+      i."needsReview"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1017,7 +1061,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."userId",
       u."username",
       i."url",
-      i."nsfwLevel"
+      i."nsfwLevel",
+      i."ingestion",
+      i."blockedFor",
+      i."needsReview"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1038,7 +1085,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           i."userId",
           u."username",
           i."url",
-          i."nsfwLevel"
+          i."nsfwLevel",
+          i."ingestion",
+          i."blockedFor",
+          i."needsReview"
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "User" u ON u.id = i."userId"
@@ -1102,12 +1152,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         imageId: entry.imageId,
         nsfwLevel: entry.nsfwLevel,
       };
-      const runReview = (model?: string) =>
+      const runReview = (model?: string, provider?: OpenRouterProvider, forShadow = false) =>
         generateReview({
           theme: currentChallenge.theme,
           themeElements,
           resourceConcept,
-          creator: entry.username,
+          creator: forShadow ? shadowCreatorLabel(entry.imageId) : entry.username,
           imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
           config: judgingConfig,
           categories: userCategories?.map((c) => ({
@@ -1115,15 +1165,22 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
             name: c.label,
             criteria: c.criteria,
           })),
-          nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+          nsfw: usesNsfwRubrics(allowedNsfwLevel),
+          // Judge-written reasons can name other entrants; the shadow gets no usernames.
+          recentWinnerIdeas: forShadow ? undefined : recentWinnerIdeas,
           model,
+          provider,
         });
       const review = await reviewWithShadow({
-        shadow: config.reviewShadow,
+        shadow: shadowFor(config.reviewShadow, {
+          source: challengeRecord?.source,
+          allowedNsfwLevel,
+          entry,
+        }),
         context: reviewContext,
-        run: (model) =>
+        run: (model, provider) =>
           model
-            ? runReview(model)
+            ? runReview(model, provider, true)
             : reviewWithFallback({
                 run: runReview,
                 fallbackModel: REVIEW_FALLBACK_MODEL,
@@ -1793,7 +1850,7 @@ export async function pickWinnersForChallenge(
         });
 
         const prize = currentChallenge.prizes[0]?.buzz ?? 0;
-        const soleWinnerReason = 'Sole eligible entrant';
+        const soleWinnerReason = SOLE_WINNER_REASON;
         winningEntries = [
           {
             userId: soleEntry.userId,

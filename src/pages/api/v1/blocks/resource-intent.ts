@@ -14,6 +14,7 @@ import { checkBlockLLMRateLimit } from '~/server/utils/block-catalog-rate-limit'
 import { resolveCatalogViewerMaturity } from '~/server/utils/block-catalog-viewer-level';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * POST /api/v1/blocks/resource-intent — prompt → intent + criteria → civitai
@@ -108,8 +109,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       endpoint: 'resource_intent',
       retryAfterSeconds: rateLimit.retryAfterSeconds,
     });
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.llm', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 

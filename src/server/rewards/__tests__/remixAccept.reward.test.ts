@@ -25,10 +25,10 @@ const { createBuzzTransactionMany, getMultipliersForUser } = h;
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (...args: unknown[]) => h.insert(...args) },
 }));
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: h.createBuzzTransactionMany,
-  getMultipliersForUser: h.getMultipliersForUser,
   getTransactionByExternalId: vi.fn(async () => null),
+  getMultipliersForUser: h.getMultipliersForUser,
 }));
 
 import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';

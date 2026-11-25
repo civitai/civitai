@@ -1,3 +1,5 @@
+import { encodeSignals, PRESS_FIELDS, type PressSignals } from '$lib/press';
+
 /** What the page shows for one thing to judge: the question, the sealed item, and a banner when the question changed, and the category of a yes/no question. */
 export type PickedItem = {
   question: {
@@ -260,6 +262,27 @@ export function createSerialQueue() {
   };
 }
 
+export type PressClock = { wall: () => number; mono: () => number };
+const systemClock: PressClock = { wall: () => Date.now(), mono: () => performance.now() };
+
+/**
+ * Stamps a vote body with the press fields. `waitedMs` uses the monotonic clock, so unlike the wall-clock gap the server
+ * works out it has no skew in it; the returned call sets it once, at the first start of the post (a resend keeps it).
+ */
+export function markPress(
+  body: FormData,
+  signals: PressSignals,
+  clock: PressClock = systemClock
+): () => void {
+  const pressed = clock.mono();
+  body.set(PRESS_FIELDS.pressedAt, String(clock.wall()));
+  body.set(PRESS_FIELDS.signals, encodeSignals(signals));
+  return () => {
+    if (body.has(PRESS_FIELDS.waitedMs)) return;
+    body.set(PRESS_FIELDS.waitedMs, String(Math.max(0, Math.round(clock.mono() - pressed))));
+  };
+}
+
 /** A post that has had no answer by then is given up on, so one hung request cannot hold up the votes queued behind it. */
 export const POST_TIMEOUT_MS = 15_000;
 
@@ -273,6 +296,8 @@ export type PostVoteDeps = {
   /** Posts the vote once. `reached` is true only for an answer that was read in full; an abort or a lost connection is not. */
   send: VoteSend;
   wait: (ms: number) => Promise<void>;
+  /** When the vote leaves the queue and its first post starts. */
+  onStart?: () => void;
   /** A vote that came back as anything but recorded: the notice, and whether the page must be read again. */
   onFailure: (outcome: Extract<VoteOutcome, { ok: false }>) => void;
   /** A recorded vote, with what the action returned (a skill check graded on the spot carries `check`). */
@@ -295,7 +320,10 @@ export async function postVote(key: string, deps: PostVoteDeps): Promise<void> {
     reached = sent.reached;
     return sent.result;
   };
-  const result = await queue.add(() => sendWithRetry(attempt, wait, deps.retryDelays));
+  const result = await queue.add(() => {
+    deps.onStart?.();
+    return sendWithRetry(attempt, wait, deps.retryDelays);
+  });
   const outcome = describeOutcome(result);
   tracker.settle(key);
   if (!reached || isBusy(result)) tracker.release(key);

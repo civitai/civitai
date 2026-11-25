@@ -41,10 +41,10 @@ export interface StudioElementHost {
   checkTrainingText?(
     input: TrainingTextCheckInput
   ): Promise<{ ok: true } | { ok: false; error: string }>;
-  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
-   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
-   *  its stored modelId unchecked. */
-  modelLive?(modelId: number): Promise<boolean>;
+  /** Whether the run's model (and, when given, the run's version on it) still counts for this user
+   *  (not missing, not deleted by its owner), answered by the host's server; it should settle (time
+   *  out) on its own. Omit and a run links its stored modelId unchecked. */
+  modelLive?(modelId: number, modelVersionId?: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available, moderator message, blocked models). Omit (or
@@ -86,6 +86,9 @@ export interface StudioElementHost {
     supportUrl?: string;
     /** The host's dataset storage policy, linked beside the dataset-sharing choice. */
     dataPolicyUrl?: string;
+    /** The signed-in user's id. Keys the New training flow's browser-local autosave; omit and
+     *  nothing is autosaved. */
+    userId?: number;
     /** The per-model catalog gates (`ModelCard.flagKey`) this user may see, plus `KOHYA_FLAG_KEY`
      *  when they may train with Kohya — the embed's stand-in for the shell's server-side
      *  `allowedModelFlags`. Omitted => every gated model, and Kohya, stays hidden. */
@@ -103,6 +106,9 @@ export interface StudioElementHost {
   /** URL for the main app's publish-from-workflow entry (draft model + wizard) for a run's
    *  checkpoint; omit to hide the Publish affordance. Relative = same-tab, absolute = new tab. */
   publishUrl?(req: PublishRequest): string;
+  /** The same entry, adding the run as a new version of one of the owner's models; omit to offer
+   *  only the new-model Publish. */
+  publishVersionUrl?(req: PublishRequest): string;
   /** URL for the run's model page — draft or published (runs carry a modelId once a draft
    *  exists); omit to hide the "view model" affordance. Relative = same-tab, absolute = new tab. */
   modelPageUrl?(req: ModelPageRequest): string;
@@ -173,7 +179,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       }),
 
     // No hook: the stored link stands unchecked.
-    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
+    modelLive: (modelId, modelVersionId) =>
+      host.modelLive ? host.modelLive(modelId, modelVersionId) : Promise.resolve(true),
 
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 
@@ -185,7 +192,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         );
         if (res.status === 401) throw new UnauthorizedError(`Dataset image unavailable (401)`);
         if (!res.ok) throw new Error(`Dataset image unavailable (${res.status})`);
-        return res.blob();
+        // The orchestrator's CORS exposes X-NSFW-Level.
+        return { blob: await res.blob(), nsfwLevel: res.headers.get('x-nsfw-level') ?? undefined };
       }),
 
     listGenerations: (media) => call((client) => orch.listGenerations(client, media)),

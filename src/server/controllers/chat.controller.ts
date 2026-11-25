@@ -538,6 +538,7 @@ export const modifyUserHandler = async ({
         status: true,
         leftAt: true,
         isOwner: true,
+        filteredAt: true,
         user: {
           select: {
             username: true,
@@ -634,9 +635,19 @@ export const modifyUserHandler = async ({
 
     // TODO if a moderator rejoins, auto-rejoin other users
 
-    // Already there (a stale tab, a double click): nothing to write. Rewriting
-    // kickedAt or leftAt would also move the point a member's reads stop at.
+    // Already there (a stale tab, a double click): nothing to write but the accept
+    // below. Rewriting kickedAt or leftAt would move the point a member's reads stop at.
     if (status === existing.status) {
+      // Joined but filtered: a message after they deleted the chat put it back in
+      // Requests, and accepting it is this Join.
+      if (status === ChatMemberStatus.Joined && existing.filteredAt) {
+        const { count } = await dbWrite.chatMember.updateMany({
+          where: { id: chatMemberId, status: ChatMemberStatus.Joined },
+          data: { filteredAt: null },
+        });
+        if (count === 0) throw throwConflictError('This membership changed; reload and try again.');
+        await signalChatMembersUpdated({ chatId: existing.chat.id, userIds: [existing.userId] });
+      }
       // primary: the row this request is about, read back as it stands
       return await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
     }

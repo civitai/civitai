@@ -51,7 +51,7 @@ func cacheState(r *testkit.Redis) map[string]string {
 type goldenProbeCase struct {
 	dir, procedure string
 	min            int
-	setup          func(*testing.T, *goldenFixture) *goldenEnv
+	setup          func(testing.TB, *goldenFixture) *goldenEnv
 	serve          func(*Server, context.Context, *http.Request) (*computed, error)
 	request        func(context.Context, ShadowRequest) (*http.Request, error)
 	// required: the caches the emptied-cache comparison must reach as would_miss.
@@ -72,6 +72,33 @@ var goldenProbeCases = []goldenProbeCase{
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
 		[]string{hydrate.CacheUserCosmetics}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
 			CacheOfficialModels}, false},
+	// GET /api/v1/images: the probe runs the public route's compute (a session is handed back there),
+	// under hydrate.WithPresence as model.getAll's does. The golden server reads no ClickHouse and no
+	// image-resource-use-write flag, so a cold metric hash or image-resources entry falls back.
+	{"v1-images", ProbeV1Images, goldenMinV1, goldenSetup,
+		func(s *Server, ctx context.Context, r *http.Request) (*computed, error) {
+			return s.v1ImagesCompute(true)(ctx, r)
+		},
+		SyntheticV1Request, []string{hydrate.CacheMetrics, CacheImageResources}, nil, false},
+}
+
+// goldenShadowRequest is the sample a Node sampler sends for fx: its REST query and path for a REST
+// fixture (one with a path), else its tRPC input.
+func goldenShadowRequest(fx *goldenFixture, headers map[string]string) ShadowRequest {
+	if fx.Request.Path != "" {
+		return ShadowRequest{Input: fx.Request.Query, Path: fx.Request.Path, Headers: headers}
+	}
+	return ShadowRequest{Input: fx.Request.Input, Headers: headers}
+}
+
+// goldenServeFallback is the reason the public route falls back on fx with ("" = served): the
+// fixture's own (the shadow's), except that the public images route hands a signed-in request back
+// before computing it (v1ImagesServeOnly).
+func goldenServeFallback(gc goldenProbeCase, fx *goldenFixture) string {
+	if gc.procedure == ProbeV1Images && fx.Request.Session != nil {
+		return "v1-images-session-cookie"
+	}
+	return fx.Expect.Fallback
 }
 
 // The registry holds exactly the procedures the golden cases cover (a new registration needs its
@@ -100,7 +127,8 @@ func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure s
 		t.Fatal("the golden hydrator has no presence check")
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker}
-	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: fx.Request.Input, Headers: env.headers}, rec)
+	sr := goldenShadowRequest(fx, env.headers)
+	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: sr.Input, Path: sr.Path, Headers: sr.Headers}, rec)
 	result, missed := classifyProbe(err, rec.Misses(), rec.Raced(), checker.MissReason)
 	return result, missed, err
 }
@@ -125,7 +153,7 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 	expected := map[string]bool{}
 	for _, path := range goldenFiles(t, gc.dir, gc.min) {
 		fx := goldenLoad(t, path)
-		switch want := fx.Expect.Fallback; {
+		switch want := goldenServeFallback(gc, fx); {
 		case want == "":
 			expected[ProbeWouldServe] = true
 		case missReasonCache(want) != "":
@@ -142,7 +170,7 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 				t.Fatalf("the probe wrote to the cache:\n before %v\n after  %v", before, after)
 			}
 			seen[result]++
-			want := fx.Expect.Fallback
+			want := goldenServeFallback(gc, fx)
 			switch c := missReasonCache(want); {
 			case want == "":
 				if result != ProbeWouldServe {
@@ -234,6 +262,10 @@ func goldenKeyCache(key string) string {
 		return CacheModelDecorations
 	case hydrate.KeyVersionImages:
 		return CacheVersionImages
+	case hydrate.KeyImageResources:
+		return CacheImageResources
+	case hydrate.KeyImageMeta:
+		return CacheImageMeta
 	}
 	for _, c := range hydrate.PageCaches {
 		if c.Key == m[1] {
@@ -259,7 +291,7 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 	serveCompared := map[string]int{}
 	for _, path := range goldenFiles(t, gc.dir, gc.min) {
 		fx := goldenLoad(t, path)
-		if fx.Expect.Fallback != "" {
+		if goldenServeFallback(gc, fx) != "" {
 			continue
 		}
 		byCache := map[string][]string{}
@@ -281,7 +313,7 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 					}
 				}
 				served := gc.setup(t, &cold)
-				r, err := gc.request(context.Background(), ShadowRequest{Input: cold.Request.Input, Headers: served.headers})
+				r, err := gc.request(context.Background(), goldenShadowRequest(&cold, served.headers))
 				if err != nil {
 					t.Fatal(err)
 				}

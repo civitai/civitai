@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * Handler-level coverage for POST /api/v1/blocks/dev-token — the dev/preview
@@ -133,9 +134,17 @@ vi.mock('~/env/server', () => ({
   env: { BLOCK_TOKEN_PRIVATE_KEY: 'priv', BLOCK_TOKEN_PUBLIC_KEY: 'pub' },
 }));
 
+const { mockFliptVariant } = vi.hoisted(() => ({
+  mockFliptVariant: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten' },
+  getFliptVariant: mockFliptVariant,
+}));
+
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, TokenScopePresets } from '~/shared/constants/token-scope.constants';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockAppBlockFindUnique = dbMock.dbWrite.appBlock.findUnique;
@@ -521,6 +530,19 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    // An abuse limit: the house meta names it and the wait, and carries no counts (the
+    // route's own top-level fields are kept as it always sent them).
+    expect(res._getJSONData()).toMatchObject({
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: { retryAfterSeconds: 60, id: 'apps.dev-token', kind: 'abuse' },
+    });
+    expect(Object.keys((res._getJSONData() as { rateLimit: object }).rateLimit).sort()).toEqual([
+      'id',
+      'kind',
+      'retryAfterSeconds',
+      'retryAt',
+    ]);
     expect(mockSign).not.toHaveBeenCalled();
   });
 
@@ -2020,5 +2042,120 @@ describe('POST /api/v1/blocks/dev-token', () => {
         expect(local.spendGrantBasis).toBe('explicit');
       });
     });
+  });
+});
+
+describe('POST /api/v1/blocks/dev-token under bearer-scope-tighten', () => {
+  beforeEach(() => {
+    mockFliptVariant.mockReset();
+  });
+
+  // The preset the CLI's dev:live setup link creates: UserRead | AIServicesWrite |
+  // AIServicesRead | BuzzRead, with no ModelsRead.
+  const AI_SERVICES_KEY_SESSION = {
+    ...MOD_SESSION,
+    apiKeyType: 'User',
+    tokenScope: TokenScopePresets.AIServices,
+  };
+  const READONLY_KEY_SESSION = { ...READONLY_MOD_SESSION, apiKeyType: 'User' };
+  const FULL_KEY_SESSION = { ...MOD_SESSION, apiKeyType: 'User' };
+
+  function noApprovedRow() {
+    mockAppBlockFindUnique.mockResolvedValueOnce(null);
+  }
+
+  it('enforce: 403s a personal key with neither Full nor AIServicesWrite', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(READONLY_KEY_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it('log: the same key still mints, and the shortfall is logged', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    mockGetSession.mockResolvedValueOnce(READONLY_KEY_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({
+          mode: 'log',
+          route: '/api/v1/blocks/dev-token',
+          credentialKind: 'apiKey',
+        }),
+      })
+    );
+  });
+
+  it('enforce: an AI Services key mints, granting only the block scopes its bits hold (approved app)', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(AI_SERVICES_KEY_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    // models:read:self needs ModelsRead, which the preset lacks; storage carries no OAuth bit.
+    expect(mockSign.mock.calls[0][0].scopes).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:read',
+      'user:read:self',
+    ]);
+  });
+
+  it('log: an AI Services key keeps every scope it was granted before', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    mockGetSession.mockResolvedValueOnce(AI_SERVICES_KEY_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).toContain('models:read:self');
+  });
+
+  it('enforce: an AI Services key is held to its bits on the pending path', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(AI_SERVICES_KEY_SESSION);
+    noApprovedRow();
+    mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+    const { req, res } = authPost({ slug: 'my-pending-app' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).not.toContain('models:read:self');
+    expect(mockSign.mock.calls[0][0].scopes).toContain('apps:storage:read');
+  });
+
+  it('enforce: an AI Services key is held to its bits on the no-row path', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(AI_SERVICES_KEY_SESSION);
+    noApprovedRow();
+    mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+    const { req, res } = authPost({
+      slug: 'brand-new-app',
+      scopes: ['models:read:self', 'posts:write:self', 'user:read:self'],
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).toEqual(['user:read:self']);
+  });
+
+  it('enforce: a Full Access key keeps the full grant without reading the flag', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(FULL_KEY_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).toContain('models:read:self');
+    expect(mockFliptVariant).not.toHaveBeenCalled();
+  });
+
+  it('enforce: an OAuth token carrying AppBlocksSubmit mints as before', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_NOSPEND_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).toContain('models:read:self');
   });
 });

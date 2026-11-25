@@ -1,3 +1,4 @@
+import { readWithoutJit } from '@civitai/db/knights';
 import { createHash } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { utc } from '@civitai/db/kysely';
@@ -197,27 +198,29 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
     const stages = stagesWorkedBy(rank);
     // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
-    const rows = await recipients(db, 'new-images', day)
-      .select('pl.userId')
-      .where('pl.rankType', '=', rank)
-      // Daily for players who voted recently; others at most once per window, to bring them back.
-      .where(
-        sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
+    const rows = await readWithoutJit(db, (trx) =>
+      recipients(trx, 'new-images', day)
+        .select('pl.userId')
+        .where('pl.rankType', '=', rank)
+        // Daily for players who voted recently; others at most once per window, to bring them back.
+        .where(
+          sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
           or not exists (select 1 from "KnightsNotificationSend" s where s."playerId" = pl."userId" and s."kind" = 'new-images' and s."day" > ${lastNudgeAfter}))`
-      )
-      .where((eb) =>
-        eb.exists(
-          servableItems(db)
-            .select(sql<number>`1`.as('one'))
-            .where('i.minRank', 'in', stages)
-            .where(sql<boolean>`img."userId" is distinct from pl."userId"`)
-            .where(
-              // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
-              sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`
-            )
         )
-      )
-      .execute();
+        .where((eb) =>
+          eb.exists(
+            servableItems(db)
+              .select(sql<number>`1`.as('one'))
+              .where('i.minRank', 'in', stages)
+              .where(sql<boolean>`img."userId" is distinct from pl."userId"`)
+              .where(
+                // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
+                sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`
+              )
+          )
+        )
+        .execute()
+    );
     found.push(...rows.map((r) => r.userId));
   }
   return found;

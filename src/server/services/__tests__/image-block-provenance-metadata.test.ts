@@ -215,6 +215,27 @@ describe('createImage', () => {
     expect(createdMetadata()).toEqual(UNRELATED);
   });
 
+  it('drops a client account-deletion prior state, which an account restore writes back', async () => {
+    const forged = {
+      accountDeletionPriorIngestion: 'Scanned',
+      accountDeletionPriorBlockedFor: null,
+      accountDeletionPriorNeedsReview: 'minor',
+      accountDeletionPriorNsfwLevel: 1,
+      accountDeletionPriorNsfwLevelLocked: true,
+    };
+    const parsed = imageSchema.parse({ url: KEY, metadata: { size: 1, ...forged } });
+    expect(parsed.metadata).toEqual({ size: 1 });
+
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, ...forged },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+  });
+
   it('leaves metadata absent when neither is given', async () => {
     await createImage({ url: KEY, userId: 1, type: 'image', skipIngestion: true } as never);
 

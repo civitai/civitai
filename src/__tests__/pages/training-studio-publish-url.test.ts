@@ -28,6 +28,8 @@ describe('the Training Studio publish link', () => {
     ['nothing ticked', { ownRights: false, shareDataset: false }],
     ['share without the rights', { ownRights: false, shareDataset: true }],
     ['no choice given', {}],
+    ['as a new version', { asVersion: true }],
+    ['as a new version, shared', { asVersion: true, ownRights: true, shareDataset: true }],
   ])('is the same from both hosts: %s', (_, choice) => {
     const req = { workflowId: 'wf-1', epoch: 3, ...choice };
     expect(studioPublishUrl(req)).toBe(studioLink(req));
@@ -43,6 +45,13 @@ describe('the Training Studio publish link', () => {
       ownRights: false,
       shareDataset: false,
     });
+  });
+
+  it('asks the publish entry for the model picker only when adding as a new version', () => {
+    const req = { workflowId: 'wf-1', epoch: 3 };
+    const target = (link: string) => new URL(link, 'https://x.test').searchParams.get('target');
+    expect(target(studioPublishUrl({ ...req, asVersion: true }))).toBe('existing');
+    expect(target(studioPublishUrl(req))).toBeNull();
   });
 
   it('reopening Publish with the boxes untouched carries no choice, so a stored share stays', () => {

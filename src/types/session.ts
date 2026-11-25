@@ -48,6 +48,8 @@ export interface SessionUser {
    * which the `app-builder-approved` Flipt segment matches.
    */
   appBuilderApproved?: boolean;
+  /** The account is memorialized; set by the auth hub's session producer. */
+  memorialized?: true;
   banDetails?: ReturnType<typeof getUserBanDetails>;
   deletedAt?: Date;
   subscriptions?: UserSubscriptionsByBuzzType; // multi-subscription support per buzzType

@@ -861,6 +861,24 @@ export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): bigint
 }
 
 /**
+ * Bits an operator grants an app-block OauthClient by hand that no manifest scope maps to, so
+ * `deriveOauthBitmaskFromBlockScopes` can never produce them. `AppDataRead` is the one the auth
+ * hub's block exchange requires of the app.
+ */
+export const OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS = TokenScope.AppDataRead;
+
+/**
+ * The `allowedScopes` to write when re-deriving an existing app-block client's ceiling from its
+ * manifest: the derived bits, plus any operator-granted bit the client already holds. It grants
+ * nothing new — a client without the bit does not gain it — and every other bit follows the
+ * manifest, so a bit the manifest dropped is still dropped. Every writer that re-derives an
+ * `appblk-*` client's `allowedScopes` goes through this.
+ */
+export function appBlockOauthCeiling(derived: bigint, existing: bigint | null | undefined): bigint {
+  return derived | ((existing ?? 0n) & OPERATOR_GRANTED_APP_BLOCK_OAUTH_BITS);
+}
+
+/**
  * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
  * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
  * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`

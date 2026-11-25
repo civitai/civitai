@@ -15,8 +15,14 @@ import {
   type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import {
+  datasetBatches,
+  imagesInScope,
+  newBatch,
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
+  asDatasetFilter,
+  matchesRatingFilter,
+  ratingChoices,
   buildTrainingRuns,
   stampMature,
   captionTriggerHit,
@@ -983,16 +989,16 @@ describe('Kohya engine selection and options', () => {
   });
 
   it.each(['sdxl', 'pony', 'illustrious'])(
-    'offers Kohya clip skip for %s, defaulting to 2 with a floor of 2',
+    'offers Kohya clip skip for %s, defaulting to 2 and allowing 1',
     (type) => {
       const kohya = { ...run(type), engine: 'kohya' };
       const { ecosystem } = runVersion(kohya);
       expect(kohyaFieldSupported('clipSkip', ecosystem)).toBe(true);
-      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 2, max: 4 });
+      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 1, max: 4 });
       expect(defaultRunParams(kohya).clipSkip).toBe('2');
       expect(runTrainingParams(kohya, defaultRunParams(kohya), 'tag').kohya?.clipSkip).toBe(2);
-      const picked = { ...defaultRunParams(kohya), clipSkip: '3' };
-      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(3);
+      const picked = { ...defaultRunParams(kohya), clipSkip: '1' };
+      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(1);
     }
   );
 
@@ -1226,5 +1232,92 @@ describe('Krea 2 label modes', () => {
     expect(sweepLabelMode([flux, krea], krea, 'tag', false)).toBe('caption');
     // a labeled dataset keeps its format across the swap
     expect(sweepLabelMode([anima, krea], krea, 'caption', true)).toBe('caption');
+  });
+});
+
+describe('asDatasetFilter', () => {
+  it('takes the status filters and one per site rating, and nothing else', () => {
+    expect(asDatasetFilter('mature')).toBe('mature');
+    expect(asDatasetFilter('rating:pg13')).toBe('rating:pg13');
+    expect(asDatasetFilter('rating:na')).toBeUndefined();
+    expect(asDatasetFilter('rating:')).toBeUndefined();
+    expect(asDatasetFilter('grid')).toBeUndefined();
+  });
+});
+
+describe('rating filters', () => {
+  const img = (nsfwLevel: string | undefined, status: Img['status'] = 'uploaded') =>
+    ({
+      id: nextImgId(),
+      name: 'a.png',
+      previewUrl: '',
+      mediaType: 'image',
+      status,
+      progress: 1,
+      blobId: 'b',
+      nsfwLevel,
+      tags: [],
+      caption: '',
+    } as unknown as Img);
+
+  it('offers each rating among trainable images, and keeps the selected one at 0', () => {
+    const images = [img('pg'), img('X'), img('x'), img('r', 'blocked')];
+    expect(ratingChoices(images, 'all').map((r) => `${r.label} ${r.count}`)).toEqual([
+      'PG 1',
+      'X 2',
+    ]);
+    expect(ratingChoices(images, 'rating:r').map((r) => `${r.label} ${r.count}`)).toEqual([
+      'PG 1',
+      'X 2',
+      'R 0',
+    ]);
+  });
+
+  it('matches only trainable images of that rating, in any case', () => {
+    expect(matchesRatingFilter(img('X'), 'rating:x')).toBe(true);
+    expect(matchesRatingFilter(img('x', 'blocked'), 'rating:x')).toBe(false);
+    expect(matchesRatingFilter(img('pg'), 'all')).toBeUndefined();
+  });
+});
+
+describe('dataset batches', () => {
+  const at = (h: number, m: number) => new Date(2026, 10, 24, h, m).getTime();
+
+  it('imagesInScope keeps only the chosen batch, and the whole dataset when no batch is chosen', () => {
+    const first = newBatch('upload', at(15, 0));
+    const second = newBatch('upload', at(15, 41));
+    const images = [
+      { id: 1, batch: first },
+      { id: 2, batch: second },
+      { id: 3, batch: first },
+      { id: 4 },
+    ];
+    expect(imagesInScope(images, first.id).map((i) => i.id)).toEqual([1, 3]);
+    expect(imagesInScope(images, second.id).map((i) => i.id)).toEqual([2]);
+    expect(imagesInScope(images, null)).toBe(images);
+  });
+
+  it('names each batch by source, per-source number, size and time, oldest first', () => {
+    const upload = newBatch('upload', at(15, 0));
+    const zip = newBatch('zip', at(15, 10));
+    const upload2 = newBatch('upload', at(15, 41));
+    const options = datasetBatches(
+      [{ batch: upload2 }, { batch: upload }, { batch: zip }, { batch: upload2 }, {}],
+      'image'
+    );
+    expect(options.map((o) => o.label.replace(/ · [^·]+$/, ''))).toEqual([
+      'Upload 1 · 1 image',
+      'Zip import 1 · 1 image',
+      'Upload 2 · 2 images',
+    ]);
+    // 12- or 24-hour, whichever the runner's locale uses.
+    expect(options[2]!.label).toMatch(/(3|15):41/);
+  });
+
+  it('gives batches added in the same millisecond distinct, increasing ids', () => {
+    const now = at(9, 0);
+    const a = newBatch('zip', now);
+    const b = newBatch('upload', now);
+    expect(b.id).toBeGreaterThan(a.id);
   });
 });

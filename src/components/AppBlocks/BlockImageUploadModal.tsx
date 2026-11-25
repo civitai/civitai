@@ -106,8 +106,8 @@ export default function BlockImageUploadModal({
   const persistMutation = trpc.blockImageUpload.persist.useMutation();
   const gateMutation = trpc.blockImageUpload.gate.useMutation();
 
-  // Guard against a resolved poll landing after the modal unmounts / a new upload
-  // supersedes it (epoch bump) — and clean up the object-URL preview + timer.
+  // Guard against a resolved poll landing after the modal closes / a new upload
+  // supersedes it (epoch bump) — and clean up the timer, and the object-URL preview on unmount.
   const epochRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -118,11 +118,17 @@ export default function BlockImageUploadModal({
       timerRef.current = null;
     }
   }
+  // Closed, not unmounted: a closed dialog stays mounted through its exit transition.
   useEffect(() => {
+    if (!dialog.opened) return;
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- the live epoch counter, not a DOM node
       epochRef.current++;
       clearTimer();
+    };
+  }, [dialog.opened]);
+  useEffect(() => {
+    return () => {
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     };
   }, []);
@@ -243,8 +249,8 @@ export default function BlockImageUploadModal({
             {/* Unshared only: a shared upload's visibility is the share notice below. */}
             {!share && (
               <>
-                This image is kept <strong>private</strong>: Civitai won&apos;t show it to other people
-                using this app.{' '}
+                This image is kept <strong>private</strong>: Civitai won&apos;t show it to other
+                people using this app.{' '}
               </>
             )}
             {SCAN_COPY} Upload a PNG, JPEG or WebP.

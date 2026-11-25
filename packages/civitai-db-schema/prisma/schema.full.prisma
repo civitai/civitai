@@ -627,6 +627,7 @@ model User {
   blockGoodPurchasesAsAppOwner     BlockGoodPurchase[]      @relation("BlockGoodPurchaseAppOwner")
   blockGoodEntitlements            BlockGoodEntitlement[]   @relation("BlockGoodEntitlementOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
+  appAssistantSessionLinks   AppAssistantSessionLink[]
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
@@ -1177,9 +1178,9 @@ model Model {
   @@index([updatedAt, id])
 }
 
-/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
-/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
-/// outlive the model and user.
+/// Every owner a model has had, including its first. Account restore reads it to find the models
+/// a deleted account handed to the placeholder owner. Append-only (a trigger refuses UPDATE and
+/// DELETE); no foreign keys, so rows outlive the model and user.
 model ModelOwnership {
   id        Int      @id @default(autoincrement())
   modelId   Int
@@ -1290,6 +1291,8 @@ model ModelVersionShowcaseItem {
   source         String // 'Owner' | 'Community' (CHECK in the migration)
   position       Int?     @db.SmallInt
   excluded       Boolean  @default(false)
+  /// The image's author or a moderator removed it; kept so the owner can't add it back.
+  removed        Boolean  @default(false)
   addedById      Int
   createdAt      DateTime @default(now())
 
@@ -1946,30 +1949,6 @@ model ComicProjectReport {
 
   @@id([reportId, comicProjectId])
   @@index([comicProjectId], type: Hash)
-}
-
-/// A copy of a held author's ResourceReview, written in the same statement as a delete that would
-/// cascade it. Purged once the author's hold ends.
-model HeldResourceReview {
-  /// The original ResourceReview id.
-  id             Int       @id
-  modelId        Int
-  modelVersionId Int
-  userId         Int
-  rating         Int
-  recommended    Boolean
-  details        String?
-  exclude        Boolean
-  nsfw           Boolean
-  tosViolation   Boolean
-  metadata       Json?
-  createdAt      DateTime
-  updatedAt      DateTime
-  heldAt         DateTime  @default(now())
-  /// The holds on the author when it was copied.
-  holdReasons    String[]
-
-  @@index([userId])
 }
 
 model ResourceReview {
@@ -2996,6 +2975,9 @@ model AppAccessRequest {
   reviewedAt   DateTime?
   reviewedById Int?
   reviewedBy   User?     @relation("AppAccessRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  /// moderator | system (CHECK `AppAccessRequest_reviewSource_check`). Who decided the row, kept
+  /// apart from `reviewedById`, which a deleted moderator account sets NULL. NULL while pending.
+  reviewSource String?
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
@@ -3542,6 +3524,7 @@ model AppBlockPublishRequest {
   actionsRunId                   String? @map("actions_run_id") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  assistantTrace        AppPublishRequestTrace?
 
   @@index([status, submittedAt(sort: Desc)], map: "app_block_publish_requests_queue_idx")  // mod queue
   @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
@@ -3585,6 +3568,64 @@ model AppBlockBuildAttempt {
   @@index([publishRequestId, mode, createdAt(sort: Desc)], map: "app_block_build_attempts_request_idx")
   @@index([mode, slug, sha, createdAt(sort: Desc)], map: "app_block_build_attempts_version_idx")
   @@map("app_block_build_attempts")
+}
+
+/// App Assistant session tracing: which App Assistant chats worked on which app, for whom. One row
+/// per (conversation, app slug), upserted by every finished server-runner turn whose chat had an app
+/// chosen (`~/server/services/app-assistant/session-tracing.service`), while the
+/// `app-assistant-tracing` Flipt flag is on. A chat that moves between apps has one row per app; an
+/// app built over several chats has one row per chat. Read by moderators only (submission tracing).
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: every write is best-effort (a failure,
+/// a missing table included, is logged and dropped), so code using it ships before the table.
+/// Migration `20271124120000_app_assistant_session_links`. The user FK cascades only on a HARD
+/// delete; account deletion (`deleteUser`) is soft, and its `delete-app-assistant-links` step
+/// deletes these rows.
+model AppAssistantSessionLink {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @map("user_id")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String   @map("conversation_id") // the chat's conversation id (orchestration tag `cvt:conv:<id>`)
+  appSlug        String   @map("app_slug") // the app's blockId, as `create_app` / `use_open_app` chose it
+  firstSeenAt    DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  turnCount      Int      @default(0) @map("turn_count")
+  lastModel      String?  @map("last_model")
+  buzzTotal      Float    @default(0) @map("buzz_total")
+  lastRunId      String?  @map("last_run_id") // the last reported PASS, "<runId>@<pass start>": that pass delivered again right after counts once
+
+  // Per user: a conversation id is chosen by the page, so only the user's own chats share its space.
+  @@unique([userId, conversationId, appSlug], map: "app_assistant_session_links_user_conversation_app_key")
+  @@index([appSlug, userId, lastSeenAt(sort: Desc)], map: "app_assistant_session_links_app_user_idx")
+  @@map("app_assistant_session_links")
+}
+
+/// App Assistant session tracing, frozen at submission: for one publish request, the App Assistant
+/// chats that built it (the submitter's own `AppAssistantSessionLink` rows for the slug), an immutable
+/// JSON snapshot of each chat's transcript in the bundle store (`snapshots[].key`), and the signals
+/// computed from the submitted bundle and those transcripts (`signals`, shape versioned by
+/// `signalsVersion`). Written once per request at submit, best-effort, while the
+/// `app-assistant-tracing` flag is on. Read by moderators only.
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: a write that fails is logged and the
+/// submission goes on. Migration `20271124130000_app_publish_request_traces`.
+model AppPublishRequestTrace {
+  id               Int                    @id @default(autoincrement())
+  publishRequestId String                 @unique @map("publish_request_id")
+  publishRequest   AppBlockPublishRequest @relation(fields: [publishRequestId], references: [id], onDelete: Cascade)
+  slug             String
+  userId           Int                    @map("user_id") // the submitter
+  conversationIds  String[]               @map("conversation_ids")
+  snapshots        Json // [{ conversationId, key?, bytes?, turns?, error? }]
+  signals          Json
+  signalsVersion   Int                    @map("signals_version")
+  snapshotError    String?                @map("snapshot_error") // why the trace is partial, if it is
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([slug, createdAt(sort: Desc)], map: "app_publish_request_traces_slug_idx")
+  @@index([createdAt], map: "app_publish_request_traces_created_idx")
+  @@index([userId], map: "app_publish_request_traces_user_idx")
+  @@map("app_publish_request_traces")
 }
 
 /// App Store Listings (W13) — the store-facing record, decoupled from runtime.
@@ -5584,6 +5625,63 @@ enum CommentEntityType {
   crucible
   storyline
   postText
+  featurePage
+}
+
+// A data.civitai.com Feature Pages subject (a feature or a feature request) with a comment thread.
+// The integer id is what CommentV3.entityId addresses; the urn is the platform's name for it.
+model FeaturePageTopic {
+  id        Int      @id @default(autoincrement())
+  urn       String   @unique
+  kind      String // feature | request (DB CHECK)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+// One row per Feature Pages comment: what the mirror last pushed to the platform, and when it pushes
+// next. No relation to CommentV3, so the row outlives a hard-deleted comment.
+model FeaturePageCommentMirror {
+  commentId      Int       @id
+  userId         Int
+  requestId      String
+  urn            String?
+  goneCause      String? // author | moderator | refused (DB CHECK)
+  version        Int       @default(1)
+  pushedState    String?
+  pushedDigest   String?
+  platformDigest String?
+  // The state and post digest the next push is for, so the dirty pass schedules each change once
+  // and leaves a row in backoff alone until what it should hold changes again.
+  pendingDigest  String?
+  pushAttempts   Int       @default(0)
+  scanAttempts   Int       @default(0)
+  // The scan content hash scanAttempts counts against; a new hash starts the count again.
+  scanHash       String?
+  // The frame requestIds of the last 20 edits applied, so a resent edit changes nothing.
+  editRequestIds String[]  @default([])
+  // Set before the first post is sent: a lost reply leaves it set with no urn.
+  postAttemptedAt DateTime? @db.Timestamptz(6)
+  // Counts text sends after the first post, so each changed body gets its own idempotency key.
+  postSeq        Int       @default(0)
+  // When goneCause was set: the retraction's event time, the same on every retry.
+  goneAt            DateTime? @db.Timestamptz(6)
+  // Since when its feature subject is one the platform does not hold yet: the post waits, uncapped.
+  subjectMissingAt  DateTime? @db.Timestamptz(6)
+  // The text's own event time (post or edit), sent as `at`; flag changes do not move it.
+  contentAt         DateTime  @default(now()) @db.Timestamptz(6)
+  // Set when the platform holds, or is about to be sent, a removal: never cleared.
+  removeWantedAt    DateTime? @db.Timestamptz(6)
+  // Since when a restriction (hide, removal, retraction) is owed to the platform: lease priority and
+  // the alert clock.
+  restrictedAt      DateTime? @db.Timestamptz(6)
+  nextPushAt     DateTime? @db.Timestamptz(6)
+  leaseUntil     DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, requestId])
+  @@index([nextPushAt])
+  // Partial indexes, in the migration only: unique urn WHERE urn IS NOT NULL, and nextPushAt WHERE
+  // restrictedAt IS NOT NULL.
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -5624,6 +5722,8 @@ model CommentV3 {
   deletedAt     DateTime? @db.Timestamptz(6)
   tosViolation  Boolean   @default(false)
   hidden        Boolean   @default(false)
+  // When `hidden` last became true; a restore undoes only the hide that wrote this stamp.
+  hiddenAt      DateTime? @db.Timestamptz(6)
   locked        Boolean   @default(false)
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
@@ -7329,68 +7429,6 @@ model PersonalDataExport {
   @@index([status])
 }
 
-/// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
-/// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
-/// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
-/// later), or when a person releases it; clearing an image's review flag never ends it.
-model EvidenceHold {
-  id              Int       @id @default(autoincrement())
-  userId          Int
-  csamReportId    Int?
-  /// subject | secondary | manual
-  role            String
-  reportSentAt    DateTime?
-  /// NULL holds until released.
-  releaseAt       DateTime?
-  extendedUntil   DateTime?
-  /// Who asked for the extension, and their reference.
-  extensionRequestedBy String?
-  extensionReference   String?
-  reason          String
-  createdAt       DateTime  @default(now())
-  createdById     Int?
-  releasedAt      DateTime?
-  releasedById    Int?
-  releaseReason   String?
-
-  @@index([userId])
-}
-
-/// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
-/// is the post it was in, and nothing else records it. `prior*` are the image's ingestion, block
-/// reason and nsfwLevel before the trigger blocked it. Purged once no hold covers the owner.
-model EvidenceHoldImage {
-  imageId         Int      @id
-  userId          Int
-  postId          Int?
-  keptAt          DateTime @default(now())
-  priorIngestion  String?
-  priorBlockedFor String?
-  priorNsfwLevel  Int?
-}
-
-/// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
-/// Purged with the owner's `EvidenceHoldImage` rows once no hold covers them.
-model EvidenceHoldPost {
-  postId         Int       @id
-  userId         Int
-  title          String?
-  detail         String?
-  createdAt      DateTime?
-  publishedAt    DateTime?
-  modelVersionId Int?
-  collectionId   Int?
-  metadata       Json?
-  keptAt         DateTime  @default(now())
-}
-
-/// @view
-/// The owners with at least one active `EvidenceHold`.
-model EvidenceHeldUser {
-  userId    Int       @id
-  heldUntil DateTime?
-}
-
 model Link {
   id         Int      @id @default(autoincrement())
   url        String
@@ -7918,8 +7956,10 @@ enum JobQueueType {
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
-  /// A delete that has to wait: an owner's own delete a child-safety case keeps, or a parent's cleanup
-  /// of an image something still keeps. `pending-deletes` carries it out once nothing blocks it.
+  /// A delete that has to wait: a delete a child-safety case keeps (the owner's, carried out as the
+  /// owner, or anyone else's, carried out as the system; `removeBlockedImages` keeps its own in its own
+  /// queue instead), or a parent's cleanup of an image something still keeps.
+  /// `pending-deletes` carries it out once nothing blocks it.
   PendingDelete
 }
 
@@ -8747,6 +8787,15 @@ model KnightsPlayer {
   recapPopupOptOut Boolean @default(false)
 }
 
+/// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with
+/// `KnightsPlayerDay` toward Paladin's days-played bar; nothing writes it after the backfill.
+model KnightsLegacyPlayerDay {
+  playerId Int
+  day      DateTime @db.Date
+
+  @@id([playerId, day])
+}
+
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
 /// `bonusGold` (the streak bonus) is paid straight to goldEarned and does not.
 model KnightsPlayerDay {
@@ -8795,9 +8844,9 @@ model KnightsReferenceImage {
   id            Int      @id @default(autoincrement())
   imageId       Int      @unique
   questionKey   String   @default("knights.image.nsfwLevel")
-  pool          String // trials | hiddenCheck
+  pool          String // trials | hiddenCheck | skillCheck
   answer        String
-  source        String // core | harvested | agreement
+  source        String // core | harvested | agreement | inquisitor
   explanation   String? // required for core
   status        String   @default("active") // active | retired
   modActivityId Int? // the moderator ruling a harvested item came from
@@ -8809,6 +8858,37 @@ model KnightsReferenceImage {
 
   @@index([pool, status, source])
   @@index([modActivityId])
+}
+
+/// A settled rating item moderators review in game. Two agreeing votes confirm it as a skill check; a split or an excluded review ends there. The queueItemId foreign key (cascade) lives in the migration only, like the other Knights tables.
+model KnightsInquisitorReview {
+  id             Int       @id @default(autoincrement())
+  queueItemId    Int       @unique
+  imageId        Int
+  questionKey    String
+  consensusValue String // the players' settled answer (the item's resolvedValue)
+  status         String    @default("open") // open | confirmed | split | excluded | expired
+  confirmedValue String? // the level both moderators gave, on a confirmed review
+  claimedBy      Int? // the moderator whose closing vote is writing the image level
+  claimExpiresAt DateTime? // that claim's lease
+  createdAt      DateTime  @default(now())
+  closedAt       DateTime?
+  checkedAt      DateTime? // when the tick last checked its image against the safety exclusions
+
+  @@index([status, createdAt])
+  @@index([status, checkedAt])
+  @@index([imageId])
+}
+
+/// One moderator's vote on an inquisitor review. The reviewId foreign key (cascade) lives in the migration only.
+model KnightsInquisitorVote {
+  reviewId    Int
+  moderatorId Int
+  answer      String
+  createdAt   DateTime @default(now())
+
+  @@id([reviewId, moderatorId])
+  @@index([moderatorId, createdAt])
 }
 
 /// An image with a known yes/no answer to one yes/no question (kind `bool`), curated by moderators for grading Acolytes. Never touches Knight+ consensus. The imageId foreign key (cascade) lives in the migration only, like the other Knights tables.
@@ -10360,6 +10440,7 @@ model ComicPanel {
   @@index([projectId, chapterPosition, position])
   @@index([imageId])
   @@index([status])
+  @@index([workflowId])
 }
 
 model ComicProjectEngagement {
@@ -11685,6 +11766,11 @@ model ServiceOffering {
   sellerAffirmation Json?
   /// The seller lets buyers attach delivered work to their review. Off until the seller opts in.
   allowReviewWork   Boolean               @default(false)
+  /// Questions whose answers add to the price and days; null for a single-price service.
+  requestForm        Json?
+  requestFormVersion Int                   @default(0)
+  /// The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
+  fromPrice          Int?
   /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
   /// only in the transaction that publishes or hides a review; the deals job compares them to rows.
   happyCount        Int                   @default(0)
@@ -11740,6 +11826,10 @@ model ServiceDeal {
   licenseAllowResale        Boolean                 @default(false)
   /// When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
   licenseAgreedAt           DateTime?
+  /// The buyer disclosure version (`BUYER_DISCLOSURE_VERSION`) and its lines as the buyer was shown
+  /// them before the hold. Null on a deal made before they were recorded.
+  buyerDisclosureVersion    String?
+  buyerDisclosureLines      String[]
   /// The offering's maxNsfwLevel when requested; never re-read from the offering.
   maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)
@@ -11752,6 +11842,9 @@ model ServiceDeal {
   settledAt                 DateTime?
   chatId                    Int?
   requestText               String
+  formVersion               Int?
+  formAnswers               Json?
+  priceBreakdown            Json?
   requestedAt               DateTime                @default(now())
   acceptedAt                DateTime?
   dueAt                     DateTime?

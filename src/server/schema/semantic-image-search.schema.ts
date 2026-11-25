@@ -7,14 +7,23 @@ export const SEMANTIC_QUERY_MAX_LENGTH = 500;
 export const SEMANTIC_SEARCH_PAGE_SIZE = 50;
 export const MAX_SEARCH_MODEL_VERSIONS = 20;
 
+/**
+ * The query as typed: the service's spelling correction is skipped ("Search instead for"). The text
+ * is still audited as any query is.
+ */
+export const semanticSpellcheckField = z.literal(false).optional();
+
 export type SemanticImageSearchInput = z.infer<typeof semanticImageSearchSchema>;
 export const semanticImageSearchSchema = baseQuerySchema
   .extend({
     query: z.string().trim().max(SEMANTIC_QUERY_MAX_LENGTH).optional(),
+    spellcheck: semanticSpellcheckField,
     // "More like this": the image whose vector is the query.
     imageId: z.number().int().positive().optional(),
     // "More like this" without the viewer's own images (results only, never the source image).
     excludeOwn: z.boolean().optional(),
+    // "More like this" only: the closest matches carrying this tag first (behind `moreLikeThisSteer`).
+    preferTagIds: z.number().int().positive().array().max(1).optional(),
     // Room for whatever the images feed can select: its filters carry into the search unchanged.
     tagIds: z.number().int().array().max(100).optional(),
     // By name, as the image search URLs and pickers carry them; resolved to ids on the server.

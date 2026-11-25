@@ -1,9 +1,10 @@
 import { sql } from '@civitai/db/kysely';
 import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
+import { listWithheldIds, withheldRow } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
-import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
+import { getFlagClearHolds, type FlagClearHoldLeg } from './csam-flag-clear';
 import {
   imagesVersion,
   imageVersion,
@@ -13,6 +14,7 @@ import {
   type SetAsideState,
 } from './csam-queue-set-aside';
 import { outOfCsamQueuePending as outOfPending } from '@civitai/db-queries/csam-queue';
+import { pendingDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -46,7 +48,6 @@ export type ImageReviewItem = {
   createdAt: Date;
   userId: number;
   username: string | null;
-  userImage: string | null;
   postId: number | null;
   postTitle: string | null;
   entityType: string | null;
@@ -139,7 +140,6 @@ export async function getImageReviewQueue({
       'i.createdAt',
       'i.userId',
       'u.username',
-      'u.image as userImage',
       'i.postId',
       'p.title as postTitle',
       'ic.entityType',
@@ -249,9 +249,7 @@ function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Block
 
 export const CSAM_QUEUE_USER_LIMIT = 500;
 
-/** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
- *  the status is unknown rather than that this user is on a hold. */
-export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
+export type CsamQueueHoldReason = FlagClearHoldLeg;
 
 export type CsamQueueUser = {
   userId: number;
@@ -341,7 +339,7 @@ export async function getCsamQueueByUser({
       : null;
 
   const none = userIds.length === 0;
-  const [users, reports, removed, holds, marker] = await Promise.all([
+  const [users, reports, removed, holds] = await Promise.all([
     none
       ? []
       : dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
@@ -371,12 +369,7 @@ export async function getCsamQueueByUser({
           .groupBy('i.userId')
           .execute(),
     getFlagClearHolds(userIds),
-    holdMarkerState(dbRead),
   ]);
-  const reasons = (legs: FlagClearHoldLeg[] = []): CsamQueueHoldReason[] =>
-    marker === 'view'
-      ? legs
-      : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
   const removedByUser = new Map(removed.map((r) => [r.userId, r]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
   const reportsByUser = new Map(reports.map((r) => [r.userId, r]));
@@ -395,7 +388,7 @@ export async function getCsamQueueByUser({
         : reportsByUser.get(g.userId)?.reportSentAt ?? null,
       latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
       reported: isFeedbackCaptureOwner(g.userId) ? g.captureReported : reportsByUser.has(g.userId),
-      heldBy: reasons(holds.get(g.userId)),
+      heldBy: holds.get(g.userId) ?? [],
       capture: capture(g),
     })),
     truncated,
@@ -479,11 +472,7 @@ export async function getReportedImageQueue({
    *  the hand-off panels. Without it a link to a ruled report landed on an unrelated Pending list. */
   reportId?: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
-  const deleteRequested = sql<boolean>`EXISTS (
-    SELECT 1 FROM "JobQueue" jq
-    WHERE jq.type = 'PendingDelete' AND jq."entityType" = 'Image' AND jq."entityId" = i.id
-      AND jq.data ? 'ownerId'
-  )`;
+  const deleteRequested = pendingDeleteQueued('Image', sql.ref('i.id'), { ownerAsked: true });
   const base = () =>
     dbRead
       .selectFrom('Image as i')
@@ -595,7 +584,10 @@ export type AppealImageItem = {
   nsfwLevel: number;
   width: number | null;
   height: number | null;
-  type: MediaType;
+  type: MediaType | null;
+  /** Withheld from this moderator by the media access rule (`restrictedImageIds`): served with
+   *  `withheldRow` in place of its fields. */
+  restricted: boolean;
   needsReview: string | null;
   minor: boolean;
   poi: boolean;
@@ -615,10 +607,12 @@ export async function getAppealImageQueue({
   browsingLevel,
   cursor,
   limit,
+  csamReview,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  csamReview: boolean;
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
   const fetched = await dbRead
     .selectFrom('Image as i')
@@ -693,6 +687,7 @@ export async function getAppealImageQueue({
   const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
+  const restricted = await listWithheldIds(ids, { csamReview }, 'appeals');
   const tosByImage = new Map<number, string>();
   const reportsByImage = new Map<number, AppealReportRow[]>();
   if (ids.length) {
@@ -741,31 +736,35 @@ export async function getAppealImageQueue({
     }
   }
 
-  const items: AppealImageItem[] = rows.map((r) => ({
-    id: r.id,
-    url: r.url,
-    nsfwLevel: r.nsfwLevel,
-    width: r.width,
-    height: r.height,
-    type: r.type,
-    needsReview: r.needsReview,
-    minor: r.minor,
-    poi: r.poi,
-    modelRestricted: r.modelRestricted,
-    blockedFor: r.blockedFor,
-    userId: r.userId,
-    username: r.username,
-    appeal: {
-      id: r.appealId,
-      message: r.appealMessage,
-      createdAt: r.appealCreatedAt,
-      username: r.appealUsername,
-      userId: r.appealUserId,
-    },
-    moderatorUsername: r.moderatorUsername,
-    removedAt: r.removedAt,
-    tosReason: tosByImage.get(r.id) ?? null,
-    reports: reportsByImage.get(r.id) ?? [],
-  }));
+  const items: AppealImageItem[] = rows.map((r) => {
+    const item = {
+      id: r.id,
+      url: r.url,
+      width: r.width,
+      height: r.height,
+      type: r.type,
+      restricted: false,
+      nsfwLevel: r.nsfwLevel,
+      needsReview: r.needsReview,
+      minor: r.minor,
+      poi: r.poi,
+      modelRestricted: r.modelRestricted,
+      blockedFor: r.blockedFor,
+      userId: r.userId,
+      username: r.username,
+      appeal: {
+        id: r.appealId,
+        message: r.appealMessage,
+        createdAt: r.appealCreatedAt,
+        username: r.appealUsername,
+        userId: r.appealUserId,
+      },
+      moderatorUsername: r.moderatorUsername,
+      removedAt: r.removedAt,
+      tosReason: tosByImage.get(r.id) ?? null,
+      reports: reportsByImage.get(r.id) ?? [],
+    };
+    return restricted.has(r.id) ? withheldRow(item) : item;
+  });
   return { items, nextCursor };
 }

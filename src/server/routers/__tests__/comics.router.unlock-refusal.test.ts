@@ -76,6 +76,7 @@ beforeEach(() => {
       ? { muted: false, bannedAt: null }
       : undefined) as never);
   vi.clearAllMocks();
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: PANEL_ID }] as never);
   vi.mocked(handleError).mockImplementation((error) => (error as { detail: string }).detail);
   const panel = {
     id: PANEL_ID,
@@ -134,20 +135,18 @@ describe('comics.unlockPanelGeneration - an orchestrator refusal', () => {
 describe('comics.unlockPanelGeneration - who may unlock', () => {
   beforeEach(() => orchestratorRefuses(403, 'refused'));
 
-  it('refuses a user with mature content off, before reaching the orchestrator', async () => {
-    await expect(unlock({ showNsfw: false })).rejects.toThrow(/Enable mature content/);
-    expect(mocks.getWorkflow).not.toHaveBeenCalled();
-    expect(clientUpdateWorkflow).not.toHaveBeenCalled();
-  });
-
   it('refuses the green domain, before reaching the orchestrator', async () => {
     await expect(unlock({ domain: 'green' })).rejects.toThrow(/civitai\.red/);
     expect(mocks.getWorkflow).not.toHaveBeenCalled();
     expect(clientUpdateWorkflow).not.toHaveBeenCalled();
   });
 
-  it('CONTROL: sends the unlock for a red-domain user with mature content on', async () => {
-    await expect(unlock()).rejects.toThrow('refused');
-    expect(clientUpdateWorkflow).toHaveBeenCalledTimes(1);
-  });
+  // Domain-only mature rule: civitai/civitai#10332.
+  it.each([true, false])(
+    'CONTROL: sends the unlock on red whatever the mature content setting (%s)',
+    async (showNsfw) => {
+      await expect(unlock({ showNsfw })).rejects.toThrow('refused');
+      expect(clientUpdateWorkflow).toHaveBeenCalledTimes(1);
+    }
+  );
 });

@@ -1,6 +1,7 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import {
   legacyCookieReadEnabled,
+  refusesMemorializedSession,
   rollSlot,
   sessionCookieMode,
   sessionCookieNameForSlot,
@@ -20,11 +21,20 @@ import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
 import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
-import { isHubPageRequest, isTrustedSessionCaller } from '$lib/server/auth/same-origin';
+import {
+  isHubPageRequest,
+  isTrustedSessionCaller,
+  refuseFraming,
+} from '$lib/server/auth/same-origin';
 import { authS2sRequestsTotal, unhandledErrorsTotal } from '$lib/server/metrics';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { callerShape, readInternalCaller } from '$lib/server/auth/s2s';
 import { logAxiomError } from '$lib/server/axiom';
+import { registerEmailSendRecorder } from '$lib/server/email/send-recorder';
+
+// Every send the hub makes (sign-in, verification, invite) is a send row in the main app's
+// emailEvents, through its internal route.
+registerEmailSendRecorder();
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -89,7 +99,7 @@ const preflightHeaders = (origin: string) => ({
   vary: 'Origin',
 });
 
-export const handle: Handle = async ({ event, resolve }) => {
+const handleRequest: Handle = async ({ event, resolve }) => {
   // CORS for SAME-SITE spokes calling /api/auth/* directly with the browser client (credentialed). Only an
   // allowlisted Origin gets headers; server-to-server proxy calls (the main app) send no Origin → unaffected.
   const corsOrigin = event.url.pathname.startsWith('/api/auth/')
@@ -138,7 +148,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     const claims = await verifier.verifyToken(token).catch(() => null);
     const userId = Number(claims?.sub);
     if (claims && Number.isFinite(userId) && (internal || (await acceptHubSession(claims)))) {
-      event.locals.user = (await getOrProduceSessionUser(userId).catch(() => null)) ?? undefined;
+      const user = await getOrProduceSessionUser(userId).catch(() => null);
+      event.locals.user = user && !refusesMemorializedSession(user, claims) ? user : undefined;
       event.locals.session = claims;
       event.locals.tokenId = claims.jti;
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.
@@ -194,6 +205,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
   return response;
 };
+
+// Every response, including the ones this hook answers itself before any route runs.
+export const handle: Handle = async (input) => refuseFraming(await handleRequest(input));
 
 // Count unhandled server errors (any uncaught throw in a load/action/endpoint that reaches SvelteKit),
 // then return a safe, non-leaking message. The counter inc is best-effort and runs before we build the

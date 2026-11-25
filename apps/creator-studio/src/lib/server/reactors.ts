@@ -97,7 +97,7 @@ export const safeProfilePictureUrl = () => sql`
   CASE
     WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0 AND p."blockedFor" IS NULL
       AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0
-      AND (p."needsReview" IS NULL OR p."needsReview" <> ALL(${sql.lit(`{${OWNER_HIDDEN_REVIEWS.join(',')}}`)}::text[])) THEN p.url
+      AND (p."needsReview" IS NULL OR p."needsReview" <> ALL(${[...OWNER_HIDDEN_REVIEWS]}::text[])) THEN p.url
   END`;
 
 /**

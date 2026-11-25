@@ -571,9 +571,9 @@ describe('buildStickerAutoTrackWorkflow', () => {
     expect(workflow['6'].inputs).toMatchObject({ masks: ['5', 0], fallback_masks: ['12', 0] });
   });
 
-  it('hides an eye sticker while its eye is turned away', () => {
-    // Off, a sticker placed on an eye rides the cheek while the head is in profile.
-    expect(graph()['9'].inputs.hide_when_eye_lost).toBe(true);
+  it('keeps a sticker on the face while its eyes are shut', () => {
+    // On, glasses and googly eyes vanish whenever the eyes close for about a second.
+    expect(graph()['9'].inputs.hide_when_eye_lost).toBe(false);
   });
 
   it('turns re-id off for a sticker that is not on a head', () => {

@@ -65,8 +65,7 @@ import { CollectionItemNSFWLevelSelector } from '~/components/Collections/compon
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
 import { ContestCommunityScore } from '~/components/Collections/components/ContestCollections/ContestCommunityScore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
-import { useServerDomains } from '~/providers/AppProvider';
+import { useRedHref } from '~/hooks/useRedHref';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -151,8 +150,7 @@ const ReviewCollection = () => {
     redPendingReviewCount = 0,
     isLoading: loadingCollection,
   } = useCollection(collectionId);
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
 
   const { data, isLoading, isFetching, fetchNextPage, hasNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
@@ -270,7 +268,7 @@ const ReviewCollection = () => {
                 {redPendingReviewCount > 0 && (
                   <Button
                     component="a"
-                    href={syncAccount(`//${redDomain}${router.asPath}`)}
+                    href={redHref()}
                     variant="light"
                     color="red"
                     rightSection={<IconExternalLink size={16} />}

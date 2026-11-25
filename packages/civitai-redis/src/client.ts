@@ -3400,6 +3400,7 @@ const REDIS_KEYS_UNPREFIXED = {
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     FEATURE_PAGES_SERVICE_TOKEN: 'packed:caches:feature-pages-service-token',
+    FEATURE_PAGES_VIEWER_HANDLE: 'packed:caches:feature-pages-viewer-handle',
     // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
     // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
     // the display read of a placement space. See placement-space.service.ts.
@@ -3410,6 +3411,7 @@ const REDIS_KEYS_UNPREFIXED = {
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures:v4',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
+    VERSION_SHOWCASE: 'packed:caches:version-showcase',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
@@ -3448,6 +3450,8 @@ const REDIS_KEYS_UNPREFIXED = {
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
+    // Legacy annual-sub-payment and reward rows, per user and query window.
+    LEGACY_PREPAID_DELIVERIES: 'packed:caches:legacy-prepaid-deliveries',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',
@@ -3570,6 +3574,7 @@ const REDIS_KEYS_UNPREFIXED = {
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
     HISTORY_DOWNLOADS: 'counters:history-downloads',
     BUG_REPORTS: 'counters:bug-reports',
+    FEATURE_PAGES_LIFTS: 'counters:feature-pages-lifts',
   },
   LIVE_NOW: 'live-now',
   TAG: 'tag',
@@ -3746,6 +3751,16 @@ const REDIS_KEYS_UNPREFIXED = {
       key = `${CANDIDATES}:${collection}:${sha256({ query, qdrantFilter, sort, start, viewerClass })}`, TTL 10m.
      */
     CANDIDATES: 'semantic-search:candidates',
+  },
+  FEED_GO: {
+    /*
+      Use: the Training Data listing rule sets (trainingDataListingRulesId) of the Node builds now
+      answering the public model API, read by feed-go before it serves a body listing a Training
+      Data file (src/server/services/feed-go-training-data-rules.ts).
+      Structure: hash, field = rule set id, value '1'; each field expires
+      FEED_GO_TRAINING_DATA_RULES_TTL_MS after its last write (HPEXPIRE), so the hash holds only the builds still answering.
+     */
+    TRAINING_DATA_RULES_LIVE: 'feed-go:training-data-rules-live',
   },
 } as const;
 

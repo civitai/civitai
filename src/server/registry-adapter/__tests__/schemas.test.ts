@@ -229,6 +229,7 @@ describe('the schemas of our own entities', () => {
         'forkOf',
         'iconUrl',
         'kind',
+        'listingContentRating',
         'name',
         'release',
         'runtime',

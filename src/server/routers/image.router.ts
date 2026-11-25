@@ -20,7 +20,6 @@ import {
   getImageGenerationData,
   getImagesByUserIdForModeration,
   getMyImages,
-  ingestImageById,
   removeImageResource,
   removeImageTechniques,
   removeImageTools,
@@ -30,6 +29,7 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
+import { rescanImageById } from '~/server/services/image-rescan.service';
 import {
   middleware,
   heavyProcedure,
@@ -54,7 +54,11 @@ import {
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
-import { cacheIt, edgeCacheIt } from './../middleware.trpc';
+import { cacheIt, edgeCacheIt, noEdgeCacheWhen, rateLimit } from './../middleware.trpc';
+import {
+  IMAGE_404_CACHE_TAG,
+  imageResourcesEdgeTag,
+} from '~/server/services/image-visibility-invalidation.service';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
@@ -62,12 +66,15 @@ import {
   getImageSchema,
   getInfiniteImagesSchema,
   getMyImagesInput,
+  isViewerScopedImageFeed,
+  isViewerScopedInfiniteFeed,
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
   setTosViolationSchema,
   setVideoThumbnailSchema,
   toggleImageFlagSchema,
+  updateImageAcceptableMinorRateLimits,
   updateImageAcceptableMinorSchema,
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
@@ -130,6 +137,7 @@ export const imageRouter = router({
   getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
+    .use(noEdgeCacheWhen(isViewerScopedInfiniteFeed))
     // One `user` object per creator on the wire (`image-feed-shared-users`, dark). Here rather
     // than in the handler, which `civitai-embed` also calls directly.
     .query(async (opts) => withSharedFeedUsers(await getInfiniteImagesHandler(opts))),
@@ -145,6 +153,7 @@ export const imageRouter = router({
   getImagesAsPostsInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
+    .use(noEdgeCacheWhen(isViewerScopedImageFeed))
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -162,22 +171,30 @@ export const imageRouter = router({
     .use(
       edgeCacheIt({
         ttl: CacheTTL.sm,
+        tags: (input: { id: number }) => [imageResourcesEdgeTag(input.id)],
       })
     )
     .query(getImageResourcesHandler),
   removeResource: moderatorProcedure
     .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),
-  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
+  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanImageById(input)),
   getEntitiesCoverImage: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)
     .query(getEntitiesCoverImageHandler),
   get404Images: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
-    // A moderation flag on an entry reaches this shared, signed-out list only when these expire.
-    .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .use(cacheIt({ key: 'image:get404Images:v3', ttl: CacheTTL.day }))
+    // invalidateImageVisibilityCaches purges both by tag. The key's version drops entries cached
+    // before they carried the tag.
+    .use(edgeCacheIt({ ttl: CacheTTL.day, tags: () => [IMAGE_404_CACHE_TAG] }))
+    .use(
+      cacheIt({
+        key: 'image:get404Images:v4',
+        ttl: CacheTTL.day,
+        tags: () => [IMAGE_404_CACHE_TAG],
+      })
+    )
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
     .input(reportCsamImagesSchema)
@@ -257,6 +274,7 @@ export const imageRouter = router({
   updateAccetableMinor: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(updateImageAcceptableMinorSchema)
+    .use(rateLimit(updateImageAcceptableMinorRateLimits))
     .mutation(updateImageAcceptableMinorHandler),
   getMyImages: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

@@ -48,7 +48,8 @@ const request = (fields: Record<string, string>) =>
 const event = (fields: Record<string, string>) =>
   ({
     request: request(fields),
-    locals: { user: { id: 7 } },
+    // A grant holder, so the media access check (image-action-access) reads nothing.
+    locals: { user: { id: 7, roles: ['moderator:admin'] } },
     params: { slug: 'reported' },
   } as never);
 

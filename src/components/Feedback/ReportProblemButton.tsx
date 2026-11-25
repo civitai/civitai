@@ -1,7 +1,6 @@
 import { Button } from '@mantine/core';
 import { IconFlag } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type { FeedbackDrawerProps } from '~/components/Feedback/FeedbackDrawer';
 import {
   FEEDBACK_ORCHESTRATOR_ID_PATTERN,
@@ -12,10 +11,6 @@ import {
 } from '~/shared/constants/feedback.constants';
 import { parseErrorRef } from '~/utils/feedback/errorRef';
 import { trpc } from '~/utils/trpc';
-
-const FeedbackDrawer = dynamic(() => import('~/components/Feedback/FeedbackDrawer'), {
-  ssr: false,
-});
 
 export type ReportProblem = {
   /**
@@ -92,7 +87,7 @@ export function ReportProblemButton({
         toast: { ...(title ? { title: clip(title) } : {}), message: clip(message) },
       },
     };
-    dialogStore.trigger({ component: FeedbackDrawer, props });
+    openDialog(() => import('~/components/Feedback/FeedbackDrawer'), props);
   };
 
   return (

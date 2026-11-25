@@ -22,6 +22,11 @@ import (
 // and whether it is building, serving or retired. The partial unique index keeps at most one
 // generation building and one serving. owner is the process that last claimed the generation;
 // writes check it (see Postgres.Claim for what that guarantees).
+//
+// listing_rating and listing_rated (App.ListingRating, App.ListingRated) were added by layout 2;
+// the ALTERs add them to a database an earlier layout created. A row written before reads
+// listing_rated false, so search filters it on its rating exactly as before, until the layout 2
+// rebuild beside it replaces it.
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS app_index_cursors (
   generation bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -50,6 +55,8 @@ CREATE TABLE IF NOT EXISTS app_index_apps (
   tagline text,
   icon_url text,
   release text,
+  listing_rating text,
+  listing_rated boolean NOT NULL DEFAULT false,
   search tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('simple', name), 'A') ||
     setweight(to_tsvector('simple', slug), 'B') ||
@@ -61,6 +68,8 @@ CREATE TABLE IF NOT EXISTS app_index_apps (
 CREATE INDEX IF NOT EXISTS app_index_apps_search ON app_index_apps USING gin (search);
 CREATE INDEX IF NOT EXISTS app_index_apps_by_name
   ON app_index_apps (generation, name_key COLLATE "C", urn COLLATE "C");
+ALTER TABLE app_index_apps ADD COLUMN IF NOT EXISTS listing_rating text;
+ALTER TABLE app_index_apps ADD COLUMN IF NOT EXISTS listing_rated boolean NOT NULL DEFAULT false;
 `
 
 // lockKey is the advisory lock a consumer holds, per schema so that separate schemas of one
@@ -305,14 +314,15 @@ func (p *Postgres) Apply(ctx context.Context, gen int64, c Change) error {
 		a := c.App
 		// A whole-row replace.
 		_, err := tx.Exec(ctx, `
-INSERT INTO app_index_apps (generation, urn, rev, body, slug, name, name_key, kind, category, rating, creator, tagline, icon_url, release)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''))
+INSERT INTO app_index_apps (generation, urn, rev, body, slug, name, name_key, kind, category, rating, creator, tagline, icon_url, release, listing_rating, listing_rated)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), NULLIF($15, ''), $16)
 ON CONFLICT (generation, urn) DO UPDATE SET
   rev = EXCLUDED.rev, body = EXCLUDED.body, slug = EXCLUDED.slug, name = EXCLUDED.name, name_key = EXCLUDED.name_key,
   kind = EXCLUDED.kind, category = EXCLUDED.category, rating = EXCLUDED.rating, creator = EXCLUDED.creator,
-  tagline = EXCLUDED.tagline, icon_url = EXCLUDED.icon_url, release = EXCLUDED.release`,
+  tagline = EXCLUDED.tagline, icon_url = EXCLUDED.icon_url, release = EXCLUDED.release,
+  listing_rating = EXCLUDED.listing_rating, listing_rated = EXCLUDED.listing_rated`,
 			gen, a.URN, a.Rev, []byte(a.Body), a.Slug, a.Name, nameKey(a.Name), a.Kind, a.Category, a.Rating, a.Creator,
-			a.Tagline, a.IconURL, a.Release)
+			a.Tagline, a.IconURL, a.Release, a.ListingRating, a.ListingRated)
 		return err
 	})
 }
@@ -374,10 +384,11 @@ func (p *Postgres) Search(ctx context.Context, q Query) (Page, error) {
 	if q.Category != "" {
 		where = append(where, "a.category = "+arg(q.Category))
 	}
-	// In the query, before the LIMIT, so a page is filled with admitted rows. A null rating never
-	// equals any element, so it is answered only when admitted is nil (Mature.admitted).
-	if ratings := q.Mature.admitted(); ratings != nil {
-		where = append(where, "lower(a.rating) = ANY("+arg(ratings)+"::text[])")
+	// In the query, before the LIMIT, so a page is filled with admitted rows (Mature.Admits). The
+	// rating filtered on is App.GateRating's: the listing's own when the body carried it, else the
+	// app's. A null rating reads as '', which is never hidden, as listingMatureFilter's COALESCE does.
+	if hidden := q.Mature.hidden(); len(hidden) > 0 {
+		where = append(where, "coalesce(lower(CASE WHEN a.listing_rated THEN a.listing_rating ELSE a.rating END), '') <> ALL("+arg(hidden)+"::text[])")
 	}
 	sql := `
 SELECT a.urn, a.slug, a.name, coalesce(a.tagline, ''), a.kind, coalesce(a.category, ''), coalesce(a.rating, ''),

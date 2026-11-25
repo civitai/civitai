@@ -112,6 +112,18 @@ func TestComputeInfiniteVerifiedCrawler(t *testing.T) {
 		if !reflect.DeepEqual(f.feed.queries, []string{c.query}) {
 			t.Errorf("%s: feed queries %q, want [%q]", c.name, f.feed.queries, c.query)
 		}
+		// The per-class shadow series: a crawler with no session is `crawler`, with one `user`; the rest
+		// (no verified crawler) are signed-out visitors.
+		wantClass := "anon"
+		switch {
+		case c.name == "a crawler with a session":
+			wantClass = "user"
+		case !c.cacheable:
+			wantClass = "crawler"
+		}
+		if out.viewerClass != wantClass {
+			t.Errorf("%s: viewer class %q, want %q", c.name, out.viewerClass, wantClass)
+		}
 		headers := trpc.ResultHeaders(out.ttl)
 		if c.cacheable {
 			if out.ttl == nil || *out.ttl != trpc.SignedOutTTL || reflect.DeepEqual(headers, private) {

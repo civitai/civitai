@@ -4,7 +4,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import * as yauzl from 'yauzl';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import { BUYER_DISCLOSURE_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -19,6 +19,7 @@ import {
   type FixtureEntry,
   type FixtureOptions,
 } from '~/server/utils/__tests__/zip-fixture';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -212,6 +213,8 @@ const MIGRATIONS = [
   '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
+  '20271125130000_service_deal_buyer_disclosure',
+  '20271128130000_service_request_form',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -259,7 +262,8 @@ async function accepted() {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
-    disclosureVersion: SERVICES_TERMS_VERSION,
+    disclosureVersion: BUYER_DISCLOSURE_VERSION,
+    disclosureReviewEnabled: false,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
@@ -309,9 +313,6 @@ beforeAll(async () => {
       "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       "reportSentAt" timestamp, "archivedAt" timestamp);
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
-    CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL);
     CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT now());
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
@@ -320,6 +321,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
   // The deal holds a party's delete reads.
   await holder.db.exec(`
     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
@@ -362,9 +364,9 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImages.mockImplementation(async (ids: number[]) => {
-    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
-  });
+  images.deleteImages.mockImplementation(async (ids: number[]) =>
+    q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
+  );
   await holder.db.exec(`
     TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";

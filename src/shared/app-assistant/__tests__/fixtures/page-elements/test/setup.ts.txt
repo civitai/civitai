@@ -1,0 +1,124 @@
+/**
+ * Test-only stand-in for `ElementInternals`, loaded by vitest.config.ts
+ * (`setupFiles`) before every test file.
+ *
+ * Why: `<civitai-button>` and every form control in `@civitai/components`
+ * (`<civitai-checkbox>`, `-number-input`, `-radio-group`, `-segmented-control`,
+ * `-select`, `-slider`, `-switch`, `-text-input`, `-textarea`) call
+ * `this.attachInternals()` while they are constructed. Every browser the app
+ * runs in has it; happy-dom (20.x and 21.x) does not, so without this file any
+ * test that renders one of those elements fails with
+ * `TypeError: this.attachInternals is not a function`.
+ *
+ * It is installed ONLY when the API is missing, so it never replaces a real
+ * implementation, and it never ships: nothing under `src/` imports it.
+ * `@civitai/components` may publish this same shim as
+ * `@civitai/components/testing/happy-dom`; once the version this project
+ * installs has it, `setupFiles` can name that export instead of this file.
+ *
+ * What it covers: `form` (the nearest ancestor `<form>`), `labels`, `validity`
+ * / `validationMessage` / `willValidate` driven by `setValidity`,
+ * `checkValidity` / `reportValidity` (a cancelable `invalid` event when
+ * invalid, as native), `setFormValue`, `states`. What it does not: make
+ * `new FormData(form)` see a control's value, or run `form.reset()` callbacks —
+ * test those in a real browser.
+ */
+
+const VALIDITY_FLAGS = [
+  'badInput',
+  'customError',
+  'patternMismatch',
+  'rangeOverflow',
+  'rangeUnderflow',
+  'stepMismatch',
+  'tooLong',
+  'tooShort',
+  'typeMismatch',
+  'valueMissing',
+] as const;
+
+type Flags = Partial<Record<(typeof VALIDITY_FLAGS)[number], boolean>>;
+
+function validityOf(flags: Flags): ValidityState {
+  const state: Record<string, boolean> = {};
+  for (const flag of VALIDITY_FLAGS) state[flag] = flags[flag] === true;
+  state.valid = VALIDITY_FLAGS.every((flag) => !state[flag]);
+  return Object.freeze(state) as unknown as ValidityState;
+}
+
+class ElementInternalsShim {
+  readonly #host: HTMLElement;
+  #validity = validityOf({});
+  #message = '';
+  #value: unknown = null;
+  readonly states = new Set<string>();
+
+  constructor(host: HTMLElement) {
+    this.#host = host;
+  }
+
+  get form(): HTMLFormElement | null {
+    return this.#host.closest('form');
+  }
+
+  get labels(): NodeList {
+    return this.#host.ownerDocument.createDocumentFragment().childNodes;
+  }
+
+  get shadowRoot(): ShadowRoot | null {
+    return this.#host.shadowRoot;
+  }
+
+  get willValidate(): boolean {
+    return true;
+  }
+
+  get validity(): ValidityState {
+    return this.#validity;
+  }
+
+  get validationMessage(): string {
+    return this.#message;
+  }
+
+  /** The last value handed to `setFormValue` — not part of the platform API. */
+  get formValue(): unknown {
+    return this.#value;
+  }
+
+  setFormValue(value: unknown): void {
+    this.#value = value;
+  }
+
+  setValidity(flags: Flags = {}, message = '', _anchor?: HTMLElement): void {
+    const validity = validityOf(flags);
+    if (!validity.valid && message === '') {
+      // The native method throws on an invalid state with no message.
+      throw new TypeError("Failed to execute 'setValidity': the message must not be empty");
+    }
+    this.#validity = validity;
+    this.#message = validity.valid ? '' : message;
+  }
+
+  checkValidity(): boolean {
+    if (this.#validity.valid) return true;
+    this.#host.dispatchEvent(new Event('invalid', { cancelable: true }));
+    return false;
+  }
+
+  reportValidity(): boolean {
+    return this.checkValidity();
+  }
+}
+
+if (typeof HTMLElement !== 'undefined' && typeof HTMLElement.prototype.attachInternals !== 'function') {
+  const attached = new WeakSet<HTMLElement>();
+  HTMLElement.prototype.attachInternals = function attachInternals(this: HTMLElement): ElementInternals {
+    // Native behaviour: one ElementInternals per element, ever.
+    if (attached.has(this)) {
+      throw new DOMException('ElementInternals has already been attached', 'NotSupportedError');
+    }
+    attached.add(this);
+    return new ElementInternalsShim(this) as unknown as ElementInternals;
+  };
+}

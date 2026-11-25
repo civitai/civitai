@@ -96,7 +96,11 @@ export const semanticImageSearchRouter = router({
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const { ownImagesOf } = ctx;
-      const searched = ownImagesOf ? ownImagesInput(input, ownImagesOf) : input;
+      const asked = ownImagesOf ? ownImagesInput(input, ownImagesOf) : input;
+      // Dropped, not refused: a shared ?prefer= link or a stale tab gets plain "more like this".
+      const steer =
+        guardFlagEnabled(ctx, 'moreLikeThis') && guardFlagEnabled(ctx, 'moreLikeThisSteer');
+      const searched = steer ? asked : { ...asked, preferTagIds: undefined };
       // Refused, not dropped: results unfiltered by the resource asked for would read as filtered.
       if (searched.modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
         throw new TRPCError({

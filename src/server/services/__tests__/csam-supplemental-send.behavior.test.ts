@@ -228,14 +228,17 @@ describe('a supplemental image report', () => {
   });
 
   it.each([
-    [0, 'A Civitai reviewer confirmed the attached image(s).'],
+    [
+      0,
+      "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw.",
+    ],
     [
       1,
-      'A Civitai reviewer confirmed the attached image(s). The account has 1 further image that was flagged for review and not individually reviewed. It is preserved and available in response to legal process.',
+      "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw. The account has 1 further image that was flagged for review and not individually reviewed. It is preserved and available in response to legal process.",
     ],
     [
       7,
-      'A Civitai reviewer confirmed the attached image(s). The account has 7 further images that were flagged for review and not individually reviewed. They are preserved and available in response to legal process.',
+      "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw. The account has 7 further images that were flagged for review and not individually reviewed. They are preserved and available in response to legal process.",
     ],
   ])('tells NCMEC about %i unreviewed image(s) in exactly the agreed words', async (n, text) => {
     await view(501);
@@ -259,7 +262,7 @@ describe('a supplemental image report', () => {
     await processCsamReport(supplementalReport([501, 502, 503], []));
 
     expect(sentTip().additionalInfo).toBe(
-      'A Civitai reviewer confirmed the attached image(s).\n1 file(s) named in this report are no longer stored and are not included.'
+      "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw.\n1 file(s) named in this report are no longer stored and are not included."
     );
   });
 

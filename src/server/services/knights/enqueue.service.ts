@@ -1,5 +1,5 @@
 import { sql, type Kysely } from 'kysely';
-import { servableImage } from '@civitai/db/knights';
+import { postHiddenFromKnights, readWithoutJit, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
@@ -32,7 +32,8 @@ export type EnqueueRefusal =
   | 'not-servable'
   | 'not-still-image'
   | 'no-post'
-  | 'unpublished';
+  | 'unpublished'
+  | 'private-post';
 
 export type EnqueueOptions = {
   /**
@@ -41,9 +42,9 @@ export type EnqueueOptions = {
    */
   servableOnly?: boolean;
   /**
-   * Refuse images with no post (`no-post`) or whose post is not live at `now`: a draft or a later
-   * date (`unpublished`). Scan sampling and owner ratings pass it; the publish sweep samples the
-   * post once it goes live.
+   * Refuse images with no post (`no-post`), whose post is not live at `now`: a draft or a later
+   * date (`unpublished`), or whose post's availability Knights does not show (`private-post`). Scan sampling and owner
+   * ratings pass it.
    */
   requirePublished?: boolean;
   /**
@@ -103,28 +104,32 @@ export async function enqueueKnightsItems(
       servable: boolean;
       hasPost: boolean;
       publishesAt: Date | null;
+      hiddenPost: boolean;
     }
   >(
     input.items.length === 0
       ? []
       : (
-          await db
-            .selectFrom('Image as img')
-            .leftJoin('Post as p', 'p.id', 'img.postId')
-            .select((eb) => [
-              'img.id',
-              'img.needsReview',
-              'img.acceptableMinor',
-              'img.type',
-              'p.id as postRowId',
-              // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
-              sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
-                'publishedEpoch'
-              ),
-              servableImage(eb).as('servable'),
-            ])
-            .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
-            .execute()
+          await readWithoutJit(db, (trx) =>
+            trx
+              .selectFrom('Image as img')
+              .leftJoin('Post as p', 'p.id', 'img.postId')
+              .select((eb) => [
+                'img.id',
+                'img.needsReview',
+                'img.acceptableMinor',
+                'img.type',
+                'p.id as postRowId',
+                'p.availability',
+                // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
+                sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
+                  'publishedEpoch'
+                ),
+                servableImage(eb).as('servable'),
+              ])
+              .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
+              .execute()
+          )
         ).map((row) => [
           row.id,
           {
@@ -132,6 +137,7 @@ export async function enqueueKnightsItems(
             still: row.type === 'image',
             servable: Boolean(row.servable),
             hasPost: row.postRowId !== null,
+            hiddenPost: postHiddenFromKnights(row.availability),
             publishesAt:
               row.publishedEpoch === null ? null : new Date(Number(row.publishedEpoch) * 1000),
           },
@@ -169,6 +175,7 @@ export async function enqueueKnightsItems(
       (image.publishesAt === null || image.publishesAt.getTime() > now.getTime())
     )
       return refuse('unpublished');
+    if (requirePublished && image.hiddenPost) return refuse('private-post');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;

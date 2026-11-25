@@ -20,6 +20,7 @@ import {
   captureFeedGoShadowV1Images,
   feedGoV1ShapeClass,
   finishFeedGoShadow,
+  probeFeedGoShadow,
   type FeedGoShadowSample,
   type FeedGoV1ShapeInput,
 } from '~/server/trpc/feed-go-shadow';
@@ -183,6 +184,9 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
     shadow = beginFeedGoShadowV1Images(req);
+    // Go-first probe (its own rate, FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE, default 0): started
+    // here, before the gates and the search fill the per-image caches, and never awaited.
+    probeFeedGoShadow(shadow);
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);

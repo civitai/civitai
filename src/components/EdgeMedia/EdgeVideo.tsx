@@ -59,6 +59,8 @@ type VideoProps = Omit<
   standby?: boolean;
 };
 
+type WebkitVideoElement = HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+
 export type EdgeVideoRef = {
   stop: () => void;
 };
@@ -183,12 +185,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       const container = containerRef.current;
       if (!container) return;
 
-      if (!document.fullscreenElement) {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else if (typeof container.requestFullscreen === 'function') {
         container.requestFullscreen().catch((err: Error) => {
           console.error(`Error attempting to enable fullscreen mode: ${err.message}`);
         });
       } else {
-        document.exitFullscreen();
+        // iPhone Safari has no element fullscreen; only the video itself can go fullscreen.
+        (ref.current as WebkitVideoElement | null)?.webkitEnterFullscreen?.();
       }
     }, []);
 

@@ -15,7 +15,6 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
-  TALLIES,
 } from './doc-store.functional';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -30,8 +29,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * `appdata_rw`). Never point it at a shared, staging or production database.
  * CI's unit job provides one (a `postgres:18` service in `.github/workflows/lint.yml`).
  * Without it every case here is skipped, and the properties below are NOT
- * exercised by that run: quota under concurrent writers, concurrent marks,
- * counters and first increments, the lock timeout, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
+ * exercised by that run: quota under concurrent writers, concurrent reports,
+ * the lock timeout, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
  */
 
 if (!REAL_PG_URL) {
@@ -174,64 +173,23 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     expect(await store.get(ctx(app, NS_PROD, 1), PREFS, 'blocked')).toBeNull();
   });
 
-  it('concurrent first increments of one absent key create ONE doc and lose no count', async () => {
-    const app = freshApp('race_ctrcreate');
-    const store = createDocStore({ db: h.db });
-    const r = await settle(
-      Array.from({ length: 10 }, (_, i) =>
-        store.increment(ctx(app, NS_PROD, 700 + i), TALLIES, 'col-1', 'plays', 2)
-      )
-    );
-    expect(r.codes).toEqual([]);
-    expect(r.ok).toBe(10);
-    const docs = await h.raw(`SELECT key, author_kind FROM appdata.doc WHERE app_id = $1`, [app]);
-    expect(docs).toEqual([{ key: 'col-1', author_kind: 'counter' }]);
-    expect((await store.get(ctx(app, NS_PROD, null), TALLIES, 'col-1'))?.counters.plays).toBe(20);
-    const [u] = await h.raw(`SELECT docs, last_seq FROM appdata.usage_app WHERE app_id = $1`, [
-      app,
-    ]);
-    expect({ docs: Number(u.docs), seq: Number(u.last_seq) }).toEqual({ docs: 1, seq: 1 });
-    await assertUsageConsistent(h, app, NS_PROD);
-  });
-
-  it('marks: 12 users, each racing 3 identical marks on one doc — count 12, then 0 after racing unmarks', async () => {
-    const app = freshApp('race_mark');
+  it('reports: 12 users, each racing 3 identical reports on one doc — exactly 12 report rows', async () => {
+    const app = freshApp('race_report');
     const store = createDocStore({ db: h.db });
     await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
     const users = Array.from({ length: 12 }, (_, i) => 500 + i);
-    await settle(
-      users.flatMap((u) =>
-        [0, 1, 2].map(() => store.mark(ctx(app, NS_PROD, u), POSTS, 'k', 'vote'))
-      )
+    const r = await settle(
+      users.flatMap((u) => [0, 1, 2].map(() => store.report(ctx(app, NS_PROD, u), POSTS, 'k')))
     );
-    const doc = await store.get(ctx(app, NS_PROD, null), POSTS, 'k');
-    expect(doc?.marks.vote).toBe(12);
+    expect(r.codes).toEqual([]);
     const [rows] = await h.raw(
-      `SELECT count(*)::int AS n FROM appdata.doc_mark WHERE app_id = $1`,
+      `SELECT count(*)::int AS n FROM appdata.doc_mark WHERE app_id = $1 AND name = 'report'`,
       [app]
     );
     expect(rows.n).toBe(12);
-    const un = await settle(
-      users.flatMap((u) => [0, 1].map(() => store.unmark(ctx(app, NS_PROD, u), POSTS, 'k', 'vote')))
-    );
-    expect(un.codes).toEqual([]);
-    expect((await store.get(ctx(app, NS_PROD, null), POSTS, 'k'))?.marks.vote).toBe(0);
   });
 
-  it('counters: 20 racing increments of 3 sum exactly', async () => {
-    const app = freshApp('race_ctr');
-    const store = createDocStore({ db: h.db });
-    await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
-    const r = await settle(
-      Array.from({ length: 20 }, (_, i) =>
-        store.increment(ctx(app, NS_PROD, 600 + i), POSTS, 'k', 'views', 3)
-      )
-    );
-    expect(r.codes).toEqual([]);
-    expect((await store.get(ctx(app, NS_PROD, null), POSTS, 'k'))?.counters.views).toBe(60);
-  });
-
-  it('mixed racing writes, deletes, marks and counters across users and keys settle with no deadlock and consistent usage', async () => {
+  it('mixed racing writes and deletes across users and keys settle with no deadlock and consistent usage', async () => {
     const app = freshApp('race_mix');
     const store = createDocStore({ db: h.db });
     const keys = ['a', 'b', 'c'];
@@ -312,9 +270,9 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     const store = createDocStore({ db: h.db });
     const app = freshApp('pg_recorder');
     await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
-    await store.mark(ctx(app, NS_PROD, 2), POSTS, 'k', 'vote');
+    await store.report(ctx(app, NS_PROD, 2), POSTS, 'k');
     await store.list(ctx(app, NS_PROD, 2), POSTS, {
-      sort: '-mark:vote',
+      sort: '-updatedAt',
       where: { status: 'open' },
     });
     await store.delete(ctx(app, NS_PROD, 1), POSTS, 'k');

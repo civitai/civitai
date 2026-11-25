@@ -6,7 +6,7 @@ const API_ROOT = path.resolve(__dirname, '../../pages/api');
 const SERVED_API_ROOT = path.resolve(__dirname, '../api-routes');
 
 const SCAN_SUBMIT =
-  /\b(ingestImages?|ingestImageById|enqueueImageIngestion|createImageIngestionRequest)\b/;
+  /\b(ingestImages?|ingestImageById|rescanImageById|enqueueImageIngestion|createImageIngestionRequest)\b/;
 
 /**
  * REST routes that name an image scan submit function directly. Adding one is a deliberate

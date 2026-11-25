@@ -12,6 +12,7 @@ import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticSh
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { FeaturedModelVersionHomeBlock } from '~/components/HomeBlocks/FeaturedModelVersionHomeBlock';
 import { HomeBlocksSkeleton } from '~/components/HomeBlocks/HomeBlockSkeleton';
+import { homeBlockContentId } from '~/components/HomeBlocks/homeBlockContentId';
 import { FeedHomeBlock } from '~/components/HomeBlocks/FeedHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
@@ -66,18 +67,21 @@ export function Home() {
           <BrowsingLevelProvider browsingLevel={sfwBrowsingLevelsFlag}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 1 && i > 0;
+              // Placed and keyed by its own row; its content read by the id it shares with every
+              // other viewer of the block (a system block's clone reads its source's).
+              const contentId = homeBlockContentId(homeBlock);
               return (
                 <React.Fragment key={homeBlock.id}>
                   {homeBlock.type === HomeBlockType.Collection && (
                     <CollectionHomeBlock
-                      homeBlockId={homeBlock.id}
+                      homeBlockId={contentId}
                       metadata={homeBlock.metadata}
                       blockIndex={i}
                     />
                   )}
                   {homeBlock.type === HomeBlockType.FeaturedCollections && (
                     <FeaturedCollectionsHomeBlock
-                      homeBlockId={homeBlock.id}
+                      homeBlockId={contentId}
                       metadata={homeBlock.metadata}
                       blockIndex={i}
                     />
@@ -87,16 +91,13 @@ export function Home() {
                   )} */}
                   {homeBlock.type === HomeBlockType.Feed && (
                     <FeedHomeBlock
-                      homeBlockId={homeBlock.id}
+                      homeBlockId={contentId}
                       metadata={homeBlock.metadata}
                       blockIndex={i}
                     />
                   )}
                   {homeBlock.type === HomeBlockType.Leaderboard && (
-                    <LeaderboardsHomeBlock
-                      homeBlockId={homeBlock.id}
-                      metadata={homeBlock.metadata}
-                    />
+                    <LeaderboardsHomeBlock homeBlockId={contentId} metadata={homeBlock.metadata} />
                   )}
                   {homeBlock.type === HomeBlockType.Social && (
                     <SocialHomeBlock metadata={homeBlock.metadata} />
@@ -107,12 +108,12 @@ export function Home() {
                   {homeBlock.type === HomeBlockType.CosmeticShop && (
                     <CosmeticShopSectionHomeBlock
                       metadata={homeBlock.metadata}
-                      homeBlockId={homeBlock.id}
+                      homeBlockId={contentId}
                     />
                   )}
                   {homeBlock.type === HomeBlockType.FeaturedModelVersion && (
                     <FeaturedModelVersionHomeBlock
-                      homeBlockId={homeBlock.id}
+                      homeBlockId={contentId}
                       metadata={homeBlock.metadata}
                       blockIndex={i}
                     />

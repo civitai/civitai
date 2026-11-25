@@ -1,6 +1,6 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { titleCase } from '~/utils/string-helpers';
 
@@ -20,6 +20,8 @@ const describeRecipient = (recipient: string | null) =>
   recipient ? `@${recipient}` : 'your recipient';
 
 export const membershipGiftSentEmail = createEmail({
+  template: 'membershipGiftSent',
+  mailClass: 'transactional',
   header: ({ to, recipient, tier, months }: MembershipGiftSentData) => ({
     subject: `Your gift of ${describeGift({ tier, months })} was delivered to ${describeRecipient(
       recipient
@@ -34,13 +36,21 @@ export const membershipGiftSentEmail = createEmail({
       : '';
 
     return simpleEmailWithTemplate({
+      icon: '💝',
+      accent: 'violet',
+      eyebrow: 'Gift delivered',
       header: `Thanks ${escapeHtml(username)}, your gift has been delivered!`,
       body: `
-        <p>
+        <p style="margin: 0;">
           Your gift of <strong>${describeGift({ tier, months })}</strong> has been delivered to
           <strong>${escapeHtml(describeRecipient(recipient))}</strong>. It starts when they
           accept it.
         </p>
+        ${renderEmailSummary([
+          { label: 'Gift', value: describeGift({ tier, months }) },
+          { label: 'Delivered to', value: escapeHtml(describeRecipient(recipient)) },
+          ...(anonymous ? [{ label: 'Sent', value: 'Anonymously' }] : []),
+        ])}
         ${anonymousNote}
         <p>
           If something doesn't look right, contact

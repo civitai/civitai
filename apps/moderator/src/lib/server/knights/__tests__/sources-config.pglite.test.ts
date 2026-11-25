@@ -55,6 +55,7 @@ const {
   getSourcesContext,
   getSourcesSettings,
   saveGameSettings,
+  saveModTagReview,
   saveSourcesConfig,
   SOURCES_AUDIT_ACTIVITY,
 } = await import('../sources-config.service');
@@ -360,6 +361,22 @@ describe('saveGameSettings', () => {
     expect(parseKnightsSourcesConfig(redisStore.get(KEY)!).game?.yesNoMaxAgeDays).toBe(21);
   });
 
+  it('stores the skill-check pool cap and the serve-judged toggle under game, audits both, and keeps the other fields', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(
+      await saveGameSettings({ skillCheckPoolCap: 300, skillCheckServeJudged: true }, MOD)
+    ).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({
+      hiddenCheckRate: 0.1,
+      yesNoStretch: 4,
+      skillCheckPoolCap: 300,
+      skillCheckServeJudged: true,
+    });
+    const recorded = JSON.stringify(await audit());
+    expect(recorded).toContain('skillCheckPoolCap');
+    expect(recorded).toContain('skillCheckServeJudged');
+  });
+
   it('clears one stored field on request, so Knights uses its default for it, and audits it', async () => {
     redisStore.set(KEY, JSON.stringify(stored));
     await saveGameSettings({ hiddenCheckRate: null }, MOD);
@@ -480,6 +497,36 @@ describe('saveGameSettings harvest fields', () => {
     redisStore.set(KEY, JSON.stringify({ ...stored, game }));
     await saveSourcesConfig({ enabled: false, sfwRate: 0.4, nsfwRate: 0.2 }, MOD);
     expect(JSON.parse(redisStore.get(KEY)!).game).toEqual(game);
+  });
+});
+
+describe('saveModTagReview', () => {
+  it('turns the tag review source on and off, carrying every other field over, and audits each change', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 0.5, nsfwRate: 0.2, game: { shopDisabled: true } })
+    );
+    expect(await saveModTagReview(true, MOD)).toEqual({ ok: true, changed: true });
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY) ?? null)).toEqual({
+      enabled: true,
+      sfwRate: 0.5,
+      nsfwRate: 0.2,
+      game: { shopDisabled: true },
+      modTagReview: true,
+    });
+    expect(await saveModTagReview(true, MOD)).toEqual({ ok: true, changed: false });
+    expect(await saveModTagReview(false, MOD)).toEqual({ ok: true, changed: true });
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY) ?? null).modTagReview).toBe(false);
+    expect(
+      (await activity()).filter((a) => a.activity.startsWith(SOURCES_AUDIT_ACTIVITY))
+    ).toHaveLength(2);
+  });
+
+  it('keeps the switch when the sources or the game settings are saved', async () => {
+    await saveModTagReview(true, MOD);
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }, MOD);
+    await saveGameSettings({ yesNoStretch: 4 }, MOD);
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY) ?? null).modTagReview).toBe(true);
   });
 });
 

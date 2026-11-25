@@ -38,6 +38,7 @@ import { model3dRouter } from './model3d.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
 import { modelVersionGiftRouter } from './model-version-gift.router';
+import { versionShowcaseRouter } from './version-showcase.router';
 import { notificationRouter } from './notification.router';
 import { partnerRouter } from './partner.router';
 import { placementRouter } from './placement.router';
@@ -177,6 +178,7 @@ export const routers = {
   model3d: () => Promise.resolve(model3dRouter),
   modelFile: () => Promise.resolve(modelFileRouter),
   modelVersion: () => Promise.resolve(modelVersionRouter),
+  versionShowcase: () => Promise.resolve(versionShowcaseRouter),
   modelVersionGift: () => Promise.resolve(modelVersionGiftRouter),
   notification: () => Promise.resolve(notificationRouter),
   partner: () => Promise.resolve(partnerRouter),

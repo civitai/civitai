@@ -1,7 +1,6 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as LegalHoldService from '~/server/services/legal-hold.service';
 
 /**
  * What `delete-old-training-data` does with each row it selects.
@@ -37,11 +36,6 @@ const { mockDeleteModelFileObject, mockIsFlipt, mockResolveTarget, mockGetQuaran
     mockGetQuarantineBucket: vi.fn(() => 'civitai-quarantine'),
   }));
 
-// The hold marker view exists; the statements that read it are what is under test here.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHoldService>()),
-  holdMarkerViewExists: async () => true,
-}));
 vi.mock('~/utils/s3-utils', () => ({
   deleteModelFileObject: mockDeleteModelFileObject,
   resolveModelFileDeleteTarget: mockResolveTarget,
@@ -70,7 +64,6 @@ const row = (mf_id: number, url = `https://example.invalid/bucket/key-${mf_id}`)
   mf_id,
   job_id: `job-${mf_id}`,
   url,
-  held: false,
 });
 
 const DELETED = { deleted: true } as const;
@@ -270,6 +263,26 @@ describe('a pass is capped', () => {
     expect(dbWrite.$queryRaw.mock.calls[0]).not.toContain(
       DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS
     );
+  });
+});
+
+describe('a version on an open CSAM report', () => {
+  it('is left out of both the count and the slice', async () => {
+    selects([]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    const carriesReportCheck = (call: unknown[]) =>
+      call.some(
+        (v) =>
+          typeof v === 'object' &&
+          v !== null &&
+          'sql' in v &&
+          String((v as { sql: string }).sql).includes("'modelVersionIds'")
+      );
+    expect(dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(carriesReportCheck(dbWrite.$queryRaw.mock.calls[0])).toBe(true);
+    expect(carriesReportCheck(dbWrite.$queryRaw.mock.calls[1])).toBe(true);
   });
 });
 

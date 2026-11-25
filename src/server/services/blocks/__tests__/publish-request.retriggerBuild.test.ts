@@ -100,6 +100,7 @@ vi.mock('~/server/utils/blocks-retrigger-rate-limit', () => ({
   acquireRetriggerLock: limiter.acquire,
   releaseRetriggerLock: limiter.release,
   checkRetriggerModeratorQuota: limiter.quota,
+  RETRIGGER_LOCK_TTL_SECONDS: 60,
 }));
 
 const SHA = 'a'.repeat(40);
@@ -517,7 +518,15 @@ describe('retriggerBuild — guard 6: deploy-state gate', () => {
 describe('retriggerBuild — guard 7: rate limit + double-click idempotency', () => {
   it('refuses when the per-moderator quota is exhausted', async () => {
     mockRedis.quotaAllowed = false;
-    await expectRejectCode(callRetrigger(), 'RATE_LIMITED');
+    const refused = await callRetrigger().catch((e: unknown) => e);
+    await expectRejectCode(Promise.reject(refused), 'RATE_LIMITED');
+    // The refusal carries its meta: the quota window's wait and the abuse id, no counts.
+    expect((refused as { rateLimit?: unknown }).rateLimit).toEqual({
+      retryAfterSeconds: 1800,
+      retryAt: expect.any(String),
+      id: 'apps.build-retrigger',
+      kind: 'abuse',
+    });
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 
@@ -532,7 +541,13 @@ describe('retriggerBuild — guard 7: rate limit + double-click idempotency', ()
     expect(mockTriggerBuild).toHaveBeenCalledTimes(1);
     // Second call: the NX lock is already held.
     mockRedis.nxResult = false;
-    await expectRejectCode(callRetrigger(), 'RATE_LIMITED');
+    const refused = await callRetrigger().catch((e: unknown) => e);
+    await expectRejectCode(Promise.reject(refused), 'RATE_LIMITED');
+    // The lock lapses by its TTL at the latest: that is the wait the refusal names.
+    expect((refused as { rateLimit?: { retryAfterSeconds?: number } }).rateLimit).toMatchObject({
+      retryAfterSeconds: 60,
+      id: 'apps.build-retrigger',
+    });
     expect(mockTriggerBuild).toHaveBeenCalledTimes(1); // still ONE
   });
 

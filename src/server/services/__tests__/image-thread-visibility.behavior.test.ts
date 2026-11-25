@@ -40,6 +40,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL DEFAULT ${OWNER}, "postId" int, url text NOT NULL,
       type text NOT NULL DEFAULT 'image', "nsfwLevel" int NOT NULL DEFAULT 1,
@@ -57,11 +58,14 @@ beforeAll(async () => {
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
     CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, "bannerId" int, status text, "publishedAt" timestamp, ingestion text
+      id int PRIMARY KEY, "coverId" int, "bannerId" int, status text, "publishedAt" timestamp, ingestion text, availability "Availability" DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability");
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "endAt" timestamp, "nsfwLevel" int);
+    CREATE TABLE "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
     CREATE TABLE "CommentV3" (
       id serial PRIMARY KEY, "entityType" text, "entityId" int, "parentId" int, "userId" int,
       content text, "deletedAt" timestamp, "createdAt" timestamp NOT NULL DEFAULT now()

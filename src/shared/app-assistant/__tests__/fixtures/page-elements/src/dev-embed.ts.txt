@@ -1,0 +1,85 @@
+// Dev-server embeddability for `civitai app dev-tunnel` (P2).
+//
+// `dev:tunnel` serves THIS local dev server, through a hardened reverse tunnel,
+// as a `dev-<16hex>.civit.ai` host that the REAL Civitai host
+// (`/apps/dev/<blockId>` on civitai.com, civitai.red or civitai.green) iframes.
+// For that embed to work the dev server must be framable BY every Civitai domain
+// and the block bundle must ACCEPT postMessages from each of them.
+//
+// This file holds the framing half, imported by vite.config.ts; the allowlist
+// half is VITE_BLOCK_ALLOWED_PARENT_ORIGINS in .env.development, which must name
+// the same origins. It is DEV-ONLY: vite `server.*` options apply only to
+// `vite dev`, never to `vite build`, so the PRODUCTION bundle is untouched.
+
+/**
+ * The Civitai host origins that embed this app: every Civitai domain serves the
+ * `/apps/dev` preview route, which iframes the tunneled child. The ONE list the
+ * dev server's frame-ancestors CSP is built from below; `.env.development`'s
+ * VITE_BLOCK_ALLOWED_PARENT_ORIGINS (the postMessage allowlist) carries the same
+ * origins. To add a domain, add it here AND there.
+ */
+export const CIVITAI_PARENT_ORIGINS: readonly string[] = [
+{{ civitaiParentOriginsJS }}];
+
+/**
+ * The dev host suffix the tunnel serves the child on (`dev-<16hex>.civit.ai`).
+ * Vite's DNS-rebinding host check must allow it, or the tunneled request is 403'd
+ * before it reaches the app. A leading-dot entry matches any subdomain.
+ */
+export const DEV_TUNNEL_HOST_SUFFIX = '.civit.ai';
+
+/**
+ * Hosts the dev server accepts (Vite `server.allowedHosts`). `localhost` covers
+ * the normal harness; the `.civit.ai` suffix admits the tunneled host.
+ */
+export const DEV_ALLOWED_HOSTS: string[] = ['localhost', DEV_TUNNEL_HOST_SUFFIX];
+
+/**
+ * The env flag that marks a dev-tunnel session. `npm run dev:tunnel` sets it,
+ * and so does anything else that serves this dev server through the tunnel
+ * (e.g. `CIVITAI_DEV_TUNNEL_HMR=1 npm run dev`). Named for its first use —
+ * routing HMR over the tunnel — it also gates devServerSecurityHeaders().
+ * vite.config reads it with loadEnv(mode, cwd, ''), so a value exported in the
+ * shell counts as well as one set by an npm script.
+ */
+export const DEV_TUNNEL_ENV = 'CIVITAI_DEV_TUNNEL_HMR';
+
+/** True in a dev-tunnel session: DEV_TUNNEL_ENV is '1' or 'true'. */
+export function isDevTunnel(env: Record<string, string | undefined>): boolean {
+  const v = env[DEV_TUNNEL_ENV];
+  return v === '1' || v === 'true';
+}
+
+/**
+ * Response headers that make the dev server iframe-embeddable from the prod
+ * parent. vite.config sends them ONLY in a dev-tunnel session (isDevTunnel):
+ * on a plain `npm run dev`, `Access-Control-Allow-Origin: *` would let any page
+ * open in the same browser read this dev server's source. Two headers, both
+ * DEV-ONLY:
+ *
+ * 1. `frame-ancestors` CSP scoped to the Civitai domains (+ self for the plain
+ *    local harness) so each may EMBED the dev server. Critically we DO NOT set
+ *    `X-Frame-Options` — an `X-Frame-Options: DENY/SAMEORIGIN` would block the
+ *    cross-origin embed regardless of the CSP. (Vite sets no XFO by default;
+ *    this documents + asserts that invariant.)
+ *
+ * 2. `Access-Control-Allow-Origin: *` so the ES modules load. The dev-tunnel
+ *    embeds this server inside App Blocks' `PageBlockHost` iframe, which is
+ *    sandboxed with a NULL origin. When that null-origin document fetches the
+ *    dev server's ES modules (`/src/main.tsx`, `/@vite/client`, …) the browser
+ *    applies CORS; without an `Access-Control-Allow-Origin` header it blocks
+ *    every module script ("from origin 'null' has been blocked by CORS policy").
+ *    `*` matches how PRODUCTION app-blocks are served (their module scripts
+ *    carry `access-control-allow-origin: *`), so the tunneled dev build behaves
+ *    like prod. This is safe here: the dev server is reachable only through the
+ *    authenticated dev-tunnel gate and is a local dev server; module-script
+ *    fetches are non-credentialed, so `*` (not a specific origin) is correct.
+ *    Like all `server.*` options this applies only to `vite dev`, never to a
+ *    `vite build` production bundle.
+ */
+export function devServerSecurityHeaders(): Record<string, string> {
+  return {
+    'Content-Security-Policy': `frame-ancestors 'self' ${CIVITAI_PARENT_ORIGINS.join(' ')}`,
+    'Access-Control-Allow-Origin': '*',
+  };
+}

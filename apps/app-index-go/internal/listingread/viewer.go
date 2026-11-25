@@ -18,7 +18,8 @@ import (
 //   - BrowsingLevel is the viewer's browsing level as the store reads it (viewerBrowsingLevel):
 //     the mature ratings it admits on a red-capable host (matureRatingsAllowed) and, on such a
 //     host, the levels it adds to the media ceiling (redHostMediaCeiling). 0 is the public floor.
-//     Ignored off a red-capable host, as on the site.
+//     Off a red-capable host only a sub-listing card's image ceiling reads it
+//     (subListingImageCeiling), as on the site.
 //   - Scope is the store visibility scope (resolveStoreVisibilityScope), narrowed (NarrowScope).
 //
 // The audience floor is not here: only a `public`-floor viewer is answered from the read model

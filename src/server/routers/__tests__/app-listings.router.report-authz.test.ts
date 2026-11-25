@@ -208,8 +208,8 @@ describe('reportListing — protectedProcedure', () => {
 });
 
 describe('reportListing — rate-limit wiring', () => {
-  it('is guarded by rateLimit(20/3600) (report-spam guard)', () => {
-    expect(rateLimitCalls).toContainEqual(expect.objectContaining({ limit: 20, period: 3600 }));
+  it('is guarded by its registry limit (report-spam guard, 20/3600 by default)', () => {
+    expect(rateLimitCalls).toContainEqual({ usageLimitIds: ['apps.listing-reports'] });
   });
 });
 

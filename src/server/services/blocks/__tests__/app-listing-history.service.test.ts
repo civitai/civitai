@@ -831,6 +831,29 @@ describe('🔴 the failure detail reaches the app’s team, and only for a faile
       authorFailureDetail({ status: 'approved', deployState: 'failed', deployDetail: null })
     ).toBeNull();
   });
+
+  // INVARIANT GUARD, not regression coverage: an approved+failed row stores a build failure, not
+  // a review preview's boot check, so this exit never returned one. It pins that the History
+  // tab's exit goes through the same author redaction as the other author exits.
+  it('a detail carrying a boot check reaches the team as the fixed reason only', () => {
+    const MARKER = 'zq-bootcheck-marker-5e1d0a7c93';
+    const out = authorFailureDetail({
+      status: 'approved',
+      deployState: 'failed',
+      deployDetail: JSON.stringify({
+        bootCheck: {
+          result: 'passed',
+          ms: 900,
+          messagesSeen: [`${MARKER}-msg`],
+          firstError: null,
+          checkedAt: '2026-01-01T00:00:00.000Z',
+          mode: 'shadow',
+        },
+      }),
+    });
+    expect(out).not.toContain(MARKER);
+    expect(JSON.parse(out as string).bootCheck.reason).toBe('passed');
+  });
 });
 
 describe('the latest build attempt’s step + class ride along with the failure detail', () => {

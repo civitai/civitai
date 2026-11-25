@@ -44,6 +44,9 @@ const mocks = vi.hoisted(() => ({
   assetsQuery: vi.fn(),
   holds: [] as unknown[],
   approveResult: undefined as unknown,
+  versionPreview: undefined as unknown,
+  versionPreviewError: false,
+  versionPreviewQuery: vi.fn(),
 }));
 
 const notified = vi.hoisted(() => [] as Record<string, unknown>[]);
@@ -95,6 +98,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'blocks.listPublishRequestHolds': { useQuery: () => ({ data: mocks.holds }) },
         'blocks.clearPublishRequestHold': { useMutation: mutation('clearHold') },
         'blocks.placePublishRequestHold': { useMutation: mutation('placeHold') },
+        'blocks.getVersionListingRatingPreview': {
+          useQuery: (input: unknown, opts: unknown) => {
+            mocks.versionPreviewQuery(input, opts);
+            return { data: mocks.versionPreview, isError: mocks.versionPreviewError };
+          },
+        },
         'appListings.getAssets': {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.assetsQuery(input, opts);
@@ -117,7 +126,54 @@ beforeEach(() => {
   mocks.assets = { data: undefined, isError: false };
   mocks.assetsQuery.mockClear();
   mocks.holds = [];
+  mocks.versionPreview = undefined;
+  mocks.versionPreviewError = false;
+  mocks.versionPreviewQuery.mockClear();
   showError.mockClear();
+});
+
+describe('ReviewActionBar — a new version re-rates the live listing', () => {
+  const bar = (mode: 'pending' | 'approved' = 'pending') =>
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: { ...PENDING, appBlockId: 'apb_1' }, mode }}
+        onClose={vi.fn()}
+      />
+    );
+
+  test('says the approve re-rates the listing from X to PG-13, and asks the server every open', async () => {
+    mocks.versionPreview = { listingId: 'apl_live', from: 'x', to: 'pg13' };
+    bar();
+    const notice = page.getByTestId('apps-version-listing-rerate');
+    await expect.element(notice).toBeInTheDocument();
+    expect(notice.element().textContent).toBe(
+      'Approving this version re-rates the live store listing from X to PG-13: the rating this version declares, raised to its store imagery when that is rated higher.'
+    );
+    expect(mocks.versionPreviewQuery).toHaveBeenCalledWith(
+      { publishRequestId: 'req-1' },
+      { staleTime: 0, refetchOnMount: 'always', retry: false }
+    );
+    // A notice, not a gate.
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+  });
+
+  test('a failed check says so instead of looking like no change', async () => {
+    mocks.versionPreviewError = true;
+    bar();
+    await expect
+      .element(page.getByTestId('apps-version-listing-rerate-unchecked'))
+      .toHaveTextContent(
+        'Could not check whether approving re-rates the live store listing. Close and reopen this request to retry.'
+      );
+    expect(page.getByTestId('apps-version-listing-rerate').elements()).toHaveLength(0);
+  });
+
+  test('an unchanged rating says nothing', async () => {
+    mocks.versionPreview = { listingId: 'apl_live', from: 'r', to: 'r' };
+    bar();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+    expect(page.getByTestId('apps-version-listing-rerate').elements()).toHaveLength(0);
+  });
 });
 
 describe('ReviewActionBar — review holds', () => {
@@ -240,7 +296,25 @@ describe('ReviewActionBar — approve', () => {
       <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={onClose} />
     );
     await page.getByRole('button', { name: 'Approve + build' }).click();
-    expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approve failed' }));
+    // Persistent, at the top, like every other review failure.
+    expect(showError).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Approve failed', autoClose: false, position: 'top-center' })
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test('a reject error is persistent too, and does NOT close', async () => {
+    mocks.errorMode = true;
+    const onClose = vi.fn();
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={onClose} />
+    );
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await page.getByTestId('apps-review-reject-chip-duplicate').click();
+    await page.getByTestId('apps-review-reject-confirm').click();
+    expect(showError).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Reject failed', autoClose: false, position: 'top-center' })
+    );
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -293,6 +367,183 @@ describe('ReviewActionBar — publish floor (icon + cover)', () => {
     );
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
     expect(page.getByTestId('apps-review-approve-floor').elements()).toHaveLength(0);
+  });
+});
+
+/**
+ * 🔴 REVIEW BOOT CHECK. A failed ENFORCED check places a boot-check review hold on the app; the
+ * hold (not the recorded result) disables Approve until an override reason, exactly like any
+ * other hold, and the bar says why. A check that could not run, or none under a current enforce
+ * flag, leaves Approve enabled with a yellow notice; a SHADOW result changes nothing.
+ */
+describe('ReviewActionBar — review boot check', () => {
+  const FAILED_NOTICE =
+    'The boot check found that this build never finishes loading (no BLOCK_READY), and placed a boot-check hold on the app. The hold stays until a build of this app passes the boot check; rebuilding or tearing down the preview does not remove it. To approve before that, override the hold with a written reason.';
+  const UNAVAILABLE =
+    "Boot check couldn't run for this build, so nobody has confirmed the app finishes loading. Check that the preview starts before you approve.";
+  const NOT_RUN =
+    'Boot check not run: this build has not passed the boot check, so nobody has confirmed the app finishes loading. Check that the preview starts before you approve.';
+  const BOOT_HOLD = {
+    id: 11,
+    slug: 'my-block',
+    publishRequestId: 'req-1',
+    requestKind: 'onsite',
+    placedByUserId: -1,
+    placedByUsername: 'civitai',
+    placedByLabel: 'Boot check',
+    reason:
+      'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold',
+    createdAt: new Date(),
+    clearedAt: null,
+    clearedByUserId: null,
+    clearedKind: null,
+    clearedReason: null,
+  };
+
+  test('🔴 enforce + failed with its boot-check hold: Approve disabled until an override reason, the notice shown', async () => {
+    mocks.holds = [BOOT_HOLD];
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'failed', mode: 'enforce' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-review-approve-boot-check'))
+      .toHaveTextContent(FAILED_NOTICE);
+    await expect.element(page.getByText('1 open review hold')).toBeInTheDocument();
+    await expect.element(page.getByText(BOOT_HOLD.reason)).toBeInTheDocument();
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeDisabled();
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeEnabled();
+    // One override field: the holds panel's (no second, boot-check-only field beside it).
+    expect(page.getByTestId('apps-review-boot-check-override-reason').elements()).toHaveLength(0);
+    // The escape hatch: a written override reason.
+    await page
+      .getByTestId('apps-review-hold-override-reason')
+      .fill('checked by hand, the app loads fine');
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      holdOverrideReason: 'checked by hand, the app loads fine',
+      holdOverrideIds: [11],
+    });
+  });
+
+  test('🔴 enforce + failed with NO hold (its write failed): Approve needs the same override reason, then sends it', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'failed', mode: 'enforce' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeDisabled();
+    const reason = page.getByTestId('apps-review-boot-check-override-reason');
+    await reason.fill('too short');
+    await expect.element(approve).toBeDisabled();
+    await reason.fill('checked by hand, the app loads fine');
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      holdOverrideReason: 'checked by hand, the app loads fine',
+      holdOverrideIds: [],
+    });
+  });
+
+  test('🔴 the hold blocks after a teardown too: no recorded result, the hold alone disables Approve', async () => {
+    mocks.holds = [BOOT_HOLD];
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: { ...PENDING, previewBootCheck: null }, mode: 'pending' }}
+        onClose={vi.fn()}
+        approveAndNext
+      />
+    );
+    await expect.element(page.getByTestId('apps-review-approve-now-button')).toBeDisabled();
+    await expect.element(page.getByTestId('apps-review-approve-next')).toBeDisabled();
+  });
+
+  test('enforce + unavailable: Approve enabled, the yellow notice shown', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: {
+            ...PENDING,
+            previewBootCheck: { result: 'unavailable', mode: 'enforce' },
+            previewBootCheckUnverified: true,
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await expect
+      .element(page.getByTestId('apps-review-boot-check-unavailable'))
+      .toHaveTextContent(UNAVAILABLE);
+    expect(page.getByTestId('apps-review-approve-boot-check').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-boot-check-not-run').elements()).toHaveLength(0);
+  });
+
+  test('🔴 enforce current, no enforced pass: the yellow "Boot check not run" notice, Approve enabled', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: null, previewBootCheckUnverified: true },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await expect
+      .element(page.getByTestId('apps-review-boot-check-not-run'))
+      .toHaveTextContent(NOT_RUN);
+  });
+
+  test('an enforced pass (not unverified): no boot-check notice at all', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: {
+            ...PENDING,
+            previewBootCheck: { result: 'passed', mode: 'enforce' },
+            previewBootCheckUnverified: false,
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    expect(page.getByTestId('apps-review-boot-check-not-run').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-boot-check-unavailable').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-approve-boot-check').elements()).toHaveLength(0);
+  });
+
+  test('shadow + failed: Approve enabled, no boot-check notice of any kind', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, previewBootCheck: { result: 'failed', mode: 'shadow' } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    expect(page.getByTestId('apps-review-approve-boot-check').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-boot-check-unavailable').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-boot-check-not-run').elements()).toHaveLength(0);
   });
 });
 
@@ -731,5 +982,28 @@ describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('ReviewActionBar — the sticky bar reserves the viewport bottom', () => {
+  const reserve = () =>
+    document.documentElement.style.getPropertyValue('--review-action-bar-reserve');
+
+  test('set while a sticky bar shows a pending request, removed when it unmounts', async () => {
+    const view = await renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} sticky />
+    );
+    await expect.element(page.getByTestId('apps-review-action-bar')).toBeInTheDocument();
+    await vi.waitFor(() => expect(reserve()).toMatch(/^[1-9]\d*px$/));
+    await view.unmount();
+    expect(reserve()).toBe('');
+  });
+
+  test('not set by the inline (modal) bar', async () => {
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+    expect(reserve()).toBe('');
   });
 });

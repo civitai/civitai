@@ -1,3 +1,5 @@
+import type { Prisma } from '@prisma/client';
+import { serviceFormLabels, serviceRequestFormSchema } from '~/shared/utils/service-request-form';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -34,8 +36,15 @@ export function buildServiceOfferingModerationText(offering: {
   title: string;
   description: string;
   licenseCustomText: string | null;
+  requestForm: Prisma.JsonValue;
 }) {
-  return [offering.title, offering.description, offering.licenseCustomText]
+  const form = serviceRequestFormSchema.safeParse(offering.requestForm);
+  return [
+    offering.title,
+    offering.description,
+    offering.licenseCustomText,
+    ...(form.success ? serviceFormLabels(form.data) : []),
+  ]
     .filter(Boolean)
     .join(' ');
 }
@@ -240,7 +249,13 @@ export async function scanServiceOffering(offeringId: number, { forceRescan = fa
   // The primary: called right after a write, and a lagging replica would scan the old text.
   const offering = await dbWrite.serviceOffering.findUnique({
     where: { id: offeringId },
-    select: { title: true, description: true, licenseCustomText: true, updatedAt: true },
+    select: {
+      title: true,
+      description: true,
+      licenseCustomText: true,
+      requestForm: true,
+      updatedAt: true,
+    },
   });
   if (!offering) return;
   try {
@@ -271,7 +286,13 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.serviceOffering.findMany({
       where: { id: { in: ids } },
-      select: { id: true, title: true, description: true, licenseCustomText: true },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        licenseCustomText: true,
+        requestForm: true,
+      },
     });
     return new Map(rows.map((r) => [r.id, buildServiceOfferingModerationText(r)]));
   },

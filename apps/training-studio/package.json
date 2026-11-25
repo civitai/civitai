@@ -1,6 +1,6 @@
 {
   "name": "@civitai/training-studio-app",
-  "version": "0.0.56",
+  "version": "0.0.60",
   "private": true,
   "type": "module",
   "scripts": {
@@ -45,6 +45,7 @@
     "@typescript-eslint/parser": "^5.62.0",
     "eslint": "^8.57.1",
     "eslint-plugin-svelte": "^2.46.1",
+    "fake-indexeddb": "^6.2.8",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "svelte-eslint-parser": "^0.43.0",

@@ -11,6 +11,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
+import { isImageOwner } from '~/server/services/util.service';
 import {
   getEnabledRemixApps,
   getRemixAppRegistry,
@@ -131,12 +132,10 @@ export function buildRemixAppRun({
 
 /** An upscale input at the size the host knows: the source row's, or the run's recorded output's. */
 function hostSized(url: string, image: RemixSourceImage, log: readonly RemixLogEntry[]) {
-  if (url === getRemixSourceUrl(image))
-    return {
-      url,
-      width: image.width || REMIX_FALLBACK_DIMENSIONS.width,
-      height: image.height || REMIX_FALLBACK_DIMENSIONS.height,
-    };
+  if (url === getRemixSourceUrl(image)) {
+    if (!image.width || !image.height) throw unsizedUpscale('user');
+    return { url, width: image.width, height: image.height };
+  }
   const made = log
     .flatMap((entry) => (entry.type === 'workflow' ? entry.result.images : []))
     .find((output) => output.url === url);
@@ -145,6 +144,28 @@ function hostSized(url: string, image: RemixSourceImage, log: readonly RemixLogE
     code: 'BAD_REQUEST',
     message: 'This upscale names an image of unknown size',
   });
+}
+
+/**
+ * A built-in app's upscale input, at the size it names. The upscaler prices by that size, so an
+ * input of unknown size, or the source when its row has none, is refused rather than guessed.
+ */
+function builtInSized({ url, width, height }: RemixImage, image: RemixSourceImage) {
+  const sourceUnsized = url === getRemixSourceUrl(image) && !(image.width && image.height);
+  if (!width || !height || sourceUnsized) throw unsizedUpscale('built-in');
+  return { url, width, height };
+}
+
+const REMIX_UPSCALE_UNAVAILABLE = 'Upscale unavailable for this image';
+
+function unsizedUpscale(app: 'built-in' | 'user') {
+  logToAxiom({
+    name: 'remix-app-run',
+    type: 'warning',
+    message: 'Refused an upscale of an image of unknown size',
+    payload: { app },
+  });
+  return new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_UPSCALE_UNAVAILABLE });
 }
 
 /**
@@ -160,16 +181,19 @@ export function buildRuntimeRequest({
   viewer,
   author,
   log,
+  references = [],
 }: {
   app: Pick<RemixApp, 'name' | 'engine'>;
   image: RemixSourceImage;
+  /** Every image the run's `image` asks were answered with: they rate the run with the source. */
+  references?: readonly RemixSourceImage[];
   request: RemixWorkflowRequest;
   viewer: { isGreen: boolean; showNsfw: boolean };
   /** Required, so no caller can leave a user app's sizes to its claim. */
   author: RegisteredRemixApp['author'] | undefined;
   log: readonly RemixLogEntry[];
 }) {
-  const resolved = resolveRemixAppEngine(app, image, viewer);
+  const resolved = resolveRemixAppEngine(app, image, viewer, references);
   if ('refusal' in resolved) throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
   const { tier, engine } = resolved;
   const sized = ({ url, width, height }: RemixImage) => ({
@@ -179,7 +203,9 @@ export function buildRuntimeRequest({
   });
 
   if (request.kind === 'upscale') {
-    const input = author ? hostSized(request.image.url, image, log) : sized(request.image);
+    const input = author
+      ? hostSized(request.image.url, image, log)
+      : builtInSized(request.image, image);
     return {
       tier,
       // The upscaler prices by the output size, so by the input's.
@@ -329,6 +355,16 @@ export async function loadSource(
   return readSource(imageId);
 }
 
+/** An image the viewer answered an `image` ask with: one of their own images, through the source's visibility check. */
+export async function loadReference(imageId: number, caller: RemixAppCaller) {
+  if (!(await isImageOwner({ userId: caller.user.id, imageId, allowMods: false })))
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Pick one of your own images' });
+  const image = await loadSource(imageId, caller, true);
+  if (image.type !== 'image')
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Pick an image, not a video' });
+  return image;
+}
+
 async function readSource(imageId: number) {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
@@ -343,6 +379,9 @@ async function readSource(imageId: number) {
       blockedFor: true,
       minor: true,
       poi: true,
+      needsReview: true,
+      acceptableMinor: true,
+      tosViolation: true,
     },
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });

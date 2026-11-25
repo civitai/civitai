@@ -1,11 +1,13 @@
 // Prometheus metrics for Knights, scraped from `/metrics`. Labels are bounded enums only: never a user, image or
 // item id. Every counter is seeded with its full label set so each series exports 0 before its first event.
 import { Counter, Registry, collectDefaultMetrics } from 'prom-client';
+import type { RevocationOutcome } from '@civitai/auth';
 import {
   KNIGHTS_ESCALATION_REASONS,
   KNIGHTS_STAGE_RANKS,
   KNIGHTS_WRITEBACK_REASONS,
 } from '@civitai/shared/new-order';
+import type { PressTiming } from '$lib/press';
 import { logToAxiom } from './axiom';
 import { loadGaugeSnapshot, registerGauges } from './metrics/gauges';
 
@@ -30,6 +32,24 @@ const ESCALATION_REASONS = [
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
+const SKILL_CHECK_RETIRE_REASONS = ['cap', 'failures'] as const;
+const REVIEW_OUTCOMES = ['confirmed', 'split', 'excluded', 'expired'] as const;
+const SKILL_CHECK_READ_SITES = [
+  'pool-insert',
+  'knight-serve',
+  'knight-answer',
+  'acolyte-serve',
+  'review',
+  'review-serve',
+  'review-stats',
+  'review-sweep',
+  'notice',
+  'recap',
+  'judgments',
+] as const;
+export type SkillCheckReadSite = (typeof SKILL_CHECK_READ_SITES)[number];
+export type ReviewOutcome = (typeof REVIEW_OUTCOMES)[number];
+export type SkillCheckRetireReason = (typeof SKILL_CHECK_RETIRE_REASONS)[number];
 const REFUSAL_REASONS = [
   'no-player',
   'not-open',
@@ -51,6 +71,7 @@ const REFUSAL_KINDS = [...VOTE_KINDS, 'unknown'] as const;
 const REFUSAL_ACTIONS = ['vote', 'skip'] as const;
 export type RefusalKind = (typeof REFUSAL_KINDS)[number];
 export type RefusalAction = (typeof REFUSAL_ACTIONS)[number];
+
 const TICK_FAILURE_STEPS = [
   'writeback',
   'moderator_ruled',
@@ -58,6 +79,7 @@ const TICK_FAILURE_STEPS = [
   'yesno',
   'reset',
   'buzz_grant',
+  'tag_writeback',
 ] as const;
 
 export type VoteKind = (typeof VOTE_KINDS)[number];
@@ -91,6 +113,17 @@ const sessionCookieSlot = counter(
   'knights_session_cookie_slot_total',
   'Authenticated requests by the session cookie slot they were read from (host | shared).',
   { slot: ['host', 'shared'] }
+);
+const REVOCATION_OUTCOMES = [
+  'hit',
+  'timeout',
+  'breaker-open',
+  'error',
+] as const satisfies readonly RevocationOutcome[];
+const revocationChecks = counter(
+  'knights_revocation_checks_total',
+  'Session revocation reads by outcome (hit: the store answered).',
+  { outcome: REVOCATION_OUTCOMES }
 );
 const votes = counter('knights_votes_total', 'Votes written to the ledger, by kind.', {
   kind: VOTE_KINDS,
@@ -131,6 +164,25 @@ const hiddenChecksGraded = counter(
   { verdict: HIDDEN_VERDICTS }
 );
 const smites = counter('knights_smites_total', 'Smites issued by hidden-check grading.');
+const reviewsClosed = counter(
+  'knights_inquisitor_reviews_closed_total',
+  'In-game inquisitor reviews closed, by outcome: two agreeing moderators, a split, or excluded (ruled, blocked, moved, held, or sent to the Inquisitors).',
+  { outcome: REVIEW_OUTCOMES }
+);
+const skillCheckReadsUnreadable = counter(
+  'knights_skill_check_reads_unreadable_total',
+  'Skill-check safety reads that could not be read and failed closed, by where they ran.',
+  { site: SKILL_CHECK_READ_SITES }
+);
+const overridesUnclosed = counter(
+  'knights_inquisitor_overrides_unclosed_total',
+  "Two agreeing moderators' level written to an image whose review could then not be closed (no skill check added)."
+);
+const skillChecksRetired = counter(
+  'knights_skill_checks_retired_total',
+  'Mod-confirmed skill checks retired, by reason: pushed out by the pool cap, or failed by too many Knights.',
+  { reason: SKILL_CHECK_RETIRE_REASONS }
+);
 const careerResets = counter(
   'knights_career_resets_total',
   'Career resets, by trigger: the smite limit (done in the main app) or the player restarting.',
@@ -174,6 +226,8 @@ function safely(record: () => void) {
 
 export const metrics = {
   sessionCookieSlot: (slot: 'host' | 'shared') => safely(() => sessionCookieSlot.inc({ slot })),
+  revocationCheck: (outcome: RevocationOutcome) =>
+    safely(() => revocationChecks.inc({ outcome: bounded(outcome, REVOCATION_OUTCOMES) })),
   vote: (kind: VoteKind) => safely(() => votes.inc({ kind })),
   harvestSkipped: (count: number) =>
     safely(() => {
@@ -197,6 +251,14 @@ export const metrics = {
   hiddenCheckGraded: (verdict: string) =>
     safely(() => hiddenChecksGraded.inc({ verdict: bounded(verdict, HIDDEN_VERDICTS) })),
   smite: () => safely(() => smites.inc()),
+  reviewClosed: (outcome: ReviewOutcome) => safely(() => reviewsClosed.inc({ outcome })),
+  overrideUnclosed: () => safely(() => overridesUnclosed.inc()),
+  skillCheckReadUnreadable: (site: SkillCheckReadSite) =>
+    safely(() => skillCheckReadsUnreadable.inc({ site })),
+  skillChecksRetired: (reason: SkillCheckRetireReason, count: number) =>
+    safely(() => {
+      if (count > 0) skillChecksRetired.inc({ reason }, count);
+    }),
   unhandledError: () => safely(() => unhandledErrors.inc()),
   tickItemFailures: (step: TickFailureStep, count: number) =>
     safely(() => {
@@ -207,13 +269,14 @@ export const metrics = {
       if (count > 0) notificationsSent.inc({ kind: bounded(kind, NOTIFY_KINDS) }, count);
     }),
   // No table records a refused vote or skip, so each also leaves an Axiom event naming the player and the ledger item id
-  // (negative for a hidden check; null before the token is opened).
+  // (negative for a hidden check; null before the token is opened). `press` adds the client's press timing to the row.
   voteRefused: (
     reason: string,
     kind: RefusalKind,
     playerId: number,
     itemId: number | null,
-    action: RefusalAction
+    action: RefusalAction,
+    press?: PressTiming
   ) => {
     safely(() => voteRefusals.inc({ reason: bounded(reason, REFUSAL_REASONS), kind, action }));
     void logToAxiom({
@@ -221,7 +284,7 @@ export const metrics = {
       name: 'knights-vote-refused',
       message: `A ${action} was refused`,
       details: { reason, playerId },
-      payload: { kind, itemId, action },
+      payload: { kind, itemId, action, ...press },
     });
   },
   // No table records these three, so each also leaves one Axiom event.

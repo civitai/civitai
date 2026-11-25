@@ -1,6 +1,10 @@
 package listingread
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/civitai/civitai/apps/app-index-go/internal/store"
+)
 
 // Literal ceilings, each worked from listingMediaCeiling / redHostMediaCeiling in
 // listing-media-audience.ts (PG 1, PG-13 2, R 4, X 8, XXX 16, Blocked 32).
@@ -46,30 +50,33 @@ func TestMatureRatingGate(t *testing.T) {
 		name  string
 		red   bool
 		level int64
-		want  matureAllowed
+		want  store.Mature
 	}{
-		{"main, every level", false, 31, matureAllowed{}},
-		{"red, PG only", true, 1, matureAllowed{}},
-		{"red, no level", true, 0, matureAllowed{}},
-		{"red, R", true, 4, matureAllowed{r: true}},
-		{"red, X", true, 8, matureAllowed{x: true}},
-		{"red, XXX", true, 16, matureAllowed{xxx: true}},
-		{"red, Blocked only", true, 32, matureAllowed{}},
-		{"red, all", true, 31, matureAllowed{r: true, x: true, xxx: true}},
+		{"main, every level", false, 31, store.Mature{}},
+		{"red, PG only", true, 1, store.Mature{}},
+		{"red, no level", true, 0, store.Mature{}},
+		{"red, R", true, 4, store.Mature{R: true}},
+		{"red, X", true, 8, store.Mature{X: true}},
+		{"red, XXX", true, 16, store.Mature{XXX: true}},
+		{"red, Blocked only", true, 32, store.Mature{}},
+		{"red, all", true, 31, store.Mature{R: true, X: true, XXX: true}},
 	} {
 		if got := matureRatingsAllowed(c.red, c.level); got != c.want {
 			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
 		}
 	}
-	xOnly := matureAllowed{x: true}
+	// The listing gate's rating rule is store.Mature.Admits (TestMatureAdmits pins it), reached
+	// through Admits with an X-only viewer.
+	xOnly := Viewer{Scope: ScopeFull, RedCapable: true, BrowsingLevel: levelPG | levelX}
 	for _, c := range []struct {
 		rating string
 		want   bool
 	}{
-		{"", true}, {"g", true}, {"pg", true}, {"pg13", true},
+		{"", true}, {"mystery", true}, {"g", true}, {"pg", true}, {"pg13", true}, {"pg-13", true},
 		{"r", false}, {"R", false}, {"x", true}, {"X", true}, {"xxx", false}, {"XXX", false},
 	} {
-		if got := matureRatingAllowed(c.rating, xOnly); got != c.want {
+		l := store.Listing{Kind: "onsite", ListingContentRating: c.rating}
+		if got := Admits(l, xOnly); got != c.want {
 			t.Errorf("rating %q with X only: %v, want %v", c.rating, got, c.want)
 		}
 	}

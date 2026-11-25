@@ -133,6 +133,7 @@ describe('image.getImagesAsPostsInfinite stays per-viewer', () => {
     expect(end).toBeGreaterThan(start);
     const route = router.slice(start, end);
     expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
-    expect(route).not.toMatch(/\.use\(/);
+    // noEdgeCacheWhen only ever lowers the edge TTL; any other middleware here needs a look.
+    expect(route.replace(/\.use\(noEdgeCacheWhen\(\w+\)\)/, '')).not.toMatch(/\.use\(/);
   });
 });
