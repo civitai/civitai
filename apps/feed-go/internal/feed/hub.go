@@ -394,7 +394,7 @@ func (g *GalleryStore) Hub(ctx context.Context, hubID, viewerID int, isModerator
 	if !isModerator {
 		if viewerID != 0 {
 			args = append(args, viewerID)
-			where += ` AND (h."userId" = $2 OR h.availability = 'Public')`
+			where += ` AND h."userId" = $2 OR h.availability = 'Public'` // PROBE MUTANT: parentheses dropped
 		} else {
 			where += ` AND h.availability = 'Public'`
 		}
