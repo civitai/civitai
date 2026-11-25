@@ -29,7 +29,7 @@ const STUBS: Record<string, string> = {
   Empty: '',
   Pass: PASS,
   // Draws the media url a card would load, so a test can see whose media reached the page.
-  Media: `<script>const props = $props();</script><img alt="" src={props.item.url} />`,
+  Media: `<script>const props = $props();</script><img alt="" src={props.item.url} data-unprocessed={props.unprocessed ? 'yes' : 'no'} />`,
 };
 
 // Inside src, not node_modules: Vitest transforms only files outside node_modules, and the page's
@@ -52,7 +52,10 @@ function emit(name: string, source: string) {
  *  their compiled selves, other components by stubs, `$app` modules by inert values. */
 function stubImports(source: string): string {
   return source
-    .replace(/import \{ enhance \} from '\$app\/forms';/, 'const enhance = () => {};')
+    .replace(
+      /import \{ (?:applyAction, )?enhance \} from '\$app\/forms';/,
+      'const enhance = () => {}; const applyAction = async () => {};'
+    )
     .replace(/import \{ goto \} from '\$app\/navigation';/, 'const goto = () => {};')
     .replace(
       /import \{ page(?: as (\w+))? \} from '\$app\/state';/,
@@ -83,6 +86,7 @@ function stubImports(source: string): string {
 }
 
 let Page: unknown;
+let IngestionPage: unknown;
 let render: (c: unknown, o: { props: unknown }) => { body: string };
 
 beforeAll(async () => {
@@ -96,6 +100,10 @@ beforeAll(async () => {
   emit('PromptHighlight', stubImports(read('components/PromptHighlight.svelte')));
   emit('Page', stubImports(read('components/image-queue/ImageQueuePage.svelte')));
   Page = (await import(/* @vite-ignore */ pathToFileURL(path.join(work, 'Page.js')).href)).default;
+  emit('IngestionPage', stubImports(read('../routes/images/ingestion-errors/+page.svelte')));
+  IngestionPage = (
+    await import(/* @vite-ignore */ pathToFileURL(path.join(work, 'IngestionPage.js')).href)
+  ).default;
   ({ render } = await import(/* @vite-ignore */ serverEntry('svelte/server')));
 });
 
@@ -239,4 +247,32 @@ describe('the review-highlight queues', () => {
       expect(prompts()).toBe(alone);
     }
   );
+});
+
+describe('the ingestion errors page', () => {
+  // Its rows never finished processing, so a tile the CDN cannot serve has no stored file to show
+  // either: it must say so, not send the moderator to ask for CSAM-queue access.
+  it('draws its tiles as unprocessed uploads', () => {
+    const body = render(IngestionPage, {
+      props: {
+        data: {
+          items: [{ id: NORMAL, url: `key-${NORMAL}`, type: 'image', name: null, nsfwLevel: 0 }],
+          civitaiUrl: 'https://civitai.test',
+          nextCursor: undefined,
+          limit: 50,
+          limitOptions: [50],
+        },
+        form: null,
+      },
+    }).body;
+    document.body.innerHTML = body;
+    const tiles = [...document.querySelectorAll('img')].map((i) => i.dataset.unprocessed);
+    expect(tiles).toEqual(['yes']);
+  });
+
+  it('leaves the other queues falling back to storage', () => {
+    show('newUser', 'review', [card(NORMAL)]);
+    const tiles = [...document.querySelectorAll('img')].map((i) => i.dataset.unprocessed);
+    expect(tiles).toEqual(['no']);
+  });
 });
