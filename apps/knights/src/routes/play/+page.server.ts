@@ -43,6 +43,7 @@ import type { Pause } from '$lib/server/vote-limits/gate';
 import { limitedMessage } from '$lib/vote-limit-copy';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { skillChecks } from '$lib/server/skill-check/runtime';
+import { isInquisitor } from '$lib/server/inquisitor/mode';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { castYesNoVote } from '$lib/server/yesno/vote';
@@ -121,8 +122,7 @@ async function acolyteLevelCard(progress: Notice | null, userId: number): Promis
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
-  if (locals.user.isModerator && (await skillChecks()).enabled)
-    return inquisitorView(locals.user.id);
+  if (await isInquisitor(locals.user)) return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),

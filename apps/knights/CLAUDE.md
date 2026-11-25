@@ -41,7 +41,7 @@ Tables `KnightsQuestion`, `KnightsQueueItem` and `KnightsVote` (migration `20261
 Everything takes the Kysely client as an argument so `queue.pglite.test.ts` runs the real service and the real migration
 SQL on PGlite.
 
-- Moderators get the in-game inquisitor queue on `/play` instead of the player game (`routes/play/inquisitor.server.ts`; the player page is `PlayerPlay.svelte`, `+page.svelte` only picks one).
+- Moderators get the in-game inquisitor queue on `/play` instead of the player game (`routes/play/inquisitor.server.ts`; the player page is `PlayerPlay.svelte`, `+page.svelte` only picks one). While it is on they play as the Inquisitor everywhere (`isInquisitor`): the header and `/home` show the Inquisitor instead of their career (see the inquisitor doc).
 - `markApplied` also opens the item's in-game inquisitor review (`inquisitor/review.service.ts`, best effort; the tick's sweep catches a miss). See [`docs/features/knights-inquisitor.md`](../../docs/features/knights-inquisitor.md).
 - `enqueueItem`: an item's `minRank` defaults to its question's, an override wins; `votesNeeded` can only lower the votes a stage needs (`STAGE_RULES`), never raise them. `minRank` must be a stage rank (Knight, Templar, Paladin); anything else throws.
 - `getFeed`: the highest stage the player may judge with an unjudged open item, from a per-stage window (`feed.ts`): one read of the items escalated in the last day (none at the entry stage),
