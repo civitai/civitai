@@ -232,8 +232,8 @@ function recordIntent(
   });
 }
 
-/** Drops the cover's safe bits from the model's level, which is what takes it off .com. A failed
- *  level refresh is also queued for the nsfw-level job, then thrown so the re-check retry stays. */
+/** Drops the cover's safe bits from the model's level, which is what takes it off .com. Rethrows
+ *  after queueing the level job, so the re-check retry still runs. */
 async function finishRemoval(modelId: number) {
   // Imported here: the level service pulls in search.
   const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
