@@ -39,6 +39,8 @@ function deps(verdicts: (boolean | null)[], overrides: Partial<Model3dRatingV2De
       matureLevel: async () => 2,
       claim: async () => true,
       rate,
+      remembered: async () => false,
+      remember: async () => undefined,
       ...overrides,
     } satisfies Model3dRatingV2Deps,
   };
@@ -59,6 +61,7 @@ const gate = (verdicts: (boolean | null)[], previewUrls = fourAngles, overrides 
     deps(verdicts, overrides).deps
   );
 
+// Justin, card 2026-11-25-200325: the v2 rater gates posting a 3D result (raise only).
 describe('3D post gate with the v2 rater', () => {
   it('blocks a result without mature billing when one of four angles is mature', async () => {
     expect(await gate([false, false, true, false])).toMatch(/rated mature/);
@@ -85,6 +88,51 @@ describe('3D post gate with the v2 rater', () => {
     ).toBeUndefined();
   });
 
+  it('a throwing flag read or limit keeps the current rating, and spends nothing first', async () => {
+    const claim = vi.fn(async () => true);
+    expect(
+      await gate([true], [hosted(0)], { matureLevel: async () => null, claim })
+    ).toBeUndefined();
+    expect(claim).not.toHaveBeenCalled();
+    const { rate, deps: d } = deps([true], {
+      claim: async () => Promise.reject(new Error('redis down')),
+    });
+    expect(
+      await isModel3DMatureByV2({ user, req, previewUrls: [hosted(0)], workflowId: 'wf-1' }, d)
+    ).toBe(false);
+    expect(rate).not.toHaveBeenCalled();
+    expect(
+      await gate([true], [hosted(0)], { matureLevel: async () => Promise.reject(new Error('x')) })
+    ).toBeUndefined();
+  });
+
+  it('a mature verdict holds the gate on a later attempt that gets no v2 answer', async () => {
+    const seen = new Set<string>();
+    const memory = {
+      remembered: async (id: string) => seen.has(id),
+      remember: async (id: string) => void seen.add(id),
+    };
+    expect(await gate([true], [hosted(0)], memory)).toMatch(/rated mature/);
+    expect(await gate([null], [hosted(0)], { ...memory, claim: async () => false })).toMatch(
+      /rated mature/
+    );
+    // Rolled back (flag off): the remembered verdict no longer applies.
+    expect(
+      await gate([null], [hosted(0)], { ...memory, matureLevel: async () => null })
+    ).toBeUndefined();
+  });
+
+  it('sends every angle once, keyed by position, at the flag level', async () => {
+    const { rate, deps: d } = deps([false, false, false, false], { matureLevel: async () => 3 });
+    await isModel3DMatureByV2({ user, req, previewUrls: fourAngles, workflowId: 'wf-9' }, d);
+    expect(rate).toHaveBeenCalledTimes(1);
+    const [args] = rate.mock.calls[0];
+    expect(args.items.map((i) => i.key)).toEqual(['0', '1', '2', '3']);
+    expect(args.items.map((i) => i.mediaUrl)).toEqual(fourAngles);
+    expect(args.matureLevel).toBe(3);
+    expect(args.metadata).toMatchObject({ workflowId: 'wf-9', userId: 7 });
+  });
+
   it('is not asked when mature billing is on or the result is already mature', async () => {
     const { rate, deps: d } = deps([true]);
     const base = { primaryModel: glb, user, req, previewUrls: [hosted(0)], workflowId: 'wf-1' };
@@ -107,7 +155,7 @@ describe('3D post gate with the v2 rater', () => {
     const { rate, deps: d } = deps([true]);
     expect(
       await isModel3DMatureByV2(
-        { user, req, previewUrls: ['https://example.com/x.png'], workflowId: 'wf-1' },
+        { user, req, previewUrls: [hosted(0), 'https://example.com/x.png'], workflowId: 'wf-1' },
         d
       )
     ).toBe(false);

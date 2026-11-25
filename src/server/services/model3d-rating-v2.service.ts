@@ -3,6 +3,7 @@ import type { Model3dBlob, NsfwLevel } from '@civitai/orchestration-client';
 import { NsfwLevel as OrchestratorNsfwLevel } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { getPolyGenPostBlock } from '~/server/orchestrator/polygen/polygen-output';
 import {
   isRateableMediaUrl,
@@ -28,6 +29,10 @@ export const MODEL3D_RATING_V2_GLOBAL_LIMIT = {
   windowSeconds: 24 * 60 * 60,
 };
 const WAIT_SECONDS = 20;
+/** How long a mature v2 verdict holds the gate for that workflow without asking again. */
+const REMEMBER_SECONDS = 30 * 24 * 60 * 60;
+const rememberedKey = (workflowId: string) =>
+  `${REDIS_KEYS.GENERATION.MODEL3D_RATING_V2_MATURE}:${workflowId}` as const;
 
 /** Mature only when every angle has a v2 verdict and one of them is mature: a missing angle leaves the
  *  result to its current rating, since the v2 rater can only add the gate. */
@@ -42,6 +47,9 @@ export type Model3dRatingV2Deps = {
   /** False when a limit refuses: the result then keeps its current rating. */
   claim: (user: SessionUser, req: NextApiRequest) => Promise<boolean>;
   rate: typeof rateImagesV2;
+  /** A mature verdict already given for this workflow. */
+  remembered: (workflowId: string) => Promise<boolean>;
+  remember: (workflowId: string) => Promise<void>;
 };
 
 const defaultDeps: Model3dRatingV2Deps = {
@@ -70,6 +78,10 @@ const defaultDeps: Model3dRatingV2Deps = {
     return global.allowed;
   },
   rate: rateImagesV2,
+  remembered: async (workflowId) => (await redis.exists(rememberedKey(workflowId))) > 0,
+  remember: async (workflowId) => {
+    await redis.set(rememberedKey(workflowId), '1', { EX: REMEMBER_SECONDS });
+  },
 };
 
 /** Whether the v2 rater calls this 3D result's preview renders mature. Off (flag), refused (limits),
@@ -84,9 +96,11 @@ export async function isModel3DMatureByV2(
   deps: Model3dRatingV2Deps = defaultDeps
 ): Promise<boolean> {
   if (!previewUrls.length || !previewUrls.every(isRateableMediaUrl)) return false;
-  const matureLevel = await deps.matureLevel(user);
+  // Each step failing open keeps the post on its current rating: this rater can only add the gate.
+  const matureLevel = await deps.matureLevel(user).catch(() => null);
   if (matureLevel === null) return false;
-  if (!(await deps.claim(user, req))) return false;
+  if (await deps.remembered(workflowId).catch(() => false)) return true;
+  if (!(await deps.claim(user, req).catch(() => false))) return false;
   const results = await deps
     .rate({
       items: previewUrls.map((mediaUrl, i) => ({ key: `${i}`, mediaUrl })),
@@ -96,7 +110,9 @@ export async function isModel3DMatureByV2(
       waitSeconds: WAIT_SECONDS,
     })
     .catch(() => null);
-  return results ? anglesMature(results.map((r) => r.mature)) : false;
+  const mature = results ? anglesMature(results.map((r) => r.mature)) : false;
+  if (mature) await deps.remember(workflowId).catch(() => undefined);
+  return mature;
 }
 
 /** The post gate with the v2 rater added: today's block, else a block when the v2 rater calls the
