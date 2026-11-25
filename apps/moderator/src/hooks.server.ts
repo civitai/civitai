@@ -12,6 +12,7 @@ import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
+import { registerEmailSendRecorder } from '$lib/server/emails/send-recorder';
 import {
   batchPathTier,
   reviewBatchesEnabled,
@@ -153,6 +154,8 @@ function logCredentialAttribution(
 // Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
 // the next Test sets page load instead of after the lease goes stale.
 export const init: ServerInit = async () => {
+  // Every send this app makes is a send row in the main app's emailEvents, through its internal route.
+  registerEmailSendRecorder();
   try {
     const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
     await releaseLeasesAtBoot();

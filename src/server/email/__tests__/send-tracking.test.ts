@@ -5,7 +5,9 @@ import { getEmailSendRecorder, type EmailSendRecord } from '@civitai/email';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   EMAIL_EVENTS_TABLE,
+  emailEventRow,
   emailSendRow,
+  insertEmailEvents,
   insertEmailSend,
   recordEmailSend,
 } from '~/server/email/send-tracking';
@@ -70,6 +72,84 @@ describe('emailEvents row and DDL', () => {
       variant: 'b',
       userId: 42,
     });
+  });
+});
+
+const migration = (file: string) =>
+  readFileSync(path.resolve(__dirname, '../../clickhouse/migrations', file), 'utf8');
+
+describe('click and unsubscribe rows', () => {
+  const click = {
+    event: 'click' as const,
+    sendId: '0b6f3d4e-8f7a-4c1e-9d2b-5a6c7e8f9a0b',
+    template: 'trainingComplete',
+    mailClass: 'transactional' as const,
+    campaign: 'c-7',
+    variant: 'b',
+    userId: 42,
+    position: 3,
+    userAgent: 'x'.repeat(600),
+  };
+  const at = new Date('2026-11-25T01:02:03.004Z');
+
+  it("add exactly the click DDL's columns to the table's own", () => {
+    const sql = migration('2026-11-25-email-events-click-columns.sql');
+    expect(sql).toContain('ALTER TABLE default.emailEvents');
+    const added = [...sql.matchAll(/ADD COLUMN IF NOT EXISTS (\w+) /g)].map((m) => m[1]);
+    expect(added).toEqual(['position', 'userAgent']);
+    expect(Object.keys(emailEventRow(click, at)).sort()).toEqual(
+      [...Object.keys(emailSendRow(record)), ...added].sort()
+    );
+  });
+
+  it('a click row is what the link named, its position and a capped user agent', () => {
+    expect(emailEventRow(click, at)).toEqual({
+      time: '2026-11-25 01:02:03.004',
+      event: 'click',
+      sendId: '0b6f3d4e-8f7a-4c1e-9d2b-5a6c7e8f9a0b',
+      template: 'trainingComplete',
+      mailClass: 'transactional',
+      campaign: 'c-7',
+      variant: 'b',
+      userId: 42,
+      position: 3,
+      userAgent: 'x'.repeat(512),
+    });
+  });
+
+  it('a send id not in our lowercase form is the nil UUID', () => {
+    expect(emailEventRow({ ...click, sendId: click.sendId.toUpperCase() }, at).sendId).toBe(
+      '00000000-0000-0000-0000-000000000000'
+    );
+    expect(emailEventRow(click, at).sendId).toBe(click.sendId);
+  });
+
+  it('an unsubscribe row has no position or user agent; a malformed send id is the nil UUID', () => {
+    const row = emailEventRow(
+      { ...click, event: 'unsubscribe', sendId: 'junk', mailClass: 'lifecycle', userId: -1 },
+      at
+    );
+    expect(row).toMatchObject({
+      event: 'unsubscribe',
+      sendId: '00000000-0000-0000-0000-000000000000',
+      userId: 0,
+      position: 0,
+      userAgent: '',
+    });
+  });
+
+  it('inserts skipping unknown fields (the click DDL unapplied), and never throws', async () => {
+    const { insert, client } = fakeClient();
+    await insertEmailEvents(client, [click]);
+    expect(insert.mock.calls[0][0]).toMatchObject({
+      table: 'emailEvents',
+      format: 'JSONEachRow',
+      clickhouse_settings: { input_format_skip_unknown_fields: 1 },
+      abort_signal: expect.any(AbortSignal),
+    });
+    insert.mockRejectedValueOnce(new Error('boom'));
+    await expect(insertEmailEvents(client, [click])).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
   });
 });
 
