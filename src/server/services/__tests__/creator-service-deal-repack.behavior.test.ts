@@ -19,6 +19,7 @@ import {
   type FixtureEntry,
   type FixtureOptions,
 } from '~/server/utils/__tests__/zip-fixture';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -319,6 +320,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
   // The deal holds a party's delete reads.
   await holder.db.exec(`
     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
@@ -361,9 +363,9 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImages.mockImplementation(async (ids: number[]) => {
-    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
-  });
+  images.deleteImages.mockImplementation(async (ids: number[]) =>
+    q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) RETURNING id`, [ids])
+  );
   await holder.db.exec(`
     TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
