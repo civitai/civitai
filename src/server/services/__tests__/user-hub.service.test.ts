@@ -2266,7 +2266,6 @@ describe('getUserHubById', () => {
       const owner = await getUserHubById({ id: 1, userId: 5 });
       const state = Object.fromEntries(owner.sources.map((s) => [s.targetId, s.modelState]));
 
-      // The label must not tell the owner whether someone else deleted a model or had it unpublished.
       expect(state[21]).toBe(state[22]);
       expect(state).toEqual({
         20: 'deleted',

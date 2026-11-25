@@ -325,7 +325,6 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
   });
   if (!hub) throw throwNotFoundError('Hub not found');
   const detail = toHubDetail(hub, userId);
-  // Only the owner, who edits the sources, is told which no longer serve.
   const states = detail.isOwner
     ? await getSourceModelStates(detail.sources, hub.userId)
     : new Map<string, SourceModelState>();
@@ -1515,9 +1514,8 @@ export async function resolveHubSources({
   const { getDeletedModelVersionIds, getHeldGalleryLevel, getWithheldVersionIds } = await import(
     '~/server/services/model.service'
   );
-  // A deleted model's versions are no source at all, for every viewer: they neither serve the hub
-  // nor hold it. Dropped here, before both, so the hold can never lift while the hub still serves
-  // that model.
+  // Dropped before the hold is read, so a deleted model can never hold the hub, and never while
+  // the hub still serves it.
   const deletedVersionIds = await getDeletedModelVersionIds(cappedVersionIds, modelOfVersion);
   const liveVersionIds = cappedVersionIds.filter((id) => !deletedVersionIds.has(id));
   // Moderators are neither held nor withheld, when the caller says so: they must see what they may

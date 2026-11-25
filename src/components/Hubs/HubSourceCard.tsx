@@ -24,7 +24,7 @@ export type HubSourceCardProps = {
     enabled: boolean;
     exclude?: boolean;
     index: number;
-    /** Why a Model or ModelVersion source serves nothing. Sent to the hub owner only. */
+    /** Set when a Model or ModelVersion source's model is no longer published. Hub owner only. */
     modelState?: SourceModelState;
   };
   /**

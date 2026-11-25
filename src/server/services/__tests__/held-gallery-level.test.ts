@@ -328,7 +328,7 @@ describe('getDeletedModelVersionIds', () => {
   });
 
   it('names only the versions of a deleted model, whether or not their model is known', async () => {
-    // 20 is looked up, 30 comes with its model, 990 does not exist.
+    // 20 is looked up, 30 comes with its model, 990's model is not deleted.
     const deleted = await getDeletedModelVersionIds([10, 20, 30, 990], new Map([[30, 3]]));
 
     expect([...deleted]).toEqual([20]);

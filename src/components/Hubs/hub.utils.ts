@@ -78,12 +78,12 @@ export const kindColor: Record<string, string> = {
   Tag: 'yellow',
 };
 
-/** What a source is called in front of a person: "Creator", not `User`. */
 export const sourceModelStateLabel: Record<SourceModelState, string> = {
   deleted: 'Deleted',
   unavailable: 'No longer available',
 };
 
+/** What a source is called in front of a person: "Creator", not `User`. */
 export function hubSourceKindLabel(type: string) {
   return sourceKindLabels[type] ?? 'Source';
 }

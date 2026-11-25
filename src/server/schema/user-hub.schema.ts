@@ -256,15 +256,15 @@ export const hubSourceExclusionSchema = z.object({
 
 export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 
-// The client builds its exclusion set with this and the service subtracts with it.
-// One spelling, in the module both sides already import from.
 /**
- * Why a Model or ModelVersion source serves nothing, told to the hub owner only. Another user's
- * model that is not published is `unavailable` whatever its status, so the label never says
- * whether it was deleted or unpublished; only the owner's own deleted model is `deleted`.
+ * A Model or ModelVersion source whose model is no longer published, told to the hub owner only.
+ * Another user's model is `unavailable` whatever its status, so the label never says whether it was
+ * deleted or unpublished; only the owner's own deleted model is `deleted`.
  */
 export type SourceModelState = 'deleted' | 'unavailable';
 
+// The client builds its exclusion set with this and the service subtracts with it.
+// One spelling, in the module both sides already import from.
 export const hubSourceKey = (source: HubSourceExclusionInput) =>
   `${source.type}:${source.targetId}`;
 
