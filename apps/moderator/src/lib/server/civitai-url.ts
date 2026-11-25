@@ -3,9 +3,9 @@ import { env } from '$env/dynamic/private';
 const trimSlash = (value: string): string => (value.endsWith('/') ? value.slice(0, -1) : value);
 
 /** Base for every content link a moderator follows. `.red` renders every browsing level and holds
- *  content `.com` will not serve, so a `.com` link can dead-end on exactly the item being moderated
- *  (ClickUp 868kn8aa0). Distinct from `CIVITAI_APP_URL`, which is a server-to-server API base and a
- *  redirect target for non-moderators — pointing those at `.red` is a different decision.
+ *  content `.com` will not serve, so a `.com` link can dead-end on exactly the item being moderated.
+ *  Distinct from `CIVITAI_APP_URL`, the main app's public origin and the redirect target for
+ *  non-moderators — pointing those at `.red` is a different decision.
  *
  *  It used to fall back to `CIVITAI_APP_URL` as a convenience for local setups, which quietly made that
  *  different decision for us: `CIVITAI_APP_URL` is set to `.com` wherever this actually runs, so the

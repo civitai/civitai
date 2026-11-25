@@ -19,6 +19,7 @@ vi.mock('$app/server', () => ({
 
 const { grantCreatorScore, resetSubscriptionCaches } = await import('../user-actions.service');
 const { syncSearchIndexBulk } = await import('../search-index');
+const { evictHomeBlocks } = await import('../home-blocks');
 
 const urls: string[] = [];
 
@@ -48,6 +49,7 @@ const calls = {
   'a webhook call (callMainApp)': () => resetSubscriptionCaches({ userId: 1, moderatorId: 2 }),
   'the search-index callback': () =>
     syncSearchIndexBulk({ entityType: 'model', entityIds: [1], action: 'update' }),
+  'the home-block refresh': () => evictHomeBlocks([1]),
 };
 
 describe.each(Object.entries(calls))('%s', (_, call) => {
