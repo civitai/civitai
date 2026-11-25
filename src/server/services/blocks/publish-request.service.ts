@@ -3693,8 +3693,8 @@ async function approveRequestUnderClaim(
   if (bootCheckOverridden) {
     // The audit record of approving past a recorded boot-check failure (a hold override is
     // recorded on the hold itself; this one may have no hold to record it on).
-    const { logToAxiom } = await import('~/server/logging/client');
-    logToAxiom(
+    // Called through the module (not destructured), so the Axiom-field scan reads it as a call.
+    (await import('~/server/logging/client')).logToAxiom(
       {
         name: 'app-blocks.review.boot-check-override',
         type: 'info',
