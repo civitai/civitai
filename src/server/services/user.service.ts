@@ -3304,8 +3304,7 @@ export const toggleBan = async ({
 
       // Their app access (the builder grant behind App Assistant and its sandbox): every approved
       // or pending request is declined, so the grant is gone and an unban cannot be followed by an
-      // automatic re-approval. (The sandbox service's own ban signal is the "*" preview revoke the
-      // block-instance leg above sends.) Isolated like every other leg.
+      // automatic re-approval. Isolated like every other leg.
       revokeAppAccessForBannedUser({ userId: id, actorId: userId }).catch((error) =>
         logToAxiom({
           type: 'error',

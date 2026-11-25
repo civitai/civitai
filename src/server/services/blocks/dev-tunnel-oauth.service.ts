@@ -6,6 +6,7 @@ import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import { DEV_TUNNEL_SESSION_BUZZ_CAP } from '~/server/services/blocks/dev-tunnel-session';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
+import { reopenBanDisabledClient } from '~/server/services/oauth-ban-marker';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
 
 /** The OAuth client a never-submitted app borrows in its author's tunnel; a submitted app has its own. */
@@ -65,11 +66,12 @@ export async function mintDevTunnelOauthToken(opts: {
         allowedScopes: scope,
         userId,
       },
-      // `accessMode` back to open: a ban disables this self-only client, and this mint runs only
-      // once the dev-tunnel gates pass again, so re-enabling it here is the normal way back.
-      update: { allowedScopes: scope, accessMode: 'open' },
+      update: { allowedScopes: scope },
       select: { id: true },
     });
+    // A ban disables this self-only client; this mint runs only past the dev-tunnel gates, so it is
+    // the way back. Only a ban's disable is undone: any other mode (staff, testers) is left alone.
+    await reopenBanDisabledClient(clientId);
   }
 
   const buzzLimit = scopes.includes('ai:write:budgeted')

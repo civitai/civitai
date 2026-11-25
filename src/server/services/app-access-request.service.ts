@@ -14,6 +14,7 @@ import type {
   ListAppAccessRequestsInput,
   SubmitAppAccessRequestInput,
 } from '~/server/schema/app-access-request.schema';
+import { intervalDays } from '~/server/utils/sql-interval';
 import { APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS } from '~/shared/constants/app-access-request.constants';
 import type {
   AppAccessRequestStatus,
@@ -101,11 +102,6 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
   }
 }
 
-/** `make_interval` takes int4 and Prisma binds a JS number as int8, so the constant is inlined. */
-const MIN_ACCOUNT_AGE_FOR_AUTO_APPROVAL = Prisma.raw(
-  `make_interval(days => ${APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS})`
-);
-
 /**
  * The basic account checks an instant approval needs: the account exists and is not deleted, is
  * not banned, is not muted, and does not still owe the site's email check — the same rule the rest
@@ -127,7 +123,9 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
       "deletedAt" IS NULL
       AND "bannedAt" IS NULL
       AND "muted" = FALSE
-      AND "createdAt" <= CURRENT_TIMESTAMP - ${MIN_ACCOUNT_AGE_FOR_AUTO_APPROVAL}
+      AND "createdAt" <= CURRENT_TIMESTAMP - ${intervalDays(
+        APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS
+      )}
       AND NOT EXISTS (
         SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'declined'
       )

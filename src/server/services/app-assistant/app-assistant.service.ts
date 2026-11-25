@@ -10,6 +10,7 @@ import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.s
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { stampDirectPreviewActivity } from '~/server/services/blocks/dev-tunnel.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
+import { reopenBanDisabledClient } from '~/server/services/oauth-ban-marker';
 import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
 import { canAccessAppAssistant } from '~/shared/utils/app-blocks-access';
@@ -222,12 +223,9 @@ export async function enableAppAssistant(userId: number): Promise<void> {
 
   const client = await dbWrite.oauthClient.findUnique({
     where: { id: clientId },
-    select: { allowedScopes: true, accessMode: true },
+    select: { allowedScopes: true },
   });
-  // A ban disables this client (`accessMode: 'disabled'`) and an unban leaves it so. Turning App
-  // Assistant on again re-opens it: every caller runs the App Assistant gate first, so after an
-  // unban this happens only once that gate (approval included) passes again.
-  if (client?.allowedScopes !== scope || client.accessMode === 'disabled')
+  if (client?.allowedScopes !== scope)
     await dbWrite.oauthClient.upsert({
       where: { id: clientId },
       create: {
@@ -243,9 +241,13 @@ export async function enableAppAssistant(userId: number): Promise<void> {
         allowedScopes: scope,
         userId,
       },
-      update: { allowedScopes: scope, accessMode: 'open' },
+      update: { allowedScopes: scope },
       select: { id: true },
     });
+
+  // A ban disables this client and an unban leaves it so; turning App Assistant on again (past the
+  // gate, approval included) re-opens it. Only a ban's disable: one by staff stays.
+  await reopenBanDisabledClient(clientId);
 
   const existing = await dbWrite.oauthConsent.findUnique({
     where: { userId_clientId: { userId, clientId } },

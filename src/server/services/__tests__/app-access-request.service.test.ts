@@ -499,7 +499,9 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     expect(await submit(mira, MIRA_IDEA)).toMatchObject({ status: 'approved' });
   });
 
-  describe('account age', () => {
+  // The rule is APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS (7) in
+  // `~/shared/constants/app-access-request.constants`; the ages below bracket it.
+  describe('account age: at least APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS (7) days', () => {
     const createdAgo = (userId: number, interval: string) =>
       pg.query(`UPDATE "User" SET "createdAt" = CURRENT_TIMESTAMP - $2::interval WHERE "id" = $1`, [
         userId,

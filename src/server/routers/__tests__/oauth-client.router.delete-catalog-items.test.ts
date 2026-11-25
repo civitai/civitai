@@ -105,3 +105,13 @@ describe('oauthClient.delete', () => {
     expect(withdrawMock).not.toHaveBeenCalled();
   });
 });
+
+// Deleting an App Assistant client stays allowed (it turns App Assistant off), unlike editing it.
+describe('oauthClient.delete on an App Assistant client', () => {
+  it('deletes it', async () => {
+    const id = `appassist-${OWNER_ID}`;
+    dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({ id, userId: OWNER_ID });
+    await expect(caller.delete({ id })).resolves.toEqual({ success: true });
+    expect(dbMock.dbWrite.oauthClient.delete).toHaveBeenCalledWith({ where: { id } });
+  });
+});

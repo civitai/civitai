@@ -1,23 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as ApiKeyService from '~/server/services/api-key.service';
-
-// The boundaries this leg calls, each covered on its own: token expiry, the orchestrator's auth
-// cache, and the moderator alert channel.
-const { expireClientTokens, revokeCivitaiUserTokens, notifyModAlert } = vi.hoisted(() => ({
-  expireClientTokens: vi.fn(async (_clientId: string) => ({ expired: 0 })),
-  revokeCivitaiUserTokens: vi.fn(async (_args: { userId: number }) => true),
-  notifyModAlert: vi.fn(
-    async (_title: string, _description: string, _opts?: { noMentions?: boolean }) =>
-      'delivered' as const
-  ),
-}));
-vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ApiKeyService>()),
-  expireClientTokens,
-}));
-vi.mock('~/server/services/orchestrator/civitai', () => ({ revokeCivitaiUserTokens }));
-vi.mock('~/server/common/mod-alert', () => ({ notifyModAlert }));
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type { BanCleanupDeps } from '../ban-access-cleanup.service';
 
 const { disableOauthForBannedUser } = await import('../ban-access-cleanup.service');
 
@@ -25,8 +9,18 @@ const USER = 4242;
 const ASSISTANT = `appassist-${USER}`;
 const DEV = `appdev-${USER}-pose-board`;
 const THIRD_PARTY = 'b1e0c0de-0000-4000-8000-000000000001';
-// Prefix lookalikes owned by the banned user but naming ANOTHER user: not self-only.
+// Owned by the banned user but naming another user's id: not self-only.
 const LOOKALIKE_DEV = `appdev-${USER}0-pose-board`;
+
+// The boundaries the leg calls (token expiry, the orchestrator's auth cache, the moderator alert
+// channel, the ban mark), passed in; `order` records the sequence across them and the DB writes.
+let order: string[];
+let deps: BanCleanupDeps & {
+  expireClientTokens: ReturnType<typeof vi.fn>;
+  revokeCivitaiUserTokens: ReturnType<typeof vi.fn>;
+  notifyModAlert: ReturnType<typeof vi.fn>;
+  markBanDisabledClients: ReturnType<typeof vi.fn>;
+};
 
 const owned = (rows: { id: string; accessMode?: string; name?: string }[]) =>
   dbMock.dbWrite.oauthClient.findMany.mockResolvedValue(
@@ -34,62 +28,88 @@ const owned = (rows: { id: string; accessMode?: string; name?: string }[]) =>
   );
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  order = [];
+  deps = {
+    expireClientTokens: vi.fn(async (id: string) => void order.push(`expire:${id}`)),
+    revokeCivitaiUserTokens: vi.fn(async () => true),
+    notifyModAlert: vi.fn(async () => 'delivered' as const),
+    markBanDisabledClients: vi.fn(async (ids: string[]) => void order.push(`mark:${ids}`)),
+  };
   owned([{ id: ASSISTANT }, { id: DEV }, { id: THIRD_PARTY, name: 'Prompt Pal' }]);
   dbMock.dbWrite.apiKey.findMany.mockResolvedValue([{ userId: USER }, { userId: 99 }] as never);
-  dbMock.dbWrite.oauthClient.updateMany.mockResolvedValue({ count: 2 } as never);
+  dbMock.dbWrite.oauthClient.updateMany.mockReset();
+  dbMock.dbWrite.oauthClient.updateMany.mockImplementation((async () => {
+    order.push('disable');
+    return { count: 2 };
+  }) as never);
+  dbMock.dbWrite.oauthConsent.deleteMany.mockReset();
   dbMock.dbWrite.oauthConsent.deleteMany.mockResolvedValue({ count: 3 } as never);
+  loggingMock.logToAxiom.mockClear();
 });
 
 describe('disableOauthForBannedUser', () => {
-  it('🔴 disables ONLY the self-only clients (App Assistant, dev tunnel) and expires their tokens', async () => {
-    const result = await disableOauthForBannedUser(USER);
+  it('🔴 disables ONLY the self-only clients (App Assistant, dev tunnel), marking them first', async () => {
+    const result = await disableOauthForBannedUser(USER, deps);
 
     expect(dbMock.dbWrite.oauthClient.updateMany).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.oauthClient.updateMany).toHaveBeenCalledWith({
       where: { id: { in: [ASSISTANT, DEV] } },
       data: { accessMode: 'disabled' },
     });
-    expect(expireClientTokens.mock.calls.map(([id]) => id)).toEqual([ASSISTANT, DEV]);
+    // The ban mark goes on before the disable, so a re-enable can tell it from a staff disable.
+    expect(order).toEqual([
+      `mark:${ASSISTANT},${DEV}`,
+      'disable',
+      `expire:${ASSISTANT}`,
+      `expire:${DEV}`,
+    ]);
     expect(result).toMatchObject({ disabled: [ASSISTANT, DEV], flagged: [THIRD_PARTY] });
   });
 
   it('🔴 a third-party app the user owns is NOT disabled and its users keep their tokens; a moderator is told', async () => {
     owned([{ id: THIRD_PARTY, name: 'Prompt Pal' }, { id: LOOKALIKE_DEV }]);
-    const result = await disableOauthForBannedUser(USER);
+    const result = await disableOauthForBannedUser(USER, deps);
 
     expect(dbMock.dbWrite.oauthClient.updateMany).not.toHaveBeenCalled();
-    expect(expireClientTokens).not.toHaveBeenCalled();
-    expect(revokeCivitaiUserTokens).not.toHaveBeenCalled();
+    expect(deps.markBanDisabledClients).not.toHaveBeenCalled();
+    expect(deps.expireClientTokens).not.toHaveBeenCalled();
+    expect(deps.revokeCivitaiUserTokens).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       disabled: [],
       flagged: [THIRD_PARTY, LOOKALIKE_DEV],
       flagDelivery: 'delivered',
     });
-    expect(notifyModAlert).toHaveBeenCalledTimes(1);
-    const [, description, opts] = notifyModAlert.mock.calls[0];
+    expect(deps.notifyModAlert).toHaveBeenCalledTimes(1);
+    const [, description, opts] = deps.notifyModAlert.mock.calls[0];
     expect(description).toContain(`User ${USER}`);
     expect(description).toContain(`${THIRD_PARTY} (Prompt Pal, open)`);
     expect(description).toContain(LOOKALIKE_DEV);
     // The app names are user-written.
     expect(opts).toEqual({ noMentions: true });
+    // The log carries the ids under `payload`: the main Axiom dataset takes no new top-level key.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'ban-user-oauth-clients-for-review',
+        payload: { clientIds: [THIRD_PARTY, LOOKALIKE_DEV] },
+      })
+    );
   });
 
   it('🔴 revokes, at the orchestrator, every user who held a token under a disabled client', async () => {
-    await disableOauthForBannedUser(USER);
+    await disableOauthForBannedUser(USER, deps);
     expect(dbMock.dbWrite.apiKey.findMany).toHaveBeenCalledWith({
       where: { clientId: { in: [ASSISTANT, DEV] } },
       select: { userId: true },
       distinct: ['userId'],
     });
-    expect(revokeCivitaiUserTokens.mock.calls.map(([a]) => a.userId).sort((a, b) => a - b)).toEqual(
-      [99, USER]
-    );
+    expect(
+      deps.revokeCivitaiUserTokens.mock.calls.map(([a]) => (a as { userId: number }).userId)
+    ).toEqual([USER, 99]);
   });
 
   it('🔴 deletes the consents the user gave, except to App Block clients, even when token expiry fails', async () => {
-    expireClientTokens.mockRejectedValue(new Error('db down'));
-    const result = await disableOauthForBannedUser(USER);
+    deps.expireClientTokens.mockRejectedValue(new Error('db down'));
+    const result = await disableOauthForBannedUser(USER, deps);
     expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
       where: { userId: USER, NOT: { clientId: { startsWith: 'appblk-' } } },
     });
@@ -97,18 +117,19 @@ describe('disableOauthForBannedUser', () => {
   });
 
   it('leaves App Block clients out of the client read', async () => {
-    await disableOauthForBannedUser(USER);
+    await disableOauthForBannedUser(USER, deps);
     expect(dbMock.dbWrite.oauthClient.findMany).toHaveBeenCalledWith({
       where: { userId: USER, NOT: { id: { startsWith: 'appblk-' } } },
       select: { id: true, name: true, accessMode: true },
     });
   });
 
-  it('an already-disabled self-only client is not written again, and nothing is flagged without a third-party app', async () => {
+  it('🔴 an already-disabled self-only client (staff) is neither marked nor written again', async () => {
     owned([{ id: ASSISTANT, accessMode: 'disabled' }]);
-    const result = await disableOauthForBannedUser(USER);
+    const result = await disableOauthForBannedUser(USER, deps);
+    expect(deps.markBanDisabledClients).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthClient.updateMany).not.toHaveBeenCalled();
-    expect(notifyModAlert).not.toHaveBeenCalled();
+    expect(deps.notifyModAlert).not.toHaveBeenCalled();
     expect(result).toMatchObject({ disabled: [], flagged: [], flagDelivery: null });
   });
 });

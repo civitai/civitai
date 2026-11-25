@@ -154,3 +154,45 @@ describe('restoring an account', () => {
     expect(forgetGenerationToken).toHaveBeenCalledWith(USER);
   });
 });
+
+// The ban's OAuth and app-access legs (ban-access-cleanup.service, covered on its own): every ban
+// reaches both, for the banned user; an unban reaches neither.
+describe('a ban disables OAuth apps and app access', () => {
+  const MODERATOR = 17;
+  const appAccessDeclines = () =>
+    dbMock.dbWrite.$queryRaw.mock.calls.filter(([sql]) =>
+      String((sql as { sql?: string })?.sql ?? sql).includes('UPDATE "AppAccessRequest"')
+    );
+
+  beforeEach(() => {
+    dbMock.dbWrite.oauthClient.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.oauthConsent.deleteMany.mockResolvedValue({ count: 0 } as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+  });
+
+  it('🔴 a moderator ban reaches both legs, for the banned user, attributed to the moderator', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(account(null) as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(account(null) as never);
+    await toggleBan({ id: USER, userId: MODERATOR, isModerator: true } as never);
+
+    expect(dbMock.dbWrite.oauthClient.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ userId: USER }) })
+    );
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ userId: USER }),
+    });
+    const [declines] = appAccessDeclines();
+    expect(declines).toBeDefined();
+    const values = (declines[0] as { values: unknown[] }).values;
+    expect(values).toEqual(expect.arrayContaining([MODERATOR, USER]));
+  });
+
+  it('🔴 an unban reaches neither: nothing is re-enabled or re-granted', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(account(new Date()) as never);
+    await toggleBan({ id: USER, userId: MODERATOR, isModerator: true } as never);
+    expect(dbMock.dbWrite.oauthClient.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).not.toHaveBeenCalled();
+    expect(appAccessDeclines()).toHaveLength(0);
+  });
+});

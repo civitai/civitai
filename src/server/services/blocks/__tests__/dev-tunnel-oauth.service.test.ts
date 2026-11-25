@@ -24,6 +24,7 @@ vi.mock('~/server/services/orchestrator/civitai', () => ({
 
 import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   devTunnelClientId,
@@ -84,9 +85,10 @@ describe('mintDevTunnelOauthToken', () => {
       grants: [],
       allowedScopes: SPEND,
     });
-    // 🔴 `accessMode: 'open'`: a ban disabled this self-only client; the next mint (past the
-    // dev-tunnel gates) re-opens it.
-    expect(client.update).toEqual({ allowedScopes: SPEND, accessMode: 'open' });
+    // 🔴 The mint never sets the client's mode: a 'testers' or staff-disabled client keeps it.
+    expect(client.update).toEqual({ allowedScopes: SPEND });
+    expect(client.update).not.toHaveProperty('accessMode');
+    expect(dbMock.dbWrite.oauthClient.updateMany).not.toHaveBeenCalled();
 
     const consent = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
     expect(consent.where).toEqual({
@@ -127,5 +129,32 @@ describe('mintDevTunnelOauthToken', () => {
       })
     ).rejects.toThrow(/another user/);
     expect(mintAppTokenMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('mintDevTunnelOauthToken on a client a ban disabled', () => {
+  it('🔴 re-opens it (the mint runs only past the dev-tunnel gates) and spends the mark', async () => {
+    const marked = new Set(['oauth:ban-disabled:appdev-42-my-app']);
+    redisMock.redis.exists.mockImplementation((async (key: string) =>
+      [...marked].some((m) => key.endsWith(m)) ? 1 : 0) as never);
+    redisMock.redis.del.mockImplementation((async (key: string) => {
+      const hit = [...marked].find((m) => key.endsWith(m));
+      return hit && marked.delete(hit) ? 1 : 0;
+    }) as never);
+    dbMock.dbWrite.oauthClient.updateMany.mockResolvedValue({ count: 1 } as never);
+
+    await mintDevTunnelOauthToken({
+      userId: USER_ID,
+      clientId: 'appdev-42-my-app',
+      scopes: ['user:read:self'],
+      impersonatedBy: null,
+    });
+    expect(dbMock.dbWrite.oauthClient.updateMany).toHaveBeenCalledWith({
+      where: { id: 'appdev-42-my-app', accessMode: 'disabled' },
+      data: { accessMode: 'open' },
+    });
+    expect(marked.size).toBe(0);
+    redisMock.redis.exists.mockReset();
+    redisMock.redis.del.mockReset();
   });
 });
