@@ -417,3 +417,26 @@ describe('blocks.unlockOutput — the seam', () => {
     });
   });
 });
+
+async function outcomeUnknown(): Promise<number> {
+  const metric = client.register.getSingleMetric('civitai_app_block_unlock_outcome_unknown_total');
+  const values = metric ? (await metric.get()).values : [];
+  return values[0]?.value ?? 0;
+}
+
+describe('blocks.unlockOutput — an unlock whose outcome is unknown', () => {
+  it('🔴 a write with no answer is counted once for support', async () => {
+    h.lift.mockImplementation(async () => ({ outcome: 'no-response' }));
+    const before = await outcomeUnknown();
+    const result = await unlock();
+    expect(result.outcome).toBe('unavailable');
+    expect(await outcomeUnknown()).toBe(before + 1);
+  });
+
+  it('CONTROL: a confirmed unlock counts nothing', async () => {
+    const before = await outcomeUnknown();
+    const result = await unlock();
+    expect(result.outcome).toBe('unlocked');
+    expect(await outcomeUnknown()).toBe(before);
+  });
+});
