@@ -42,7 +42,10 @@ describe('getRecentWinnerIdeas', () => {
     const db = new PGlite();
     await db.exec(`
       CREATE TABLE "Challenge" (id int, source text, "allowedNsfwLevel" int);
-      CREATE TABLE "Image" (id int, "nsfwLevel" int, ingestion text, "blockedFor" text, "needsReview" text);
+      CREATE TABLE "Image" (
+        id int, "nsfwLevel" int, ingestion text, "blockedFor" text, "needsReview" text,
+        "modelRestricted" boolean NOT NULL DEFAULT false
+      );
       CREATE TABLE "ChallengeWinner" ("challengeId" int, "imageId" int, reason text, "createdAt" timestamp);
       INSERT INTO "Challenge" VALUES (1, 'System', 3), (2, 'System', 28), (3, 'User', 3), (9, 'System', 3), (4, 'System', 0);
       INSERT INTO "Image" VALUES
@@ -50,6 +53,7 @@ describe('getRecentWinnerIdeas', () => {
         (13, 1, 'Scanned', 'tos', NULL), (14, 1, 'Scanned', NULL, 'minor'), (15, 1, 'Scanned', NULL, NULL),
         (16, 1, 'Scanned', NULL, NULL),
         (17, 1, 'Pending', NULL, NULL), (18, 0, 'Scanned', NULL, NULL), (19, 1, 'Scanned', NULL, NULL);
+      INSERT INTO "Image" VALUES (20, 4, 'Scanned', NULL, NULL, true);
       INSERT INTO "ChallengeWinner" VALUES
         (1, 10, 'clean sfw winner', now()),
         (2, 11, 'mature challenge winner', now()),
@@ -61,6 +65,7 @@ describe('getRecentWinnerIdeas', () => {
         (1, 17, 'image not scanned yet', now()),
         (1, 18, 'image unrated', now()),
         (4, 19, 'challenge level unset', now()),
+        (2, 20, 'model-restricted mature winner', now()),
         (1, 10, 'Sole eligible entrant', now());
     `);
     vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation((async (

@@ -1011,7 +1011,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."url",
       i."nsfwLevel",
       i."ingestion",
-      i."blockedFor"
+      i."blockedFor",
+      i."needsReview"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1062,7 +1063,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."url",
       i."nsfwLevel",
       i."ingestion",
-      i."blockedFor"
+      i."blockedFor",
+      i."needsReview"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1085,7 +1087,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           i."url",
           i."nsfwLevel",
           i."ingestion",
-          i."blockedFor"
+          i."blockedFor",
+          i."needsReview"
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "User" u ON u.id = i."userId"

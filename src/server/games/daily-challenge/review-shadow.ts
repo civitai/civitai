@@ -17,7 +17,8 @@ type ShadowableReview = {
 
 /**
  * Whether an entry may go to the shadow model, a third party outside production judging: only
- * a System daily that is SFW, and only an image the scan has cleared at an SFW level.
+ * a System daily that is SFW, and only an image the scan has cleared at an SFW level and no
+ * moderator review holds. A missing scan state or review flag counts as not cleared.
  */
 export function shadowSendable({
   source,
@@ -26,13 +27,19 @@ export function shadowSendable({
 }: {
   source: ChallengeSource | undefined;
   allowedNsfwLevel: number;
-  entry: { nsfwLevel: number; ingestion?: string; blockedFor?: string | null };
+  entry: {
+    nsfwLevel: number;
+    ingestion?: string;
+    blockedFor?: string | null;
+    needsReview?: string | null;
+  };
 }) {
   return (
     source === ChallengeSource.System &&
     getIsSafeBrowsingLevel(allowedNsfwLevel) &&
     entry.ingestion === 'Scanned' &&
     !entry.blockedFor &&
+    entry.needsReview === null &&
     getIsSafeBrowsingLevel(entry.nsfwLevel)
   );
 }

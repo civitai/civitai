@@ -110,7 +110,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, url text, "nsfwLevel" int,
       "modelRestricted" boolean NOT NULL DEFAULT false,
-      ingestion text DEFAULT 'Scanned', "blockedFor" text
+      ingestion text DEFAULT 'Scanned', "blockedFor" text, "needsReview" text
     );
     CREATE TABLE "CollectionItem" (
       "collectionId" int, "imageId" int, "tagId" int, note text, status text,
@@ -539,11 +539,14 @@ describe('the judge-model shadow', () => {
   beforeEach(async () => {
     await setBanned(null);
     await db.query(
-      `UPDATE "Image" SET "nsfwLevel" = 1, "modelRestricted" = false, ingestion = 'Scanned'`
+      `UPDATE "Image" SET "nsfwLevel" = 1, "modelRestricted" = false, ingestion = 'Scanned', "needsReview" = NULL`
     );
   });
   // Back to a config that never shadows, for any case after this block.
-  afterEach(() => vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig() as never));
+  afterEach(() => {
+    vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig() as never);
+    challengeRecordOverrides = {};
+  });
 
   it('never gets a mature or unscanned entry; gets the scanned SFW ones', async () => {
     vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig(pinned) as never);
@@ -551,6 +554,28 @@ describe('the judge-model shadow', () => {
     await db.query(`UPDATE "Image" SET ingestion = 'Pending' WHERE id = 6`);
 
     expect(await shadowedImageIds()).toEqual([3, 5, 7, 8]);
+  });
+
+  // Owed entries (7, 8) come back on every tick, so one case can hold and then clear the same one.
+  it('never gets an entry held for moderator review; gets it once the hold clears', async () => {
+    vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig(pinned) as never);
+    await db.query(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 7`);
+    expect(await shadowedImageIds()).toEqual([8]);
+
+    await db.query(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 7`);
+    expect(await shadowedImageIds()).toEqual([7, 8]);
+  });
+
+  it.each([
+    ['a user challenge', { source: ChallengeSource.User }],
+    ['a mod challenge', { source: ChallengeSource.Mod }],
+    ['a mature daily', { allowedNsfwLevel: 1 | 4 }],
+  ])('never runs on %s, while the production judge still reviews', async (_, overrides) => {
+    vi.mocked(getChallengeConfig).mockResolvedValue(shadowConfig(pinned) as never);
+    challengeRecordOverrides = overrides;
+
+    expect(await shadowedImageIds()).toEqual([]);
+    expect(mockGenerateReview.mock.calls.length).toBeGreaterThan(0);
   });
 
   it('never runs without a pin that denies data collection', async () => {
@@ -596,6 +621,14 @@ describe('recent winner ideas', () => {
   });
   afterEach(() => {
     challengeRecordOverrides = {};
+    vi.mocked(getChallengeConfig).mockResolvedValue({
+      judgedTagId: JUDGED_TAG,
+      reviewMeTagId: REVIEW_ME_TAG,
+      reviewAmount: { min: 6, max: 12 },
+      maxScoredPerUser: 5,
+      defaultJudgeId: 1,
+      defaultJudge: null,
+    } as never);
   });
 
   it('reach the judge on an SFW System daily whose rubric discloses them, from SFW winners only', async () => {
@@ -632,14 +665,6 @@ describe('recent winner ideas', () => {
     expect(byRun(true).length).toBeGreaterThan(0);
     expect(byRun(true).every((ideas) => ideas === undefined)).toBe(true);
     expect(byRun(false).every((ideas) => ideas?.[0] === 'a past winning idea')).toBe(true);
-    vi.mocked(getChallengeConfig).mockResolvedValue({
-      judgedTagId: JUDGED_TAG,
-      reviewMeTagId: REVIEW_ME_TAG,
-      reviewAmount: { min: 6, max: 12 },
-      maxScoredPerUser: 5,
-      defaultJudgeId: 1,
-      defaultJudge: null,
-    } as never);
   });
 
   it('read every System winner on a mature daily', async () => {

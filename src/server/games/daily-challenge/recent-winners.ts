@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema';
@@ -31,7 +32,8 @@ export function withFreshnessCriteria(categories: ChallengeJudgingCategory[]) {
  * Why the latest System daily winners won, for the review prompt. The reasons are judge-written
  * from entrants' images, so they are capped and flattened and go under the untrusted-fields
  * preamble. An SFW challenge re-checks the winning image's scan today, since it may have been
- * re-rated since it won.
+ * re-rated since it won. Stricter than `winnerImageFields`, which serves a winner image: any
+ * moderator hold keeps a reason out of the prompt.
  */
 export async function getRecentWinnerIdeas(
   excludeChallengeId: number,
@@ -54,6 +56,7 @@ export async function getRecentWinnerIdeas(
       AND cw.reason <> ${SOLE_WINNER_REASON}
       AND i."blockedFor" IS NULL
       AND i."needsReview" IS NULL
+      AND ${imageNotRestrictedSql()}
       ${sfwFilter}
     ORDER BY cw."createdAt" DESC
     LIMIT ${RECENT_WINNER_LIMIT}

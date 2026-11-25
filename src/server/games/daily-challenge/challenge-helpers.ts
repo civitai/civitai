@@ -1082,6 +1082,7 @@ export type RecentEntry = {
   /** Read by the review shadow's gate; absent means not sendable. */
   ingestion?: string;
   blockedFor?: string | null;
+  needsReview?: string | null;
 };
 
 /** Row shape for resource selection queries (used by processing and testing). */

@@ -115,7 +115,7 @@ describe('shadowSendable', () => {
   const sendable = {
     source: ChallengeSource.System,
     allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.PG13,
-    entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', blockedFor: null },
+    entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', blockedFor: null, needsReview: null },
   };
 
   it('sends a scanned SFW entry of an SFW System daily', () => {
@@ -132,6 +132,14 @@ describe('shadowSendable', () => {
     ['an unscanned entry', { ...sendable, entry: { ...sendable.entry, ingestion: 'Pending' } }],
     ['an entry with no scan state', { ...sendable, entry: { nsfwLevel: NsfwLevel.PG } }],
     ['a blocked entry', { ...sendable, entry: { ...sendable.entry, blockedFor: 'tos' } }],
+    [
+      'an entry held for moderator review',
+      { ...sendable, entry: { ...sendable.entry, needsReview: 'poi' } },
+    ],
+    [
+      'an entry with no review state',
+      { ...sendable, entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', blockedFor: null } },
+    ],
     ['a mature entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: NsfwLevel.R } }],
     ['an unrated entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: 0 } }],
   ])('never sends %s', (_, input) => {
@@ -143,7 +151,7 @@ describe('shadowFor', () => {
   const input = {
     source: ChallengeSource.System,
     allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.PG13,
-    entry: { nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned', blockedFor: null },
+    entry: { nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned', blockedFor: null, needsReview: null },
   };
   const deny = { order: ['wafer/us'], allowFallbacks: false, dataCollection: 'deny' as const };
 
