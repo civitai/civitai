@@ -141,8 +141,8 @@ describe('getModelsRaw and taken-down models', () => {
 
 /**
  * The v1 model lists (/api/v1/models and the blocks/models and blocks/tools catalogs, all through
- * runModelSearch): the statement runModelSearch really builds is captured, and its taken-down clause
- * is run over PGlite rows.
+ * runModelSearch) hide taken-down models (civitai/civitai#10476): the statement runModelSearch really
+ * builds is captured, and its taken-down clause is run over PGlite rows.
  */
 const OWNER = 10;
 let pg: PGlite;
