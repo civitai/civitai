@@ -199,6 +199,7 @@ describe('readFeedGoShadowConfig', () => {
         'http://feed-go.internal.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
       v1ModelsUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models',
       v1ModelsIdUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models/id',
+      siteSearchUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/search',
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,

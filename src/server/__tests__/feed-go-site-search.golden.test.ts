@@ -7,9 +7,10 @@
  * answer. This file runs the real route handler (src/pages/api/search/[...path].ts) and the real
  * site-search service over it — the body schemas, the viewer, the filter clauses, the backend call,
  * the hit shaping and the passthrough all run as in production — with only what crosses the process
- * boundary answered from the fixture: the session (MixedAuthEndpoint hands the fixture's user to the
- * handler), the Flipt-backed features (the host's colour: green is the SFW site), the rate limit, the
- * profanity verdict (always clean here), the passthrough switch, and `fetch` to the search backend.
+ * boundary answered from the fixture: the session (the handler below MixedAuthEndpoint is called with
+ * the fixture's user), and, passed in as the handler's dependencies, the Flipt-backed features (the
+ * host's colour: green is the SFW site), the rate limit, the profanity verdict (always clean here)
+ * and the passthrough switch; plus `fetch` to the search backend.
  *
  * A served fixture's `expect.call` must equal the call this code made (path, and the JSON body as
  * parsed) and `expect.body` the exact text it wrote; a fallback fixture's `expect.nodeStatus` is the
@@ -20,9 +21,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
-import type * as Profanity from '~/server/services/profanity-list.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import type { SiteSearchRouteDeps } from '~/pages/api/search/[...path]';
 
 const FIXTURE_DIR = join(process.cwd(), 'apps/feed-go/testdata/golden/site-search');
 const SEARCH_HOST = 'https://search.example.test';
@@ -73,40 +73,20 @@ type FakeRes = {
 };
 type RouteHandler = (req: FakeReq, res: FakeRes, user: Fixture['viewer'] | undefined) => unknown;
 
-vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => {
-  const actual = await importOriginal<typeof EndpointHelpers>();
-  return {
-    ...actual,
-    // The session crosses the boundary (the auth hub): the fixture's user, or signed out.
-    MixedAuthEndpoint: (handler: RouteHandler, methods: string[] = ['GET']) => {
-      return async (req: FakeReq, res: FakeRes) => {
-        if (!methods.includes(req.method))
-          return res.status(405).json({ error: 'Method not allowed' });
-        return handler(req, res, state.fx.viewer ?? undefined);
-      };
-    },
-  };
-});
-vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
+/** The handler's outside reads, answered from the fixture. */
+const deps = {
+  // No fixture is rate limited.
+  checkRateLimit: async () => ({ allowed: true }),
   // The host's colour decides both features here: green is the SFW site, red the mature one (no
   // region is restricted in any fixture).
-  getFeatureFlagsLazy: ({ req }: { req: { headers: Record<string, string> } }) => {
+  getFeatures: ({ req }: { req: { headers: Record<string, string> } }) => {
     const green = req.headers.host?.startsWith('green.');
     return { isGreen: !!green, canViewNsfw: !green };
   },
-}));
-vi.mock('~/server/utils/site-search-rate-limit', () => ({
-  checkSiteSearchRateLimit: async () => ({ allowed: true }),
-}));
-vi.mock('~/server/services/profanity-list.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof Profanity>()),
-  isProfaneSearch: async () => false,
-}));
-vi.mock('~/server/services/site-search-passthrough', () => ({
-  isSiteSearchPassthroughOn: () => state.fx.config.passthrough,
-}));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: () => undefined }));
+  isProfane: async () => false,
+  isPassthroughOn: () => state.fx.config.passthrough,
+} as unknown as SiteSearchRouteDeps;
+
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
 
 function loadFixtures() {
@@ -150,10 +130,11 @@ function fakeRes() {
   return res;
 }
 
-let handler: (req: FakeReq, res: FakeRes) => Promise<unknown>;
+let handler: RouteHandler;
 
 beforeAll(async () => {
-  handler = (await import('~/pages/api/search/[...path]')).default as unknown as typeof handler;
+  const { createSiteSearchHandler } = await import('~/pages/api/search/[...path]');
+  handler = createSiteSearchHandler(deps) as unknown as RouteHandler;
 }, 180_000);
 
 beforeEach(() => {
@@ -181,7 +162,7 @@ async function run(fx: Fixture) {
     body: JSON.parse(fx.request.body),
   };
   const res = fakeRes();
-  await handler(req, res);
+  await handler(req, res, fx.viewer ?? undefined);
   return res;
 }
 
