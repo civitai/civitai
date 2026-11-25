@@ -326,6 +326,13 @@ describe("a moderator's dismissal of the scan's report", () => {
     await flagScan(id);
     await runMirror(mirror);
     expect(platform.posts.filter((p) => p.text === 'edited')).toHaveLength(0);
+    expect(modVisibleBySource()).toHaveLength(1);
+
+    // Its own clean scan sends it.
+    await scanClean(id);
+    await runMirror(mirror);
+    expect(platform.posts.filter((p) => p.text === 'edited')).toHaveLength(1);
+    expect(decided(id)).toBe('visible');
   });
 
   it("8. a moderator's own hide over the scan's leaves nothing for a dismissal to lift", async () => {
@@ -411,6 +418,56 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(decided(id)).toBe('hidden');
 
     await q(`UPDATE "Report" SET status = 'Unactioned' WHERE id = $1`, [later]);
+    expect(await settle()).toMatchObject({ moderatorLifts: 1 });
+    expect(decided(id)).toBe('visible');
+  });
+
+  it('12. an older scan report ruled again lifts nothing while a later scan report is open', async () => {
+    const { id, reportId } = await hiddenByScan();
+    await dismiss(reportId);
+    await settle();
+    await q(`UPDATE "CommentV3" SET content = '<p>now a scam</p>' WHERE id = $1`, [id]);
+    await q(
+      `UPDATE "FeaturePageCommentMirror" SET version = version + 1, "contentAt" = now(),
+         "nextPushAt" = now() WHERE "commentId" = $1`,
+      [id]
+    );
+    await scanHides(id);
+    await runMirror(mirror);
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
+    expect(await dismiss(reportId)).toBeNull();
+    expect((await commentOf(id)).hidden).toBe(true);
+  });
+
+  it('13a. a lift is not made while a push holds the row, and is made when asked again after', async () => {
+    const { id, reportId } = await hiddenByScan();
+    await q(
+      `UPDATE "FeaturePageCommentMirror" SET "leaseUntil" = now() + interval '1 minute'
+       WHERE "commentId" = $1`,
+      [id]
+    );
+    expect(await dismiss(reportId)).toBeNull();
+    expect((await commentOf(id)).hidden).toBe(true);
+    await q(`UPDATE "FeaturePageCommentMirror" SET "leaseUntil" = NULL WHERE "commentId" = $1`, [
+      id,
+    ]);
+    expect(await dismiss(reportId)).toEqual({ commentId: id, version: 1 });
+  });
+
+  it('13. a row the push holds is not lifted on the platform until the push lets it go', async () => {
+    const { id, reportId } = await hiddenByScan();
+    await dismiss(reportId);
+    await runMirror(mirror);
+    await q(
+      `UPDATE "FeaturePageCommentMirror" SET "leaseUntil" = now() + interval '1 minute'
+       WHERE "commentId" = $1`,
+      [id]
+    );
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0 });
+    expect(modVisibleBySource()).toHaveLength(0);
+    await q(`UPDATE "FeaturePageCommentMirror" SET "leaseUntil" = NULL WHERE "commentId" = $1`, [
+      id,
+    ]);
     expect(await settle()).toMatchObject({ moderatorLifts: 1 });
     expect(decided(id)).toBe('visible');
   });

@@ -912,6 +912,42 @@ const takeLift = (commentId: number, by?: number) =>
     { by }
   );
 
+/**
+ * The platform's moderator visible for a lift, by sourceId: it lifts the moderator hide and decides
+ * for no version, so the site and the pipeline decide after it, a pipeline hide included. Sent under
+ * the row's lease, from facts read under it, so a hide made since the page was read goes first.
+ * 'held': someone has reported it since the lift, so it stays hidden there until that is handled.
+ */
+async function sendModeratorLift(commentId: number, item: PlatformCommentItem) {
+  if (!(await leaseFpMirrorRow(kyselyWrite, commentId))) return 'skipped' as const;
+  try {
+    const [row] = await readFpMirrorFacts(kyselyWrite, [commentId]);
+    if (!row || row.nextPushAt || reconcileAction(evaluate(row), item) !== 'moderator-lift')
+      return 'skipped' as const;
+    if (
+      await hasOpenPersonFpReport(kyselyWrite, {
+        commentId,
+        systemUserId: constants.system.user.id,
+      })
+    )
+      return 'held' as const;
+    const r = await send(PLATFORM_MOD_VERDICT_PATH, {
+      target: { sourceId: commentId },
+      verdict: 'visible',
+      at: new Date().toISOString(),
+    });
+    if (r.kind !== 'ok') {
+      log('error', 'moderator lift failed', { commentId, kind: r.kind });
+      return 'skipped' as const;
+    }
+    // The push then lifts the site's.
+    await markFpReconciled(kyselyWrite, commentId, 'due');
+    return 'sent' as const;
+  } finally {
+    await releaseFpLeases(kyselyWrite, [commentId]);
+  }
+}
+
 /** The daily reconcile: compares what each urn should hold with the platform, by reconcileAction. */
 export async function runFpReconcile() {
   if (!(await fpMirrorTableExists(kyselyWrite))) return notMigrated('reconcile');
@@ -983,29 +1019,9 @@ export async function runFpReconcile() {
       });
       if (!on || action === 'counted') continue;
       if (action === 'moderator-lift') {
-        // Someone reported it since the lift: it stays hidden there until that report is handled.
-        if (
-          await hasOpenPersonFpReport(kyselyWrite, {
-            commentId: row.commentId,
-            systemUserId: constants.system.user.id,
-          })
-        ) {
-          moderatorHidden += 1;
-          continue;
-        }
-        // By sourceId: it lifts the moderator hide and decides for no version, so the site and the
-        // pipeline decide after it, a pipeline hide included. The push then lifts the site's.
-        const r = await send(PLATFORM_MOD_VERDICT_PATH, {
-          target: { sourceId: row.commentId },
-          verdict: 'visible',
-          at: new Date().toISOString(),
-        });
-        if (r.kind !== 'ok') {
-          log('error', 'moderator lift failed', { commentId: row.commentId, kind: r.kind });
-          continue;
-        }
-        moderatorLifts += 1;
-        await markFpReconciled(kyselyWrite, row.commentId, 'due');
+        const lifted = await sendModeratorLift(row.commentId, item);
+        if (lifted === 'sent') moderatorLifts += 1;
+        else if (lifted === 'held') moderatorHidden += 1;
         continue;
       }
       if (action !== 'lift') {

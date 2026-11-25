@@ -61,7 +61,7 @@ CREATE TABLE "CommentV3" ("id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, 
 CREATE TABLE "FeaturePageCommentMirror" ("commentId" INTEGER PRIMARY KEY, "version" INTEGER NOT NULL DEFAULT 1,
   "goneCause" TEXT, "removeWantedAt" TIMESTAMPTZ(6), "scanHiddenAt" TIMESTAMPTZ(6), "scanHiddenVersion" INTEGER,
   "liftGrantedAt" TIMESTAMPTZ(6), "liftGrantedBy" INTEGER, "liftGrantedVersion" INTEGER,
-  "nextPushAt" TIMESTAMPTZ(6), "pushAttempts" INTEGER NOT NULL DEFAULT 0, "pendingDigest" TEXT,
+  "nextPushAt" TIMESTAMPTZ(6), "leaseUntil" TIMESTAMPTZ(6), "pushAttempts" INTEGER NOT NULL DEFAULT 0, "pendingDigest" TEXT,
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT now());
 CREATE TABLE "TextScanHold" ("entityType" TEXT, "entityId" INTEGER, "label" TEXT, "status" TEXT,
   "textHash" TEXT, "meta" JSONB);
@@ -136,6 +136,23 @@ describe("the scan's report on a Feature Pages comment", () => {
       { userId: MOD, entityType: 'commentV3', entityId: COMMENT, activity: 'scanLift' },
       { userId: MOD, entityType: 'report', entityId: SCAN_REPORT, activity: 'scanLift' },
     ]);
+  });
+
+  it('already Unactioned by this moderator with the lift not made: asked again, it is made', async () => {
+    await db.query(
+      `UPDATE "Report" SET status = 'Unactioned', "statusSetBy" = $2, "statusSetAt" = now()
+       WHERE id = $1`,
+      [SCAN_REPORT, MOD]
+    );
+    expect(
+      await setReportStatus({
+        id: SCAN_REPORT,
+        status: 'Unactioned',
+        userId: MOD,
+        liftScanHide: true,
+      })
+    ).toEqual({ ok: true, changed: false });
+    expect(await comment()).toEqual({ hidden: false, liftGrantedBy: MOD });
   });
 
   it('ruled through the batch save, or by a caller that does not ask: it stays hidden', async () => {

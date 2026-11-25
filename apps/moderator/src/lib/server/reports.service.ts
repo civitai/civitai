@@ -590,7 +590,8 @@ export async function setReportStatus({
 
   await syncResolvedMarker(id, status);
 
-  if (liftScanHide && updated && status === ReportStatus.Unactioned)
+  // Also when nothing changed: a lift that failed after the status was set is tried again.
+  if (liftScanHide && status === ReportStatus.Unactioned)
     await grantFpScanLift(dbWrite, { reportId: id, actorId: userId, systemUserId: SYSTEM_USER_ID });
 
   // `updated` is set only when the row actually changed, so re-actioning an already-Actioned report never

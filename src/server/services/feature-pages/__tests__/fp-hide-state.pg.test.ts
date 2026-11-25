@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   clearFpRestricted,
+  grantFpScanLift,
   leaseFpMirrorRows,
   markFpMirrorDue,
   markFpReconciled,
@@ -1034,6 +1035,53 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
       ]);
       expect(a.filter((id) => b.includes(id))).toEqual([]);
       expect(a.length + b.length).toBe(6);
+    });
+  });
+
+  describe("a moderator's lift of the scan's hide", () => {
+    it('waits on a csam hold decision in flight, then sees the hold and lifts nothing', async () => {
+      currentId = await seed();
+      await c0.query(
+        `CREATE TABLE IF NOT EXISTS "ModActivity"(id serial PRIMARY KEY, "userId" int,
+           activity text NOT NULL, "entityType" text, "entityId" int)`
+      );
+      await c0.query(`UPDATE "CommentV3" SET hidden = true, "hiddenAt" = now() WHERE id = $1;`, [
+        currentId,
+      ]);
+      await c0.query(
+        `UPDATE "FeaturePageCommentMirror" m SET "scanHiddenAt" = c."hiddenAt", "scanHiddenVersion" = 1
+         FROM "CommentV3" c WHERE c.id = m."commentId" AND m."commentId" = $1`,
+        [currentId]
+      );
+      const [{ id: reportId }] = (
+        await c0.query(
+          `INSERT INTO "Report"(status, reason, "userId", details, "statusSetBy")
+           VALUES ('Unactioned', 'AdminAttention', -1, '{"comment":"auto-hidden by scan"}', 1)
+           RETURNING id`
+        )
+      ).rows;
+      await c0.query(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+        currentId,
+        reportId,
+      ]);
+
+      await c1.query('BEGIN');
+      await hold(txOf(c1), c1);
+      const settled = { done: false };
+      const lifted = grantFpScanLift(kysely, { reportId, actorId: 1, systemUserId: -1 });
+      void lifted.finally(() => (settled.done = true));
+      let waited = false;
+      for (let i = 0; i < 200 && !settled.done && !waited; i++) {
+        const { rows } = await c0.query(
+          `SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'`
+        );
+        waited = rows.length > 0;
+        if (!waited) await new Promise((r) => setTimeout(r, 10));
+      }
+      await c1.query('COMMIT');
+      expect(waited).toBe(true);
+      expect(await lifted).toBeNull();
+      expect((await state(currentId)).hidden).toBe(true);
     });
   });
 });
