@@ -424,8 +424,8 @@ const fixtures = loadFixtures();
 
 describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
   it('finds the fixtures (a glob that matched nothing would pass every case below)', () => {
-    expect(fixtures.length).toBeGreaterThanOrEqual(37);
-    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(28);
+    expect(fixtures.length).toBeGreaterThanOrEqual(38);
+    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(29);
     // The text search is reached: fixtures whose search call Node makes.
     expect(fixtures.filter(({ fx }) => fx.expect.search).length).toBeGreaterThanOrEqual(4);
     // The Training Data listing is reached: fixtures whose statement Node sends.
