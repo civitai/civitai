@@ -1037,8 +1037,7 @@ describe('submitEntry — maximum clip length', () => {
   });
 
   it('does not render the clip and the limit as the SAME duration', async () => {
-    // `formatDuration` rounds, so a fractional overshoot printed "at most 2:00; this one is 2:00"
-    // — an entrant told the entry is too long and shown two identical numbers.
+    // A rejected clip must never print the same number as the limit ("at most 2:00; this one is 2:00").
     dbMock.dbRead.image.findUnique.mockResolvedValue(
       imageRow(MediaType.video, { duration: 120.51 })
     );

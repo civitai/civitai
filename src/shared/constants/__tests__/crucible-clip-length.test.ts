@@ -7,8 +7,10 @@ import {
 } from '~/shared/constants/crucible.constants';
 import { formatDuration } from '~/utils/number-helpers';
 
+// The 0.5s tolerance is a product decision from the Crucible contests owner (2026-11): a 30s video
+// made on Civitai measures 30.016-30.418s from container padding. Shrinking it below that makes
+// on-site clips fail a limit of their own length again.
 describe('clipLengthAllowed', () => {
-  // A 30s video made on Civitai measures 30.016-30.418s from container padding.
   it('accepts an on-site 30s clip against a 30s limit', () => {
     expect(clipLengthAllowed(30.023, 30)).toBe(true);
     expect(clipLengthAllowed(30.418, 30)).toBe(true);
