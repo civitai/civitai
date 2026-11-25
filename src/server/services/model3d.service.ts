@@ -76,6 +76,7 @@ import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/hand
 import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
+import type { SessionUser as AppSessionUser } from '~/types/session';
 
 type SessionUser = {
   id: number;
@@ -315,7 +316,8 @@ export const ensureModel3DFromWorkflow = async ({
   ctx,
 }: {
   input: EnsureModel3DFromWorkflowInput;
-  user: SessionUser;
+  // The full session user: the v2 rating's limits and flag read the user's tier and Flipt context.
+  user: AppSessionUser;
   ctx: Context;
 }) => {
   // Fast path: draft already exists (handler ran earlier, or a prior

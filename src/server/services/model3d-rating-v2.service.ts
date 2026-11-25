@@ -134,7 +134,7 @@ export const MODEL3D_UNRATEABLE_PREVIEW =
   "This 3D model's preview couldn't be rated. Render it again, then post.";
 
 /** What a 3D post shows as its cover and the images the v2 rater is shown for it: the preview renders,
- *  or, with none, the auto-thumbnail the cover falls back to. The cover is always one of the rated. */
+ *  or, with none, the auto-thumbnail the cover falls back to; a cover with no url leaves nothing rated. */
 export function model3DPostImages<T extends { url?: string | null }>(
   renders: readonly (T | null | undefined)[],
   thumbnail: T | null | undefined
