@@ -380,6 +380,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // FEED_GO_SHADOW_URL and the rate / in-flight knobs with FEED_GO_SHADOW, with a per-second bucket
   // per route. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_V1_MODELS = 'feed-go-shadow-v1-models',
+  // The same mirror for `POST /api/search/*` (the site's search UI), to feed-go's
+  // `/internal/shadow/api/search`: the request body, the search call Node made, the backend's 200
+  // body and Node's answer, so feed-go reshapes the same backend answer without calling it again.
+  // DEFAULT-OFF. Global boolean, read at most once per 5s per process; shares FEED_GO_SHADOW_URL and
+  // the rate / in-flight knobs with FEED_GO_SHADOW, with its own per-second bucket. See
+  // `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_SITE_SEARCH = 'feed-go-shadow-site-search',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the

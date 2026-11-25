@@ -167,5 +167,64 @@
       "period": "AllTime",
       "sort": "Most Reactions"
     }
+  },
+  "siteSearchParamsSchema": {
+    "keys": [
+      "attributesToCrop",
+      "attributesToHighlight",
+      "attributesToRetrieve",
+      "cropLength",
+      "cropMarker",
+      "facets",
+      "filter",
+      "highlightPostTag",
+      "highlightPreTag",
+      "hitsPerPage",
+      "limit",
+      "matchingStrategy",
+      "offset",
+      "page",
+      "q",
+      "sort"
+    ],
+    "defaults": {}
+  },
+  "siteMultiSearchSchema": {
+    "keys": [
+      "queries"
+    ],
+    "defaults": {}
+  },
+  "siteMultiSearchQuerySchema": {
+    "keys": [
+      "attributesToCrop",
+      "attributesToHighlight",
+      "attributesToRetrieve",
+      "cropLength",
+      "cropMarker",
+      "facets",
+      "filter",
+      "highlightPostTag",
+      "highlightPreTag",
+      "hitsPerPage",
+      "indexUid",
+      "limit",
+      "matchingStrategy",
+      "offset",
+      "page",
+      "q",
+      "sort"
+    ],
+    "defaults": {}
+  },
+  "siteFacetSearchSchema": {
+    "keys": [
+      "facetName",
+      "facetQuery",
+      "filter",
+      "matchingStrategy",
+      "q"
+    ],
+    "defaults": {}
   }
 }

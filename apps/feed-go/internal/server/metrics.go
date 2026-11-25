@@ -451,6 +451,14 @@ func RequestFallbackReasons() map[string][]string {
 		"v1-image-id", "v1-tags", "v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort",
 		"v1-with-tags", "v1-cursor", "v1-legacy-cursor", "v1-page-limit",
 	})
+	// The site-search route (sitesearch.go): its region block (no user-agent check: the path is not
+	// bot-aware), the method, the credential form, the path, the etag query, the body, the indexes, the
+	// address the rate limit keys on, and the profanity refusal civitai.com applies to any text.
+	search := sortedUnion([]string{
+		"method", "region-blocked", "bearer-token", "search-path", "search-etag", "search-content-type",
+		"search-body-size", "search-input", "search-input-invalid", "search-input-duplicate",
+		"input-unknown-key", "search-index", "search-rate-limit-ip", "search-profanity",
+	})
 	return map[string][]string{
 		EndpointAsPosts:     asPosts,
 		EndpointInfinite:    infinite,
@@ -458,6 +466,7 @@ func RequestFallbackReasons() map[string][]string {
 		EndpointV1Models:    v1Models,
 		EndpointV1ModelsID:  v1ModelsID,
 		EndpointV1Images:    v1Images,
+		EndpointSearch:      search,
 	}
 }
 
@@ -484,10 +493,10 @@ func prefixed(prefix string, keys []string) []string {
 func cachedEndpoint(e string) bool { return e == EndpointV1ModelsID }
 
 // emptyReachable reports whether endpoint can count a trivial answer (served_empty, match_empty) in
-// mode: never on as-posts, whose compute does not mark one, and on the single-model route only in
-// the shadow, as its trivial answer is the not-found body, which the public route falls back on.
+// mode: never on as-posts or site-search, whose computes do not mark one, and on the single-model route
+// only in the shadow, as its trivial answer is the not-found body, which the public route falls back on.
 func emptyReachable(endpoint, mode string) bool {
-	return endpoint != EndpointAsPosts && (endpoint != EndpointV1ModelsID || mode == "shadow")
+	return endpoint != EndpointAsPosts && endpoint != EndpointSearch && (endpoint != EndpointV1ModelsID || mode == "shadow")
 }
 
 // outcomeReachable reports whether the mode's path can count outcome for endpoint.
@@ -498,7 +507,8 @@ func outcomeReachable(endpoint, mode, outcome string) bool {
 	case "served_empty":
 		return emptyReachable(endpoint, mode)
 	case OutcomeRegionBlocked:
-		return mode == "serve"
+		// site-search always hands a blocked region back (ServeSearchHTTP).
+		return mode == "serve" && endpoint != EndpointSearch
 	case OutcomeFeedUnavailable:
 		return mode == "serve" && endpoint == EndpointInfinite
 	}
@@ -507,7 +517,7 @@ func outcomeReachable(endpoint, mode, outcome string) bool {
 
 // shadowResultReachable reports whether the compare path can count result for endpoint: match_cached
 // needs a cached answer, match_empty a trivial one, and the single-model route's classifier
-// (ClassifyV1ModelID) has no order.
+// (ClassifyV1ModelID) has no order, nor has site-search's (ClassifySearch).
 func shadowResultReachable(endpoint, result string) bool {
 	switch result {
 	case "match_cached":
@@ -515,7 +525,7 @@ func shadowResultReachable(endpoint, result string) bool {
 	case "match_empty":
 		return emptyReachable(endpoint, "shadow")
 	case "order":
-		return endpoint != EndpointV1ModelsID
+		return endpoint != EndpointV1ModelsID && endpoint != EndpointSearch
 	}
 	return true
 }
@@ -567,8 +577,9 @@ func (m *Metrics) seedOutcomes() {
 }
 
 // ServedEndpoints are the endpoints with a public route (each takes its serve slot from the one
-// shared pool): the three tRPC procedures, the two REST model routes and the REST images route.
-var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID, EndpointV1Images}
+// shared pool): the three tRPC procedures, the two REST model routes, the REST images route and site
+// search.
+var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID, EndpointV1Images, EndpointSearch}
 
 // ErrorModes are the `mode` values of feed_go_errors_total: a compute error on the public route, in a
 // shadow sample or in a Go-first probe, and a fallback-proxy error.

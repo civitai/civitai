@@ -191,3 +191,16 @@ and the real `/api/v1` proxy middleware chain, adds the next.config.mjs headers 
 production build, and fails when the app's answer differs from the file. `internal/server/region_blocked_test.go`
 requires feed-go's answer with `FEED_GO_ANSWER_REGION_BLOCKED` on to equal it on every route
 (DESIGN.md §6.2). When the Node test fails, correct the file from the app's answer; never from feed-go's.
+
+## `site-search/`
+
+One file per `POST /api/search/*` case: `request` (`path`, the JSON `body` as text, `host`:
+`green.example.test` is the SFW site, `red.example.test` the mature one), `viewer` (the session
+user's `id`, `isModerator`, `browsingLevel`, `showNsfw`; null when signed out), `config.passthrough`
+(`site-search-passthrough`), `upstream` (the search backend's `status` and `body` text), and
+`expect`: either `call` (the backend path and the JSON body Node sends, compared as values) and `body`
+(the exact text Node writes), or `fallback` (the reason feed-go must hand the request back with) and
+`nodeStatus` (what Node then answers). Written by hand from the Node code; held to the real handler by
+`src/server/__tests__/feed-go-site-search.golden.test.ts`, whose failure prints `GOLDEN-ACTUAL` — set a
+fixture's expectation from that output only. `internal/server/sitesearch_golden_test.go` runs feed-go
+over the same files. Upstream bodies are written in `JSON.stringify`'s form, so the bytes compare equal.

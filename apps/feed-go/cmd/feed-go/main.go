@@ -32,6 +32,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
+	"github.com/civitai/civitai/apps/feed-go/internal/sitesearch"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
@@ -582,6 +583,21 @@ func run(log *slog.Logger) error {
 		Users: sources,
 		Rules: &v1models.TrainingDataRules{Redis: cache, Prefix: cfg.CacheKeyPrefix},
 	}
+	// POST /api/search/* (DESIGN.md §18): the shadow reshapes the backend response Node recorded and needs
+	// none of this; the public route (FEED_GO_SERVE_SEARCH) calls the search backend Node calls and keeps
+	// Node's rate-limit windows on the cache cluster.
+	sc := config.LoadSiteSearch()
+	if err := sc.Validate(); err != nil {
+		return err
+	}
+	searchDeps := &server.SearchDeps{Rate: cache, KeyPrefix: cfg.CacheKeyPrefix}
+	if sc.Host != "" {
+		cl, err := sitesearch.NewClient(sc.Host, sc.APIKey)
+		if err != nil {
+			return err
+		}
+		searchDeps.Upstream = cl
+	}
 	// nil (no FLIPT_URL, or a bad one): every page the flag could lead falls back.
 	personalHotLead, err := personalHotLeadReader(cfg)
 	if err != nil {
@@ -628,6 +644,8 @@ func run(log *slog.Logger) error {
 		ServeV1Images:  mc.ServeImages,
 		V1BearerAuth:   mc.BearerAuth,
 		Associated:     associated,
+		Search:         searchDeps,
+		ServeSearch:    sc.Serve,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
@@ -677,6 +695,18 @@ func run(log *slog.Logger) error {
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
 	}
+	// The public /api/search route's one upstream (FEED_GO_SEARCH_FALLBACK_URL); unset, the route is not
+	// mounted.
+	if sc.FallbackURL != "" {
+		target, err := url.Parse(sc.FallbackURL)
+		if err != nil {
+			return err
+		}
+		srv.SearchFallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
+			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
+	}
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
@@ -695,6 +725,8 @@ func run(log *slog.Logger) error {
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil)
+	log.Info("public /api/search", "FEED_GO_SERVE_SEARCH", sc.Serve, "mounted", srv.SearchFallback != nil,
+		"search_backend_configured", searchDeps.Upstream != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	log.Info("blocked-region requests answered here (451) instead of handed back", "FEED_GO_ANSWER_REGION_BLOCKED", cfg.AnswerRegionBlocked)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
@@ -709,7 +741,7 @@ func run(log *slog.Logger) error {
 	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
 	// do not listen publicly at all.
-	if srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil {
+	if srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil || srv.SearchFallback != nil {
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))

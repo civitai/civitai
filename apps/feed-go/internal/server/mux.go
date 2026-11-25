@@ -13,7 +13,10 @@ import (
 // (FEED_GO_SERVE_V1_MODELS), else proxied to V1Fallback; without it those paths are not routed here.
 // With V1ImagesFallback set (FEED_GO_V1_IMAGES_FALLBACK_URL; V1Fallback alone does not mount it),
 // `GET /api/v1/images` (that path only), computed only with ServeV1Images (FEED_GO_SERVE_V1_IMAGES),
-// else proxied to V1ImagesFallback. Nothing else. It never carries a debug route, whatever the pprof toggle says.
+// else proxied to V1ImagesFallback. With SearchFallback set (FEED_GO_SEARCH_FALLBACK_URL), everything under
+// `/api/search/`, computed only with ServeSearch (FEED_GO_SERVE_SEARCH), else proxied to SearchFallback
+// (a path the port does not answer, `/api/search/token` among them, falls back: `search-path`). Nothing
+// else. It never carries a debug route, whatever the pprof toggle says.
 func PublicMux(s *Server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/api/trpc/"+Procedure, s)
@@ -27,6 +30,9 @@ func PublicMux(s *Server) *http.ServeMux {
 	if s.V1ImagesFallback != nil {
 		// The exact path: nothing under /api/v1/images/ is this route (Node's are other pages).
 		mux.HandleFunc(V1ImagesPath, s.ServeV1ImagesHTTP)
+	}
+	if s.SearchFallback != nil {
+		mux.HandleFunc(SearchPath+"/", s.ServeSearchHTTP)
 	}
 	return mux
 }
@@ -46,6 +52,7 @@ func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux
 	mux.HandleFunc("/internal/shadow/"+ProcedureInfinite, s.ShadowInfiniteHandler)
 	mux.HandleFunc("/internal/shadow/"+ProcedureModelGetAll, s.ShadowModelGetAllHandler)
 	mux.HandleFunc("/internal/shadow/"+ProcedureAssociated, s.ShadowAssociatedHandler)
+	mux.HandleFunc("/internal/shadow"+SearchPath, s.ShadowSearchHandler)
 	mux.HandleFunc(ProbePathPrefix, s.ProbeHandler)
 	if withPprof {
 		// Registered explicitly: importing net/http/pprof also registers these on http.DefaultServeMux,
