@@ -22,7 +22,6 @@ const {
   exclusionsFor,
   nextRevertBatch,
   nextUnlockBatch,
-  PROFANITY_BATCH_LIMIT,
   recordScans,
   revertLocks,
   runBackfill,
@@ -423,6 +422,7 @@ describe('model nsfw lock backfill: profanity locks', () => {
       [JSON.stringify(profanityMarker)]
     );
     scanModelText.mockReset();
+    effects.bustPublicModelResponseCache.mockClear();
     scanModelText.mockResolvedValue('submitted');
   });
 
@@ -507,6 +507,8 @@ describe('model nsfw lock backfill: profanity locks', () => {
         effects
       );
       expect(result).toMatchObject({ changed: [ELIGIBLE], skippedRatingChanged: { count: 0 } });
+      expect(effects.bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
+      expect(effects.bustPublicModelResponseCache).toHaveBeenCalledWith([ELIGIBLE]);
       const after = await row(ELIGIBLE);
       expect(after.nsfw).toBe(true);
       expect(after.lockedProperties).toEqual(['nsfw', 'tags']);
@@ -529,6 +531,13 @@ describe('model nsfw lock backfill: profanity locks', () => {
         changed: [],
         skippedRatingChanged: { count: 1, ids: [ELIGIBLE] },
       });
+      // Nothing changed, so no cache is busted; a later page of the pass skips the bucket-wide count.
+      expect(effects.bustPublicModelResponseCache).not.toHaveBeenCalled();
+      const later = await runBackfill(
+        backfillSchema.parse({ bucket: PROFANITY, action: 'revert', dryRun: false, afterId: 1 }),
+        effects
+      );
+      expect(later.skippedRatingChanged).toBeUndefined();
       expect(await revertLocks(PROFANITY, [ELIGIBLE])).toEqual([]);
       expect(await row(ELIGIBLE)).toEqual(before);
     });
@@ -611,6 +620,8 @@ describe('model nsfw lock backfill: profanity locks', () => {
         relocked: [],
         relockedCount: 0,
       });
+      expect(effects.bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
+      expect(effects.bustPublicModelResponseCache).toHaveBeenCalledWith(result.changed);
       for (const id of ALL_ELIGIBLE)
         expect((await row(id)).meta.nsfwLockBackfill.scan).toMatchObject({ status: 'submitted' });
     });
@@ -674,7 +685,6 @@ describe('model nsfw lock backfill: profanity locks', () => {
     });
 
     it('takes at most 200 ids a call', async () => {
-      expect(PROFANITY_BATCH_LIMIT).toBe(200);
       const result = await runBackfill(
         backfillSchema.parse({ bucket: PROFANITY, limit: 500 }),
         effects

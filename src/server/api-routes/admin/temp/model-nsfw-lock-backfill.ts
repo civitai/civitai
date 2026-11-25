@@ -245,7 +245,7 @@ const revertableSql = (bucket: Bucket) => Prisma.sql`
   AND NOT ${moderatorRuledSinceSql(Prisma.sql`m.meta->'nsfwLockBackfill'->>'at'`)}
 `;
 
-/** Profanity unlocks a revert skips because the rating changed since: the count, and the first ids. */
+/** Profanity unlocks a revert skips because their rating changed since; at most 100 of their ids. */
 export async function ratingChangedSinceUnlock() {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT m.id FROM "Model" m
@@ -425,7 +425,10 @@ export async function runBackfill(
       : await nextUnlockBatch(bucket, afterId, limit);
   const nextAfterId = ids.length ? ids[ids.length - 1] : afterId;
   const skippedRatingChanged =
-    profanity && action === 'revert' ? await ratingChangedSinceUnlock() : undefined;
+    // A scan of every unlocked model, so once per pass: on its first call.
+    profanity && action === 'revert' && afterId === 0
+      ? await ratingChangedSinceUnlock()
+      : undefined;
   // The bucket count scans every locked model of the bucket, so only an unlock dry run pays for it.
   if (dryRun) {
     const counts =
