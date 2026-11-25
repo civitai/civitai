@@ -4,7 +4,13 @@ import type {
   ProfilePageTheme,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
-import { profilePageThemeSchema } from '~/server/schema/user-profile.schema';
+import * as z from 'zod';
+import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
+import {
+  profilePageThemeSchema,
+  profilePinnedItemsLimit,
+  showcaseItemSchema,
+} from '~/server/schema/user-profile.schema';
 import { isMemberTier, isMemberTierCached } from '~/server/services/subscriptions.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -196,14 +202,14 @@ export async function getProfileCustomization({
   };
 }
 
-/** The About tab's text: kept out of the main profile read, which every visitor pays for. */
+/** The About tab's text and pinned items: kept out of the main profile read, which every visitor pays for. */
 export async function getProfileAbout({ userId, viewerId }: { userId: number; viewerId?: number }) {
   // primary: only for the owner, whose save is read back at once.
   const profile = await (viewerId === userId ? dbWrite : dbRead).userProfile.findUnique({
     where: { userId },
-    select: { about: true },
+    select: { about: true, pinnedItems: true },
   });
-  return { about: profile?.about ?? null };
+  return { about: profile?.about ?? null, pinnedItems: parsePinnedItems(profile?.pinnedItems) };
 }
 
 /**
@@ -238,4 +244,14 @@ function parsePageTheme(value: unknown): ProfilePageTheme | null {
   const parsed = profilePageThemeSchema.safeParse(value);
   const { dark, light, sidebar } = parsed.success ? parsed.data : {};
   return parsed.success && (dark || light || sidebar) ? parsed.data : null;
+}
+
+/** A stored pinned list, keeping only entries of the allowed shape, at most the limit. */
+export function parsePinnedItems(value: unknown): ShowcaseItemSchema[] {
+  const parsed = z.array(showcaseItemSchema).safeParse(value);
+  return parsed.success
+    ? parsed.data
+        .filter((item) => item.entityType === 'Image' || item.entityType === 'Model')
+        .slice(0, profilePinnedItemsLimit)
+    : [];
 }

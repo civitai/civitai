@@ -13,6 +13,7 @@ import type {
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
+  SetPinnedItemSchema,
   SetShowcaseSectionsSchema,
   ShowcaseItemSchema,
   ShowcaseSectionSchema,
@@ -21,6 +22,7 @@ import type {
 import {
   customShowcaseKey,
   customShowcaseKeyPrefix,
+  profilePinnedItemsLimit,
   showcaseSectionLimits,
   showcaseSectionTypes,
 } from '~/server/schema/user-profile.schema';
@@ -70,6 +72,7 @@ import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import {
   assertPageCustomizationAllowed,
   imagesHiddenFromModerator,
+  parsePinnedItems,
 } from '~/server/services/profile-customization.service';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
@@ -865,4 +868,49 @@ async function withoutRestrictedPictureFor<T extends { id: number; nsfwLevel: nu
 ) {
   if (sameUser || !(await isPictureModelRestricted(picture))) return picture;
   return null;
+}
+
+/**
+ * Pins one of the owner's own images or models to their About tab, or unpins it. At most
+ * `profilePinnedItemsLimit`; a pin past that is refused rather than dropping an older one.
+ */
+export async function setPinnedItem({
+  userId,
+  entityType,
+  entityId,
+  pinned,
+}: SetPinnedItemSchema & { userId: number }) {
+  // primary: compared with the write that follows it.
+  const profile = await dbWrite.userProfile.findUnique({
+    where: { userId },
+    select: { pinnedItems: true },
+  });
+  const current = parsePinnedItems(profile?.pinnedItems);
+  const item = { entityType, entityId } as ShowcaseItemSchema;
+  const isPinned = current.some((pin) => isSameShowcaseItem(pin, item));
+  if (pinned === isPinned) return current;
+
+  if (pinned) {
+    if (current.length >= profilePinnedItemsLimit)
+      throw throwBadRequestError(
+        `You can pin up to ${profilePinnedItemsLimit} items. Unpin one first.`
+      );
+    await assertShowcaseItemsOwned({
+      userId,
+      showcaseItems: [item],
+      currentShowcaseItems: [],
+      allowedTypes: ['Model', 'Image'],
+    });
+  }
+  const next = pinned
+    ? [...current, item]
+    : current.filter((pin) => !isSameShowcaseItem(pin, item));
+
+  // Only over the list just read, so two pins at once cannot push it past the limit.
+  const { count } = await dbWrite.userProfile.updateMany({
+    where: { userId, pinnedItems: { equals: profile?.pinnedItems ?? [] } },
+    data: { pinnedItems: next },
+  });
+  if (!count) throw throwConflictError('Your pinned items changed while saving. Try again.');
+  return next;
 }

@@ -16,16 +16,17 @@ import clsx from 'clsx';
 
 export const ShowcaseSection = ({
   user,
-  pinned,
+  pinnedItems,
 }: ProfileSectionProps & {
-  /** The About tab's "Pinned": the first three items, one row. */
-  pinned?: boolean;
+  /** The About tab's "Pinned": the items the owner pinned, in one row, instead of the showcase. */
+  pinnedItems?: ShowcaseItemSchema[];
 }) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-showcase-section' });
+  const pinned = !!pinnedItems;
   const allShowcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
   const showcaseItems = useMemo(
-    () => (pinned ? allShowcaseItems.slice(0, 3) : allShowcaseItems),
-    [allShowcaseItems, pinned]
+    () => pinnedItems ?? allShowcaseItems,
+    [allShowcaseItems, pinnedItems]
   );
   const rows = pinned ? 1 : 2;
   // Clamped to the schema's own bound rather than sent whole. `isNullState` below is

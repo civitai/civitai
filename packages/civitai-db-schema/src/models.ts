@@ -6188,6 +6188,7 @@ export interface UserProfile {
   sfwBackgroundImageId: number | null;
   sfwBackgroundImage?: Image | null;
   pageTheme: JsonValue | null;
+  pinnedItems: JsonValue;
   about: string | null;
 }
 

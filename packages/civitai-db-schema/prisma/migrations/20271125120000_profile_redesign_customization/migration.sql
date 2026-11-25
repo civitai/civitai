@@ -1,4 +1,4 @@
--- Profile redesign: page background, card colours (pageTheme), About text, sidebar cosmetic.
+-- Profile redesign: page background, card colours (pageTheme), About text and pinned items, sidebar cosmetic.
 -- Apply ALL of it before the code that reads these columns deploys: a missing column breaks
 -- every profile read, flag or not. Part 1 runs in a transaction; parts 2 and 3 run on their own.
 
@@ -15,6 +15,7 @@ ALTER TABLE "UserProfile"
   ADD COLUMN IF NOT EXISTS "backgroundImageId" INTEGER,
   ADD COLUMN IF NOT EXISTS "sfwBackgroundImageId" INTEGER,
   ADD COLUMN IF NOT EXISTS "pageTheme" JSONB,
+  ADD COLUMN IF NOT EXISTS "pinnedItems" JSONB NOT NULL DEFAULT '[]',
   ADD COLUMN IF NOT EXISTS "about" TEXT;
 
 -- NOT VALID: the new columns are all NULL, so there is nothing to check and no reason to scan.

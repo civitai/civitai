@@ -9,6 +9,7 @@ import {
   addToShowcaseSection,
   getUserContentOverview,
   getUserWithProfile,
+  setPinnedItem,
   setShowcaseSections,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
@@ -17,6 +18,7 @@ import type {
   GetProfileCustomizationSchema,
   GetProfilePartSchema,
   GetUserProfileSchema,
+  SetPinnedItemSchema,
   SetProfileBackgroundSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
@@ -316,7 +318,7 @@ export const getProfileAboutHandler = async ({
   ctx: Context;
 }) => {
   try {
-    if (await blockedViewer(ctx, input.userId)) return { about: null };
+    if (await blockedViewer(ctx, input.userId)) return { about: null, pinnedItems: [] };
     return await getProfileAbout({ userId: input.userId, viewerId: ctx.user?.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -334,6 +336,22 @@ export const setProfileBackgroundHandler = async ({
   try {
     if (ctx.user.muted) throw throwAuthorizationError();
     await setProfileBackground({ userId: ctx.user.id, imageId: input.imageId, domain: ctx.domain });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const setPinnedItemHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetPinnedItemSchema;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    if (ctx.user.muted) throw throwAuthorizationError();
+    return await setPinnedItem({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

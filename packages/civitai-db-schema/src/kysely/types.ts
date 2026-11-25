@@ -6829,6 +6829,10 @@ export type UserProfile = {
    * Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
    */
   pageTheme: unknown | null;
+  /**
+   * Up to three of the owner's own images or models, shown on the About tab. Shape: showcaseItemSchema[].
+   */
+  pinnedItems: Generated<unknown>;
   about: string | null;
 };
 export type UserPurchasedRewards = {

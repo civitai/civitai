@@ -13,7 +13,6 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
@@ -74,7 +73,8 @@ function UserAboutPage() {
   const about = !muted ? aboutData?.about : null;
   const location = !muted ? profile.location : null;
   const links = !muted ? sortDomainLinks(user.links) : [];
-  const hasPinned = ((profile.showcaseItems ?? []) as ShowcaseItemSchema[]).length > 0;
+  const pinnedItems = aboutData?.pinnedItems ?? [];
+  const hasPinned = pinnedItems.length > 0;
   const hasContent = !!bio || !!about || hasPinned || !!location || links.length > 0;
 
   // The design's right-hand column: labelled facts beside the About text.
@@ -162,7 +162,10 @@ function UserAboutPage() {
       </div>
       {hasPinned && (
         <div className={sectionClasses.panelCell}>
-          <ShowcaseSection user={{ ...user, username: user.username as string }} pinned />
+          <ShowcaseSection
+            user={{ ...user, username: user.username as string }}
+            pinnedItems={pinnedItems}
+          />
         </div>
       )}
     </div>

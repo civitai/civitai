@@ -9866,6 +9866,8 @@ model UserProfile {
   /// Members-only card colours: { dark?: { color, opacity? }, light?: { color, opacity? } }.
   /// Light mode falls back to dark when unset. Shape: profilePageThemeSchema.
   pageTheme               Json?
+  /// Up to three of the owner's own images or models, shown on the About tab. Shape: showcaseItemSchema[].
+  pinnedItems             Json      @default("[]")
   about                   String?
 
   @@id([userId])

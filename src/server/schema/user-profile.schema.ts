@@ -281,3 +281,11 @@ export const getProfileCustomizationSchema = getProfilePartSchema.extend({
   // The viewer's browsing level: a background outside it is not sent.
   browsingLevel: z.number().int().min(0).optional(),
 });
+
+export const profilePinnedItemsLimit = 3;
+export type SetPinnedItemSchema = z.infer<typeof setPinnedItemSchema>;
+export const setPinnedItemSchema = z.object({
+  entityType: z.enum(['Image', 'Model']),
+  entityId: z.number().int().positive(),
+  pinned: z.boolean(),
+});
