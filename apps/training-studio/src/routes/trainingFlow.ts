@@ -621,7 +621,7 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Repeats each image within a dataset epoch. The Steps field still sets the total training budget.',
   enableBucket: 'Groups images with similar aspect ratios to reduce cropping.',
   clipSkip:
-    'Text encoder layer skip. SD 1.5 defaults to 1 (anime 2); SDXL-family models default to 2 and need at least 2.',
+    'Text encoder layer skip. SD 1.5 defaults to 1 (anime 2); SDXL-family models default to 2, where 1 trains on the last layer and usually looks wrong.',
   lrSchedulerNumCycles:
     'Number of cycles for cosine_with_restarts. Other schedulers ignore this value.',
   seed: 'Random seed for training and preview samples.',

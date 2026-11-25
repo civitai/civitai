@@ -122,16 +122,15 @@ export const KOHYA_PARAM_FIELDS = [
   'zeroTerminalSnr',
 ] as const;
 
-/** Clip skip applies to SD1 and the SDXL family; the trainer treats SDXL values below 2 as 2, so SDXL starts
- *  at 2 and offers nothing lower. */
+/** Clip skip applies to SD1 and the SDXL family. SDXL defaults to 2; 1 is allowed but trains on the last
+ *  layer. */
 export function kohyaClipSkip(
   ecosystem: string
 ): { min: number; max: number; default: number } | undefined {
   const family = kohyaFamily(ecosystem);
   const baseModel = family === 'sd1' ? 'SD 1.5' : family === 'sdxl' ? 'SDXL 1.0' : undefined;
   if (!baseModelSupportsClipSkip(baseModel)) return undefined;
-  const sdxl = family === 'sdxl';
-  return { min: sdxl ? 2 : 1, max: KOHYA_BOUNDS.clipSkip!.max, default: sdxl ? 2 : 1 };
+  return { min: 1, max: KOHYA_BOUNDS.clipSkip!.max, default: family === 'sdxl' ? 2 : 1 };
 }
 
 export function kohyaBound(field: string, ecosystem: string): ParamBound | undefined {

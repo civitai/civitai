@@ -33,7 +33,7 @@ const REPLAYED_INPUT = {
   enableBucket: true,
   shuffleCaption: false,
   keepTokens: 1,
-  clipSkip: 1,
+  clipSkip: 3,
   flipAugmentation: false,
   unetLR: 0.0005,
   textEncoderLR: 0.00005,
@@ -262,6 +262,33 @@ describe('runRetrainSource', () => {
     // The quote never carries the idempotency key.
     expect(w.calls.quoteBodies[0]).not.toHaveProperty('externalId');
     expect(w.calls.refund + w.calls.submit).toBe(0);
+  });
+
+  // A source was sent an SDXL-family clip skip of 1 when the trainer raised it to 2. Replayed as
+  // sent, the retrain would train on the last layer.
+  describe('clip skip', () => {
+    const replayed = async (model: string, clipSkip: number, over: Parameters<typeof sourceRun>[0] = {}) => {
+      const source = sourceRun(over);
+      const step = source.steps![0] as unknown as { input: Record<string, unknown> };
+      step.input = { ...step.input, model, clipSkip };
+      const body = (await createWorld(source).run(false)).body!;
+      return (body.steps[0] as unknown as { input: Record<string, unknown> }).input.clipSkip;
+    };
+
+    it.each(['sdxl', 'pony', 'illustrious', 'noobai'])(
+      'replays a %s clip skip of 1 as 2, for a Studio or an API run',
+      async (family) => {
+        const model = `urn:air:${family}:checkpoint:civitai:101@202`;
+        expect(await replayed(model, 1)).toBe(2);
+        expect(await replayed(model, 1, { studio: false })).toBe(2);
+      }
+    );
+
+    it('keeps an SD1 clip skip of 1, and a 1 on a stamped run', async () => {
+      expect(await replayed('urn:air:sd1:checkpoint:civitai:101@202', 1)).toBe(1);
+      const stamped = { metadata: { name: 'My LoRA', clipSkipAsSent: true } };
+      expect(await replayed(BASE_AIR, 1, stamped)).toBe(1);
+    });
   });
 
   it('replays an API run with its own tags, no Studio metadata or callbacks, and without the Studio Kohya flag', async () => {

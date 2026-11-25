@@ -266,7 +266,8 @@ export function buildRetrainBody(
     priority: 'low',
     input: replayKohyaInput(
       input,
-      KOHYA_REPLAY_KEYS satisfies readonly (keyof KohyaTrainingInput)[]
+      KOHYA_REPLAY_KEYS satisfies readonly (keyof KohyaTrainingInput)[],
+      workflow.metadata
     ),
   } as unknown as WorkflowStepTemplate;
   return {
