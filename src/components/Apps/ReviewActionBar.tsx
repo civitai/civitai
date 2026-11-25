@@ -33,6 +33,18 @@ import {
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
 import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
+import {
+  BOOT_CHECK_APPROVE_REFUSAL,
+  BOOT_CHECK_NOT_RUN_NOTICE,
+  BOOT_CHECK_UNAVAILABLE_NOTICE,
+  bootCheckFailed,
+  bootCheckOverrideMissing,
+  bootCheckUnavailable,
+} from '~/shared/utils/review-boot-check';
+import {
+  HOLD_REASON_MAX,
+  HOLD_REASON_MIN,
+} from '~/shared/constants/publish-request-holds.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { trpcKeepalive } from '~/utils/trpc-keepalive';
@@ -164,6 +176,12 @@ export function ReviewActionBar({
   // reason shown, rather than offered and refused.
   const floorMissing = request.approveFloorMissing ?? [];
   const floorBlocked = floorMissing.length > 0;
+  // The review boot check's NOTICES only. A failed enforced check is refused through the
+  // boot-check review hold it placed, which the holds panel shows and which Approve already needs
+  // an override reason for (`holdBlocked`); the notice says why. Unavailable / not run never block.
+  const bootFailed = bootCheckFailed(request.previewBootCheck);
+  const bootUnavailable = !bootFailed && bootCheckUnavailable(request.previewBootCheck);
+  const bootNotRun = !bootFailed && !bootUnavailable && request.previewBootCheckUnverified === true;
   const mediaSplitDecision =
     request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
       ? mediaSplit
@@ -171,6 +189,14 @@ export function ReviewActionBar({
   const openHolds = useOpenPublishRequestHolds(mode === 'pending' ? request.slug : null);
   const [holdOverrideReason, setHoldOverrideReason] = useState('');
   const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
+  // Every reason Approve (all three buttons) is disabled, in one place.
+  // The recorded enforced failure: the SAME predicate the server refuses on, and the same
+  // override reason that passes the holds passes it (never a hard block).
+  const bootOverrideMissing = bootCheckOverrideMissing(
+    request.previewBootCheck,
+    holdOverrideReason
+  );
+  const approveGated = splitStateUnknown || floorBlocked || holdBlocked || bootOverrideMissing;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async (result) => {
@@ -229,7 +255,7 @@ export function ReviewActionBar({
     publishRequestId: request.id,
     approvalNotes: approvalNotes.trim() || undefined,
     ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
-    ...(openHolds.length
+    ...(openHolds.length || bootFailed
       ? {
           holdOverrideReason: holdOverrideReason.trim(),
           holdOverrideIds: openHolds.map((h) => h.id),
@@ -356,6 +382,37 @@ export function ReviewActionBar({
             {listingFloorApproveRefusal(floorMissing)}
           </Alert>
         )}
+        {bootFailed && (
+          <Alert color="red" variant="light" data-testid="apps-review-approve-boot-check">
+            {BOOT_CHECK_APPROVE_REFUSAL}
+          </Alert>
+        )}
+        {bootFailed && openHolds.length === 0 && (
+          // No hold to carry the override field (its write may have failed): the recorded failure
+          // takes the same reason, sent the same way.
+          <ReasonGatedField
+            value={holdOverrideReason}
+            onChange={setHoldOverrideReason}
+            disabled={busy}
+            minLength={HOLD_REASON_MIN}
+            maxLength={HOLD_REASON_MAX}
+            label="Override reason (required to approve past the failed boot check)"
+            placeholder="Why it is safe to approve although the boot check failed. Not shown to the developer."
+            testId="apps-review-boot-check-override-reason"
+            minRows={2}
+            maxRows={6}
+          />
+        )}
+        {bootUnavailable && (
+          <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-unavailable">
+            {BOOT_CHECK_UNAVAILABLE_NOTICE}
+          </Alert>
+        )}
+        {bootNotRun && (
+          <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-not-run">
+            {BOOT_CHECK_NOT_RUN_NOTICE}
+          </Alert>
+        )}
         {mode === 'pending' && <VersionListingRatingNotice publishRequestId={request.id} />}
         {request.approveRating && (
           <OnsiteApproveRatingWarning
@@ -427,7 +484,7 @@ export function ReviewActionBar({
                 variant="default"
                 leftSection={<IconCheck size={14} />}
                 onClick={() => approveMut.mutate(approveInput())}
-                disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
+                disabled={busy || approveGated}
                 loading={approveMut.isPending}
                 title="Approve now, with no undo window"
                 data-testid="apps-review-approve-now-button"
@@ -438,7 +495,7 @@ export function ReviewActionBar({
                 color="green"
                 rightSection={<IconArrowRight size={14} />}
                 onClick={approveLater}
-                disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
+                disabled={busy || approveGated}
                 data-testid="apps-review-approve-next"
               >
                 Approve &amp; next
@@ -449,7 +506,7 @@ export function ReviewActionBar({
               color="green"
               leftSection={<IconCheck size={14} />}
               onClick={() => approveMut.mutate(approveInput())}
-              disabled={busy || splitStateUnknown || floorBlocked || holdBlocked}
+              disabled={busy || approveGated}
               loading={approveMut.isPending}
             >
               Approve + build

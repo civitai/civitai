@@ -569,6 +569,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by
   // app-step-positions.ts.
   APP_BLOCK_STEP_POSITIONS = 'app-block-step-positions',
+  // Variant: `shadow` | `enforce`; any other answer, a missing flag or an error included, is off.
+  // The App Block review boot check; read by review-boot-check.service.ts. Same key as
+  // REVIEW_BOOT_CHECK_FLAG in ~/shared/utils/review-boot-check.
+  APP_BLOCKS_REVIEW_BOOT_CHECK = 'app-blocks-review-boot-check',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:

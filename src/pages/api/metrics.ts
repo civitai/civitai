@@ -84,6 +84,9 @@ import { seedAppBlockSourceMetrics } from '~/server/prom/app-block-source.metric
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+// Seeds civitai_app_block_review_boot_checks_total's 18 series at 0 (same reason): 2 modes x
+// (passed, failed, and unavailable x 7 reasons).
+import { ensureRegisterAppBlockBootCheckMetrics } from '~/server/prom/app-block-boot-check.metrics';
 import { ensureRegisterAppReviewAutodeployMetrics } from '~/server/prom/app-review-autodeploy.metrics';
 import { ensureRegisterFeedbackHqSyncMetrics } from '~/server/prom/feedback-hq-sync.metrics';
 // Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
@@ -102,6 +105,7 @@ ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterSearchUploadMetrics();
 ensureRegisterAppBlockBuildMetrics();
+ensureRegisterAppBlockBootCheckMetrics();
 ensureRegisterAppReviewAutodeployMetrics();
 ensureRegisterFeedbackHqSyncMetrics();
 ensureRegisterThreadCpuMetrics();

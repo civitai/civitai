@@ -37,7 +37,8 @@ const {
   return {
     SECRET,
     mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
-    mockFlag: { enabled: true, sharedServer: false },
+    // `bootCheck`: the `app-blocks-review-boot-check` variant (null = absent → off).
+    mockFlag: { enabled: true, sharedServer: false, bootCheck: null as string | null },
     mockRelease: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
     mockReviewUnpublish: vi.fn(async (..._a: unknown[]) => ({ name: 'review-unpub-1' })),
     mockTriggerApplyReview: vi.fn(async () => ({ name: 'review-apply-1' })),
@@ -91,6 +92,10 @@ vi.mock('~/server/flipt/client', () => ({
       ? mockFlag.sharedServer
       : false
   ),
+  getFliptVariant: vi.fn(async (flag: string) =>
+    flag === 'app-blocks-review-boot-check' ? mockFlag.bootCheck : null
+  ),
+  FLIPT_FEATURE_FLAGS: { APP_BLOCKS_REVIEW_BOOT_CHECK: 'app-blocks-review-boot-check' },
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: { appBlockPublishRequest: { findUnique: mockFindUnique } },
@@ -105,6 +110,8 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   waitForApplyJob: mockWaitApply,
   waitForReviewHostReachable: mockWaitReachable,
   triggerReviewUnpublish: (...a: unknown[]) => mockReviewUnpublish(...a),
+  // The system user the probe's (and the boot check's) entry token is bound to.
+  SHARED_REVIEW_PROBE_MOD_USER_ID: -1,
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markReviewPreviewState: mockMarkPreview,
@@ -1237,5 +1244,213 @@ describe('POST review-build-callback — build-only environment', () => {
     const { req, res } = makeReqRes(body());
     await handler(req, res);
     expect(mockTriggerApplyReview).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 🔴 THE REVIEW BOOT CHECK (flag `app-blocks-review-boot-check`). An HTTP 200 from the preview
+ * proves its files are served, not that the app starts: the trigger case answered 200, was marked
+ * `preview-live`, and never sent BLOCK_READY because its `.mjs` modules were served as
+ * `application/octet-stream`. With the flag on, the watcher asks the checker before it writes
+ * `preview-live`; only an ENFORCED `failed` fails the preview.
+ *
+ * Driven through the real watcher + the real boot-check service: only the checker's HTTP
+ * endpoint (fetch) and the flag value are faked.
+ */
+describe('settlePublishedReview: the review boot check', () => {
+  const HOST = 'review-abc123def4567890.civit.ai';
+  const baseDetail = { sha: SHA, host: HOST, url: `https://${HOST}/${SLUG}` };
+  const CHECKER = 'http://boot-checker.test';
+  const MIME_ERROR =
+    'Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "application/octet-stream".';
+  const FAILED_BODY = {
+    result: 'failed',
+    ms: 10012,
+    messagesSeen: ['BLOCK_HELLO'],
+    consoleErrors: [MIME_ERROR],
+    failedRequests: [],
+    nonJsModuleResponses: 1,
+    blockedScripts: [],
+  };
+  const PASSED_BODY = {
+    result: 'passed',
+    ms: 812,
+    messagesSeen: ['BLOCK_HELLO', 'BLOCK_READY'],
+    consoleErrors: [],
+    failedRequests: [],
+    nonJsModuleResponses: 0,
+    blockedScripts: [],
+  };
+  const ENFORCED_FAILURE_ERROR =
+    'Boot check: the app loaded but never sent BLOCK_READY within 10s. First error: Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "application/octet-stream". Fix and resubmit.';
+
+  const fetchMock = vi.fn();
+  const respond = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+  beforeEach(async () => {
+    mockEnvStore.APP_BLOCK_BOOT_CHECK_URL = CHECKER;
+    // review-session reads the signing secret from process.env.
+    vi.stubEnv('NEXTAUTH_SECRET', 'test-nextauth-secret');
+    vi.stubGlobal('fetch', fetchMock);
+    mockWaitReachable.mockResolvedValue(true);
+    mockMarkPreview.mockImplementation((async () => 1) as never);
+  });
+  afterEach(() => {
+    mockFlag.bootCheck = null;
+    delete mockEnvStore.APP_BLOCK_BOOT_CHECK_URL;
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    fetchMock.mockReset();
+    vi.clearAllMocks();
+    mockMarkPreview.mockImplementation((async () => undefined) as never);
+  });
+
+  const run = (onSettled = vi.fn()) =>
+    watchDirectPublishedReview({
+      publishRequestId: PUBREQ,
+      slug: SLUG,
+      sha: SHA,
+      baseDetail,
+      onSettled,
+    }).then(() => onSettled);
+
+  /** The states the watcher wrote, in order. */
+  const writtenStates = () => mockMarkPreview.mock.calls.map((c) => (c as unknown[])[1]);
+  const writtenDetail = (state: string) =>
+    (mockMarkPreview.mock.calls.find((c) => (c as unknown[])[1] === state) as unknown[])[2];
+
+  it('🔴 enforce + failed: preview-failed with the first console error, never preview-live', async () => {
+    mockFlag.bootCheck = 'enforce';
+    fetchMock.mockResolvedValue(respond(200, FAILED_BODY));
+    const onSettled = await run();
+
+    expect(writtenStates()).toEqual(['preview-failed']);
+    expect(writtenDetail('preview-failed')).toEqual({
+      ...baseDetail,
+      sharedServer: undefined,
+      bootCheck: {
+        result: 'failed',
+        ms: 10012,
+        messagesSeen: ['BLOCK_HELLO'],
+        firstError: MIME_ERROR,
+        checkedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        mode: 'enforce',
+      },
+      error: ENFORCED_FAILURE_ERROR,
+    });
+    expect(onSettled.mock.calls).toEqual([[PUBREQ, false]]);
+    // A clean `failed` is a verdict and is never retried.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('the checker is asked with the preview URL + a system entry token, the instance id and the review sandbox', async () => {
+    mockFlag.bootCheck = 'enforce';
+    fetchMock.mockResolvedValue(respond(200, PASSED_BODY));
+    await run();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://boot-checker.test/v1/boot-check');
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(String(init.body));
+    expect(Object.keys(body).sort()).toEqual(
+      ['blockId', 'blockInstanceId', 'sandbox', 'timeoutMs', 'url'].sort()
+    );
+    expect(body.blockId).toBe('my-app');
+    expect(body.blockInstanceId).toBe('page_pubreq_0123456789ABCDEFGHJKMNPQRS');
+    expect(body.sandbox).toBe('allow-scripts');
+    expect(body.timeoutMs).toBe(10000);
+    expect(body.url.startsWith(`https://${HOST}/${SLUG}?mr=`)).toBe(true);
+    // The token is the system user's entry token for THIS host.
+    const { verifyReviewAccessToken } = await import('~/server/services/blocks/review-session');
+    const token = decodeURIComponent(body.url.split('?mr=')[1]);
+    expect(verifyReviewAccessToken(token, HOST, { secret: 'test-nextauth-secret' })).toEqual({
+      ok: true,
+      modUserId: -1,
+    });
+  });
+
+  it('🔴 shadow + failed: still preview-live, the failure only recorded (mode shadow)', async () => {
+    mockFlag.bootCheck = 'shadow';
+    fetchMock.mockResolvedValue(respond(200, FAILED_BODY));
+    const onSettled = await run();
+
+    expect(writtenStates()).toEqual(['preview-live']);
+    expect(writtenDetail('preview-live')).toEqual({
+      ...baseDetail,
+      sharedServer: undefined,
+      bootCheck: {
+        result: 'failed',
+        ms: 10012,
+        messagesSeen: ['BLOCK_HELLO'],
+        firstError: MIME_ERROR,
+        checkedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        mode: 'shadow',
+      },
+    });
+    expect(onSettled.mock.calls).toEqual([[PUBREQ, true]]);
+  });
+
+  it('enforce + passed: preview-live with the passed result', async () => {
+    mockFlag.bootCheck = 'enforce';
+    fetchMock.mockResolvedValue(respond(200, PASSED_BODY));
+    await run();
+    expect(writtenStates()).toEqual(['preview-live']);
+    expect((writtenDetail('preview-live') as { bootCheck: unknown }).bootCheck).toEqual({
+      result: 'passed',
+      ms: 812,
+      messagesSeen: ['BLOCK_HELLO', 'BLOCK_READY'],
+      firstError: null,
+      checkedAt: expect.any(String),
+      mode: 'enforce',
+    });
+  });
+
+  it('🔴 enforce + checker down (5xx twice): retried once, then preview-live marked unavailable', async () => {
+    mockFlag.bootCheck = 'enforce';
+    fetchMock.mockResolvedValue(respond(503, { error: 'down' }));
+    const onSettled = await run();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(writtenStates()).toEqual(['preview-live']);
+    expect((writtenDetail('preview-live') as { bootCheck: unknown }).bootCheck).toEqual({
+      result: 'unavailable',
+      ms: null,
+      messagesSeen: [],
+      firstError: null,
+      checkedAt: expect.any(String),
+      mode: 'enforce',
+    });
+    expect(onSettled.mock.calls).toEqual([[PUBREQ, true]]);
+  }, 15_000);
+
+  it('enforce + no checker URL configured: no call, preview-live marked unavailable', async () => {
+    mockFlag.bootCheck = 'enforce';
+    delete mockEnvStore.APP_BLOCK_BOOT_CHECK_URL;
+    await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(writtenStates()).toEqual(['preview-live']);
+    expect(
+      (writtenDetail('preview-live') as { bootCheck: { result: string } }).bootCheck.result
+    ).toBe('unavailable');
+  });
+
+  it('flag off (absent): no checker call and the live write is exactly the pre-check detail', async () => {
+    mockFlag.bootCheck = null;
+    await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(writtenStates()).toEqual(['preview-live']);
+    expect(writtenDetail('preview-live')).toBe(baseDetail);
+  });
+
+  it('host never answered: no boot check runs (the existing unreachable failure stands)', async () => {
+    mockFlag.bootCheck = 'enforce';
+    mockWaitReachable.mockResolvedValueOnce(false);
+    await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(writtenStates()).toEqual(['preview-failed']);
+    expect((writtenDetail('preview-failed') as { error: string }).error).toBe(
+      DIRECT_UNREACHABLE_ERROR
+    );
   });
 });
