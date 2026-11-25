@@ -24,16 +24,28 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+type FilingInput = { userId: number; imageIds?: number[]; blockListedImages?: boolean };
+const fileInTransaction = vi.hoisted(
+  () =>
+    async ({ userId, imageIds = [], blockListedImages }: FilingInput) =>
+      holder.db.transaction(async (tx) => {
+        if (blockListedImages && imageIds.length)
+          await tx.query(
+            `UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = 32, "blockedFor" = 'CSAM' WHERE id = ANY($1)`,
+            [imageIds]
+          );
+        const { rows } = await tx.query<{ id: number }>(
+          `INSERT INTO "CsamReport" ("userId") VALUES ($1) RETURNING id`,
+          [userId === -1 ? null : userId]
+        );
+        return rows[0];
+      })
+);
 
 const { createCsamReport, createSupplementalCsamReport, softDeleteUser } = vi.hoisted(() => ({
-  createSupplementalCsamReport: vi.fn(async ({ userId }: { userId: number }) => {
-    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [userId]);
-  }),
-  createCsamReport: vi.fn(async ({ userId }: { userId: number }) => {
-    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [
-      userId === -1 ? null : userId,
-    ]);
-  }),
+  // As the services do: the listed images are blocked in the report's own transaction.
+  createSupplementalCsamReport: vi.fn(async (input: FilingInput) => fileInTransaction(input)),
+  createCsamReport: vi.fn(async (input: FilingInput) => fileInTransaction(input)),
   softDeleteUser: vi.fn(async ({ id }: { id: number }) => {
     await holder.db.query(
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE "userId" = $1`,
@@ -212,9 +224,8 @@ describe('fileCsamReport', () => {
     expect(await flag(OTHER_OWNERS)).toBe('csam');
   });
 
-  // Held by an earlier report on its owner. This one names no owner, but blocks the image it lists,
-  // so the owner's open report takes over from the flag. Supersedes the earlier "keeps the flag on
-  // an image that is not removed", from when a report without an owner blocked nothing.
+  // Held by an earlier report on its owner. This one names no owner, but blocks the image it lists
+  // (civitai/civitai#10405), so the owner's open report takes over from the flag.
   it('blocks an image an ownerless report lists, and its owner’s open report takes the flag', async () => {
     await report(-1, [UNBLOCKED_HELD]);
 
@@ -363,7 +374,7 @@ describe('fileCsamReport', () => {
     expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
   });
 
-  it('tells the moderator when the listed images cannot be blocked, files nothing, and can be filed again', async () => {
+  it('tells the moderator when filing fails, files and blocks nothing, and can be filed again', async () => {
     const { createCsamReportHandler, CSAM_LISTED_BLOCK_FAILED_MESSAGE } = await import(
       '~/server/controllers/csam.controller'
     );
@@ -372,10 +383,7 @@ describe('fileCsamReport', () => {
         (await pg.query<{ n: number }>(`SELECT count(*)::int AS n FROM "CsamReport"`)).rows[0].n
       );
     const before = await reports();
-    const real = dbMock.dbWrite.$executeRaw.getMockImplementation();
-    dbMock.dbWrite.$executeRaw.mockImplementationOnce((async () => {
-      throw new Error('write failed');
-    }) as never);
+    createCsamReport.mockRejectedValueOnce(new Error('write failed'));
     const file = () =>
       createCsamReportHandler({
         input: { userId: OWNER, imageIds: [OTHER_OWNERS_SCANNED], type: 'Image' },
@@ -387,12 +395,23 @@ describe('fileCsamReport', () => {
       message: CSAM_LISTED_BLOCK_FAILED_MESSAGE,
     });
     expect(await reports()).toBe(before);
+    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBeNull();
     expect(softDeleteUser).not.toHaveBeenCalled();
 
-    dbMock.dbWrite.$executeRaw.mockImplementation(real as never);
     await file();
     expect(await reports()).toBe(before + 1);
     expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
+  });
+
+  it('passes a refusal through unchanged, blocking nothing', async () => {
+    const { throwBadRequestError } = await import('~/server/utils/errorHandling');
+    createCsamReport.mockImplementationOnce(async () => throwBadRequestError('refused'));
+
+    await expect(report(OWNER, [OTHER_OWNERS_SCANNED])).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'refused',
+    });
+    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBeNull();
   });
 
   it('fails loudly with the flag still on when removing the account fails', async () => {
@@ -403,13 +422,11 @@ describe('fileCsamReport', () => {
     expect(await flag(OWNED)).toBe('csam');
   });
 
-  // The images are blocked before the report row, so a failed insert leaves them blocked, which is safe.
-  it('fails loudly with the flag still on, and the images blocked, when filing the report fails', async () => {
+  it('fails loudly with the flag still on when filing the report fails', async () => {
     createCsamReport.mockRejectedValueOnce(new Error('connection lost'));
 
-    await expect(report(OWNER, [OWNED])).rejects.toThrow('connection lost');
+    await expect(report(OWNER, [OWNED])).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
 
     expect(await flag(OWNED)).toBe('csam');
-    expect(await blockedFor(OWNED)).toBe('CSAM');
   });
 });

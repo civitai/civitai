@@ -154,7 +154,11 @@ import {
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
-import { deleteImages } from '~/server/services/image.service';
+import {
+  afterCsamImageBlock,
+  CSAM_IMAGE_BLOCK,
+  deleteImages,
+} from '~/server/services/image.service';
 import {
   refreshHasReceivedReviews,
   refreshOwnedStickerCache,
@@ -1872,40 +1876,16 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   };
 };
 
-/**
- * A CSAM filing's media block: exactly the listed images, as CSAM, whoever owns them. Throws on a
- * failed write, so the filing stops before a report row exists.
- */
-export async function blockListedImagesAsCsam(imageIds: number[]) {
-  if (!imageIds.length) return;
-  await dbWrite.$executeRaw`
-    UPDATE "Image"
-    SET ingestion = 'Blocked', "nsfwLevel" = ${NsfwLevel.Blocked}, "blockedFor" = ${BlockedReason.CSAM}
-    WHERE id = ANY(${imageIds}::int[])
-  `;
-  // As in blockUserImagesAsCsam: a restore must not un-block a CSAM block.
-  await clearAccountDeletionImageMarkers({ ids: imageIds });
-  await evictHomeBlocksForImages({ imageIds });
-}
-
 /** `softDeleteUser`'s media block: every image of the user, as CSAM. */
 export async function blockUserImagesAsCsam(userId: number) {
-  await dbWrite.image.updateMany({
-    where: { userId },
-    data: {
-      ingestion: 'Blocked',
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: BlockedReason.CSAM,
-    },
-  });
+  await dbWrite.image.updateMany({ where: { userId }, data: CSAM_IMAGE_BLOCK });
   // A CSAM block outranks an account-deletion grace block. If this account had already
   // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
   // later restore would un-block CSAM-blocked content.
   //
   // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
   // user owns, and the clear's scope is the block's.
-  await clearAccountDeletionImageMarkers({ userId });
-  await evictHomeBlocksForImages({ userId });
+  await afterCsamImageBlock({ userId });
 }
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */

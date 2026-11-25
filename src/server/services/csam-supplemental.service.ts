@@ -11,6 +11,7 @@ import type {
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import { getViewedImageIds, shownActivities } from '~/server/services/csam.service-new';
+import { CSAM_IMAGE_BLOCK } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 const SHOWN_ACTIVITIES = SHOWN_RENDITIONS.flatMap(shownActivities);
@@ -122,7 +123,13 @@ export async function createSupplementalCsamReport({
   details,
   type,
   supplementalOf,
-}: CreateCsamReportSchema & { reportedById: number; supplementalOf: number }) {
+  blockListedImages = false,
+}: CreateCsamReportSchema & {
+  reportedById: number;
+  supplementalOf: number;
+  /** Blocks the listed images as CSAM in the same transaction, after every refusal. */
+  blockListedImages?: boolean;
+}) {
   if (type !== 'Image' || userId === -1)
     throwBadRequestError('Only an image report on a user can be supplemental');
 
@@ -135,6 +142,12 @@ export async function createSupplementalCsamReport({
       supplementalOf,
       reportedById,
     });
+    if (blockListedImages)
+      await tx
+        .updateTable('Image')
+        .set({ ...CSAM_IMAGE_BLOCK })
+        .where('id', 'in', imageIds)
+        .execute();
     return tx
       .insertInto('CsamReport')
       .values({

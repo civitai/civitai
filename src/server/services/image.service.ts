@@ -1550,6 +1550,67 @@ export function logNoticeUnderReview(images: { id: number; userId: number }[]) {
     logToAxiom({ type: 'warning', name: 'image-notice-under-review', imageId: id, userId });
 }
 
+/** The columns a CSAM block writes on an "Image" row. */
+export const CSAM_IMAGE_BLOCK = {
+  ingestion: 'Blocked',
+  nsfwLevel: NsfwLevel.Blocked,
+  blockedFor: BlockedReason.CSAM,
+} as const;
+
+/**
+ * Runs, after a CSAM block commits, the steps a moderator block runs: search and the documents
+ * referencing the images, comic panels, post caches, image existence, account-deletion markers
+ * and home blocks. Never throws: the block stands, so a failed step is logged.
+ */
+export async function afterCsamImageBlock(target: { imageIds: number[] } | { userId: number }) {
+  const run = async (step: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (error) {
+      logToAxiom({
+        name: 'csam-image-block',
+        type: 'error',
+        message: `after-block step failed: ${step}`,
+        error: (error as Error)?.message,
+      });
+    }
+  };
+  let imageIds: number[];
+  if ('userId' in target) {
+    // First: a restore must not un-block a CSAM block.
+    await run('markers', () => clearAccountDeletionImageMarkers({ userId: target.userId }));
+    await run('home-blocks', () => evictHomeBlocksForImages({ userId: target.userId }));
+    // primary: the ids of the block that just committed.
+    const owned = await dbWrite.image.findMany({
+      where: { userId: target.userId },
+      select: { id: true },
+    });
+    imageIds = owned.map((image) => image.id);
+  } else {
+    imageIds = target.imageIds;
+    if (!imageIds.length) return;
+    await run('markers', () => clearAccountDeletionImageMarkers({ ids: imageIds }));
+    await run('home-blocks', () => evictHomeBlocksForImages({ imageIds }));
+  }
+  for (const ids of chunk(imageIds, 1000)) {
+    await run('search', () =>
+      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete })
+    );
+    await run('existence', () => invalidateManyImageExistence(ids));
+    await run('comics', () => queueComicsForPanelImages(ids));
+    await run('documents', () => queueDocumentsForBlockedImages(ids));
+    await run('posts', async () => {
+      // primary: the post ids of rows the block just wrote.
+      const posts = await dbWrite.image.findMany({
+        where: { id: { in: ids }, postId: { not: null } },
+        select: { postId: true },
+      });
+      const postIds = uniq(posts.map((p) => p.postId).filter(isDefined));
+      if (postIds.length) await bustCachesForPosts(postIds);
+    });
+  }
+}
+
 export async function handleBlockImages({
   ids: imageIds,
   userId,

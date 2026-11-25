@@ -27,7 +27,11 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
-import { toggleImageFlag, updateImagesFlag } from '~/server/services/image.service';
+import {
+  afterCsamImageBlock,
+  toggleImageFlag,
+  updateImagesFlag,
+} from '~/server/services/image.service';
 import {
   queueArticlesAndComicsForImages,
   queueDocumentsForBlockedImages,
@@ -138,5 +142,19 @@ describe("a moderator's minor flag write", () => {
     await toggleImageFlag({ id: IMAGE_ID, flag: 'poi' });
     expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
     expect(queueArticlesAndComicsForImages).not.toHaveBeenCalled();
+  });
+});
+
+describe('a CSAM block', () => {
+  // A document of any owner that references a blocked image (a showcase, an article or comic cover)
+  // leaves search only through this queue: no trigger watches the block.
+  it('queues every document showing the blocked images', async () => {
+    await afterCsamImageBlock({ imageIds: [IMAGE_ID] });
+    expect(queueDocumentsForBlockedImages).toHaveBeenCalledWith([IMAGE_ID]);
+  });
+
+  it('queues nothing for no images (control)', async () => {
+    await afterCsamImageBlock({ imageIds: [] });
+    expect(queueDocumentsForBlockedImages).not.toHaveBeenCalled();
   });
 });
