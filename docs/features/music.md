@@ -4,6 +4,14 @@ A song is an `Image` row with `type: audio`, behind the `music` feature flag (`u
 the client, `ctx.features.music` on the server). With the flag off, songs are not created and none of the
 surfaces below change anything.
 
+Without the flag a viewer gets no song from a generic image read either, except their own: the image
+feeds (every feed route loads its rows through `getAllImagesUncaptured`, so `image.getInfinite`,
+`image.getImagesAsPostsInfinite`, `/api/v1/images`, collection and profile galleries), `image.get`,
+post image lists (`getImagesForPosts`) and model-version showcases (`getImagesForModelVersion`). The
+clause is `songsHiddenSql` (`image-visibility.service.ts`). A cached model gallery and the shared
+model-version cache exempt no owner. feed-go cannot read the flag, so its port hides other users' songs
+from everyone but moderators.
+
 - **Global player:** `src/store/music-player.store.ts` holds the current song, Up next and playback; one
   `<audio>` element (`MusicPlayerAudio`) plays it. Every surface starts a song with `playFromList`.
   The bar's cover and title open the song's detail view, and the creator's name opens the music tab
@@ -120,8 +128,10 @@ Below the `sm` breakpoint the player is a mini bar with two sheets over it
 
 ## A generated song's cover
 
-An ACE-Step song's cover is never muxed into the song: the handler sends ACE no `cover`, so the song
-is an MP3 like every other generator's and the song scan can read it. A cover the generator makes
+For a requester with the `music` flag, an ACE-Step song's cover is never muxed into the song: the
+handler sends ACE no `cover`, so the song is an MP3 like every other generator's and the song scan can
+read it. A requester without the flag can't post a song, so the handler sends the cover (generated or
+uploaded) and ACE returns an MP4 over it, as before songs existed (`GenerationHandlerCtx.canUseMusic`). A cover the generator makes
 (the suppressed `imageGen` step) or one the creator uploads (kept on the song step's metadata) is
 linked when the song is posted, copied into a scanned image row (`linkGeneratedSongCover`). The
 queue shows that image over the song. Songs posted before this, as an MP4 over their cover, fail the
@@ -148,7 +158,8 @@ re-read the list at once.
 A playlist is a collection of type `Music` ("Playlist" in the UI). It holds songs only, as
 `imageId` items: `saveItemInCollections` and `upsertCollection` refuse a picture in a playlist and a
 song in an image collection ("Collection type mismatch"), and `bulkSaveItems` adds only the songs.
-Untyped collections still take either. Saving a song (its ⋯ menu, the player bar, the detail view's
+Untyped collections still take either. Creating or editing a playlist, and saving into one (or saving
+a song anywhere), needs the `music` flag: without it these refuse with "Songs are not available yet." Saving a song (its ⋯ menu, the player bar, the detail view's
 share) opens "Add to Playlist". A playlist's page is the image collection page, where songs show as
 Song Cards and play as a list. Playlists cannot be contests and have no review queue, judging or
 collected-content reward. Songs saved to image collections before playlists existed stay there.
