@@ -175,23 +175,29 @@ function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }
 
 export function ReviewImages({ images }: { images: Omit<ReviewImage, 'reviewId'>[] }) {
   const layout = reviewImageLayout(images.length);
+  const linkLabel = (index: number) => `Open review image ${index + 1} of ${images.length}`;
   if (layout === 'single')
     return (
       <div className="max-w-[360px]">
-        {images.map((image) => (
-          <ReviewThumb key={image.id} image={image} className="aspect-[4/3]" linked />
+        {images.map((image, index) => (
+          <ReviewThumb
+            key={image.id}
+            image={image}
+            className="aspect-[4/3]"
+            linkLabel={linkLabel(index)}
+          />
         ))}
       </div>
     );
   if (layout === 'row')
     return (
       <div className="flex max-w-md gap-2">
-        {images.map((image) => (
+        {images.map((image, index) => (
           <ReviewThumb
             key={image.id}
             image={image}
             fit="contain"
-            linked
+            linkLabel={linkLabel(index)}
             style={reviewRowTileStyle(image)}
             className="min-w-0"
           />
@@ -200,8 +206,13 @@ export function ReviewImages({ images }: { images: Omit<ReviewImage, 'reviewId'>
     );
   return (
     <div className="grid max-w-md grid-cols-4 gap-2">
-      {images.map((image) => (
-        <ReviewThumb key={image.id} image={image} className="aspect-square" linked />
+      {images.map((image, index) => (
+        <ReviewThumb
+          key={image.id}
+          image={image}
+          className="aspect-square"
+          linkLabel={linkLabel(index)}
+        />
       ))}
     </div>
   );
@@ -212,14 +223,14 @@ function ReviewThumb({
   className = 'aspect-square',
   style,
   fit = 'cover',
-  linked = false,
+  linkLabel,
 }: {
   image: Omit<ReviewImage, 'reviewId'>;
   className?: string;
   style?: CSSProperties;
   fit?: 'cover' | 'contain';
-  /** Opens the image's own page, which decides whether this viewer may see it. */
-  linked?: boolean;
+  /** Links the tile, named this, to the image's own page, which decides whether this viewer may see it. */
+  linkLabel?: string;
 }) {
   const media = {
     ...image,
@@ -246,9 +257,14 @@ function ReviewThumb({
       }
     </ImageGuard2>
   );
-  if (linked)
+  if (linkLabel)
     return (
-      <NextLink href={`/images/${image.id}`} className={`block ${tileClass}`} style={style}>
+      <NextLink
+        href={`/images/${image.id}`}
+        aria-label={linkLabel}
+        className={`block ${tileClass}`}
+        style={style}
+      >
         {content}
       </NextLink>
     );

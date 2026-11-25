@@ -40,7 +40,16 @@ const html = (count: number) =>
 describe('review images on the service page', () => {
   // One image, a row of 2-3 and a grid of 4 each render their own tiles.
   it.each([1, 2, 4])('with %i image(s), every tile opens its own image page', (count) => {
-    const hrefs = [...html(count).matchAll(/<a[^>]*href="([^"]+)"/g)].map((m) => m[1]);
-    expect(hrefs).toEqual(Array.from({ length: count }, (_, i) => `/images/${i + 1}`));
+    const links = [...html(count).matchAll(/<a[^>]*>/g)].map(([tag]) => ({
+      href: tag.match(/href="([^"]+)"/)?.[1],
+      name: tag.match(/aria-label="([^"]+)"/)?.[1],
+    }));
+    // The image itself has alt="", so the label is the link's only name.
+    expect(links).toEqual(
+      Array.from({ length: count }, (_, i) => ({
+        href: `/images/${i + 1}`,
+        name: `Open review image ${i + 1} of ${count}`,
+      }))
+    );
   });
 });
