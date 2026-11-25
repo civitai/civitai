@@ -302,6 +302,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		ExcludedUsers:  in.ExcludedUserIDs,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		CanSeeSongs:    viewer.CanSeeSongs,
 		// Every fetch below reads it: the page, the post completion, the hydrate of the feed's ids,
 		// and the pinned and sponsored posts (`...input` in each of the handler's getAllImages calls).
 		// So do the tags and the techniques.

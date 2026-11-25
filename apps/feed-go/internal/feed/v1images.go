@@ -335,6 +335,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		ExcludedTagIDs:          excluded,
 		ViewerID:                viewer.ID,
 		IsModerator:             viewer.IsModerator,
+		CanSeeSongs:             viewer.CanSeeSongs,
 		PostID:                  in.PostID,
 		TargetUserID:            userID,
 		ThrowOnStatementTimeout: true,
@@ -440,6 +441,7 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 		ExcludedTagIDs: excluded,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		CanSeeSongs:    viewer.CanSeeSongs,
 		PostID:         in.PostID,
 		TargetUserID:   userID,
 		// `postId && !modelId`: a post's own media, in its order.

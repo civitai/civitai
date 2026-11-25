@@ -12,8 +12,7 @@ const (
 )
 
 // songsHiddenSql (getAllImagesUncaptured): no song but the viewer's own, right after the types
-// clause; a cached model gallery names no viewer; moderators get no clause. feed-go cannot read the
-// `music` flag, so a signed-in non-moderator is treated as not holding it.
+// clause; a viewer who can see songs (moderator, or the `music` flag) gets no clause.
 func TestBuildSongsHidden(t *testing.T) {
 	b := (&ImagesQuery{Limit: 5, Sort: SortNewest, BrowsingLevel: 1, Types: []string{"audio"}, ViewerID: 7}).Build()
 	types := strings.Index(b.SQL, `i.type = ANY($`)
@@ -31,9 +30,15 @@ func TestBuildSongsHidden(t *testing.T) {
 		t.Fatalf("signed out: want the bare clause:\n%s", b.SQL)
 	}
 
+	// The availability clause already binds the viewer, so a model gallery keeps the owner carve-out.
 	b = (&ImagesQuery{Limit: 5, BrowsingLevel: 1, ModelVersionID: 60, ViewerID: 7}).Build()
-	if !strings.Contains(b.SQL, songsHiddenSQL) || strings.Contains(b.SQL, songsHiddenOwnerSQL) {
-		t.Fatalf("model gallery: want the bare clause, no viewer:\n%s", b.SQL)
+	if !strings.Contains(b.SQL, songsHiddenOwnerSQL) {
+		t.Fatalf("model gallery: want the owner carve-out:\n%s", b.SQL)
+	}
+
+	b = (&ImagesQuery{Limit: 5, Sort: SortNewest, BrowsingLevel: 1, ViewerID: 7, CanSeeSongs: true}).Build()
+	if strings.Contains(b.SQL, songsHiddenSQL) {
+		t.Fatalf("music flag: want no song clause:\n%s", b.SQL)
 	}
 
 	b = (&ImagesQuery{Limit: 5, Sort: SortNewest, BrowsingLevel: 1, ViewerID: 7, IsModerator: true}).Build()

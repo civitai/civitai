@@ -287,6 +287,21 @@ func userHubsReader(cfg *config.Config) (server.UserFlagReader, error) {
 	return flipt.NewUserFlag(fc, server.UserHubsFlag), nil
 }
 
+// musicReader reads server.MusicFlag per viewer from FLIPT_URL for the image reads' song rule (nil
+// without it: only moderators see other users' songs, as Node answers when Flipt cannot). Answers are
+// cached per viewer (flipt.UserFlag); a read is bounded as the personal hot lead's is.
+func musicReader(cfg *config.Config) (server.UserFlagReader, error) {
+	if cfg.FliptURL == "" {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment,
+		Timeout: personalHotLeadTimeout})
+	if err != nil {
+		return nil, err
+	}
+	return flipt.NewUserFlag(fc, server.MusicFlag), nil
+}
+
 // opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
 // on and a written-back cache whose lookup reads the primary (hydrate.PrimaryCaches). A replica-only
 // allowlist (e.g. metrics,tag-ids) never opens it.
@@ -593,6 +608,11 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		log.Error("flag not read; every hubId request falls back", "flag", server.UserHubsFlag, "err", err)
 	}
+	// nil (no FLIPT_URL, or a bad one): only moderators see other users' songs.
+	music, err := musicReader(cfg)
+	if err != nil {
+		log.Error("flag not read; only moderators see other users' songs", "flag", server.MusicFlag, "err", err)
+	}
 	srv := &server.Server{
 		Resolver:         resolver,
 		Deps:             deps,
@@ -600,6 +620,7 @@ func run(log *slog.Logger) error {
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		PersonalHotLead:  personalHotLead,
 		UserHubs:         userHubs,
+		Music:            music,
 		// FLIPT_DEPLOYMENT_ID, the targeting property Node's buildFliptContext adds.
 		FliptDeploymentID: cfg.FliptDeploymentID,
 		ServeInfinite:     cfg.ServeInfinite,

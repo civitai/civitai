@@ -20,6 +20,8 @@ type assocImageQuery struct {
 	// ViewerID is the session user (0 = signed out), IsModerator their moderator flag.
 	ViewerID    int
 	IsModerator bool
+	// CanSeeSongs is Viewer.CanSeeSongs: other users' songs are served (songsHiddenSql).
+	CanSeeSongs bool
 	// Level is the model input's browsingLevel; ExcludedTagIDs its excludedTagIds after
 	// enforceBlockedBrowsingTagsForModels added the addons' (nil = none).
 	Level          int
@@ -68,9 +70,8 @@ func (q assocImageQuery) build() (string, []any) {
 		hydrate.ImageReviewedSQL("i"),
 		// minorMatureImageVisibleSql({ userId, isModerator }).
 		hydrate.MinorMatureImageVisibleSQL("i", q.ViewerID, q.IsModerator, bind))
-	// songsHiddenSql: no song but the viewer's own; feed-go cannot evaluate the `music` flag, so only
-	// moderators (who always hold it) see other users' songs.
-	if !q.IsModerator {
+	// songsHiddenSql: a viewer who cannot see songs gets none but their own.
+	if !q.IsModerator && !q.CanSeeSongs {
 		if q.ViewerID != 0 {
 			and = append(and, `(i."type" != 'audio' OR i."userId" = `+bind(q.ViewerID)+`)`)
 		} else {

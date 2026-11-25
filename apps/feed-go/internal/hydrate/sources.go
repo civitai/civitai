@@ -168,3 +168,26 @@ func rowsToMaps(rows pgx.Rows) ([]map[string]any, error) {
 	}
 	return out, rows.Err()
 }
+
+// WithoutHiddenSongs is the Node app's withoutHiddenSongs over the shared showcase cache's images
+// (getImagesForModelVersionCache): unless canSeeSongs, a song (type "audio") stays only for its owner
+// (viewerID 0: signed out, so for no one).
+func WithoutHiddenSongs(byVersion map[int][]superjson.Object, viewerID int, canSeeSongs bool) map[int][]superjson.Object {
+	if canSeeSongs {
+		return byVersion
+	}
+	out := make(map[int][]superjson.Object, len(byVersion))
+	for vid, list := range byVersion {
+		kept := make([]superjson.Object, 0, len(list))
+		for _, img := range list {
+			if t, _ := ObjectField(img, "type").(string); t == "audio" {
+				if owner, ok := Int(ObjectField(img, "userId")); !ok || viewerID == 0 || owner != viewerID {
+					continue
+				}
+			}
+			kept = append(kept, img)
+		}
+		out[vid] = kept
+	}
+	return out
+}
