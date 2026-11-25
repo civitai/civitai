@@ -275,15 +275,15 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		sess.CanViewNsfw = browsing.CanViewNsfw(color, restricted, sess.IsModerator)
 		viewer := sitesearch.ViewerOf(sess)
 
-		var up sitesearch.Upstream
-		if rec, ok := ctx.Value(searchRecordedKey{}).(sitesearch.Upstream); ok {
-			// A shadow sample's recorded response (sitesearch.Recorded).
-			up = rec
-		} else if serving && s.Search != nil && s.Search.Upstream != nil {
+		// A shadow sample's recorded response (sitesearch.Recorded), else the backend when serving.
+		up, recorded := ctx.Value(searchRecordedKey{}).(sitesearch.Upstream)
+		switch {
+		case recorded:
+		case serving && s.Search != nil && s.Search.Upstream != nil:
 			up = s.Search.Upstream
-		} else if !serving {
+		case !serving:
 			return nil, fallback.New("search-no-upstream")
-		} else {
+		default:
 			return nil, fallback.New("search-unconfigured")
 		}
 		rateKey := ""

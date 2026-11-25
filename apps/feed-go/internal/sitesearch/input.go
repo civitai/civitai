@@ -104,7 +104,7 @@ func readStringList(raw []byte, key string, maxItems, maxLen int) ([]string, err
 // readInt is `z.number().int()` with its bounds: a finite integral number in the safe range (zod 4's
 // int), then min and max. An integral value past 2^53 falls back whatever zod says of it.
 func readInt(raw []byte, key string, min, max int) (int, error) {
-	if len(raw) == 0 || !(raw[0] == '-' || (raw[0] >= '0' && raw[0] <= '9')) {
+	if len(raw) == 0 || (raw[0] != '-' && (raw[0] < '0' || raw[0] > '9')) {
 		return 0, invalid(key, "%s: not a number", key)
 	}
 	f, err := strconv.ParseFloat(string(raw), 64)

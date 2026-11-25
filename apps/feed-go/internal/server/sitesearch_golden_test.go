@@ -81,7 +81,7 @@ func loadSiteSearchFixtures(t *testing.T) []siteSearchFixture {
 	}
 	out := make([]siteSearchFixture, 0, len(files))
 	for _, f := range files {
-		raw, err := os.ReadFile(f)
+		raw, err := os.ReadFile(f) //nolint:gosec // G304: f is a fixture from the testdata glob
 		if err != nil {
 			t.Fatal(err)
 		}

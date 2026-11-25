@@ -89,7 +89,7 @@ func attributesToFetch(uid string, attrs []string) []string {
 func (p *Params) body(uid string, v Viewer) []byte {
 	o := &object{}
 	for _, f := range p.fields {
-		o.members = append(o.members, member{key: f.key, val: f.val})
+		o.members = append(o.members, member(f))
 	}
 	raw, _ := o.get("filter")
 	if filter, ok := withViewerClauses(p.Filter, raw, Clauses(uid, v)); ok {

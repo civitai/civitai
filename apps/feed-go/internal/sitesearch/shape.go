@@ -19,7 +19,7 @@ func ratingWithinCap(raw []byte, present bool, cap int) (bool, error) {
 	if !ok {
 		return false, errShape
 	}
-	return rating != 0 && int32(cap)|rating == int32(cap), nil
+	return rating != 0 && int32(cap)|rating == int32(cap), nil //nolint:gosec // G115: cap is a browsing level (at most 63)
 }
 
 // imageWithinCap is `isRatingWithinCap(image?.nsfwLevel, cap)` for one element of an images list: an
@@ -195,7 +195,7 @@ func shapeComicHit(hit *object, cap int) error {
 		}
 		level = l
 	}
-	if level > 0 && level&^int32(cap) == 0 {
+	if level > 0 && level&^int32(cap) == 0 { //nolint:gosec // G115: cap is a browsing level (at most 63)
 		return nil
 	}
 	hit.del("coverImageUrl")
