@@ -171,6 +171,14 @@ func (s *Server) sharedError(w http.ResponseWriter, start time.Time, err error, 
 		s.sharedRefusal(w, start, "service_token_refused", anon)
 	case errors.Is(err, shared.ErrSignedOutBusy):
 		s.sharedRefusal(w, start, "capacity", anon)
+	case errors.Is(err, shared.ErrNoServiceClient):
+		// No service client is configured: no level stream can be read until one is.
+		s.sharedRefusal(w, start, "service_client_unconfigured", anon)
+	case errors.Is(err, shared.ErrServiceTokenRefused):
+		// The hub refused to mint this service's own token (alone, or as the cause of a cooldown).
+		s.sharedRefusal(w, start, "service_token_refused", anon)
+	case errors.Is(err, shared.ErrServiceTokenUnavailable):
+		s.sharedRefusal(w, start, "service_token_unavailable", anon)
 	default:
 		var ended *session.EndedError
 		if errors.As(err, &ended) && ended.Reason == "not_resolved" {

@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
+	"github.com/civitai/civitai/apps/app-data-go/internal/token"
 )
 
 // Sources are the `source` values of app_data_reads_total: where a read's answer came from.
@@ -27,7 +28,9 @@ var FallbackReasons = []string{
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
-var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen"}
+var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen",
+	// A level stream whose service token was not minted (shared.CloseServiceToken*).
+	"service_token_refused", "service_token_unavailable", "service_client_unconfigured"}
 
 // Outcomes are the `outcome` values of app_data_reads_total. `registry_only` is a read that asked for
 // the registry's answer only (api.RegistryOnlyHeader) and that the registry could not answer: REST
@@ -95,6 +98,14 @@ type Metrics struct {
 	// SignedOutReads counts signed-out viewers' shared reads by outcome (Outcomes); zero while
 	// APP_DATA_WRITES is off.
 	SignedOutReads *prometheus.CounterVec
+	// ServiceTokenFetches counts each call to the hub's token endpoint for the level streams' service
+	// token, by outcome (token.Outcomes: ok, refused, unavailable); zero without a service client.
+	ServiceTokenFetches *prometheus.CounterVec
+}
+
+// ObserveServiceTokenFetch is token.Source.OnFetch: it counts each fetch by its outcome.
+func (m *Metrics) ObserveServiceTokenFetch(err error) {
+	m.ServiceTokenFetches.WithLabelValues(token.Outcome(err)).Inc()
 }
 
 // Stats is what the session manager holds now (session.Stats), read at scrape time.
@@ -153,6 +164,10 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Name: "app_data_signed_out_reads_total",
 			Help: "Signed-out viewers' shared-collection reads, served from the level streams, by outcome.",
 		}, []string{"outcome"}),
+		ServiceTokenFetches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_service_token_fetch_total",
+			Help: "Calls to the hub's token endpoint for the level streams' service token, by outcome (ok; refused: the hub refused this client; unavailable: unreachable, a 429 or 5xx, or no token in the answer).",
+		}, []string{"outcome"}),
 	}
 	gauge := func(name, help string, pick func(s, l, r, b int) int) prometheus.Collector {
 		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
@@ -160,7 +175,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		})
 	}
 	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges, m.UserExchangeGuard,
-		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays, m.SignedOutReads,
+		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays, m.SignedOutReads, m.ServiceTokenFetches,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
@@ -197,6 +212,9 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		for _, o := range WriteOutcomes {
 			m.Writes.WithLabelValues(op, o)
 		}
+	}
+	for _, o := range token.Outcomes {
+		m.ServiceTokenFetches.WithLabelValues(o)
 	}
 	for _, o := range GuardOutcomes {
 		m.UserExchangeGuard.WithLabelValues(o)

@@ -71,6 +71,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/sign"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
@@ -159,18 +160,27 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /metrics", promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{}))
-	return withClientIP(mux)
+	return withEdge(mux)
 }
 
-// withClientIP puts the viewer's address, as the edge named it (exchange.ClientIPHeader), in each
-// request's context: the user exchange charges a token it has not seen exchanged to it
-// (exchange.Guard) and forwards it to the hub. A request without the header carries none.
-func withClientIP(h http.Handler) http.Handler {
+// withEdge puts what the edge named about the viewer in each request's context:
+//   - their address (exchange.ClientIPHeader): the user exchange charges a token it has not seen
+//     exchanged to it (exchange.Guard) and forwards it to the hub. A request without the header
+//     carries none;
+//   - their region (sign.ReadRegion): a stream a read opens for them carries it to the adapter
+//     (session.WithRegion) when its manager forwards regions (session.Options.Region, on with
+//     APP_DATA_FORWARD_REGION); otherwise it is read and never sent. A request with none, or with a
+//     malformed one, carries none, and the adapter holds it to SFW, as before.
+func withEdge(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		if ip := exchange.ClientIPFrom(r.Header); ip != "" {
-			r = r.WithContext(exchange.WithClientIP(r.Context(), ip))
+			ctx = exchange.WithClientIP(ctx, ip)
 		}
-		h.ServeHTTP(w, r)
+		if region, bad := sign.ReadRegion(r.Header); bad == "" {
+			ctx = session.WithRegion(ctx, region)
+		}
+		h.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

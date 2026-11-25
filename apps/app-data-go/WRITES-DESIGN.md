@@ -51,7 +51,7 @@ one wins. What it makes of migration step 1:
 | Shared reads: the union of the level streams in the viewer's mask and the per-viewer stream; `@me` gets; `keyPrefix`, `author=me`, key-sorted pages | here | #10393 |
 | Signed-out reads from the level streams | here | #10393 |
 | No REST fallback (the step-1 table) | here | #10393: with `APP_DATA_WRITES` on, every read |
-| Region forwarding on the per-viewer subscription | here | not built: until it is, the adapter holds every signed-in viewer behind this service to SFW |
+| Region forwarding on the per-viewer and private subscriptions | here | built, behind `APP_DATA_FORWARD_REGION` (default off): while off, the adapter holds every signed-in viewer behind this service to SFW |
 | Second replica, header-hash sticky routing | deployment | not built |
 | Internal route, store `seq`/`recordId`, `app_storage_requests_total{via}` | site | built, #10128, #10142 |
 | The internal route's delete answer names its key (an `@me` delete's derived key) | site | #10392 |
@@ -441,8 +441,10 @@ no fallback to read it elsewhere; the fix is raising the bound.
 **Decided by the operator:** app-data-go reads the level streams under its own service identity, as an
 anonymous viewer, and serves signed-out viewers from them. Registry-only.
 
-- **How app-data-go authenticates to the adapter:** a hub service token for its own client
-  (client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
+- **How app-data-go authenticates to the adapter:** a hub service token for its own service client
+  (`APP_DATA_SERVICE_CLIENT_ID`, a client separate from the relay client: the hub mints a service
+  token only for a client whose grants are exactly the service grant, and refuses a client that is
+  both a relay and a service; client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
   the app index's is (`auth.jwt.ts:15-25`, `:197-212`; `REGISTRY_ADAPTER_SERVICE_CLIENTS`,
   `auth.live.ts:47-57`), and on the shared-level allowlist above. A service subscription otherwise
   reads every rating (`SERVICE_AUDIENCE`, `audience.ts`), so it names one level bit and the adapter

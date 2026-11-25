@@ -127,6 +127,9 @@ type Request struct {
 	// Meta, when set, is sent as the request's `meta` (a JSON object, as its compact text): the
 	// adapter's level streams are named there, `{"level":4}`.
 	Meta json.RawMessage
+	// Headers, when set, are sent on the request beside the ones set here (the viewer's region
+	// headers, session.Region). They never replace Accept, Authorization or User-Agent.
+	Headers map[string]string
 }
 
 // MaxLine bounds one SSE line. The largest app entity is a few KiB.
@@ -215,6 +218,13 @@ func (c *Client) Subscribe(ctx context.Context, req Request) (*Stream, error) {
 	if err != nil {
 		cancel()
 		return nil, &Error{Code: BadRequest, Message: err.Error()}
+	}
+	for name, v := range req.Headers {
+		switch http.CanonicalHeaderKey(name) {
+		case "Accept", "Authorization", "User-Agent":
+		default:
+			hr.Header.Set(name, v)
+		}
 	}
 	hr.Header.Set("Accept", "text/event-stream")
 	token := c.Token
