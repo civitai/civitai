@@ -112,6 +112,17 @@
     opacity: 0.6;
   }
 
+  /* While saving, hover keeps the resting look, over the global button hover fill. */
+  .switch[aria-disabled='true']:hover {
+    border-color: color-mix(in srgb, var(--io-gold-muted) 55%, transparent);
+    background: var(--io-matte);
+  }
+
+  .switch[aria-checked='true'][aria-disabled='true']:hover {
+    border-color: var(--io-gold);
+    background: var(--io-gold);
+  }
+
   .switch:focus-visible {
     outline: 2px solid var(--io-gold);
     outline-offset: 2px;

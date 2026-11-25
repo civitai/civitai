@@ -1,3 +1,4 @@
+import { KNIGHTS_TAG_GROUPS } from '@civitai/shared/knights-tag-groups';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
@@ -495,34 +496,11 @@ export const votableTagColors = {
   [NsfwLevel.Blocked]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
 } as const;
 
-export const toggleableBrowsingCategories = [
-  {
-    title: 'Hide anime',
-    relatedTags: [
-      { id: 4, name: 'anime' },
-      { id: 413, name: 'manga' },
-      // { id: 5218, name: 'hentai' },
-    ],
-  },
-  {
-    title: 'Hide furry',
-    relatedTags: [
-      { id: 5139, name: 'anthro' },
-      { id: 5140, name: 'furry' },
-    ],
-  },
-  {
-    title: 'Hide gore',
-    relatedTags: [
-      { id: 1282, name: 'gore' },
-      { id: 789, name: 'body horror' },
-    ],
-  },
-  {
-    title: 'Hide political',
-    relatedTags: [{ id: 2470, name: 'political' }],
-  },
-];
+/** The topics a viewer can hide in browsing settings: the same groups Knights players can hide, one list for both. */
+export const toggleableBrowsingCategories = KNIGHTS_TAG_GROUPS.map((group) => ({
+  title: `Hide ${group.label.toLowerCase()}`,
+  relatedTags: group.tags.map((tag) => ({ id: tag.id, name: tag.name })),
+}));
 
 export const browsingModeDefaults = {
   showNsfw: false,

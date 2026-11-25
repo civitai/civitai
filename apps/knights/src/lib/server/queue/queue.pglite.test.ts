@@ -33,7 +33,7 @@ import {
   STAGE_SCAN_FIRST_ROUND,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
-import { creditLateJudgment } from './vote-record';
+import { creditLateJudgment, notInHiddenTagGroups } from './vote-record';
 
 const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
@@ -3071,6 +3071,24 @@ describe('a preset tag group the player hides in Knights settings', () => {
 
     expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([anime, other].sort());
     expect(await vote(1, anime, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('filters nothing when there are no preset groups at all, whatever the player stored', async () => {
+    await taggedItems();
+    await tagImage(pg, 10, 4);
+    await hideTagGroups(pg, 1, ['anime']);
+    const ids = async (groups?: []) =>
+      (
+        await db
+          .selectFrom('Image as img')
+          .select('img.id')
+          .where(notInHiddenTagGroups(1, groups ? { groups } : {}))
+          .orderBy('img.id')
+          .execute()
+      ).map((r) => r.id);
+
+    expect(await ids()).toEqual([11]);
+    expect(await ids([])).toEqual([10, 11]);
   });
 
   it('changes nothing for a player who hides no group', async () => {

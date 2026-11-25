@@ -26,9 +26,13 @@ export function optionsOnScreen({ question, apprentice }: Screen): Option[] | nu
   return apprentice?.kind === 'question' ? apprentice.options ?? null : null;
 }
 
+/** An apprenticeship practice pair is on screen (a yes/no question, with its "Not sure"). */
+export const isYesNoApprentice = ({ apprentice }: Screen): boolean =>
+  apprentice?.kind === 'question' && apprentice.item?.kind === 'yesno';
+
 /**
  * Space skips a queue item and sends "Not sure" on a practice pair; on an apprenticeship rating (no skip) it stays the
  * browser's, pressing a focused button.
  */
 export const spaceSkips = ({ question, apprentice }: Screen): boolean =>
-  !!question || (apprentice?.kind === 'question' && apprentice.item?.kind === 'yesno');
+  !!question || isYesNoApprentice({ apprentice });

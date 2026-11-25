@@ -28,7 +28,7 @@
   import { heartsLeft, landVote, pendingGoldVotes, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
-  import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
+  import { answerForKey, answerForKeyPress, isYesNoApprentice, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
@@ -87,7 +87,7 @@
   let yesNo = $derived(
     data.mode === 'queue'
       ? view?.question.kind === 'bool'
-      : data.apprentice.kind === 'question' && data.apprentice.item.kind === 'yesno'
+      : isYesNoApprentice({ apprentice: data.apprentice })
   );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
   const guide = $state<GuideState>({ reopened: false, dismissed: false });
@@ -776,6 +776,13 @@
   />
 {/snippet}
 
+{#snippet practiceFields(item: { kind: string; referenceId: number; version: string | null })}
+  <input type="hidden" name="kind" value={item.kind} />
+  <input type="hidden" name="referenceId" value={item.referenceId} />
+  <input type="hidden" name="version" value={item.version ?? ''} />
+  {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+{/snippet}
+
 {#snippet soundToggle()}
   <button
     type="button"
@@ -898,20 +905,14 @@
       </div>
       <div class="controls" class:yesno={yesNo}>
         <form class="answers answer-row" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
-          <input type="hidden" name="kind" value={apprentice.item.kind} />
-          <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
-          <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
-          {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+          {@render practiceFields(apprentice.item)}
           {#each apprentice.options as option, index (option.value)}
             {@render pill(option, index, false, false)}
           {/each}
         </form>
         {#if yesNo}
           <form class="skip" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={skipForm}>
-            <input type="hidden" name="kind" value={apprentice.item.kind} />
-            <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
-            <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
-            {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+            {@render practiceFields(apprentice.item)}
             <AnswerPill
               option={{ value: 'unsure', label: 'Not sure' }}
               index={0}

@@ -1,8 +1,8 @@
 /**
- * The preset tag groups a Knight can hide in Knights settings: an image carrying an enabled tag of a hidden group is not
- * served to them. The topics are the ones the main site lets a viewer hide (`toggleableBrowsingCategories`), kept apart
- * because Knights may offer different ones. Never a browsing level or sexual content: Knights exists for the community to
- * rate mature content, so it must stay served.
+ * Tag groups a person can hide: Knights players in Knights settings (an image carrying an enabled tag of a hidden group
+ * is not served to them), and viewers in the main site's browsing settings (`toggleableBrowsingCategories`), built from
+ * this one list. Never a browsing level or sexual content: Knights exists for the community to rate mature content, so it
+ * must stay served.
  */
 export const KNIGHTS_TAG_GROUPS = [
   {

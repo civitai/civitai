@@ -10,15 +10,12 @@ import {
 } from '$lib/server/player-prefs';
 import { isKnightsTagGroupKey, KNIGHTS_TAG_GROUPS } from '@civitai/shared/knights-tag-groups';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
+import { tunesServing } from '$lib/server/ranks';
 import type { Actions, PageServerLoad } from './$types';
-
-// Acolytes keep their hand-picked practice questions and a fixed graded set: they are part of training, so neither the
-// switch nor the tag groups are theirs to change.
-const choosesQuestions = (rank: string) => rank !== 'Acolyte';
 
 export const load: PageServerLoad = async ({ locals }) => {
   const status = await requireMember(db, locals.user.id);
-  if (!choosesQuestions(status.rank))
+  if (!tunesServing(status.rank))
     return {
       questions: { available: false as const },
       tagGroups: { available: false as const },
@@ -45,7 +42,7 @@ export const actions: Actions = {
   questions: async ({ locals, request }) => {
     const status = await requireMember(db, locals.user.id);
     if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
-    if (!choosesQuestions(status.rank))
+    if (!tunesServing(status.rank))
       return fail(403, { message: 'Yes/no questions can be turned off from Knight.' });
     const value = (await request.formData()).get('questions');
     if (value !== 'on' && value !== 'off') return fail(400, { message: 'Choose on or off.' });
@@ -56,7 +53,7 @@ export const actions: Actions = {
   tagGroup: async ({ locals, request }) => {
     const status = await requireMember(db, locals.user.id);
     if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
-    if (!choosesQuestions(status.rank))
+    if (!tunesServing(status.rank))
       return fail(403, { message: 'Content groups can be hidden from Knight.' });
     const form = await request.formData();
     const key = form.get('key');

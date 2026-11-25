@@ -251,31 +251,36 @@ export const notHiddenCreator =
     return eb.not(eb.exists(perRow ? engaged.offset(0) : engaged));
   };
 
-/** Each preset group's tags as SQL rows `(key, tagId)`: code constants, written in. */
-const TAG_GROUP_ROWS = sql.join(
-  KNIGHTS_TAG_GROUPS.flatMap((group) =>
-    group.tags.map((tag) => sql`(${sql.lit(group.key)}, ${sql.lit(tag.id)})`)
-  )
-);
+type TagGroups = readonly { key: string; tags: readonly { id: number }[] }[];
 
 /**
  * Leaves out images carrying an enabled tag of a preset group the player hides in Knights settings. Read inside the
- * query, so it cannot fail open; a player who hides nothing matches no group. The player's own hidden tags on the site
- * never apply. Expects `Image as img`.
+ * query, so it cannot fail open; a player who hides nothing matches no group, and no groups at all is no filter. The
+ * player's own hidden tags on the site never apply. Expects `Image as img`; `perRow` as in `notHiddenCreator`.
  */
-export const notInHiddenTagGroups = (userId: number) => () =>
-  sql<SqlBool>`NOT EXISTS (
-    SELECT 1 FROM "KnightsPlayer" kp
-    JOIN (VALUES ${TAG_GROUP_ROWS}) AS g(key, "tagId") ON g.key = ANY(kp."hiddenTagGroups")
-    JOIN "TagsOnImageDetails" td ON td."tagId" = g."tagId" AND td."imageId" = img.id AND NOT td.disabled
-    WHERE kp."playerId" = ${userId}
-  )`;
+export const notInHiddenTagGroups =
+  (
+    userId: number,
+    { perRow = true, groups = KNIGHTS_TAG_GROUPS }: { perRow?: boolean; groups?: TagGroups } = {}
+  ) =>
+  () => {
+    const rows = groups.flatMap((group) =>
+      group.tags.map((tag) => sql`(${sql.lit(group.key)}, ${sql.lit(tag.id)})`)
+    );
+    if (rows.length === 0) return sql<SqlBool>`true`;
+    return sql<SqlBool>`NOT EXISTS (
+      SELECT 1 FROM "KnightsPlayer" kp
+      JOIN (VALUES ${sql.join(rows)}) AS g(key, "tagId") ON g.key = ANY(kp."hiddenTagGroups")
+      JOIN "TagsOnImageDetails" td ON td."tagId" = g."tagId" AND td."imageId" = img.id AND NOT td.disabled
+      WHERE kp."playerId" = ${userId}${perRow ? sql` OFFSET 0` : sql``}
+    )`;
+  };
 
 /** What may be served to the player: not a hidden or blocked creator's image, nor one in a tag group they hide. */
 export const servedTo =
   (userId: number, options: { perRow?: boolean } = {}) =>
   (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) =>
-    eb.and([notHiddenCreator(userId, options)(eb), notInHiddenTagGroups(userId)()]);
+    eb.and([notHiddenCreator(userId, options)(eb), notInHiddenTagGroups(userId, options)()]);
 
 export const LATE_JUDGMENT_WINDOW_MS = 10 * 60_000;
 
