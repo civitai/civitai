@@ -240,9 +240,13 @@ async function validateZip({ zipfile, entries }: OpenedZip, shouldStop: () => bo
     if (shouldStop()) return null;
     const read = await readEntry(zipfile, entry, budget, () => false);
     if (read.kind === 'image') images.push(entry);
-    // A second read, on a budget of its own, so the archive's total is not counted twice.
+    // A second read, on a budget of its own, so the archive's total is not counted twice. readEntry
+    // has already inflated this whole entry against the archive's limits, so this reads nothing the
+    // archive was not allowed, and the entry's own cap still applies.
     else if (
-      !(await isTheDocumentItsNamed(entry.path, () => openEntryStream(zipfile, entry, { used: 0 })))
+      !(await isTheDocumentItsNamed(entry.path, {
+        open: () => openEntryStream(zipfile, entry, { used: 0 }),
+      }))
     )
       throw new ZipRejectedError("A document in the archive isn't what its name says.");
   }
@@ -413,28 +417,54 @@ async function isImageByContent(file: ClaimedFinal) {
 }
 
 const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'yaml', 'yml', 'csv']);
-const PDF_START = Buffer.from('%PDF-');
+const PDF_END = Buffer.from('%%EOF');
+/** How far from the end a PDF's `%%EOF` may sit, and how much of its start is read. */
+const PDF_ENDS_BYTES = 1024;
+/** What may follow `%%EOF`: whitespace or NUL padding. */
+const PDF_PADDING = new Set([0x00, 0x09, 0x0a, 0x0c, 0x0d, 0x20]);
+
+type DocumentBytes = {
+  /** Every byte, in order. */
+  open: () => AsyncIterable<Buffer> | Promise<AsyncIterable<Buffer>>;
+  /** The first and last `bytes`, read without the rest when the source allows it. */
+  ends?: (bytes: number) => Promise<{ head: Buffer; tail: Buffer }>;
+};
+
+async function streamedEnds(open: DocumentBytes['open'], bytes: number) {
+  let head = Buffer.alloc(0);
+  let tail = Buffer.alloc(0);
+  for await (const chunk of await open()) {
+    if (head.length < bytes) head = Buffer.concat([head, chunk]).subarray(0, bytes);
+    tail = Buffer.concat([tail, chunk]);
+    if (tail.length > bytes) tail = tail.subarray(tail.length - bytes);
+  }
+  return { head, tail };
+}
+
+/**
+ * A PDF opens with its header line (`%PDF-1.7`), followed by no other format's signature, and ends
+ * with `%%EOF`.
+ */
+function isPdfShaped(head: Buffer, tail: Buffer) {
+  const header = /^%PDF-\d\.\d[ \t]*[\r\n]+/.exec(head.toString('latin1'));
+  if (!header) return false;
+  if (sniffEntry(head.subarray(header[0].length), { tsAnywhere: false }) !== 'other') return false;
+  const end = tail.lastIndexOf(PDF_END);
+  return end >= 0 && tail.subarray(end + PDF_END.length).every((byte) => PDF_PADDING.has(byte));
+}
 
 /**
  * A document has no content scan, so a Final or a zip entry named as one must be what its name says,
- * all of it: a text file is valid UTF-8 with no NUL byte anywhere, and a PDF starts with its header.
- * Anything else would be delivered unscanned, so it is refused. `open` streams the bytes, the first
- * `bytes` of them when that is all the check needs.
+ * all of it: a text file is valid UTF-8 with no NUL byte anywhere, and a PDF is shaped like one
+ * (`isPdfShaped`). Anything else would be delivered unscanned, so it is refused.
  */
-async function isTheDocumentItsNamed(
-  name: string,
-  open: (bytes?: number) => AsyncIterable<Buffer> | Promise<AsyncIterable<Buffer>>
-) {
+async function isTheDocumentItsNamed(name: string, { open, ends }: DocumentBytes) {
   const extension = fileExtension(name);
   const text = TEXT_EXTENSIONS.has(extension);
   if (!text && extension !== 'pdf') return true;
   if (!text) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of await open(PDF_START.length)) {
-      chunks.push(chunk);
-      if (Buffer.concat(chunks).length >= PDF_START.length) break;
-    }
-    return Buffer.concat(chunks).subarray(0, PDF_START.length).equals(PDF_START);
+    const { head, tail } = await (ends ?? ((bytes) => streamedEnds(open, bytes)))(PDF_ENDS_BYTES);
+    return isPdfShaped(head, tail);
   }
   const decoder = new TextDecoder('utf-8', { fatal: true });
   try {
@@ -444,16 +474,28 @@ async function isTheDocumentItsNamed(
     }
     decoder.decode();
   } catch (error) {
-    if (error instanceof TypeError) return false;
+    if ((error as { code?: string }).code === 'ERR_ENCODING_INVALID_ENCODED_DATA') return false;
     throw error;
   }
   return true;
 }
 
-/** The whole Final, or its first `bytes`. */
-async function finalBytes(file: ClaimedFinal) {
+async function readAll(stream: AsyncIterable<Buffer>) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+/** The Final's bytes, its ends read as two ranges. */
+async function finalBytes(file: ClaimedFinal): Promise<DocumentBytes> {
   const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
-  return (bytes?: number) => source.readRange(0, Math.min(bytes ?? file.size, file.size));
+  return {
+    open: () => source.readRange(0, file.size),
+    ends: async (bytes) => ({
+      head: await readAll(source.readRange(0, Math.min(bytes, file.size))),
+      tail: await readAll(source.readRange(Math.max(0, file.size - bytes), file.size)),
+    }),
+  };
 }
 
 /** A Final that is itself an image has a single entry: the file. */
