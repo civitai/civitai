@@ -67,7 +67,6 @@
     "./report-reward": "./src/report-reward.ts",
     "./new-order-levels": "./src/new-order-levels.ts",
     "./new-order": "./src/new-order.ts",
-    "./knights-tag-groups": "./src/knights-tag-groups.ts",
     "./knights-shop": "./src/knights-shop.ts",
     "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts",
     "./usage-limit-view": "./src/usage-limit-view.ts",

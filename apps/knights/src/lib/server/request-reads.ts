@@ -1,6 +1,6 @@
-import { redirect } from '@sveltejs/kit';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { memberOrRedirect } from './membership';
 import { getPlayerStatus, type PlayerStatus } from './player-status';
 import { getStanding, type Standing } from './standing';
 
@@ -29,7 +29,5 @@ export async function requireRequestMember(
   db: Kysely<DB>,
   locals: App.Locals
 ): Promise<PlayerStatus> {
-  const status = await requestPlayerStatus(db, locals);
-  if (!status) redirect(303, '/home');
-  return status;
+  return memberOrRedirect(await requestPlayerStatus(db, locals));
 }

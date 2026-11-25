@@ -3,7 +3,8 @@
  * served to them, and stays open for everyone else. Chosen from the open queue's tags and the players' comments, and
  * agreed with Moderation (2026-11-25). The main site's browsing categories are a separate list. Never a browsing level or
  * a whole kind of sexual content: Knights exists for the community to rate mature content, so it must stay served. Nor a
- * tag that only names an orientation.
+ * tag that only names an orientation. Never reuse a retired key (anime, political): players may still have it stored, and it
+ * would hide that group again without their choosing.
  */
 export const KNIGHTS_TAG_GROUPS = [
   {

@@ -118,7 +118,7 @@
     <div class="rows">
       <div class="row">
         <div class="text">
-          <p class="label"><span id="restart-label">Restart career</span></p>
+          <p class="label">Restart career</p>
           {#if data.career.swornIn}
             <p class="meta">Sworn in on {formatDate(data.career.swornIn)}</p>
           {/if}

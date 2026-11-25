@@ -8,7 +8,7 @@ declare global {
       signInUrl?: string;
       /** This request's ban and mute read (`requestStanding`), made once by the hooks. */
       standing?: Promise<import('$lib/server/standing').Standing>;
-      /** This request's player status (`requestPlayerStatus`), shared by the layout and page loads. */
+      /** This request's player status (`requestPlayerStatus`), shared by the layout and page loads; never read it in an action that writes. */
       playerStatus?: Promise<import('$lib/server/player-status').PlayerStatus | null>;
     }
   }

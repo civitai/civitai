@@ -12,7 +12,7 @@ import { isRank } from '../ranks';
 import { SMITES } from '../smites/config';
 import { activeSmiteCount } from '../smites/smites.service';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import { KNIGHTS_TAG_GROUPS } from '@civitai/shared/knights-tag-groups';
+import { KNIGHTS_TAG_GROUPS } from '../knights-tag-groups';
 import { canVote } from './ranks';
 import { levelForExp, voteWeight } from './resolution';
 

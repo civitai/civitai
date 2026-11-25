@@ -512,7 +512,6 @@
     margin-top: 2.5rem;
   }
 
-
   @media (max-width: 64rem) {
     .steps,
     .details {

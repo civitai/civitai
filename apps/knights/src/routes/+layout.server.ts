@@ -8,7 +8,7 @@ import { db } from '$lib/server/db';
 import { feedbackEnabled } from '$lib/server/feedback/enabled';
 import { ladderRows } from '$lib/server/ladder';
 import { PROGRESSION } from '$lib/server/progression/config';
-import type { getPlayerStatus } from '$lib/server/player-status';
+import type { PlayerStatus } from '$lib/server/player-status';
 import { requestPlayerStatus, requestStanding } from '$lib/server/request-reads';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
@@ -34,7 +34,7 @@ async function recapUnseen(playerId: number | undefined): Promise<boolean> {
 // read only costs what failed: the pills when the status is gone, the streak alone when only the daily read failed.
 async function headerStats(locals: App.Locals) {
   const playerId = locals.user.id;
-  let status: Awaited<ReturnType<typeof getPlayerStatus>>;
+  let status: PlayerStatus | null;
   try {
     status = await requestPlayerStatus(db, locals);
   } catch (error) {
@@ -76,21 +76,22 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
   // An Inquisitor's header shows neither the recap nor the player stats, so those reads are skipped.
   const inquisitor = await inquisitorQueueOpen(user);
   // Independent reads, sent together: this runs on every page load and after every form action.
+  // Only a player has a career to restart (the account menu offers it) or header stats.
+  const playerRow = user
+    ? db
+        .selectFrom('NewOrderPlayer')
+        .select('userId')
+        .where('userId', '=', user.id)
+        .executeTakeFirst()
+    : Promise.resolve(undefined);
   const [player, shopOpen, feedback, badges, recap, header] = await Promise.all([
-    // Only a player has a career to restart, which the account menu offers.
-    user
-      ? db
-          .selectFrom('NewOrderPlayer')
-          .select('userId')
-          .where('userId', '=', user.id)
-          .executeTakeFirst()
-      : undefined,
+    playerRow,
     shopEnabled(),
     user ? feedbackOpen(user, locals) : false,
     // A signed-out visitor (the welcome page, a 404) wears no badge, so the cosmetics are not read for them.
     user ? rankBadgeUrls(db) : NO_BADGES,
     inquisitor ? false : recapUnseen(user?.id),
-    user && !inquisitor ? headerStats(locals) : null,
+    user && !inquisitor ? playerRow.then((row) => (row ? headerStats(locals) : null)) : null,
   ]);
   return {
     civitaiUrl,
@@ -108,6 +109,6 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     badges,
     inquisitor,
     recapUnseen: recap,
-    headerStats: player !== undefined ? header : null,
+    headerStats: header,
   };
 };

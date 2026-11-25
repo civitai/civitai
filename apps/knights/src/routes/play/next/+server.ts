@@ -8,7 +8,7 @@ import { pauseFor } from '$lib/server/vote-limits/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { skippedFor } from '$lib/server/skips';
-import { getStanding } from '$lib/server/standing';
+import { requestStanding } from '$lib/server/request-reads';
 import { consented } from '$lib/server/membership';
 import { BUFFER_TARGET, MAX_EXCLUDED, type PickedItem } from '../optimistic';
 import { pickItem } from '../next-item.server';
@@ -30,7 +30,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   const userId = locals.user.id;
   const [status, { muted }] = await Promise.all([
     getPlayerStatus(db, userId),
-    getStanding(db, userId),
+    requestStanding(db, locals),
   ]);
   if (!status || muted || status.rank === 'Acolyte' || status.smites >= status.maxSmites)
     return NOTHING();

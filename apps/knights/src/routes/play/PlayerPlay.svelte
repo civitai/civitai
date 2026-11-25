@@ -715,6 +715,8 @@
       if (apprentice.kind === 'checkpoint') return { kind: 'checkpoint' as const, apprentice };
       return { kind: 'no-practice' as const };
     }
+    // A reset that is due outranks a mute, a pace lockout and anything still buffered: it is what happens to the career next.
+    if (shown.resetPending) return { kind: 'reset' as const };
     if (shown.muted) return { kind: 'muted' as const };
     if (shown.lockoutSeconds)
       return {
@@ -723,7 +725,6 @@
         limit: limitPhrase(shown.lockoutWindowSeconds ?? null),
       };
     if (view) return { kind: 'queue-stage' as const, view };
-    if (shown.resetPending) return { kind: 'reset' as const };
     return { kind: 'clear' as const, daily: shown.daily };
   });
   // The player's own clock and zone: rendered only in the browser, so the server's zone never shows.

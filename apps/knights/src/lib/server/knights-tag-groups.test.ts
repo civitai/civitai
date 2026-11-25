@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isKnightsTagGroupKey, KNIGHTS_TAG_GROUPS, tagIdsOfGroups } from '../knights-tag-groups';
+import { isKnightsTagGroupKey, KNIGHTS_TAG_GROUPS, tagIdsOfGroups } from './knights-tag-groups';
 
 // Knights exists so the community rates mature content: a group must never let a player hide it. These are the tag
 // names the moderators' rating tags use for sexual content and nudity.

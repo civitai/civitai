@@ -1,21 +1,22 @@
 import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { requireMember } from '$lib/server/membership';
-import { getStanding, mutedFailure } from '$lib/server/standing';
+import { mutedFailure } from '$lib/server/standing';
+import { requestStanding, requireRequestMember } from '$lib/server/request-reads';
 import {
   hiddenTagGroups,
   playerPrefs,
   setTagGroupHidden,
   setYesNoQuestions,
 } from '$lib/server/player-prefs';
-import { isKnightsTagGroupKey, KNIGHTS_TAG_GROUPS } from '@civitai/shared/knights-tag-groups';
+import { isKnightsTagGroupKey, KNIGHTS_TAG_GROUPS } from '$lib/server/knights-tag-groups';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { tunesServing } from '$lib/server/ranks';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
   const [status, player] = await Promise.all([
-    requireMember(db, locals.user.id),
+    requireRequestMember(db, locals),
     db
       .selectFrom('NewOrderPlayer')
       .select('startAt')
@@ -53,7 +54,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 export const actions: Actions = {
   questions: async ({ locals, request }) => {
     const status = await requireMember(db, locals.user.id);
-    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if ((await requestStanding(db, locals)).muted) return mutedFailure();
     if (!tunesServing(status.rank))
       return fail(403, { message: 'Yes/no questions can be turned off from Knight.' });
     const value = (await request.formData()).get('questions');
@@ -64,7 +65,7 @@ export const actions: Actions = {
   },
   tagGroup: async ({ locals, request }) => {
     const status = await requireMember(db, locals.user.id);
-    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if ((await requestStanding(db, locals)).muted) return mutedFailure();
     if (!tunesServing(status.rank))
       return fail(403, { message: 'Content groups can be hidden from Knight.' });
     const form = await request.formData();
