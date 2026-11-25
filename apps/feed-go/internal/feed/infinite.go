@@ -77,6 +77,10 @@ type InfiniteInput struct {
 	// the viewer's own (ServeInfinite); kept, it routes the request to Postgres beside a `userId`
 	// (requiresImageDbPath) and is the feed mapper's empty page without one (`flag:publishedOnly`).
 	PublishedOnly bool
+	// PostIDs is `postIds` (z.number().array()), as sent (read only with InfinitePorts.PostIDs;
+	// otherwise a non-empty list falls back as `input-postIds`). Non-empty, it routes to Postgres,
+	// filters the page to those posts (ImagesQuery.PostIDs) and adds their models to the gallery gates.
+	PostIDs []int
 }
 
 // InfinitePorts are image.getInfinite's input shapes ported behind their own serve switch, each off
@@ -85,6 +89,8 @@ type InfinitePorts struct {
 	// PublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY: compute a request with
 	// `publishedOnly`.
 	PublishedOnly bool
+	// PostIDs is FEED_GO_INFINITE_SERVE_INPUT_POST_IDS: compute a request with `postIds`.
+	PostIDs bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
@@ -177,6 +183,9 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 	if ports.PublishedOnly {
 		unsupported = withoutKey(unsupported, "publishedOnly")
 	}
+	if ports.PostIDs {
+		unsupported = withoutKey(unsupported, "postIds")
+	}
 	base, err := parseInput(parsed, unsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
@@ -258,6 +267,15 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 			return nil, fallback.NewfSafe("input-invalid", "publishedOnly", "publishedOnly: %T", v)
 		}
 		in.PublishedOnly = b
+	}
+	if v, ok := m["postIds"]; ok && ports.PostIDs {
+		// `.optional()`, not `.nullish()`: a null is the schema's BAD_REQUEST.
+		if v == nil {
+			return nil, fallback.NewfSafe("input-invalid", "postIds", "postIds: null")
+		}
+		if in.PostIDs, err = int4IDs(v, "postIds"); err != nil {
+			return nil, err
+		}
 	}
 	return in, nil
 }
@@ -453,13 +471,14 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
-// dbPath is requiresImageDbPath for the supported inputs: a post's media, a collection, reactions,
-// ids, a model without a version (the feed has no model dimension), prioritizedUserIds with a model
-// or version scope, or `publishedOnly` beside a `userId` (the own-content submit pickers; read on the
-// input after the handler's withdrawal, withPublishedOnlyScoped). Every other shape it lists falls
+// dbPath is requiresImageDbPath for the supported inputs: a post's media, several posts' media
+// (`postIds`), a collection, reactions, ids, a model without a version (the feed has no model
+// dimension), prioritizedUserIds with a model or version scope, or `publishedOnly` beside a
+// `userId` (the own-content submit pickers; read on the input after the handler's withdrawal,
+// withPublishedOnlyScoped). Every other shape it lists falls
 // back in parsing.
 func (in *InfiniteInput) dbPath() bool {
-	return in.PostID != 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
+	return in.PostID != 0 || len(in.PostIDs) > 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
 		(in.ModelID != 0 && in.ModelVersionID == 0) ||
 		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0)) ||
 		(in.PublishedOnly && in.UserID != 0)
@@ -810,8 +829,8 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 
 	// The gallery gates (moderators are exempt from both): a taken-down model's images only to its
 	// owner, a minor or SFW-only model's only at its held level.
-	if !viewer.IsModerator && (in.ModelID != 0 || in.ModelVersionID != 0 || in.PostID != 0) {
-		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID)
+	if !viewer.IsModerator && (in.ModelID != 0 || in.ModelVersionID != 0 || in.PostID != 0 || len(in.PostIDs) > 0) {
+		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID, in.PostIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -914,6 +933,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
 		PostID:         in.PostID,
+		PostIDs:        in.PostIDs,
 		TargetUserID:   userID,
 		TagIDs:         tags,
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,

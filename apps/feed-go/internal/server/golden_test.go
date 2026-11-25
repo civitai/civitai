@@ -50,7 +50,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 99
+	goldenMinInfinite = 110
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -122,6 +122,9 @@ type goldenFixture struct {
 		// ServePublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY (infinite/ fixtures; absent:
 		// off, the fixture's `publishedOnly` falls back).
 		ServePublishedOnly bool `json:"servePublishedOnly"`
+		// ServePostIDs is FEED_GO_INFINITE_SERVE_INPUT_POST_IDS (infinite/ fixtures; absent: off, the
+		// fixture's `postIds` falls back).
+		ServePostIDs bool `json:"servePostIds"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -1555,7 +1558,7 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 	}
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
-		Ports:       feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly}}
+		Ports:       feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly, PostIDs: fx.Config.ServePostIDs}}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}

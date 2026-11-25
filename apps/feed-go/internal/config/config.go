@@ -110,6 +110,10 @@ type Config struct {
 	// compute an `image.getInfinite` request with `publishedOnly` (feed.InfinitePorts). Off, such a
 	// request is the `input-publishedOnly` fallback, as before the port.
 	InfiniteServeInputPublishedOnly bool
+	// InfiniteServeInputPostIDs is FEED_GO_INFINITE_SERVE_INPUT_POST_IDS (default off): compute an
+	// `image.getInfinite` request with `postIds` (feed.InfinitePorts). Off, such a request is the
+	// `input-postIds` fallback, as before the port.
+	InfiniteServeInputPostIDs bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
 	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
@@ -286,9 +290,12 @@ func Load() (*Config, error) {
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
 		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
 		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
-		AnswerRegionBlocked:  boolEnv("FEED_GO_ANSWER_REGION_BLOCKED", false),
-		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
-		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		InfiniteServeInputPostIDs: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", false),
+
+		AnswerRegionBlocked: boolEnv("FEED_GO_ANSWER_REGION_BLOCKED", false),
+		WriteDevalue:        trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
+		ImageLocation:       os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		GetAllServeInputIDs:             boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
 		GetAllServeInputFollowed:        boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),

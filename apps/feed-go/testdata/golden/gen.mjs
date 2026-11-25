@@ -1532,14 +1532,17 @@ const getReactionTotals = (post) => {
 };
 
 /** getHeldGalleryLevel / isModelGalleryWithheld over resolveImageModelIds (model.service.ts). */
-function resolveImageModelIds({ modelId, modelVersionId, postId }) {
+function resolveImageModelIds({ modelId, modelVersionId, postId, postIds = [] }) {
   const required = new Set();
   if (modelVersionId) required.add(modelVersionId);
   const listed = new Set();
-  if (postId) {
-    const posts = cacheFetch(K.postVersion, [postId]);
-    if (!posts[postId]) return null;
-    if (posts[postId].modelVersionId) listed.add(posts[postId].modelVersionId);
+  // `postId || postIds?.length`: every listed post's version; only a missing `postId` is null.
+  if (postId || postIds?.length) {
+    const ids = new Set(postIds);
+    if (postId) ids.add(postId);
+    const posts = cacheFetch(K.postVersion, [...ids]);
+    if (postId && !posts[postId]) return null;
+    for (const id of ids) if (posts[id]?.modelVersionId) listed.add(posts[id].modelVersionId);
   }
   const versionIds = new Set([...listed, ...required]);
   const modelIds = new Set();
@@ -1799,6 +1802,7 @@ const isViewerScopedInfiniteFeed = (input) =>
 /** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
 const requiresImageDbPath = (input) =>
   !!input.postId ||
+  !!input.postIds?.length ||
   !!input.collectionId ||
   !!input.reactions?.length ||
   !!input.ids?.length ||
@@ -3120,6 +3124,78 @@ const INFINITE = [
     input: { userId: 1001, publishedOnly: false, sort: 'Newest', browsingLevel: 31, limit: 5 },
     replies: {
       'levels=1%2C2%2C4%2C8%2C16&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+      },
+    },
+  // `postIds` (FEED_GO_INFINITE_SERVE_INPUT_POST_IDS): several posts' media, always the Postgres path.
+  {
+    name: 'post-ids-signed-out',
+    description: '`postIds` signed out: requiresImageDbPath, the Postgres page of those posts’ images only (`i."postId" IN (…)`), Newest (i."id" DESC), the look-ahead row’s id as the cursor; no feed call; edge-cacheable.',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7101, 7201], sort: 'Newest', browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'post-ids-cursor',
+    description: 'The next page of the same posts: the numeric cursor is an image id, inclusive.',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7101, 7201], sort: 'Newest', cursor: 8103, browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'post-ids-signed-in-oldest',
+    description: '`postIds` signed in at every level, Oldest (i."id" ASC): another creator’s posts, the viewer’s addon exclusions applied.',
+    goConfig: { servePostIds: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { postIds: [7002, 7004, 7009], sort: 'Oldest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'post-ids-beside-post-id',
+    description: '`postIds` beside a `postId`: both clauses, and the post scope’s order (i."index", i."id").',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postId: 7101, postIds: [7101, 7201], browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'post-ids-held-model',
+    description: '`postIds` naming a post on an SFW-only model (7301 on 5002, held at 3): the gallery gate folds every listed post’s model into the hold, so the page is served at 31 & 3 (8302 at 4 dropped).',
+    goConfig: { servePostIds: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { postIds: [7301, 7101], sort: 'Newest', browsingLevel: 31, limit: 10 },
+    alsoCached: [8302],
+  },
+  {
+    name: 'post-ids-taken-down-stranger',
+    description: '`postIds` naming a post on a taken-down model (7401 on 5003) read by someone else: the gallery is withheld, the handler’s empty page.',
+    goConfig: { servePostIds: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { postIds: [7401, 7101], sort: 'Newest', browsingLevel: 31, limit: 10 },
+    // The rows only: their per-image caches would be read by no Node answer (the harness's cold-metrics
+    // runs require a held metric hash to be read).
+    alsoPosts: [7401, 7101],
+  },
+  {
+    name: 'post-ids-taken-down-owner',
+    description: 'The same posts read by the taken-down model’s owner (1001): not withheld, the posts’ images.',
+    goConfig: { servePostIds: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { postIds: [7401, 7101], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'post-ids-empty-list',
+    description: '`postIds: []`: no filter and no routing (`?.length`), the global feed.',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [], sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
     },
   },
   // Fallbacks.
@@ -3139,6 +3215,32 @@ const INFINITE = [
     viewer: 1001,
     host: HOST.blue,
     input: { userId: 1001, publishedOnly: null, sort: 'Newest', browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'fallback-post-ids-off',
+    description: '`postIds` with FEED_GO_INFINITE_SERVE_INPUT_POST_IDS off: the shape falls back, as before the port.',
+    fallback: 'input-postIds',
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7001, 7003], sort: 'Newest', browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'fallback-post-ids-not-int4',
+    description: 'A `postIds` entry that is not an int4 integer: Node binds it against the integer column, which Postgres refuses; not answered here.',
+    fallback: 'input-postIds',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7001, 1.5], browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'fallback-post-ids-null',
+    description: '`postIds: null`: z.number().array().optional() refuses a null, Node’s BAD_REQUEST, which it answers itself.',
+    fallback: 'input-invalid',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: null, browsingLevel: 1, limit: 2 },
   },
   {
     name: 'fallback-followed-not-a-boolean',
@@ -3788,6 +3890,9 @@ function emitInfinite() {
       const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
       alsoCached(spec);
+      // `spec.alsoPosts`: posts whose rows the tables hold although Node's answer reads none of them (a
+      // withheld gallery), so a feed-go that skipped the gate would answer them.
+      for (const id of spec.alsoPosts ?? []) T.posts.add(id);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
       writeDevalueBody('infinite', spec.name, value);
     }
