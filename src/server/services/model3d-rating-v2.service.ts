@@ -12,6 +12,7 @@ import {
 } from '~/server/services/rating-v2.service';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
+import { TRPCError } from '@trpc/server';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import { usageLimits } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
@@ -29,6 +30,8 @@ export const MODEL3D_RATING_V2_GLOBAL_LIMIT = {
   windowSeconds: 24 * 60 * 60,
 };
 const WAIT_SECONDS = 20;
+/** The preview graph renders at most this many angles; more are never sent on the system token. */
+export const MAX_ANGLES = 4;
 /** How long a mature v2 verdict holds the gate for that workflow without asking again. */
 const REMEMBER_SECONDS = 30 * 24 * 60 * 60;
 const rememberedKey = (workflowId: string) =>
@@ -44,7 +47,8 @@ export function anglesMature(verdicts: (boolean | null)[]): boolean {
 
 export type Model3dRatingV2Deps = {
   matureLevel: (user: SessionUser) => Promise<number | null>;
-  /** False when a limit refuses: the result then keeps its current rating. */
+  /** False when the global window refuses; throws the rate-limit error when the user's own limit
+   *  refuses. */
   claim: (user: SessionUser, req: NextApiRequest) => Promise<boolean>;
   rate: typeof rateImagesV2;
   /** A mature verdict already given for this workflow. */
@@ -62,17 +66,13 @@ const defaultDeps: Model3dRatingV2Deps = {
       ).catch(() => null)
     ),
   claim: async (user, req) => {
-    try {
-      const record = await claimRateLimitAttempt({
-        rules: MODEL3D_RATING_V2_RATE_LIMIT.rules,
-        keyName: MODEL3D_RATING_V2_RATE_LIMIT.key,
-        user,
-        req,
-      });
-      await record();
-    } catch {
-      return false;
-    }
+    const record = await claimRateLimitAttempt({
+      rules: MODEL3D_RATING_V2_RATE_LIMIT.rules,
+      keyName: MODEL3D_RATING_V2_RATE_LIMIT.key,
+      user,
+      req,
+    });
+    await record();
     const { key, max, windowSeconds } = MODEL3D_RATING_V2_GLOBAL_LIMIT;
     const global = await checkFixedWindow(key, max, windowSeconds, { failOpen: false });
     return global.allowed;
@@ -95,12 +95,19 @@ export async function isModel3DMatureByV2(
   }: { user: SessionUser; req: NextApiRequest; previewUrls: string[]; workflowId: string },
   deps: Model3dRatingV2Deps = defaultDeps
 ): Promise<boolean> {
-  if (!previewUrls.length || !previewUrls.every(isRateableMediaUrl)) return false;
+  if (!previewUrls.length || previewUrls.length > MAX_ANGLES) return false;
+  if (!previewUrls.every(isRateableMediaUrl)) return false;
   // Each step failing open keeps the post on its current rating: this rater can only add the gate.
   const matureLevel = await deps.matureLevel(user).catch(() => null);
   if (matureLevel === null) return false;
   if (await deps.remembered(workflowId).catch(() => false)) return true;
-  if (!(await deps.claim(user, req).catch(() => false))) return false;
+  // The user's own limit is theirs to spend, so its refusal blocks the post (try again shortly) rather
+  // than letting it through unrated; a system-side refusal or failure keeps today's rating.
+  const claimed = await deps.claim(user, req).catch((e) => {
+    if (e instanceof TRPCError && e.code === 'TOO_MANY_REQUESTS') throw e;
+    return false;
+  });
+  if (!claimed) return false;
   const results = await deps
     .rate({
       items: previewUrls.map((mediaUrl, i) => ({ key: `${i}`, mediaUrl })),

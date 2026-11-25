@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest } from 'next';
 import {
@@ -119,6 +120,46 @@ describe('3D post gate with the v2 rater', () => {
     // Rolled back (flag off): the remembered verdict no longer applies.
     expect(
       await gate([null], [hosted(0)], { ...memory, matureLevel: async () => null })
+    ).toBeUndefined();
+  });
+
+  it('never sends more angles than the preview graph renders', async () => {
+    const { rate, deps: d } = deps([true, true, true, true, true]);
+    const five = [0, 1, 2, 3, 4].map(hosted);
+    expect(await isModel3DMatureByV2({ user, req, previewUrls: five, workflowId: 'wf-1' }, d)).toBe(
+      false
+    );
+    expect(rate).not.toHaveBeenCalled();
+  });
+
+  it("the user's own limit refusing blocks the post instead of letting it through", async () => {
+    const refused = new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Slow down',
+      cause: { rateLimit: { retryAfterSeconds: 60 } },
+    });
+    await expect(
+      gate([false], [hosted(0)], { claim: async () => Promise.reject(refused) })
+    ).rejects.toBe(refused);
+  });
+
+  it('a refusal without retry details blocks too; a store outage keeps the current rating', async () => {
+    const bare = new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: "You're doing that too much...",
+    });
+    await expect(
+      gate([false], [hosted(0)], { claim: async () => Promise.reject(bare) })
+    ).rejects.toBe(bare);
+    const outage = new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'try again' });
+    expect(
+      await gate([true], [hosted(0)], { claim: async () => Promise.reject(outage) })
+    ).toBeUndefined();
+  });
+
+  it('a rater error still passes on the current rating', async () => {
+    expect(
+      await gate([true], [hosted(0)], { rate: async () => Promise.reject(new Error('rater down')) })
     ).toBeUndefined();
   });
 
