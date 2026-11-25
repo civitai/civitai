@@ -16,7 +16,7 @@ import { DISMISS_FAILED } from '$lib/notice-copy';
 import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
 import type { RankPerks } from '$lib/rank-up';
-import { getStanding, mutedFailure } from '$lib/server/standing';
+import { mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
 import { ratingExamples, withExamples } from '$lib/server/rating-examples';
@@ -62,6 +62,7 @@ import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import { pickItem } from './next-item.server';
 import { inquisitorActions, inquisitorView } from './inquisitor.server';
 import { apprenticePayload, progressPayload } from './apprentice';
+import { requestStanding, requireRequestMember } from '$lib/server/request-reads';
 import { UNSURE_ANSWER } from '$lib/server/yesno/keys';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -127,8 +128,8 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
   if (await inquisitorQueueOpen(locals.user)) return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([
-    requireMember(db, locals.user.id),
-    getStanding(db, locals.user.id),
+    requireRequestMember(db, locals),
+    requestStanding(db, locals),
   ]);
   await requireConsent(locals.user.id);
   const now = queueDeps.now();
@@ -403,7 +404,7 @@ export const actions: Actions = {
   vote: async (event) => {
     const arrivedAt = queueDeps.now().getTime();
     const userId = event.locals.user.id;
-    if ((await getStanding(db, userId)).muted) {
+    if ((await requestStanding(db, event.locals)).muted) {
       refused('muted', null, userId);
       return mutedFailure();
     }
@@ -432,7 +433,7 @@ export const actions: Actions = {
   skip: async ({ request, locals }) => {
     const skipRefused = (reason: string) =>
       metrics.voteRefused(reason, 'unknown', locals.user.id, null, 'skip');
-    if ((await getStanding(db, locals.user.id)).muted) {
+    if ((await requestStanding(db, locals)).muted) {
       skipRefused('muted');
       return mutedFailure();
     }
@@ -512,7 +513,7 @@ export const actions: Actions = {
   },
 
   apprentice: async ({ request, locals }) => {
-    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if ((await requestStanding(db, locals)).muted) return mutedFailure();
     if (!(await consented(locals.user.id))) return consentFailure();
     const form = await request.formData();
     const kind = form.get('kind');
