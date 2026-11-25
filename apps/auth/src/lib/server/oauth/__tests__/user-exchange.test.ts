@@ -542,9 +542,10 @@ describe('user token exchange — rate limits', () => {
     expect(h.rate.get(`oauth:token-exchange:${RELAY}`)).toBeUndefined();
   });
 
-  it("a listed app exchanging a token that isn't its own spends no client budget", async () => {
+  it("a listed app exchanging a token that isn't its own spends no client budget, and is a miss", async () => {
     expect((await exchange({ caller: OTHER_APP })).body.error).toBe('unauthorized_client');
     expect(h.rate.get(`oauth:token-exchange:${OTHER_APP}`)).toBeUndefined();
+    expect(h.rateCalls.filter((k) => k.startsWith(`oauth:token-exchange-miss:${OTHER_APP}:`))).toHaveLength(1);
     // Control: the token's own app spends one.
     expect((await exchange({ caller: APP })).status).toBe(200);
     expect(h.rate.get(`oauth:token-exchange:${APP}`)).toBe(1);

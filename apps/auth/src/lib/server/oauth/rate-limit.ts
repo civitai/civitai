@@ -56,9 +56,10 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                subject never spends it, so a flood of made-up tokens (or of real tokens minted for an
 //                unlisted app) sent through a relay cannot exhaust the relay's budget for every real user.
 //   - token-exchange-miss: per-(client, caller IP) (30/min) — user-exchange subject tokens that did NOT
-//                resolve, or whose app the resource does not list. Charged after the lookup, and only on a
-//                miss; a miss past the limit is answered 429. A subject that resolves never reads it, so a
-//                full bucket refuses only callers that keep sending bad tokens, never a valid one. The IP is
+//                resolve, whose app the resource does not list, or that the caller may not exchange. Charged
+//                after the lookup, and only on a miss; a miss past the limit is answered 429. A subject the
+//                resource accepts never reads it, so a full bucket never refuses a valid token; any bad
+//                token sent on a full key is answered 429, whoever sends it. The IP is
 //                getClientIp's: a relay that sends the viewer's IP as x-forwarded-for on the internal path
 //                gets one bucket per viewer, so a flood from one viewer is refused without refusing the
 //                others; with no IP it is one bucket per client.

@@ -185,10 +185,11 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     }
 
     // 5. The subject token, always looked up. A subject that does not resolve (unknown, revoked,
-    // expired, or not an exchangeable token), or whose app the resource does not list (step 6), is a
-    // miss: charged to the (client, caller IP) and to nothing else, and once that key is past its limit
-    // answered 429 instead. A subject that resolves never reads the miss limit, so a key flooded with
-    // bad tokens still exchanges every valid one.
+    // expired, or not an exchangeable token), whose app the resource does not list (step 6), or that
+    // the caller may not exchange (step 7) is a miss: charged to the (client, caller IP) and to nothing
+    // else, and once that key is past its limit answered 429 instead. A subject the resource accepts
+    // never reads the miss limit, so a key flooded with bad tokens still exchanges every valid one
+    // (a bad token sent on a full key gets the 429, whoever sends it).
     const miss = async (error: 'invalid_grant' | 'unauthorized_client', reason: string) => {
       if (!(await chargeTokenExchangeMiss(caller.id, input.clientIp))) {
         return refuse('rate_limited', 'subject miss limit', undefined, 'token-exchange-miss');
@@ -197,22 +198,22 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     };
     const now = new Date();
     const subject = await findSubjectTokenByHash(generateSecretHash(subjectToken), now);
-    if (!subject) return miss('invalid_grant', 'subject token not found');
+    if (!subject) return await miss('invalid_grant', 'subject token not found');
     ctx.app = subject.clientId;
     ctx.userId = subject.userId;
     const subjectRefusal = await subjectTokenRefusal(subject);
-    if (subjectRefusal) return miss('invalid_grant', subjectRefusal);
+    if (subjectRefusal) return await miss('invalid_grant', subjectRefusal);
 
     // 6. The app the token was issued to is allowed for this resource.
     if (!resource.apps.includes(subject.clientId)) {
-      return miss('unauthorized_client', 'app not listed for resource');
+      return await miss('unauthorized_client', 'app not listed for resource');
     }
 
     // 7. A direct exchange by the app, or a relay acting for it.
     let actor: string | undefined;
     if (caller.id !== subject.clientId) {
       if (!resource.relays.includes(caller.id)) {
-        return refuse('unauthorized_client', 'caller is neither the app nor a relay');
+        return await miss('unauthorized_client', 'caller is neither the app nor a relay');
       }
       actor = caller.id;
       ctx.actor = actor;
