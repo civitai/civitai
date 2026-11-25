@@ -152,7 +152,7 @@ export async function getReactors(
       SELECT count(*)::int AS n FROM ${sql.table(t.reactions)}
       WHERE ${sql.ref(t.fk)} = ${entityId} AND reaction = ${reaction} AND ${listed} ${counted}
     `.execute(db);
-    hidden = counts[reaction] - Number(listedRows.rows[0]?.n ?? 0);
+    hidden = Math.max(0, counts[reaction] - Number(listedRows.rows[0]?.n ?? 0));
   }
 
   const { cursor } = query;
