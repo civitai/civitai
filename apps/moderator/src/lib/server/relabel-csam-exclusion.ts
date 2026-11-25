@@ -9,9 +9,8 @@ import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
  * Every signal is used, because none is complete on its own: a later moderator removal
  * overwrites `blockedFor`, and an unsent `CsamReport` can have its image list replaced. The
  * `Report` arms match only rows written before `report.create` stopped taking the CSAM reason.
- * The owner checks are deliberately broader than the ticket's "CSAM-reported images". Everything the
- * moderator views withhold without the CSAM grant (`moderatorWithheldSql`) is excluded too, for every
- * labeler.
+ * The owner checks and the withheld arm (`moderatorWithheldSql`, for every labeler) go beyond
+ * CSAM-reported images.
  */
 export const csamExcludedImageIds = (imageIds: number[]) => sql<{ id: number }>`
   WITH candidate AS (SELECT DISTINCT unnest(${imageIds}::int[]) AS id),
