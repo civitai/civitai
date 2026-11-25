@@ -1,0 +1,18 @@
+{
+  "name": "fallback-retired-index",
+  "description": "The retired images index: Node refuses it (403 index_not_accessible) before any call.",
+  "request": {
+    "path": "/api/search/indexes/images_v6/search",
+    "body": "{\"q\":\"x\"}",
+    "host": "red.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": null,
+  "expect": {
+    "fallback": "search-index",
+    "nodeStatus": 403
+  }
+}

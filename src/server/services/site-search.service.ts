@@ -108,10 +108,22 @@ export class SiteSearchError extends Error {
 export type SiteSearchResponse = { status: number; body: unknown; raw?: Buffer };
 
 /**
+ * A search call and the backend's 200 body, as bytes: what the feed-go shadow sampler mirrors so the
+ * Go port can reshape the same answer (apps/feed-go DESIGN.md §18).
+ */
+export type SiteSearchUpstream = { path: string; request: string; response: Buffer };
+
+/**
  * Passthrough is asked for by the caller (the `site-search-passthrough` switch) and granted only
  * where `hitsNeedShaping` says no hit of the response would be changed for this viewer.
+ * `onUpstream`, set only for a request the feed-go shadow sampled, is told the call and the backend's
+ * 200 body; the body is then read as bytes and parsed as `res.json()` parses it, so the answer is
+ * the same either way.
  */
-export type SiteSearchOptions = { passthrough?: boolean };
+export type SiteSearchOptions = {
+  passthrough?: boolean;
+  onUpstream?: (upstream: SiteSearchUpstream) => void;
+};
 
 /**
  * The clauses every query on `indexUid` is held to, on top of whatever the client sends.
@@ -444,6 +456,15 @@ async function readJsonObjectBytes(res: Response): Promise<Buffer | undefined> {
   return bytes;
 }
 
+/** `res.json()`'s parse of bytes already read: UTF-8 (a BOM dropped), JSON.parse; undefined on failure. */
+function parseJsonBytes(bytes: Buffer): unknown {
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * POSTs to Meilisearch with the server's search key. A 4xx that rejects the query is returned
  * as-is so the client can tell a bad filter from an outage. An unreachable, timed-out or 5xx
@@ -454,12 +475,13 @@ async function readJsonObjectBytes(res: Response): Promise<Buffer | undefined> {
 async function postToSearch(
   path: string,
   body: unknown,
-  { passthrough = false }: SiteSearchOptions = {}
+  { passthrough = false, onUpstream }: SiteSearchOptions = {}
 ): Promise<SiteSearchResponse> {
   const host = env.NEXT_PUBLIC_SEARCH_HOST;
   const apiKey = env.SEARCH_TOKEN_API_KEY ?? env.SEARCH_API_KEY;
   if (!host) throw new SiteSearchError(503, 'search_unavailable', 'Search is not configured');
 
+  const request = JSON.stringify(body);
   let res: Response;
   try {
     res = await fetch(`${host}${path}`, {
@@ -468,7 +490,7 @@ async function postToSearch(
         'Content-Type': 'application/json',
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       },
-      body: JSON.stringify(body),
+      body: request,
       signal: AbortSignal.timeout(SITE_SEARCH_TIMEOUT_MS),
     });
   } catch (error) {
@@ -486,8 +508,18 @@ async function postToSearch(
   let responseBody: unknown;
   if (passthrough && res.status === 200) {
     const raw = await readJsonObjectBytes(res);
-    if (raw) return { status: 200, body: undefined, raw };
+    if (raw) {
+      onUpstream?.({ path, request, response: raw });
+      return { status: 200, body: undefined, raw };
+    }
     // not a JSON object: falls through to the failure handling below
+  } else if (onUpstream && res.status === 200) {
+    const bytes = await res.arrayBuffer().then(
+      (buffer) => Buffer.from(buffer),
+      () => undefined
+    );
+    responseBody = bytes ? parseJsonBytes(bytes) : undefined;
+    if (bytes && responseBody !== undefined) onUpstream({ path, request, response: bytes });
   } else {
     responseBody = await res.json().catch(() => undefined);
   }
@@ -523,7 +555,7 @@ export async function siteMultiSearch(
   const response = await postToSearch(
     '/multi-search',
     { queries: input.queries.map((query) => withViewer(query.indexUid, query, viewer)) },
-    { passthrough }
+    { passthrough, onUpstream: options.onUpstream }
   );
   if (response.status !== 200 || response.raw) return response;
 
@@ -551,7 +583,10 @@ export async function siteIndexSearch(
   const response = await postToSearch(
     `/indexes/${indexUid}/search`,
     withViewer(indexUid, params, viewer),
-    { passthrough: !!options.passthrough && !hitsNeedShaping(indexUid, viewer) }
+    {
+      passthrough: !!options.passthrough && !hitsNeedShaping(indexUid, viewer),
+      onUpstream: options.onUpstream,
+    }
   );
   if (response.status !== 200 || response.raw) return response;
 
@@ -569,5 +604,6 @@ export async function siteFacetSearch(
   // Facet values carry no hits, so nothing in this response is ever shaped.
   return postToSearch(`/indexes/${indexUid}/facet-search`, withViewer(indexUid, params, viewer), {
     passthrough: !!options.passthrough,
+    onUpstream: options.onUpstream,
   });
 }

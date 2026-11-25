@@ -44,12 +44,14 @@ func loadRegionBlockedGolden(t *testing.T) []regionBlockedRoute {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	// Every public route, each once: a route added to ServedEndpoints needs its Node capture too.
+	// Every public route, each once: a route added to ServedEndpoints needs its Node capture too. Not
+	// site-search: it hands every blocked region back (TestSearchHandsBlockedRegionBack).
 	got := make([]string, 0, len(doc.Routes))
 	for _, r := range doc.Routes {
 		got = append(got, r.Endpoint)
 	}
-	if want := slices.Sorted(slices.Values(ServedEndpoints)); !slices.Equal(slices.Sorted(slices.Values(got)), want) {
+	answering := slices.DeleteFunc(slices.Clone(ServedEndpoints), func(e string) bool { return e == EndpointSearch })
+	if want := slices.Sorted(slices.Values(answering)); !slices.Equal(slices.Sorted(slices.Values(got)), want) {
 		t.Fatalf("golden endpoints = %v, want exactly %v", got, want)
 	}
 	return doc.Routes

@@ -4068,6 +4068,11 @@ export type KnightsQueueItem = {
    * Yes/no items only: answers so far; serving finishes questions that are under way first.
    */
   voteCount: Generated<number>;
+  /**
+   * The settled value the label pass has finished with: recorded as its verdict label, or skipped for good (image not
+   * servable or gone, or refused by the label store too often). Null until then.
+   */
+  verdictLabelledValue: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

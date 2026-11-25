@@ -258,7 +258,12 @@ export const postRouter = router({
     .input(plannerPostIdSchema)
     .use(isFlagProtected('postPlanner'))
     .query(({ ctx, input }) =>
-      getPlannerPostDetail({ ...input, user: ctx.user, servableLevels: requestServableLevels(ctx) })
+      getPlannerPostDetail({
+        ...input,
+        user: ctx.user,
+        servableLevels: requestServableLevels(ctx),
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      })
     ),
   reschedule: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
