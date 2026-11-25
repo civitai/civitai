@@ -7,6 +7,7 @@ import {
   publishedPostSql,
 } from '~/server/services/collection-cover-visibility';
 import { assertImagesVisibleToViewer } from '~/server/services/image-visibility.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { getHiddenModelIds } from '~/server/services/model-visibility.service';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -59,8 +60,10 @@ export async function assertCollectionItemsVisibleToViewer({
 }) {
   const wanted = [...new Set(ids)];
   if (wanted.length === 0) return;
-  if (itemKey === 'imageId')
+  if (itemKey === 'imageId') {
+    await assertNotDealFileImages(wanted, 'used here');
     return assertImagesVisibleToViewer({ ids: wanted, userId, isModerator });
+  }
 
   const { from, alias, visible } = itemTable(itemKey);
   const viewable = isModerator

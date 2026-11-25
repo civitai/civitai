@@ -395,12 +395,30 @@ export const IMAGE_USES = {
 } as const satisfies Record<string, readonly [string, string]>;
 
 /**
- * Uses of an image with no Prisma relation to `Image`, so the relation test cannot list them;
- * `imageNotUsed` reads them beside `IMAGE_USES`. A deal file entry's copy is its file's evidence.
+ * Where a deal file points at its scan copy: an entry of a Final or Attachment, and a preview (a
+ * rejected one's copy is kept as evidence). The copy is owned by its uploader, so no ownership check
+ * stops it; every deal-copy check is built from this list.
  */
-export const IMAGE_USES_WITHOUT_RELATION = {
+export const DEAL_FILE_IMAGE_USES = {
   serviceDealFileEntries: ['ServiceDealFileEntry', 'imageId'],
+  serviceDealFilePreviews: ['ServiceDealFile', 'imageId'],
 } as const satisfies Record<string, readonly [string, string]>;
+
+/**
+ * Uses of an image with no Prisma relation to `Image`, so the relation test cannot list them;
+ * `imageNotUsed` reads them beside `IMAGE_USES`.
+ */
+export const IMAGE_USES_WITHOUT_RELATION = { ...DEAL_FILE_IMAGE_USES };
+
+/** True in SQL when a deal file points at the image whose id is `id`. */
+export const dealFileImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
+  sql<boolean>`(${sql.join(
+    Object.values(DEAL_FILE_IMAGE_USES).map(
+      ([table, column]) =>
+        sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d.${sql.id(column)} = ${id})`
+    ),
+    sql` OR `
+  )})`;
 
 /**
  * The key a stored url names, lowercased; shop artwork columns hold whatever the client sent.

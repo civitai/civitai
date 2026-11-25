@@ -138,7 +138,7 @@ beforeAll(async () => {
 const reset = () =>
   holder.db.exec(`
     SET session_replication_role = replica;
-    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue", "ServiceDealFileEntry";
+    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue", "ServiceDealFileEntry", "ServiceDealFile";
     SET session_replication_role = DEFAULT;
   `);
 
@@ -414,6 +414,18 @@ describe('an image a deal file entry points at', () => {
     await deleteImages([imageOf(PLAIN), other], { actor: { system: 'some-other-job' } });
     expect(await imageRow(imageOf(PLAIN))).toBeDefined();
     expect(await imageRow(other)).toBeUndefined();
+  });
+
+  it("is refused to its owner as a preview's copy, and the cleanup keeps it", async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await holder.db.query(`INSERT INTO "ServiceDealFile" ("imageId") VALUES ($1)`, [
+      imageOf(PLAIN),
+    ]);
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await deleteImages([imageOf(PLAIN)], { actor: { system: 'some-other-job' } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
   });
 
   it('control: the owner still deletes an image no entry points at', async () => {

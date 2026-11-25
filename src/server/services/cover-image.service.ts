@@ -128,9 +128,8 @@ export type CoverImageDeps = {
    * no-op measurable.
    */
   logExistenceUnknown: (args: { userId: number }) => void;
-  /** Throws {@link RESTRICTED_COVER_IMAGE_MESSAGE} for an image restricted by its base model, and
-   *  refuses a deal file's scan copy. */
-  assertNotRestricted: (id: number) => Promise<void>;
+  /** Refuses an image no cover may use: one its base model restricts, or a deal file's scan copy. */
+  assertUsableAsCover: (id: number) => Promise<void>;
 };
 
 export const RESTRICTED_COVER_IMAGE_MESSAGE = `This image can't be used as a cover: ${RESTRICTED_IMAGE_REASON}.`;
@@ -139,7 +138,7 @@ const restrictedCoverError = () =>
   new TRPCError({ code: 'BAD_REQUEST', message: RESTRICTED_COVER_IMAGE_MESSAGE });
 
 /** A missing id passes. */
-async function assertNotRestricted(id: number) {
+async function assertUsableAsCover(id: number) {
   // primary: guards the cover write, so a just-flagged image is seen.
   const image = await dbWrite.image.findUnique({
     where: { id },
@@ -248,7 +247,7 @@ export const productionCoverImageDeps: CoverImageDeps = {
     await assertClientKeysIssuedToCaller({ urls: [url], userId, alsoIssuedTo: uploaderId });
   },
   logExistenceUnknown,
-  assertNotRestricted,
+  assertUsableAsCover,
   // 🔴 Wrapped, not referenced directly. Reading `createImage` here would read it at MODULE
   // LOAD, and this module is now in the import graph of the article + challenge services —
   // so every existing test that wholesale-`vi.mock`s `image.service` without re-stubbing
@@ -283,7 +282,7 @@ export async function resolveCoverImageId(
   if (id != null) {
     await assertOwnership?.(id);
     // Keeping the cover already set (`currentCoverId`) is not choosing it, so a later flag doesn't block other edits.
-    if (id !== currentCoverId) await deps.assertNotRestricted(id);
+    if (id !== currentCoverId) await deps.assertUsableAsCover(id);
     return id;
   }
 
@@ -291,7 +290,7 @@ export async function resolveCoverImageId(
   if (reusable) {
     if (reusable.id !== currentCoverId) {
       if (reusable.restricted) throw restrictedCoverError();
-      await deps.assertNotRestricted(reusable.id);
+      await deps.assertUsableAsCover(reusable.id);
     }
     return reusable.id;
   }

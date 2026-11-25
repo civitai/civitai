@@ -378,6 +378,7 @@ import {
   type DeleteOutcome,
   type DeletedImage as DeletedImageWithFiles,
   type DeletedImageRow,
+  dealFileImageSql,
 } from '@civitai/db-queries/content-deletion';
 import {
   imagesPendingDeletion as readImagesPendingDeletion,
@@ -1046,21 +1047,19 @@ const withDeleteTransaction = <T>(
     : run(kyselyOver(dbWrite));
 
 /**
- * The system deletes that may remove a deal file's scan copy, besides a moderator's: the deal
- * pipeline's own, image ingestion's, and an account deletion's drain (`ACCOUNT_DELETION_DRAIN`),
- * whose deal holds on its own. Any other actor, an unknown system one included, leaves such an image.
+ * The system deletes that may remove a deal file's scan copy, besides any moderator delete: the deal
+ * pipeline's own and an account deletion's drain (`ACCOUNT_DELETION_DRAIN`), whose deal holds on
+ * its own. Any other actor, an unknown system one included, leaves such an image.
  */
 const DEAL_FILE_IMAGE_DELETERS = new Set([
   'creator-service-deal-unpack',
   'creator-service-deal-file',
   'creator-service-deal-review',
-  'image-ingestion',
   'remove-deleted-user-images',
 ]);
 
 /** In the DELETE's own WHERE, so an entry written after a check still keeps its image. */
-const notDealFileImage = sql<boolean>`NOT EXISTS (
-  SELECT 1 FROM "ServiceDealFileEntry" sde WHERE sde."imageId" = "Image"."id")`;
+const notDealFileImage = sql<boolean>`NOT ${dealFileImageSql(sql.ref('Image.id'))}`;
 
 /** `deleteImages`, with the images it left for their child-safety case. */
 export async function deleteImagesWithOutcome(

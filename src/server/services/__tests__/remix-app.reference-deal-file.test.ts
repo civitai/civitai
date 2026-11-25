@@ -11,7 +11,7 @@ beforeEach(() => {
 
 describe('loadReference', () => {
   it("refuses the caller's own image when it is a deal file's scan copy", async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{}] as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ dealFileImage: true }] as never);
     await expect(loadReference(1, caller)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

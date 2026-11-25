@@ -125,6 +125,8 @@ beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+    CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+    CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
     CREATE TABLE "Image" (
       minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,

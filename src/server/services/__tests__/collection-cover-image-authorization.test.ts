@@ -92,6 +92,22 @@ describe('updateCollectionCoverImage authorization', () => {
     );
   });
 
+  it("refuses the manager's own image when it is a deal file's scan copy", async () => {
+    arrangeCollection();
+    const prior = mockDbWrite.$queryRaw.getMockImplementation();
+    mockDbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...v: unknown[]) =>
+      [...strings].join('').includes('ServiceDealFile')
+        ? Promise.resolve([{ dealFileImage: true }])
+        : prior?.(strings, ...v) ?? Promise.resolve([])) as never);
+
+    await expect(
+      updateCollectionCoverImage({
+        input: { id: COLLECTION_ID, imageId: IMAGE_ID, userId: OWNER_ID },
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+  });
+
   it('refuses an image whose owner has blocked the manager, even before the cache knows', async () => {
     const BLOCKER = 4_321;
     const collectionRow = arrangeCollection();

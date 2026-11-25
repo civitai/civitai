@@ -42,6 +42,8 @@ const SCHEMA = `
     id int PRIMARY KEY, "userId" int NOT NULL, status text DEFAULT 'Published', "deletedAt" timestamp,
     availability text DEFAULT 'Public', mode text
   );
+  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
+  CREATE TABLE "ServiceDealFile" (id serial PRIMARY KEY, "imageId" int);
   CREATE TABLE "Model3D" (
     id int PRIMARY KEY, "userId" int NOT NULL, status text DEFAULT 'Published', "deletedAt" timestamp,
     availability text DEFAULT 'Public'
@@ -96,6 +98,20 @@ beforeEach(async () => {
   await Promise.all([replica.exec(reset), primary.exec(reset)]);
   getCached.mockReset().mockResolvedValue([]);
   hiddenModels.mockReset().mockResolvedValue(new Set());
+});
+
+describe('imageId', () => {
+  it("refuses a deal file's scan copy before any visibility read, for staff too", async () => {
+    await primary.exec(`INSERT INTO "ServiceDealFile" ("imageId") VALUES (77)`);
+    try {
+      for (const viewer of [{ userId: OWNER }, { userId: OWNER, isModerator: true }])
+        await expect(
+          assertCollectionItemsVisibleToViewer({ itemKey: 'imageId', ids: [77], ...viewer })
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    } finally {
+      await primary.exec(`TRUNCATE "ServiceDealFile"`);
+    }
+  });
 });
 
 type Key = 'postId' | 'articleId' | 'modelId' | 'model3dId';

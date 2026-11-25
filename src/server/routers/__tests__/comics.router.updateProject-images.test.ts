@@ -104,6 +104,12 @@ describe.each(['coverImageId', 'heroImageId'] as const)(
       );
     });
 
+    it("refuses the caller's own image when it is a deal file's scan copy", async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ dealFileImage: true }] as never);
+      await expect(update({ [column]: OWN_IMAGE })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(dbMock.dbWrite.comicProject.update).not.toHaveBeenCalled();
+    });
+
     it("refuses another user's image and writes nothing", async () => {
       await expect(update({ [column]: OTHERS_IMAGE })).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
