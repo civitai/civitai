@@ -4556,8 +4556,8 @@ describe('review publishing and counters', () => {
 });
 
 describe('dispute reviews', () => {
-  const disputed = async (buyerId = BUYER) => {
-    const { id } = await request({ buyerId });
+  const disputed = async (buyerId = BUYER, overrides: Parameters<typeof request>[0] = {}) => {
+    const { id } = await request({ buyerId, ...overrides });
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: buyerId });
@@ -4606,6 +4606,48 @@ describe('dispute reviews', () => {
       ?.latestReview;
   const resolve = (id: number, resolution: 'Refund' | 'Release') =>
     deals.resolveServiceDealDispute({ dealId: id, moderatorId: STRANGER, resolution });
+
+  it("shows the reviewer the buyer's form answers and the price they gave", async () => {
+    await q(`UPDATE "ServiceOffering" SET "requestForm" = $1::jsonb, "requestFormVersion" = 1`, [
+      JSON.stringify({
+        questions: [
+          {
+            type: 'pickOne',
+            id: 'style',
+            label: 'Style',
+            options: [
+              { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+              { id: 'color', label: 'Full color', price: 300, days: 2 },
+            ],
+          },
+        ],
+      }),
+    ]);
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const id = await disputed(BUYER, {
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: { style: 'color' },
+    });
+    const { deal } = await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER });
+    expect(deal).toMatchObject({
+      price: 800,
+      formAnswers: [{ label: 'Style', answer: 'Full color' }],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it('shows no form answers for a deal requested without a form', async () => {
+    const { deal } = await reviews.getServiceDisputeEvidence({
+      dealId: await disputed(),
+      viewerId: STRANGER,
+    });
+    expect(deal).toMatchObject({ formAnswers: null, priceBreakdown: null });
+  });
 
   it('refuses a review of a deal that is not Disputed, and writes nothing', async () => {
     const { id } = await request();
