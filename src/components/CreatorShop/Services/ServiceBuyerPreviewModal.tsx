@@ -22,7 +22,12 @@ export default function ServiceBuyerPreviewModal(
         <div className="mx-auto w-full max-w-[320px]">
           <ServiceOfferingCard {...card} preview />
         </div>
-        <ServiceOfferingTerms offering={card.offering} sellerUsername={card.sellerUsername} />
+        <ServiceOfferingTerms
+          offering={card.offering}
+          sellerUsername={card.sellerUsername}
+          seller={card.seller}
+          sellerId={card.sellerId}
+        />
         <ServiceBuyerDisclosure offering={card.offering} />
         <ServiceOfferingLicense offering={card.offering} />
       </Stack>

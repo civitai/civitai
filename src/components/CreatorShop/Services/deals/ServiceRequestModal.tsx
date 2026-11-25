@@ -65,7 +65,7 @@ export function ServiceRequestModal({
   seller,
   origin = 'listing',
 }: {
-  /** Where the popup opened. The service page already shows the description, so it skips it. */
+  /** Where the popup opened. */
   origin?: 'listing' | 'page';
   seller?: RequestSeller;
   sellerId?: number;
@@ -219,7 +219,7 @@ export function ServiceRequestModal({
 type RequestOffering = Parameters<typeof ServiceRequestModal>[0]['offering'];
 type RequestSeller = ComponentProps<typeof UserAvatar>['user'];
 
-// By item, not position: the list varies with the rollout and a line must keep its own icon.
+// By item, not position, so each line keeps its own icon.
 const DISCLOSURE_ICONS: Record<BuyerDisclosureItemId, typeof IconLock> = {
   hold: IconLock,
   delivery: IconPackage,
