@@ -26,18 +26,19 @@ import (
 // Every request outcome a path can reach is a 0 series per endpoint, and only those: served_cached
 // on the single-model route alone (the only cached answer), on both modes; no served_empty on
 // as-posts (its compute marks no trivial answer) nor on the single-model public route (its trivial
-// answer, the not-found body, falls back there); region_blocked (the app's 451 written here) on every
-// public route, serve mode only; feed_unavailable (the app's 503 for a failed feed call, written here)
-// on the public image.getInfinite route only.
+// answer, the not-found body, is not_found or a fallback there); region_blocked (the app's 451 written
+// here) on every public route, serve mode only; feed_unavailable (the app's 503 for a failed feed
+// call, written here) on the public image.getInfinite route only; not_found (Node's 404 written here)
+// on the public single-model route only.
 func TestRequestOutcomesAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	// serve: 6 public routes x served, served_empty, fallback, error, + v1-models-id served_cached,
 	// - served_empty on as-posts and v1-models-id; shadow: 7 endpoints x the same 4, + v1-models-id
 	// served_cached, - served_empty on as-posts; + region_blocked on the 6 public routes (serve only);
-	// + feed_unavailable on infinite (serve only).
-	if n := testutil.CollectAndCount(m.Requests); n != 6*4+1-2+7*4+1-1+6+1 {
-		t.Fatalf("feed_go_requests_total has %d series at construction, want 58", n)
+	// + feed_unavailable on infinite (serve only); + not_found on v1-models-id (serve only).
+	if n := testutil.CollectAndCount(m.Requests); n != 6*4+1-2+7*4+1-1+6+1+1 {
+		t.Fatalf("feed_go_requests_total has %d series at construction, want 59", n)
 	}
 	served := []string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id", "v1-images"}
 	all := append([]string{"model-associated"}, served...)
@@ -95,6 +96,20 @@ func TestRequestOutcomesAreSeeded(t *testing.T) {
 			l := map[string]string{"feed_endpoint": e, "mode": mode, "outcome": "feed_unavailable"}
 			if _, found := metricValue(t, reg, "feed_go_requests_total", l); found {
 				t.Errorf("requests%v exists: only the public image.getInfinite route answers the feed 503", l)
+			}
+		}
+	}
+	if v, found := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": "v1-models-id", "mode": "serve", "outcome": "not_found"}); !found || v != 0 {
+		t.Errorf("requests{v1-models-id,serve,not_found} = %v found=%v, want a 0 series", v, found)
+	}
+	for _, mode := range []string{"serve", "shadow"} {
+		for _, e := range all {
+			if e == "v1-models-id" && mode == "serve" {
+				continue
+			}
+			l := map[string]string{"feed_endpoint": e, "mode": mode, "outcome": "not_found"}
+			if _, found := metricValue(t, reg, "feed_go_requests_total", l); found {
+				t.Errorf("requests%v exists: only the public single-model route answers Node's 404", l)
 			}
 		}
 	}

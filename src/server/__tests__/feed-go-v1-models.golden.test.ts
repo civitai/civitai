@@ -10,7 +10,8 @@
  * only the I/O answered from the fixture: the model statement (`pgDbRead.cancellableQuery`, whose SQL
  * is captured), the per-id caches' `fetch`, and the small replica reads.
  *
- * It requires the fixture's `expect.body` to be the exact bytes `res.json` writes, and `expect.sql` the
+ * It requires the fixture's `expect.body` to be the exact bytes `res.json` writes, with the status
+ * `expect.status` (200 when absent; the [id] not-found answer is a 404), and `expect.sql` the
  * model statement this code builds (whitespace-normalised text and its values). feed-go's golden
  * harness (apps/feed-go/internal/v1models/golden_test.go) requires the same bytes and the same
  * statement from Go over the same world, so the two are held to each other through the fixture.
@@ -87,6 +88,8 @@ type Fixture = {
   world: World;
   expect: {
     fallback?: string;
+    /** The status the handler answers with; absent = 200. */
+    status?: number;
     body?: string | null;
     sql?: { text: string; values: unknown[] } | null;
     trainingDataSql?: { text: string; values: unknown[] } | null;
@@ -458,9 +461,15 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
       const want = f.expect.trainingDataSql;
       expect(
         actual,
-        `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql, trainingDataSql, search })}`
+        `GOLDEN-ACTUAL ${file} ${JSON.stringify({
+          status: res.statusCode,
+          body,
+          sql,
+          trainingDataSql,
+          search,
+        })}`
       ).toEqual({
-        status: 200,
+        status: f.expect.status ?? 200,
         body: f.expect.body,
         sql: f.expect.sql ? { ...f.expect.sql, text: normalizeSql(f.expect.sql.text) } : null,
         trainingDataSql: want ?? null,
@@ -550,7 +559,8 @@ type HeaderCase = {
   name: string;
   fixture: string;
   request: { headers: Record<string, string> };
-  expect: { headers: Record<string, string> };
+  /** status: the status the route answers with; absent = 200. */
+  expect: { status?: number; headers: Record<string, string> };
 };
 
 const headerCases: { file: string; hc: HeaderCase }[] = readdirSync(HEADER_DIR)
@@ -579,7 +589,7 @@ describe('feed-go /api/v1/models header cases: the real Node response headers', 
       expect(
         { status: res.statusCode, headers },
         `HEADERS-ACTUAL ${file} ${JSON.stringify(headers)}`
-      ).toEqual({ status: 200, headers: hc.expect.headers });
+      ).toEqual({ status: hc.expect.status ?? 200, headers: hc.expect.headers });
     },
     120_000
   );
