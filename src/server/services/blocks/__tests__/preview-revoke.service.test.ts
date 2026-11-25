@@ -8,7 +8,6 @@ import {
   buildPreviewRevokeRequest,
   clearQueuedBanRevoke,
   drainPreviewRevokeQueue,
-  PREVIEW_REVOKE_MAX_AGE_MS,
   releaseHoldsForUnbannedUser,
   revokePreviewSession,
   revokePreviewsForBannedUser,
@@ -250,13 +249,60 @@ describe('the reaper drains the queue', () => {
     });
   });
 
-  // 8 h: PREVIEW_REVOKE_MAX_AGE_MS in preview-revoke.service.ts.
-  it('one older than the 8 h cap is dropped unsent, and the drop is logged', async () => {
+  // 7 days: PREVIEW_REVOKE_MAX_AGE_MS in preview-revoke.service.ts. Literal ms, never derived
+  // from the constant, so a change to the bound is a change to this test.
+  const HOUR_MS = 3_600_000;
+  const DAY_MS = 24 * HOUR_MS;
+
+  it('the queue key lives 7 days from an enqueue', async () => {
+    answer(503);
+    await releaseHoldsForUnbannedUser(USER, NOW_MS);
+    expect(lua.pttl(QUEUE)).toBe(604_800_000);
+  });
+
+  it('a ban revoke queued 6 d 23 h ago is still in Redis and is sent, signed at send time', async () => {
+    answer(503);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    const later = NOW_MS + 6 * DAY_MS + 23 * HOUR_MS;
+    lua.nowMs = later; // the queue key's own TTL runs too
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toEqual({
+      sent: 1,
+      dropped: 0,
+      retrying: 0,
+      lastStatus: 200,
+    });
+    const init = fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+    expect(init.headers['x-preview-revoke-timestamp']).toBe(String(later / 1000));
+    expect(init.headers['x-preview-revoke-signature']).toBe(
+      buildPreviewRevokeRequest(
+        { userId: USER, previewId: '*', issuedAt: NOW_MS + 120_000, reason: 'ban' },
+        SECRET,
+        later
+      ).headers['x-preview-revoke-signature']
+    );
+    expect(queued()).toEqual({});
+  });
+
+  it('a hold release queued 6 d 23 h ago is still in Redis and is sent', async () => {
+    answer(503);
+    await releaseHoldsForUnbannedUser(USER, NOW_MS);
+    const later = NOW_MS + 6 * DAY_MS + 23 * HOUR_MS;
+    lua.nowMs = later;
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toMatchObject({ sent: 1, dropped: 0 });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+  });
+
+  it('one queued 7 d 1 h ago is dropped unsent, and the drop is logged', async () => {
     answer(503);
     await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
     fetchMock.mockClear();
     loggingMock.logToAxiom.mockClear();
-    expect(await drainPreviewRevokeQueue(NOW_MS + PREVIEW_REVOKE_MAX_AGE_MS + 1)).toEqual({
+    // The Redis clock is left at the enqueue, so the age check (not the key TTL) is what drops it.
+    expect(await drainPreviewRevokeQueue(NOW_MS + 7 * DAY_MS + HOUR_MS)).toEqual({
       sent: 0,
       dropped: 1,
       retrying: 0,
@@ -268,9 +314,16 @@ describe('the reaper drains the queue', () => {
         type: 'app-assistant.preview-revoke.expired',
         userId: USER,
         reason: 'r',
-        payload: { ageMs: PREVIEW_REVOKE_MAX_AGE_MS + 1 },
+        payload: { ageMs: 608_400_000 },
       },
     ]);
+  });
+
+  it('the queue key itself is gone 7 d 1 h after the last enqueue', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    lua.nowMs = NOW_MS + 7 * DAY_MS + HOUR_MS;
+    expect(lua.pttl(QUEUE)).toBe(-2);
   });
 });
 

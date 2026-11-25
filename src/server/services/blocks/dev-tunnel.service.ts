@@ -135,8 +135,9 @@ const directUsedKey = (userId: number, previewId: string) =>
   `${USER_PREFIX}:direct-used:{${userId}}:${previewId}` as const;
 /**
  * How long a `used` marker lives: the session cap (the latest its session can end and queue a
- * revoke) plus the longest a queued revoke is kept and retried. Shorter, and a revoke sent from
- * the queue after the marker expired could end a new session opened on the same id.
+ * revoke) plus the longest a queued revoke is kept and retried (PREVIEW_REVOKE_MAX_AGE_MS, 7
+ * days). Shorter, and a revoke sent from the queue after the marker expired could end a new
+ * session opened on the same id.
  */
 export const DIRECT_USED_MARKER_SECONDS =
   DEV_TUNNEL_HARD_SECONDS + Math.ceil(PREVIEW_REVOKE_MAX_AGE_MS / 1000);
