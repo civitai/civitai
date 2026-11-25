@@ -7,8 +7,7 @@ import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted
 
 // An orchestrator AIR the AIR grammar cannot read is still one to the orchestrator.
 const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
-// A URL only as http(s):// or a media data URI; any other scheme is held to the AIR rule. Stricter
-// than app-step-positions' URL_VALUE_RE, which decides what counts as a URL off media keys.
+// A URL only as http(s):// or a media data URI; any other scheme is held to the AIR rule.
 const MEDIA_URL_RE = /^(https?:\/\/|data:(image|video|audio)\/[a-z0-9.+-]+(;[^,]*)?,)/i;
 // An orchestrator blob key, with or without a file extension, and a training blob key.
 export const BLOB_KEY_RE = /^([0-9a-z]{26}(\.[0-9a-z]{1,10})?|[0-9a-f]{32}(\.[0-9a-z]{1,10})?)$/i;
