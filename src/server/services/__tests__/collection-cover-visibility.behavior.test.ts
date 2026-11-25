@@ -103,6 +103,7 @@ const STRANGER_UPLOAD = 208; // postless upload by a stranger
 const MANAGER_UPLOAD = 209; // postless upload by a manager of the collection
 const VIEWER_REMOVED = 210; // the viewer's own removed image
 const VIEW_ONLY_UPLOAD = 211; // postless upload by a contributor without manage rights
+const SONG_COVER = 299; // stranger's song on a published public post
 const OTHER_MANAGER_UPLOAD = 212; // postless upload by a manager of a different collection
 const PENDING_SCAN = 214; // stranger's image whose scan hasn't finished
 const OWNER_REMOVED = 215; // the collection owner's own removed upload
@@ -126,6 +127,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
+      type text NOT NULL DEFAULT 'image',
       minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,
       "userId"          integer NOT NULL,
@@ -197,6 +199,7 @@ beforeAll(async () => {
       (${OTHER_MANAGER_UPLOAD}, ${OTHER_MANAGER}, NULL, 'Scanned', NULL, NULL);
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${REMOVED_LEVEL}, ${STRANGER}, 1, 32);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion") VALUES (${PENDING_SCAN}, ${STRANGER}, 1, 'Pending');
+    INSERT INTO "Image" ("id", "userId", "postId", "type") VALUES (${SONG_COVER}, ${STRANGER}, 1, 'audio');
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${UNRATED}, ${STRANGER}, 1, 0), (${VIEWER_UNRATED}, ${VIEWER}, 5, 0);
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "minor") VALUES
       (${MINOR_R}, ${VIEWER}, 5, 4, true),
@@ -270,6 +273,14 @@ describe('which covers a stranger is shown', () => {
   it("shows the image's owner their own unrated image, and nobody else", async () => {
     expect(await servable(VIEWER_UNRATED, { id: VIEWER })).toBe(true);
     expect(await servable(VIEWER_UNRATED, { id: STRANGER })).toBe(false);
+  });
+
+  // No viewer here holds the music flag.
+  it('shows a song as a cover only to its owner and staff', async () => {
+    expect(await servable(SONG_COVER)).toBe(false);
+    expect(await servable(SONG_COVER, { id: VIEWER })).toBe(false);
+    expect(await servable(SONG_COVER, { id: STRANGER })).toBe(true);
+    expect(await servable(SONG_COVER, { id: 99, isModerator: true })).toBe(true);
   });
 
   it('shows staff any cover', async () => {

@@ -521,6 +521,7 @@ export const updatePostHandler = async ({
               tagId: collectionTagId,
               isModerator: ctx.user.isModerator,
               canAccessUserChallenges: ctx.features.userChallenges,
+              canUseMusic: ctx.features.music,
             },
             permissions,
           });

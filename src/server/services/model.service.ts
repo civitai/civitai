@@ -2055,7 +2055,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         modelVersionImages[image.modelVersionId].images.push(image);
       }
     } else {
-      modelVersionImages = await getImagesForModelVersionCache(modelVersionIds);
+      modelVersionImages = await getImagesForModelVersionCache(modelVersionIds, user);
     }
     if (!holdExempt?.isModerator)
       modelVersionImages = await holdForViewer(modelVersionImages, items, holdExempt);
@@ -6988,7 +6988,8 @@ export async function getModelsWithVersions({
   curate ??= (await import('~/server/services/version-showcase.service')).withCuratedShowcases;
   const images = await holdShowcaseImages(
     await curate(
-      await getImagesForModelVersionCache(modelVersionIds),
+      // The flag reads only the fields this session-shaped viewer carries.
+      await getImagesForModelVersionCache(modelVersionIds, user as SessionUser | undefined),
       showcaseSiteForBrowsingLevel(input.browsingLevel ?? sfwBrowsingLevelsFlag)
     ),
     new Map(

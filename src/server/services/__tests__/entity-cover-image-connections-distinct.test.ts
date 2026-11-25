@@ -258,6 +258,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         // `minorMatureImageVisibleSql`, for a signed-out viewer here; its rows are in
         // minor-mature-image-visibility.behavior.test.ts.
         'AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?))) ' +
+        // songsHiddenSql: this viewer holds no `music` flag.
+        'AND i."type" != \'audio\' ' +
         // `coverRated`: an unrated image is a cover for moderators only.
         'AND (i."nsfwLevel" NOT IN (0, ?) OR ?::boolean) ' +
         // `heldGalleryImageSql`, exempting the model owner and moderators; its rows are in

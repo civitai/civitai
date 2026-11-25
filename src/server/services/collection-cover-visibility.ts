@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { canSeeSongs, songsHiddenSql } from '~/server/services/song-visibility-sql';
+import type { SessionUser } from '~/types/session';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   imageNotRestrictedSql,
@@ -181,10 +183,13 @@ export function collectionItemCoversSql({
   itemsPerCollection,
   imageSql,
   srcImageLevels = sfwBrowsingLevelsFlag,
+  songsHidden,
 }: {
   collectionIds: number[];
   itemsPerCollection: number;
   imageSql: Prisma.Sql;
+  /** `songsHiddenSql` for the viewer: an item that is a song yields no cover image. */
+  songsHidden?: Prisma.Sql;
   /**
    * The levels an article's cover image may have for its legacy cover string to go with it. SFW
    * for a reader that shows the string to everyone; a reader that drops the string with an image
@@ -192,6 +197,7 @@ export function collectionItemCoversSql({
    */
   srcImageLevels?: number;
 }) {
+  const songs = songsHidden ? Prisma.sql`AND ${songsHidden}` : Prisma.empty;
   return Prisma.sql`
     WITH target AS MATERIALIZED (
       SELECT *
@@ -217,6 +223,7 @@ export function collectionItemCoversSql({
       WHERE ${servableCollectionCoverSql({
         postlessAllowed: itemUploadSql(Prisma.sql`ti."addedById"`),
       })}
+        ${songs}
     ), postItemImage AS MATERIALIZED (
       SELECT * FROM (
           SELECT
@@ -229,6 +236,7 @@ export function collectionItemCoversSql({
             AND ${servableImageSql}
             AND ${publishedPostSql}
             AND ${withinItsModelSql}
+            ${songs}
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -249,6 +257,7 @@ export function collectionItemCoversSql({
               AND mv.status = 'Published'
               AND mv.availability != 'Private'
               AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
+              ${songs}
       ) t
       WHERE t.rn = 1
     ), articleItemImage AS MATERIALIZED (
@@ -262,6 +271,7 @@ export function collectionItemCoversSql({
           AND ${servableImageSql}
           AND ${withinItsModelSql}
           AND ${publishedArticleSql}
+          ${songs}
     ), articleItemSrc AS MATERIALIZED (
         -- A legacy cover string carries no rating of its own, and its readers show it to every
         -- viewer: it goes with a servable cover or banner image at a level everyone may see, or,
@@ -279,6 +289,7 @@ export function collectionItemCoversSql({
         WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
           AND ${servableImageSql}
           AND ${publishedModel3dSql}
+          ${songs}
     )
     SELECT
         target."collectionId" id,
@@ -316,6 +327,14 @@ export async function getModelWithheldImageIds(
 
 type CoverViewer = { id?: number; isModerator?: boolean } | undefined | null;
 
+/** No song as a cover unless the viewer may see songs (`canSeeSongs`), or it is their own. */
+const coverSongsSql = (viewer: CoverViewer) =>
+  songsHiddenSql({
+    // The flag reads only the fields this session-shaped viewer carries.
+    music: canSeeSongs((viewer ?? undefined) as SessionUser | undefined),
+    ownerId: viewer?.id,
+  }) ?? Prisma.sql`TRUE`;
+
 type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId: number };
 
 type CoverDb = Pick<typeof dbRead, '$queryRaw'>;
@@ -347,7 +366,7 @@ export async function getServableCoverCollectionIds(
           collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
         }),
         heldExempt: modelOwnerSql,
-      })}) AND ${withinHeldGallerySql(modelOwnerSql)}`;
+      })}) AND ${withinHeldGallerySql(modelOwnerSql)} AND ${coverSongsSql(viewer)}`;
   const rows = await db.$queryRaw<{ collectionId: number }[]>`
     SELECT v."collectionId"
     FROM unnest(

@@ -18,10 +18,12 @@ import {
   notReviewImageSql,
   shownReviewImageSql,
 } from '~/server/services/creator-service-review-image-sql';
+import { canSeeSongs, songsHiddenSql } from '~/server/services/song-visibility-sql';
 import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { SessionUser } from '~/types/session';
 
 /**
  * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
@@ -125,9 +127,15 @@ export function imageVisibilityConditions({
   ownerSeesHeld = false,
   shownReviewImageLevels,
   judgingCrucibleIds,
+  music,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /**
+   * The viewer's `music` flag: `false` hides songs other than the viewer's own (`songsHiddenSql`).
+   * Unset leaves songs to the caller, as for a by-id action a song procedure already gated.
+   */
+  music?: boolean;
   /**
    * `userId` (the session user) also sees their own items under an owner-hidden review hold. Only
    * for a read that shows the owner their item; not for one that acts on the image (a remix, say).
@@ -226,7 +234,22 @@ export function imageVisibilityConditions({
     imageNotRestrictedSql({ viewerId: userId }),
     // Without the opt-in, a review image is closed to its uploader too (moderators aside).
     ...(shownReviewImageLevels === undefined ? [notReviewImageSql] : []),
+    ...(music === false ? [songsHiddenSql({ music, ownerId: userId })!] : []),
   ];
+}
+
+export { canSeeSongs, songsHiddenSql };
+
+/**
+ * `songsHiddenSql` over rows already read, for a cache filled for every viewer: `rows` without the
+ * songs `viewer` may not see (signed out when undefined).
+ */
+export function withoutHiddenSongs<T extends { type?: string | null; userId?: number | null }>(
+  rows: T[],
+  viewer: SessionUser | undefined
+) {
+  if (canSeeSongs(viewer)) return rows;
+  return rows.filter((row) => row.type !== 'audio' || (!!viewer && row.userId === viewer.id));
 }
 
 /**
@@ -241,10 +264,13 @@ export async function assertImageVisibleToViewer({
   withSignedOutVerdict = false,
   ownerSeesHeld = false,
   judgingCrucibleIds,
+  music,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
+  /** `imageVisibilityConditions`' `music`: pass `canSeeSongs` from a read that serves the image. */
+  music?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`. */
   ownerSeesHeld?: boolean;
   /** `imageVisibilityConditions`' `judgingCrucibleIds`. */
@@ -261,7 +287,11 @@ export async function assertImageVisibleToViewer({
   withSignedOutVerdict?: boolean;
 }) {
   const signedOutVerdict = withSignedOutVerdict
-    ? Prisma.sql`(${Prisma.join([Prisma.sql`TRUE`, ...imageVisibilityConditions({})], ' AND ')})`
+    ? Prisma.sql`(${Prisma.join(
+        // Signed out holds no `music` flag.
+        [Prisma.sql`TRUE`, ...imageVisibilityConditions({ music: false })],
+        ' AND '
+      )})`
     : Prisma.sql`NULL::boolean`;
   // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
   // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
@@ -284,7 +314,13 @@ export async function assertImageVisibleToViewer({
     WHERE ${Prisma.join(
       [
         Prisma.sql`i.id = ${id}`,
-        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, judgingCrucibleIds }),
+        ...imageVisibilityConditions({
+          userId,
+          isModerator,
+          ownerSeesHeld,
+          judgingCrucibleIds,
+          music,
+        }),
       ],
       ' AND '
     )}

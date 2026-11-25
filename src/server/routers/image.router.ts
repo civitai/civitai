@@ -1,4 +1,5 @@
 import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
+import { canSeeSongs } from '~/server/services/image-visibility.service';
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -144,6 +145,7 @@ export const imageRouter = router({
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        music: canSeeSongs(ctx.user ?? undefined),
       })
     ),
   /**
