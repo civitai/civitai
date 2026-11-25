@@ -36,9 +36,8 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
   homeBlockCacheBust: vi.fn(),
 }));
 
-const { saveItemInCollections, bulkSaveItems, upsertCollection } = await import(
-  '~/server/services/collection.service'
-);
+const { saveItemInCollections, bulkSaveItems, upsertCollection, updateCollectionCoverImage } =
+  await import('~/server/services/collection.service');
 
 const COLLECTION_ID = 10;
 const OWNER_ID = 999;
@@ -311,6 +310,73 @@ describe('songs and playlists', () => {
   });
 
   describe('without the music flag', () => {
+    it('refuses bulk-adding a song to an image or untyped collection', async () => {
+      for (const type of ['Image', null]) {
+        arrange(type as never);
+        mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+        await expect(
+          bulkSaveItems({
+            input: { collectionId: COLLECTION_ID, imageIds: [PICTURE, SONG], userId: SUBMITTER_ID },
+            permissions: { write: true, isContributor: true, isOwner: false } as never,
+          } as never)
+        ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: SONGS_UNAVAILABLE_MESSAGE });
+      }
+      expect(mockDbWrite.collectionItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it('still bulk-adds pictures to an image collection', async () => {
+      arrange('Image');
+      mockDbRead.image.findFirst.mockResolvedValue(null);
+      mockDbWrite.collectionItem.createMany.mockResolvedValue({ count: 1 } as never);
+      await bulkSaveItems({
+        input: { collectionId: COLLECTION_ID, imageIds: [PICTURE], userId: SUBMITTER_ID },
+        permissions: { write: true, isContributor: true, isOwner: false } as never,
+      } as never);
+      expect(mockDbWrite.collectionItem.createMany).toHaveBeenCalled();
+    });
+
+    it('refuses a song as the first item of an untyped collection', async () => {
+      mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+      await expect(
+        upsertCollection({
+          input: { name: 'Mine', read: 'Public', imageId: SONG, userId: 1 },
+        } as never)
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: SONGS_UNAVAILABLE_MESSAGE });
+      expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a song as a cover, and any cover for a playlist', async () => {
+      arrange('Image');
+      mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+      const setCover = (imageId: number) =>
+        updateCollectionCoverImage({
+          input: { id: COLLECTION_ID, imageId, userId: OWNER_ID },
+        });
+      await expect(setCover(SONG)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      arrange('Music');
+      mockDbRead.image.findFirst.mockResolvedValue(null);
+      await expect(setCover(PICTURE)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: SONGS_UNAVAILABLE_MESSAGE,
+      });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator save a song and edit a playlist', async () => {
+      arrange('Music');
+      await expect(
+        saveItemInCollections({
+          input: {
+            imageId: SONG,
+            userId: SUBMITTER_ID,
+            isModerator: true,
+            collections: [{ collectionId: COLLECTION_ID }],
+            removeFromCollectionIds: [],
+          } as never,
+        })
+      ).resolves.toBe('added');
+    });
+
     it('refuses saving a song, and saving into a playlist', async () => {
       arrange('Music');
       await expect(save(SONG, false)).rejects.toMatchObject({

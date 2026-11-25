@@ -153,6 +153,7 @@ export const getAllCollectionsInfiniteHandler = async ({
       imagesPerCollection: 10, // Some fallbacks
       browsingLevel,
       showsImage,
+      viewer: ctx.user && { ...ctx.user, isModerator: credentialViews(ctx).asModerator },
     });
 
     // Get Item Counts
@@ -497,7 +498,12 @@ export const updateCollectionCoverImageHandler = async ({
 
   try {
     const collection = await updateCollectionCoverImage({
-      input: { ...input, userId: user.id, isModerator: user.isModerator },
+      input: {
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+        canUseMusic: ctx.features?.music,
+      },
     });
 
     return collection;

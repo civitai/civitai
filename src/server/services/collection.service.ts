@@ -157,7 +157,11 @@ import {
   getServableCoverCollectionIds,
   isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
-import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  canSeeSongs,
+  songsHiddenSql,
+} from '~/server/services/image-visibility.service';
 import {
   JUDGE_RATING_METADATA_KEY,
   stripBlockProvenanceMetadata,
@@ -948,9 +952,26 @@ async function imageCollectionType(imageId: number) {
   return image?.type === MediaType.audio ? CollectionType.Music : CollectionType.Image;
 }
 
-/** Playlists and the songs in them are for `music` flag holders only. */
-function assertCanUseMusicCollections(canUseMusic: boolean | undefined) {
-  if (!canUseMusic) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+/** Playlists and the songs in them are for `music` flag holders and moderators only. */
+function assertCanUseMusicCollections(
+  canUseMusic: boolean | undefined,
+  isModerator: boolean | undefined
+) {
+  if (!canUseMusic && !isModerator) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
+/** `assertCanUseMusicCollections` when any of `imageIds` is a song. */
+async function assertCanSaveSongs(
+  imageIds: number[],
+  canUseMusic: boolean | undefined,
+  isModerator: boolean | undefined
+) {
+  if (canUseMusic || isModerator || !imageIds.length) return;
+  const song = await dbRead.image.findFirst({
+    where: { id: { in: imageIds }, type: MediaType.audio },
+    select: { id: true },
+  });
+  if (song) assertCanUseMusicCollections(canUseMusic, isModerator);
 }
 
 /**
@@ -1126,7 +1147,7 @@ export const saveItemInCollections = async ({
       itemKey === 'imageId'
         ? await imageCollectionType(input.imageId as number)
         : inputToCollectionType[itemKey];
-    if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
+    if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic, isModerator);
     // check if all collections match the Model type
     const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
@@ -1140,7 +1161,7 @@ export const saveItemInCollections = async ({
     throw throwBadRequestError('3D models cannot be entered into contest collections');
   }
   if (collections.some((c) => c.type === CollectionType.Music))
-    assertCanUseMusicCollections(canUseMusic);
+    assertCanUseMusicCollections(canUseMusic, isModerator);
   // Playlists are plain lists of songs: no contest gates cover them.
   if (
     collections.some((c) => c.type === CollectionType.Music && c.mode === CollectionMode.Contest)
@@ -1661,7 +1682,8 @@ export const upsertCollection = async ({
       },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
-    if (currentCollection.type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
+    if (currentCollection.type === CollectionType.Music)
+      assertCanUseMusicCollections(canUseMusic, isModerator);
 
     // An editor shown no cover because it is hidden from them sends `image: null`; that leaves the
     // stored cover as it is rather than removing it.
@@ -1994,7 +2016,7 @@ export const upsertCollection = async ({
   if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
     throw throwBadRequestError('3D model collections cannot be contests');
   }
-  if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
+  if (type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic, isModerator);
   if (type === CollectionType.Music && mode === CollectionMode.Contest) {
     throw throwBadRequestError('Playlists cannot be contests');
   }
@@ -2003,6 +2025,7 @@ export const upsertCollection = async ({
     if ((await imageCollectionType(imageId)) !== type)
       throw throwBadRequestError('Collection type mismatch');
   }
+  if (imageId) await assertCanSaveSongs([imageId], canUseMusic, isModerator);
 
   for (const [itemKey, itemId] of [
     ['imageId', imageId],
@@ -2097,9 +2120,13 @@ export const upsertCollection = async ({
 export const updateCollectionCoverImage = async ({
   input,
 }: {
-  input: UpdateCollectionCoverImageInput & { userId: number; isModerator?: boolean };
+  input: UpdateCollectionCoverImageInput & {
+    userId: number;
+    isModerator?: boolean;
+    canUseMusic?: boolean;
+  };
 }) => {
-  const { id, imageId, userId, isModerator } = input;
+  const { id, imageId, userId, isModerator, canUseMusic } = input;
   const permission = await getUserCollectionPermissionsById({
     id,
     userId,
@@ -2108,6 +2135,15 @@ export const updateCollectionCoverImage = async ({
 
   if (!permission.manage) {
     throw throwAuthorizationError('You do not have permission to manage this collection');
+  }
+  if (!canUseMusic && !isModerator) {
+    const collection = await dbRead.collection.findUnique({
+      where: { id },
+      select: { type: true },
+    });
+    if (collection?.type === CollectionType.Music)
+      assertCanUseMusicCollections(canUseMusic, isModerator);
+    await assertCanSaveSongs([imageId], canUseMusic, isModerator);
   }
 
   await assertImageVisibleToViewer({
@@ -3855,7 +3891,8 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
-  if (collection.type === CollectionType.Music) assertCanUseMusicCollections(canUseMusic);
+  if (collection.type === CollectionType.Music)
+    assertCanUseMusicCollections(canUseMusic, isModerator);
   for (const [itemKey, ids] of [
     ['imageId', imageIds],
     ['postId', postIds],
@@ -3991,6 +4028,7 @@ export const bulkSaveItems = async ({
         where: { imageId: { in: imageIds }, collectionId },
       })
     ).map((item) => item.imageId);
+    await assertCanSaveSongs(imageIds, canUseMusic, isModerator);
     // A playlist takes only the songs among them.
     const songIds =
       collection.type === CollectionType.Music
@@ -4166,10 +4204,13 @@ export const getCollectionCoverImages = async ({
   imagesPerCollection,
   browsingLevel,
   showsImage,
+  viewer,
 }: {
   collectionIds: number[];
   imagesPerCollection: number;
   browsingLevel: number;
+  /** Who the covers are for: songs only for `canSeeSongs`, or their owner. */
+  viewer: SessionUser | undefined;
   /** The viewer's browsing-tag filter, from `getShowcaseImageFilter`. */
   showsImage: (image: {
     userId?: number;
@@ -4209,6 +4250,7 @@ export const getCollectionCoverImages = async ({
           imageSql,
           // The string is dropped below with an image above the viewer's level.
           srcImageLevels: allBrowsingLevelsFlag,
+          songsHidden: songsHiddenSql({ music: canSeeSongs(viewer), ownerId: viewer?.id }),
         })}`
       : [];
   const withinLevel = itemImages.filter(

@@ -1,3 +1,4 @@
+import { songsHiddenSql } from '~/server/services/song-visibility-sql';
 import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
@@ -321,6 +322,8 @@ export const pullData = async (
       collectionIds: collectionsNeedingImages,
       itemsPerCollection: 10,
       imageSql: collectionIndexImageSql,
+      // The index is read by everyone: no song is a cover in it.
+      songsHidden: songsHiddenSql({ music: false }),
     })}`;
   }
 
