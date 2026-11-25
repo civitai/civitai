@@ -8,14 +8,12 @@ export type StorageFigure = { bytes: number; docs: number };
 /**
  * One viewer's figure in one app, split by what "Empty" does with each part. `private` (their
  * private documents) always goes; `shared` (the visible posts they authored) goes when they ask
- * for it; `hidden` (their posts moderation hid) and `counters` (counter documents their increment
- * created) stay. The parts sum to the figure.
+ * for it; `hidden` (their posts moderation hid) stays. The parts sum to the figure.
  */
 export type StorageHoldings = {
   private: StorageFigure;
   shared: StorageFigure;
   hidden: StorageFigure;
-  counters: StorageFigure;
 };
 
 /** The documents an Empty can remove (the shared ones only when asked for). */
@@ -25,15 +23,9 @@ export function clearableDocs(h: StorageHoldings): number {
 
 /** What no Empty removes, in words, or null when an Empty can remove everything. */
 export function keptStorageNote(h: StorageHoldings): string | null {
-  const kept = h.counters.docs + h.hidden.docs;
+  const kept = h.hidden.docs;
   if (kept === 0) return null;
-  const what = [
-    h.counters.docs > 0 ? 'counters you started' : null,
-    h.hidden.docs > 0 ? 'posts hidden by moderation' : null,
-  ]
-    .filter(Boolean)
-    .join(' and ');
-  return `${kept} ${kept === 1 ? 'item stays' : 'items stay'}: ${what}.`;
+  return `${kept} ${kept === 1 ? 'item stays' : 'items stay'}: posts hidden by moderation.`;
 }
 
 /** The per-viewer ceilings of one (app, namespace, user). */

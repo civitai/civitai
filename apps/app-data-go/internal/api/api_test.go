@@ -1124,7 +1124,6 @@ var writePaths = []struct{ method, path, body string }{
 	{"POST", notesPath, `{"data":{"t":"c"}}`},
 	{"PUT", notesPath + "/note-w1", `{"data":{"t":"p"}}`},
 	{"DELETE", notesPath + "/note-w2", ""},
-	{"PATCH", notesPath + "/note-w3", `{"$mark":"vote"}`},
 	{"GET", "/v1/apps/todo-app/info", ""},
 	{"OPTIONS", notesPath + "/note-w4", ""},
 	{"OPTIONS", "/v1/apps/todo-app/info", ""},

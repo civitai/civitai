@@ -53,10 +53,9 @@ var BlockOutcomes = []string{
 }
 
 // WriteOps are the `op` values of app_data_writes_total and app_data_write_forward_seconds (the
-// write routes, WRITES-DESIGN.md "The API"; publish and unpublish are not served yet). A PATCH is
-// named by its operator ($inc increment, $mark mark, $unmark unmark); `patch` is a PATCH refused here
-// before its operator could be read (a body that is not exactly one operator).
-var WriteOps = []string{"create", "put", "delete", "mark", "unmark", "increment", "info", "patch"}
+// write routes, WRITES-DESIGN.md "The API"). The tally PATCH (increment, mark, unmark) was removed
+// with App Storage's tallies (docs/app-storage-generic-core.md, rollout step 5).
+var WriteOps = []string{"create", "put", "delete", "info"}
 
 // WriteOutcomes are the `outcome` values of app_data_writes_total. `2xx`, `4xx` and `501` are the
 // store's answer, passed on. `refused_here` is a request this service refused before forwarding it

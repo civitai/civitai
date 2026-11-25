@@ -71,7 +71,7 @@ export const DOC_STORE_ACTION_COPY: Record<
   delete: {
     button: 'Delete',
     title: 'Delete this document permanently?',
-    body: 'The document, its counts and its marks are removed. This cannot be undone.',
+    body: 'The document and its reports are removed. This cannot be undone.',
     done: 'Document deleted',
   },
 };
@@ -168,8 +168,6 @@ function ReportRow({ row, onReview }: { row: Row; onReview: () => void }) {
   const author =
     row.author.kind === 'user'
       ? `${row.author.username ?? 'unknown'} (#${row.author.userId})`
-      : row.author.kind === 'counter'
-      ? 'created by a counter'
       : 'the app';
   return (
     <Paper

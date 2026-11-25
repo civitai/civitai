@@ -6,7 +6,6 @@
 //	POST   /v1/apps/{slug}/collections/{collection}/records             create
 //	PUT    /v1/apps/{slug}/collections/{collection}/records/{key}       put
 //	DELETE /v1/apps/{slug}/collections/{collection}/records/{key}       delete  [?ifVersion=N]
-//	PATCH  /v1/apps/{slug}/collections/{collection}/records/{key}       one of {$inc}, {$mark}, {$unmark}
 //	GET    /v1/apps/{slug}/info                                         the viewer's usage and limits
 //
 // Each goes to `<site>/api/internal/blocks/storage[/<collection>[/<key>]]?from=<slug>[&ifVersion=N][&major=N]`.
@@ -64,7 +63,7 @@ const maxAnswerBytes = 4 << 20
 // every write and needs Content-Type allowed. Retry-After is exposed: a 429 or 503 names its delay
 // there.
 const (
-	AllowMethods  = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+	AllowMethods  = "GET, POST, PUT, DELETE, OPTIONS"
 	AllowHeaders  = "Authorization, Content-Type"
 	ExposeHeaders = "Retry-After"
 )
@@ -121,10 +120,10 @@ type Forwarder struct {
 // route is one write route's fixed facts.
 type route struct {
 	method string // sent to the site, whatever the inbound method's spelling
-	op     string // the metric op; a PATCH's is set from its operator
+	op     string // the metric op
 	key    bool   // the path names a record key
 	coll   bool   // the path names a collection
-	body   bool   // a JSON object body is required (POST, PUT, PATCH); otherwise none is allowed
+	body   bool   // a JSON object body is required (POST, PUT); otherwise none is allowed
 	params map[string]bool
 }
 
@@ -132,7 +131,6 @@ var (
 	createRoute = route{method: http.MethodPost, op: "create", coll: true, body: true, params: map[string]bool{"major": true}}
 	putRoute    = route{method: http.MethodPut, op: "put", coll: true, key: true, body: true, params: map[string]bool{"major": true}}
 	deleteRoute = route{method: http.MethodDelete, op: "delete", coll: true, key: true, params: map[string]bool{"major": true, "ifVersion": true}}
-	patchRoute  = route{method: http.MethodPatch, op: "patch", coll: true, key: true, body: true, params: map[string]bool{"major": true}}
 	infoRoute   = route{method: http.MethodGet, op: "info", params: map[string]bool{}}
 )
 
@@ -143,7 +141,6 @@ func (f *Forwarder) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+records, f.serve(createRoute))
 	mux.HandleFunc("PUT "+records+"/{key}", f.serve(putRoute))
 	mux.HandleFunc("DELETE "+records+"/{key}", f.serve(deleteRoute))
-	mux.HandleFunc("PATCH "+records+"/{key}", f.serve(patchRoute))
 	mux.HandleFunc("OPTIONS "+records+"/{key}", Preflight)
 	mux.HandleFunc("GET /v1/apps/{slug}/info", f.serve(infoRoute))
 	mux.HandleFunc("OPTIONS /v1/apps/{slug}/info", Preflight)
@@ -290,12 +287,6 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 		return ob, refused(http.StatusBadRequest, "invalid_request", "this request takes no body")
 	case rt.body && !jsonObject(body):
 		return ob, refused(http.StatusBadRequest, "invalid_request", "the body must be a JSON object")
-	case rt.op == "patch":
-		op, ok := patchOp(body)
-		if !ok {
-			return ob, refused(http.StatusBadRequest, "invalid_request", "the body must be exactly one of $inc, $mark or $unmark")
-		}
-		ob.op = op
 	}
 	ob.body = body
 
@@ -368,35 +359,6 @@ func readBody(r *http.Request) ([]byte, *refusal) {
 func jsonObject(body []byte) bool {
 	t := bytes.TrimLeft(body, " \t\r\n")
 	return len(t) > 0 && t[0] == '{' && json.Valid(body)
-}
-
-// patchOp is the op of a PATCH body that is exactly one operator, $inc, $mark or $unmark, named once:
-// the shape only, the site checks the rest. A key named twice counts twice.
-func patchOp(body []byte) (string, bool) {
-	// The body is one valid JSON object (jsonObject), so no step below can fail; a decoder that did
-	// would stop at More, never loop.
-	dec := json.NewDecoder(bytes.NewReader(body))
-	_, _ = dec.Token() // the '{'
-	var names []string
-	for dec.More() {
-		tok, _ := dec.Token()
-		name, _ := tok.(string)
-		names = append(names, name)
-		var skip json.RawMessage
-		_ = dec.Decode(&skip)
-	}
-	if len(names) != 1 {
-		return "", false
-	}
-	switch names[0] {
-	case "$inc":
-		return "increment", true
-	case "$mark":
-		return "mark", true
-	case "$unmark":
-		return "unmark", true
-	}
-	return "", false
 }
 
 func bearer(header string) (string, bool) {

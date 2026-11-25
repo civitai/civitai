@@ -16,7 +16,7 @@
 // admit — review namespaces only, read and delete only.
 //
 // The second exception is the ACCOUNT WIPE's enumeration (`listAccountNamespaces`): one
-// SELECT keyed on `user_id = $1` over `usage_user` and `doc_mark`, run only inside
+// SELECT keyed on `user_id = $1` over `usage_user` and `doc_mark` (its reports), run only inside
 // `accountWipeTx`, whose transaction-local `appdata.account_wipe_uid` setting the
 // migration's wipe policy admits for that ONE user's rows of those two tables, read only.
 // It returns (app, ns) pairs; the wipe of each runs in an ordinary `withTx`, keyed and
@@ -46,7 +46,7 @@
 // before calling in, and each is a seam at the call into an operation here:
 //   - resolve the context (app id, namespace, viewer) from a verified token;
 //   - the min-trust gate on viewer writes into shared collections (put, create,
-//     delete, increment, mark, unmark);
+//     delete) and on reports;
 //   - rate limits;
 //   - content moderation of shared writes;
 //   - a collection's `ownedModelVersions` rule on create and put (`doc-store-ownership.ts`);
@@ -56,8 +56,8 @@
 //   - map `DocStoreError` codes to HTTP statuses and envelopes;
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
-// A collection's declared `schema` it DOES check, on every document write (put and create;
-// counters and marks are not document bodies): `doc-store-schema.ts`. Every write of a body also
+// A collection's declared `schema` it DOES check, on every document write (put and create):
+// `doc-store-schema.ts`. Every write of a body also
 // stamps the schema major the caller passes (`DocCollection.schemaMajor`) into
 // `doc.schema_major`, once that manual-apply column exists (`stampWrittenDoc`). It is read only by
 // a read path that migrates a body on serve (a caller of `applyMajorChain` in
@@ -77,8 +77,7 @@
 // never both pass a check that only one fits under; zero rows returned rolls the
 // whole transaction back as `quota_exceeded`. There is no pre-flight read.
 // Every document write is charged to the calling viewer: under `own` only the
-// author changes a shared doc, a private doc is the viewer's, and a counter
-// collection's doc is charged to the viewer whose increment created it.
+// author changes a shared doc, and a private doc is the viewer's.
 //
 // WHICH CEILINGS A DOCUMENT COUNTS TOWARD is decided by the key space it lives in
 // (`scope_uid`), never by the collection's current declaration: a SHARED document
@@ -95,23 +94,17 @@
 // exactly those ceilings.
 //
 // LOCK ORDER, which is what makes it deadlock-free: (1) the document row of the
-// one key being written, (1b) that document's tally and mark rows, (1c) the
-// namespace's `mark_head` row, (2) `usage_app` for (app, ns), (3) the caller's
-// `usage_user` row. Nothing takes a document or tally lock it does not already hold
-// after (1c) or (2) (the mark-sequence stamps update rows taken at (1b)), (1c) is
-// never taken holding (2), and (3) is only taken holding (2), so no cycle can
-// form. A mark, an unmark and an increment of an EXISTING document take (1) KEY
-// SHARE, (1b) and (1c), and no usage lock. An increment that CREATES its counter
-// document takes (1), (1b), (1c), then (2) and (3) for the create's accounting. A
-// document write takes (1), (1b) where it deletes tallies, (2) and (3), and never
-// (1c).
+// one key being written, (2) `usage_app` for (app, ns), (3) the caller's
+// `usage_user` row. Nothing takes a document lock after (2), and (3) is only taken
+// holding (2), so no cycle can form. A report takes (1) KEY SHARE and no usage lock.
 //
-// `markSeq` comes from `mark_head.last_mark_seq` (`SQL_TAKE_MARK_SEQ`), taken by
-// every mark, unmark and increment under (1c) and stamped on the tally row it
-// changed: per-(app, ns) mark order equals commit order, as `seq`'s does. It
-// never moves `doc.seq`, which moderation and the rater check as the document's
-// revision. Until the manual migration that adds `mark_head` is applied, nothing
-// is taken and no `markSeq` is answered (`withMarkHead`).
+// MARKS, COUNTERS, TALLIES AND SERVER-SIDE PUBLISH were removed from the core
+// (docs/app-storage-generic-core.md, rollout step 5). Nothing here reads or writes
+// `appdata.doc_tally` or `appdata.mark_head` any more (a later hand-applied migration drops
+// them); `appdata.doc_mark` holds only reports (`REPORT_MARK`). A collection whose approved
+// manifest still declares `marks` or `counters` is served as a plain collection (the
+// declaration is inert), and one that declares `write: "none"` is served READ-ONLY
+// (`assertShareWritable`), never as `own`.
 //
 // `seq` comes from `usage_app.last_seq`, incremented in the same statement that
 // charges the quota and therefore row-locked until commit: per-(app, ns) seq
@@ -160,16 +153,12 @@ import type {
   DocStoreLimits,
   DocStoreUsage,
   PublishAction,
-  PublishPreviewEntry,
-  PublishResult,
   QuotaCeiling,
-  UnpublishResult,
   WrittenDocRecord,
 } from '~/server/services/apps/doc-store.types';
 import {
   DEFAULT_DOC_STORE_LIMITS,
   DOC_STORE_BOUNDS as B,
-  DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
   DocStoreMigrationPendingError,
   isDocStoreError,
@@ -215,12 +204,6 @@ export type DocStoreDeps = {
    */
   hooks?: {
     beforeUsageCharge?: () => Promise<void>;
-    /**
-     * Awaited by a mark, unmark or increment holding its (1b) rows, just before it takes the
-     * mark sequence (lock 1c). The concurrency test parks every caller here so they all reach
-     * `mark_head` together. Never set in production.
-     */
-    beforeMarkSeq?: () => Promise<void>;
   };
 };
 
@@ -237,7 +220,6 @@ const APP_ID_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
 const NS_SHAPE = /^(prod|dev:[1-9][0-9]{0,9}|rev:[A-Za-z0-9_-]{1,64}:[1-9][0-9]{0,9})$/;
 const REVIEW_NS = /^rev:([A-Za-z0-9_-]{1,64}):([1-9][0-9]{0,9})$/;
 const INDEX_NAME_SHAPE = /^[A-Za-z_][A-Za-z0-9_]{0,63}(\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,2}$/;
-const TALLY_NAME_SHAPE = /^[a-z][a-z0-9_]{0,31}$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 function invalid(message: string, details?: Record<string, unknown>): DocStoreError {
@@ -319,6 +301,11 @@ export function assertCollection(coll: DocCollection): WritePolicy {
  * Viewers write documents in shared collections only under `own`. Exported so the route
  * layer can refuse BEFORE it spends a write budget token and a moderation scan; the store
  * still runs it itself on every document write.
+ *
+ * 🔴 `write: "none"` IS READ-ONLY, PERMANENTLY. It existed for counter documents, which were
+ * removed (docs/app-storage-generic-core.md, "Manifest fields"), but an approved manifest (or a
+ * rollback to one) can still declare it, and the parser keeps it as a policy so it never reads
+ * as an absent `write` (= `own`, writable by every eligible viewer).
  */
 export function assertShareWritable(
   coll: DocCollection,
@@ -331,7 +318,7 @@ export function assertShareWritable(
   if (policy === 'none') {
     throw new DocStoreError(
       'write_policy',
-      'documents in this collection are written by counters only'
+      'this collection is read-only: its declared write "none" admits no viewer writes'
     );
   }
 }
@@ -340,8 +327,7 @@ export function assertShareWritable(
  * VIEWER-KEYED collections (`keyedBy`, `doc-store-viewer-keyed.ts`): a viewer writes exactly one
  * document per (parent) key, at a key the server derives, so every path that names keys itself or
  * writes beside the document is refused (`invalid_request`, `reason: 'viewer_keyed'`): a create or
- * a write by key (the route), publish and unpublish, counters and declared marks (here, in the
- * store, for every caller). The only writes are the route's `@me` ones. Exported for the route.
+ * a write by key (the route). The only writes are the route's `@me` ones. Exported for the route.
  */
 export function refuseViewerKeyed(coll: DocCollection, what: string): void {
   if (coll.config.keyedBy === undefined) return;
@@ -349,17 +335,6 @@ export function refuseViewerKeyed(coll: DocCollection, what: string): void {
     `${what} is not available on viewer-keyed collection ${coll.name}: write the viewer's own document at /${coll.name}/@me`,
     { reason: 'viewer_keyed', collection: coll.name }
   );
-}
-
-/**
- * A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh report
- * after a moderator dismissed the document's reports, so one viewer could re-open it
- * indefinitely (see DISMISSED REPORTS in the moderation section). Exported so the route refuses
- * it before spending any budget or reading the viewer's trust; the store runs it on every
- * `unmark` itself.
- */
-export function refuseReportWithdrawal(name: string): void {
-  if (name === REPORT_MARK) throw invalid('a report cannot be withdrawn', { mark: name });
 }
 
 /** A key made only of dots (`.`, `..`, …) is a path step to every URL client, not a name. */
@@ -393,42 +368,11 @@ function requireShared(coll: DocCollection, what: string): void {
 }
 
 /**
- * The request checks of an increment: a shared collection, a declared counter, `by` from 1 to
- * {@link B.incrementMax}. Exported so the permission-hook gate (`gateHook`) runs them before it
- * calls a hook (an invalid request never reaches a hook); the store runs them on every increment
- * itself.
- */
-export function assertIncrementRequest(coll: DocCollection, counter: string, by: number): void {
-  requireShared(coll, 'counters');
-  refuseViewerKeyed(coll, 'counters');
-  if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
-    throw invalid(`counter ${counter} is not declared`, { counter });
-  }
-  if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
-    throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
-  }
-}
-
-/**
- * The request checks of a mark or unmark: a shared collection, a declared mark or `report`. The
- * hook gate runs them before a hook, as for an increment; the store runs them itself.
- */
-export function assertMarkRequest(coll: DocCollection, name: string): void {
-  requireShared(coll, 'marks');
-  // A report stays possible on every shared document, a viewer-keyed one included.
-  if (name === REPORT_MARK) return;
-  refuseViewerKeyed(coll, 'marks');
-  if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
-    throw invalid(`mark ${name} is not declared`, { mark: name });
-  }
-}
-
-/**
  * PERMISSION HOOKS. A viewer write to a collection whose declaration has a `hook` runs only with
  * a HookPass for exactly this write (`doc-store-hook-pass.ts`), which only the hook gate mints
  * once the hook allowed it. Returns the document version the write is pinned to (the version the
- * hook was shown), or `undefined` for a collection with no hook. The `report` mark is exempt: a
- * hook must never be able to silence moderation reports. The maintenance, moderation and
+ * hook was shown), or `undefined` for a collection with no hook. A report never comes through
+ * here: a hook must never be able to silence moderation reports. The maintenance, moderation and
  * migration writers do not come through here: they are platform operations, not viewer writes
  * (`doc-store-hook.ledger.test.ts` lists every write entry point).
  */
@@ -437,11 +381,9 @@ function requireHookPass(
   coll: DocCollection,
   op: HookOp,
   key: string,
-  pass: HookPass | undefined,
-  markName?: string
+  pass: HookPass | undefined
 ): number | undefined {
   if (!coll.config.hook) return undefined;
-  if (op === 'mark' && markName === REPORT_MARK) return undefined;
   return spendHookPass(pass, { appId: ctx.appId, ns: ctx.ns, collection: coll.name, key, op });
 }
 
@@ -461,82 +403,18 @@ function effectiveIfVersion(
   return pinned;
 }
 
-/** A tally op pinned to a version: the locked document's version must still be it. */
-function assertTallyVersion(ifVersion: number | undefined, current: number): void {
-  if (ifVersion !== undefined && ifVersion !== current) {
-    throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: current });
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Server-side publish: the rules both the route and the store apply
+// The unchanged-put rule
 // ---------------------------------------------------------------------------
 
 /**
- * The keys of one publish or unpublish: 1 to `DOC_STORE_PUBLISH_BOUNDS.maxKeys`, each a valid
- * key, none twice. Each refusal is `invalid_request` with a stable `details.reason`. Exported so
- * the route refuses before it spends any budget; the store runs it again itself.
- */
-export function assertPublishKeys(keys: unknown): string[] {
-  if (!Array.isArray(keys) || keys.length === 0) {
-    throw invalid('keys must name at least one document', { reason: 'empty_keys' });
-  }
-  if (keys.length > DOC_STORE_PUBLISH_BOUNDS.maxKeys) {
-    throw invalid(`at most ${DOC_STORE_PUBLISH_BOUNDS.maxKeys} keys per call`, {
-      reason: 'too_many_keys',
-      max: DOC_STORE_PUBLISH_BOUNDS.maxKeys,
-    });
-  }
-  const seen = new Set<string>();
-  for (const key of keys) {
-    assertKey(key as string);
-    if (seen.has(key)) throw invalid('a key is named twice', { reason: 'duplicate_key', key });
-    seen.add(key);
-  }
-  return [...seen];
-}
-
-/**
- * A publish copies from a PRIVATE collection into a SHARED one viewers write (`own`). Anything
- * else is refused (`invalid_request`, `reason: 'publish_visibility'`, or the shared collection's
- * own `write_policy`). Exported for the route; the store runs it itself.
- */
-export function assertPublishPair(from: DocCollection, to: DocCollection): void {
-  assertCollection(from);
-  if (from.config.visibility !== 'private' || to.config.visibility !== 'shared') {
-    throw invalid('publish copies from a private collection into a shared one', {
-      reason: 'publish_visibility',
-    });
-  }
-  assertShareWritable(to);
-  assertNotHooked(to, 'publish');
-  refuseViewerKeyed(to, 'publish');
-}
-
-/**
- * Publish and unpublish write a whole batch of shared documents in one transaction, and a
- * permission hook decides ONE write (`doc-store-hook.ts`), so a collection with a `hook` refuses
- * both (`invalid_request`, `reason: 'hooked_collection'`): its documents are written one at a time
- * through create / put / delete, each decided by the hook. Refusing is the fail-closed answer; a
- * batch that skipped the hook would fail open. Exported for the route; the store runs it itself.
- */
-export function assertNotHooked(coll: DocCollection, what: 'publish' | 'unpublish'): void {
-  if (!coll.config.hook) return;
-  throw invalid(
-    `${what} is not available for a collection with a permission hook; write each document`,
-    { reason: 'hooked_collection', collection: coll.name }
-  );
-}
-
-/**
- * What a publish does with one key (`PublishAction`). The ONE place this is decided: the route's
- * pre-read and the store's locked transaction both call it, so what was checked and what is
- * written cannot be classified apart.
+ * What a write of `source` over the stored shared document `copy` would do (`PublishAction`). The
+ * ONE place this is decided; `putIfUnchanged` answers without writing only on `unchanged`.
  */
 export function classifyPublish(
   viewer: number,
   source: { hash: string } | undefined,
-  /** The shared row: `author_kind`, `author_uid`, `hidden`, `hash` (`SQL_PUBLISH_TARGETS`). */
+  /** The shared row: `author_kind`, `author_uid`, `hidden`, `hash` (`SQL_UNCHANGED_PROBE`). */
   copy: Record<string, unknown> | undefined
 ): PublishAction {
   if (copy) {
@@ -548,37 +426,6 @@ export function classifyPublish(
   if (!source) return 'missing';
   if (!copy) return 'create';
   return copy.hash === source.hash ? 'unchanged' : 'update';
-}
-
-/** Postgres `deadlock_detected`. */
-const PG_DEADLOCK = '40P01';
-/** How many times a publish or unpublish transaction Postgres aborted as a deadlock is re-run. */
-export const PUBLISH_DEADLOCK_RETRIES = 2;
-
-/**
- * Run `tx` (a whole transaction) again when Postgres aborted it as a deadlock (40P01), at most
- * `retries` more times. The aborted attempt rolled back, so a re-run starts from nothing. Out of
- * retries, the refusal is the store's retryable contention one (`rate_limited`,
- * `reason: 'contention'`, as for a lock timeout), which the route refunds without a rejection.
- * Any other error is thrown at once. Exported for its own test.
- */
-export async function retryOnDeadlock<T>(
-  tx: () => Promise<T>,
-  retries = PUBLISH_DEADLOCK_RETRIES
-): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await tx();
-    } catch (err) {
-      if ((err as { code?: unknown } | null)?.code !== PG_DEADLOCK) throw err;
-      if (attempt >= retries) {
-        throw new DocStoreError('rate_limited', 'storage is busy; retry', {
-          reason: 'contention',
-          retryAfter: 1,
-        });
-      }
-    }
-  }
 }
 
 /** Serialise and bound `data`. Returns the JSON text handed to Postgres. */
@@ -739,17 +586,12 @@ const SQL_ROLE_PRIVILEGES = `SELECT r.rolname, r.rolsuper, r.rolbypassrls
   FROM pg_roles r WHERE r.rolname = current_user`;
 
 /**
- * Document columns plus its tallies and the viewer's own marks. `viewerParam` is a placeholder.
- * With `rating` (content levels on, `DocStoreContext.levels`), also the document's effective level
- * and rating status; without it the text is exactly what it was before levels existed.
+ * Document columns. With `rating` (content levels on, `DocStoreContext.levels`), also the
+ * document's effective level and rating status. No tally and no mark is read: they were removed
+ * from the core (docs/app-storage-generic-core.md, rollout step 5).
  */
-function docColumns(viewerParam: string, rating = false): string {
-  return `d.key, d.data, d.version, d.created_at, d.updated_at, d.author_uid, d.author_kind,
-    (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
-      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key AND d.scope_uid = 0) AS tallies,
-    (SELECT array_agg(vm.name ORDER BY vm.name) FROM appdata.doc_mark vm
-      WHERE vm.app_id = $1 AND vm.ns = $2 AND vm.coll = d.coll AND vm.key = d.key
-        AND vm.user_id = ${viewerParam} AND d.scope_uid = 0) AS viewer_marks${
+function docColumns(rating = false): string {
+  return `d.key, d.data, d.version, d.created_at, d.updated_at, d.author_uid, d.author_kind${
     rating ? RATING_COLUMNS : ''
   }`;
 }
@@ -816,7 +658,6 @@ const VISIBLE = `d.hidden_at IS NULL`;
  *
  * Visible when any of:
  * - the document is private (`scope_uid <> 0`): only its owner's key space ever reads it;
- * - it is a counter document: created empty by an increment, it holds no `data` to rate;
  * - the viewer is its user author and it is not rated for its current version (never rated,
  *   `pending`, or rated for an older version): an author always sees what they wrote until it is
  *   rated;
@@ -832,20 +673,20 @@ const VISIBLE = `d.hidden_at IS NULL`;
  */
 export function sharedDocLevelVisible(viewer: string, level: string, domain: string): string {
   const isAuthor = `(d.author_kind = 'user' AND d.author_uid = ${viewer})`;
-  return `COALESCE(d.scope_uid <> 0 OR d.author_kind = 'counter'
+  return `COALESCE(d.scope_uid <> 0
     OR (${isAuthor} AND NOT ${RATED_NOW})
     OR (${RATED_NOW}
       AND (${CURRENT_LEVEL}
         & CASE WHEN ${isAuthor} THEN ${domain} ELSE ${level} END) <> 0), false)`;
 }
 
-// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 viewer, $6 keys
-const SQL_GET_MANY = `SELECT ${docColumns('$5::int')}
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 keys
+const SQL_GET_MANY = `SELECT ${docColumns()}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
-    AND d.key = ANY($6::text[]) AND ${VISIBLE}`;
-// Its levels twin. $7 the viewer's level, $8 the token's domain ceiling.
-const SQL_GET_MANY_LEVELS = `SELECT ${docColumns('$5::int', true)}
+    AND d.key = ANY($5::text[]) AND ${VISIBLE}`;
+// Its levels twin. $5 the viewer, $6 keys, $7 the viewer's level, $8 the token's domain ceiling.
+const SQL_GET_MANY_LEVELS = `SELECT ${docColumns(true)}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.key = ANY($6::text[]) AND ${VISIBLE}
@@ -860,14 +701,14 @@ const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_byte
 
 // `putIfUnchanged`'s one read: the stored shared document as a write returns it (SQL_STAMP_SEQ's
 // columns), plus what decides whether a put of `$6` would change any stored row:
-// - `hash` / `written_hash`: the SAME content hash a publish compares (`md5` of jsonb's canonical
-//   text, see SQL_PUBLISH_TARGETS), the second taken of `$6::jsonb` exactly as SQL_UPDATE_DOC
+// - `hash` / `written_hash`: the content hash `classifyPublish` compares (`md5` of jsonb's
+//   canonical text, so equal content gives an equal hash), the second taken of `$6::jsonb` exactly as SQL_UPDATE_DOC
 //   would store it;
 // - `index_same`: the document's stored index rows are exactly the rows SQL_SYNC_INDEX would leave
-//   ($8-$11, the same arrays it takes), compared both ways with EXCEPT (NULLs compare equal there).
+//   ($7-$10, the same arrays it takes), compared both ways with EXCEPT (NULLs compare equal there).
 // Unlocked: nothing is written on its answer, so the answer is simply as of this read.
-// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 viewer, $8 names, $9 v_text,
-// $10 v_num, $11 v_type
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 names, $8 v_text, $9 v_num,
+// $10 v_type
 const SQL_UNCHANGED_PROBE_TAIL = `,${WRITTEN_COLUMNS},
     d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash,
     md5($6::jsonb::text) AS written_hash,
@@ -875,39 +716,24 @@ const SQL_UNCHANGED_PROBE_TAIL = `,${WRITTEN_COLUMNS},
       SELECT ix.name, ix.v_text, ix.v_num, ix.v_type FROM appdata.doc_index ix
         WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = $4::int AND ix.key = $5
       EXCEPT
-      SELECT * FROM unnest($8::text[], $9::text[], $10::float8[], $11::text[])
+      SELECT * FROM unnest($7::text[], $8::text[], $9::float8[], $10::text[])
     ) AND NOT EXISTS (
-      SELECT * FROM unnest($8::text[], $9::text[], $10::float8[], $11::text[])
+      SELECT * FROM unnest($7::text[], $8::text[], $9::float8[], $10::text[])
       EXCEPT
       SELECT ix.name, ix.v_text, ix.v_num, ix.v_type FROM appdata.doc_index ix
         WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = $4::int AND ix.key = $5
     ) AS index_same
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5`;
-const SQL_UNCHANGED_PROBE = `SELECT ${docColumns('$7::int')}${SQL_UNCHANGED_PROBE_TAIL}`;
+const SQL_UNCHANGED_PROBE = `SELECT ${docColumns()}${SQL_UNCHANGED_PROBE_TAIL}`;
 // The same, with its rating (levels on). The writer's own document only: the caller answers with
 // it only when `classifyPublish` says the caller authored it, so no gate.
-const SQL_UNCHANGED_PROBE_LEVELS = `SELECT ${docColumns(
-  '$7::int',
-  true
-)}${SQL_UNCHANGED_PROBE_TAIL}`;
+const SQL_UNCHANGED_PROBE_LEVELS = `SELECT ${docColumns(true)}${SQL_UNCHANGED_PROBE_TAIL}`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 writer uid
 const SQL_INSERT_DOC = `INSERT INTO appdata.doc AS d
     (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind, last_writer_uid)
   VALUES ($1, $2, $3, $4::int, $5, $6::jsonb, 1, 0, $7::int, 'user', $7::int)
-  ON CONFLICT DO NOTHING
-  RETURNING d.size_bytes`;
-
-// A document in a `write: 'none'` collection, created by the first increment of
-// one of its counters: empty data and author_kind 'counter'. `author_uid` records
-// the incrementer ONLY so the creation is charged to their per-user ceiling like
-// any other create; it confers nothing — `author=me` and the `own` policy both
-// require author_kind 'user', and readers see `{ kind: 'counter' }` with no uid.
-// $1 app, $2 ns, $3 coll, $4 key, $5 incrementer
-const SQL_INSERT_COUNTER_DOC = `INSERT INTO appdata.doc AS d
-    (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind, last_writer_uid)
-  VALUES ($1, $2, $3, 0, $4, '{}'::jsonb, 1, 0, $5::int, 'counter', $5::int)
   ON CONFLICT DO NOTHING
   RETURNING d.size_bytes`;
 
@@ -927,9 +753,7 @@ const SQL_UPDATE_DOC = `UPDATE appdata.doc d
 const SQL_DELETE_DOC = `DELETE FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5`;
 
-// A deleted shared document's tallies and marks ($1 app, $2 ns, $3 coll, $4 key).
-const SQL_DELETE_TALLIES = `DELETE FROM appdata.doc_tally t
-  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4`;
+// A deleted shared document's reports ($1 app, $2 ns, $3 coll, $4 key).
 const SQL_DELETE_MARKS = `DELETE FROM appdata.doc_mark mk
   WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.coll = $3 AND mk.key = $4`;
 
@@ -973,23 +797,23 @@ const SQL_CHARGE_USER = `INSERT INTO appdata.usage_user AS u (app_id, ns, user_i
 
 // Stamp the seq and return the stored document, with its seq and record id
 // (`WrittenDocRecord`, `WRITTEN_COLUMNS`).
-// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 seq, $7 viewer
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 seq
 const SQL_STAMP_SEQ = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int')},${WRITTEN_COLUMNS}`;
+  RETURNING ${docColumns()},${WRITTEN_COLUMNS}`;
 // The same, also stamping the schema major the body was written under (NULL = not known). Only
 // once the manual migration `20261106130000_appdata_doc_schema_major.sql` added the column (see
-// `hasSchemaMajorColumn`). $8 the major.
-const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
+// `hasSchemaMajorColumn`). $7 the major.
+const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $7::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int')},${WRITTEN_COLUMNS}`;
+  RETURNING ${docColumns()},${WRITTEN_COLUMNS}`;
 // The two above, returning the rating too (levels on). The writer's own document: no gate.
 const SQL_STAMP_SEQ_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int', true)},${WRITTEN_COLUMNS}`;
-const SQL_STAMP_SEQ_MAJOR_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
+  RETURNING ${docColumns(true)},${WRITTEN_COLUMNS}`;
+const SQL_STAMP_SEQ_MAJOR_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $7::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int', true)},${WRITTEN_COLUMNS}`;
+  RETURNING ${docColumns(true)},${WRITTEN_COLUMNS}`;
 // Whether `appdata.doc.schema_major` exists: fails with undefined_column (42703) until the manual
 // migration is applied. Reads no row. Run under a savepoint, so that failure leaves the write's
 // transaction usable. $1 app, $2 ns
@@ -1002,10 +826,8 @@ const SQL_TOMBSTONE = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, sco
   ON CONFLICT (app_id, ns, coll, scope_uid, key)
   DO UPDATE SET seq = EXCLUDED.seq, deleted_at = now()`;
 
-// Counters and marks: shared documents only. KEY SHARE blocks a concurrent
-// delete of the document until this transaction ends, without blocking other
-// counter/mark writers. Returns the document's version, which a tally pinned by a
-// permission hook (`ifVersion`) is checked against. $1 app, $2 ns, $3 coll, $4 key
+// A report: shared documents only. KEY SHARE blocks a concurrent delete of the document until
+// this transaction ends, without blocking other reporters. $1 app, $2 ns, $3 coll, $4 key
 const SQL_SHARE_LOCK_DOC = `SELECT d.version FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
     AND ${VISIBLE}
@@ -1013,9 +835,7 @@ const SQL_SHARE_LOCK_DOC = `SELECT d.version FROM appdata.doc d
 
 // Server-side lookup of one key across the app's SHARED collections. Hidden rows included, so
 // the caller can tell hidden from missing. LIMIT 2 is enough to tell one match from several.
-// Only a user-authored document has an author here: a counter document's `author_uid` is
-// whoever incremented it first, which is not authorship. $1 app, $2 ns, $3 collection names,
-// $4 key
+// Only a user-authored document has an author here. $1 app, $2 ns, $3 collection names, $4 key
 const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
     CASE WHEN d.author_kind = 'user' THEN d.author_uid END AS author_uid,
     d.hidden_at IS NOT NULL AS hidden
@@ -1092,7 +912,7 @@ const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
 // collection level streams (`apps/app-data-go/WRITES-DESIGN.md`, "The shape: one stream per level
 // bit"; `docs/app-storage-generic-core.md`, "Registry and app-data-go impact"). Shared documents
 // (`scope_uid = 0`) of one collection of one app namespace, each as a PLAIN document: its key,
-// body, version, seq and timestamps. Never its author, any tally, or anyone's marks. A viewer-keyed
+// body, version, seq and timestamps. Never its author or anyone's reports. A viewer-keyed
 // document (`keyedBy`) is one of these like any other: its key is the opaque `<parent>:<digest>`
 // the REST list also returns, and its author is not read. Two selectors, each its own statement
 // so every predicate is a literal:
@@ -1101,14 +921,10 @@ const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
 //     unrated, pending or stale-rated document is on no bit's stream);
 //   - NONE: every visible document (content levels OFF for the app: the adapter serves it only
 //     then).
-// Neither carries a counter document (`author_kind = 'counter'`): the predicate admits one at every
-// level, so it would sit on all five bit streams.
 // Hidden documents are never on a stream. The seq read flags each row `on_stream`, so a write
 // that moved a document off the stream reads as leaving it.
 const LEVEL_STREAM_COLUMNS = `d.key, d.data, d.version, d.seq, d.created_at, d.updated_at`;
-const LEVEL_ON_BIT = (bit: string) =>
-  `d.author_kind <> 'counter' AND ${sharedDocLevelVisible('NULL::int', bit, bit)}`;
-const LEVEL_ON_NONE = `d.author_kind <> 'counter'`;
+const LEVEL_ON_BIT = (bit: string) => sharedDocLevelVisible('NULL::int', bit, bit);
 // The seq range (`after`, `upTo`]. $1 app, $2 ns, $3 coll, $4 after seq, $5 up to seq, $6 limit
 // (+ $7 the bit)
 const SQL_LEVEL_DOCS_SINCE_BIT = `SELECT ${LEVEL_STREAM_COLUMNS},
@@ -1119,7 +935,7 @@ const SQL_LEVEL_DOCS_SINCE_BIT = `SELECT ${LEVEL_STREAM_COLUMNS},
   ORDER BY d.seq
   LIMIT $6::int`;
 const SQL_LEVEL_DOCS_SINCE_NONE = `SELECT ${LEVEL_STREAM_COLUMNS},
-    (d.hidden_at IS NULL AND ${LEVEL_ON_NONE}) AS on_stream
+    d.hidden_at IS NULL AS on_stream
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.seq > $4::bigint AND d.seq <= $5::bigint
@@ -1138,7 +954,6 @@ const SQL_LEVEL_DOCS_DESC_NONE = `SELECT ${LEVEL_STREAM_COLUMNS}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND ($4::text = '' OR d.key < $4::text)
-    AND ${LEVEL_ON_NONE}
   ORDER BY d.key DESC
   LIMIT $6::int`;
 
@@ -1161,48 +976,12 @@ const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::tex
   ORDER BY d.key
   LIMIT $6::int`;
 
-// The kind is a literal: this statement can only ever write a counter row.
-// $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
-const SQL_INCREMENT = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key, kind, name, count)
-  VALUES ($1, $2, $3, $4, 'counter', $5, $6::bigint)
-  ON CONFLICT (app_id, ns, coll, key, kind, name) DO UPDATE SET count = t.count + EXCLUDED.count
-  RETURNING t.count`;
-
-// A mark carries no payload: `report` is a mark like any other. (The table's nullable
-// `reason` column is never written.) $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user
+// A report (`name` = `REPORT_MARK`, the only name written). It carries no payload: the table's
+// nullable `reason` column is never written. $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user
 const SQL_INSERT_MARK = `INSERT INTO appdata.doc_mark AS mk (app_id, ns, coll, key, name, user_id)
   VALUES ($1, $2, $3, $4, $5, $6::int)
   ON CONFLICT DO NOTHING
   RETURNING 1 AS inserted`;
-
-// $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user
-const SQL_DELETE_MARK = `DELETE FROM appdata.doc_mark mk
-  WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.coll = $3 AND mk.key = $4 AND mk.name = $5 AND mk.user_id = $6::int
-  RETURNING 1 AS deleted`;
-
-// $1 app, $2 ns, $3 coll, $4 key, $5 name
-const SQL_MARK_UP = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key, kind, name, count)
-  VALUES ($1, $2, $3, $4, 'mark', $5, 1)
-  ON CONFLICT (app_id, ns, coll, key, kind, name) DO UPDATE SET count = t.count + 1
-  RETURNING t.count`;
-const SQL_MARK_DOWN = `UPDATE appdata.doc_tally t SET count = t.count - 1
-  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = 'mark' AND t.name = $5
-  RETURNING t.count`;
-const SQL_MARK_COUNT = `SELECT t.count FROM appdata.doc_tally t
-  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = 'mark' AND t.name = $5`;
-
-// The namespace's next mark sequence: lock (1c), held until commit, so mark order equals commit
-// order. Taken by every mark, unmark and increment, whether or not it changed a row. Only once the
-// manual migration `20261122120000_appdata_mark_head.sql` created the table and the column (see
-// `withMarkHead`). $1 app, $2 ns
-const SQL_TAKE_MARK_SEQ = `INSERT INTO appdata.mark_head AS mh (app_id, ns, last_mark_seq)
-  VALUES ($1, $2, 1)
-  ON CONFLICT (app_id, ns) DO UPDATE SET last_mark_seq = mh.last_mark_seq + 1
-  RETURNING mh.last_mark_seq`;
-// Stamp the mark sequence on the tally row this transaction changed (and so already holds).
-// $1 app, $2 ns, $3 coll, $4 key, $5 kind, $6 name, $7 mark seq
-const SQL_STAMP_TALLY = `UPDATE appdata.doc_tally t SET mark_seq = $7::bigint
-  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = $5 AND t.name = $6`;
 
 // Stored usage. $1 app, $2 ns (+ $3 user). A missing row is zero.
 const SQL_USAGE_APP = `SELECT u.bytes, u.docs FROM appdata.usage_app u
@@ -1212,8 +991,8 @@ const SQL_USAGE_USER = `SELECT u.bytes, u.docs FROM appdata.usage_user u
 
 // Review maintenance (see the module header). Every row of every review namespace of one
 // publish request, table by table, in the store's lock order (document first — its index rows
-// go with it by the foreign-key cascade — then tallies and marks, then mark_head, then the
-// maintenance runs, then usage_app before usage_user), so a write racing the purge cannot
+// go with it by the foreign-key cascade — then reports, then the maintenance runs, then
+// usage_app before usage_user), so a write racing the purge cannot
 // deadlock against it. (The store writes maintenance runs in the production namespace only.)
 // $1 publish request id. Each returns the number of rows it deleted.
 const SQL_REVIEW_PURGE = [
@@ -1221,13 +1000,9 @@ const SQL_REVIEW_PURGE = [
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_index ix WHERE ix.app_id = $1 AND ix.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns LIKE 'rev:%' RETURNING 1)
-  SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns LIKE 'rev:%' RETURNING 1)
-  SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.maint_run mr WHERE mr.app_id = $1 AND mr.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -1240,7 +1015,7 @@ const SQL_REVIEW_PURGE = [
 // The publish requests that still have review data, in id order after a keyset cursor. From
 // `usage_app` AND `doc`: a document inserted by a write that overlapped a purge can commit
 // after the purge deleted its namespace's `usage_app` row, leaving a document with no usage
-// row; tallies, marks and index rows exist only beside a document, and a tombstone's write
+// row; reports and index rows exist only beside a document, and a tombstone's write
 // holds the document's lock, which the purge waits for. $1 cursor (exclusive), $2 limit.
 const SQL_REVIEW_APP_IDS = `SELECT r.app_id FROM (
     SELECT u.app_id FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' AND u.app_id > $1
@@ -1251,10 +1026,10 @@ const SQL_REVIEW_APP_IDS = `SELECT r.app_id FROM (
 // ACCOUNT WIPE (see the module header and `wipeAccount`).
 //
 // The (app, ns) pairs in which one user has rows that name them, in key order after a keyset
-// cursor. Two sources suffice: every document that names a user — their private documents, the
-// shared documents they authored, the counter documents whose creation was charged to them — is
-// charged to that user's `usage_user` row in the same transaction that writes it (the invariant
-// `assertUsageConsistent` checks in every suite), and a mark names its user in `doc_mark`. Run
+// cursor. Two sources suffice: every document that names a user — their private documents and the
+// shared documents they authored — is charged to that user's `usage_user` row in the same
+// transaction that writes it (the invariant `assertUsageConsistent` checks in every suite), and a
+// report names its user in `doc_mark`. Run
 // only inside `accountWipeTx`. $1 user id, $2 app id and $3 ns of the cursor (exclusive), $4 limit.
 const SQL_ACCOUNT_NAMESPACES = `SELECT w.app_id, w.ns FROM (
     SELECT wu.app_id, wu.ns FROM appdata.usage_user wu WHERE wu.user_id = $1::int
@@ -1264,7 +1039,7 @@ const SQL_ACCOUNT_NAMESPACES = `SELECT w.app_id, w.ns FROM (
   ORDER BY w.app_id, w.ns LIMIT $4::int`;
 
 // The wipe of ONE (app, ns), in an ordinary scoped transaction. $1 app, $2 ns, $3 user id.
-// Statement order follows the store's LOCK ORDER: document rows, then tally and mark rows, then
+// Statement order follows the store's LOCK ORDER: document rows, then report rows, then
 // `usage_app` (taken by `charge`), then `usage_user` — except one second pass over the documents
 // at the end, whose reason and cost are at its call in `wipeAccountNamespace`.
 
@@ -1276,13 +1051,9 @@ const SQL_WIPE_NAMESPACE = [
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_index ix WHERE ix.app_id = $1 AND ix.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2 RETURNING 1)
-  SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2 RETURNING 1)
-  SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.maint_run mr WHERE mr.app_id = $1 AND mr.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -1294,70 +1065,47 @@ const SQL_WIPE_NAMESPACE = [
 
 // Any other namespace (`prod`, a review namespace): only what names the user.
 // The user's private documents; their index rows go by the cascade. Private documents have no
-// tallies or marks, and get no tombstone: the only reader of a private key space is its owner.
+// reports, and get no tombstone: the only reader of a private key space is its owner.
 const SQL_WIPE_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
     WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int RETURNING d.size_bytes)
   SELECT count(*)::int AS docs, COALESCE(sum(gone.size_bytes), 0)::bigint AS bytes FROM gone`;
 // EVERY shared document the wipe will touch in this namespace — the ones the user authored
-// (hidden or not), which it deletes; the counter documents whose creation was charged to the
-// user, whose uid it clears; and the ones the user marked, whose tallies it decrements — locked
-// in ONE statement, in (coll, key) order. Two wipes of users who authored and marked each
+// (hidden or not), which it deletes, and the ones the user reported, whose report rows it deletes —
+// locked in ONE statement, in (coll, key) order. Two wipes of users who authored and reported each
 // other's documents then queue on the first document they share instead of each holding its own
-// author's documents and waiting for the other's: with the authored set and the marked set
+// author's documents and waiting for the other's: with the authored set and the reported set
 // locked by separate statements, that deadlocked every time on a real server.
 // FOR UPDATE for both sets: the authored ones are deleted, which needs it, and a single statement
-// has a single strength. Taking a weaker lock on the marked ones would need a second statement
-// (or an upgrade later), which is the interleaving this exists to remove. The cost: a viewer
-// marking or incrementing one of those documents waits for the wipe to commit (bounded by
-// LOCK_TIMEOUT).
+// has a single strength. The cost: a viewer reporting one of those documents waits for the wipe
+// to commit (bounded by LOCK_TIMEOUT).
 // After this statement, the only document rows the wipe writes are (a) shared documents in this
-// lock set — deleted by `deleteLockedSharedDocs` (authored), uid-cleared by
-// `SQL_WIPE_RELEASE_COUNTER_DOCS` (counter) — and (b) the user's own PRIVATE documents
-// (`SQL_WIPE_PRIVATE_DOCS`, `scope_uid` = the user), which no other wipe ever locks: every other
-// wipe's lock set is shared documents only. Every tally and mark row it changes belongs to a
+// lock set, deleted by `deleteLockedSharedDocs` (authored), and (b) the user's own PRIVATE
+// documents (`SQL_WIPE_PRIVATE_DOCS`, `scope_uid` = the user), which no other wipe ever locks:
+// every other wipe's lock set is shared documents only. Every report row it deletes belongs to a
 // document in this set, except a document the user's own in-flight write commits between
-// statements, which the second pass locks. (Leaving the counter documents out of this set deadlocked two wipes of
-// users who had reported each other's counter documents.) `authored` marks the documents to
-// delete: user-authored only, never a counter document, which outlives its creator; the same
+// statements, which the second pass locks. `authored` marks the documents to delete: the same
 // delete path a moderator delete takes.
 const SQL_WIPE_LOCK_DOCS = `SELECT d.coll, d.key, d.size_bytes, d.author_uid,
     (d.author_kind = 'user' AND d.author_uid = $3::int) AS authored
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0
-    AND ((d.author_kind IN ('user', 'counter') AND d.author_uid = $3::int)
+    AND ((d.author_kind = 'user' AND d.author_uid = $3::int)
       OR EXISTS (SELECT 1 FROM appdata.doc_mark lm
         WHERE lm.app_id = $1 AND lm.ns = $2 AND lm.coll = d.coll AND lm.key = d.key
           AND lm.user_id = $3::int))
   ORDER BY d.coll, d.key
   FOR UPDATE OF d`;
-// Counter-created documents whose creation was charged to the user: the uid was kept ONLY for
-// that charge, and the charge is released with the user's usage rows below, so the uid goes too.
-const SQL_WIPE_RELEASE_COUNTER_DOCS = `WITH done AS (UPDATE appdata.doc d
-    SET author_uid = NULL, last_writer_uid = NULL
-    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'counter'
-      AND d.author_uid = $3::int
-    RETURNING 1)
-  SELECT count(*)::int AS n FROM done`;
-// The user's marks, reports included, and the same statement takes each from its tally: the
-// two can never disagree. A tally already below its marks (drift; the reconciler's to report)
-// stops at 0 rather than failing the wipe on the `doc_tally_nonnegative` CHECK.
+// The user's `doc_mark` rows: their reports (and any row a removed mark left, which the
+// hand-applied cleanup deletes too).
 const SQL_WIPE_MARKS = `WITH gone AS (DELETE FROM appdata.doc_mark mk
     WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.user_id = $3::int
-    RETURNING mk.coll, mk.key, mk.name),
-  per AS (SELECT g.coll, g.key, g.name, count(*)::bigint AS n FROM gone g
-    GROUP BY g.coll, g.key, g.name),
-  down AS (UPDATE appdata.doc_tally t SET count = GREATEST(t.count - per.n, 0)
-    FROM per
-    WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = per.coll AND t.key = per.key
-      AND t.kind = 'mark' AND t.name = per.name
     RETURNING 1)
-  SELECT (SELECT count(*) FROM gone)::int AS marks`;
+  SELECT count(*)::int AS marks FROM gone`;
 // Tombstones of the user's private documents carry their uid as `scope_uid`. After `usage_app`,
 // where every writer of a tombstone takes it.
 const SQL_WIPE_PRIVATE_TOMBS = `DELETE FROM appdata.doc_tomb tb
   WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.scope_uid = $3::int`;
-// The user's usage row: every byte it counted is gone (deleted documents) or released (counter
-// documents now charge no user).
+// The user's usage row: every byte it counted is gone (deleted documents).
 const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
   WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
 
@@ -1371,8 +1119,8 @@ const SQL_APP_PURGE_POLICY = `SELECT count(*)::int AS n FROM pg_catalog.pg_polic
   WHERE pp.policyname = 'appdata_app_purge_read' AND pp.tablename IN ('doc', 'usage_app')`;
 // The namespaces one app has rows in, in key order after a keyset cursor. Two sources suffice for
 // the reason `SQL_REVIEW_APP_IDS` gives: every write takes its namespace's `usage_app` row, and a
-// document outlives that row only when its write overlapped a namespace delete; tallies, marks
-// and index rows exist only beside a document. Run only inside `appPurgeTx`. $1 app id, $2 ns of
+// document outlives that row only when its write overlapped a namespace delete; reports and
+// index rows exist only beside a document. Run only inside `appPurgeTx`. $1 app id, $2 ns of
 // the cursor (exclusive), $3 limit.
 const SQL_APP_NAMESPACES = `SELECT p.ns FROM (
     SELECT pu.ns FROM appdata.usage_app pu WHERE pu.app_id = $1 AND pu.ns > $2::text
@@ -1391,10 +1139,6 @@ const SQL_APP_PURGE_BATCH = [
   `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2
     AND mk.ctid = ANY (ARRAY(SELECT bm.ctid FROM appdata.doc_mark bm
       WHERE bm.app_id = $1 AND bm.ns = $2 LIMIT $3::int))
-    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
-  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2
-    AND t.ctid = ANY (ARRAY(SELECT bt.ctid FROM appdata.doc_tally bt
-      WHERE bt.app_id = $1 AND bt.ns = $2 LIMIT $3::int))
     RETURNING 1) SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2
     AND tb.ctid = ANY (ARRAY(SELECT bb.ctid FROM appdata.doc_tomb bb
@@ -1433,13 +1177,6 @@ const SQL_MIGRATE_DOC = `UPDATE appdata.doc d
 // `purgeCollection`. Ordinary (app, ns)-scoped statements, run in ordinary `withTx` transactions
 // bound to the app's production namespace.
 //
-// The FREEZE: a `mark_migration` run that is not `rolled_back` refuses `$mark` / `$unmark` of its
-// mark on its collection. Read by `mark` and `unmark` after their document lock, so a freeze that
-// locked every document of the collection (`SQL_LOCK_COLL_DOCS`) and committed is seen by every
-// later mark. $1 app, $2 ns, $3 coll, $4 mark name
-const SQL_MARK_FROZEN = `SELECT mr.params ->> 'to' AS target FROM appdata.maint_run mr
-  WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.coll = $3 AND mr.kind = 'mark_migration'
-    AND mr.name = $4 AND mr.status <> 'rolled_back'`;
 // One run, unlocked or locked. $1 app, $2 ns, $3 coll, $4 kind, $5 name
 const SQL_MAINT_RUN_GET = `SELECT mr.coll, mr.kind, mr.name, mr.status, mr.params, mr.result,
     mr.actor_uid, mr.created_at, mr.updated_at
@@ -1646,15 +1383,15 @@ const SQL_VIEWER_RECORDS = `SELECT d.coll, d.scope_uid, d.key, d.data, d.version
 
 // Emptying one viewer's data in one (app, ns), in an ordinary scoped transaction. $1 app, $2 ns,
 // $3 the viewer.
-// Their private documents (index rows go by the cascade; private documents have no tallies or
-// marks), returning what the tombstones and the refund need.
+// Their private documents (index rows go by the cascade; private documents have no reports),
+// returning what the tombstones and the refund need.
 const SQL_EMPTY_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
     WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int
     RETURNING d.coll, d.key, d.size_bytes)
   SELECT gone.coll, gone.key, gone.size_bytes FROM gone ORDER BY gone.coll, gone.key`;
 // The visible shared documents the viewer authored, locked in one ordered statement before
 // anything is deleted (LOCK ORDER (1)). A hidden one is left for moderation, as an author
-// delete leaves it (`remove` answers `not_found`); a counter document is nobody's to delete.
+// delete leaves it (`remove` answers `not_found`).
 const SQL_EMPTY_LOCK_AUTHORED = `SELECT d.coll, d.key, d.size_bytes, d.author_uid
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'user'
@@ -1665,18 +1402,16 @@ const SQL_EMPTY_LOCK_AUTHORED = `SELECT d.coll, d.key, d.size_bytes, d.author_ui
 // ordinary scoped transaction. $1 app, $2 ns, $3 the viewer. Exactly the documents charged to
 // their usage row (`assertUsageConsistent`): their private documents (`private`, every empty
 // deletes them), the shared documents they authored (`shared` when visible, deleted on request;
-// `hidden` when moderation hid them, which an empty leaves) and the counter documents their
-// increment created (`counter`, which an empty leaves).
+// `hidden` when moderation hid them, which an empty leaves).
 const SQL_VIEWER_HOLDINGS = `SELECT
     CASE WHEN d.scope_uid = $3::int THEN 'private'
-      WHEN d.author_kind = 'counter' THEN 'counter'
       WHEN ${VISIBLE} THEN 'shared'
       ELSE 'hidden' END AS part,
     count(*)::int AS docs, COALESCE(sum(d.size_bytes), 0)::bigint AS bytes
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2
     AND (d.scope_uid = $3::int
-      OR (d.scope_uid = 0 AND d.author_kind IN ('user', 'counter') AND d.author_uid = $3::int))
+      OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = $3::int))
   GROUP BY 1`;
 // One tombstone per deleted key, all at one seq. $1 app, $2 ns, $3 scope_uid, $4 seq,
 // $5 collections, $6 keys (parallel arrays).
@@ -1707,58 +1442,6 @@ const listEqualityJoin = (
 const listSortIndexJoin = (name: string, type: string) => `JOIN appdata.doc_index sx
     ON sx.app_id = $1 AND sx.ns = $2 AND sx.coll = d.coll AND sx.scope_uid = d.scope_uid
     AND sx.key = d.key AND sx.name = ${name} AND sx.v_type = ${type}`;
-// LEFT JOIN + COALESCE: a document with no tally row sorts as 0. That ordering
-// cannot come from `doc_tally_top_idx`, so a tally sort reads the collection and
-// sorts it; serving it from the index would need a zero row per declared tally
-// per document (a backfill whenever a counter or mark is declared).
-const listSortTallyJoin = (kind: string, name: string) => `LEFT JOIN appdata.doc_tally st
-    ON st.app_id = $1 AND st.ns = $2 AND st.coll = d.coll AND st.key = d.key
-    AND st.kind = ${kind} AND st.name = ${name}`;
-const listMarkedByMe = (name: string, user: string) => `EXISTS (SELECT 1 FROM appdata.doc_mark mb
-    WHERE mb.app_id = $1 AND mb.ns = $2 AND mb.coll = d.coll AND mb.key = d.key
-      AND mb.name = ${name} AND mb.user_id = ${user})`;
-
-// SERVER-SIDE PUBLISH (`publishCopies`, `unpublishCopies`, `previewPublish`).
-//
-// 🔴 THE OWNER-SCOPE GUARD: a publish reads source documents ONLY from the caller's own private
-// key space, `scope_uid = $4` where $4 is the viewer of the resolved context (never request
-// input), and never from the shared key space (`scope_uid <> 0`). Another user's private document
-// at the same key is not visible to this statement.
-// $1 app, $2 ns, $3 source coll, $4 viewer, $5 keys
-const SQL_PUBLISH_SOURCES = `SELECT d.key, d.data, md5(d.data::text) AS hash
-  FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.scope_uid <> 0
-    AND d.key = ANY($5::text[]) AND ${VISIBLE}`;
-// The shared documents at those keys, whoever wrote them, hidden ones included (the caller
-// decides). `md5(data::text)` is the content hash: jsonb's text form is canonical, so equal
-// content gives an equal hash. $1 app, $2 ns, $3 target coll, $4 keys
-const SQL_PUBLISH_TARGETS = `SELECT d.key, d.author_uid, d.author_kind, d.size_bytes,
-    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash
-  FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = ANY($4::text[])
-  ORDER BY d.key`;
-// The CALLER'S OWN copies among those keys, locked, in key order. Only the caller's: a publish or
-// unpublish never locks a row another user authored (those are `not_author` from the plain read
-// above), so naming another author's keys cannot hold their documents' locks.
-// $1 app, $2 ns, $3 target coll, $4 keys, $5 viewer
-const SQL_PUBLISH_LOCK_OWN_TARGETS = `SELECT d.key, d.author_uid, d.author_kind, d.size_bytes,
-    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash
-  FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = ANY($4::text[])
-    AND d.author_kind = 'user' AND d.author_uid = $5::int
-  ORDER BY d.key
-  FOR UPDATE`;
-// The caller's OWN visible copies in the target collection whose key no longer has a private
-// document in the SOURCE collection. Scoped by the source, not by how the copy got there: a copy
-// published from another private collection has no document in this one, so it is a candidate.
-// $1 app, $2 ns, $3 target coll, $4 source coll, $5 viewer, $6 limit
-const SQL_PUBLISH_PRUNE_CANDIDATES = `SELECT d.key FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
-    AND d.author_kind = 'user' AND d.author_uid = $5::int AND ${VISIBLE}
-    AND NOT EXISTS (SELECT 1 FROM appdata.doc p
-      WHERE p.app_id = $1 AND p.ns = $2 AND p.coll = $4 AND p.scope_uid = $5::int AND p.key = d.key)
-  ORDER BY d.key
-  LIMIT $6::int`;
 // `SQL_CHARGE_APP` for a transaction that changes several documents at once: `last_seq` moves
 // by $7, one seq per changed document, and the caller numbers them `last_seq - $7 + 1 …
 // last_seq`. Same ceilings, same row lock.
@@ -1777,36 +1460,16 @@ const SQL_CHARGE_APP_SEQS = `INSERT INTO appdata.usage_app AS u (app_id, ns, byt
 // ---------------------------------------------------------------------------
 
 /**
- * A document row's author as a reader sees it: a counter document is nobody's; an app document,
- * or one whose author uid is gone, the app's; otherwise the user, marked when it is the viewer.
+ * A document row's author as a reader sees it: a user-authored document is the user's, marked when
+ * it is the viewer; anything else (an app document, one whose author uid is gone) the app's.
  */
 function rowAuthor(row: Record<string, unknown>, viewerUid: number | null): DocAuthor {
   const authorUid = row.author_uid === null ? null : Number(row.author_uid);
-  if (row.author_kind === 'counter') return { kind: 'counter' };
-  if (row.author_kind === 'app' || authorUid === null) return { kind: 'app' };
+  if (row.author_kind !== 'user' || authorUid === null) return { kind: 'app' };
   return { kind: 'user', uid: authorUid, isViewer: authorUid === viewerUid };
 }
 
-function toDocRecord(
-  row: Record<string, unknown>,
-  ctx: DocStoreContext,
-  coll: DocCollection
-): DocRecord {
-  const tallies = (row.tallies ?? {}) as Record<string, number | string>;
-  const counters: Record<string, number> = {};
-  const marks: Record<string, number> = {};
-  if (coll.config.visibility === 'shared') {
-    for (const name of coll.config.counters ?? []) counters[name] = 0;
-    for (const name of coll.config.marks ?? []) if (name !== REPORT_MARK) marks[name] = 0;
-    for (const [k, v] of Object.entries(tallies)) {
-      const sep = k.indexOf(':');
-      const kind = k.slice(0, sep);
-      const name = k.slice(sep + 1);
-      // A report count is never exposed to anyone.
-      if (kind === 'counter') counters[name] = Number(v);
-      else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
-    }
-  }
+function toDocRecord(row: Record<string, unknown>, ctx: DocStoreContext): DocRecord {
   return {
     key: row.key as string,
     data: row.data as Record<string, unknown>,
@@ -1814,24 +1477,14 @@ function toDocRecord(
     createdAt: new Date(row.created_at as string | Date),
     updatedAt: new Date(row.updated_at as string | Date),
     author: rowAuthor(row, ctx.viewerUid),
-    counters,
-    marks,
-    viewer:
-      ctx.viewerUid === null
-        ? null
-        : { marks: ((row.viewer_marks as string[] | null) ?? []).slice() },
     ...(ctx.levels ? { rating: toDocRating(row) } : {}),
   };
 }
 
 /** A row a write returned its document from (`WRITTEN_COLUMNS`), as the write answers it. */
-function toWrittenDocRecord(
-  row: Record<string, unknown>,
-  ctx: DocStoreContext,
-  coll: DocCollection
-): WrittenDocRecord {
+function toWrittenDocRecord(row: Record<string, unknown>, ctx: DocStoreContext): WrittenDocRecord {
   return {
-    ...toDocRecord(row, ctx, coll),
+    ...toDocRecord(row, ctx),
     seq: Number(row.seq),
     recordId: row.record_id === null || row.record_id === undefined ? null : String(row.record_id),
   };
@@ -1861,8 +1514,7 @@ function toDocRating(row: Record<string, unknown>): DocRating {
 type SortSpec =
   | { kind: 'key'; desc: boolean }
   | { kind: 'createdAt' | 'updatedAt'; desc: boolean }
-  | { kind: 'index'; desc: boolean; name: string; type: DocIndexType }
-  | { kind: 'tally'; desc: boolean; tally: 'counter' | 'mark'; name: string };
+  | { kind: 'index'; desc: boolean; name: string; type: DocIndexType };
 
 function parseSort(coll: DocCollection, raw: string | undefined): SortSpec {
   const s = raw ?? 'key';
@@ -1870,20 +1522,6 @@ function parseSort(coll: DocCollection, raw: string | undefined): SortSpec {
   const field = desc ? s.slice(1) : s;
   if (field === 'key') return { kind: 'key', desc };
   if (field === 'createdAt' || field === 'updatedAt') return { kind: field, desc };
-  const tally = /^(counter|mark):(.+)$/.exec(field);
-  if (tally) {
-    requireShared(coll, 'counters and marks');
-    const kind = tally[1] as 'counter' | 'mark';
-    const name = tally[2];
-    const declared = kind === 'counter' ? coll.config.counters ?? [] : coll.config.marks ?? [];
-    // A report count is never exposed, so it is never a sort key — even if declared.
-    if (!declared.includes(name) || (kind === 'mark' && name === REPORT_MARK)) {
-      throw new DocStoreError('index_not_declared', `${kind} ${name} is not declared`, {
-        field,
-      });
-    }
-    return { kind: 'tally', desc, tally: kind, name };
-  }
   const type = declaredIndexType(coll, field);
   if (!type) {
     throw new DocStoreError('index_not_declared', `sort field ${field} is not declared`, { field });
@@ -1902,8 +1540,6 @@ function sortTag(sort: SortSpec): string {
       return `c${dir}`;
     case 'updatedAt':
       return `u${dir}`;
-    case 'tally':
-      return `t${dir}`;
     case 'index':
       return `${indexColumn(sort.type) === 'v_text' ? 's' : 'n'}${dir}`;
   }
@@ -1951,11 +1587,9 @@ function decodeCursor(sort: SortSpec, cursor: string): { value: string; key: str
     // float8 text, as Postgres printed it.
     if (!/^-?[0-9.eE+-]{1,32}$/.test(payload) || !Number.isFinite(Number(payload))) throw bad();
   } else if (sort.kind !== 'key') {
-    // Microseconds since epoch (17 digits reach year 5138) or a tally count (never
-    // negative; 18 digits stay under the bigint maximum). Anything else would be a
-    // 500 from the cast or the interval arithmetic.
-    const digits = sort.kind === 'tally' ? 18 : 17;
-    if (!new RegExp(`^[0-9]{1,${digits}}$`).test(payload)) throw bad();
+    // Microseconds since epoch (17 digits reach year 5138). Anything else would be a 500
+    // from the cast or the interval arithmetic.
+    if (!/^[0-9]{1,17}$/.test(payload)) throw bad();
   }
   return { value, key };
 }
@@ -2123,7 +1757,7 @@ export type ViewerAppUsage = { appId: string; bytes: number; docs: number };
 /**
  * One user's figure in one app (`viewerHoldings`), split by what `emptyViewerData` does with it:
  * `private` always goes, `shared` (visible posts they authored) goes when asked for, `hidden`
- * (their posts moderation hid) and `counters` (counter documents their increment created) stay.
+ * (their posts moderation hid) stays.
  */
 export type ViewerAppHoldings = StorageHoldings;
 
@@ -2270,9 +1904,7 @@ export const PUBLISHED_NS = 'prod';
 const PG_UNDEFINED_COLUMN = '42703';
 /** How long a store trusts "no `schema_major` column" before probing again. */
 const SCHEMA_MAJOR_RECHECK_MS = 60_000;
-/** How often a store that found `appdata.mark_head` absent looks for it again. */
-const MARK_HEAD_RECHECK_MS = 60_000;
-/** undefined_table: `appdata.mark_head` does not exist (its migration is not applied). */
+/** undefined_table: an optional table does not exist (its migration is not applied). */
 const PG_UNDEFINED_TABLE = '42P01';
 /**
  * Zero: a store never trusts "`appdata.maint_run` is absent" (only presence is kept). The freeze is
@@ -2360,19 +1992,6 @@ function buildDocStore(deps: DocStoreDeps) {
     [PG_UNDEFINED_COLUMN],
     SCHEMA_MAJOR_RECHECK_MS
   );
-  // `appdata.mark_head` and `doc_tally.mark_seq` (a manual migration): the mark sequence is taken
-  // only once they exist.
-  const markHeadTable = optionalRelationProbe(
-    'mark_head',
-    [PG_UNDEFINED_TABLE, PG_UNDEFINED_COLUMN],
-    MARK_HEAD_RECHECK_MS
-  );
-
-  /**
-   * Run `fn`, which names `appdata.mark_head` or `doc_tally.mark_seq`, only where they exist; null
-   * where they do not (`optionalRelationProbe.run`): the call then answers without a sequence.
-   */
-  const withMarkHead = <T>(c: DocStoreClient, fn: () => Promise<T>) => markHeadTable.run(c, fn);
   // `appdata.maint_run` (a manual migration): marks are frozen and maintenance runs recorded only
   // once it exists.
   const maintRunTable = optionalRelationProbe(
@@ -2383,13 +2002,9 @@ function buildDocStore(deps: DocStoreDeps) {
   /** Run `fn`, which names `appdata.maint_run`, only where it exists; null where it does not. */
   const withMaintRun = <T>(c: DocStoreClient, fn: () => Promise<T>) => maintRunTable.run(c, fn);
 
-  /**
-   * One statement of a purge or wipe; the `mark_head` and `maint_run` ones only where their
-   * tables exist.
-   */
+  /** One statement of a purge or wipe; the `maint_run` one only where its table exists. */
   async function purgeRows(c: DocStoreClient, sql: string, params: unknown[]): Promise<number> {
     const run = async () => Number((await c.query(sql, params)).rows[0]?.n ?? 0);
-    if (/appdata\.mark_head\b/.test(sql)) return (await withMarkHead(c, run)) ?? 0;
     if (/appdata\.maint_run\b/.test(sql)) return (await withMaintRun(c, run)) ?? 0;
     return run();
   }
@@ -2411,8 +2026,8 @@ function buildDocStore(deps: DocStoreDeps) {
   /**
    * Stamp the seq of a document whose body this transaction just wrote, and return it. With
    * `coll.schemaMajor` given and the column present, also stamp the major the body was written
-   * under. Every write of a document body ends here (`finishWrite`, the counter document a first
-   * increment creates, `migrateDocuments`), and nothing else does.
+   * under. Every write of a document body ends here (`finishWrite`, `migrateDocuments`), and
+   * nothing else does.
    */
   async function stampWrittenDoc(
     c: DocStoreClient,
@@ -2420,10 +2035,9 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     scope: number,
     key: string,
-    seq: number,
-    viewer: number | null
+    seq: number
   ): Promise<DocStoreQueryResult> {
-    const base = [ctx.appId, ctx.ns, coll.name, scope, key, seq, viewer];
+    const base = [ctx.appId, ctx.ns, coll.name, scope, key, seq];
     if (coll.schemaMajor === undefined || !(await hasSchemaMajorColumn(c, ctx))) {
       return c.query(ctx.levels ? SQL_STAMP_SEQ_LEVELS : SQL_STAMP_SEQ, base);
     }
@@ -2659,8 +2273,8 @@ function buildDocStore(deps: DocStoreDeps) {
 
   /**
    * Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`.
-   * `seqs` > 1 charges a transaction that changed that many documents (a publish): the returned
-   * seq is the LAST of `seqs` consecutive ones.
+   * `seqs` > 1 charges a transaction that changed that many documents: the returned seq is the
+   * LAST of `seqs` consecutive ones.
    */
   async function charge(
     c: DocStoreClient,
@@ -2681,7 +2295,7 @@ function buildDocStore(deps: DocStoreDeps) {
     if (user.bytes !== 0 || user.docs !== 0) {
       // A charge that only frees passes whatever the ceiling (SQL_CHARGE_USER), so it reads none.
       // Every charge that adds bytes or documents is to a user resolved before the transaction:
-      // the viewer (put, increment) or, for a migration, the owners on the page — the only
+      // the viewer (put, create) or, for a migration, the owners on the page — the only
       // charge to someone other than the caller. The lookup here, under the lock, is a fallback
       // no call path reaches; it keeps a missed pre-resolution correct, only slower.
       const ceiling = !(user.bytes > 0 || user.docs > 0)
@@ -2834,8 +2448,8 @@ function buildDocStore(deps: DocStoreDeps) {
       indexRows.map((r) => r.type),
     ]);
     const seq = await charge(c, ctx, usage.app, usage.user);
-    const res = await stampWrittenDoc(c, ctx, coll, scope, key, seq, ctx.viewerUid);
-    return toWrittenDocRecord(res.rows[0], ctx, coll);
+    const res = await stampWrittenDoc(c, ctx, coll, scope, key, seq);
+    return toWrittenDocRecord(res.rows[0], ctx);
   }
 
   async function getMany(
@@ -2850,20 +2464,23 @@ function buildDocStore(deps: DocStoreDeps) {
     keys.forEach(assertKey);
     if (keys.length === 0) return [];
     const scope = scopeUid(ctx, coll);
-    const params = [ctx.appId, ctx.ns, coll.name, scope, ctx.viewerUid, [...new Set(keys)]];
+    const base = [ctx.appId, ctx.ns, coll.name, scope];
+    const unique = [...new Set(keys)];
     const rows = await withTx(
       ctx,
       async (c) =>
         (ctx.levels
           ? await c.query(SQL_GET_MANY_LEVELS, [
-              ...params,
+              ...base,
+              ctx.viewerUid,
+              unique,
               ctx.levels.viewerLevel,
               ctx.levels.domainLevel ?? ctx.levels.viewerLevel,
             ])
-          : await c.query(SQL_GET_MANY, params)
+          : await c.query(SQL_GET_MANY, [...base, unique])
         ).rows
     );
-    const byKey = new Map(rows.map((r) => [r.key as string, toDocRecord(r, ctx, coll)]));
+    const byKey = new Map(rows.map((r) => [r.key as string, toDocRecord(r, ctx)]));
     return keys.map((k) => byKey.get(k) ?? null);
   }
 
@@ -2961,7 +2578,6 @@ function buildDocStore(deps: DocStoreDeps) {
             0,
             key,
             json,
-            ctx.viewerUid,
             indexRows.map((r) => r.name),
             indexRows.map((r) => r.vText),
             indexRows.map((r) => r.vNum),
@@ -2975,7 +2591,7 @@ function buildDocStore(deps: DocStoreDeps) {
     }
     if (row.index_same !== true) return null;
     if (opts.ifVersion !== undefined && opts.ifVersion !== Number(row.version)) return null;
-    return toWrittenDocRecord(row, ctx, coll);
+    return toWrittenDocRecord(row, ctx);
   }
 
   async function remove(
@@ -3011,7 +2627,6 @@ function buildDocStore(deps: DocStoreDeps) {
       assertMayModify(ctx, coll, row);
       await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, coll.name, scope, key]);
       if (coll.config.visibility === 'shared') {
-        await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, coll.name, key]);
         await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, coll.name, key]);
       }
       const size = Number(row.size_bytes);
@@ -3027,223 +2642,8 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * Add `by` (1–100) to a declared counter of a visible shared document. In a
-   * `write: 'none'` collection the first increment of an absent key CREATES the
-   * document (empty, unowned, charged to the incrementer); under any other
-   * policy an absent key is `not_found`, so nobody can squat keys by counting.
-   *
-   * `opts.ifVersion` (a permission hook's pin, or a caller's own) refuses the increment with
-   * `version_conflict` unless the document is still at that version (0: still absent). A tally
-   * never changes the version, so concurrent increments never conflict with each other.
-   *
-   * Answers the counter's value and the mark sequence it took (`markSeq`, stamped on the counter's
-   * tally row; absent before the mark-sequence migration is applied); an increment that created its
-   * counter document also answers that document's `seq`. An increment of an existing document
-   * never moves its `seq`.
-   */
-  async function increment(
-    ctx: DocStoreContext,
-    coll: DocCollection,
-    key: string,
-    counter: string,
-    by = 1,
-    opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ value: number; markSeq?: number; seq?: number }> {
-    const policy = assertCollection(coll);
-    assertKey(key);
-    assertIncrementRequest(coll, counter, by);
-    const viewer = requireViewer(ctx);
-    const ifVersion = effectiveIfVersion(
-      opts.ifVersion,
-      requireHookPass(ctx, coll, 'increment', key, opts.hookPass)
-    );
-    await resolveCeilings(ctx, [viewer]);
-    return withTx(ctx, async (c) => {
-      const bump = async () =>
-        Number(
-          (await c.query(SQL_INCREMENT, [ctx.appId, ctx.ns, coll.name, key, counter, by])).rows[0]
-            .count
-        );
-      // Two passes at most, as in writeDoc: a concurrent first increment of the
-      // same key can win the INSERT; the loser's insert waits for it to commit,
-      // inserts nothing, and the second pass increments the winner's document.
-      for (let attempt = 0; attempt < 2; attempt++) {
-        // Existing visible doc: KEY SHARE only, so increments never serialise on it.
-        const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
-        if (doc.rows.length > 0) {
-          assertTallyVersion(ifVersion, Number(doc.rows[0].version));
-          const value = await bump();
-          return { value, ...(await stampMarkSeq(c, ctx, coll, key, 'counter', counter)) };
-        }
-        if (policy !== 'none') throw new DocStoreError('not_found', 'document not found');
-        assertTallyVersion(ifVersion, 0);
-
-        const existing = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, 0, key]))
-          .rows[0];
-        if (existing) {
-          if (existing.hidden) throw new DocStoreError('not_found', 'document not found');
-          continue; // became visible between the two reads: increment it
-        }
-        const ins = await c.query(SQL_INSERT_COUNTER_DOC, [
-          ctx.appId,
-          ctx.ns,
-          coll.name,
-          key,
-          viewer,
-        ]);
-        if (ins.rows.length === 0) continue; // lost the race; increment the winner's doc
-        // Same accounting as any document create: the app and the creating
-        // viewer's own ceiling (labelled `viewer`: it is the caller's), then the seq. The mark
-        // sequence first: (1c) before (2), the lock order.
-        const value = await bump();
-        const marked = await stampMarkSeq(c, ctx, coll, key, 'counter', counter);
-        const size = Number(ins.rows[0].size_bytes);
-        const seq = await charge(
-          c,
-          ctx,
-          { bytes: size, docs: 1 },
-          { uid: viewer, bytes: size, docs: 1, ceiling: 'viewer' }
-        );
-        await stampWrittenDoc(c, ctx, coll, 0, key, seq, ctx.viewerUid);
-        return { value, ...marked, seq };
-      }
-      throw new DocStoreError('version_conflict', 'concurrent write; retry', {
-        currentVersion: null,
-      });
-    });
-  }
-
-  const assertMarkName = assertMarkRequest;
-
-  /**
-   * THE FREEZE (`docs/app-storage-generic-core.md`, "Data migration", step 2): a mark whose rows a
-   * mark migration has frozen answers `410 removed` on that collection, for `$mark` and `$unmark`
-   * alike. Read AFTER the document lock: a freeze locks every document of the collection
-   * (`SQL_LOCK_COLL_DOCS`) before it writes its run, so a mark either committed before the
-   * freeze took that lock (and the copy reads it) or reads the freeze here. `report` is never
-   * frozen: it is not migrated. Where `appdata.maint_run` does not exist, nothing is frozen.
-   */
-  async function refuseFrozenMark(
-    c: DocStoreClient,
-    ctx: DocStoreContext,
-    coll: DocCollection,
-    name: string
-  ): Promise<void> {
-    if (name === REPORT_MARK) return;
-    const row = await withMaintRun(
-      c,
-      async () => (await c.query(SQL_MARK_FROZEN, [ctx.appId, ctx.ns, coll.name, name])).rows[0]
-    );
-    if (!row) return;
-    const target = typeof row.target === 'string' ? row.target : null;
-    throw new DocStoreError(
-      'removed',
-      `mark ${name} on collection ${coll.name} has moved${
-        target ? ` to collection ${target}` : ''
-      }: write the viewer's own document there instead`,
-      { reason: 'mark_migrated', collection: coll.name, mark: name, to: target }
-    );
-  }
-
-  /**
-   * Lock (1c): take the namespace's next mark sequence, and stamp it on the tally row this
-   * transaction changed (a row it already holds), if it changed one. Returns `{ markSeq }`, or `{}`
-   * before the mark-sequence migration is applied (`withMarkHead`), so the caller answers without
-   * one.
-   */
-  async function stampMarkSeq(
-    c: DocStoreClient,
-    ctx: DocStoreContext,
-    coll: DocCollection,
-    key: string,
-    kind: 'counter' | 'mark' | null,
-    name: string
-  ): Promise<{ markSeq?: number }> {
-    await deps.hooks?.beforeMarkSeq?.();
-    const markSeq = await withMarkHead(c, async () => {
-      const seq = Number(
-        (await c.query(SQL_TAKE_MARK_SEQ, [ctx.appId, ctx.ns])).rows[0].last_mark_seq
-      );
-      if (kind !== null) {
-        await c.query(SQL_STAMP_TALLY, [ctx.appId, ctx.ns, coll.name, key, kind, name, seq]);
-      }
-      return seq;
-    });
-    return markSeq === null ? {} : { markSeq };
-  }
-
-  /**
-   * `count` is null for `report`, whose count is never exposed. `markSeq` is the mark sequence it
-   * took, stamped on the tally row when it changed it; a mark the viewer already held changes no
-   * row but still takes one. Absent before the mark-sequence migration is applied.
-   */
-  async function mark(
-    ctx: DocStoreContext,
-    coll: DocCollection,
-    key: string,
-    name: string,
-    opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: true; count: number | null; markSeq?: number }> {
-    assertCollection(coll);
-    assertKey(key);
-    assertMarkName(coll, name);
-    const viewer = requireViewer(ctx);
-    const ifVersion = effectiveIfVersion(
-      opts.ifVersion,
-      requireHookPass(ctx, coll, 'mark', key, opts.hookPass, name)
-    );
-    return withTx(ctx, async (c) => {
-      const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
-      if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
-      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
-      await refuseFrozenMark(c, ctx, coll, name);
-      const args = [ctx.appId, ctx.ns, coll.name, key, name];
-      const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
-      const added = ins.rows.length > 0;
-      const res = added ? await c.query(SQL_MARK_UP, args) : await c.query(SQL_MARK_COUNT, args);
-      const count = Number(res.rows[0]?.count ?? 0);
-      const marked = await stampMarkSeq(c, ctx, coll, key, added ? 'mark' : null, name);
-      return { marked: true as const, count: name === REPORT_MARK ? null : count, ...marked };
-    });
-  }
-
-  async function unmark(
-    ctx: DocStoreContext,
-    coll: DocCollection,
-    key: string,
-    name: string,
-    opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: false; count: number | null; markSeq?: number }> {
-    assertCollection(coll);
-    assertKey(key);
-    assertMarkName(coll, name);
-    refuseReportWithdrawal(name);
-    const viewer = requireViewer(ctx);
-    const ifVersion = effectiveIfVersion(
-      opts.ifVersion,
-      requireHookPass(ctx, coll, 'unmark', key, opts.hookPass, name)
-    );
-    return withTx(ctx, async (c) => {
-      const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
-      if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
-      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
-      await refuseFrozenMark(c, ctx, coll, name);
-      const args = [ctx.appId, ctx.ns, coll.name, key, name];
-      const del = await c.query(SQL_DELETE_MARK, [...args, viewer]);
-      const removed = del.rows.length > 0;
-      const res = removed
-        ? await c.query(SQL_MARK_DOWN, args)
-        : await c.query(SQL_MARK_COUNT, args);
-      const count = Number(res.rows[0]?.count ?? 0);
-      // The tally row it decremented is stamped.
-      const marked = await stampMarkSeq(c, ctx, coll, key, removed ? 'mark' : null, name);
-      return { marked: false as const, count: name === REPORT_MARK ? null : count, ...marked };
-    });
-  }
-
-  /**
-   * The report API's write: the `report` mark's `doc_mark` row, but no `doc_tally` row and no mark
-   * sequence. No HookPass is asked for: a hook must never be able to silence a report.
+   * The report API's write: one `doc_mark` row named `report` per (document, viewer). No HookPass is
+   * asked for: a hook must never be able to silence a report.
    */
   async function report(
     ctx: DocStoreContext,
@@ -3271,10 +2671,9 @@ function buildDocStore(deps: DocStoreDeps) {
 
   /**
    * List one collection. Filters combine with AND: one declared-index equality,
-   * `author=me`, `markedBy=me&mark=…` and `keyPrefix`. Order is the sort field
-   * with the key as tiebreaker (both in the requested direction), paged by keyset
-   * cursor. A sort or filter on an index lists only documents that HAVE that
-   * index value; a tally sort lists every document, absent tallies as 0.
+   * `author=me` and `keyPrefix`. Order is the sort field with the key as tiebreaker
+   * (both in the requested direction), paged by keyset cursor. A sort or filter on an
+   * index lists only documents that HAVE that index value.
    */
   async function list(
     ctx: DocStoreContext,
@@ -3338,14 +2737,6 @@ function buildDocStore(deps: DocStoreDeps) {
       if (q.author !== 'me') throw invalid('author must be "me"');
       conds.push(`d.author_kind = 'user' AND d.author_uid = ${p(requireViewer(ctx))}::int`);
     }
-    if (q.markedBy !== undefined || q.mark !== undefined) {
-      if (q.markedBy !== 'me' || q.mark === undefined) {
-        throw invalid('markedBy=me and mark are required together');
-      }
-      assertMarkName(coll, q.mark);
-      conds.push(listMarkedByMe(`${p(q.mark)}::text`, `${p(requireViewer(ctx))}::int`));
-    }
-
     let sortExpr = '';
     // The key column of the table that drives the sort, so the keyset cursor and
     // ORDER BY sit on one table's index for index sorts.
@@ -3373,12 +2764,6 @@ function buildDocStore(deps: DocStoreDeps) {
         cursorCast = col === 'v_text' ? `PARAM::text` : `PARAM::float8`;
         break;
       }
-      case 'tally':
-        joins.push(listSortTallyJoin(`${p(sort.tally)}::text`, `${p(sort.name)}::text`));
-        sortExpr = `COALESCE(st.count, 0)`;
-        sortValueExpr = `COALESCE(st.count, 0)::text`;
-        cursorCast = `PARAM::bigint`;
-        break;
     }
 
     if (q.cursor !== undefined) {
@@ -3395,7 +2780,7 @@ function buildDocStore(deps: DocStoreDeps) {
     const dir = sort.desc ? 'DESC' : 'ASC';
     const orderBy = sortExpr ? `${sortExpr} ${dir}, ${keyExpr} ${dir}` : `d.key ${dir}`;
     const sql = [
-      `SELECT ${docColumns(viewerParam, ctx.levels !== undefined)}, ${sortValueExpr} AS sort_value`,
+      `SELECT ${docColumns(ctx.levels !== undefined)}, ${sortValueExpr} AS sort_value`,
       listBase(joins.join('\n')),
       ...conds.map((cnd) => `AND ${cnd}`),
       `ORDER BY ${orderBy}`,
@@ -3406,7 +2791,7 @@ function buildDocStore(deps: DocStoreDeps) {
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     return {
-      items: page.map((r) => toDocRecord(r, ctx, coll)),
+      items: page.map((r) => toDocRecord(r, ctx)),
       nextCursor:
         rows.length > limit && last
           ? encodeCursor(sort, String(last.sort_value), last.key as string)
@@ -3520,7 +2905,6 @@ function buildDocStore(deps: DocStoreDeps) {
       privateBytes: 0,
       sharedDocs: 0,
       sharedBytes: 0,
-      counterDocsReleased: 0,
       marks: 0,
       namespaceRows: 0,
       maintRunsScrubbed: 0,
@@ -3535,8 +2919,8 @@ function buildDocStore(deps: DocStoreDeps) {
       const args = [appId, ns, userId];
       /**
        * The document rows (LOCK ORDER (1)): every shared document the wipe touches is locked in
-       * one ordered statement (`SQL_WIPE_LOCK_DOCS`), then the private documents are deleted and
-       * the counter documents released. Nothing is charged here; `settle` does that once every
+       * one ordered statement (`SQL_WIPE_LOCK_DOCS`), then the private documents are deleted.
+       * Nothing is charged here; `settle` does that once every
        * row lock is held.
        */
       const wipeDocs = async () => {
@@ -3546,12 +2930,11 @@ function buildDocStore(deps: DocStoreDeps) {
         const deleted = { docs: n(priv, 'docs'), bytes: n(priv, 'bytes') };
         result.privateDocs += deleted.docs;
         result.privateBytes += deleted.bytes;
-        result.counterDocsReleased += n(await c.query(SQL_WIPE_RELEASE_COUNTER_DOCS, args));
         return { authored, deleted };
       };
       /**
-       * Delete the locked authored documents exactly as a moderator delete does (tallies, marks,
-       * app and author refunds, tombstones). The private documents refund nothing: the app's
+       * Delete the locked authored documents exactly as a moderator delete does (every report on
+       * them, app and author refunds, tombstones). The private documents refund nothing: the app's
        * ceiling never carried them (`appDelta`), and the account's own usage row, which did, is
        * deleted below. Their zero-byte charge is kept for its lock: it takes `usage_app` (LOCK
        * ORDER (2)) before the usage-row delete takes (3), as it did when it refunded bytes, so
@@ -3572,8 +2955,7 @@ function buildDocStore(deps: DocStoreDeps) {
         }
       };
       const first = await wipeDocs();
-      // Every tally this changes belongs to a document `wipeDocs` locked, so no other wipe can
-      // hold one of them (LOCK ORDER (1b) after (1)).
+      // Every report row this deletes is on a document `wipeDocs` locked.
       result.marks = n(await c.query(SQL_WIPE_MARKS, args), 'marks');
       await settle(first);
       // A write by this user that was in flight when the statements above took their snapshots
@@ -3584,7 +2966,7 @@ function buildDocStore(deps: DocStoreDeps) {
       // found by a re-run. The second pass re-runs the single ordered lock statement, so it
       // takes document locks after the usage locks — the reverse of LOCK ORDER. It already holds
       // every document lock from the first pass, so a new lock can only be on a document the
-      // in-flight writer created or a document this user marked meanwhile. That document can
+      // in-flight writer created or a document this user reported meanwhile. That document can
       // also be locked by someone else (a moderator delete, or another wipe) who then waits on
       // this user's usage row, so the second pass can deadlock with them in that narrow window.
       // Postgres then aborts one side whole; for this wipe the namespace is reported in
@@ -3607,10 +2989,9 @@ function buildDocStore(deps: DocStoreDeps) {
    * transaction:
    *   - their own dev namespace (`dev:<uid>`) is deleted outright;
    *   - elsewhere, their private documents are deleted (index rows with them; the app's usage
-   *     never carried them, so it is not refunded); their marks — reports included — are deleted and each tally decremented; the shared
+   *     never carried them, so it is not refunded); their reports are deleted; the shared
    *     documents they authored are DELETED, hidden or not, exactly as a moderator delete does
-   *     (index rows, tallies, every user's marks on them, app and author refunds, tombstones);
-   *     counter-created documents charged to them keep their counters but lose the uid; their
+   *     (index rows, every user's reports on them, app and author refunds, tombstones); their
    *     usage rows and private tombstones are deleted.
    * Idempotent: a re-run finds nothing left that names the user. A namespace whose transaction
    * fails is reported in `failures` (it rolled back in full) and the rest continue; a disabled
@@ -3737,7 +3118,7 @@ function buildDocStore(deps: DocStoreDeps) {
    * then a write racing the run, or a re-run of the same page, is safe. A changed document gets a new version
    * and seq (and `coll.schemaMajor` as its schema major, as any write stamps it), its index rows are re-derived, and its size delta is charged exactly as a write
    * would charge it (the app's ceiling for a shared document, and the user the document is
-   * charged to: its viewer for a private one, its author or counter creator for a shared one).
+   * charged to: its viewer for a private one, its author for a shared one).
    * A document the write would refuse — over the size cap, an index value of the wrong type, a
    * ceiling it no longer fits under — is left as it was and counted in `failed`.
    *
@@ -3748,7 +3129,7 @@ function buildDocStore(deps: DocStoreDeps) {
   /** Whose per-user usage a migrated document's size change is charged to; null for none. */
   function migrationOwner(scope: number, row: Record<string, unknown>): number | null {
     if (scope !== 0) return scope;
-    return (row.author_kind === 'user' || row.author_kind === 'counter') &&
+    return row.author_kind === 'user' &&
       row.author_uid !== null &&
       row.author_uid !== undefined
       ? Number(row.author_uid)
@@ -3849,7 +3230,7 @@ function buildDocStore(deps: DocStoreDeps) {
                     ceiling: scope !== 0 ? 'viewer' : 'author',
                   }
             );
-            await stampWrittenDoc(c, ctx, coll, scope, key, seq, null);
+            await stampWrittenDoc(c, ctx, coll, scope, key, seq);
             return { changed: true, invalid: stillInvalid(next) };
           });
         // A lock wait that timed out (a burst of writes to this app) is retried once; the
@@ -4266,15 +3647,7 @@ function buildDocStore(deps: DocStoreDeps) {
             ]);
           }
           for (const [i, d] of inserted.entries()) {
-            await stampWrittenDoc(
-              c,
-              ctx,
-              args.target,
-              0,
-              d.key,
-              last - inserted.length + 1 + i,
-              null
-            );
+            await stampWrittenDoc(c, ctx, args.target, 0, d.key, last - inserted.length + 1 + i);
           }
         }
         return { rows, inserted: inserted.length };
@@ -4927,8 +4300,7 @@ function buildDocStore(deps: DocStoreDeps) {
   /**
    * The apps in which `userId` holds production documents, with their stored usage — the same
    * figure the per-viewer ceiling (`userBytes` / `userDocs`) is checked against: their private
-   * documents, the shared documents they authored and the counter documents their increment
-   * created. One indexed read per page, never a read per app.
+   * documents and the shared documents they authored. One indexed read per page, never a read per app.
    */
   async function listViewerUsage(userId: number): Promise<ViewerAppUsage[]> {
     assertWipeUserId(userId);
@@ -4970,7 +4342,6 @@ function buildDocStore(deps: DocStoreDeps) {
       private: part('private'),
       shared: part('shared'),
       hidden: part('hidden'),
-      counters: part('counter'),
     };
   }
 
@@ -5018,9 +4389,9 @@ function buildDocStore(deps: DocStoreDeps) {
    *   - always: their private documents (index rows with them), each refunded to their own usage
    *     (the app's never carried them, `appDelta`) and tombstoned, as `remove` does;
    *   - with `shared`: also the VISIBLE shared documents they authored, deleted exactly as an
-   *     author or moderator delete does (`deleteLockedSharedDocs`: index rows, tallies, every
-   *     viewer's marks, app and author refunds, tombstones). A hidden one stays for moderation.
-   * Counter documents their increment created, and their marks on other documents, stay.
+   *     author or moderator delete does (`deleteLockedSharedDocs`: index rows, every viewer's
+   *     reports, app and author refunds, tombstones). A hidden one stays for moderation.
+   * Their reports on other documents stay.
    * Idempotent: a re-run finds nothing and writes nothing.
    */
   async function emptyViewerData(
@@ -5064,388 +4435,6 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
-  // -------------------------------------------------------------------------
-  // Server-side publish
-  // -------------------------------------------------------------------------
-
-  type PublishTargetRow = Record<string, unknown> & { key: string; hash: string };
-  type PublishSourceRow = { key: string; data: Record<string, unknown>; hash: string };
-
-  /**
-   * The shared rows at `keys` in `to`, by key: every author's from a plain read, and with `lock`
-   * the caller's own re-read under `FOR UPDATE` (`SQL_PUBLISH_LOCK_OWN_TARGETS`), so their entries
-   * are the locked rows (and an own row deleted in between is gone). Another author's row is never
-   * locked.
-   */
-  async function readPublishTargets(
-    c: DocStoreClient,
-    ctx: DocStoreContext,
-    to: DocCollection,
-    viewer: number,
-    keys: string[],
-    lock: boolean
-  ): Promise<Map<string, PublishTargetRow>> {
-    const targets = new Map<string, PublishTargetRow>();
-    const rows = (await c.query(SQL_PUBLISH_TARGETS, [ctx.appId, ctx.ns, to.name, keys])).rows;
-    for (const r of rows) targets.set(r.key as string, r as PublishTargetRow);
-    if (!lock) return targets;
-    const own = (
-      await c.query(SQL_PUBLISH_LOCK_OWN_TARGETS, [ctx.appId, ctx.ns, to.name, keys, viewer])
-    ).rows;
-    const locked = new Map(own.map((r) => [r.key as string, r as PublishTargetRow]));
-    for (const [key, row] of [...targets]) {
-      const mine = row.author_kind === 'user' && Number(row.author_uid) === viewer;
-      if (mine && !locked.has(key)) targets.delete(key);
-    }
-    for (const [key, row] of locked) targets.set(key, row);
-    return targets;
-  }
-
-  async function readPublishRows(
-    c: DocStoreClient,
-    ctx: DocStoreContext,
-    from: DocCollection,
-    to: DocCollection,
-    viewer: number,
-    keys: string[],
-    lock: boolean
-  ) {
-    const targets = await readPublishTargets(c, ctx, to, viewer, keys, lock);
-    const sources = new Map<string, PublishSourceRow>();
-    const sourceRows = (
-      await c.query(SQL_PUBLISH_SOURCES, [ctx.appId, ctx.ns, from.name, viewer, keys])
-    ).rows;
-    for (const r of sourceRows) sources.set(r.key as string, r as PublishSourceRow);
-    return { targets, sources };
-  }
-
-  /**
-   * What a publish of `keys` from the caller's private `from` into the shared `to` would do now,
-   * key by key in key order, with the private body of every key it would write. The route reads
-   * this to validate and moderate exactly those bodies before `publishCopies`, which re-reads
-   * them under lock and refuses (`source_changed`) any that changed in between.
-   */
-  async function previewPublish(
-    ctx: DocStoreContext,
-    from: DocCollection,
-    to: DocCollection,
-    keys: string[]
-  ): Promise<PublishPreviewEntry[]> {
-    assertPublishPair(from, to);
-    const viewer = requireViewer(ctx);
-    const unique = assertPublishKeys(keys).sort();
-    const { targets, sources } = await withTx(ctx, (c) =>
-      readPublishRows(c, ctx, from, to, viewer, unique, false)
-    );
-    return unique.map((key) => {
-      const source = sources.get(key);
-      const action = classifyPublish(viewer, source, targets.get(key));
-      return action === 'create' || action === 'update'
-        ? { key, action, source: { data: source!.data, hash: source!.hash } }
-        : { key, action };
-    });
-  }
-
-  /**
-   * Copy the caller's private documents at `keys` from `from` into the shared `to`, authored by
-   * the caller, in ONE transaction: every copy lands or none does.
-   *
-   * - Only the caller's own private documents are read (`SQL_PUBLISH_SOURCES`); a key with none is
-   *   skipped as `missing`. A copy someone else authored is skipped as `not_author`, one a
-   *   moderator hid as `hidden`; neither is touched.
-   * - A copy whose content hash equals its source's is `unchanged`: no write, no seq.
-   * - Every copy written must have the content hash the caller checked (`checked`, from
-   *   `previewPublish`); a source that changed since is refused whole as `version_conflict` with
-   *   `reason: 'source_changed'`, and a key the preview did not plan to write (its copy changed:
-   *   another author's copy deleted, the caller's own changed) with `reason: 'target_changed'`, so
-   *   nothing unchecked is ever written.
-   * - Content levels on (`ctx.levels`): every copy it creates or updates is marked pending
-   *   (`markRatingPending`), exactly as a shared put is, so it is hidden from other viewers until
-   *   it is rated again; an unchanged copy keeps its rating.
-   * - `prune`: the caller's own visible copies in `to` whose key has no private document in
-   *   `from` are deleted, at most `limit` per call — including copies the caller published from
-   *   ANOTHER private collection, which have no document in `from`.
-   * - The usage of every change is charged at once (`charge` with one seq per changed document),
-   *   so the per-user and app ceilings refuse the whole publish or none of it.
-   *
-   * LOCKS: only the caller's OWN copies (at `keys` and the prune candidates), in key order, then
-   * any own row a concurrent publish created, in key order, then `usage_app`, then `usage_user`.
-   * Another author's row is read, never locked. That is NOT deadlock-free: two publishes of
-   * overlapping keys can still take two lock orders (one inserts a key the other then waits on,
-   * when a write commits that key between their lock reads), and Postgres aborts one with
-   * 40P01. The whole transaction is then retried (`retryOnDeadlock`, at most
-   * `PUBLISH_DEADLOCK_RETRIES` times); the caller's publish budget is reserved once, outside it.
-   */
-  async function publishCopies(
-    ctx: DocStoreContext,
-    from: DocCollection,
-    to: DocCollection,
-    req: {
-      keys: string[];
-      checked: ReadonlyMap<string, string>;
-      prune?: { limit: number };
-    }
-  ): Promise<PublishResult> {
-    assertPublishPair(from, to);
-    const viewer = requireViewer(ctx);
-    const keys = assertPublishKeys(req.keys).sort();
-    const prune = req.prune;
-    if (prune) {
-      if (!Number.isSafeInteger(prune.limit) || prune.limit < 1) {
-        throw invalid('prune limit must be a positive integer');
-      }
-    }
-    await resolveCeilings(ctx, [viewer]);
-
-    return retryOnDeadlock(() =>
-      withTx(ctx, async (c) => {
-        const result: PublishResult = {
-          created: [],
-          updated: [],
-          unchanged: [],
-          pruned: [],
-          skipped: [],
-          pruneIncomplete: false,
-        };
-        let candidates: string[] = [];
-        if (prune) {
-          candidates = (
-            await c.query(SQL_PUBLISH_PRUNE_CANDIDATES, [
-              ctx.appId,
-              ctx.ns,
-              to.name,
-              from.name,
-              viewer,
-              prune.limit + 1,
-            ])
-          ).rows.map((r) => r.key as string);
-          result.pruneIncomplete = candidates.length > prune.limit;
-          candidates = candidates.slice(0, prune.limit);
-        }
-        const lockKeys = [...new Set([...keys, ...candidates])].sort();
-        const { targets, sources } = await readPublishRows(
-          c,
-          ctx,
-          from,
-          to,
-          viewer,
-          lockKeys,
-          true
-        );
-
-        // Prune first, from the LOCKED rows: still the caller's, visible, with no private source.
-        const pruneKeys = candidates.filter((key) => {
-          const copy = targets.get(key);
-          return (
-            copy !== undefined &&
-            !sources.has(key) &&
-            classifyPublish(viewer, undefined, copy) === 'missing'
-          );
-        });
-        const pruneSet = new Set(pruneKeys);
-
-        let bytes = 0;
-        let docs = 0;
-        const written: string[] = [];
-        for (const key of keys) {
-          const source = sources.get(key);
-          let copy: PublishTargetRow | undefined = targets.get(key);
-          let action = classifyPublish(viewer, source, copy);
-          if (action === 'create') {
-            assertChecked(req.checked, key, source!.hash);
-            const json = serializeData(source!.data);
-            validateDocAgainstCollectionSchema(ctx, to, source!.data);
-            const indexRows = indexRowsFor(to, source!.data);
-            const ins = await c.query(SQL_INSERT_DOC, [
-              ctx.appId,
-              ctx.ns,
-              to.name,
-              0,
-              key,
-              json,
-              viewer,
-            ]);
-            if (ins.rows.length > 0) {
-              const size = Number(ins.rows[0].size_bytes);
-              bytes += size;
-              docs += 1;
-              await markRatingPending(c, ctx, to, key);
-              await syncIndex(c, ctx, to, key, indexRows);
-              result.created.push(key);
-              written.push(key);
-              continue;
-            }
-            // A concurrent writer created it after our read: read it (locked if it is ours) and
-            // decide again.
-            copy = (await readPublishTargets(c, ctx, to, viewer, [key], true)).get(key);
-            if (!copy) {
-              throw new DocStoreError('version_conflict', 'concurrent write; retry', {
-                currentVersion: null,
-                reason: 'concurrent_write',
-                key,
-              });
-            }
-            action = classifyPublish(viewer, source, copy);
-          }
-          if (action === 'update') {
-            assertChecked(req.checked, key, source!.hash);
-            const json = serializeData(source!.data);
-            validateDocAgainstCollectionSchema(ctx, to, source!.data);
-            const indexRows = indexRowsFor(to, source!.data);
-            const res = await c.query(SQL_UPDATE_DOC, [
-              ctx.appId,
-              ctx.ns,
-              to.name,
-              0,
-              key,
-              json,
-              viewer,
-            ]);
-            bytes += Number(res.rows[0].size_bytes) - Number(copy!.size_bytes);
-            await markRatingPending(c, ctx, to, key);
-            await syncIndex(c, ctx, to, key, indexRows);
-            result.updated.push(key);
-            written.push(key);
-          } else if (action === 'unchanged') {
-            result.unchanged.push(key);
-          } else if (action === 'create') {
-            throw new Error('doc-store: publish re-lock classified a present copy as absent');
-          } else if (!(action === 'missing' && pruneSet.has(key))) {
-            // A requested key the prune below deletes is reported there, not as missing.
-            result.skipped.push({ key, reason: action });
-          }
-        }
-
-        for (const key of pruneKeys) {
-          await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, to.name, 0, key]);
-          await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, to.name, key]);
-          await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, to.name, key]);
-          bytes -= Number(targets.get(key)!.size_bytes);
-          docs -= 1;
-          result.pruned.push(key);
-        }
-
-        const changed = written.length + pruneKeys.length;
-        if (changed === 0) return result;
-        const last = await charge(
-          c,
-          ctx,
-          { bytes, docs },
-          { uid: viewer, bytes, docs, ceiling: 'author' },
-          changed
-        );
-        let seq = last - changed;
-        for (const key of written) {
-          seq += 1;
-          await stampWrittenDoc(c, ctx, to, 0, key, seq, viewer);
-        }
-        for (const key of pruneKeys) {
-          seq += 1;
-          await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, to.name, 0, key, seq]);
-        }
-        return result;
-      })
-    );
-  }
-
-  /**
-   * A body about to be written must be the one the caller checked. No checked hash at all means the
-   * preview did not plan to write this key (`target_changed`: its copy changed since); a different
-   * one means the private document changed (`source_changed`).
-   */
-  function assertChecked(checked: ReadonlyMap<string, string>, key: string, hash: string) {
-    const seen = checked.get(key);
-    if (seen === undefined) {
-      throw new DocStoreError('version_conflict', 'a shared copy changed while publishing', {
-        reason: 'target_changed',
-        key,
-      });
-    }
-    if (seen !== hash) {
-      throw new DocStoreError('version_conflict', 'a private document changed while publishing', {
-        reason: 'source_changed',
-        key,
-      });
-    }
-  }
-
-  async function syncIndex(
-    c: DocStoreClient,
-    ctx: DocStoreContext,
-    coll: DocCollection,
-    key: string,
-    indexRows: IndexRow[]
-  ) {
-    await c.query(SQL_SYNC_INDEX, [
-      ctx.appId,
-      ctx.ns,
-      coll.name,
-      0,
-      key,
-      indexRows.map((r) => r.name),
-      indexRows.map((r) => r.vText),
-      indexRows.map((r) => r.vNum),
-      indexRows.map((r) => r.type),
-    ]);
-  }
-
-  /**
-   * Delete the caller's own shared documents at `keys` in `to`, in ONE transaction. A key with no
-   * visible document is `missing` (a hidden one reads as missing, as `delete` does); one someone
-   * else authored is `not_author` and never touched.
-   */
-  async function unpublishCopies(
-    ctx: DocStoreContext,
-    to: DocCollection,
-    keys: string[]
-  ): Promise<UnpublishResult> {
-    assertCollection(to);
-    requireShared(to, 'unpublish targets');
-    assertShareWritable(to);
-    assertNotHooked(to, 'unpublish');
-    refuseViewerKeyed(to, 'unpublish');
-    const viewer = requireViewer(ctx);
-    const sorted = assertPublishKeys(keys).sort();
-    return retryOnDeadlock(() =>
-      withTx(ctx, async (c) => {
-        const targets = await readPublishTargets(c, ctx, to, viewer, sorted, true);
-        const result: UnpublishResult = { deleted: [], skipped: [] };
-        let bytes = 0;
-        for (const key of sorted) {
-          const copy = targets.get(key);
-          if (!copy || copy.hidden === true) {
-            result.skipped.push({ key, reason: 'missing' });
-            continue;
-          }
-          if (!(copy.author_kind === 'user' && Number(copy.author_uid) === viewer)) {
-            result.skipped.push({ key, reason: 'not_author' });
-            continue;
-          }
-          await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, to.name, 0, key]);
-          await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, to.name, key]);
-          await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, to.name, key]);
-          bytes += Number(copy.size_bytes);
-          result.deleted.push(key);
-        }
-        const n = result.deleted.length;
-        if (n === 0) return result;
-        const last = await charge(
-          c,
-          ctx,
-          { bytes: -bytes, docs: -n },
-          { uid: viewer, bytes: -bytes, docs: -n, ceiling: 'author' },
-          n
-        );
-        let seq = last - n;
-        for (const key of result.deleted) {
-          seq += 1;
-          await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, to.name, 0, key, seq]);
-        }
-        return result;
-      })
-    );
-  }
-
   const store = {
     get,
     getMany,
@@ -5454,17 +4443,11 @@ function buildDocStore(deps: DocStoreDeps) {
     create,
     delete: remove,
     list,
-    increment,
-    mark,
-    unmark,
     report,
     usage,
     limits,
     viewerLimits,
     isUsable,
-    previewPublish,
-    publishCopies,
-    unpublishCopies,
   };
   /**
    * Shared documents of `appId` under `key` in any of `collections`, production namespace only,
@@ -5895,13 +4878,12 @@ function translatePgError(err: unknown, opts: { outcomeUnknown?: boolean } = {})
 // `routers/__tests__/apps-mod-doc-store.router.test.ts` (its ledger case).
 //
 // DISMISSED REPORTS. A moderator who reviews a VISIBLE document and keeps it dismisses its
-// reports: `doc.reports_dismissed_at` records when, and only report marks made after that point
-// count as OPEN (the queue and `reports` below). The marks themselves are kept, so each
-// reporter's own "I reported this" state (`viewer.marks`) stays true. A report is one per user
-// AND cannot be withdrawn (`unmark` refuses `report`), so a reporter cannot re-open a dismissed
-// document by withdrawing and re-filing: only a report from someone who had not reported it
-// re-opens it. Deleting the marks instead would tell reporters they never reported, and let
-// each of them re-open it after every dismissal. Unhide does not touch the point, so it
+// reports: `doc.reports_dismissed_at` records when, and only reports made after that point
+// count as OPEN (the queue and `reports` below). The report rows themselves are kept. A report is
+// one per user AND cannot be withdrawn (the report API has no delete), so a reporter cannot
+// re-open a dismissed document by re-filing: only a report from someone who had not reported it
+// re-opens it. Deleting the rows instead would let each reporter re-open it after every
+// dismissal. Unhide does not touch the point, so it
 // re-surfaces no dismissed report; a hidden document is not dismissable (unhide it first), and
 // the hidden and all views list hidden documents whatever their open count. The point is the dismissing transaction's start time: a report whose own
 // transaction started later is never swept, and one made between the moderator's last look
@@ -5926,7 +4908,7 @@ export type ReportedDocRow = {
   reports: number;
   createdAt: Date;
   updatedAt: Date;
-  authorKind: 'user' | 'app' | 'counter';
+  authorKind: 'user' | 'app';
   /** Moderators may see it; it must never reach an app. */
   authorUid: number | null;
   hiddenAt: Date | null;
@@ -5945,8 +4927,6 @@ export type ModeratedDoc = ReportedDocRow & {
   data: Record<string, unknown>;
   /** md5 of the stored jsonb text — what an audit row records instead of the content. */
   dataMd5: string;
-  counters: Record<string, number>;
-  marks: Record<string, number>;
 };
 
 type ModerationDeps = {
@@ -5959,12 +4939,10 @@ type ModerationDeps = {
   ) => Promise<number>;
 };
 
-// The queue for one (app, ns). Driven by the report marks through `doc_mark_name_idx`
-// (app_id, ns, name, …), so its cost follows the app's REPORT marks — not its document count,
-// and not its other marks (votes, likes…), which that index skips: documents with at least one
-// OPEN report (made after any dismissal), counted per document. The other mark reads are served
-// by the existing indexes (`markedBy=me` by `doc_mark_user_idx`, a document's own marks by the
-// primary key). $1 app, $2 ns, $3 the report mark name; `statusCond` is a
+// The queue for one (app, ns). Driven by the report rows through `doc_mark_name_idx`
+// (app_id, ns, name, …), so its cost follows the app's reports, not its document count:
+// documents with at least one OPEN report (made after any dismissal), counted per document.
+// $1 app, $2 ns, $3 the report mark name; `statusCond` is a
 // fixed string chosen in `listReported`.
 const sqlModOpenReported = (statusCond: string) => `SELECT d.coll, d.key, d.author_uid,
     d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by, d.size_bytes,
@@ -5998,15 +4976,10 @@ ORDER BY q.reports DESC, q.updated_at DESC, q.coll DESC, q.key DESC
 LIMIT $4::int`;
 
 // One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
-// $5 the report mark name. Reports are counted from their `doc_mark` rows only, never from the
-// `report` tally: the report API (`report` above) writes the row and no tally, the `report` mark
-// writes both, so the rows are the one count that holds every report exactly once.
+// $5 the report mark name. Reports are counted from their `doc_mark` rows.
 const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.seq, d.size_bytes,
     d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by,
     d.reports_dismissed_at,
-    (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
-      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key
-        AND NOT (t.kind = 'mark' AND t.name = $5)) AS tallies,
     (SELECT count(*) FROM appdata.doc_mark am
       WHERE am.app_id = $1 AND am.ns = $2 AND am.coll = d.coll AND am.key = d.key
         AND am.name = $5) AS reports_total,
@@ -6047,13 +5020,13 @@ const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hid
 // THE RATER (content levels, build 3; `doc-rater.service.ts`). The shared documents of one
 // collection that are not rated for their current version — never rated (NULL), `pending`, or
 // rated or overridden for an older version (`RATED_NOW` is false) — oldest change first, after a
-// seq cursor. Counter documents hold no `data` to rate, and a hidden one waits for a moderator.
+// seq cursor. A hidden one waits for a moderator.
 // Read server-side to be rated; never returned to a viewer. Uses `doc_feed_shared_seq_idx`.
 // $1 app, $2 ns, $3 coll, $4 seq cursor (exclusive), $5 limit
 const SQL_RATER_UNRATED = `SELECT d.key, d.data, d.version, d.seq, d.rating_id
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
-    AND d.seq > $4::bigint AND d.author_kind <> 'counter' AND d.hidden_at IS NULL
+    AND d.seq > $4::bigint AND d.hidden_at IS NULL
     AND NOT ${RATED_NOW}
   ORDER BY d.seq
   LIMIT $5::int`;
@@ -6146,10 +5119,9 @@ function toLockedSharedDoc(row: Record<string, unknown>): LockedSharedDoc {
 /**
  * Hard-delete shared documents the caller has ALREADY locked FOR UPDATE — the one implementation
  * behind the moderator delete and the account wipe. Each document's index rows go with it (FK
- * cascade), its tallies and marks are deleted, the app and the user its creation was charged to
- * are refunded, and a tombstone takes the next seq: the same accounting as an author delete.
- * Every document, tally and mark row is deleted before any usage row is charged (LOCK ORDER (1),
- * (1b), then (2), (3)). Returns each document's tombstone seq, in input order.
+ * cascade), its reports are deleted, the app and its author are refunded, and a tombstone takes
+ * the next seq: the same accounting as an author delete. Every document and report row is deleted
+ * before any usage row is charged (LOCK ORDER (1), then (2), (3)). Returns each document's tombstone seq, in input order.
  */
 async function deleteLockedSharedDocs(
   c: DocStoreClient,
@@ -6159,7 +5131,6 @@ async function deleteLockedSharedDocs(
 ): Promise<number[]> {
   for (const d of docs) {
     await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, d.coll, 0, d.key]);
-    await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, d.coll, d.key]);
     await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, d.coll, d.key]);
   }
   const seqs: number[] = [];
@@ -6168,9 +5139,7 @@ async function deleteLockedSharedDocs(
       c,
       ctx,
       { bytes: -d.sizeBytes, docs: -1 },
-      // No user carries a doc without an author uid: a counter document whose creator's account
-      // was wiped had its charge released with that account's usage row, and an app-authored
-      // doc never charged one.
+      // No user carries a doc without an author uid: an app-authored doc never charged one.
       d.authorUid === null
         ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
         : { uid: d.authorUid, bytes: -d.sizeBytes, docs: -1, ceiling: 'author' }
@@ -6224,8 +5193,7 @@ function createModeration({ withTx, charge }: ModerationDeps) {
   }
 
   /**
-   * One shared document, hidden or not, with every tally but the `report` one; its reports are
-   * `reports` (open) and `reportsTotal` (all time), both counted from the report rows.
+   * One shared document, hidden or not; its reports are `reports` (open) and `reportsTotal` (all time), both counted from the report rows.
    */
   async function get(
     appId: string,
@@ -6239,12 +5207,6 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       async (c) => (await c.query(SQL_MOD_GET, [appId, ns, collection, key, REPORT_MARK])).rows[0]
     );
     if (!row) return null;
-    const counters: Record<string, number> = {};
-    const marks: Record<string, number> = {};
-    for (const [k, v] of Object.entries((row.tallies ?? {}) as Record<string, number | string>)) {
-      const sep = k.indexOf(':');
-      (k.slice(0, sep) === 'counter' ? counters : marks)[k.slice(sep + 1)] = Number(v);
-    }
     return {
       collection: row.coll as string,
       key: row.key as string,
@@ -6265,14 +5227,12 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       sizeBytes: Number(row.size_bytes),
       version: Number(row.version),
       revision: Number(row.seq),
-      counters,
-      marks,
     };
   }
 
   /**
    * Hide (or unhide) one shared document. A hidden document reads as not found to the
-   * app (`VISIBLE`) and keeps its data, tallies, marks and quota charge, so the action
+   * app (`VISIBLE`) and keeps its data, reports and quota charge, so the action
    * is reversible. A hide takes the next seq into a tombstone, so a feed reader drops
    * the document; an unhide gives the document the next seq, so the reader sees it
    * again. Already in the requested state: `changed: false`, nothing written. With
@@ -6338,11 +5298,9 @@ function createModeration({ withTx, charge }: ModerationDeps) {
 
   /**
    * Hard-delete one shared document, hidden or not: its index rows go with it (FK
-   * cascade), its tallies and marks are deleted, the app and the charged author are
-   * refunded (a counter-created doc's `author_uid` is the user its creation was charged
-   * to), and a tombstone takes the next seq — the same accounting as an author delete.
-   * A document with no `author_uid` (a counter document whose creator's account was wiped,
-   * or app-authored) refunds the app only: no user carries it.
+   * cascade), its reports are deleted, the app and its author are refunded, and a tombstone
+   * takes the next seq — the same accounting as an author delete. A document with no
+   * `author_uid` (app-authored) refunds the app only: no user carries it.
    */
   async function remove(
     appId: string,
@@ -6379,7 +5337,7 @@ export type UnratedDoc = {
 
 export type ApplyRatingResult =
   | { applied: true; seq: number; currentLevel: number }
-  | { applied: false; reason: 'gone' | 'changed' | 'hidden' | 'counter' };
+  | { applied: false; reason: 'gone' | 'changed' | 'hidden' };
 
 /** The levels a rating may carry: one NsfwLevel bit (the CHECK `doc_level_bit`). */
 const RATING_LEVEL_BITS = new Set([1, 2, 4, 8, 16, 32]);
@@ -6534,7 +5492,6 @@ function createRater({
       if (!row) return { applied: false, reason: 'gone' } as const;
       if (Number(row.seq) !== opts.seq) return { applied: false, reason: 'changed' } as const;
       if (row.hidden) return { applied: false, reason: 'hidden' } as const;
-      if (row.author_kind === 'counter') return { applied: false, reason: 'counter' } as const;
       // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
       const seq = await charge(c, ctx, NO_APP_CHARGE, {
         uid: 0,

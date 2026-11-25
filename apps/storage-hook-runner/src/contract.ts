@@ -15,44 +15,17 @@ import {
  * hook silently reading `undefined` for a field it relies on.
  */
 
-export const HOOK_OPS = ['create', 'put', 'delete', 'increment', 'mark', 'unmark'] as const;
+/** The document writes. The tally ops (increment, mark, unmark) were removed from App Storage. */
+export const HOOK_OPS = ['create', 'put', 'delete'] as const;
 const Op = z.enum(HOOK_OPS);
 
-/** blockIds, collection, counter and mark names. Bounded because `app` and `collection` are
+/** blockIds and collection names. Bounded because `app` and `collection` are
  *  metric labels (and only a signed caller can send them). */
 const Name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/);
 
 /** A JSON value that must be PRESENT (`null` when there is nothing), never omitted. */
 const Present = z.unknown().refine((v) => v !== undefined, { message: 'required (send null)' });
 
-/**
- * A tally write as the document update operator the storage API takes on `PATCH /:coll/:key`
- * (`{ $inc: { <counter>: by } }`, `{ $mark: <name> }`, `{ $unmark: <name> }`). The deprecated
- * per-tally routes are aliases, so a hook sees this one shape whichever route carried the write.
- * Exactly one operator; `$inc` names exactly one counter.
- */
-const Tally = z
-  .union([
-    z.strictObject({
-      $inc: z
-        .record(Name, z.number().finite())
-        .refine((m) => Object.keys(m).length === 1, { message: '$inc names exactly one counter' }),
-    }),
-    z.strictObject({ $mark: Name }),
-    z.strictObject({ $unmark: Name }),
-  ])
-  .nullable();
-
-/** The operator each op carries (null for a document write). */
-const TALLY_OPERATOR_OF_OP: Record<(typeof HOOK_OPS)[number], '$inc' | '$mark' | '$unmark' | null> =
-  {
-    create: null,
-    put: null,
-    delete: null,
-    increment: '$inc',
-    mark: '$mark',
-    unmark: '$unmark',
-  };
 
 /** The single argument the hook's default export is called with. */
 export const HookInput = z
@@ -63,14 +36,15 @@ export const HookInput = z
     key: z.string().min(1).max(200),
     /** The stored document's data before this write, or null (create, or absent). */
     before: Present,
-    /** The document's data after this write, or null (delete, increment, mark, unmark). */
+    /** The document's data after this write, or null (delete). */
     after: Present,
-    /** Metadata of the stored document (version, author kind, counters, marks), or null. Its
-     *  inner shape is the write path's to define; the runner passes it through. */
+    /** Metadata of the stored document (version, author kind; `counters` / `marks` always
+     *  empty), or null. Its inner shape is the write path's to define; the runner passes it
+     *  through. */
     doc: z.record(z.string(), z.unknown()).nullable(),
-    /** For increment / mark / unmark: the update operator (`$inc` / `$mark` / `$unmark`); null
-     *  for create, put and delete. The operator must be the op's own. */
-    tally: Tally,
+    /** Always null since the tally ops were removed; still a required field, so a hook written
+     *  against it keeps reading `null`. */
+    tally: z.null(),
     viewer: z.strictObject({ userId: z.number().int() }),
     app: z.strictObject({ blockId: Name }),
     /** The importing app's blockId on a `?from=` write, else null. */
@@ -78,15 +52,7 @@ export const HookInput = z
     /** On a viewer-keyed collection only: the parent key a `@me` write names (null under
      *  `keyedBy: "viewer"`). Absent on every other collection. */
     parent: z.string().min(1).max(96).nullable().optional(),
-  })
-  .refine(
-    (i) => {
-      const want = TALLY_OPERATOR_OF_OP[i.op];
-      if (want === null) return i.tally === null;
-      return i.tally !== null && Object.keys(i.tally)[0] === want;
-    },
-    { message: "tally must be the op's own update operator ($inc / $mark / $unmark), or null" }
-  );
+  });
 export type HookInput = z.infer<typeof HookInput>;
 
 export const CheckRequest = z

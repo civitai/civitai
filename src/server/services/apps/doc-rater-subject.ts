@@ -41,8 +41,8 @@ export function appDocTextScanSubject(
     // An author cannot rate their own document: any level found is the level.
     declared: {},
     ...(doc.authorUid !== null ? { userId: doc.authorUid } : {}),
-    // A hidden document waits for a moderator, and a counter document holds no text.
-    ...(doc.hidden || doc.authorKind === 'counter' ? { notPublic: true } : {}),
+    // A hidden document waits for a moderator.
+    ...(doc.hidden ? { notPublic: true } : {}),
     meta,
   };
 }
