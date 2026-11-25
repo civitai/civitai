@@ -869,12 +869,17 @@ export function reconcileAction(
 const FP_MAX_LIFTS = 3;
 const FP_LIFTS_WINDOW_SECONDS = 30 * 24 * 60 * 60;
 
-/** A lift that lost is sent again up to FP_MAX_LIFTS times, then counted stuck. */
-const takeLift = (commentId: number) =>
+/**
+ * A lift that lost is sent again up to FP_MAX_LIFTS times, then counted stuck. The count lives on
+ * the cache cluster: an eviction restarts it, so a lift that keeps losing can be sent more often,
+ * at most once a reconcile.
+ */
+const takeLift = (commentId: number, by?: number) =>
   takeClusterWindowCount(
     'feature-pages.lift',
     `${REDIS_KEYS.COUNTERS.FEATURE_PAGES_LIFTS}:${commentId}`,
-    FP_LIFTS_WINDOW_SECONDS
+    FP_LIFTS_WINDOW_SECONDS,
+    { by }
   );
 
 /** The daily reconcile: compares what each urn should hold with the platform, by reconcileAction. */
@@ -945,7 +950,13 @@ export async function runFpReconcile() {
       const lifts = await takeLift(row.commentId).catch(() => NaN);
       if (Number.isNaN(lifts)) continue;
       if (lifts <= FP_MAX_LIFTS) {
-        await markFpReconciled(kyselyWrite, row.commentId, 'due');
+        // Counted only if this marks it due: a row another writer made due first sends no lift.
+        let marked = false;
+        try {
+          marked = await markFpReconciled(kyselyWrite, row.commentId, 'due');
+        } finally {
+          if (!marked) await takeLift(row.commentId, -1).catch(() => undefined);
+        }
       } else {
         liftsLost += 1;
         log('error', 'lift lost', { commentId: row.commentId });
