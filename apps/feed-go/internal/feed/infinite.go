@@ -290,6 +290,14 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 			return nil, err
 		}
 	}
+	// A collection's Random sort beside a `postId`: getAllImages orders it by the seeded sort key (its
+	// Random branch replaces the post scope's `i."index"`, then appends `, i."id"`) and builds the
+	// `seed:sortKey:id` cursor, where this service's post scope (ImagesQuery.IndexOrder, a `postId`
+	// without a `modelId`) would order by the index and page on it. Every Random request with a
+	// `postId` is left to Node, decided by the input alone.
+	if in.Sort == SortRandom && in.PostID != 0 {
+		return nil, fallback.New("collection-random-post-id")
+	}
 	return in, nil
 }
 

@@ -2217,14 +2217,19 @@ without one Node answers `Random sort requires a collectionId` (a BAD_REQUEST), 
   cursor is on neither page: Node's behaviour, kept. A part that is not digits (Node inlines `NaN`, a
   sign or a fraction into the SQL) is `collection-random-cursor`, a request-determined reason seeded
   at 0.
+- **Beside a `postId`.** Node's Random branch replaces the post scope's `i."index"` order (then
+  appends `, i."id"`) and builds the `seed:sortKey:id` cursor; this service's post scope
+  (`ImagesQuery.IndexOrder`) would order and page on the index, so a second page came back nearly
+  empty. Any Random request with a `postId` is `collection-random-post-id`, a request-determined
+  reason seeded at 0, and Node answers it.
 - **`nextCursor`.** Node selects `concat(<seed>::text, ':', ct."sortKey"::text, ':', i."id"::text)`
   as the cursor column; here the sort key is the cursor column and the string is built from the bound
   seed and the look-ahead row's key and id: the same text for the integers both sides hold.
 - **Tests.** The golden fixtures `collection-random-*` (the mirror's sort keys are literals from a
   real Postgres, pinned against the CI Postgres by `TestIntegrationCollectionRandomSortKeys`; neither
-  the mirror nor the Go fake reimplements `hashtext`), `TestInfiniteSortRandomSwitch` (on: Node's
-  answer; off: `input-sort`), `TestInfiniteSortRandomShadow` (a Node sample is `match` on,
-  `unsupported` off), `TestIntegrationCollectionRandomPage` (the order, the cursor column and the
+  the mirror nor the Go fake reimplements `hashtext`), the `SortRandom` rows of `TestInfinitePortsSwitch` (on:
+  Node's answer; off: `input-sort`) and `TestInfinitePortsShadow` (a Node sample is `match` on,
+  `unsupported` off), `TestParseInfiniteRandomSortPostID` and `fallback-collection-random-post-id`, `TestIntegrationCollectionRandomPage` (the order, the cursor column and the
   strict next page on Postgres).
 
 ## 15. `model.getAll` (tRPC, shadow; served only behind `FEED_GO_SERVE_MODEL_GETALL`, default off)
