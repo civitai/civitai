@@ -146,7 +146,7 @@ export function pickCategoryRubric(
 
 /**
  * Whether a challenge is judged on the NSFW rubric variants: unless every level it allows is SFW.
- * Decided per challenge, never per entry, so an SFW daily always reads `rubric`.
+ * Decided per challenge, never per entry, so an SFW daily never reads `rubricNsfw`.
  */
 export function usesNsfwRubrics(allowedNsfwLevel: number) {
   return !getIsSafeBrowsingLevel(allowedNsfwLevel);
