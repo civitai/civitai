@@ -74,6 +74,7 @@ const OWNED = 61;
 const OTHER_OWNERS = 62;
 const UNBLOCKED_HELD = 63;
 const OTHER_FLAG = 64;
+const OTHER_OWNERS_SCANNED = 90;
 const EXPIRED_HOLD = 65;
 const NEAR_CEILING = 66;
 const INSIDE_MARGIN = 67;
@@ -92,7 +93,9 @@ beforeAll(async () => {
       "userId" int,
       ingestion text,
       "needsReview" text,
-      "blockedFor" text
+      "blockedFor" text,
+      "nsfwLevel" int,
+      metadata jsonb
     );
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
@@ -124,6 +127,7 @@ beforeEach(async () => {
       (${OWNED}, ${OWNER}, 'Scanned', 'csam'),
       (${OTHER_OWNERS}, ${OTHER_OWNER}, 'Blocked', 'csam'),
       (${UNBLOCKED_HELD}, ${PRIOR_REPORT_OWNER}, 'Scanned', 'csam'),
+      (${OTHER_OWNERS_SCANNED}, ${OTHER_OWNER}, 'Scanned', NULL),
       (${OTHER_FLAG}, ${OWNER}, 'Blocked', 'minor'),
       (${APPEALED}, ${OTHER_OWNER}, 'Blocked', 'appeal'),
       (${APPEALED_UNLISTED}, ${OTHER_OWNER}, 'Blocked', 'appeal');
@@ -208,12 +212,12 @@ describe('fileCsamReport', () => {
     expect(await flag(OTHER_OWNERS)).toBe('csam');
   });
 
-  // Held by an earlier report, but this one (no owner) blocked nothing: the flag is what keeps it out
-  // of every feed.
-  it('keeps the flag on an image that is not removed', async () => {
+  // Held by an earlier report on its owner. This one names no owner, but blocks the image it lists,
+  // so the owner's open report takes over from the flag.
+  it('blocks an image an ownerless report lists, and its owner’s open report takes the flag', async () => {
     await report(-1, [UNBLOCKED_HELD]);
 
-    expect(await flag(UNBLOCKED_HELD)).toBe('csam');
+    expect(await flag(UNBLOCKED_HELD)).toBeNull();
   });
 
   // A new report on an owner whose open report is past the release cutoff: the flag stays on.
@@ -328,6 +332,48 @@ describe('fileCsamReport', () => {
       expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: 2 });
     }
   );
+
+  const blockedFor = async (id: number) =>
+    (
+      await pg.query<{ blockedFor: string | null }>(
+        `SELECT "blockedFor" FROM "Image" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0].blockedFor;
+
+  // Search drops a listed image through its own row, so every path the filing takes must block it.
+  it.each([
+    ['an image of another account', OWNER, OTHER_OWNERS_SCANNED],
+    ['an internal filing that removes no account', -1, UNBLOCKED_HELD],
+    // softDeleteUser returns early for a moderator account; here it blocks nothing.
+    ['an account whose removal blocks nothing', OWNER, OWNED],
+  ])('blocks every listed image as CSAM on %s', async (_, userId, imageId) => {
+    if (userId !== -1) softDeleteUser.mockImplementationOnce(async () => undefined);
+    await report(userId, [imageId]);
+
+    expect(await blockedFor(imageId)).toBe('CSAM');
+  });
+
+  it('blocks the listed images even when removing the account fails', async () => {
+    softDeleteUser.mockRejectedValueOnce(new Error('connection lost'));
+
+    await expect(report(OWNER, [OTHER_OWNERS_SCANNED])).rejects.toThrow('connection lost');
+
+    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
+  });
+
+  it('files nothing when the listed images cannot be blocked', async () => {
+    const real = dbMock.dbWrite.$executeRaw.getMockImplementation();
+    dbMock.dbWrite.$executeRaw.mockImplementationOnce((async () => {
+      throw new Error('write failed');
+    }) as never);
+
+    await expect(report(OWNER, [OWNED])).rejects.toThrow('write failed');
+
+    expect(createCsamReport).not.toHaveBeenCalled();
+    expect(softDeleteUser).not.toHaveBeenCalled();
+    dbMock.dbWrite.$executeRaw.mockImplementation(real as never);
+  });
 
   it('fails loudly with the flag still on when removing the account fails', async () => {
     softDeleteUser.mockRejectedValueOnce(new Error('connection lost'));

@@ -33,7 +33,7 @@ import {
   logCsamBlocklistNoHash,
 } from '~/server/services/image.service';
 import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
-import { softDeleteUser } from '~/server/services/user.service';
+import { blockListedImagesAsCsam, softDeleteUser } from '~/server/services/user.service';
 import {
   AppealStatus,
   BlockImageReason,
@@ -87,6 +87,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     contextText,
   };
   const filed = contextText.length ? { ...filing, details: withContext } : filing;
+  // Before the report row, and not caught: a filing whose images could not be blocked files nothing,
+  // so a retry is clean. Search drops a listed image through its own row, whoever owns it.
+  await blockListedImagesAsCsam(imageIds);
   const report = supplementalOf
     ? await createSupplementalCsamReport({ ...filed, supplementalOf })
     : await createCsamReport({ ...filed, writeBlocklist: false });
