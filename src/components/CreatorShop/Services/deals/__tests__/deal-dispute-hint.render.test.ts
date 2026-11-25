@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 
 // A buyer on an in-progress deal looked for a dispute button and found only the offering's
@@ -105,6 +105,9 @@ describe('deal page: when a dispute becomes available', () => {
 // The review card replaces the dispute window only for a deal enrolled in reviews, viewed with the
 // review flag; with the flag off the page is today's.
 describe('deal page: the review card', () => {
+  afterEach(() => {
+    mocks.flags = { creatorServices: true, creatorServicesNext: false };
+  });
   const renderCompleted = ({ next, enrolled }: { next: boolean; enrolled: boolean }) => {
     mocks.flags = { creatorServices: true, creatorServicesNext: next };
     mocks.deal = {
@@ -125,11 +128,9 @@ describe('deal page: the review card', () => {
       actions: [],
       review: enrolled ? { settled: false, finalsClear: true, review: null } : null,
     };
-    const page = renderToStaticMarkup(
+    return renderToStaticMarkup(
       createElement(MantineProvider, null, createElement(ServiceDealPage, { dealId: 7 }))
     );
-    mocks.flags = { creatorServices: true, creatorServicesNext: false };
-    return page;
   };
   const DISPUTE_WINDOW = 'Dispute window closes in';
   const CARD = 'How did it turn out?';

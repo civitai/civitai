@@ -89,7 +89,6 @@ export const creatorServiceDealRouter = router({
       reviewEnabled: !!ctx.features.creatorServicesNext,
     })
   ),
-  // Behind the live review flag inside the service, so the brake stops new reviews at once.
   review: gated.input(reviewServiceDealSchema).mutation(({ input, ctx }) =>
     reviewServiceDeal({
       dealId: input.id,
