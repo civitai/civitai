@@ -130,6 +130,23 @@ export const getUserProfileHandler = async ({
   }
 };
 
+// The civitai.com copies count as the field they override.
+const moderatorArchivedFields = {
+  bio: ['bio', 'sfwBio'],
+  message: ['message', 'sfwMessage'],
+  location: ['location'],
+  links: ['socialLinks', 'sponsorshipLinks'],
+  showcaseSections: ['showcaseItems', 'profileSectionsSettings'],
+  about: ['about'],
+} as const;
+
+/** The profile fields a moderator's save over another user's profile touches, archived first. */
+export function profileFieldsTouchedByModerator(input: object) {
+  return (Object.keys(moderatorArchivedFields) as (keyof typeof moderatorArchivedFields)[]).filter(
+    (field) => moderatorArchivedFields[field].some((key) => key in input)
+  );
+}
+
 export const updateUserProfileHandler = async ({
   input,
   ctx,
@@ -146,17 +163,7 @@ export const updateUserProfileHandler = async ({
     const userId = sessionUser.isModerator ? input.userId || sessionUser.id : sessionUser.id;
     const byModerator = userId !== sessionUser.id;
     if (byModerator) {
-      // The civitai.com copies count as the field they override.
-      const touched = {
-        bio: ['bio', 'sfwBio'],
-        message: ['message', 'sfwMessage'],
-        location: ['location'],
-        links: ['socialLinks', 'sponsorshipLinks'],
-        showcaseSections: ['showcaseItems', 'profileSectionsSettings'],
-      };
-      const fields = (Object.keys(touched) as (keyof typeof touched)[]).filter((field) =>
-        touched[field].some((key) => key in input)
-      );
+      const fields = profileFieldsTouchedByModerator(input);
       if (fields.length)
         await archiveProfileBeforeModeratorChange({
           userId,
