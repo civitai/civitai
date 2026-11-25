@@ -1729,6 +1729,47 @@ describe('copies of scanned images', () => {
     expect((await entries(fileId))[0].imageId).not.toBeNull();
   });
 
+  describe('copies kept for their case', () => {
+    /** 50 passed copies kept for their case, then one that can go. */
+    async function keptThenDeletable() {
+      const dealId = await accepted();
+      await q(`INSERT INTO "Image" (url) SELECT 'kept' FROM generate_series(1, 50)`);
+      await q(`INSERT INTO "Image" (url) VALUES ('free')`);
+      await q(
+        `INSERT INTO "ServiceDealFileEntry" ("dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+           SELECT $1, i, 'a.png', 1, i, 'Passed' FROM generate_series(1, 51) i`,
+        [dealId]
+      );
+      images.deleteImages.mockImplementation(async (ids: number[]) =>
+        q(`DELETE FROM "Image" WHERE id = ANY($1::int[]) AND url <> 'kept' RETURNING id`, [ids])
+      );
+    }
+    const copies = async () =>
+      (await q<{ imageId: number }>(`SELECT "imageId" FROM "ServiceDealFileEntry"`)).map(
+        (row) => row.imageId
+      );
+
+    it('do not hold up a copy after them: it goes in the same run or the next', async () => {
+      await keptThenDeletable();
+      const deleted =
+        (await unpack.deleteEntryScanCopies()) + (await unpack.deleteEntryScanCopies());
+      expect(deleted).toBe(1);
+      expect(await copies()).not.toContain(51);
+      expect(await copies()).toHaveLength(50);
+    });
+
+    it('are deleted once their case clears', async () => {
+      await keptThenDeletable();
+      await unpack.deleteEntryScanCopies();
+      await unpack.deleteEntryScanCopies();
+      await q(`UPDATE "Image" SET url = 'free'`);
+      const deleted =
+        (await unpack.deleteEntryScanCopies()) + (await unpack.deleteEntryScanCopies());
+      expect(deleted).toBe(50);
+      expect(await copies()).toEqual([]);
+    });
+  });
+
   describe('when the seller deletes the file', () => {
     async function threeImages() {
       const dealId = await accepted();
@@ -1871,6 +1912,24 @@ describe('copies of scanned images', () => {
       await purgedWithCopy(fileId);
     });
 
+    it('keeps its copy when a hold lands after its objects are deleted', async () => {
+      const fileId = await overLevelFinal();
+      const { s3Key } = await fileRow(fileId);
+      const deleteObject = s3.deleteObject.getMockImplementation();
+      s3.deleteObject.mockImplementation(async (bucketName: string, key: string) => {
+        await deleteObject?.(bucketName, key);
+        if (key !== s3Key) return;
+        await q(`INSERT INTO "Report" (status) VALUES ('Pending')`);
+        await q(
+          `INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, (SELECT max(id) FROM "Report"))`
+        );
+      });
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(images.deleteImages).not.toHaveBeenCalled();
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+    });
+
     it.each([
       ['flagged as a minor', `UPDATE "Image" SET minor = true`],
       ['flagged as a real person', `UPDATE "Image" SET poi = true`],
@@ -1995,6 +2054,16 @@ describe('the finals malware scan flag', () => {
   });
 });
 
+/** What a CSAM reviewer who is no party to the deal is offered of a file, and gets. */
+async function reviewerSees(dealId: number, fileId: number, servableLevels: number) {
+  const reviewer = { userId: 99, isModerator: true, canReviewCsam: true, servableLevels };
+  const listed = (await files.listServiceDealFiles({ dealId, ...reviewer })).find(
+    (row) => row.id === fileId
+  );
+  const download = await files.resolveServiceDealFileDownload({ fileId, ...reviewer });
+  return { listed: listed?.canDownload, downloaded: download !== null };
+}
+
 // Decided in civitai/civitai#10422.
 describe('a Final rated outside the domain', () => {
   /** A completed R deal whose one Final (`name`) passed, its one image rated R. */
@@ -2076,32 +2145,27 @@ describe('a Final rated outside the domain', () => {
     expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
   });
 
-  it('once removed, is listed downloadable to a CSAM reviewer only while no image in it is held', async () => {
-    const { dealId, fileId } = await completedRatedFinal('result.zip');
-    await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
-    const asReviewer = async () =>
-      (
-        await files.listServiceDealFiles({
-          dealId,
-          userId: 99,
-          isModerator: true,
-          canReviewCsam: true,
-          servableLevels: 31,
-        })
-      ).find((row) => row.id === fileId);
-    expect(await asReviewer()).toMatchObject({ canDownload: true });
-    await q(`UPDATE "Image" SET minor = true`);
-    expect(await asReviewer()).toMatchObject({ canDownload: false });
-    expect(
-      await files.resolveServiceDealFileDownload({
-        fileId,
-        userId: 99,
-        isModerator: true,
-        moderatorFetch: true,
-        servableLevels: 31,
-      })
-    ).toBeNull();
-  });
+  it.each([
+    ['an image in it is held', async () => (await q(`UPDATE "Image" SET minor = true`), 31)],
+    ['this host may not show its rating', async () => 3],
+    [
+      'it still sits at the key its uploader holds',
+      async () => (
+        await q(`UPDATE "ServiceDealFile" SET "s3Key" = 'service-deals/uploads/1/0/f'`), 31
+      ),
+    ],
+  ])(
+    'once removed, is refused to a CSAM reviewer, listed and downloaded alike, when %s',
+    async (_n, refuse) => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+      expect(await reviewerSees(dealId, fileId, 31)).toEqual({ listed: true, downloaded: true });
+      expect(await reviewerSees(dealId, fileId, await refuse())).toEqual({
+        listed: false,
+        downloaded: false,
+      });
+    }
+  );
 
   it('a file with no rated image is served on any domain', async () => {
     const { dealId, fileId } = await completedRatedFinal('result.zip');
@@ -2947,6 +3011,42 @@ describe('a video Final', () => {
 
   beforeEach(() => {
     probe.video.mockResolvedValue({ width: 640, height: 360, duration: 10.1 });
+  });
+
+  it('never stamped and rated off this domain, is refused, with no link to the other domain', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    const listed = async () =>
+      (
+        await files.listServiceDealFiles({
+          dealId,
+          userId: SELLER,
+          isModerator: false,
+          servableLevels: 3,
+        })
+      ).find((row) => row.id === fileId);
+    expect(await listed()).toMatchObject({ canDownload: false, downloadOffDomain: true });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scannedEtag" = NULL, "scannedVersionId" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    expect(await listed()).toMatchObject({ canDownload: false });
+    expect((await listed())?.downloadOffDomain).toBeUndefined();
+  });
+
+  it('once removed and never stamped, is refused to a CSAM reviewer, listed and downloaded alike', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    expect(await reviewerSees(dealId, fileId, 31)).toEqual({ listed: true, downloaded: true });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scannedEtag" = NULL, "scannedVersionId" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    expect(await reviewerSees(dealId, fileId, 31)).toEqual({ listed: false, downloaded: false });
   });
 
   it('scans the whole video, as the version it will serve', async () => {

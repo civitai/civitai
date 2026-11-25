@@ -801,20 +801,26 @@ export async function settleFinals() {
   return { finalsFailed: failed, finalsPassed: passed };
 }
 
+/** The last entry `deleteEntryScanCopies` tried. Kept in memory: a restart only starts it over. */
+let copiesCursor = 0;
+
 /**
  * Step 5: the copy of an image that passed has done its job (one refused only for its rating goes
  * in the purge, with its file). The copy of an image whose scan has not finished, or that was
  * refused for anything but its rating, is KEPT, even after its file was deleted: its Image row is
- * what the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
- * is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
+ * what the moderation tooling reads, and deleting it would take the evidence with it. A copy whose
+ * file is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
  * passes. A delete that fails stays pointed at and is retried.
  */
 export async function deleteEntryScanCopies({ limit = 50 } = {}) {
+  // Each run starts after the last one's final row and wraps to the start, so copies kept for
+  // their case are tried again but cannot fill every batch.
   const rows = await dbWrite.$queryRaw<{ id: number; imageId: number; fileId: number | null }[]>`
     SELECT e."id", e."imageId", e."fileId" FROM "ServiceDealFileEntry" e
     WHERE e."imageId" IS NOT NULL AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-    ORDER BY e."id" LIMIT ${limit}::int`;
+    ORDER BY e."id" <= ${copiesCursor}::int, e."id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
+  copiesCursor = rows[rows.length - 1].id;
   const { deleteImages } = await import('~/server/services/image.service');
   let deleted = 0;
   for (const row of rows) {

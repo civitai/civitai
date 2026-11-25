@@ -724,10 +724,11 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * A removed file whose scans finished clean (or that can never be judged), with its scan copies
- * gone. Deal holds are not checked here; `purgeable` adds them. A
- * removed file whose scan failed, or is still to come, stays for the moderators. `f` names the
- * file row.
+ * A removed file whose scans finished clean, or that can never be judged, or that failed only for a
+ * rating above its deal's level. Its scan copies are gone, except those of such over-level images,
+ * which the purge deletes with the file. Deal holds are not checked here; `purgeable` adds them. A
+ * file whose scan failed for any other reason, or is still to come, stays for the moderators. `f`
+ * names the file row.
  */
 const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
@@ -1007,6 +1008,7 @@ type FileRow = {
   watermarkedKey: string | null;
   removedAt: Date | null;
   nsfwLevel: number | null;
+  s3Key: string;
 } & FinalLevelFacts;
 
 /**
@@ -1070,7 +1072,7 @@ export async function listServiceDealFiles({
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
       f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey",
-      f."removedAt", f."nsfwLevel", ${finalLevelColumns}
+      f."removedAt", f."nsfwLevel", f."s3Key", ${finalLevelColumns}
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -1094,7 +1096,10 @@ export async function listServiceDealFiles({
           scanStatus: row.scanStatus,
           previewUrl: null,
           // Refused as the download refuses it.
-          canDownload: canReviewCsam && !(row.kind === 'Final' && row.csamHeld),
+          canDownload:
+            canReviewCsam &&
+            !isUploaderKey(row.s3Key) &&
+            finalLevelGate(row, servableLevels, false) === 'served',
           removedAt: row.removedAt,
         },
       ];
@@ -1222,13 +1227,13 @@ function finalLevelGate(
   if (row.csamHeld) return 'refused';
   const video = isFinalVideoName(row.fileName);
   if (!video && row.contentLevel === null) return 'served';
+  // A video never stamped (refused, or not scanned yet) goes only to dispute review.
+  if (video && !row.scannedEtag && !disputeReview) return 'refused';
   const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
   // Dispute review sees it whatever its rating, Blocked included (no domain's levels hold it), but
   // only while its scan image still exists to show it is not held.
   if (!levelInDomain && !(disputeReview && !row.ratedImageGone))
     return row.contentLevel ? 'offDomain' : 'refused';
-  // A video never stamped (refused, or not scanned yet) goes only to dispute review.
-  if (video && !row.scannedEtag && !disputeReview) return 'refused';
   return 'served';
 }
 
