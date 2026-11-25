@@ -84,8 +84,7 @@ describe('liftWorkflowMatureRestriction', () => {
     expect((error as TRPCError).message).toBe('not unlockable');
   });
 
-  // Decision: a 5xx is an unknown outcome, as in the comics unlock. Throwing it
-  // released the block's lock while the charge may have landed; keep this a reported outcome.
+  // Decision: a 5xx is an unknown outcome, as in the comics unlock; keep it a reported outcome.
   it.each([500, 502, 503])(
     '🔴 a %i is no-response, not a throw: the write may have landed',
     async (status) => {

@@ -1,4 +1,5 @@
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { APP_BLOCK_TAG_PREFIX } from '~/shared/utils/app-block-tags';
 import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { assertNoBlockMediaInputs } from '~/server/services/blocks/block-media-input-guard';
 import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
@@ -15580,7 +15581,6 @@ async function outputUnlockDeps(opts: {
         domain: resolveBlockMaturity(claims).isGreen ? 'green' : 'red',
       }),
     assertUnlockReleasesOutput: async () =>
-      // A comic panel's workflow unlocks only from the comic editor, which holds the panel's claim.
       orchestration.assertUnlockReleasesOutput({
         token: await token(),
         workflowId,
@@ -16855,7 +16855,7 @@ function buildWorkflowTags(
     // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),
-    `app-block:block:${claims.blockId}`,
+    `${APP_BLOCK_TAG_PREFIX}block:${claims.blockId}`,
     // Per-instance tag — the SAME helper the dev-token publish proof reads
     // (`assertBlockWorkflowTaggedForInstance`).
     appBlockInstanceTag(claims.blockInstanceId),
