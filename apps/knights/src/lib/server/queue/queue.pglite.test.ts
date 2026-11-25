@@ -414,7 +414,9 @@ describe('getFeed', () => {
       ...Array<number>(250).fill(1),
     ]);
     // The refusals write rows that name these image ids, which later tests reuse.
-    onTestFinished(() => pg.exec(`TRUNCATE ${EXCLUSION_TABLES} RESTART IDENTITY CASCADE`));
+    onTestFinished(async () => {
+      await pg.exec(`TRUNCATE ${EXCLUSION_TABLES} RESTART IDENTITY CASCADE`);
+    });
     // sameAgeStage puts item ids[k] on image 100_001 + k.
     for (const [k, [, refuse]] of refusals.entries()) await refuse(100_001 + firstRefused + k);
     const refused = ids.slice(firstRefused, clean);
