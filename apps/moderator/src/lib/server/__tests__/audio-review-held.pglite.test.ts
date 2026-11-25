@@ -61,7 +61,7 @@ const CSAM_COVER = 715;
 // Flagged itself by a moderation rule.
 const FLAGGED_SONG = 706;
 const PICTURE = 707;
-// Its flagged cover shares a key with an image still scanning: withheld without the grant.
+// Its flagged cover shares a key with an image in the CSAM queue: withheld without the grant.
 const WITHHELD_SONG = 708;
 const WITHHELD_COVER = 718;
 
@@ -109,7 +109,7 @@ beforeEach(async () => {
       (${PICTURE}, 'picture-key', 'image', 'Scanned', ${OWNER}, 'tag', 1, NULL, '2026-11-02'),
       (${WITHHELD_SONG}, 'withheld-song-key', 'audio', 'Scanned', ${OWNER}, NULL, 1, '{"title": "Dandelion"}', '2026-11-02'),
       (${WITHHELD_COVER}, 'shared-cover', 'image', 'Scanned', ${OWNER}, 'tag', 1, NULL, '2026-11-05'),
-      (719, 'shared-cover', 'image', 'Pending', ${OTHER}, NULL, 0, NULL, '2026-11-05');
+      (719, 'shared-cover', 'image', 'Pending', ${OTHER}, 'csam', 0, NULL, '2026-11-05');
     INSERT INTO "Track" ("imageId", "coverImageId") VALUES
       (${LYRICS_SONG}, ${LYRICS_COVER}), (${COVER_SONG}, ${FLAGGED_COVER}),
       (${FOREIGN_SONG}, ${FOREIGN_COVER}), (${CSAM_SONG}, ${CSAM_COVER}),

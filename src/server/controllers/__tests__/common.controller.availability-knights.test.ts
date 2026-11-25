@@ -4,6 +4,8 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type { Context } from '~/server/createContext';
 import { updateEntityAvailabilityHandler } from '~/server/controllers/common.controller';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { modelsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { clearKnightsSourcesConfigCache } from '~/server/services/knights/sources';
 import { Availability } from '~/shared/utils/prisma/enums';
 
@@ -37,6 +39,15 @@ const setPost = (availability: Availability) => {
   });
 };
 const imageReads = () => statements.filter((s) => s.sql.includes('from "Image"'));
+const postsOfVersionsReads = () =>
+  statements.filter((s) => s.sql.includes('from "Post"') && s.sql.includes('"modelVersionId" in'));
+const setModel = (entityType: 'Model' | 'ModelVersion', availability: Availability) => {
+  written = availability;
+  return updateEntityAvailabilityHandler({
+    ctx: {} as Context,
+    input: { entityType, entityId: 3, availability },
+  });
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,9 +58,14 @@ beforeEach(() => {
   );
   dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 50 }]);
   stored = Availability.Private;
-  dbMock.dbWrite.post.findUnique.mockImplementation((async () => ({
+  const storedNow = async () => ({
     availability: dbMock.dbWrite.$executeRawUnsafe.mock.calls.length === 0 ? stored : written,
-  })) as never);
+  });
+  dbMock.dbWrite.post.findUnique.mockImplementation(storedNow as never);
+  dbMock.dbWrite.model.findUnique.mockImplementation(storedNow as never);
+  dbMock.dbWrite.modelVersion.findUnique.mockImplementation(storedNow as never);
+  dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: 7 }, { id: 8 }] as never);
+  dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue({ id: 3, modelId: 1 } as never);
 });
 
 describe('updateEntityAvailabilityHandler on a Post', () => {
@@ -86,5 +102,51 @@ describe('updateEntityAvailabilityHandler on a Post', () => {
       REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES
     );
     expect(imageReads()).toEqual([]);
+  });
+});
+
+describe('updateEntityAvailabilityHandler on a Model or ModelVersion', () => {
+  it.each([
+    ['Model', [7, 8]],
+    ['ModelVersion', [3]],
+  ] as const)(
+    "offers the images on a %s's posts to Knights after it leaves Private",
+    async (entityType, versionIds) => {
+      await setModel(entityType, Availability.Public);
+
+      await vi.waitFor(() => expect(postsOfVersionsReads().length).toBeGreaterThan(0));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(postsOfVersionsReads()).toHaveLength(1);
+      const [read] = postsOfVersionsReads();
+      expect(read.values.filter((v) => typeof v === 'number')).toEqual(versionIds);
+      expect(read.writesBefore).toBe(1);
+    }
+  );
+
+  it.each([
+    ['Model', Availability.Public, Availability.Unsearchable],
+    ['ModelVersion', Availability.Public, Availability.Public],
+    ['Model', Availability.Private, Availability.Private],
+  ] as const)(
+    'offers nothing when a %s does not leave Private: %s to %s',
+    async (entityType, before, after) => {
+      stored = before;
+      await setModel(entityType, after);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalled();
+      expect(postsOfVersionsReads()).toEqual([]);
+      expect(imageReads()).toEqual([]);
+    }
+  );
+
+  it('still completes the availability update when reading the model versions fails', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockRejectedValue(new Error('primary down') as never);
+    const reindex = vi.spyOn(modelsSearchIndex, 'queueUpdate');
+
+    await expect(setModel('Model', Availability.Public)).resolves.not.toThrow();
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalled();
+    expect(reindex).toHaveBeenCalledWith([{ id: 3, action: SearchIndexUpdateQueueAction.Update }]);
+    expect(postsOfVersionsReads()).toEqual([]);
   });
 });

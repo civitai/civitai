@@ -220,6 +220,14 @@ describe('TRPC_WRITE_DEVALUE=true — format chosen per request', () => {
     expect(singleData(await get('payload', CAPABLE_WEB))).toEqual(asDevalue(PAYLOAD));
   });
 
+  // feed-go's serve-side parity replay (src/server/trpc/feed-go-parity-replay.ts) forwards the
+  // browser's own headers, a capable bundle's included, and compares the superjson envelope.
+  it('writes superjson to a feed-go parity replay, even from a capable web bundle', async () => {
+    expect(
+      singleData(await get('payload', { ...CAPABLE_WEB, 'x-feed-go-parity-replay': '1' }))
+    ).toEqual(asSuperjson(PAYLOAD));
+  });
+
   it('writes devalue on the streamed batch path the web client uses, superjson to others', async () => {
     // The jsonl stream serializes every chunk separately: devalue chunks are JSON strings,
     // superjson chunks are `{ json, meta }` objects.

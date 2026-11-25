@@ -38,12 +38,14 @@ import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed
 import {
   parseExcludeOwn,
   parseModelVersionIds,
+  parsePrefer,
   toSemanticImageSearchInput,
 } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import { isSearchRefusedError, type SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
+import { MoreLikeThisPrefer } from '~/components/Image/Infinite/MoreLikeThisPrefer';
 import {
   useImageFeedSearchQuery,
   useImageFeedSearchSort,
@@ -219,6 +221,8 @@ function ImagesFeed({
     : rawBrowsingLevel;
   const routeQuery = useRouter().query;
   const excludeOwn = parseExcludeOwn(routeQuery.excludeOwn);
+  const preferTagId =
+    features.moreLikeThisSteer && similarTo ? parsePrefer(routeQuery.prefer) : undefined;
   const rawModelVersionIds = features.imageSearchResources ? routeQuery.modelVersionIds : undefined;
   const modelVersionIds = useMemo(
     () => (rawModelVersionIds ? parseModelVersionIds(rawModelVersionIds) : undefined),
@@ -238,6 +242,7 @@ function ImagesFeed({
               browsingLevel,
               sort: feedSearch?.sort,
               excludeOwn,
+              preferTagId,
               modelVersionIds,
             }),
             ...spellcheckFor(asTyped && !!searchQuery),
@@ -250,6 +255,7 @@ function ImagesFeed({
       browsingLevel,
       feedSearch?.sort,
       excludeOwn,
+      preferTagId,
       modelVersionIds,
       asTyped,
     ]
@@ -429,6 +435,15 @@ function ImagesFeed({
         <ImageFeedSearchSummary
           query={searchInput.query ?? ''}
           similarTo={searchInput.imageId}
+          preferRow={
+            features.moreLikeThisSteer &&
+            searchInput.imageId && (
+              <MoreLikeThisPrefer
+                imageId={searchInput.imageId}
+                preferTagId={searchInput.preferTagIds?.[0]}
+              />
+            )
+          }
           correctedQuery={searching ? search.correctedQuery : undefined}
           filters={filters}
           failed={searchFailed}

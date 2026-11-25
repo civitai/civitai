@@ -13,26 +13,8 @@ import { keepPendingAppealFlags, releaseSongsOfClearedCovers } from './image-mod
 import { BAN_REASONS_ALWAYS_REMOVING_MEDIA } from '$lib/enforcement';
 import { confirmedLyricsHoldSql } from '@civitai/shared/song-csam-hold';
 
-/**
- * The one definition of a hold marker, and the table behind it. A migration that may not be applied
- * yet creates both; the guard reads the view once it exists.
- */
-export const HOLD_MARKER_VIEW = 'EvidenceHeldUser';
-export const HOLD_MARKER_TABLE = 'EvidenceHold';
-
-/** `drift`: the table without its view, so the view was dropped or renamed. Held until it is back. */
-export type HoldMarkerState = 'view' | 'none' | 'drift';
-
-/**
- * For a statement built when neither marker object existed: held if either exists by the time it
- * runs, since the marker leg it would need is not in it.
- */
-const markerAppearedSql = () =>
-  sql<boolean>`(to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL
-               OR to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL)`;
-
 /** Each reason a user's review flags may not be cleared in bulk, as a boolean over `userId`. */
-export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarkerState) {
+export function flagClearHoldLegs(userId: RawBuilder<number>) {
   const reasonCode = sql`u.meta #>> '{banDetails,reasonCode}'`;
   const legs = {
     csamReport: sql<boolean>`EXISTS (SELECT 1 FROM "CsamReport" c WHERE c."userId" = ${userId})`,
@@ -64,35 +46,14 @@ export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarker
         AND ri."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}
         AND ri."ingestion" = 'Blocked'
     )`,
-    evidenceHold:
-      marker === 'view'
-        ? sql<boolean>`EXISTS (SELECT 1 FROM ${sql.table(
-            HOLD_MARKER_VIEW
-          )} h WHERE h."userId" = ${userId})`
-        : marker === 'drift'
-        ? sql<boolean>`true`
-        : markerAppearedSql(),
   };
   return legs;
 }
 
 export type FlagClearHoldLeg = keyof ReturnType<typeof flagClearHoldLegs>;
 
-export async function holdMarkerState(db: Kysely<DB>): Promise<HoldMarkerState> {
-  const { rows } = await sql<{ view: unknown; table: unknown }>`
-    SELECT to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS view,
-           to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS table`.execute(db);
-  const row = rows[0];
-  if (row?.view === true) return 'view';
-  return row?.view === false && row?.table === false ? 'none' : 'drift';
-}
-
-function anyHold(
-  userId: RawBuilder<number>,
-  marker: HoldMarkerState,
-  overriding: readonly FlagClearHoldLeg[] = []
-) {
-  const legs = Object.entries(flagClearHoldLegs(userId, marker))
+function anyHold(userId: RawBuilder<number>, overriding: readonly FlagClearHoldLeg[] = []) {
+  const legs = Object.entries(flagClearHoldLegs(userId))
     .filter(([name]) => !overriding.includes(name as FlagClearHoldLeg))
     .map(([, leg]) => leg);
   return sql<boolean>`(${sql.join(legs, sql` OR `)})`;
@@ -105,8 +66,7 @@ export async function getFlagClearHolds(
 ): Promise<Map<number, FlagClearHoldLeg[]>> {
   const held = new Map<number, FlagClearHoldLeg[]>();
   if (!userIds.length) return held;
-  const marker = await holdMarkerState(db);
-  const legs = flagClearHoldLegs(sql<number>`t.id`, marker);
+  const legs = flagClearHoldLegs(sql<number>`t.id`);
   const { rows } = await sql<{ id: number } & Record<FlagClearHoldLeg, boolean>>`
     SELECT t.id, ${sql.join(
       Object.entries(legs).map(([name, leg]) => sql`${leg} AS ${sql.ref(name)}`)
@@ -127,7 +87,6 @@ export async function getFlagClearHolds(
 export async function clearRemovedFlagsUnlessHeld(
   trx: Transaction<DB>,
   userId: number,
-  marker: HoldMarkerState,
   overriding: readonly FlagClearHoldLeg[] = []
 ): Promise<number[]> {
   await trx
@@ -145,7 +104,7 @@ export async function clearRemovedFlagsUnlessHeld(
     .where('userId', '=', userId)
     .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('ingestion', '=', 'Blocked')
-    .where(sql<boolean>`NOT ${anyHold(sql<number>`${userId}::int`, marker, overriding)}`)
+    .where(sql<boolean>`NOT ${anyHold(sql<number>`${userId}::int`, overriding)}`)
     .where(sql<boolean>`NOT ${sql.raw(confirmedLyricsHoldSql('"Image"'))}`)
     .returning('id')
     .execute();
@@ -186,13 +145,12 @@ export async function clearUserCsamFlags({
   let clearedIds: number[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (trx) => {
-      const marker = await holdMarkerState(trx);
       const held = (await getFlagClearHolds([userId], trx)).get(userId);
       if (held) {
         console.warn('[csam-flag-clear] refused', { userId, moderatorId, held });
         return { ok: false, reason: 'held' } as const;
       }
-      const cleared = await clearRemovedFlagsUnlessHeld(trx, userId, marker);
+      const cleared = await clearRemovedFlagsUnlessHeld(trx, userId);
       if (cleared.length !== expectedCount) throw new QueueChanged();
       await insertModActivityBatch(trx, {
         userId: moderatorId,
@@ -215,7 +173,7 @@ export async function clearUserCsamFlags({
   }
 }
 
-/** The only leg an admin release may override. A report or an evidence hold is Legal's, never ours. */
+/** The only leg an admin release may override. A report is Legal's, never ours. */
 export const RELEASABLE_LEGS: readonly FlagClearHoldLeg[] = ['ban'];
 
 export const RELEASE_TABLE = 'CsamFlagRelease';
@@ -264,7 +222,6 @@ export async function releaseHeldUserCsamFlags(
         SELECT to_regclass(${`"${RELEASE_TABLE}"`}) IS NOT NULL AS present`.execute(trx);
       if (rows[0]?.present !== true) return { ok: false, reason: 'unavailable', legs } as const;
 
-      const marker = await holdMarkerState(trx);
       legs = (await getFlagClearHolds([userId], trx)).get(userId) ?? [];
       if (!legs.length) return { ok: false, reason: 'not-held', legs } as const;
       if (legs.some((leg) => !RELEASABLE_LEGS.includes(leg))) {
@@ -272,7 +229,7 @@ export async function releaseHeldUserCsamFlags(
         return { ok: false, reason: 'held', legs } as const;
       }
 
-      const released = await clearRemovedFlagsUnlessHeld(trx, userId, marker, RELEASABLE_LEGS);
+      const released = await clearRemovedFlagsUnlessHeld(trx, userId, RELEASABLE_LEGS);
       const remaining = await flaggedCount(trx, userId);
       if (input.dryRun) throw new DryRun(released.length, remaining);
       if (released.length !== input.expectedCount) throw new QueueChanged();

@@ -7,6 +7,9 @@ export const PLATFORM_SITE_VERDICT_PATH = '/internal/verdict/site';
 export const PLATFORM_MOD_VERDICT_PATH = '/internal/verdict/mod';
 export const PLATFORM_AUTHOR_ERASE_PATH = '/internal/author/erase';
 export const PLATFORM_COMMENTS_READ_PATH = '/internal/comments';
+export const PLATFORM_COMMENT_BY_SOURCE_PATH = '/internal/comments/by-source';
+export const PLATFORM_HANDLE_PATH = '/internal/handle';
+export const PLATFORM_SUBJECT_PATH = '/internal/subject';
 export const PLATFORM_FEATURE_PAGES_APP = 'feature-pages';
 export const PLATFORM_COMMENTS_PAGE_LIMIT = 500;
 
@@ -18,6 +21,8 @@ export const PlatformRefusal = {
   IdempotencyMismatch: 'idempotency_mismatch',
   /** The author was erased: final for every comment of theirs. */
   Erased: 'erased',
+  /** No comment of that sourceId is held. */
+  NotHeld: 'not_held',
 } as const;
 /** A missing route, which is a deploy gap and is retried, never a refusal. */
 export const PLATFORM_ROUTE_MISSING = 'not_found';
@@ -42,6 +47,16 @@ export const commentPostReplySchema = z.object({
   /** The site verdict written for the new version: a held comment's may differ from the one sent. */
   verdict: z.object({ outcome: z.string() }).passthrough().optional(),
 });
+
+export const commentBySourceSchema = z.object({
+  urn: z.string().min(1),
+  digest: z.string().min(1),
+  state: z.enum(['visible', 'hidden', 'withheld', 'retracted', 'removed', 'erased']),
+});
+
+export const subjectLookupSchema = z.object({ urn: z.string(), known: z.literal(true) });
+
+export const viewerHandleSchema = z.object({ author: z.string().regex(/^h1:[0-9a-f]{64}$/) });
 
 export const commentsPageSchema = z.object({
   items: z.array(

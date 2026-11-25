@@ -1,0 +1,66 @@
+import { Prisma } from '@prisma/client';
+import { hasBlockMarkerSql, imageNotRestrictedSql } from '~/server/common/image-visibility';
+import { dbRead } from '~/server/db/client';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema';
+
+// Categories whose score reflects originality, so a repeat of a recent winner can cost points.
+export const FRESHNESS_CATEGORY_KEYS = new Set(['creativity', 'wordplay']);
+export const FRESHNESS_CRITERIA_SUFFIX = ' Ideas that repeat a recent winner score lower.';
+
+const RECENT_WINNER_LIMIT = 10;
+// Stored when one entrant was eligible; it describes no idea.
+export const SOLE_WINNER_REASON = 'Sole eligible entrant';
+const RECENT_WINNER_IDEA_MAX_LENGTH = 200;
+
+/** True only for a stored rubric whose page tells entrants that repeats score lower. */
+export function hasFreshnessCategory(categories: { key: string; criteria: string }[] | undefined) {
+  return !!categories?.some(
+    (c) => FRESHNESS_CATEGORY_KEYS.has(c.key) && c.criteria.endsWith(FRESHNESS_CRITERIA_SUFFIX)
+  );
+}
+
+export function withFreshnessCriteria(categories: ChallengeJudgingCategory[]) {
+  return categories.map((c) =>
+    FRESHNESS_CATEGORY_KEYS.has(c.key) && !c.criteria.endsWith(FRESHNESS_CRITERIA_SUFFIX)
+      ? { ...c, criteria: c.criteria + FRESHNESS_CRITERIA_SUFFIX }
+      : c
+  );
+}
+
+/**
+ * Why the latest System daily winners won, for the review prompt. The reasons are judge-written
+ * from entrants' images, so they are capped and flattened and go under the untrusted-fields
+ * preamble. Any moderator hold or block keeps a reason out. An SFW challenge also re-checks the
+ * winning image's scan and rating today, since it may have been re-rated since it won.
+ */
+export async function getRecentWinnerIdeas(
+  excludeChallengeId: number,
+  { sfwOnly }: { sfwOnly: boolean }
+): Promise<string[]> {
+  // getIsSafeBrowsingLevel (browsingLevel.constants.ts) in SQL, for the challenge and the image.
+  const sfwFilter = sfwOnly
+    ? Prisma.sql`AND c."allowedNsfwLevel" <> 0 AND (c."allowedNsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
+      AND i."nsfwLevel" <> 0 AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
+      AND i.ingestion = 'Scanned'`
+    : Prisma.empty;
+  const rows = await dbRead.$queryRaw<{ reason: string }[]>`
+    SELECT cw.reason
+    FROM "ChallengeWinner" cw
+    JOIN "Challenge" c ON c.id = cw."challengeId"
+    JOIN "Image" i ON i.id = cw."imageId"
+    WHERE c.source = 'System'
+      AND c.id <> ${excludeChallengeId}
+      AND cw.reason IS NOT NULL
+      AND cw.reason <> ${SOLE_WINNER_REASON}
+      AND NOT ${hasBlockMarkerSql()}
+      AND i."needsReview" IS NULL
+      AND ${imageNotRestrictedSql()}
+      ${sfwFilter}
+    ORDER BY cw."createdAt" DESC
+    LIMIT ${RECENT_WINNER_LIMIT}
+  `;
+  return rows
+    .map((r) => r.reason.replace(/\s+/g, ' ').trim().slice(0, RECENT_WINNER_IDEA_MAX_LENGTH))
+    .filter(Boolean);
+}

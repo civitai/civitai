@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { RemixResultLine } from '~/components/Image/Remix/RemixResultLine';
 import { isRunningWorkflow, useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
 import { setCachedWorkflowTag } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -98,6 +99,55 @@ function useOfferPrice(slug: string, imageId: number | undefined, enabled: boole
   };
 }
 
+/** One of the viewer's own images; the server checks it is theirs and may be used. */
+function ImageAskStep({
+  ask,
+  pending,
+  onAnswer,
+}: {
+  ask: Extract<RemixViewerAsk, { kind: 'image' }>;
+  pending: boolean;
+  onAnswer: (answer: RemixAnswer) => void;
+}) {
+  const [picked, setPicked] = useState<{ id: number; url: string }>();
+  const choose = () =>
+    openDialog(() => import('~/components/Training/Form/ImageSelectModal'), {
+      title: ask.prompt,
+      selectSource: 'uploaded' as const,
+      videoAllowed: false,
+      importedUrls: [],
+      onSelect: (selected: { url: string; imageId?: number }[]) => {
+        const [first] = selected;
+        if (first?.imageId) setPicked({ id: first.imageId, url: first.url });
+      },
+    });
+  return (
+    <div className="flex flex-col gap-2">
+      {picked && (
+        <EdgeMedia2
+          src={picked.url}
+          type="image"
+          alt=""
+          className="mx-auto max-h-72 w-auto rounded-md object-contain"
+        />
+      )}
+      <div className="flex gap-2">
+        <Button variant="default" disabled={pending} onClick={choose}>
+          {picked ? 'Choose another' : 'Choose one of your images'}
+        </Button>
+        {ask.optional && (
+          <Button variant="default" disabled={pending} onClick={() => onAnswer('')}>
+            Skip
+          </Button>
+        )}
+        <Button disabled={pending || !picked} onClick={() => picked && onAnswer(picked.id)}>
+          Continue
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AskStep({
   ask,
   prices,
@@ -158,6 +208,7 @@ function AskStep({
           )}
         </div>
       )}
+      {ask.kind === 'image' && <ImageAskStep ask={ask} pending={pending} onAnswer={onAnswer} />}
       {ask.kind === 'text' && (
         <form
           className="flex gap-2"

@@ -97,7 +97,7 @@ beforeEach(async () => {
       (${SCANNER_HIT}, 'scanner-hit-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 16),
       (${SCANNER_SIBLING}, 'scan-sibling-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 17),
       (213, 'scan-sibling-key', 'image', 'Scanned', NULL, NULL, 300, 300, 12);
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (${HELD});
+    INSERT INTO "CsamReport" ("userId", details, images) VALUES (13, '{}', jsonb_build_array(jsonb_build_object('id', ${HELD})));
     INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES
       (7, 'Image', ${RESTRICTED}), (8, 'Image', ${CONTROL}), (9, 'Image', ${SIGNAL}), (10, 'Image', ${HELD}), (11, 'Image', ${SHARED_URL}),
       (14, 'Image', ${SIGNAL_SIBLING}), (15, 'Image', ${CLEAN_SIBLING}), (16, 'Image', ${SCANNER_HIT}), (17, 'Image', ${SCANNER_SIBLING});
@@ -185,13 +185,27 @@ describe('card load, without the grant', () => {
     expect(JSON.stringify(await card(WITHOUT_GRANT, RESTRICTED))).not.toContain(KEY);
   });
 
-  it('withholds a row the Postgres rule restricts, whatever its block reason', async () => {
+  it('withholds a row a CSAM report lists, whatever its block reason', async () => {
     expect(await card(WITHOUT_GRANT, HELD)).toMatchObject({ restricted: true, url: '' });
   });
 
-  // Bytes are per url: another row on it that has not finished its scan keeps this one too.
-  it('withholds a row whose url another row keeps', async () => {
-    expect(await card(WITHOUT_GRANT, SHARED_URL)).toMatchObject({ restricted: true, url: '' });
+  // The moderator-view rule reads Postgres only, and none of these is a CSAM mark of a row: a url
+  // sibling still scanning, or the scanner's label on the row or a sibling.
+  it('serves a row only the scanner or an unscanned sibling would have kept (civitai/civitai#10377)', async () => {
+    for (const id of [SHARED_URL, SCANNER_HIT, SCANNER_SIBLING])
+      expect({ id, card: await card(WITHOUT_GRANT, id) }).toMatchObject({
+        id,
+        card: { restricted: false },
+      });
+  });
+
+  it('withholds a row with CSAM among its block reasons', async () => {
+    expect(await card(WITHOUT_GRANT, SIGNAL)).toMatchObject({ restricted: true, url: '' });
+  });
+
+  it('serves a row while the scanner cannot answer', async () => {
+    scanner.down = true;
+    expect(await card(WITHOUT_GRANT, CONTROL)).toMatchObject({ restricted: false });
   });
 
   it('withholds a row whose url sibling carries a signal, and refuses its ruling', async () => {
@@ -212,24 +226,6 @@ describe('card load, without the grant', () => {
       restricted: false,
       url: 'clean-sibling-key',
     });
-  });
-
-  it('withholds a row only the scanner marks', async () => {
-    expect(await card(WITHOUT_GRANT, SCANNER_HIT)).toMatchObject({ restricted: true, url: '' });
-  });
-
-  it('withholds a row whose url sibling only the scanner marks', async () => {
-    expect(await card(WITHOUT_GRANT, SCANNER_SIBLING)).toMatchObject({ restricted: true, url: '' });
-  });
-
-  it('withholds every row the rule reaches while the scanner cannot answer', async () => {
-    scanner.down = true;
-    expect(await card(WITHOUT_GRANT, CONTROL)).toMatchObject({ restricted: true, url: '' });
-  });
-
-  // The storage route's block-reason check, which the Postgres rule alone does not make.
-  it('withholds a row whose block reason carries a signal', async () => {
-    expect(await card(WITHOUT_GRANT, SIGNAL)).toMatchObject({ restricted: true, url: '' });
   });
 
   it('serves an unrestricted row as before', async () => {

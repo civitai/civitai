@@ -106,7 +106,9 @@ describe('aggregateSignals', () => {
       'a',
       '2026-11-10T10:00:00Z',
       {
+        // v1: no accentCustomized; its evidence (25 colours, no colour token) is the stock look.
         themeCustomized: false,
+        theme: { tokenOverrides: ['--civitai-radius'], customColorCount: 25, filesScanned: 6 },
         turnCount: 4,
         buzzTotal: 10,
         readDocsTopics: ['/apps/theme', '/apps/sdk'],
@@ -118,7 +120,13 @@ describe('aggregateSignals', () => {
       'b',
       '2026-11-11T10:00:00Z',
       {
+        // v1: a colour token set, so its own look.
         themeCustomized: true,
+        theme: {
+          tokenOverrides: ['--civitai-color-primary'],
+          customColorCount: 3,
+          filesScanned: 6,
+        },
         turnCount: 8,
         buzzTotal: 30,
         readDocsTopics: ['/apps/theme'],
@@ -126,7 +134,13 @@ describe('aggregateSignals', () => {
       ['c2', 'c3']
     );
     await trace('r3', 'c', '2026-11-12T10:00:00Z', { themeCustomized: null });
-    await trace('r4', 'd', '2026-11-17T10:00:00Z', { themeCustomized: false, readDocsTopics: [] });
+    // v2: the stored verdict wins over what its evidence would say.
+    await trace('r4', 'd', '2026-11-17T10:00:00Z', {
+      themeCustomized: false,
+      accentCustomized: false,
+      theme: { tokenOverrides: ['--civitai-color-primary'], customColorCount: 0, filesScanned: 6 },
+      readDocsTopics: [],
+    });
 
     const result = await aggregateSignals({
       from: new Date('2026-11-01T00:00:00Z'),
@@ -140,6 +154,9 @@ describe('aggregateSignals', () => {
         themeCustomized: 1,
         themeDefault: 1,
         themeUnknown: 1,
+        accentCustomized: 1,
+        accentDefault: 1,
+        accentUnknown: 1,
         avgTurns: 6,
         avgBuzz: 20,
       },
@@ -150,13 +167,16 @@ describe('aggregateSignals', () => {
         themeCustomized: 0,
         themeDefault: 1,
         themeUnknown: 0,
+        accentCustomized: 0,
+        accentDefault: 1,
+        accentUnknown: 0,
         avgTurns: null,
         avgBuzz: null,
       },
     ]);
     expect(result.docsTopics).toEqual([
-      { topic: '/apps/theme', submissions: 2, themeCustomized: 1 },
-      { topic: '/apps/sdk', submissions: 1, themeCustomized: 0 },
+      { topic: '/apps/theme', submissions: 2, themeCustomized: 1, accentCustomized: 1 },
+      { topic: '/apps/sdk', submissions: 1, themeCustomized: 0, accentCustomized: 0 },
     ]);
   });
 
@@ -294,10 +314,7 @@ describe('the sweep’s page of deleted accounts', () => {
       (h.prisma.$queryRaw as (...a: unknown[]) => unknown)(...args)
     );
     try {
-      const deps = await liveTraceSweepDeps({
-        isMissingTable: () => false,
-        isHeld: async () => false,
-      });
+      const deps = await liveTraceSweepDeps({ isMissingTable: () => false });
       expect(await deps.deletedAccountsWithTraces(0, 10)).toEqual([7402, 7503, 7604]);
       expect(await deps.deletedAccountsWithTraces(7402, 1)).toEqual([7503]);
       expect(await deps.deletedAccountsWithTraces(7604, 10)).toEqual([]);

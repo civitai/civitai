@@ -8,6 +8,7 @@ const {
   decideAuthorHolds,
   getHoldCoverImages,
   getHoldContexts,
+  withheldHoldMedia,
   getCleanRescans,
   referCsamHold,
   setCsamHoldReportChoice,
@@ -18,6 +19,7 @@ const {
   getHoldCoverImages: vi.fn(),
   getCleanRescans: vi.fn(),
   getHoldContexts: vi.fn(),
+  withheldHoldMedia: vi.fn(),
   listCsamHolds: vi.fn(),
   countCsamHoldsByType: vi.fn(),
   countPendingCsamHolds: vi.fn(),
@@ -25,7 +27,8 @@ const {
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('../hold-context.server', () => ({ getHoldContexts }));
+// The withhold pass has its own pglite test (report-withheld-media); here it passes holds through.
+vi.mock('../hold-context.server', () => ({ getHoldContexts, withheldHoldMedia }));
 vi.mock('$lib/server/csam-holds.service', async () => ({
   // The real search parser: what a `q` becomes is part of what the load hands the query.
   csamHoldSearch: (
@@ -94,6 +97,21 @@ beforeEach(() => {
   getHoldCoverImages.mockResolvedValue(new Map());
   getCleanRescans.mockResolvedValue(new Map());
   getHoldContexts.mockResolvedValue(new Map());
+  withheldHoldMedia.mockImplementation(async (holds: unknown[]) => holds);
+});
+
+describe('csam text holds media', () => {
+  it('sends the rows the withhold pass returns, not the ones it was handed', async () => {
+    withheldHoldMedia.mockResolvedValue([{ id: 1, coverImages: [], shown: true }]);
+    const user = { id: 4, roles: [] };
+    const data = (await load({
+      url: new URL('http://x/csam/text-holds'),
+      locals: { grants: holder, user },
+    } as unknown as LoadEvent)) as Record<string, unknown>;
+    expect(withheldHoldMedia).toHaveBeenCalledOnce();
+    expect(withheldHoldMedia).toHaveBeenCalledWith([expect.objectContaining({ id: 1 })], user);
+    expect(data.items).toEqual([{ id: 1, coverImages: [], shown: true }]);
+  });
 });
 
 describe('csam text holds load', () => {

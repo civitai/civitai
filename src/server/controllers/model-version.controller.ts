@@ -137,7 +137,10 @@ import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { assertBaseModelAttestations } from '~/server/services/base-model-attestation.service';
-import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
+import {
+  assertTrainingSourcePublishable,
+  stampPublishedTrainingRuns,
+} from '~/server/services/orchestrator/training/publish-from-workflow';
 import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
@@ -145,7 +148,6 @@ import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-ru
 import { scanModelAndRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
 // A version the viewer may not see reads as one that does not exist: no rows, or NOT_FOUND.
 const canViewVersion = async (id: number, ctx: Context) =>
@@ -1048,8 +1050,7 @@ export const publishModelVersionHandler = async ({
     if (
       !ctx.user.isModerator &&
       (constants.modPublishOnlyStatuses.includes(version.status) ||
-        constants.modPublishOnlyStatuses.includes(version.model.status) ||
-        isRemovedWithOwner(version.model.meta))
+        constants.modPublishOnlyStatuses.includes(version.model.status))
     ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
@@ -1059,6 +1060,7 @@ export const publishModelVersionHandler = async ({
       meta: version.model.meta as ModelMeta | null,
       ownerId: version.model.userId,
       callerId: ctx.user.id,
+      versionIds: [input.id],
     });
     await assertNotCrossOwnerDuplicate({
       versionId: input.id,
@@ -1134,6 +1136,16 @@ export const publishModelVersionHandler = async ({
         type: 'published',
         entityType: 'modelVersion',
         entityId: updatedVersion.id,
+      });
+      // A version added from a Training Studio run names the run itself; the model's own run (if
+      // any) was back-linked when the model was published. A scheduled publish is not stamped, as
+      // on the model path.
+      await stampPublishedTrainingRuns({
+        ownerId: version.model.userId,
+        callerId: ctx.user.id,
+        modelId: version.modelId,
+        modelMeta: undefined,
+        versions: [{ id: updatedVersion.id, meta: version.meta }],
       });
     }
 
@@ -1624,8 +1636,7 @@ export async function publishPrivateModelVersionHandler({
   if (
     !ctx.user.isModerator &&
     (constants.modPublishOnlyStatuses.includes(version.status) ||
-      constants.modPublishOnlyStatuses.includes(version.model.status) ||
-      isRemovedWithOwner(version.model.meta))
+      constants.modPublishOnlyStatuses.includes(version.model.status))
   ) {
     throw throwAuthorizationError('You are not authorized to publish this model version');
   }
@@ -1635,6 +1646,7 @@ export async function publishPrivateModelVersionHandler({
     meta: version.model.meta as ModelMeta | null,
     ownerId: version.model.userId,
     callerId: ctx.user.id,
+    versionIds: [version.id],
   });
   assertBaseModelAttestations({ versions: [version] });
 

@@ -80,17 +80,13 @@ export function reportNamesText(report: string, user: string): string {
   return `(${c}."userId" = ${u} OR ${c}.details ->> 'secondaryUserId' = (${u})::text)`;
 }
 
-/**
- * `user` has an active hold marker, or is named on a CSAM report that is unsent, or sent without a
- * verified evidence copy. Names the "EvidenceHeldUser" view, so a database without it fails the
- * statement.
- */
+/** `user` is named on a CSAM report that is unsent, or sent without a verified evidence copy. */
 export function ownerHeldText(user: string): string {
   const u = sqlRef(user);
-  return `(EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${u}) OR EXISTS (
+  return `EXISTS (
     SELECT 1 FROM "CsamReport" hc WHERE ${reportNamesText('hc', u)}
       AND (hc."reportSentAt" IS NULL OR NOT ${evidenceVerifiedText('hc')})
-  ))`;
+  )`;
 }
 
 /** `user` is named on any CSAM report. */
@@ -192,26 +188,6 @@ export function heldUrlSql(
 // The CASE, not a WHERE: Postgres may run the cast before a WHERE's pattern test.
 const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
   FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids`;
-
-/**
- * Whether the url `url` (a column reference) carries bytes under an evidence hold: an image row on
- * it, or a moderator delete of one, is held. Bytes are per url, so a copy row is held with it.
- */
-export function evidenceHeldUrlSql(url: string): string {
-  const u = sqlRef(url);
-  if (/^eh_/.test(u)) throw new Error(`Alias taken inside evidenceHeldUrlSql: ${u}`);
-  return `(
-    EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h JOIN "Image" eh_i ON eh_i.id = eh_h."imageId"
-      WHERE eh_i.url = ${u}
-    )
-    OR EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h
-      JOIN "ImageCdnModeratorDelete" eh_d ON eh_d."imageId" = eh_h."imageId"
-      WHERE eh_d.url = ${u}
-    )
-  )`;
-}
 
 /**
  * Whether the url `url` (a column reference) carries reported bytes: an image row or moderator delete

@@ -23,6 +23,18 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
 const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
+const inquisitorQueue = vi.hoisted(() => ({ enabled: true, serveJudged: true }));
+vi.mock('$lib/server/skill-check/runtime', () => ({
+  skillChecks: async () => ({
+    enabled: inquisitorQueue.enabled,
+    poolCap: 500,
+    serveJudged: inquisitorQueue.serveJudged,
+  }),
+}));
+vi.mock('./inquisitor.server', () => ({
+  inquisitorView: async () => ({ mode: 'inquisitor' }),
+  inquisitorActions: {},
+}));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
 vi.mock('$lib/server/membership', async (original) => ({
   ...(await original<typeof import('$lib/server/membership')>()),
@@ -141,6 +153,24 @@ beforeEach(() => {
 
 describe('play load', () => {
   const progress = { answered: 12, graded: 12, correct: 9, accuracy: 0.75 };
+
+  it.each([
+    [true, 0.5],
+    [false, 0],
+  ])(
+    'mixes skill checks into the apprenticeship at the hidden-check rate only with the inquisitor queue on (on: %s)',
+    async (enabled, skillCheckRate) => {
+      getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
+      getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+      inquisitorQueue.enabled = enabled;
+      try {
+        await run();
+      } finally {
+        inquisitorQueue.enabled = true;
+      }
+      expect(getApprentice).toHaveBeenCalledWith(expect.anything(), 7, { skillCheckRate });
+    }
+  );
 
   it('sends an Acolyte to the apprenticeship, with the standing and no answer', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
@@ -380,10 +410,21 @@ describe('play load vote pacing', () => {
     expect(getFeed).toHaveBeenCalled();
   });
 
-  it('never paces a moderator', async () => {
-    await run({ isModerator: true });
+  it('serves a moderator the player feed while the inquisitor queue is switched off', async () => {
+    inquisitorQueue.enabled = false;
+    try {
+      expect(await run({ isModerator: true })).toMatchObject({ mode: 'queue' });
+      expect(getFeed).toHaveBeenCalled();
+    } finally {
+      inquisitorQueue.enabled = true;
+    }
+  });
+
+  it('serves a moderator the inquisitor queue instead of the feed, unpaced', async () => {
+    const data = await run({ isModerator: true });
+    expect(data).toMatchObject({ mode: 'inquisitor' });
     expect(pauseFor).not.toHaveBeenCalled();
-    expect(getFeed).toHaveBeenCalled();
+    expect(getFeed).not.toHaveBeenCalled();
   });
 });
 
@@ -411,6 +452,25 @@ describe('play load feed', () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
     getFeed.mockResolvedValue(feed);
   });
+
+  it.each([
+    [true, true],
+    [false, false],
+  ])(
+    'draws mod-confirmed checks for a Knight only with the inquisitor queue on (on: %s)',
+    async (enabled, skillChecks) => {
+      inquisitorQueue.enabled = enabled;
+      try {
+        await run();
+      } finally {
+        inquisitorQueue.enabled = true;
+      }
+      expect(pickHiddenCheck).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ skillChecks, serveJudged: true, rate: 0.5 })
+      );
+    }
+  );
 
   it('serves a queue item and a hidden check in the same shape, with nothing that tells them apart', async () => {
     const queued = await run();

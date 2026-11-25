@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   sys: undefined as unknown as SysRedisFake,
   tokens: new Map<string, Record<string, unknown>>(),
   minted: [] as { payload: Record<string, unknown>; jti: string }[],
+  userRows: [] as Record<string, unknown>[],
 }));
 
 vi.mock('@civitai/auth', async (importOriginal) => ({
@@ -33,7 +34,10 @@ vi.mock('$lib/server/axiom', () => ({
   logAxiomError: vi.fn(),
   logToAxiom: vi.fn(async () => undefined),
 }));
-vi.mock('$lib/server/db/db', () => ({ db: {} }));
+// The "User" rows the account checks at each mint read; none, for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../test/kysely-fake')).createKyselyFake({ User: h.userRows }),
+}));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: async (id: number) => h.users.get(id) ?? { id },
 }));
@@ -134,6 +138,7 @@ beforeEach(() => {
   h.sys.reset();
   h.tokens.clear();
   h.users.clear();
+  h.userRows.length = 0;
   h.minted = [];
 });
 afterEach(() => {
@@ -304,5 +309,60 @@ describe("re-signing the hub's own session cookie", () => {
     await visit({ navigate: true });
 
     expect(h.minted).toHaveLength(0);
+  });
+});
+
+describe('a memorialized account', () => {
+  const MEMORIALIZED = 4;
+  const MODERATOR = 7;
+  const memorializeRow = (flags = MEMORIALIZED) => h.userRows.push({ id: 100, flags });
+
+  it('is not re-signed on a page navigation, though its cached user predates the memorialization', async () => {
+    hubToken(2 * DAY_MS);
+    memorializeRow();
+
+    const { set } = await visit({ navigate: true });
+
+    expect(h.minted).toHaveLength(0);
+    expect(set).not.toHaveBeenCalledWith(SESSION_COOKIE, 'rolled-token', expect.anything());
+  });
+
+  it('is re-signed again once the memorialization is reversed (positive control)', async () => {
+    hubToken(2 * DAY_MS);
+    memorializeRow(0);
+
+    const { set } = await visit({ navigate: true });
+
+    expect(h.minted).toHaveLength(1);
+    expect(set).toHaveBeenCalledWith(SESSION_COOKIE, 'rolled-token', expect.anything());
+  });
+
+  it('is refused a refresh, and an impersonation of it is refreshed', async () => {
+    hubToken(DAY_MS);
+    memorializeRow();
+    expect(await refreshInternal()).toBe(403);
+    expect(h.minted).toHaveLength(0);
+
+    hubToken(DAY_MS, { impersonatedBy: MODERATOR });
+    expect(await refreshInternal()).toBe(200);
+    expect(h.minted).toHaveLength(1);
+  });
+
+  it("resolves to no user from a cached entry that carries the marker, unless it's an impersonation", async () => {
+    hubToken(DAY_MS);
+    h.users.set(100, { id: 100, memorialized: true });
+    expect((await visit()).locals.user).toBeUndefined();
+    expect(await identity('hub-token')).toBe(401);
+
+    hubToken(DAY_MS, { impersonatedBy: MODERATOR });
+    expect((await visit()).locals.user).toMatchObject({ id: 100 });
+    expect(await identity('hub-token')).toBe(200);
+  });
+
+  it('resolves as before without the marker (positive control)', async () => {
+    hubToken(DAY_MS);
+    h.users.set(100, { id: 100 });
+    expect((await visit()).locals.user).toMatchObject({ id: 100 });
+    expect(await identity('hub-token')).toBe(200);
   });
 });

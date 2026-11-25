@@ -81,6 +81,27 @@ type V1Answer struct {
 	Trivial bool
 }
 
+// RequestedLevel is handleImagesRequest's `browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag`: the
+// level the request asks for, before a restricted region clamps it or a gallery hold narrows it.
+func (in *V1Input) RequestedLevel() int {
+	switch {
+	case in.BrowsingLevel != nil:
+		return *in.BrowsingLevel
+	case in.Nsfw != nil:
+		return *in.Nsfw
+	}
+	return browsing.PublicLevels
+}
+
+// WithinSFW is handleImagesRequest's `withinSfw` over RequestedLevel: an integer from 0 to
+// sfwBrowsingLevelsFlag whose every bit is an SFW level. Outside it the handler answers
+// `Cache-Control: private, no-store` (the body depends on the caller's region, which a shared cache
+// does not key on).
+func (in *V1Input) WithinSFW() bool {
+	l := in.RequestedLevel()
+	return l >= 0 && l <= browsing.SFWLevels && l&browsing.SFWLevels == l
+}
+
 // ServeV1 is the `/api/v1/images` handler (handleImagesRequest) on the feed-service path
 // (runImageSearch → getImagesFromFeedServiceForRest), for the supported subset.
 func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
@@ -101,19 +122,14 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 		viewer = *req.Viewer
 	}
 
-	level := browsing.PublicLevels
-	if in.BrowsingLevel != nil {
-		level = *in.BrowsingLevel
-	} else if in.Nsfw != nil {
-		level = *in.Nsfw
-	}
+	level := in.RequestedLevel()
 	if req.RegionRestricted {
 		level = browsing.SFWLevels
 	}
 	// A minor or SFW-only model's images are served only at its gallery's held level, and a taken-down
 	// model's not at all (its owner and moderators included, on this route).
 	if in.ModelID != 0 || in.ModelVersionID != 0 || in.PostID != 0 {
-		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID)
+		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -865,22 +881,29 @@ func SkipValue(metadata json.RawMessage) *float64 {
 	return &frame
 }
 
-// resolveImageModelIDs is resolveImageModelIds for a model, a version and a post: the named model, the
-// version's model and the post's version's model. ok is false when the named version or post cannot be
-// found (Node: null — withheld, and held at nothing).
-func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int) ([]int, bool, error) {
+// resolveImageModelIDs is resolveImageModelIds for a model, a version and posts: the named model, the
+// version's model and each listed post's version's model (postId and postIds). ok is false when the named
+// version or the postId cannot be found (Node: null — withheld, and held at nothing); a postIds entry the
+// cache lacks is skipped.
+func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int, postIDs []int) ([]int, bool, error) {
 	var listed []int
-	if postID != 0 {
-		posts, err := s.PostVersions(ctx, []int{postID})
+	if postID != 0 || len(postIDs) > 0 {
+		// `new Set(postIds)` then the `postId`: every listed post's version counts; only a `postId` the
+		// cache does not hold makes the selector unresolvable. (Unique drops a 0, which no post has.)
+		ids := hydrate.Unique(append(append([]int(nil), postIDs...), postID))
+		posts, err := s.PostVersions(ctx, ids)
 		if err != nil {
 			return nil, false, err
 		}
-		v, found := posts[postID]
-		if !found {
-			return nil, false, nil
+		if postID != 0 {
+			if _, found := posts[postID]; !found {
+				return nil, false, nil
+			}
 		}
-		if v != 0 {
-			listed = append(listed, v)
+		for _, id := range ids {
+			if v := posts[id]; v != 0 {
+				listed = append(listed, v)
+			}
 		}
 	}
 	var required []int

@@ -86,6 +86,8 @@ type Version = {
   status?: string;
   /** "EntityAccess" rows for the version, written before the metrics. */
   access?: Access[];
+  /** The version's "PaidAccess" terms, written before the metrics. */
+  gate?: Record<string, unknown>;
 };
 
 type Access = { user: number; meta: Record<string, unknown> };
@@ -96,6 +98,17 @@ let nextBuyer = 10_000;
 /** `n` paid buyers of a version, each a different user. */
 const paid = (n: number, key = DOWNLOAD_KEY): Access[] =>
   Array.from({ length: n }, () => ({ user: nextBuyer++, meta: { [key]: 'tx' } }));
+const [DOWNLOAD, GENERATION] = EARLY_ACCESS_PURCHASES;
+/** `n` buyers of a version, each recording what they paid, as a purchase writes it. */
+const bought = (
+  n: number,
+  amount: unknown,
+  { kind = DOWNLOAD as (typeof EARLY_ACCESS_PURCHASES)[number], buzzType = 'yellow' } = {}
+): Access[] =>
+  Array.from({ length: n }, () => ({
+    user: nextBuyer++,
+    meta: { [kind.transactionKey]: 'tx', [kind.amountKey]: amount, [kind.buzzTypeKey]: buzzType },
+  }));
 
 let nextModel = 1;
 /** Writes versions first, as the metrics job does, then the ModelMetric row the trigger scores. */
@@ -126,6 +139,11 @@ async function model(
        VALUES ($1, $2, $3, $4)`,
       [id, v.likes, v.downloads ?? 0, v.generations ?? 0]
     );
+    if (v.gate)
+      await db.pg.query(
+        `INSERT INTO "PaidAccess" ("entityType", "entityId", terms) VALUES ('ModelVersion', $1, $2)`,
+        [id, JSON.stringify(v.gate)]
+      );
     for (const a of v.access ?? [])
       await db.pg.query(
         `INSERT INTO "EntityAccess" ("accessToId", "accessToType", "accessorId", "accessorType", meta)
@@ -173,6 +191,8 @@ let preexistingByDownloads: number;
 const DAY_45 = daysAgo(45);
 // Under the bar on likes + downloads, over it with its buyers: only the buyer-bar rescore lifts it.
 let preexistingByBuyers: number;
+// Under the bar counting each buyer as 1, over it weighting them by price: only the price rescore.
+let preexistingByPrice: number;
 
 const SCHEMA = `
     CREATE TABLE "ModelMetric" (
@@ -198,6 +218,10 @@ const SCHEMA = `
       "accessToId" int NOT NULL, "accessToType" text NOT NULL,
       "accessorId" int NOT NULL, "accessorType" text NOT NULL, meta jsonb DEFAULT '{}',
       PRIMARY KEY ("accessToId", "accessToType", "accessorId", "accessorType")
+    );
+    CREATE TABLE "PaidAccess" (
+      "entityType" text NOT NULL, "entityId" int NOT NULL, terms jsonb NOT NULL,
+      PRIMARY KEY ("entityType", "entityId")
     );
 `;
 
@@ -227,6 +251,15 @@ beforeAll(async () => {
     { at: OLD, likes: 2_970 },
     { at: RECENT, likes: 19, access: [...paid(5), ...paid(1, GENERATION_KEY)] },
   ]);
+  preexistingByPrice = await model(OLD, 3_000, [
+    { at: OLD, likes: 2_984 },
+    { at: RECENT, likes: 16, access: bought(3, 20_000) },
+  ]);
+  await db.pg.query(
+    `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount", "generationCount", "uniqueGeneratorCount")
+     VALUES ($1, 'SDXL 1.0', 3000, 0, 0), ($1, 'Mirror', 0, NULL, NULL)`,
+    [preexistingByPrice]
+  );
   // A measured slice the rescore must rewrite, and a mirror that follows ModelMetric.
   await db.pg.query(
     `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount", "generationCount", "uniqueGeneratorCount")
@@ -569,6 +602,188 @@ describe("an unmeasured slice follows its model's score", () => {
   });
 });
 
+const PRICE_WEIGHT_DIR = '20271128120100_model_hot_score_buyer_price_weight';
+
+describe('a buyer counts toward the head-start bar by what they paid, capped', () => {
+  // The rule is docs/model-feed-hot-ranking.md §21: change it there first. A buyer paying p Buzz
+  // counts least(1 + log2(max(p, 100) / 100) / 3, 3): 100 = 1, 800 = 2, 6,400 and up = 3. As §20,
+  // the model has 3,000 likes and the buyers move the bar only.
+  const headStart = (ev: number) => term(ev + 0.01 * (3_000 - ev), RECENT);
+  const noHeadStart = (ev: number) => term(ev, RECENT);
+  const expectNear = async (id: number, want: number) =>
+    expect(Math.abs((await score(id)) - want)).toBeLessThanOrEqual(1);
+  /** A model whose recent version has `likes` likes and these buyers; reports if it qualified. */
+  const qualifies = async (likes: number, v: Partial<Version>) => {
+    const id = await model(OLD, 3_000, [
+      { at: OLD, likes: 3_000 - likes },
+      { at: RECENT, likes, ...v },
+    ]);
+    const s = await score(id);
+    const ev = likes + (v.downloads ?? 0) / 6.4;
+    if (Math.abs(s - headStart(ev)) <= 1) return true;
+    expect(Math.abs(s - noHeadStart(ev))).toBeLessThanOrEqual(1);
+    return false;
+  };
+
+  it('counts a buyer at 20,000 Buzz as 3', async () => {
+    // 16 likes + 3 * 3 = 25. Counted as 1 each, 19.
+    expect(await qualifies(16, { access: bought(3, 20_000) })).toBe(true);
+    expect(await qualifies(15, { access: bought(3, 20_000) })).toBe(false);
+  });
+
+  it('caps a buyer at 3 however much they paid', async () => {
+    // 12 likes + 4 * 3 = 24. Uncapped, 1,000,000 Buzz would weigh 5.4 each.
+    expect(await qualifies(12, { access: bought(4, 1_000_000) })).toBe(false);
+    expect(await qualifies(13, { access: bought(4, 1_000_000) })).toBe(true);
+  });
+
+  it('follows the log curve between 100 and the cap', async () => {
+    // 800 Buzz = 1 + log2(8) / 3 = 2: 13 likes + 6 * 2 = 25.
+    expect(await qualifies(13, { access: bought(6, 800) })).toBe(true);
+    expect(await qualifies(12, { access: bought(6, 800) })).toBe(false);
+  });
+
+  it('counts a buyer at 100 Buzz or less as 1, as before', async () => {
+    expect(await qualifies(19, { access: [...bought(3, 100), ...bought(3, 0)] })).toBe(true);
+    expect(await qualifies(18, { access: [...bought(3, 100), ...bought(3, 1)] })).toBe(false);
+  });
+
+  it('counts a Blue Buzz purchase as 1 whatever its price, since Blue is earned, not bought', async () => {
+    expect(await qualifies(16, { access: bought(3, 20_000, { buzzType: 'blue' }) })).toBe(false);
+    expect(await qualifies(22, { access: bought(3, 20_000, { buzzType: 'blue' }) })).toBe(true);
+  });
+
+  it('weighs a generation purchase by its own amount', async () => {
+    const access = bought(3, 20_000, { kind: GENERATION });
+    expect(await qualifies(16, { access })).toBe(true);
+  });
+
+  it('counts a buyer with both purchases once, at the dearer one', async () => {
+    const both = (generation: number, download: number) => ({
+      user: nextBuyer++,
+      meta: {
+        ...bought(1, generation, { kind: GENERATION })[0].meta,
+        ...bought(1, download)[0].meta,
+      },
+    });
+    const access = [both(200, 20_000), both(200, 20_000), both(200, 20_000)];
+    // 16 + 3 * 3 = 25; adding both purchases would be 16 + 3 * (3 + 1.33) = 29.
+    expect(await qualifies(16, { access })).toBe(true);
+    expect(
+      await qualifies(15, { access: [both(200, 20_000), both(200, 20_000), both(200, 20_000)] })
+    ).toBe(false);
+  });
+
+  describe('a purchase made before the amount was recorded', () => {
+    it("takes the gate's current price for that kind", async () => {
+      expect(await qualifies(16, { access: paid(3), gate: { download: { price: 20_000 } } })).toBe(
+        true
+      );
+      // Generation without a price of its own costs the download price.
+      const generation = { download: { price: 20_000 }, generation: { trialLimit: 10 } };
+      expect(await qualifies(16, { access: paid(3, GENERATION_KEY), gate: generation })).toBe(true);
+      const cheaper = { download: { price: 20_000 }, generation: { price: 100 } };
+      expect(await qualifies(16, { access: paid(3, GENERATION_KEY), gate: cheaper })).toBe(false);
+    });
+
+    it('counts 1 when the gate accepts Blue Buzz, since the currency paid is unknown', async () => {
+      const gate = { download: { price: 20_000 }, acceptsBlueBuzz: true };
+      expect(await qualifies(16, { access: paid(3), gate })).toBe(false);
+    });
+
+    it('counts 1 with no gate, or no usable price on it', async () => {
+      expect(await qualifies(16, { access: paid(3) })).toBe(false);
+      expect(await qualifies(19, { access: paid(6) })).toBe(true);
+      const unusable = { download: { price: 'lots' }, generation: { free: true } };
+      expect(await qualifies(16, { access: paid(3), gate: unusable })).toBe(false);
+      expect(await qualifies(16, { access: paid(3, GENERATION_KEY), gate: unusable })).toBe(false);
+    });
+  });
+
+  it('scores an unreadable recorded amount as 1 rather than failing the metrics write', async () => {
+    expect(await qualifies(19, { access: [...bought(3, 'abc'), ...bought(3, null)] })).toBe(true);
+    expect(
+      await qualifies(16, { access: bought(3, 'abc'), gate: { download: { price: 20_000 } } })
+    ).toBe(false);
+  });
+
+  it("still counts a buyer in place of a download, and never the owner's purchase", async () => {
+    // 9 likes + (7 - 5) / 6.4 + 5 * 3 = 24.3. Counting the owner too: 9 + 1 / 6.4 + 6 * 3 = 27.2.
+    const owner = { user: OWNER, meta: bought(1, 20_000)[0].meta };
+    expect(await qualifies(9, { downloads: 7, access: [...bought(5, 20_000), owner] })).toBe(false);
+    expect(await qualifies(10, { downloads: 7, access: bought(5, 20_000) })).toBe(true);
+  });
+
+  it('measures a slice on its own versions with the same weights', async () => {
+    const id = await model(OLD, 3_000, [
+      { at: OLD, likes: 2_984 },
+      { at: RECENT, likes: 16, access: bought(3, 20_000) },
+    ]);
+    expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - headStart(16))).toBeLessThanOrEqual(1);
+  });
+
+  it("reads exactly the app's purchase keys", () => {
+    const sql = readFileSync(path.join(MIGRATIONS, PRICE_WEIGHT_DIR, 'migration.sql'), 'utf8');
+    const used = new Set(
+      [...sql.matchAll(/'((?:download|generation)-[A-Za-z]+)'/g)].map((m) => m[1])
+    );
+    const app = EARLY_ACCESS_PURCHASES.flatMap((p) => [
+      p.transactionKey,
+      p.amountKey,
+      p.buzzTypeKey,
+    ]);
+    expect([...used].sort()).toEqual([...app].sort());
+  });
+
+  const slicesOf = async (id: number) =>
+    Object.fromEntries(
+      (
+        await db.pg.query<{ baseModel: string; hotScore: number }>(
+          `SELECT "baseModel", "hotScore" FROM "ModelBaseModelMetric" WHERE "modelId" = $1`,
+          [id]
+        )
+      ).rows.map((r) => [r.baseModel, r.hotScore])
+    );
+
+  it('backfills a model scored before the migration, and its slices', async () => {
+    await expectNear(preexistingByPrice, headStart(16));
+    const slices = await slicesOf(preexistingByPrice);
+    expect(Math.abs(slices['SDXL 1.0'] - headStart(16))).toBeLessThanOrEqual(1);
+    expect(slices['Mirror']).toBe(await score(preexistingByPrice));
+  });
+
+  it('can be re-run, which is how a stopped rescore resumes', async () => {
+    await expect(apply(PRICE_WEIGHT_DIR)).resolves.toBeUndefined();
+    await expectNear(preexistingByPrice, headStart(16));
+  });
+
+  it('the rollback returns a price-lifted model to the §20 score, and can be re-run', async () => {
+    const id = await model(OLD, 3_000, [
+      { at: OLD, likes: 2_984 },
+      { at: RECENT, likes: 16, access: bought(3, 20_000) },
+    ]);
+    await expectNear(id, headStart(16));
+    const counted = await model(OLD, 3_000, [
+      { at: OLD, likes: 2_981 },
+      { at: RECENT, likes: 19, access: bought(6, 20_000) },
+    ]);
+
+    await apply(PRICE_WEIGHT_DIR, 'rollback.sql');
+
+    await expectNear(id, noHeadStart(16));
+    await expectNear(preexistingByPrice, noHeadStart(16));
+    const slices = await slicesOf(preexistingByPrice);
+    expect(Math.abs(slices['SDXL 1.0'] - noHeadStart(16))).toBeLessThanOrEqual(1);
+    expect(slices['Mirror']).toBe(await score(preexistingByPrice));
+    // Back on §20: 19 likes + 6 buyers counted as 1 each still qualifies.
+    await expectNear(counted, headStart(19));
+    await expect(apply(PRICE_WEIGHT_DIR, 'rollback.sql')).resolves.toBeUndefined();
+    // Re-applied, for the §20 tests below, which run on whichever functions are live.
+    await apply(PRICE_WEIGHT_DIR);
+    await expectNear(id, headStart(16));
+  });
+});
+
 const BUYER_BAR_DIR = '20271123120000_model_hot_score_buyer_bar';
 
 describe('paid buyers count toward the head-start bar like likes', () => {
@@ -768,6 +983,12 @@ describe('the rescore lag watch', () => {
       /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_buyer_bar_rollback\([\s\S]*?\$procedure\$;/,
       'rescore_hot_version_buyer_bar_rollback',
     ],
+    [
+      PRICE_WEIGHT_DIR,
+      'rollback.sql',
+      /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_price_weight_rollback\([\s\S]*?\$procedure\$;/,
+      'rescore_hot_version_price_weight_rollback',
+    ],
   ])(
     'the %s %s procedure refuses before writing when it cannot see replica lag',
     async (dir, file, re, proc) => {
@@ -865,6 +1086,26 @@ describe('the rescore lag watch', () => {
         'no replica lag visible'
       );
     expect(await usesHeadStart(pg)).toBe(true);
+    await pg.close();
+  });
+
+  it('refuses to apply the price weight, changing nothing, when it cannot see replica lag', async () => {
+    const pg = await freshDb(BUYER_BAR_DIR);
+    const weighsBuyers = async () =>
+      (
+        await pg.query(
+          `SELECT 1 FROM pg_proc WHERE proname = 'model_metric_hot_score' AND prosrc LIKE '%PaidAccess%'`
+        )
+      ).rows.length > 0;
+    expect(await usesHeadStart(pg)).toBe(true);
+
+    await expect(apply(PRICE_WEIGHT_DIR, 'migration.sql', pg)).rejects.toThrow();
+    await pg.exec('ROLLBACK');
+    expect(await weighsBuyers()).toBe(false);
+    for (const file of ['migration.sql', 'rollback.sql'])
+      await expect(pg.exec(preflightOf(PRICE_WEIGHT_DIR, file))).rejects.toThrow(
+        'no replica lag visible'
+      );
     await pg.close();
   });
 

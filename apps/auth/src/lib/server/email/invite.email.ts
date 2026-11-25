@@ -21,6 +21,10 @@ const headline = ({ appName, invitedBy }: InviteData) =>
   invitedBy ? `${invitedBy} invited you to ${appName}` : `You're invited to ${appName}`;
 
 export const inviteEmail = createEmail<InviteData, void>({
+  template: 'invite',
+  mailClass: 'transactional',
+  // Its link is single-use: never sent to a link tracker (a scanner must not be what spends it).
+  oneTimeTokenLinks: true,
   header: (data) => ({ subject: headline(data), to: data.to }),
   html: (data) =>
     renderEmailShell({

@@ -53,6 +53,7 @@
     minColumn = 300,
     pagerTop = false,
     heldMedia = false,
+    unprocessed = false,
   }: {
     items: T[];
     civitaiUrl: string;
@@ -81,6 +82,9 @@
     /** Media from storage (`/api/held-media`) instead of the public CDN, and the corner link opens
      *  the full-size file rather than the image's page on the site. The CSAM queue only. */
     heldMedia?: boolean;
+    /** Every image here failed processing: a tile the CDN cannot serve says so rather than asking
+     *  storage for a file it does not have. */
+    unprocessed?: boolean;
   } = $props();
 
   const fullHref = (item: T) =>
@@ -137,7 +141,7 @@
   {#if heldMedia}
     <HeldMedia {item} class="max-h-full max-w-full object-contain" />
   {:else}
-    <CdnOrRetractedMedia {item} class="max-h-full max-w-full object-contain" />
+    <CdnOrRetractedMedia {item} {unprocessed} class="max-h-full max-w-full object-contain" />
   {/if}
 {/snippet}
 

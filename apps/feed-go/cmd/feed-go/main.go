@@ -76,7 +76,7 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 		return nil
 	}
 	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
-		TagGate: feed.ImageTagGate(blocked, addons)}
+		TagGate: feed.ImageTagGate(blocked, addons), TierMetadataKey: cfg.TierMetadataKey}
 	if cfg.CacheWriteBack.NeedsPrimary() {
 		c.Primary = primary
 	}
@@ -201,6 +201,59 @@ func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.Mis
 	return sw, nil
 }
 
+// imageResourcesFlagMaxStale bounds how old the last good read of hydrate.ImageResourceUseWriteFlag
+// may be for its "off" to count (flipt.Switch.MaxStale; the shared default is 10 minutes).
+const imageResourcesFlagMaxStale = time.Minute
+
+// imageResourcesSwitch is the switch attachImageResourcesSwitch starts over read: an "off" older than
+// imageResourcesFlagMaxStale is not off (Node's lookup may have moved to the primary since), so the
+// misses fall back rather than read the replica (12 refreshes at flipt.RefreshInterval). A flag Flipt
+// says does not exist reads ON here, not off as flipt.Switch reads a missing flag: absent, Node's read
+// may be anything, so the misses fall back (fail closed).
+func imageResourcesSwitch(read func(ctx context.Context) (bool, error)) *flipt.Switch {
+	sw := flipt.NewSwitch(func(ctx context.Context) (bool, error) {
+		on, err := read(ctx)
+		if errors.Is(err, flipt.ErrFlagNotFound) {
+			return true, nil
+		}
+		return on, err
+	})
+	sw.MaxStale = imageResourcesFlagMaxStale
+	return sw
+}
+
+// attachImageResourcesSwitch reads hydrate.ImageResourceUseWriteFlag in the background (every
+// flipt.RefreshInterval, until ctx ends) and hands c the question the image-resources miss
+// computation asks: is the flag known to be off (flipt.Switch.Off), so the Node lookup reads the
+// replica? Without c, FLIPT_URL or FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS nothing is read and every
+// image-resources miss falls back, as before. Failures are logged at most once a minute, the
+// staleness once per outage; a flag unread past imageResourcesFlagMaxStale (1 minute) is not off, so
+// the misses fall back again.
+func attachImageResourcesSwitch(ctx context.Context, cfg *config.Config, c *hydrate.MissCompute, log *slog.Logger) (*flipt.Switch, error) {
+	if c == nil || cfg.FliptURL == "" || !cfg.ComputeImageResourcesMiss {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	sw := imageResourcesSwitch(func(ctx context.Context) (bool, error) { return fc.Boolean(ctx, hydrate.ImageResourceUseWriteFlag) })
+	var lastLog time.Time
+	sw.OnError = func(err error) {
+		if now := time.Now(); now.Sub(lastLog) >= time.Minute {
+			lastLog = now
+			log.Warn("flag read failed; the last good value holds", "flag", hydrate.ImageResourceUseWriteFlag, "err", err)
+		}
+	}
+	sw.OnStale = func(age time.Duration) {
+		log.Error("flag unread past its staleness bound; image-resources misses fall back", "flag", hydrate.ImageResourceUseWriteFlag,
+			"since_last_good", age.Round(time.Second).String())
+	}
+	c.ImageResourcesFromReplica = sw.Off
+	sw.Start(ctx)
+	return sw, nil
+}
+
 // personalHotLeadTimeout bounds one personal-hot-lead read on the request path: past it the page
 // falls back (model-getall-personal-hot-lead-unknown), which Node answers correctly anyway.
 const personalHotLeadTimeout = 250 * time.Millisecond
@@ -217,6 +270,21 @@ func personalHotLeadReader(cfg *config.Config) (server.UserFlagReader, error) {
 		return nil, err
 	}
 	return flipt.NewUserFlag(fc, server.PersonalHotLeadFlag), nil
+}
+
+// userHubsReader reads server.UserHubsFlag per viewer from FLIPT_URL for image.getInfinite's `hubId`
+// (nil without it, or with FEED_GO_INFINITE_SERVE_INPUT_HUB_ID off: every `hubId` request falls back).
+// Answers are cached per viewer (flipt.UserFlag); a read is bounded as the personal hot lead's is.
+func userHubsReader(cfg *config.Config) (server.UserFlagReader, error) {
+	if cfg.FliptURL == "" || !cfg.InfiniteServeInputHubID {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment,
+		Timeout: personalHotLeadTimeout})
+	if err != nil {
+		return nil, err
+	}
+	return flipt.NewUserFlag(fc, server.UserHubsFlag), nil
 }
 
 // opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
@@ -285,7 +353,7 @@ func run(log *slog.Logger) error {
 	}
 
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	reg.MustRegister(server.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := server.NewMetrics(reg)
 
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
@@ -323,6 +391,12 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		log.Error("flag not read; metric-hash populates keep the shared clickhouse", "flag", metricsClickHouseFlag, "err", err)
 	}
+	resourcesSwitch, err := attachImageResourcesSwitch(ctx, cfg, sources.Compute, log)
+	if err != nil {
+		log.Error("flag not read; image-resources misses fall back", "flag", hydrate.ImageResourceUseWriteFlag, "err", err)
+	}
+	log.Info("image-resources misses", "FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", cfg.ComputeImageResourcesMiss,
+		"computed_while_flag_off", resourcesSwitch != nil, "flag", hydrate.ImageResourceUseWriteFlag)
 	log.Info("dedicated metrics clickhouse", "configured", sources.Compute != nil && sources.Compute.MetricsClickHouse != nil,
 		"flag_read", metricsSwitch != nil, "CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", cfg.MetricsClickHouseRequestTimeout.Milliseconds())
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
@@ -420,6 +494,18 @@ func run(log *slog.Logger) error {
 		Blocked: blocked,
 		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
+		Ports: feed.InfinitePorts{
+			PublishedOnly:       cfg.InfiniteServeInputPublishedOnly,
+			PostIDs:             cfg.InfiniteServeInputPostIDs,
+			SortRandom:          cfg.InfiniteServeSortRandom,
+			GallerySettingsMiss: cfg.InfiniteServeGallerySettingsMiss,
+			HubID:               cfg.InfiniteServeInputHubID,
+		},
+		// A collection's Random seed: the system redis key, read-only.
+		RandomSeed: &feed.RandomSeed{Sys: sys},
+		// A gallery-settings miss's hold, from the replica (lag-aware; FEED_GO_COMPUTE_MISSES off: nil
+		// Compute, so it falls back).
+		GalleryHolds: sources,
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -435,6 +521,9 @@ func run(log *slog.Logger) error {
 			CoverageNext:            cfg.CoverageNext,
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
+			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed, HidePaid: cfg.GetAllServeHidePaid},
+			ServeUserCosmeticsMiss:  cfg.GetAllServeUserCosmeticsMiss,
+			ServeMembershipMiss:     cfg.GetAllServeMembershipMiss,
 		},
 	}
 	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
@@ -447,7 +536,25 @@ func run(log *slog.Logger) error {
 	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
-	if err := mc.Validate(); err != nil {
+	if err := mc.Validate(cfg.BearerAuth); err != nil {
+		return err
+	}
+	// The list's text search reads the search index the Node app reads (SEARCH_HOST): answered in the
+	// shadow whenever it is configured, served only with FEED_GO_V1_MODELS_SERVE_QUERY.
+	var search v1models.ModelSearcher
+	if mc.SearchHost != "" {
+		mcl, err := v1models.NewMeiliClient(mc.SearchHost, mc.SearchAPIKey, mc.SearchTimeout)
+		if err != nil {
+			return err
+		}
+		// The Node app's circuit settings; a rejected call (circuit open, concurrency cap) is handed
+		// back as `v1-models-query` and counted here.
+		mcl.SetCircuit(mc.CircuitTripThreshold, mc.CircuitWindow, mc.CircuitCooldown)
+		mcl.OnReject = func(why string) { metrics.SearchRejected.WithLabelValues(why).Inc() }
+		search = mcl
+	}
+	log.Info("GET /api/v1/models text search", "configured", search != nil, "serve", mc.ServeQuery)
+	if err := mc.ValidateMisses(cfg.ComputeMisses); err != nil {
 		return err
 	}
 	v1Models := &server.V1ModelsDeps{
@@ -458,12 +565,15 @@ func run(log *slog.Logger) error {
 			Gallery: deps.Gallery,
 			Addons:  deps.Addons.Addons,
 			Blocked: blocked,
+			Search:  search,
 			Config: v1models.Config{
+				ServeQuery:           mc.ServeQuery,
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
 				CoverageNext:         cfg.CoverageNext,
 				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
 				ComputeMisses:        cfg.ComputeMisses,
+				ServeDataMiss:        mc.ServeDataMiss,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
 				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
@@ -478,12 +588,18 @@ func run(log *slog.Logger) error {
 		log.Error("flag not read; every page it could lead falls back", "flag", server.PersonalHotLeadFlag, "err", err)
 	}
 	log.Info("model.getAll personal hot lead", "flag", server.PersonalHotLeadFlag, "flag_read", personalHotLead != nil)
+	// nil (no FLIPT_URL, a bad one, or the hubId port off): every `hubId` request falls back.
+	userHubs, err := userHubsReader(cfg)
+	if err != nil {
+		log.Error("flag not read; every hubId request falls back", "flag", server.UserHubsFlag, "err", err)
+	}
 	srv := &server.Server{
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		PersonalHotLead:  personalHotLead,
+		UserHubs:         userHubs,
 		// FLIPT_DEPLOYMENT_ID, the targeting property Node's buildFliptContext adds.
 		FliptDeploymentID: cfg.FliptDeploymentID,
 		ServeInfinite:     cfg.ServeInfinite,
@@ -493,9 +609,15 @@ func run(log *slog.Logger) error {
 		RegionRules:       cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,
-		Metrics:          metrics,
-		Log:              log,
-		ShadowQueue:      make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// FEED_GO_ANSWER_REGION_BLOCKED: the app's 451 written here instead of handed back.
+		AnswerRegionBlocked: cfg.AnswerRegionBlocked,
+		Metrics:             metrics,
+		Log:                 log,
+		ShadowQueue:         make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+
+		// FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE: the app's 503 for a failed feed call written here.
+		AnswerInfiniteFeedUnavailable: cfg.InfiniteAnswerFeedUnavailable,
+
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
@@ -503,6 +625,8 @@ func run(log *slog.Logger) error {
 		Infinite:       infinite,
 		V1Models:       v1Models,
 		ServeV1Models:  mc.Serve,
+		ServeV1Images:  mc.ServeImages,
+		V1BearerAuth:   mc.BearerAuth,
 		Associated:     associated,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
@@ -522,9 +646,15 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
+		// The serve-side parity replays (FEED_GO_SERVE_PARITY_SAMPLE_RATE, default 0 = off) go to the
+		// same Node app through the same proxy code, but their own instance: a replay's failure is
+		// counted as its outcome (feed_go_serve_parity_total), never as a fallback proxy error.
+		srv.Parity = newServeParity(cfg.ServeParityRate, target, prop)
 	}
-	// The public /api/v1/models routes hand their fallbacks to the Node app that serves /api/v1, a
-	// different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the routes are not mounted).
+	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil)
+	// The public /api/v1/models and /api/v1/images routes hand their fallbacks to the Node app that
+	// serves /api/v1, a different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the
+	// routes are not mounted).
 	if mc.FallbackURL != "" {
 		target, err := url.Parse(mc.FallbackURL)
 		if err != nil {
@@ -535,12 +665,38 @@ func run(log *slog.Logger) error {
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
 	}
+	// The public /api/v1/images route's one upstream (FEED_GO_V1_IMAGES_FALLBACK_URL); unset, the route
+	// is not mounted (FEED_GO_V1_FALLBACK_URL is never used for it).
+	if mc.ImagesFallbackURL != "" {
+		target, err := url.Parse(mc.ImagesFallbackURL)
+		if err != nil {
+			return err
+		}
+		srv.V1ImagesFallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
+			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
+	}
 
 	public := server.PublicMux(srv)
-	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
-	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
-	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil)
+	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
+		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed,
+		"FEED_GO_GETALL_SERVE_HIDE_PAID", cfg.GetAllServeHidePaid,
+		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss,
+		"FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", cfg.GetAllServeMembershipMiss)
+	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite,
+		"FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", cfg.InfiniteServeInputPublishedOnly,
+		"FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", cfg.InfiniteServeInputPostIDs,
+		"FEED_GO_INFINITE_SERVE_SORT_RANDOM", cfg.InfiniteServeSortRandom,
+		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss,
+		"FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", cfg.InfiniteAnswerFeedUnavailable,
+		"FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", cfg.InfiniteServeInputHubID, "user_hubs_flag_read", userHubs != nil)
+	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
+		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
+	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
+		"mounted", srv.V1ImagesFallback != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
+	log.Info("blocked-region requests answered here (451) instead of handed back", "FEED_GO_ANSWER_REGION_BLOCKED", cfg.AnswerRegionBlocked)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
 	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)
@@ -553,7 +709,7 @@ func run(log *slog.Logger) error {
 	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
 	// do not listen publicly at all.
-	if srv.Fallback != nil || srv.V1Fallback != nil {
+	if srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil {
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))

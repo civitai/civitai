@@ -33,6 +33,7 @@ import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import {
   afterCommentsV3Deleted,
   deleteCommentsV3,
@@ -41,6 +42,7 @@ import { commentV3CsamHold, hasOpenCommentReport } from '~/server/services/comme
 import { prismaRunner, setCommentFlags } from '~/server/services/commentv3/write.service';
 import {
   callSigner,
+  forgetFeaturePageViewerHandle,
   isRouteMissing,
   type SignerReply,
   SignerUnavailableError,
@@ -54,9 +56,11 @@ import {
 } from '~/server/services/feature-pages/comment-state';
 import { fpHtmlToText } from '~/server/services/feature-pages/comment-text';
 import {
+  commentBySourceSchema,
   commentPostReplySchema,
   commentsPageSchema,
   PLATFORM_AUTHOR_ERASE_PATH,
+  PLATFORM_COMMENT_BY_SOURCE_PATH,
   PLATFORM_COMMENT_PATH,
   PLATFORM_COMMENTS_PAGE_LIMIT,
   PLATFORM_COMMENTS_READ_PATH,
@@ -75,6 +79,7 @@ import {
   FEATURE_PAGES_FEATURE_URN_PREFIX,
   FEATURE_PAGES_TEXT_MAX_LENGTH,
 } from '~/shared/constants/feature-pages.constants';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { sleep } from '~/utils/errorHandling';
 import { currentScanContentHashes } from '~/server/services/text-scan/submit';
 
@@ -100,6 +105,11 @@ const SUBJECT_WAIT_ALERT_MINUTES = 24 * 60;
 
 const log = (type: 'info' | 'error' | 'warning', message: string, payload: MixedObject) =>
   logToAxiom({ name: 'feature-pages-mirror', type, message, payload });
+
+async function markAuthorErased(userId: number) {
+  await markFpAuthorErased(kyselyWrite, userId);
+  await forgetFeaturePageViewerHandle(userId);
+}
 
 const isFpMirrorOn = () => isFlipt(FLIPT_FEATURE_FLAGS.FEATURE_PAGES_MIRROR);
 
@@ -198,6 +208,37 @@ async function send(path: string, body: Record<string, unknown>): Promise<StepOu
     const details = (reply.body as { details?: { digest?: unknown } } | null)?.details;
     return { kind: 'stale', digest: typeof details?.digest === 'string' ? details.digest : null };
   }
+  return { kind: 'retry', status: reply.status };
+}
+
+type HeldOutcome =
+  | { kind: 'held'; urn: string; digest: string; state: string }
+  | { kind: 'not-held' }
+  | { kind: 'retry'; status: number | 'unreachable' };
+
+/** What the platform holds for a comment, by its sourceId: never its text. */
+async function readBySource(sourceId: number): Promise<HeldOutcome> {
+  let reply: SignerReply;
+  try {
+    reply = await callSigner(PLATFORM_COMMENT_BY_SOURCE_PATH, {
+      method: 'GET',
+      query: new URLSearchParams({ sourceId: String(sourceId) }),
+    });
+  } catch (e) {
+    if (e instanceof SignerUnavailableError) return { kind: 'retry', status: 'unreachable' };
+    throw e;
+  }
+  if (reply.status === 404 && signerErrorCode(reply) === PlatformRefusal.NotHeld)
+    return { kind: 'not-held' };
+  if (reply.status >= 200 && reply.status < 300) {
+    const parsed = commentBySourceSchema.safeParse(reply.body);
+    return parsed.success ? { kind: 'held', ...parsed.data } : { kind: 'retry', status: 200 };
+  }
+  if (isRouteMissing(reply))
+    log('error', 'platform route missing', {
+      path: PLATFORM_COMMENT_BY_SOURCE_PATH,
+      status: reply.status,
+    });
   return { kind: 'retry', status: reply.status };
 }
 
@@ -375,7 +416,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     return 'skipped';
   };
   const erased = async () => {
-    await markFpAuthorErased(kyselyWrite, row.userId);
+    await markAuthorErased(row.userId);
     log('info', 'author erased on the platform', { commentId: row.commentId });
     return 'removed' as const;
   };
@@ -396,7 +437,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
   if (state === 'erased') {
     const r = await send(PLATFORM_AUTHOR_ERASE_PATH, { uid: row.userId });
     if (r.kind !== 'ok' && r.kind !== 'erased') return failed(r, 'erase');
-    await markFpAuthorErased(kyselyWrite, row.userId);
+    await markAuthorErased(row.userId);
     log('info', 'pushed', { commentId: row.commentId, state, userId: row.userId });
     return 'pushed';
   }
@@ -563,8 +604,27 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
         return 'pushed';
       }
     } else {
-      // Hidden with no urn: nothing to aim a verdict at until the platform resolves it by sourceId.
-      return wait(UNRESOLVED_WAIT_MINUTES, 'lost first post: no urn', true);
+      const held = await readBySource(row.commentId);
+      if (held.kind === 'retry') return fail(held.status, 'by-source');
+      if (held.kind === 'held') {
+        if (held.state === 'erased') return erased();
+        urn = held.urn;
+        platformDigest = held.digest;
+        steps.push('by-source');
+      } else {
+        // Not held yet: hidden ahead of its post, so a post that lands later is withheld.
+        const r = await send(PLATFORM_MOD_VERDICT_PATH, {
+          target: { sourceId: row.commentId },
+          verdict: 'hidden',
+          at: new Date().toISOString(),
+        });
+        if (r.kind === 'removed') return removed('mod-hidden-ahead');
+        if (r.kind === 'erased') return erased();
+        if (r.kind !== 'ok') return failed(r, 'mod-hidden-ahead');
+        await done();
+        log('info', 'pushed', { commentId: row.commentId, state, steps: ['mod-hidden-ahead'] });
+        return 'pushed';
+      }
     }
   }
 
@@ -779,7 +839,7 @@ const FINAL_STATES: readonly FpCommentState[] = ['mod-removed', 'retracted', 'er
 export function reconcileAction(
   e: Evaluated,
   item: PlatformCommentItem
-): FpReconcileAction | 'counted' | null {
+): FpReconcileAction | 'counted' | 'pipeline-hidden' | 'moderator-hidden' | 'lift' | null {
   const seen = observed(item);
   const textHeld = seen !== 'retracted' && seen !== 'removed';
   if (e.state === 'refused') return null;
@@ -791,13 +851,36 @@ export function reconcileAction(
   if (e.state === 'mod-hidden') return seen === 'visible' ? 'restrict' : null;
   // Retracted there is final: its text is never sent again.
   if (seen === 'retracted') return 'counted';
+  if (seen === 'hidden' && item.verdict?.source === 'pipeline') return 'pipeline-hidden';
   // Visible: a takedown's tombstone or another post moved the token, so the text goes again.
   if (item.digest && item.digest !== e.row.platformDigest) return 'repost';
   if (seen === null) return 'due';
+  if (seen === 'hidden' && item.verdict?.source === 'site') {
+    // The site's own hide outlasted its lift (a tie, or a lift stamped by a clock behind): lifted
+    // again at a fresh time, which wins only over a hide no newer than now.
+    const hiddenAt = Date.parse(item.verdict.at ?? '');
+    return Number.isNaN(hiddenAt) || hiddenAt <= Date.now() ? 'lift' : 'counted';
+  }
   // Hidden on the platform by its own moderator: never answered.
-  if (seen === 'hidden') return 'counted';
+  if (seen === 'hidden') return 'moderator-hidden';
   return null;
 }
+
+const FP_MAX_LIFTS = 3;
+const FP_LIFTS_WINDOW_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * A lift that lost is sent again up to FP_MAX_LIFTS times, then counted stuck. The count lives on
+ * the cache cluster: an eviction restarts it, so a lift that keeps losing can be sent more often,
+ * at most once a reconcile.
+ */
+const takeLift = (commentId: number, by?: number) =>
+  takeClusterWindowCount(
+    'feature-pages.lift',
+    `${REDIS_KEYS.COUNTERS.FEATURE_PAGES_LIFTS}:${commentId}`,
+    FP_LIFTS_WINDOW_SECONDS,
+    { by }
+  );
 
 /** The daily reconcile: compares what each urn should hold with the platform, by reconcileAction. */
 export async function runFpReconcile() {
@@ -807,6 +890,9 @@ export async function runFpReconcile() {
   let cursor: string | null = null;
   let checked = 0;
   let mismatched = 0;
+  let pipelineHidden = 0;
+  let moderatorHidden = 0;
+  let liftsLost = 0;
   do {
     const query = new URLSearchParams({
       app: PLATFORM_FEATURE_PAGES_APP,
@@ -817,7 +903,7 @@ export async function runFpReconcile() {
     const page = commentsPageSchema.safeParse(reply.body);
     if (reply.status !== 200 || !page.success) {
       log('error', 'reconcile read failed', { status: reply.status, checked });
-      return { on, checked, mismatched, failed: true };
+      return { on, checked, mismatched, pipelineHidden, moderatorHidden, liftsLost, failed: true };
     }
     const byUrn = await readFpMirrorByUrns(
       kyselyWrite,
@@ -840,6 +926,14 @@ export async function runFpReconcile() {
       const e = evaluate(row);
       const action = reconcileAction(e, item);
       if (!action) continue;
+      if (action === 'pipeline-hidden') {
+        pipelineHidden += 1;
+        continue;
+      }
+      if (action === 'moderator-hidden') {
+        moderatorHidden += 1;
+        continue;
+      }
       mismatched += 1;
       log('warning', 'mismatched', {
         commentId: row.commentId,
@@ -847,12 +941,33 @@ export async function runFpReconcile() {
         observed: observed(item),
         action,
       });
-      if (on && action !== 'counted') await markFpReconciled(kyselyWrite, row.commentId, action);
+      if (!on || action === 'counted') continue;
+      if (action !== 'lift') {
+        await markFpReconciled(kyselyWrite, row.commentId, action);
+        continue;
+      }
+      // Counter unreadable: send nothing this pass; the next reconcile finds the row again.
+      const lifts = await takeLift(row.commentId).catch(() => NaN);
+      if (Number.isNaN(lifts)) continue;
+      if (lifts <= FP_MAX_LIFTS) {
+        // Counted only if this marks it due: a row another writer made due first sends no lift.
+        let marked = false;
+        try {
+          marked = await markFpReconciled(kyselyWrite, row.commentId, 'due');
+        } finally {
+          if (!marked) await takeLift(row.commentId, -1).catch(() => undefined);
+        }
+      } else {
+        liftsLost += 1;
+        log('error', 'lift lost', { commentId: row.commentId });
+        await markFpReconciled(kyselyWrite, row.commentId, 'stuck', FP_MAX_PUSH_ATTEMPTS);
+      }
     }
     cursor = page.data.next;
   } while (cursor);
-  log('info', 'heartbeat', { job: 'reconcile', on, checked, mismatched });
-  return { on, checked, mismatched };
+  const counts = { on, checked, mismatched, pipelineHidden, moderatorHidden, liftsLost };
+  log('info', 'heartbeat', { job: 'reconcile', ...counts });
+  return counts;
 }
 
 async function readVisibleFpUrns() {

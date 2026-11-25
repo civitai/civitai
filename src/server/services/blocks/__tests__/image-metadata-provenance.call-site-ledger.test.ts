@@ -581,7 +581,9 @@ type UpdateDecision =
   /** `data` is `cond ? { … } : { … }`: two object literals, neither naming metadata. */
   | 'literal-branches'
   /** `data: { [flag]: <boolean> }`, `flag` being the schema's closed enum of boolean columns. */
-  | 'boolean-flag-key';
+  | 'boolean-flag-key'
+  /** `data: CSAM_IMAGE_BLOCK`, image.service's flat literal of the block columns, none metadata. */
+  | 'csam-image-block';
 
 /** Every update site that can write `metadata`, keyed by enclosing function. */
 const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: number }> = {
@@ -689,6 +691,11 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-grace-marker-strip',
     sites: 1,
   },
+  'src/server/services/user.service.ts#blockUserImagesAsCsam': {
+    decision: 'csam-image-block',
+    sites: 1,
+  },
+  'src/server/services/csam.service.ts#blockListed': { decision: 'csam-image-block', sites: 1 },
   'src/server/services/image.service.ts#toggleImageFlag': {
     decision: 'boolean-flag-key',
     sites: 1,
@@ -700,6 +707,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
 };
 
 const IMAGE_SCHEMA = readFileSync(join(ROOT, 'src/server/schema/image.schema.ts'), 'utf8');
+const IMAGE_SERVICE = readFileSync(join(ROOT, 'src/server/services/image.service.ts'), 'utf8');
 
 /** Does this update site's shape match its recorded decision? Returns a reason when not. */
 function checkUpdateDecision(decision: UpdateDecision, site: Site): string | null {
@@ -853,6 +861,15 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         )
       )
         return 'the flag schema is no longer the closed enum of boolean columns';
+      return null;
+    }
+    case 'csam-image-block': {
+      if ((propertyValue(region, 'data') ?? '') !== 'CSAM_IMAGE_BLOCK')
+        return 'data is no longer CSAM_IMAGE_BLOCK';
+      const def = /export const CSAM_IMAGE_BLOCK = (\{[^{}]*\}) as const;/.exec(IMAGE_SERVICE);
+      if (!def) return 'CSAM_IMAGE_BLOCK is no longer a flat object literal';
+      if (/\bmetadata\b|\.\.\.|\[/.test(def[1]))
+        return 'CSAM_IMAGE_BLOCK writes metadata or an unreadable key';
       return null;
     }
   }

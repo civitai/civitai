@@ -16,6 +16,7 @@ import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
+import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
 
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
@@ -35,7 +36,10 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  *   `GET /api/v1/models` + `GET /api/v1/models/[id]` (one flag, `feed-go-shadow-v1-models`): the raw
  *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
  *   handler itself. A request carrying an API credential is not mirrored (`skipped_credential`):
- *   the body can echo it.
+ *   the body can echo it. The exception, off unless `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true`:
+ *   an `/api/v1/models/[id]` request whose credential is an Authorization header (never a
+ *   `?token=`) is mirrored with a description of it in place of the key
+ *   (`feed-go-shadow-credential.ts`: the key's `generateSecretHash`, never the key). The list never.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
  * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
@@ -64,7 +68,11 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  * Fire-and-forget: the POST is started before the handler and never awaited. It runs only for a
  * request the shadow sampler already sampled (so it is inside that sample's per-second token), for
  * a further `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE` fraction of them (default 0: off), takes its own
- * slot under the shared in-flight cap, and has the shadow timeout.
+ * slot under the shared in-flight cap, and has the shadow timeout. `image.getInfinite` and
+ * `model.getAll` are probed the same way; `GET /api/v1/images` too, at
+ * `/internal/probe/api/v1/images` with its raw query as `input` and its `path`, at its own rate
+ * (`FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE`, default 0: off), started where the route decides
+ * its sample (after the cheap rejects and the bulkhead slot, before the gallery gates and the search).
  */
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
@@ -91,6 +99,8 @@ export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
 export const FEED_GO_PROBE_INFINITE_PATH = `/internal/probe/${FEED_GO_SHADOW_INFINITE_PROCEDURE}`;
 /** feed-go's Go-first probe path for `model.getAll`. */
 export const FEED_GO_PROBE_MODEL_GET_ALL_PATH = `/internal/probe/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
+/** feed-go's Go-first probe path for `GET /api/v1/images`. */
+export const FEED_GO_PROBE_V1_IMAGES_PATH = `/internal/probe${FEED_GO_SHADOW_V1_IMAGES_ROUTE}`;
 
 export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
@@ -212,6 +222,25 @@ export type FeedGoShadowConfig = {
   probeModelGetAllUrl: string | undefined;
   /** The fraction of sampled requests that are also probed (0 = none, 1 = every one). */
   probeRate: number;
+  /** Full Go-first probe URL for `GET /api/v1/images`, or undefined (disabled). */
+  probeV1ImagesUrl?: string;
+  /**
+   * The fraction of sampled `GET /api/v1/images` requests that are also probed
+   * (`FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE`, default 0: off). Its own rate, so turning the
+   * REST probe on is a separate step from the tRPC probes' `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE`.
+   */
+  probeV1ImagesRate?: number;
+  /**
+   * `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` (`true` or `1`; default off): mirror an `[id]`
+   * request with an Authorization credential, described rather than forwarded (see the module doc).
+   */
+  v1ModelsCredentials?: boolean;
+  /**
+   * `FEED_GO_SHADOW_V1_MODELS_QUERY` (`true` or `1`; default off): mirror a `GET /api/v1/models`
+   * request with a text `query` (the search path). Off, such a request is never sampled, as before
+   * feed-go answered it.
+   */
+  v1ModelsQuery?: boolean;
 };
 
 type Env = Record<string, string | undefined>;
@@ -231,6 +260,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
   let probeModelGetAllUrl: string | undefined;
+  let probeV1ImagesUrl: string | undefined;
   const base = env.FEED_GO_SHADOW_URL?.trim();
   if (base) {
     try {
@@ -246,6 +276,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
         probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
+        probeV1ImagesUrl = new URL(FEED_GO_PROBE_V1_IMAGES_PATH, parsed).toString();
       }
     } catch {
       url = undefined;
@@ -258,6 +289,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
       probeModelGetAllUrl = undefined;
+      probeV1ImagesUrl = undefined;
     }
   }
   return {
@@ -272,6 +304,14 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     probeInfiniteUrl,
     probeModelGetAllUrl,
     probeRate: envNumber(env.FEED_GO_GOFIRST_PROBE_SAMPLE_RATE, 0, 0, 1),
+    probeV1ImagesUrl,
+    probeV1ImagesRate: envNumber(env.FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE, 0, 0, 1),
+    v1ModelsCredentials: ['true', '1'].includes(
+      (env.FEED_GO_SHADOW_V1_MODELS_CREDENTIALS ?? '').trim().toLowerCase()
+    ),
+    v1ModelsQuery: ['true', '1'].includes(
+      (env.FEED_GO_SHADOW_V1_MODELS_QUERY ?? '').trim().toLowerCase()
+    ),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -334,6 +374,18 @@ const REST_ENDPOINTS: ReadonlySet<FeedGoShadowEndpoint> = new Set<FeedGoShadowEn
 function isRestEndpoint(endpoint: FeedGoShadowEndpoint): endpoint is RestEndpoint {
   return REST_ENDPOINTS.has(endpoint);
 }
+
+/**
+ * The header a credentialed `/api/v1/models/[id]` sample carries in place of its key (feed-go's
+ * SampleCredentialHeader): the credential's description (`feed-go-shadow-credential.ts`).
+ */
+export const FEED_GO_SAMPLE_CREDENTIAL_HEADER = 'x-feed-go-credential';
+
+/** What `[id]` tells `beginRest` about the request's credential. */
+export type RestSampleOptions = {
+  /** Describes the request's Authorization credential (feed-go-shadow-credential.ts). */
+  credential?: () => string | undefined;
+};
 
 export type FeedGoShadowSample = {
   endpoint: FeedGoShadowEndpoint;
@@ -484,6 +536,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       if (config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      // feed-go's own replay of a request it served (feed-go-parity-replay.ts): it compares that
+      // answer itself, so a sample of it would only be a second comparison of the same request.
+      if (isFeedGoParityReplay(req.headers)) return undefined;
       // Exactly the mirrored procedures, unbatched (the web client never batches either:
       // NEVER_BATCH_PROCEDURES in src/utils/trpc.ts).
       const procedure = req.query.trpc;
@@ -533,19 +588,31 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
    */
   function beginRest(
     endpoint: RestEndpoint,
-    req: ShadowRequestLike
+    req: ShadowRequestLike,
+    opts: RestSampleOptions = {}
   ): FeedGoShadowSample | undefined {
     try {
       const route = restRoutes[endpoint];
       if (!route.url || config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      // The list's text search is mirrored only with FEED_GO_SHADOW_V1_MODELS_QUERY. A text query is
+      // any value other than the one empty string (the handler's `if (query)`).
+      if (endpoint === 'v1-models' && !config.v1ModelsQuery) {
+        const q = req.query.query;
+        if (q !== undefined && q !== '') return undefined;
+      }
       if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
-      // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`), and feed-go
-      // falls back on any credential: never mirrored, only counted.
+      // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`): never mirrored,
+      // only counted, unless it is `[id]`'s Authorization credential with the credential sampling on,
+      // which is described instead (credentialHeaders).
+      let described: Record<string, string> | undefined;
       if (hasApiCredential(req)) {
-        record('skipped_credential', endpoint);
-        return undefined;
+        described = credentialHeaders(endpoint, req, opts);
+        if (!described) {
+          record('skipped_credential', endpoint);
+          return undefined;
+        }
       }
       const target = req.url ?? '';
       const q = target.indexOf('?');
@@ -559,17 +626,42 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           // Without the hash feed-go falls back on any body with a Training Data file.
         }
       }
+      if (described) Object.assign(headers, described);
       return {
         endpoint,
         holdsSlot: false,
         input,
         path: path || undefined,
         headers,
+        // The images route can be probed (`probe`): its start time, as a tRPC sample's.
+        ...(endpoint === 'v1-images' ? { startedAt: epochNow() } : {}),
         done: false,
       };
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * The header describing `[id]`'s credential (FEED_GO_SAMPLE_CREDENTIAL_HEADER), or undefined when
+   * the request is not mirrored: another route (the list included), the credential sampling off, a
+   * `?token=` (the query string itself carries it), or no description.
+   */
+  function credentialHeaders(
+    endpoint: RestEndpoint,
+    req: ShadowRequestLike,
+    opts: RestSampleOptions
+  ): Record<string, string> | undefined {
+    if (endpoint !== 'v1-models-id' || !config.v1ModelsCredentials) return undefined;
+    if (req.query.token !== undefined || !opts.credential) return undefined;
+    let credential: string | undefined;
+    try {
+      credential = opts.credential();
+    } catch {
+      return undefined;
+    }
+    if (!credential) return undefined;
+    return { [FEED_GO_SAMPLE_CREDENTIAL_HEADER]: credential };
   }
 
   /** `beginRest` for `GET /api/v1/images`. */
@@ -591,15 +683,17 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * The Go-first probe for a sampled `as-posts` request: call it at the start of the request, before
-   * the handler runs. Starts the POST synchronously (its bytes leave on a later turn of the event
+   * The Go-first probe for a sampled request of a probed endpoint (the three tRPC procedures above,
+   * and `GET /api/v1/images` at its own rate): call it at the start of the request, before the
+   * handler runs. Starts the POST synchronously (its bytes leave on a later turn of the event
    * loop) and never awaits it; the probe holds its own in-flight slot until the POST settles. At most
    * once per sample. Never throws.
    */
   function probe(sample: FeedGoShadowSample | undefined): void {
     try {
       if (!sample || sample.probed) return;
-      // The tRPC procedures feed-go has a probe for; a REST sample is never probed.
+      // The endpoints feed-go has a probe for: three tRPC procedures and `GET /api/v1/images`, the
+      // latter at its own rate (default 0). No other REST sample is probed.
       const url =
         sample.endpoint === 'as-posts'
           ? config.probeUrl
@@ -607,10 +701,14 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           ? config.probeInfiniteUrl
           : sample.endpoint === 'model-getall'
           ? config.probeModelGetAllUrl
+          : sample.endpoint === 'v1-images'
+          ? config.probeV1ImagesUrl
           : undefined;
-      if (!url || config.probeRate <= 0) return;
+      const rate =
+        sample.endpoint === 'v1-images' ? config.probeV1ImagesRate ?? 0 : config.probeRate;
+      if (!url || rate <= 0) return;
       if (!enabledProbe()) return;
-      if (random() >= config.probeRate) return;
+      if (random() >= rate) return;
       sample.probed = true;
       if (inFlight >= config.maxInFlight) {
         recordProbe('dropped_overload', sample.endpoint);
@@ -618,6 +716,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       }
       const body = JSON.stringify({
         input: sample.input,
+        ...(sample.path ? { path: sample.path } : {}),
         headers: sample.headers,
         startedAt: sample.startedAt,
       });
@@ -950,11 +1049,12 @@ export function beginFeedGoShadowV1Images(req: ShadowRequestLike): FeedGoShadowS
  */
 export function beginFeedGoShadowV1Models(
   req: ShadowRequestLike,
-  kind: 'list' | 'id'
+  kind: 'list' | 'id',
+  opts?: RestSampleOptions
 ): FeedGoShadowSample | undefined {
   try {
     const owner = getInstance();
-    const sample = owner.beginRest(kind === 'list' ? 'v1-models' : 'v1-models-id', req);
+    const sample = owner.beginRest(kind === 'list' ? 'v1-models' : 'v1-models-id', req, opts);
     if (sample) owners.set(sample, owner);
     return sample;
   } catch {

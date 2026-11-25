@@ -40,17 +40,60 @@ type modelTag struct {
 	name any
 }
 
+// computeDataMisses answers the ids dataForModelsCache holds no entry for (no key, a bust's debounce
+// marker, an undecodable value) as Node's fetch does: its lookupFn's queries
+// (hydrate.Sources.ComputeModelData), on the replica. Node's lookup is lag-aware: a model a recent
+// write flagged is read on the primary, so a missed model whose lag flag is set, or whose flag read
+// fails, still falls back (`v1-models-data-miss`), as does every miss without the miss computation
+// (FEED_GO_COMPUTE_MISSES). Nothing is written back.
+func (d *Deps) computeDataMisses(ctx context.Context, ids []int, entries map[int]hydrate.OrderedEntry) error {
+	var missed []int
+	for _, id := range ids {
+		if _, ok := entries[id]; !ok {
+			missed = append(missed, id)
+		}
+	}
+	if len(missed) == 0 {
+		return nil
+	}
+	if d.Sources == nil || d.Sources.Compute == nil {
+		return fallback.New("v1-models-data-miss")
+	}
+	if flagged, err := d.Sources.ModelLagFlagged(ctx, missed); flagged || err != nil {
+		return fallback.New("v1-models-data-miss")
+	}
+	computed, ok, err := d.Sources.ComputeModelData(ctx, missed)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fallback.New("v1-models-data-miss")
+	}
+	for _, id := range missed {
+		if e, ok := computed[id]; ok {
+			entries[id] = e
+		}
+	}
+	return nil
+}
+
 // modelData is dataForModelsCache.fetch with its appendFn: each model's record, its `tags` replaced
-// by modelTagCache's (whose own appendFn names them from tagCache). A model-data or model-tags miss
-// falls back (DESIGN.md §16.7). A tag the tag cache does not hold is named by tagCache's own lookup on
-// the replica with Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back.
-func (d *Deps) modelData(ctx context.Context, ids []int) (map[int]*modelData, error) {
+// by modelTagCache's (whose own appendFn names them from tagCache). A model-tags miss falls back; a
+// model-data miss falls back unless computeMiss, when it is computed (computeDataMisses; DESIGN.md
+// §16.7). A tag the tag cache does not hold is named by tagCache's own lookup on the replica with
+// Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back.
+func (d *Deps) modelData(ctx context.Context, ids []int, computeMiss bool) (map[int]*modelData, error) {
 	ids = hydrate.Unique(ids)
 	b := hydrate.NewBatch()
 	data := d.Packed.QueueOrdered(b, KeyDataForModel, ids, 0)
 	tags := d.Packed.QueueOrdered(b, KeyModelTags, ids, 0)
 	b.Exec(ctx)
 	dataEntries, tagEntries := data.Entries(), tags.Entries()
+	if computeMiss {
+		if err := d.computeDataMisses(ctx, ids, dataEntries); err != nil {
+			return nil, err
+		}
+	}
 	out := make(map[int]*modelData, len(ids))
 	tagIDs := make([]int, 0, len(ids)*4)
 	tagIDsOf := map[int][]int{}

@@ -95,8 +95,10 @@ const SCHEMA = `
   CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
   CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   CREATE DOMAIN "JobQueueType" AS text;
-  CREATE TABLE "JobQueue" ("entityId" int, "entityType" "EntityType", type "JobQueueType",
+  CREATE TABLE "JobQueue" ("entityId" int, "entityType" "EntityType", type "JobQueueType", data jsonb,
     "createdAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId", type));
+  CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
+  CREATE TABLE "ServiceDealReviewReport" ("serviceDealReviewId" int NOT NULL, "reportId" int NOT NULL);
   CREATE TABLE "Post" (
     id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
     availability "Availability" DEFAULT 'Public', "collectionId" int, title text, metadata jsonb,

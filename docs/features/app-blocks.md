@@ -211,12 +211,12 @@ match. It is opt-in; a collection without one is not checked.
   backtrack catastrophically (`validateSubmission`). recheck analyses it with the
   `u` flag the store compiles it with (`APP_STORAGE_SCHEMA_PATTERN_FLAGS`; a setting's
   pattern has no flags), and each distinct pattern once. Not allowed on a
-  `write: "none"` collection, which has no document bodies.
+  `write: "none"` collection (read-only, see "removed tallies and publish" below).
 - **Enforcement:** the store checks every create and put (`writeDoc` in
   `doc-store.ts`), and the REST layer checks again before the ownership check, the
   trust gate, the write budget and moderation, so a refused write spends none of
   them. A put replaces the whole body, so the check always sees the resulting
-  document. Counters and marks are not checked. A refusal is 400
+  document. A refusal is 400
   `schema_violation`, and its message and `details.pointer` name the first failing
   JSON pointer into `data`.
 - **Semantics** (any other evaluator, the CLI's included, must match them):
@@ -260,6 +260,41 @@ put or delete at the derived key; a create or a write by key to such a collectio
 
 Code: `src/server/services/apps/doc-store-viewer-keyed.ts` (derivation; golden vectors in its
 test), `viewerKeyedRoute` in `doc-store-api.ts`.
+
+### Document store: removed tallies and publish
+
+Rollout step 5 of `docs/app-storage-generic-core.md`. Marks, counters, their tallies, counter
+documents (`write: "none"`) and server-side publish are removed. Votes and per-viewer entries are
+viewer-keyed documents (above); reports go through the report API
+(`POST /api/v1/blocks/moderation/reports`).
+
+- **Routes:** the removed ones answer exactly as an unknown route: `PATCH /:c/:key` is `405
+  method_not_allowed` (`Allow: GET, PUT, DELETE`), `/:c/:key/counters/:name`,
+  `/:c/:key/marks/:name`, `/_publish/:to` and `/_unpublish/:to` are `404 not_found`, except the
+  `report` mark (below). A list refuses
+  `markedBy` and `mark` as unknown parameters and `sort=counter:` / `sort=mark:` as an undeclared
+  sort field. No `Deprecation` header is sent any more; the preflight no longer allows PATCH.
+- **SDK compatibility:** every presented document still carries `counters: {}`, `marks: {}` and
+  `viewer` (`{marks: []}` signed in, `null` anonymous), because `@civitai/sdk` up to 0.30 refuses a
+  document without them (`PresentedDoc` in `doc-store-api.ts`). Info lists every collection's
+  `counters` and `marks` as `[]` and keeps `rate.marksAndCountersPerMinute` at `0` (SDKs 0.14 to
+  0.31 type it as a required number).
+- **The `report` mark alias:** `PUT /:c/:key/marks/report`, which SDKs older than 0.30 send for
+  `mark(key, 'report')`, stays. It files the report through the report API's own code
+  (`fileReport`: same gates, budget, row, dedupe and moderator queue) and answers `{marked: true}`;
+  `DELETE` on it answers `400 invalid_request` "a report cannot be withdrawn", as before. Every
+  other mark name is `404`. The report API is always on (its flag is no longer read).
+- **Approved manifests that still declare them** keep parsing (the parser is unchanged, so schema
+  majors replay as before) and serving: `marks` and `counters` are inert, and a `write: "none"`
+  collection is READ-ONLY (every viewer create, put and delete is `403 write_policy`), never
+  `own`. Submit and approve still refuse one the collection did not declare in the previous
+  approved version (`deprecatedPrimitiveErrors`), and still let a collection keep what it declares,
+  so such an app can ship an unrelated version or roll back.
+- **Data:** nothing reads or writes `appdata.doc_tally` or `appdata.mark_head`; `appdata.doc_mark`
+  holds only reports. The tables are dropped by a later hand-applied migration, not by code.
+- **Schema:** `public/schemas/app-block/v1.json` marks `counters` and `marks` `deprecated` and
+  describes them, and `write: "none"`, as removed (annotations only; what validates is unchanged,
+  pinned in `manifest-storage.schema-drift.test.ts`).
 
 ## Feature flag
 
@@ -837,6 +872,12 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 - **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
+
+### Private and unpublished resources
+
+An app-built step or workflow that names a Private or unpublished (not Published) version has its
+output capped at PG-13 with mature content refused, as `kind: 'textToImage'` is for any private
+generation; `checkAppStepResources` returns that cap as `capOutput`.
 
 ### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
 

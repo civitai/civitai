@@ -1,1 +1,1 @@
-export { servableImage } from '@civitai/db/knights';
+export { servableImage } from './image-gate';

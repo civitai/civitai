@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { ModelFileVisibility, ScanResultCode } from '~/shared/utils/prisma/enums';
 import {
   trainingDataServableOnHost,
@@ -22,12 +22,38 @@ export function normalizeTrainingDataShare(share: Partial<TrainingDataShare>): T
   return { ownRights, shareDataset: ownRights && share.shareDataset === true };
 }
 
-/** Whether `owner` (an int SQL expression) may not share a training dataset. */
+/**
+ * Whether `owner` (an int SQL expression) may not share a training dataset: named on a CSAM report,
+ * any of their images under CSAM review, blocked for CSAM or listed on a report, or the placeholder
+ * owner a deleted account handed its models to. Separate legs, so each image test uses its own index.
+ */
 export function trainingDataOwnerRestrictedSql(owner: Prisma.Sql): Prisma.Sql {
-  return Prisma.sql`(${ownerHeldSql(owner)} OR EXISTS (
-    SELECT 1 FROM "CsamReport" tr
-    WHERE tr."userId" = ${owner} OR tr.details ->> 'secondaryUserId' = (${owner})::text
-  ))`;
+  return Prisma.sql`(
+    (${owner}) = -1
+    OR EXISTS (
+      SELECT 1 FROM "CsamReport" tr
+      WHERE tr."userId" = ${owner} OR tr.details ->> 'secondaryUserId' = (${owner})::text
+    )
+    OR EXISTS (SELECT 1 FROM "Image" ti WHERE ti."userId" = ${owner} AND ti."needsReview" = 'csam')
+    OR EXISTS (SELECT 1 FROM "Image" ti WHERE ti."userId" = ${owner} AND ti."blockedFor" = 'CSAM')
+    OR (${owner}) IN (
+      SELECT ri."userId" FROM (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}) l
+      JOIN "Image" ri ON ri.id = CASE WHEN l.id ~ '^[0-9]{1,9}$' THEN l.id::int END
+    )
+  )`;
+}
+
+/**
+ * Whether the model version `versionId` (an int SQL expression) is on a CSAM report not yet sent or
+ * archived. Sending and archiving read its training data from storage, so nothing may purge it first.
+ */
+export function trainingDataOnOpenReportSql(versionId: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "CsamReport" ocr
+    WHERE (ocr."reportSentAt" IS NULL OR ocr."archivedAt" IS NULL)
+      AND jsonb_typeof(ocr.details -> 'modelVersionIds') = 'array'
+      AND ocr.details -> 'modelVersionIds' @> jsonb_build_array(${versionId})
+  )`;
 }
 
 /** Whether the model version `versionId` (an int SQL expression) carries restricted content. */
@@ -46,17 +72,25 @@ export function trainingDataContentRestrictedSql(versionId: Prisma.Sql): Prisma.
  * Whether the training dataset of `modelVersionId` must not be shared: a restricted owner or
  * restricted content. `true` when that can't be read.
  */
-export function trainingDataShareRestricted(
+export async function trainingDataShareRestricted(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
   modelVersionId: number
 ): Promise<boolean> {
-  return ownerHeld(
-    db,
-    Prisma.sql`FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = ${modelVersionId}`,
-    Prisma.sql`(${trainingDataOwnerRestrictedSql(
+  const rows = await db.$queryRaw<{ restricted: unknown }[]>`
+    SELECT (${trainingDataOwnerRestrictedSql(
       Prisma.raw('m."userId"')
-    )} OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))})`
-  );
+    )} OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
+    FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = ${modelVersionId}
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'training-data-share-restricted-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
+  if (!rows) return true;
+  return rows.some((r) => r.restricted !== false);
 }
 
 type ListedFile = { id: number; type: string; visibility: string };
@@ -336,8 +370,8 @@ const VISIBILITY_RANK: Record<ModelFileVisibility, number> = {
 };
 
 /**
- * Whether `modelVersionId` is a Training Studio version: it has a Studio dataset row, or its model
- * was published from Studio (a server-owned meta key, so deleting the row does not change the
+ * Whether `modelVersionId` is a Training Studio version: it has a Studio dataset row, or it or its
+ * model was published from Studio (a server-owned meta key, so deleting the row does not change the
  * answer). Any other `Training Data` file on that version stays Private for everyone but
  * moderators, so a second upload can't share what the Studio rules keep unshared.
  */
@@ -351,7 +385,8 @@ export async function versionHasStudioDataset(
       AND mf.metadata ? 'selectedEpochUrl'
     UNION ALL
     SELECT mv.id FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId} AND m.meta ? 'trainingStudioWorkflowId'
+    WHERE mv.id = ${modelVersionId}
+      AND (mv.meta ? 'trainingStudioWorkflowId' OR m.meta ? 'trainingStudioWorkflowId')
     LIMIT 1
   `;
   return rows.length > 0;

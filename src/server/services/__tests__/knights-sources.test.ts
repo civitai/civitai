@@ -8,10 +8,10 @@ const { enqueue, openCount } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/db/kyselyDb', async () => ({
   kyselyWrite: { tag: 'write' },
-  // `readWithoutJit` turns JIT off before the count; only the count reaches `openCount`.
+  // `readWithoutJit` turns JIT and parallel workers off before the count; only the count reaches `openCount`.
   kyselyRead: (await import('~/test-utils/kysely-raw-fake')).fakeKysely(
     (strings: readonly string[], ...values: unknown[]) =>
-      strings.join('').includes('SET LOCAL jit = off')
+      strings.join('').includes('SET LOCAL ')
         ? Promise.resolve([])
         : openCount(strings, ...values)
   ),

@@ -42,6 +42,7 @@ import { formatGenerationResponse2 } from '~/server/services/orchestrator/orches
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
+import { NSFW_CAPPED_MESSAGE, PRIVATE_GEN_MESSAGE } from '~/shared/orchestrator/workflow-data';
 
 const MATURE = 'x';
 const SAFE = 'pg';
@@ -66,12 +67,21 @@ function givenWorkflow(
   {
     allowMatureContent = false,
     status = 'succeeded',
-  }: { allowMatureContent?: boolean; status?: string } = {}
+    nsfwLevel,
+    metadata,
+  }: {
+    allowMatureContent?: boolean;
+    status?: string;
+    nsfwLevel?: string;
+    metadata?: Record<string, unknown>;
+  } = {}
 ) {
   mocks.getWorkflow.mockResolvedValue({
     id: 'wf-1',
     status,
     allowMatureContent,
+    nsfwLevel,
+    metadata,
     steps: [{ $type: 'imageGen', name: '$0', status, metadata: {}, output: { images: outputs } }],
   });
 }
@@ -161,9 +171,30 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll();
 
     expect(result.status).toBe('failed');
-    expect(result.errorMessage).toMatch(/yellow Buzz/);
+    expect(result.errorMessage).toContain('Open the Generator queue');
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
+  });
+
+  it('gives the private-model reason, not the yellow unlock, for a capped private result', async () => {
+    givenWorkflow([output({ nsfwLevel: MATURE })], {
+      nsfwLevel: 'pg13',
+      metadata: { params: {}, resources: [], isPrivateGeneration: true },
+    });
+
+    const result = await poll();
+
+    expect(result.status).toBe('failed');
+    expect(result.errorMessage).toBe(PRIVATE_GEN_MESSAGE);
+  });
+
+  it('says a result above the workflow cap cannot be shown', async () => {
+    givenWorkflow([output({ nsfwLevel: MATURE })], { nsfwLevel: 'pg13' });
+
+    const result = await poll();
+
+    expect(result.status).toBe('failed');
+    expect(result.errorMessage).toBe(NSFW_CAPPED_MESSAGE);
   });
 
   it('tells a user held to PG-13 by their source image how to bring a Civitai image in', async () => {
@@ -186,14 +217,14 @@ describe('pollIterationWorkflow availability', () => {
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
-  it('withholds a mature result from a user with mature content turned off', async () => {
+  // Domain-only mature rule: civitai/civitai#10332.
+  it('returns a mature result on red whatever the mature content setting', async () => {
     givenWorkflow([output({ nsfwLevel: MATURE })], { allowMatureContent: true });
 
     const result = await poll({ showNsfw: false });
 
-    expect(result.status).toBe('failed');
-    expect(result.errorMessage).toMatch(/settings/i);
-    expect(mocks.createImage).not.toHaveBeenCalled();
+    expect(result.status).toBe('succeeded');
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
   });
 
   it('keeps polling while a finished result has not been rated', async () => {

@@ -168,7 +168,6 @@ src/server/jobs/__tests__/build-resource-intent-cooc.test.ts
 src/server/jobs/__tests__/delete-old-training-data-lock.test.ts
 src/server/jobs/__tests__/delete-old-training-data-purge.test.ts
 src/server/jobs/__tests__/deliver-creator-compensation.test.ts
-src/server/jobs/__tests__/evidence-hold-expiry-alert.test.ts
 src/server/jobs/__tests__/gdpr-stripe-scrub.wiring.test.ts
 src/server/jobs/__tests__/job-disconnect-lock.test.ts
 src/server/jobs/__tests__/job-lock.test.ts
@@ -214,7 +213,6 @@ src/server/search-index/__tests__/models-index-insight-projection.test.ts
 src/server/search-index/__tests__/models-index-pricing-signals.test.ts
 src/server/services/app-assistant/__tests__/assistant-runner-tokens.test.ts
 src/server/services/apps/__tests__/doc-store-api.contract.test.ts
-src/server/services/apps/__tests__/doc-store-api.tally-operators.test.ts
 src/server/services/apps/__tests__/doc-store-internal-route.test.ts
 src/server/services/apps/__tests__/doc-store.levels-ledger.test.ts
 src/server/services/apps/__tests__/doc-store.sql-isolation.test.ts
@@ -312,7 +310,6 @@ src/server/services/__tests__/home-block-viewer-event-decorations.test.ts
 src/server/services/__tests__/image-metrics-swr.test.ts
 src/server/services/__tests__/image-metrics-timeout.test.ts
 src/server/services/__tests__/image-server-owned-columns.call-site-ledger.test.ts
-src/server/services/__tests__/legal-hold-marker-names.test.ts
 src/server/services/__tests__/license-sell-merge-split.test.ts
 src/server/services/__tests__/media-fetch-funnel-ledger.test.ts
 src/server/services/__tests__/model-file-hash-writers.test.ts

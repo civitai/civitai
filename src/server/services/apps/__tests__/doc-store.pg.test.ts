@@ -15,7 +15,6 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
-  TALLIES,
 } from './doc-store.functional';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -30,8 +29,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * `appdata_rw`). Never point it at a shared, staging or production database.
  * CI's unit job provides one (a `postgres:18` service in `.github/workflows/lint.yml`).
  * Without it every case here is skipped, and the properties below are NOT
- * exercised by that run: quota under concurrent writers, concurrent marks,
- * counters and first increments, the lock timeout, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
+ * exercised by that run: quota under concurrent writers, concurrent reports,
+ * the lock timeout, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
  */
 
 if (!REAL_PG_URL) {
@@ -174,131 +173,23 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     expect(await store.get(ctx(app, NS_PROD, 1), PREFS, 'blocked')).toBeNull();
   });
 
-  it('concurrent first increments of one absent key create ONE doc and lose no count', async () => {
-    const app = freshApp('race_ctrcreate');
-    const store = createDocStore({ db: h.db });
-    const r = await settle(
-      Array.from({ length: 10 }, (_, i) =>
-        store.increment(ctx(app, NS_PROD, 700 + i), TALLIES, 'col-1', 'plays', 2)
-      )
-    );
-    expect(r.codes).toEqual([]);
-    expect(r.ok).toBe(10);
-    const docs = await h.raw(`SELECT key, author_kind FROM appdata.doc WHERE app_id = $1`, [app]);
-    expect(docs).toEqual([{ key: 'col-1', author_kind: 'counter' }]);
-    expect((await store.get(ctx(app, NS_PROD, null), TALLIES, 'col-1'))?.counters.plays).toBe(20);
-    const [u] = await h.raw(`SELECT docs, last_seq FROM appdata.usage_app WHERE app_id = $1`, [
-      app,
-    ]);
-    expect({ docs: Number(u.docs), seq: Number(u.last_seq) }).toEqual({ docs: 1, seq: 1 });
-    await assertUsageConsistent(h, app, NS_PROD);
-  });
-
-  it('marks: 12 users, each racing 3 identical marks on one doc — count 12, then 0 after racing unmarks', async () => {
-    const app = freshApp('race_mark');
+  it('reports: 12 users, each racing 3 identical reports on one doc — exactly 12 report rows', async () => {
+    const app = freshApp('race_report');
     const store = createDocStore({ db: h.db });
     await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
     const users = Array.from({ length: 12 }, (_, i) => 500 + i);
-    await settle(
-      users.flatMap((u) =>
-        [0, 1, 2].map(() => store.mark(ctx(app, NS_PROD, u), POSTS, 'k', 'vote'))
-      )
+    const r = await settle(
+      users.flatMap((u) => [0, 1, 2].map(() => store.report(ctx(app, NS_PROD, u), POSTS, 'k')))
     );
-    const doc = await store.get(ctx(app, NS_PROD, null), POSTS, 'k');
-    expect(doc?.marks.vote).toBe(12);
+    expect(r.codes).toEqual([]);
     const [rows] = await h.raw(
-      `SELECT count(*)::int AS n FROM appdata.doc_mark WHERE app_id = $1`,
+      `SELECT count(*)::int AS n FROM appdata.doc_mark WHERE app_id = $1 AND name = 'report'`,
       [app]
     );
     expect(rows.n).toBe(12);
-    const un = await settle(
-      users.flatMap((u) => [0, 1].map(() => store.unmark(ctx(app, NS_PROD, u), POSTS, 'k', 'vote')))
-    );
-    expect(un.codes).toEqual([]);
-    expect((await store.get(ctx(app, NS_PROD, null), POSTS, 'k'))?.marks.vote).toBe(0);
   });
 
-  it('counters: 20 racing increments of 3 sum exactly', async () => {
-    const app = freshApp('race_ctr');
-    const store = createDocStore({ db: h.db });
-    await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
-    const r = await settle(
-      Array.from({ length: 20 }, (_, i) =>
-        store.increment(ctx(app, NS_PROD, 600 + i), POSTS, 'k', 'views', 3)
-      )
-    );
-    expect(r.codes).toEqual([]);
-    expect((await store.get(ctx(app, NS_PROD, null), POSTS, 'k'))?.counters.views).toBe(60);
-  });
-
-  it(`mark sequence: ${
-    3 * N + 1
-  } unmarks, marks and increments parked at (1c) together take each of the next sequences exactly once, stamp what they answered, and deadlock nothing, with a creating increment and a put racing them`, async () => {
-    const app = freshApp('race_markseq');
-    const seed = createDocStore({ db: h.db });
-    const author = ctx(app, NS_PROD, 3000);
-    const voter = ctx(app, NS_PROD, 3001);
-    for (let i = 0; i < N; i++) await seed.put(author, POSTS, `k${i}`, { status: 'open' });
-    // Mark sequences 1..N, taken one at a time.
-    for (let i = 0; i < N; i++) await seed.mark(voter, POSTS, `k${i}`, 'vote');
-
-    // Every call below holds its (1b) row and waits here until all have arrived, so they reach
-    // `mark_head` together. Each changes a tally row no other call touches.
-    const parked = 3 * N + 1;
-    const gate = barrier(parked);
-    const store = createDocStore({ db: h.db, hooks: { beforeMarkSeq: () => gate.wait() } });
-    const calls: { row: string; done: Promise<{ markSeq?: number }> }[] = [
-      ...Array.from({ length: N }, (_, i) => ({
-        row: `posts|k${i}|mark|vote`,
-        done: store.unmark(voter, POSTS, `k${i}`, 'vote'),
-      })),
-      ...Array.from({ length: N }, (_, i) => ({
-        row: `posts|k${i}|mark|star`,
-        done: store.mark(ctx(app, NS_PROD, 3100 + i), POSTS, `k${i}`, 'star'),
-      })),
-      ...Array.from({ length: N }, (_, i) => ({
-        row: `posts|k${i}|counter|views`,
-        done: store.increment(ctx(app, NS_PROD, 3200 + i), POSTS, `k${i}`, 'views', i + 1),
-      })),
-      // Creates its counter document: (1), (1b), (1c), then (2) usage_app.
-      {
-        row: 'tallies|fresh|counter|plays',
-        done: store.increment(ctx(app, NS_PROD, 3300), TALLIES, 'fresh', 'plays'),
-      },
-    ];
-    // A document write in the same namespace: (1), (2) usage_app, never (1c).
-    const put = store.put(author, BOARD, 'racer', DOC);
-    const results = await Promise.allSettled([...calls.map((c) => c.done), put]);
-    expect(results.flatMap((r) => (r.status === 'rejected' ? [String(r.reason)] : []))).toEqual([]);
-    expect(gate.arrived).toBe(parked);
-
-    const answered = results
-      .slice(0, parked)
-      .map((r) => (r as PromiseFulfilledResult<{ markSeq?: number }>).value.markSeq ?? -1);
-    // Distinct and dense: exactly N+1 .. N+parked, each once.
-    expect([...answered].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: parked }, (_, i) => N + 1 + i)
-    );
-    // Each tally row carries the sequence its call answered.
-    const rows = await h.raw(
-      `SELECT t.coll, t.key, t.kind, t.name, t.mark_seq FROM appdata.doc_tally t WHERE t.app_id = $1`,
-      [app]
-    );
-    const stamped = new Map(
-      rows.map((r) => [`${r.coll}|${r.key}|${r.kind}|${r.name}`, Number(r.mark_seq)])
-    );
-    expect(calls.map((c) => [c.row, stamped.get(c.row)])).toEqual(
-      calls.map((c, i) => [c.row, answered[i]])
-    );
-    const [mh] = await h.raw(
-      `SELECT mh.last_mark_seq FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns = $2`,
-      [app, NS_PROD]
-    );
-    expect(Number(mh.last_mark_seq)).toBe(N + parked);
-    await assertUsageConsistent(h, app, NS_PROD);
-  });
-
-  it('mixed racing writes, deletes, marks and counters across users and keys settle with no deadlock and consistent usage', async () => {
+  it('mixed racing writes and deletes across users and keys settle with no deadlock and consistent usage', async () => {
     const app = freshApp('race_mix');
     const store = createDocStore({ db: h.db });
     const keys = ['a', 'b', 'c'];
@@ -379,9 +270,9 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     const store = createDocStore({ db: h.db });
     const app = freshApp('pg_recorder');
     await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
-    await store.mark(ctx(app, NS_PROD, 2), POSTS, 'k', 'vote');
+    await store.report(ctx(app, NS_PROD, 2), POSTS, 'k');
     await store.list(ctx(app, NS_PROD, 2), POSTS, {
-      sort: '-mark:vote',
+      sort: '-updatedAt',
       where: { status: 'open' },
     });
     await store.delete(ctx(app, NS_PROD, 1), POSTS, 'k');

@@ -3,12 +3,14 @@ import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { isAppAssistantTracingOn } from '~/server/services/app-assistant/session-tracing.service';
 import {
+  accentCustomizedOf,
   computeTraceSignals,
   EXCLUDED_PATH,
   TRACE_SIGNALS_VERSION,
   type TraceSignals,
 } from '~/shared/app-assistant/trace-signals';
 import { transcriptView, type TranscriptView } from '~/shared/app-assistant/transcript-view';
+import { THEME_SOURCE_FILE } from '@civitai/app-assistant/theme-evidence';
 
 /**
  * App Assistant session tracing, frozen at submission (`app_publish_request_traces`), and the
@@ -33,8 +35,6 @@ export const MAX_TRACED_SESSIONS = 20;
 /** Source files above this are not read for signals. */
 const MAX_SIGNAL_FILE_BYTES = 512 * 1024;
 const MAX_SIGNAL_TOTAL_BYTES = 8 * 1024 * 1024;
-const SIGNAL_FILE =
-  /\.(?:css|scss|sass|less|html?|[cm]?[jt]sx?|vue|svelte)$|(?:^|\/)package\.json$/i;
 
 export interface SnapshotEntry {
   conversationId: string;
@@ -61,7 +61,7 @@ export async function bundleSignalFiles(bundleBuffer: Buffer): Promise<Map<strin
   for (const [path, entry] of Object.entries(zip.files)) {
     // Excluded paths (dependencies, build output, tests) are skipped BEFORE the budget: a vendored
     // `node_modules` must not use it up and push the app's own source out.
-    if (entry.dir || !SIGNAL_FILE.test(path) || EXCLUDED_PATH.test(path)) continue;
+    if (entry.dir || !THEME_SOURCE_FILE.test(path) || EXCLUDED_PATH.test(path)) continue;
     const bytes = await entry.async('uint8array');
     if (bytes.length > MAX_SIGNAL_FILE_BYTES || total + bytes.length > MAX_SIGNAL_TOTAL_BYTES)
       continue;
@@ -447,8 +447,6 @@ export interface TraceSweepDeps {
    * `limit`); none while the table is not applied.
    */
   deletedAccountsWithTraces(after: number, limit: number): Promise<number[]>;
-  /** The content-removal hold: `false` = not held; `true` or `null` (unreadable) = keep. */
-  isHeld(userId: number): Promise<boolean | null>;
   deletion: TraceDeletionDeps;
 }
 
@@ -457,23 +455,18 @@ export const TRACE_SWEEP_BATCH = 200;
 
 /**
  * The retry of unfinished trace deletions (the `sweep-app-assistant-traces` job): every deleted
- * account that still has trace rows, unless its content removal is held, is deleted again. Counts
- * per run; never throws for one account.
+ * account that still has trace rows is deleted again. Counts per run; never throws for one account.
  */
 export async function sweepDeletedAccountTraces(deps: TraceSweepDeps) {
-  const summary = { accounts: 0, finished: 0, held: 0, failed: 0 };
-  // Keyset pages past every account already handled, held and failing ones included, so they can
-  // never fill every batch and keep later deleted accounts from being reached.
+  const summary = { accounts: 0, finished: 0, failed: 0 };
+  // Keyset pages past every account already handled, failing ones included, so they can never fill
+  // every batch and keep later deleted accounts from being reached.
   let after = 0;
   for (;;) {
     const accounts = await deps.deletedAccountsWithTraces(after, TRACE_SWEEP_BATCH);
     for (const userId of accounts) {
       summary.accounts++;
       after = userId;
-      if ((await deps.isHeld(userId).catch(() => null)) !== false) {
-        summary.held++;
-        continue;
-      }
       const outcome = await deleteAssistantTracesOfAccount(userId, deps.deletion);
       if (outcome.failedObjects > 0) summary.failed++;
       else summary.finished++;
@@ -544,10 +537,8 @@ export async function liveTraceDeletionDeps(
 /** The real dependencies of `sweepDeletedAccountTraces`. */
 export async function liveTraceSweepDeps({
   isMissingTable,
-  isHeld,
 }: {
   isMissingTable: (err: unknown) => boolean;
-  isHeld: (userId: number) => Promise<boolean | null>;
 }): Promise<TraceSweepDeps> {
   const { dbWrite } = await import('~/server/db/client');
   return {
@@ -568,7 +559,6 @@ export async function liveTraceSweepDeps({
         throw err;
       }
     },
-    isHeld,
     deletion: await liveTraceDeletionDeps(isMissingTable),
   };
 }
@@ -704,6 +694,10 @@ export interface SignalsWeek {
   themeCustomized: number;
   themeDefault: number;
   themeUnknown: number;
+  /** By `accentCustomized` (the "looks default" signal), v1 rows judged from their own evidence. */
+  accentCustomized: number;
+  accentDefault: number;
+  accentUnknown: number;
   avgTurns: number | null;
   avgBuzz: number | null;
 }
@@ -746,25 +740,66 @@ export async function aggregateSignals({ from, to }: { from: Date; to: Date }) {
     WHERE created_at >= ${from} AND created_at < ${to}
     GROUP BY topic ORDER BY 2 DESC, topic LIMIT 50
   `;
+  // The look, per row: judged in code (`accentCustomizedOf`), never re-spelled in SQL, so a v1 row
+  // (no stored `accentCustomized`) is judged from its own evidence by the one rule.
+  const looks = await dbRead.$queryRaw<
+    Array<{ week: Date; has_accent: boolean; accent: unknown; theme: unknown; topics: unknown }>
+  >`
+    SELECT date_trunc('week', created_at) AS week,
+           jsonb_exists(signals, 'accentCustomized') AS has_accent,
+           signals->'accentCustomized' AS accent,
+           jsonb_build_object(
+             'tokenOverrides', signals->'theme'->'tokenOverrides',
+             'customColorCount', signals->'theme'->'customColorCount',
+             'filesScanned', signals->'theme'->'filesScanned'
+           ) AS theme,
+           signals->'readDocsTopics' AS topics
+    FROM app_publish_request_traces
+    WHERE created_at >= ${from} AND created_at < ${to}
+  `;
+  const accentByWeek = new Map<string, { yes: number; no: number; unknown: number }>();
+  const accentByTopic = new Map<string, number>();
+  for (const row of looks) {
+    const accent = accentCustomizedOf({
+      // A stored JSON null (nothing to judge) and an absent key (a v1 row) read alike as SQL NULL.
+      ...(row.has_accent ? { accentCustomized: row.accent ?? null } : {}),
+      theme: row.theme,
+    });
+    const key = row.week.toISOString().slice(0, 10);
+    const tally = accentByWeek.get(key) ?? { yes: 0, no: 0, unknown: 0 };
+    if (accent === true) tally.yes++;
+    else if (accent === false) tally.no++;
+    else tally.unknown++;
+    accentByWeek.set(key, tally);
+    if (accent === true && Array.isArray(row.topics))
+      for (const topic of new Set(row.topics.filter((t): t is string => typeof t === 'string')))
+        accentByTopic.set(topic, (accentByTopic.get(topic) ?? 0) + 1);
+  }
   return {
     from: from.toISOString(),
     to: to.toISOString(),
-    weeks: weeks.map(
-      (row): SignalsWeek => ({
-        week: row.week.toISOString().slice(0, 10),
+    weeks: weeks.map((row): SignalsWeek => {
+      const week = row.week.toISOString().slice(0, 10);
+      const accent = accentByWeek.get(week) ?? { yes: 0, no: 0, unknown: 0 };
+      return {
+        week,
         submissions: Number(row.submissions),
         withSessions: Number(row.with_sessions),
         themeCustomized: Number(row.customized),
         themeDefault: Number(row.default_theme),
         themeUnknown: Number(row.unknown_theme),
+        accentCustomized: accent.yes,
+        accentDefault: accent.no,
+        accentUnknown: accent.unknown,
         avgTurns: row.avg_turns === null ? null : Number(row.avg_turns),
         avgBuzz: row.avg_buzz === null ? null : Number(row.avg_buzz),
-      })
-    ),
+      };
+    }),
     docsTopics: topics.map((row) => ({
       topic: row.topic,
       submissions: Number(row.submissions),
       themeCustomized: Number(row.customized),
+      accentCustomized: accentByTopic.get(row.topic) ?? 0,
     })),
   };
 }

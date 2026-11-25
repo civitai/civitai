@@ -3,7 +3,7 @@ import { canViewTrainingData } from '$lib/server/access';
 import { flaggedActions, loadFlaggedQueue } from '$lib/server/minor-flag-queue';
 
 export const load: PageServerLoad = async ({ url, locals }) => ({
-  ...(await loadFlaggedQueue(url)),
+  ...(await loadFlaggedQueue(url, locals.user)),
   canViewTrainingData: canViewTrainingData(locals.user),
 });
 

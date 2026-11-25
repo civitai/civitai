@@ -23,6 +23,7 @@ import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BLOCK_TOKEN_MINT_RATE_LIMIT } from '~/server/common/block-token-mint-rate-limit';
 import { BlockTokenService } from '~/server/services/block-token.service';
+import { resolveAppDataInit } from '~/server/services/apps/app-data-writes-routing';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
@@ -1777,6 +1778,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         )
       : buzzBudget;
 
+  const tokenKind = oauth?.outcome === 'minted' ? 'oauth' : 'block';
+  // The App Storage writes cutover: `{ appData: { url, slug } }` only for a production page run
+  // of an app the `app-data-writes-via-service` flag is on for, with a block token; `{}` (the key
+  // ABSENT) otherwise. Decided here, never by the host. See app-data-writes-routing.ts.
+  const appDataInit = await resolveAppDataInit({
+    entityType,
+    devTunnel: devTunnel === true,
+    tokenKind,
+    appBlockId: block.id,
+    blockId: block.blockId,
+  });
+
   // A6: surface the consent signal alongside the token. The token carries only
   // the granted subset; `needsConsent` + `missingScopes` tell the host to prompt
   // the user to re-consent for the scopes the app's approved manifest declares
@@ -1786,7 +1799,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
-    kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
+    kind: tokenKind,
     scopes: manifestScopes,
     // The per-call budget this token carries, so the host forwards it to the block
     // instead of deriving its own: an install setting it can resolve from is not
@@ -1806,5 +1819,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // it is what a block should render mature affordances against. Always a
     // subset of `maxBrowsingLevel` — see `viewerEffectiveBrowsingLevel`.
     effectiveBrowsingLevel,
+    ...appDataInit,
   });
 });

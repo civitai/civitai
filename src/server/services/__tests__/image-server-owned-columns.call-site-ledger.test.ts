@@ -741,6 +741,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId'],
     decision: 'subject',
   },
+  // The account scrub drops the profile picture.
+  'src/server/services/user.service.ts#deleteUser': {
+    writes: ['profilePictureId: null'],
+    decision: 'clears',
+  },
   // A version's own images, or community images that pass the showcase eligibility check.
   'src/server/services/version-showcase-curation.service.ts#setVersionShowcase': {
     writes: ['imageId: item.imageId'],

@@ -292,7 +292,17 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271120030000_service_license_presets`
     //   `ServiceDeal.reviewEnabledAt` and the four `ServiceOffering` review columns:
     //     `20271120100100_service_deal_reviews`
+    //   `ServiceDeal.buyerDisclosureVersion` / `.buyerDisclosureLines`:
+    //     `20271125130000_service_deal_buyer_disclosure`
+    //   the three `ServiceOffering` request-form columns and the three `ServiceDeal` form columns:
+    //     `20271128130000_service_request_form` — drop these at the next catalog recapture.
     const inFlightColumns = new Set([
+      'ServiceOffering.requestForm',
+      'ServiceOffering.requestFormVersion',
+      'ServiceOffering.fromPrice',
+      'ServiceDeal.formVersion',
+      'ServiceDeal.formAnswers',
+      'ServiceDeal.priceBreakdown',
       'ServiceOffering.licensePreset',
       'ServiceOffering.licenseCustomText',
       'ServiceOffering.licenseAllowResale',
@@ -301,6 +311,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDeal.licenseAllowResale',
       'ServiceDeal.licenseAgreedAt',
       'ServiceDeal.reviewEnabledAt',
+      'ServiceDeal.buyerDisclosureVersion',
+      'ServiceDeal.buyerDisclosureLines',
       'ServiceOffering.allowReviewWork',
       'ServiceOffering.happyCount',
       'ServiceOffering.reviewCount',

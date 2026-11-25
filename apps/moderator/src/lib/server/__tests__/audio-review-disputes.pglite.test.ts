@@ -62,7 +62,7 @@ const MOD = 3;
 const SONG = 801;
 // Its scans have not finished: no level can be applied yet.
 const SCANNING_SONG = 802;
-// Shares its file with an image still scanning: withheld without the grant.
+// Shares its file with an image in the CSAM queue: withheld without the grant.
 const WITHHELD_SONG = 803;
 const POST = 900;
 
@@ -103,6 +103,7 @@ beforeEach(async () => {
       (${SCANNING_SONG}, 'scanning-key', 'audio', 'Pending', ${OWNER}, 4, 5, '{"title": "Velvet Static"}', '2026-11-01'),
       (${WITHHELD_SONG}, 'shared-key', 'audio', 'Scanned', ${OWNER}, 1, 5, '{"title": "Concrete Lullaby"}', '2026-11-01'),
       (819, 'shared-key', 'image', 'Pending', ${OTHER}, 0, 6, NULL, '2026-11-01');
+    UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 819;
     INSERT INTO "RatingReview" (id, "entityType", "entityId", "userId", "currentLevel", "suggestedLevel",
       "appliedLevel", "userComment", status, "resolvedBy", "resolvedAt", "createdAt") VALUES
       (${EARLIER}, 'Song', ${SONG}, ${OWNER}, 2, 1, 2, NULL, 'Unactioned', ${MOD}, '2026-10-30', '2026-10-29'),

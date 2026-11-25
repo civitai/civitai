@@ -82,6 +82,33 @@ func (s *Sources) fillModelData(ctx context.Context, models []int, got map[int]E
 	return s.fill(ctx, modelDataSpec, models, got, writable, false, nil, s.lookupModelData)
 }
 
+// ComputeModelData is fillModelData for a reader that keeps the records' key order (the REST model
+// routes): each of ids (none of which an entry answered) looked up with dataForModelsCache's lookup,
+// its computed record (Ordered) or NotFound for a model the lookup finds no version for. Nothing is
+// written: no id is writable. ok is false when misses are not computed (no Compute): the caller then
+// falls back. A failed lookup is the `model-data-miss-failed` fallback.
+func (s *Sources) ComputeModelData(ctx context.Context, ids []int) (entries map[int]OrderedEntry, ok bool, err error) {
+	if s == nil || s.Compute == nil {
+		return nil, false, nil
+	}
+	got := make(map[int]Entry, len(ids))
+	if err := s.fillModelData(ctx, ids, got, nil); err != nil {
+		return nil, true, err
+	}
+	entries = make(map[int]OrderedEntry, len(got))
+	for id, e := range got {
+		entries[id] = OrderedEntry{Value: e.Ordered(), NotFound: e.NotFound}
+	}
+	return entries, true, nil
+}
+
+// ModelLagFlagged reports whether a recent write flagged any of the models (their
+// `lag-helper:model:<id>` keys, lagFlagged): Node's lag-aware model-data lookup then reads the
+// primary. err is a flag read that failed (a flag found set wins over it).
+func (s *Sources) ModelLagFlagged(ctx context.Context, ids []int) (bool, error) {
+	return s.lagFlagged(ctx, "model", ids)
+}
+
 // fillModelTags is modelTagCache.fetch's miss path, asked only for the models the data cache answered.
 func (s *Sources) fillModelTags(ctx context.Context, models []int, got map[int]Entry, writable map[int]bool) error {
 	if s.Compute == nil {

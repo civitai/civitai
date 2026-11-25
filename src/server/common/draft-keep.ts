@@ -48,18 +48,13 @@ export function draftModeratedSql(model: string): string {
   OR (${m}.status::text = 'Deleted' AND ${moderatorActedBeforeDeleteSql(m)}))`;
 }
 
-/** A model tied to any CsamReport, whatever its status: one naming its owner or a past owner,
+/** A model tied to any CsamReport, whatever its status: one naming its owner,
  *  listing or naming as a resource one of its versions, or listing an image posted to one of its
- *  versions or made with one. Wider than the legal hold, which a report stops holding a year after
- *  it is sent and archived. The sets do not read the model row. */
+ *  versions or made with one. The sets do not read the model row. */
 export function draftReportTiedSql(model: string): string {
   const m = alias(model);
   return `(
   (${m}."userId")::text IN (${REPORTED_USER_IDS_SQL})
-  OR EXISTS (
-    SELECT 1 FROM "ModelOwnership" co
-    WHERE co."modelId" = ${m}.id AND (co."userId")::text IN (${REPORTED_USER_IDS_SQL})
-  )
   OR EXISTS (
     SELECT 1 FROM "ModelVersion" cv
     WHERE cv."modelId" = ${m}.id AND (cv.id)::text IN (${REPORTED_VERSION_IDS_SQL})
@@ -78,8 +73,7 @@ export function draftReportTiedSql(model: string): string {
 )`;
 }
 
-/** Every draft the reaper keeps and the warning skips, apart from legal holds (checked in the
- *  DELETE alone, by `modelDataHeldSql`). */
+/** Every draft the reaper keeps and the warning skips. */
 export function draftKeptSql(model: string): string {
   return `(${draftModeratedSql(model)} OR ${draftReportTiedSql(model)})`;
 }

@@ -62,6 +62,11 @@ func userFollowsFrom(userID int, got map[int]Entry) ([]int, error) {
 	if !present || raw == nil {
 		return []int{}, nil // `?.follows ?? []`
 	}
+	if ints, ok := raw.([]int); ok {
+		// The cache's reader decodes an all-integer list unboxed (intLists): the same ids followID
+		// reads one by one below.
+		return ints, nil
+	}
 	list, ok := raw.([]any)
 	if !ok {
 		return nil, fallback.Safef("user-follows-shape", "follows")
@@ -73,6 +78,42 @@ func userFollowsFrom(userID int, got map[int]Entry) ([]int, error) {
 			return nil, fallback.Safef("user-follows-shape", "follow id")
 		}
 		out = append(out, n)
+	}
+	return out, nil
+}
+
+// FollowedUserIDs is model.getAll's follow list (getModelsRaw's `followed`): the ids the user follows,
+// read from the replica on every call, never through userFollowsCache, as Node reads them
+// (`dbRead.user.findUnique({ where: { id }, select: { engagingUsers: { where: { type: 'Follow' } } } })`:
+// the user's Follow rows of UserEngagement). It runs the cache lookup's own statement
+// (sqlUserFollows) for the one user; the order is the rows', which only feeds an `IN (…)`. No row is
+// an empty list.
+func (s *Sources) FollowedUserIDs(ctx context.Context, userID int) ([]int, error) {
+	got, err := s.lookupUserFollows(ctx, []int{userID})
+	if err != nil {
+		return nil, err
+	}
+	rec, ok := got[userID]
+	if !ok {
+		return []int{}, nil
+	}
+	var out []int
+	for _, kv := range rec {
+		if kv.K != "follows" {
+			continue
+		}
+		list, _ := kv.V.([]any)
+		out = make([]int, 0, len(list))
+		for _, v := range list {
+			n, ok := Int(v)
+			if !ok {
+				return nil, fmt.Errorf("followed user ids: %v", v)
+			}
+			out = append(out, n)
+		}
+	}
+	if out == nil {
+		out = []int{}
 	}
 	return out, nil
 }

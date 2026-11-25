@@ -40,6 +40,13 @@ func (s *Server) ServeV1ModelsIDHTTP(w http.ResponseWriter, r *http.Request) {
 // serveV1Models is serve (server.go) for a REST model route. With ServeV1Models off every request is
 // the `v1-models-off` fallback: nothing is computed and no serve slot is taken.
 func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint string) {
+	withProfileLabels(r.Context(), endpoint, "serve", func(ctx context.Context) {
+		s.serveV1ModelsLabelled(w, r.WithContext(ctx), endpoint)
+	})
+}
+
+// serveV1ModelsLabelled is serveV1Models under the request's profile labels (withProfileLabels).
+func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, endpoint string) {
 	start := time.Now()
 	ctx, span := s.startSpan(r.Context(), r.Header, "serve", endpoint)
 	defer span.End()
@@ -68,6 +75,9 @@ func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint 
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
+		return
+	}
+	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
 		return
 	}
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
@@ -101,8 +111,9 @@ func writeV1Models(w http.ResponseWriter, c *computed, is304 bool) {
 }
 
 // v1ModelsCompute is the compute of a model route, the shadow's and the public route's alike (serving
-// tells them apart): the request checks of v1ModelsPreflight, then, serving only, those of
-// v1ModelsServeOnly; the port (computeV1Models / computeV1ModelsID); then the body as JSON.stringify
+// tells them apart): the request checks of v1ModelsPreflight (on `[id]` with V1BearerAuth, only its
+// method check), then, serving only, those of v1ModelsServeOnly; on `[id]` with V1BearerAuth, the
+// credential decision (v1DetailCredential, DESIGN.md §16.10); the port (computeV1Models / computeV1ModelsID); then the body as JSON.stringify
 // writes it (v1models.NodeBody) and the headers Node sends with it (v1models.ResponseHeaders).
 // Serving, a not-found `[id]` falls back (`v1-models-not-found`): Node's answer is a 404, and a served
 // answer here is a 200. In the shadow a list sample with a session cookie or an `etag` query is still
@@ -118,17 +129,34 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 		inner = s.computeV1ModelsFn
 	}
 	return func(ctx context.Context, r *http.Request) (*computed, error) {
-		if err := v1ModelsPreflight(r); err != nil {
-			return nil, err
+		bearer := s.V1BearerAuth && detail
+		if !bearer {
+			if err := v1ModelsPreflight(r); err != nil {
+				return nil, err
+			}
+		} else if r.Method != http.MethodGet {
+			return nil, fallback.New("method")
 		}
 		if serving {
 			if err := v1ModelsServeOnly(r, detail); err != nil {
 				return nil, err
 			}
 		}
+		// V1BearerAuth, `[id]` only: the credential decided as the Node route decides it, after the
+		// checks above and before the port (which then answers as for any caller).
+		apiKey := false
+		if bearer {
+			var err error
+			if ctx, apiKey, err = s.v1DetailCredential(ctx, r); err != nil {
+				return nil, err
+			}
+		}
 		c, err := inner(ctx, r)
 		if err != nil {
 			return nil, err
+		}
+		if apiKey {
+			c.viewerClass = V1ViewerAPIKey
 		}
 		if serving && c.notFound {
 			c.release()
@@ -178,7 +206,8 @@ func notModified(r *http.Request, c *computed) bool {
 // v1ModelsPreflight falls back, in the shadow and serving alike, on a request that is not a GET
 // (`method`) or carries any API credential: an Authorization header of any value, or any non-empty
 // `token` query value, read as loosely as the endpoint wrappers read it (auth.AnyQueryToken)
-// (`bearer-token`: the block-scope middleware and the scoped-key views are not ported).
+// (`bearer-token`). Used on the list always, and on `[id]` with V1BearerAuth off; on, `[id]`'s
+// credential is decided as Node decides it (v1DetailCredential).
 func v1ModelsPreflight(r *http.Request) error {
 	if r.Method != http.MethodGet {
 		return fallback.New("method")

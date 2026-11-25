@@ -465,12 +465,6 @@ jobs:
           fi
           echo "no migrations added outside the schema package"
 
-      # BLOCKING, on every PR including drafts. The moderator app keeps its own copy of the hold
-      # SQL; the unit suite that would catch drift does not run on PRs, and a PR touching only the
-      # main-app side is not path-filtered into apps.yml.
-      - name: Moderator hold SQL matches the main app
-        run: pnpm exec vitest run --project 'unit*' src/server/services/__tests__/moderator-delete-hold-parity.test.ts
-
       # BLOCKING, on every PR including drafts. A route missing from the generated map is a 404.
       - name: API route maps are generated
         run: node scripts/generate-api-routes.mjs --check
@@ -485,6 +479,14 @@ jobs:
       #
       # The file list is a glob, so a new drift test joins by its name. The JSON report is counted
       # because vitest given files it does not match runs the rest and still exits 0.
+      #
+      # `--reporter=github-actions`: vitest adds that reporter on its own only when NO reporter is
+      # named, so listing `default` and `json` drops it and a failing test annotates nothing but
+      # the exit code. It prints one `::error` command per failing test it can place in a file
+      # (GitHub keeps 10 error annotations per step, 50 per job; the rest stay in the log), appends a
+      # pass/fail/flaky summary to GITHUB_STEP_SUMMARY on every run, and ignores `--outputFile`,
+      # so the json report each count/ledger step reads is unchanged. A new vitest step that names
+      # its reporters must name this one too.
       - name: Manifest schema drift tests
         run: |
           set -euo pipefail
@@ -495,7 +497,7 @@ jobs:
           fi
           printf '%s\n' "${files[@]}"
           pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
-            --outputFile=schema-drift-report.json "${files[@]}"
+            --reporter=github-actions --outputFile=schema-drift-report.json "${files[@]}"
           ran=$(node -e 'console.log(require("./schema-drift-report.json").testResults.length)')
           if [ "$ran" -ne "${#files[@]}" ]; then
             echo "::error::vitest ran $ran of ${#files[@]} schema drift test files; each one must run."
@@ -1052,7 +1054,7 @@ jobs:
         # every line up to the kill.
         run: |
           nohup bash -c 'while true; do echo "[mem] $(date -u +%H:%M:%S) $(free -m | awk '"'"'/^Mem:/{print "used=" $3 " avail=" $7} /^Swap:/{print "swap=" $3}'"'"' | tr "\n" " ")"; sleep 5; done' &
-          pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+          pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=github-actions --outputFile=unit-report.json
 
       - name: Upload memory samples
         if: ${{ always() }}
@@ -1508,7 +1510,7 @@ jobs:
         run: node scripts/build-tag-index-decode-worker.mjs --check
 
       - name: Package unit tests
-        run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
+        run: pnpm run test:packages:run --reporter=default --reporter=json --reporter=github-actions --outputFile=packages-report.json
 
       # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
       # and so does a config whose globs stopped resolving. This asserts the LEDGER — every
@@ -1797,7 +1799,8 @@ jobs:
         run: |
           rc=0
           pnpm exec vitest run --project component --shard="$SHARD/3" \
-            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/component-report.json" || rc=$?
+            --reporter=default --reporter=json --reporter=github-actions \
+            --outputFile.json="$RUNNER_TEMP/component-report.json" || rc=$?
           node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/component-report.json" --narrowed || exit 1
           exit $rc
 
@@ -1874,7 +1877,7 @@ jobs:
         id: geometry
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true' && matrix.shard == 1 }}
         continue-on-error: ${{ github.event_name == 'pull_request' }}
-        run: pnpm exec vitest run --project geometry --reporter=default --reporter=json --outputFile=geometry-report.json
+        run: pnpm exec vitest run --project geometry --reporter=default --reporter=json --reporter=github-actions --outputFile=geometry-report.json
 
       # 🔴 A GREEN VITEST RUN IS A CLAIM, NOT EVIDENCE — the same hazard the
       # `packages` job's ledger exists for, one project over. `--project` matching

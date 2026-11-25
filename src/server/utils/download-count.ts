@@ -1,5 +1,29 @@
+import { createHash } from 'node:crypto';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  clickhouseDownloads,
+  queryDownloadsClickhouse,
+} from '~/server/clickhouse/downloads-client';
+import {
+  readsDedicatedDownloadsClickhouse,
+  withSharedClickhouseFallback,
+} from '~/server/services/downloads-clickhouse';
 import { isIpAddress } from '~/server/utils/client-ip';
+
+/**
+ * The keyed hash the dedicated downloads replica stores in place of a client address: the first 8
+ * bytes of SHA-256(key + address), read as a little-endian UInt64. Computed here, in the app, so
+ * neither the address nor the key ever reaches the replica or its query log; only the hash does.
+ * It must match how the replica's rows were hashed byte for byte, so the address is hashed exactly
+ * as given (no re-normalisation).
+ */
+export function downloadIpHash(key: string, ip: string): bigint {
+  return createHash('sha256')
+    .update(key + ip)
+    .digest()
+    .readBigUInt64LE(0);
+}
 
 /**
  * Rolling 24h count of distinct model versions downloaded by a rate-limiter key, read from
@@ -81,6 +105,9 @@ import { isIpAddress } from '~/server/utils/client-ip';
  * value used for the lookup is the one the trusted derivation produced, so a
  * future change to either side has something to trip over.
  *
+ * The dedicated replica's address table holds `downloadIpHash` of the address
+ * the tracker wrote, so the asymmetry above carries over unchanged.
+ *
  * Keep the validation adjacent to the interpolation. If this function ever
  * grows a second query or a third key shape, validate the new one here too
  * rather than at the call site: the guarantee above is a property of this
@@ -95,13 +122,50 @@ export async function fetchDownloadCount(userKey: string): Promise<number> {
     throw new Error('fetchDownloadCount: rate-limit key is neither a user id nor an IP address');
   }
 
-  const data = await clickhouse.$query<{ count: number }>`
+  const shared = clickhouse;
+  const readShared = async () => {
+    const data = await shared.$query<{ count: number }>`
       SELECT
         COUNT(DISTINCT modelVersionId) as count
       FROM modelVersionEvents
       WHERE type = 'Download' AND time > subtractHours(now(), 24)
       ${isUserId ? `AND userId = ${userKey}` : `AND ip = '${userKey}'`}
     `;
+    return data[0]?.count ?? 0;
+  };
 
-  return data[0]?.count ?? 0;
+  if (!readsDedicatedDownloadsClickhouse('download-count', clickhouseDownloads !== undefined)) {
+    return readShared();
+  }
+  if (isUserId) {
+    return withSharedClickhouseFallback(
+      'download-count',
+      () =>
+        countDedicated(
+          `SELECT COUNT(DISTINCT modelVersionId) AS count FROM userModelDownloads
+           WHERE userId = {userId:UInt64} AND lastDownloaded > now() - INTERVAL 24 HOUR`,
+          { userId: userKey }
+        ),
+      readShared
+    );
+  }
+  // Addresses are looked up by downloadIpHash because the dedicated replica never stores raw
+  // addresses; without the hash key they stay on the shared client.
+  const hashKey = env.CLICKHOUSE_DOWNLOADS_IP_HASH_KEY;
+  if (!hashKey) return readShared();
+  return withSharedClickhouseFallback(
+    'download-count',
+    () =>
+      countDedicated(
+        `SELECT COUNT(DISTINCT modelVersionId) AS count FROM modelVersionDownloads_48h
+         WHERE ipHash = {h:UInt64} AND time > now() - INTERVAL 24 HOUR`,
+        { h: downloadIpHash(hashKey, userKey) }
+      ),
+    readShared
+  );
+}
+
+async function countDedicated(query: string, params: Record<string, unknown>): Promise<number> {
+  const rows = await queryDownloadsClickhouse<{ count: number }>(query, params);
+  return Number(rows[0]?.count ?? 0);
 }

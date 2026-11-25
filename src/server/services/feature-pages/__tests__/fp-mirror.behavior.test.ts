@@ -1,19 +1,24 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModerationService from '~/server/services/commentv3/moderation.service';
 import type * as MirrorService from '~/server/services/feature-pages/mirror.service';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
   AUTHOR,
   bootFpDatabase,
   decided,
+  deciding,
   fetchFake,
   mirrorRow,
   OTHER,
   pg,
+  pipelineVerdict,
   platform,
+  platformReply,
   posts,
   q,
   resetFpState,
@@ -24,6 +29,7 @@ import {
   UNKNOWN,
   FEATURE,
   urnOf,
+  verdictAt,
   verdicts,
 } from '~/server/services/feature-pages/__tests__/fp-harness';
 
@@ -290,6 +296,10 @@ describe('moderation changes the mirror carries', () => {
     ]);
     expect(verdicts('mod')).toEqual([['removed', null]]);
     expect(platform.erased).toEqual([]);
+    const handleKey = (uid: number) =>
+      `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${uid}` as const;
+    for (const key of [handleKey(AUTHOR), `${handleKey(AUTHOR)}:miss`, handleKey(OTHER)] as const)
+      await redis.packed.set(key, 1);
 
     await q(`UPDATE "User" SET "deletedAt" = now() WHERE id = $1`, [AUTHOR]);
     await runMirror(mirror);
@@ -297,6 +307,9 @@ describe('moderation changes the mirror carries', () => {
     expect(platform.erased).toEqual([AUTHOR]);
     for (const id of [a, b, c, d].map((x) => x.sourceId))
       expect((await mirrorRow(id)).pushedState).toBe('erased');
+    expect(await redis.packed.get(handleKey(AUTHOR))).toBeNull();
+    expect(await redis.packed.get(`${handleKey(AUTHOR)}:miss`)).toBeNull();
+    expect(await redis.packed.get(handleKey(OTHER))).toBe(1);
   });
 
   it('an account whose only comment is already retracted on the platform is still erased', async () => {
@@ -389,7 +402,10 @@ describe('the reconcile', () => {
     expect((await reconcile()).mismatched).toBe(1);
     platform.readback = null;
     await runMirror(mirror);
-    expect(verdicts('site')).toEqual([['visible', null]]);
+    expect(verdicts('site')).toEqual([
+      ['visible', null],
+      ['visible', null],
+    ]);
     expect((await mirrorRow(comment.sourceId)).pushedState).toBe('visible');
   });
 
@@ -401,7 +417,7 @@ describe('the reconcile', () => {
         verdict: { source: 'moderator', verdict: 'hidden', at: null },
       }));
     const before = fetchFake.mock.calls.length;
-    expect((await reconcile()).mismatched).toBe(1);
+    expect(await reconcile()).toMatchObject({ mismatched: 0, moderatorHidden: 1 });
     platform.readback = null;
     await runMirror(mirror);
     expect(
@@ -410,6 +426,140 @@ describe('the reconcile', () => {
         .filter(([, init]) => (init as RequestInit | undefined)?.method === 'POST')
     ).toEqual([]);
     expect((await mirrorRow(comment.sourceId)).nextPushAt).toBeNull();
+  });
+
+  it.each([
+    ['stamped by a clock behind', 3_000],
+    ['in the same millisecond', 5_000],
+  ])(
+    "lifts again, at a fresh time, a lift that lost to the site's own hide %s",
+    async (_, liftIn) => {
+      const id = (await seed('lifted late')).comment.sourceId;
+      const seeded = Date.now();
+      verdictAt('site', id, 'hidden', new Date(seeded + 5_000));
+      verdictAt('site', id, 'visible', new Date(seeded + liftIn));
+      expect(decided(id)).toBe('hidden');
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(seeded + 60_000);
+        expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+        await runMirror(mirror);
+        expect(decided(id)).toBe('visible');
+        expect(await reconcile()).toMatchObject({ mismatched: 0 });
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it("never lifts over the site's own hide stamped ahead of the clock: counted, nothing sent", async () => {
+    const id = (await seed('hidden ahead of the clock')).comment.sourceId;
+    verdictAt('site', id, 'hidden', new Date(Date.now() + 60 * 60_000));
+    const sent = verdicts('site').length;
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    expect((await mirrorRow(id)).nextPushAt).toBeNull();
+    await runMirror(mirror);
+    expect(verdicts('site')).toHaveLength(sent);
+  });
+
+  it('never lifts over a moderator hide on the platform: counted apart, nothing sent', async () => {
+    const id = (await seed('hidden by a platform moderator')).comment.sourceId;
+    verdictAt('mod', id, 'hidden', new Date());
+    const before = fetchFake.mock.calls.length;
+    expect(await reconcile()).toMatchObject({ mismatched: 0, moderatorHidden: 1 });
+    await runMirror(mirror);
+    expect(
+      fetchFake.mock.calls
+        .slice(before)
+        .filter(([, init]) => (init as RequestInit | undefined)?.method === 'POST')
+    ).toEqual([]);
+    expect(deciding(id)).toEqual({ source: 'moderator', verdict: 'hidden' });
+  });
+
+  it('a lift whose counter cannot be read is neither sent nor counted stuck this pass', async () => {
+    const id = (await seed('counter down')).comment.sourceId;
+    const hiddenAt = new Date(Date.now() - 1_000).toISOString();
+    platform.readback = (items) =>
+      items.map((i) => ({
+        ...(i as object),
+        verdict: { source: 'site', verdict: 'hidden', at: hiddenAt },
+      }));
+    redisMock.redis.multi.mockImplementationOnce(() => {
+      throw new Error('cache cluster down');
+    });
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    const row = await mirrorRow(id);
+    expect(row.nextPushAt).toBeNull();
+    expect(row.pushAttempts).toBe(0);
+  });
+
+  // The bound (FP_MAX_LIFTS in a 30-day window) was set in civitai/civitai#10312.
+  it('a lift that keeps losing is sent three times, then counted stuck and never settled', async () => {
+    const id = (await seed('never lifts')).comment.sourceId;
+    const hiddenAt = new Date(Date.now() - 1_000).toISOString();
+    platform.readback = (items) =>
+      items.map((i) => ({
+        ...(i as object),
+        verdict: { source: 'site', verdict: 'hidden', at: hiddenAt },
+      }));
+    for (let i = 0; i < 3; i++) {
+      expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+      await runMirror(mirror);
+    }
+    expect(verdicts('site')).toHaveLength(4);
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 1 });
+    await runMirror(mirror);
+    expect(verdicts('site')).toHaveLength(4);
+    const row = await mirrorRow(id);
+    expect(row.pushAttempts).toBeGreaterThanOrEqual(mirror.FP_MAX_PUSH_ATTEMPTS);
+    expect(row.nextPushAt).toBeNull();
+    expect(await reconcile()).toMatchObject({ liftsLost: 1 });
+  });
+
+  it('lifts a site hide the platform reads back with no time', async () => {
+    await seed('hidden, no time');
+    platform.readback = (items) =>
+      items.map((i) => ({
+        ...(i as object),
+        verdict: { source: 'site', verdict: 'hidden', at: null },
+      }));
+    const sent = verdicts('site').length;
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    await runMirror(mirror);
+    expect(verdicts('site').slice(sent)).toEqual([['visible', null]]);
+  });
+
+  it('a lift is counted only when the reconcile marks its row due', async () => {
+    const id = (await seed('made due first')).comment.sourceId;
+    const hiddenAt = new Date(Date.now() - 1_000).toISOString();
+    platform.readback = (items) =>
+      items.map((i) => ({
+        ...(i as object),
+        verdict: { source: 'site', verdict: 'hidden', at: hiddenAt },
+      }));
+    const fake = redisMock.redis.multi.getMockImplementation() as () => {
+      exec: () => Promise<unknown>;
+    };
+    // Another writer makes the row due between the count and the reconcile's own update.
+    redisMock.redis.multi.mockImplementationOnce(() => {
+      const chain = fake();
+      const exec = chain.exec;
+      chain.exec = async () => {
+        await q(
+          `UPDATE "FeaturePageCommentMirror" SET "nextPushAt" = now() WHERE "commentId" = $1`,
+          [id]
+        );
+        return exec();
+      };
+      return chain;
+    });
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    await runMirror(mirror);
+    for (let i = 0; i < 3; i++) {
+      expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+      await runMirror(mirror);
+    }
   });
 
   it('counts a visible comment the platform reads back with no verdict (withheld) as a mismatch, and approves it again', async () => {
@@ -716,17 +866,82 @@ describe('the platform ends on what civitai decided', () => {
     expect(posts().map((p) => p.authorName)).toEqual(['author', 'renamed']);
   });
 
-  it('a lost first-post reply on a comment hidden since: nothing sent, retried hourly, counted stuck', async () => {
+  const bySourceReads = () =>
+    fetchFake.mock.calls.filter(([u]) => String(u).includes('/internal/comments/by-source'));
+
+  it('a lost first-post reply on a comment hidden since: the urn is read by sourceId, then hidden by it', async () => {
     const id = await seedLost('posted, reply lost, then hidden');
     await setHidden(id, true);
+    await runMirror(mirror);
+    expect(bySourceReads()).toHaveLength(1);
+    expect(verdicts('mod')).toEqual([['hidden', null]]);
+    expect(await mirrorRow(id)).toMatchObject({
+      urn: urnOf(id),
+      pushedState: 'mod-hidden',
+      pushAttempts: 0,
+    });
+    expect(decided(id)).toBe('hidden');
+  });
+
+  it('a first post the platform never got, hidden since: hidden ahead by sourceId, so the post landing late is withheld', async () => {
+    platform.down = true;
+    const id = (await seed('never got there')).comment.sourceId;
+    platform.down = false;
+    const sent = fetchFake.mock.calls.find(
+      ([u, init]) =>
+        String(u).endsWith('/internal/comment') && JSON.parse(String(init?.body)).sourceId === id
+    )!;
+    await setHidden(id, true);
+    await runMirror(mirror);
+    expect(platform.verdicts.at(-1)?.body.target).toEqual({
+      urn: urnOf(id),
+      digest: `source:${id}`,
+    });
+    expect(await mirrorRow(id)).toMatchObject({ urn: null, pushedState: 'mod-hidden' });
+    await platformReply(new URL(String(sent[0])), sent[1]!);
+    expect(decided(id)).toBe('hidden');
+    expect(deciding(id)).toEqual({ source: 'moderator', verdict: 'hidden' });
+  });
+
+  it.each([
+    ['removed', 'mod-removed'],
+    ['erased', 'erased'],
+  ])(
+    'a lost first-post reply on a hidden comment the platform holds %s: recorded so, nothing applied there',
+    async (held, pushedState) => {
+      const id = await seedLost(`posted, reply lost, then hidden, ${held} there`);
+      await setHidden(id, true);
+      if (held === 'removed') platform.removed.add(id);
+      else platform.erasedUids.add(AUTHOR);
+      await runMirror(mirror);
+      await runMirror(mirror);
+      expect(platform.verdicts).toEqual([]);
+      expect(await mirrorRow(id)).toMatchObject({ pushedState, pushAttempts: 0 });
+    }
+  );
+
+  it('a lost first-post reply on a hidden comment, the by-source reply unreadable: nothing sent, retried', async () => {
+    const id = await seedLost('posted, reply lost, then hidden, unreadable lookup');
+    await setHidden(id, true);
+    platform.badBySource = true;
+    await runMirror(mirror);
+    expect(platform.verdicts).toEqual([]);
+    expect(await mirrorRow(id)).toMatchObject({ urn: null, pushAttempts: 1 });
+  });
+
+  it('a lost first-post reply on a hidden comment, the platform unreachable: nothing sent, retried', async () => {
+    const id = await seedLost('posted, reply lost, then hidden, platform down');
+    await setHidden(id, true);
+    platform.down = true;
     const before = fetchFake.mock.calls.length;
     await runMirror(mirror);
+    platform.down = false;
     expect(
-      fetchFake.mock.calls.slice(before).filter(([u]) => String(u).startsWith(SIGNER))
+      fetchFake.mock.calls.slice(before).filter(([u]) => String(u).includes('/internal/verdict'))
     ).toEqual([]);
     const row = await mirrorRow(id);
-    expect(row.pushAttempts).toBeGreaterThanOrEqual(mirror.FP_MAX_PUSH_ATTEMPTS);
-    expect(minutesUntil(row.nextPushAt)).toBeGreaterThan(55);
+    expect(row).toMatchObject({ urn: null, pushAttempts: 1 });
+    expect(minutesUntil(row.nextPushAt)).toBeGreaterThan(0);
   });
 
   it('a lost first-post reply on a retracted or removed comment: the retract by sourceId finds the urn, a removal follows', async () => {
@@ -1114,10 +1329,15 @@ describe('the platform ends on what civitai decided', () => {
 
   it('an author the platform has erased: recorded erased, nothing sent after', async () => {
     const id = (await seed('erased upstream')).comment.sourceId;
+    const handleKey = `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${AUTHOR}` as const;
+    await redis.packed.set(handleKey, 1);
+    await redis.packed.set(`${handleKey}:miss`, 1);
     platform.erasedUids.add(AUTHOR);
     await rename(AUTHOR, 'renamed');
     await runMirror(mirror);
     expect((await mirrorRow(id)).pushedState).toBe('erased');
+    expect(await redis.packed.get(handleKey)).toBeNull();
+    expect(await redis.packed.get(`${handleKey}:miss`)).toBeNull();
     const calls = fetchFake.mock.calls.length;
     await rename(AUTHOR, 'again');
     await runMirror(mirror);
@@ -1670,6 +1890,29 @@ describe('the hide state', () => {
       ]);
       expect(await reconcile()).toMatchObject({ on: false, mismatched: 1 });
       expect((await mirrorRow(id)).nextPushAt).toBeNull();
+    });
+
+    it("hidden there by the platform's pipeline while shown here: counted apart, never answered", async () => {
+      const id = (await seed('pipeline hid it')).comment.sourceId;
+      pipelineVerdict(id, 'hidden');
+      const before = signerPosts();
+      for (let i = 0; i < 2; i++) {
+        expect(await reconcile()).toMatchObject({ mismatched: 0, pipelineHidden: 1 });
+        await runMirror(mirror);
+      }
+      expect(signerPosts() - before).toBe(0);
+      expect(decided(id)).toBe('hidden');
+    });
+
+    it("hidden there by the platform's pipeline on a moved token: still never answered", async () => {
+      const id = (await seed('pipeline hid it, token moved')).comment.sourceId;
+      pipelineVerdict(id, 'hidden');
+      readback(id, { digest: 'moved' });
+      const before = signerPosts();
+      expect(await reconcile()).toMatchObject({ mismatched: 0, pipelineHidden: 1 });
+      platform.readback = null;
+      await runMirror(mirror);
+      expect(signerPosts() - before).toBe(0);
     });
 
     it('hidden or gone here, only the token differs there: nothing', async () => {

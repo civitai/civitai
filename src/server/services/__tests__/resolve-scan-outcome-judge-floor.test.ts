@@ -80,8 +80,6 @@ beforeAll(async () => {
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     -- The scan write re-checks the owner's ban and holds (empty here, so nothing is kept).
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,

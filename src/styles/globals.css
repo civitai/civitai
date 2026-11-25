@@ -585,13 +585,17 @@ textarea {
      spelling — `margin-block-end` moves a box placed by `bottom` and does
      nothing to one placed by `top`, so a rule that got the branch wrong would
      be inert rather than wrong. `top-center` / `bottom-center` are placed with
-     `left: 50%` + a transform and have no inline edge to pay. */
+     `left: 50%` + a transform and have no inline edge to pay.
+
+     `--review-action-bar-reserve` is set on `<html>` by `ReviewActionBar` while its sticky bar
+     is up, and already includes the bottom safe area, so it is `max()`ed with the inset, not
+     added to it. */
   .mantine-Notifications-root[data-position^='top-'] {
     margin-block-start: var(--safe-area-inset-top);
   }
 
   .mantine-Notifications-root[data-position^='bottom-'] {
-    margin-block-end: var(--safe-area-inset-bottom);
+    margin-block-end: max(var(--safe-area-inset-bottom), var(--review-action-bar-reserve, 0px));
   }
 
   .mantine-Notifications-root[data-position$='-left'] {

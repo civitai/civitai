@@ -17,6 +17,8 @@ type SessionUser struct {
 	Username    string
 	IsModerator bool
 	Banned      bool
+	// Memorialized is `memorialized === true`: the account's holder has died (refusesMemorializedSession).
+	Memorialized bool
 	// APIKey is set when the viewer came from an API key rather than a session cookie: the app then
 	// accepts the request whatever its Origin (createContext's isBearerAuth).
 	APIKey bool
@@ -137,6 +139,10 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
 		return nil, nil
 	}
+	// refusesMemorializedSession: a moderator's impersonation of a memorialized account still resolves.
+	if u.Memorialized && claims.ImpersonatedBy == nil {
+		return nil, nil
+	}
 	if r.OnSlot != nil {
 		r.OnSlot(CookieSlot(tokenCookie))
 	}
@@ -188,6 +194,7 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 	if b, ok := m["bannedAt"]; ok && b != nil {
 		u.Banned = true
 	}
+	u.Memorialized, _ = m["memorialized"].(bool)
 	return u, nil
 }
 

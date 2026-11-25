@@ -275,33 +275,6 @@ describe('what a sent CSAM report takes out of the pending count', () => {
   });
 });
 
-describe('an evidence hold in the CSAM queue by user', () => {
-  afterAll(async () => {
-    await db.exec(`DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold"`);
-  });
-
-  const heldBy = async (userId: number) =>
-    (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.find((u) => u.userId === userId)
-      ?.heldBy;
-
-  it('names the hold for a user the marker view holds, and only that user', async () => {
-    await db.exec(`
-      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
-      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
-      INSERT INTO "EvidenceHold" ("userId") VALUES (103);
-    `);
-    expect(await heldBy(103)).toEqual(['evidenceHold']);
-    expect(await heldBy(106)).toEqual(['csamReportSecondary']);
-  });
-
-  // Without the view every user reads as held, so no user may be told they are on a hold.
-  it('says the status is unknown while the table exists without its view', async () => {
-    await db.exec(`DROP VIEW "EvidenceHeldUser"`);
-    expect(await heldBy(103)).toEqual(['evidenceHoldUnknown']);
-    expect(await heldBy(106)).toEqual(['csamReportSecondary', 'evidenceHoldUnknown']);
-  });
-});
-
 describe('the CSAM queue filtered to one user', () => {
   it('lists only that owner’s flagged images', async () => {
     const { items } = await getImageReviewQueue({
@@ -427,14 +400,11 @@ describe('feedback page captures in the CSAM queue', () => {
 });
 
 describe('images set aside from the CSAM queue', () => {
-  // 301 is not held: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302 is
-  // held, with the same two rows (65, 66): a hold changes nothing here.
+  // 301: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302: the same two
+  // rows (65, 66).
   beforeAll(async () => {
     await db.exec(SET_ASIDE_MIGRATION);
     await db.exec(`
-      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
-      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
-      INSERT INTO "EvidenceHold" ("userId") VALUES (302);
       INSERT INTO "User" ("id", "username") VALUES (301, 's'), (302, 't');
       INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
         (61, 301, 'csam', 'Blocked'), (63, 301, 'csam', 'Blocked'), (64, 301, 'csam', 'Blocked'),
@@ -449,7 +419,6 @@ describe('images set aside from the CSAM queue', () => {
 
   afterAll(async () => {
     await db.exec(`
-      DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold";
       DROP TRIGGER IF EXISTS "Image_csam_queue_set_aside_end" ON "Image";
       DROP FUNCTION IF EXISTS csam_queue_set_aside_end();
       DROP TABLE IF EXISTS "CsamQueueSetAside"; DROP TYPE IF EXISTS "CsamQueueSetAsideOutcome";

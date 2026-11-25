@@ -73,6 +73,10 @@ const { postgresSlugify } = await repo('src/utils/string-helpers.ts');
 const { isMinorContentRestricted } = await repo(
   'packages/civitai-shared/src/minor-content-gate.ts'
 );
+// getAllModelsSchema's `ids` and `followed` (src/server/schema/model.schema.ts) are these helpers.
+const { commaDelimitedNumberArray, booleanString } = await repo('src/utils/zod-helpers.ts');
+const { subscriptionProductMetadataSchema } = await repo('src/server/schema/subscriptions.schema.ts');
+const { constants } = await repo('src/server/common/constants.ts');
 
 // ---------------------------------------------------------------------------------------------
 // The synthetic world
@@ -319,6 +323,14 @@ const MODELS = {
       version(6013, 'Pony', { index: 0, trainingStatus: 'Approved', vaeId: 6099, flags: 2 }),
     ],
   }),
+  // A moderator's model with a hidden buzz count: its owner is a creator-membership candidate for
+  // any other viewer (cold-creator-memberships).
+  5013: model(5013, 1004, {
+    rank: rank(3, 2),
+    lastVersionAt: day(2),
+    meta: { metricVisibility: { buzz: 'hide' } },
+    versions: [version(6016, 'Pony')],
+  }),
   // No version at all: dataForModelsCache's lookup has no record for it (cacheNotFound off: nothing is
   // written, and the model is left out).
   5011: model(5011, 1002, { rank: rank(2, 2), versions: [], hashes: ['HASH5011'] }),
@@ -328,6 +340,29 @@ const MODELS = {
     rank: rank(1, 1),
     lastVersionAt: day(2),
     versions: [version(6015, 'Pony')],
+  }),
+  // Hide Paid's models (hide-paid-*): a paid version (newest, holding the cover) and a free one; one
+  // paid version only; one free version only; a paid Public version and a free Private one.
+  5021: model(5021, 1001, {
+    coverImageId: 8301,
+    rank: rank(70, 60),
+    lastVersionAt: day(13),
+    versions: [version(6031, 'Pony'), version(6032, 'SDXL 1.0')],
+  }),
+  5022: model(5022, 1002, {
+    rank: rank(65, 55),
+    lastVersionAt: day(13),
+    versions: [version(6033, 'Flux.1 D')],
+  }),
+  5023: model(5023, 1002, {
+    rank: rank(60, 50),
+    lastVersionAt: day(13),
+    versions: [version(6034, 'Illustrious')],
+  }),
+  5024: model(5024, 1002, {
+    rank: rank(55, 45),
+    lastVersionAt: day(13),
+    versions: [version(6035, 'Pony'), version(6036, 'Pony', { availability: 'Private' })],
   }),
 };
 // The lookup orders the versions by (modelId, index): the world lists 5010's out of that order, so a
@@ -374,6 +409,7 @@ const VERSION_IMAGES = {
   ),
   6013: [showcase(8130, 1001, 1)],
   6014: [showcase(8140, 1001, 1)],
+  6016: [showcase(8160, 1004, 1)],
   // Cached as the lookup wrote it before the rule: 8150 (minor-flagged, R, the model's cover) is held
   // here, and the read leaves it out for every viewer; 8151 (R) and 8152 (minor-flagged, PG-13) stay.
   6015: [
@@ -381,6 +417,12 @@ const VERSION_IMAGES = {
     showcase(8151, 1001, 4),
     showcase(8152, 1001, 2, { minor: true }),
   ],
+  6031: [showcase(8301, 1001, 1)],
+  6032: [showcase(8311, 1001, 1), showcase(8312, 1001, 2)],
+  6033: [showcase(8321, 1002, 1)],
+  6034: [showcase(8331, 1002, 1)],
+  6035: [showcase(8341, 1002, 1)],
+  6036: [showcase(8351, 1002, 1)],
 };
 for (const [vid, list] of Object.entries(VERSION_IMAGES))
   for (const i of list) i.modelVersionId = Number(vid);
@@ -403,11 +445,31 @@ const GALLERY = {
     sfwHeld: true,
   },
 };
-const PAID = { 5001: day(30), 5005: null };
+const PAID = { 5001: day(30), 5005: null, 5021: day(30), 5022: null, 5024: null };
+// getModelPaidAccessGates' `versionIds`: each gated model's versions behind a live gate.
+const PAID_VERSIONS = { 5001: [6001], 5005: [6008], 5021: [6031], 5022: [6033], 5024: [6035] };
 const PRIVACY = {
   1001: { hideModelBuzz: false, hideModelDownloads: false, hideModelGenerations: true },
 };
 const MEMBERS = { 1001: true };
+// Each viewer's Follow rows (UserEngagement, type Follow): the creators they follow.
+const FOLLOWS = { 1003: [1002], 1001: [] };
+// CustomerSubscription rows queryValidCreatorMembership reads for a cold membership key (status
+// already filtered, as Postgres answers the query): each with its own metadata and its product's.
+// 1001: a gold membership, and a silver one whose renewal email went out (skipped). 1004: a founder
+// membership, and a gold one bought with Buzz (no Creator Program validity), so not valid.
+const SUBSCRIPTIONS = {
+  1001: [
+    { metadata: {}, product: { tier: 'gold', monthlyBuzz: '5000', badgeType: 'static' } },
+    { metadata: { renewalEmailSent: true }, product: { tier: 'silver' } },
+  ],
+  1004: [
+    { metadata: {}, product: { tier: 'founder', rewardsMultiplier: 1.5 } },
+    { metadata: {}, product: { tier: 'gold', buzzPurchase: 'true' } },
+  ],
+};
+// A product whose metadata subscriptionProductMetadataSchema rejects (no tier): Node's parse throws.
+const BAD_SUBSCRIPTIONS = { 1001: [{ metadata: {}, product: { monthlyBuzz: 5000 } }] };
 
 // ---------------------------------------------------------------------------------------------
 // Caches, as Node writes them; reads are traced so each fixture carries what Node read.
@@ -486,6 +548,7 @@ class Trace {
     this.coldRead = new Set();
     this.writes = new Map(); // key -> what Node's fetch writes on the cold miss ({value, ex})
     this.events = new Set(spec.events ?? []);
+    this.badSubscriptions = !!spec.badSubscriptions;
     this.db = {
       modelVersionRows: [],
       modelHashes: [],
@@ -496,6 +559,10 @@ class Trace {
       usernames: new Map(),
       privacy: new Map(),
       collections: new Map(),
+      userFollows: new Map(),
+      followsRead: 0,
+      userCosmetics: [],
+      subscriptions: [],
     };
   }
 }
@@ -523,6 +590,30 @@ function coldLookup(prefix, id) {
         tags: [],
         versions: structuredClone(byIndex(m.versions)),
       };
+      T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
+      return result;
+    }
+    case K.userCosmetics: {
+      // userCosmeticCache's lookupFn: the user's equipped cosmetics not equipped to an entity (none
+      // here is a creator-made cosmetic, so none is withheld); none is a day's notFound marker.
+      const equipped = USER_COSMETICS[id] ?? [];
+      for (const c of equipped)
+        T.db.userCosmetics.push({
+          userId: id,
+          cosmeticId: c.cosmeticId,
+          data: c.data === null ? null : JSON.stringify(c.data),
+          equippedAt: true,
+          equippedToId: null,
+          equippedToType: null,
+        });
+      if (!equipped.length) {
+        T.writes.set(`${prefix}:${id}`, {
+          value: { userId: id, notFound: true, cachedAt: NOW },
+          ex: DAY,
+        });
+        return undefined;
+      }
+      const result = { userId: id, cosmetics: structuredClone(equipped) };
       T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
       return result;
     }
@@ -675,8 +766,14 @@ function boundCursor(cursor) {
 /** The page query: the fixture's next page, checked against the cursor Node sends. With a collection
  *  the page records the values Node binds into its CollectionItem semi-join (the collection, the
  *  viewer its in-review items are kept for, the collection tag), which the harness checks feed-go
- *  binds too. */
-function pageQuery(input, take, viewerId, { onlyModelIds, excludeModelIds } = {}) {
+ *  binds too; likewise a non-empty `ids` (`mm."modelId" IN (…)`) and a signed-in `followed`'s follow
+ *  list (`mm."userId" IN (…)`, or `1 = 0` for none). */
+function pageQuery(
+  input,
+  take,
+  viewerId,
+  { onlyModelIds, excludeModelIds, followedUserIds } = {}
+) {
   const listed = T.pages.shift();
   if (!listed) throw new Error(`${T.name}: Node asks for a page the fixture does not list`);
   const cursor = input.cursor ?? null;
@@ -697,6 +794,12 @@ function pageQuery(input, take, viewerId, { onlyModelIds, excludeModelIds } = {}
   // The pin's id filters (`mm."modelId" IN (…)` / `NOT IN (…)`): the harness checks feed-go binds them.
   if (onlyModelIds?.length) page.onlyModelIds = onlyModelIds;
   if (excludeModelIds?.length) page.excludeModelIds = excludeModelIds;
+  if (input.ids?.length) page.ids = input.ids;
+  if (followedUserIds?.length) page.followedUserIds = followedUserIds;
+  else if (followedUserIds) {
+    if (rows.length) throw new Error(`${T.name}: a \`1 = 0\` page answers no row`);
+    page.followedNone = true;
+  }
   if (input.collectionId)
     page.collection = {
       collectionId: input.collectionId,
@@ -711,8 +814,13 @@ function getModelPaidAccessGates(modelIds) {
   const out = new Map();
   for (const id of modelIds) {
     if (id in PAID) {
-      T.db.paidAccess.set(id, PAID[id]);
-      out.set(id, { earlyAccessDeadline: PAID[id] ?? null, gated: true });
+      if (!PAID_VERSIONS[id]) throw new Error(`model ${id}: gated with no gated versions`);
+      T.db.paidAccess.set(id, { deadline: PAID[id], versionIds: PAID_VERSIONS[id] });
+      out.set(id, {
+        earlyAccessDeadline: PAID[id] ?? null,
+        gated: true,
+        versionIds: PAID_VERSIONS[id],
+      });
     }
   }
   return out;
@@ -755,7 +863,7 @@ function getModelsRaw({
     isModerator: sessionUser?.isModerator,
   });
   if (enforcement.emptyResult) return { items: [], isPrivate: false };
-  const { take, username, user, baseModels, modelVersionIds, status } = input;
+  const { take, username, user, baseModels, modelVersionIds, status, ids, followed } = input;
   const includeDetails = !!include?.includes('details');
   const tagName = input.tagname ?? input.tag;
   if (tagName)
@@ -772,6 +880,14 @@ function getModelsRaw({
     T.db.usernames.set(name, target.id);
   }
   let isPrivate = false;
+  // `followed && sessionUser?.id`: the viewer's Follow rows on dbRead, on every getModelsRaw call.
+  let followedUserIds;
+  if (followed && sessionUser?.id) {
+    followedUserIds = [...(FOLLOWS[sessionUser.id] ?? [])];
+    T.db.userFollows.set(sessionUser.id, followedUserIds);
+    T.db.followsRead++;
+    isPrivate = true;
+  }
   if (input.collectionId) {
     const permissions = getUserCollectionPermissionsById({
       userId: sessionUser?.id,
@@ -782,8 +898,12 @@ function getModelsRaw({
     // pageQuery for the harness to check).
     isPrivate = !permissions.publicCollection;
   }
-  const hidePrivateModels = !username && !user && !input.collectionId;
-  const models = pageQuery(input, take ?? 100, sessionUser?.id, { onlyModelIds, excludeModelIds });
+  const hidePrivateModels = !ids && !username && !user && !followed && !input.collectionId;
+  const models = pageQuery(input, take ?? 100, sessionUser?.id, {
+    onlyModelIds,
+    excludeModelIds,
+    followedUserIds,
+  });
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
   const userBasicData = cacheFetch(K.basic, userIds);
@@ -813,12 +933,14 @@ function getModelsRaw({
     },
   });
   const cosmetics = include?.includes('cosmetics') ? getCosmeticsForEntity(modelIds) : {};
+  const { hidePaid } = input;
   const paidAccessGates = getModelPaidAccessGates(modelIds);
   const eventDecorations = include?.includes('cosmetics')
     ? getEventDecorationsForModels(modelIds)
     : undefined;
   for (const model of models) {
-    const gate = paidAccessGates.get(model.id);
+    // Under Hide Paid the card shows only free versions, so the model-level chip would contradict it.
+    const gate = hidePaid ? undefined : paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
     model.hasActivePaidAccess = gate?.gated ?? false;
   }
@@ -855,6 +977,10 @@ function getModelsRaw({
       );
       if (hidePrivateModels)
         modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
+      if (hidePaid) {
+        const gatedVersionIds = paidAccessGates.get(model.id)?.versionIds ?? [];
+        modelVersions = modelVersions.filter((mv) => !gatedVersionIds.includes(mv.id));
+      }
       const allBaseModels = [...new Set(modelVersions.map((mv) => mv.baseModel))];
       if (baseModels)
         modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
@@ -1069,10 +1195,59 @@ function getUserMetricPrivacyDefaultsMap(userIds) {
   return result;
 }
 
+/** queryValidCreatorMembership (creator-membership.service.ts) over the fixture's subscriptions, with
+ *  the real subscriptionProductMetadataSchema and tierOrder, TIER_METADATA_KEY at its default. */
+function queryValidCreatorMembership(userIds) {
+  const result = new Map();
+  const tierOrder = constants.memberships.tierOrder;
+  const highestTierByUser = new Map();
+  for (const id of userIds)
+    for (const sub of (T.badSubscriptions ? BAD_SUBSCRIPTIONS : SUBSCRIPTIONS)[id] ?? []) {
+      T.db.subscriptions.push({
+        userId: id,
+        metadata: JSON.stringify(sub.metadata),
+        productMetadata: JSON.stringify(sub.product),
+      });
+      const subMeta = sub.metadata ?? {};
+      if (subMeta.renewalEmailSent) continue;
+      const productMeta = subscriptionProductMetadataSchema.parse(sub.product);
+      if (productMeta.buzzPurchase) continue;
+      const tier = productMeta?.tier ?? 'free';
+      const prev = highestTierByUser.get(id);
+      if (prev === undefined || tierOrder.indexOf(tier) > tierOrder.indexOf(prev))
+        highestTierByUser.set(id, tier);
+    }
+  for (const id of userIds) {
+    const tier = highestTierByUser.get(id);
+    result.set(id, !!tier && tier !== 'free' && tier !== 'founder');
+  }
+  return result;
+}
+
+/** getValidCreatorMembershipMap: the cached booleans; a cold key is a miss, computed with the origin
+ *  and written back (a plain SET for MEMBERSHIP_CACHE_TTL, 10 minutes). */
 function getValidCreatorMembershipMap(userIds) {
   const result = new Map();
-  for (const id of [...new Set(userIds)])
+  const misses = [];
+  for (const id of [...new Set(userIds)]) {
+    const key = `${K.membership}:${id}`;
+    if (T.cold.has(key)) {
+      T.coldRead.add(key);
+      const written = T.writes.get(key);
+      if (written) result.set(id, written.value);
+      else misses.push(id);
+      continue;
+    }
     result.set(id, packedScalar(K.membership, id, MEMBERS[id] ?? false));
+  }
+  if (misses.length) {
+    const fresh = queryValidCreatorMembership(misses);
+    for (const id of misses) {
+      const value = fresh.get(id) ?? false;
+      result.set(id, value);
+      T.writes.set(`${K.membership}:${id}`, { value, ex: 600 });
+    }
+  }
   return result;
 }
 
@@ -1119,7 +1294,7 @@ function getModelsWithImagesAndModelVersions({
       coverId: face.pickCoverImageId(m, showSfwFace),
     })),
     modelVersionImages,
-    sameVersionOnly: !!input.baseModels?.length,
+    sameVersionOnly: !!input.baseModels?.length || !!input.hidePaid,
   });
   const coverImages = holdExempt?.isModerator
     ? unheldCovers
@@ -1291,6 +1466,11 @@ function runModels(spec) {
     ...raw,
   };
   if (input.username !== undefined) input.username = postgresSlugify(input.username);
+  // The schema's own transforms of `ids`, `followed` and `hidePaid` (commaDelimitedNumberArray,
+  // booleanString).
+  if ('ids' in raw) input.ids = commaDelimitedNumberArray().optional().parse(raw.ids);
+  if ('followed' in raw) input.followed = booleanString().optional().parse(raw.followed);
+  if ('hidePaid' in raw) input.hidePaid = booleanString().optional().parse(raw.hidePaid);
   const features = {
     getAllModelImagesSlim: spec.config.modelImagesSlim,
     coverageNext: spec.config.coverageNext,
@@ -1624,6 +1804,156 @@ const SPECS = [
     dropKeys: [`${K.versionImages}:6012`],
     fallback: 'model-images-miss',
   },
+  // `ids` and `followed` (each served only behind its switch: FEED_GO_GETALL_SERVE_INPUT_IDS,
+  // FEED_GO_GETALL_SERVE_INPUT_FOLLOWED; off, the input-ids / input-followed fallback).
+  {
+    name: 'ids-embed-signed-out',
+    description:
+      'An id list (the embeds’ lookup): the page is held to those ids, in the sort’s order, and a Private version is listed (any `ids` turns hidePrivateModels off).',
+    host: HOST.green,
+    config: { serveInputIds: true },
+    input: { ids: [5005, 5001], limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5005] }],
+  },
+  {
+    name: 'ids-comma-string-showcase',
+    description:
+      'A profile showcase: `ids` as a comma-separated string (split and trimmed) with the creator’s name, for another signed-in viewer.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveInputIds: true },
+    input: { ids: '5005, 5002', username: 'artist_two', period: 'AllTime', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5002, 5005] }],
+  },
+  {
+    name: 'ids-empty-string',
+    description: '`ids: ""` is [0]: the page is held to model 0, which no row is.',
+    host: HOST.blue,
+    config: { serveInputIds: true },
+    input: { ids: '', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [] }],
+  },
+  {
+    name: 'ids-empty-list',
+    description:
+      'An empty list filters nothing, but is still `ids`: a Private version is listed, and the lookahead cursor is kept.',
+    host: HOST.blue,
+    config: { serveInputIds: true },
+    input: { ids: [], limit: 1, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5005, 5009] }],
+  },
+  {
+    name: 'fallback-ids-off',
+    description: '`ids` with its switch off (the default): not served.',
+    host: HOST.blue,
+    input: { ids: [5001], browsingLevel: 1 },
+    fallback: 'input-ids',
+  },
+  {
+    name: 'fallback-ids-not-integer',
+    description: 'An id JS Number does not read as an int4 integer: left to Node.',
+    host: HOST.blue,
+    config: { serveInputIds: true },
+    input: { ids: ['0x10'], browsingLevel: 1 },
+    fallback: 'model-ids',
+  },
+  {
+    name: 'followed-signed-in',
+    description:
+      'Followed creators only, signed in: the page is held to the creators the viewer follows (read on every page), and a Private version is listed.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveInputFollowed: true },
+    input: { followed: true, sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5002, 5005, 5009] }],
+  },
+  {
+    name: 'followed-no-follows',
+    description: 'Followed creators only, for a viewer who follows no one: `1 = 0`, an empty answer.',
+    host: HOST.blue,
+    viewer: 1001,
+    config: { serveInputFollowed: true },
+    input: { followed: 'true', sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [] }],
+  },
+  {
+    name: 'followed-signed-out',
+    description:
+      '`followed` signed out filters nothing (Node reads it only with a user), but still turns hidePrivateModels off.',
+    host: HOST.green,
+    config: { serveInputFollowed: true },
+    input: { followed: true, limit: 1, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5005] }],
+  },
+  {
+    name: 'fallback-followed-off',
+    description: '`followed` with its switch off (the default): not served.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { followed: true, browsingLevel: 1 },
+    fallback: 'input-followed',
+  },
+  // An owner's user-cosmetics miss: computed only behind FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS
+  // (default off: the user-cosmetics-miss fallback).
+  {
+    name: 'cold-user-cosmetics',
+    description:
+      'User cosmetics entries absent: computed with userCosmeticCache’s lookup (the owner’s equipped badge; an owner with none gets a day’s notFound marker) and written back.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveUserCosmeticsMiss: true },
+    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5009] }],
+    cold: [`${K.userCosmetics}:1001`, `${K.userCosmetics}:1002`],
+  },
+  {
+    name: 'fallback-user-cosmetics-miss',
+    description:
+      'The same user cosmetics entries absent with the switch off (the default): not served.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Highest Rated', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5009] }],
+    cold: [`${K.userCosmetics}:1001`, `${K.userCosmetics}:1002`],
+    fallback: 'user-cosmetics-miss',
+  },
+  // An owner's creator-membership miss: computed only behind FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS
+  // (default off: the membership-miss fallback).
+  {
+    name: 'cold-creator-memberships',
+    description:
+      'Creator-membership entries absent for two owners with a hidden metric: computed with getValidCreatorMembershipMap’s origin (a gold membership, a renewal-emailed one skipped: valid; a founder one and a gold one bought with Buzz: not) and written back for 10 minutes; the valid owner’s hidden count stays hidden.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveMembershipMiss: true },
+    input: { sort: 'Highest Rated', limit: 3, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5013, 5009] }],
+    cold: [`${K.membership}:1001`, `${K.membership}:1004`],
+  },
+  {
+    name: 'fallback-membership-miss',
+    description: 'The same membership entries absent with the switch off (the default): not served.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Highest Rated', limit: 3, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5013, 5009] }],
+    cold: [`${K.membership}:1001`, `${K.membership}:1004`],
+    fallback: 'membership-miss',
+  },
+  {
+    name: 'fallback-membership-shape',
+    description:
+      'A product metadata subscriptionProductMetadataSchema rejects (no tier): Node’s parse throws, so feed-go hands the request to Node.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveMembershipMiss: true },
+    input: { sort: 'Highest Rated', limit: 1, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002] }],
+    cold: [`${K.membership}:1001`],
+    badSubscriptions: true,
+    nodeThrows: /tier/,
+    fallback: 'membership-shape',
+  },
   // The minor content rule on the shared version-showcase cache (imagesForModelVersionsCache's
   // appendFn): viewer-independent, so 8150 is left out for every viewer, its owner and moderators
   // included; the cover is then looked up on the replica, found on the same version, and left out
@@ -1641,6 +1971,42 @@ const SPECS = [
     input: { sort: 'Highest Rated', limit: 1, browsingLevel: 31 },
     pages: [{ cursor: null, ids: [5012] }],
   })),
+  // Hide Paid (#9385's free-version rule), served only behind FEED_GO_GETALL_SERVE_HIDE_PAID; off, the
+  // input-hidePaid fallback.
+  {
+    name: 'fallback-hide-paid-off',
+    description: 'Hide Paid with its switch off: handed back to Node (input-hidePaid).',
+    host: HOST.green,
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, hidePaid: true },
+    fallback: 'input-hidePaid',
+  },
+  {
+    name: 'hide-paid-free-version-signed-out',
+    description:
+      'Hide Paid signed out: a model with a paid and a free version shows the free one (its own images; the cover on the paid version is not borrowed), its base models are the free version’s, and no chip or deadline; a free model is unchanged. The page query leaves out the model with only a paid version (pinned by the integration tests).',
+    host: HOST.green,
+    config: { serveHidePaid: true },
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, hidePaid: true },
+    pages: [{ cursor: null, ids: [5021, 5023] }],
+  },
+  {
+    name: 'hide-paid-off-same-world',
+    description:
+      'The same models with Hide Paid off: the paid version is shown with its chip and deadline, the paid-only model is listed with its chip.',
+    host: HOST.green,
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1 },
+    pages: [{ cursor: null, ids: [5021, 5022, 5023] }],
+  },
+  {
+    name: 'hide-paid-creator-private-free-version',
+    description:
+      'Hide Paid on a creator’s page (Private versions are listed there): a model whose only free version is Private shows it; a model with only a paid version, if the page query returned it, has no version left and is left out.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveHidePaid: true },
+    input: { sort: 'Highest Rated', limit: 10, browsingLevel: 1, username: 'artist_two', hidePaid: 'true' },
+    pages: [{ cursor: null, ids: [5022, 5023, 5024] }],
+  },
 ];
 
 /** What Node writes on this fixture's cold misses, as the Go harness compares it. */
@@ -1668,7 +2034,9 @@ function dbTables() {
   const m2o = (map, f) => [...map.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(f);
   const tables = {
     modelPages: T.pagesOut,
-    paidAccess: m2o(T.db.paidAccess, ([modelId, deadline]) => mark({ modelId, deadline })),
+    paidAccess: m2o(T.db.paidAccess, ([modelId, { deadline, versionIds }]) =>
+      mark({ modelId, deadline, versionIds })
+    ),
     coverImages: m2o(
       T.db.coverImages,
       ([id, row]) => row ?? { id, userId: null, modelVersionId: null, modelId: null }
@@ -1681,6 +2049,18 @@ function dbTables() {
   if (T.db.modelHashes.length) tables.modelHashes = T.db.modelHashes;
   if (T.db.tagsOnModels.length) tables.tagsOnModels = T.db.tagsOnModels;
   if (T.db.officialModels) tables.officialModels = T.db.officialModels;
+  // Only a fixture whose request reads the viewer's follows lists them, and how often Node read them.
+  if (T.db.followsRead) {
+    tables.userFollows = m2o(T.db.userFollows, ([userId, ids]) =>
+      ids.map((targetUserId) => ({ userId, targetUserId }))
+    ).flat();
+    tables.followsRead = T.db.followsRead;
+  }
+  // Only a fixture with a cold user-cosmetics key lists the UserCosmetic rows its lookup read.
+  if ([...T.cold].some((k) => k.startsWith(`${K.userCosmetics}:`)))
+    tables.userCosmetics = T.db.userCosmetics;
+  // Only a fixture with a cold membership key lists the subscription rows its origin read.
+  if (T.db.subscriptions.length) tables.subscriptions = T.db.subscriptions;
   // Only a fixture that reads a collection lists the table (a missing collection is no row).
   if (T.db.collections.size)
     tables.collections = m2o(T.db.collections, ([, c]) => c)
@@ -1719,7 +2099,10 @@ for (const spec of SPECS) {
     try {
       value = runModels({ ...spec, config });
     } catch (err) {
-      throw new Error(`${spec.name}: ${err.message}`);
+      // `nodeThrows`: Node's own error is the expected outcome (feed-go must hand it to Node).
+      if (!(spec.nodeThrows && spec.nodeThrows.test(String(err?.message ?? err))))
+        throw new Error(`${spec.name}: ${err.message}`);
+      T.pages = [];
     }
     if (T.pages.length)
       throw new Error(`${spec.name}: ${T.pages.length} listed page(s) never asked for`);

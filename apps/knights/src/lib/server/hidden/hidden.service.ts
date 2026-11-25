@@ -1,11 +1,6 @@
 import { createHash } from 'node:crypto';
-import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import {
-  readWithoutJit,
-  REFERENCE_POOL,
-  REFERENCE_STATUS,
-  servableImage,
-} from '@civitai/db/knights';
+import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
+import { readWithoutJit, REFERENCE_POOL, REFERENCE_STATUS } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -24,7 +19,8 @@ import {
 import { BLOCKED_ANSWER } from '../../block-reasons';
 import { creditVote, insertVote } from '../queue/vote-record';
 import { isRank } from '../ranks';
-import { servableReferences, type ServedStatus } from '../reference';
+import { servableReferences, type Pool, type ServedStatus } from '../reference';
+import { answeredImageServable, failClosed } from '../skill-check/eligible';
 import { activeSmiteCount, resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
 import { gradeHiddenVotes, type CheckOutcome } from './settle';
@@ -81,14 +77,32 @@ const bucketOrder = (digest: Buffer) =>
     .sort((a, b) => a.key - b.key)
     .map(({ group }) => group);
 
+/** The pools a Knight's skill checks are drawn from; the mod-confirmed one only while the inquisitor queue is on. */
+const checkPools = (skillChecks: boolean | undefined): Pool[] =>
+  skillChecks
+    ? [REFERENCE_POOL.hiddenCheck, REFERENCE_POOL.skillCheck]
+    : [REFERENCE_POOL.hiddenCheck];
+
 function eligibleReferences(
   db: Executor,
   userId: number,
   questionKey: string,
   statuses: ServedStatus[],
-  exclude: number[] = []
+  exclude: number[] = [],
+  serveJudged = false,
+  pools: Pool[] = checkPools(false)
 ) {
-  return servableReferences(db, REFERENCE_POOL.hiddenCheck, statuses)
+  // A check is a vote on its reference's image, so (player, image) rides the ("playerId","imageId") index. It also keeps a
+  // probation check from the players whose votes made it.
+  const votedOnImage = (eb: ExpressionBuilder<Refs, 'r'>) =>
+    eb.exists(
+      eb
+        .selectFrom('KnightsVote as v')
+        .select(sql<number>`1`.as('one'))
+        .where('v.playerId', '=', userId)
+        .whereRef('v.imageId', '=', 'r.imageId')
+    );
+  return servableReferences(db, pools, statuses)
     .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
@@ -96,19 +110,41 @@ function eligibleReferences(
     .where(notHiddenCreator(userId))
     .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
-      eb.not(
-        eb.exists(
-          // A check is a vote on its reference's image, so (player, image) is the whole test and rides the
-          // ("playerId","imageId") index. It also keeps a probation check from the players whose votes made it.
-          eb
-            .selectFrom('KnightsVote as v')
-            .select(sql<number>`1`.as('one'))
-            .where('v.playerId', '=', userId)
-            .whereRef('v.imageId', '=', 'r.imageId')
-        )
-      )
+      eb.or([
+        eb.and([eb('r.pool', '!=', REFERENCE_POOL.skillCheck), eb.not(votedOnImage(eb))]),
+        eb.and([
+          eb('r.pool', '=', REFERENCE_POOL.skillCheck),
+          // Never the same check twice; and, with `skillCheckServeJudged` off, not on an image the player already saw,
+          // judged in the queue or answered as an Acolyte.
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('KnightsVote as same')
+                .select(sql<number>`1`.as('one'))
+                .where('same.playerId', '=', userId)
+                .where('same.itemId', '=', sql<number>`-"r"."id"`)
+            )
+          ),
+          serveJudged
+            ? eb.val(true)
+            : eb.and([
+                eb.not(votedOnImage(eb)),
+                eb.not(
+                  eb.exists(
+                    eb
+                      .selectFrom('KnightsApprenticeAnswer as aa')
+                      .select(sql<number>`1`.as('one'))
+                      .where('aa.playerId', '=', userId)
+                      .whereRef('aa.imageId', '=', 'r.imageId')
+                  )
+                ),
+              ]),
+        ]),
+      ])
     );
 }
+
+type Refs = DB & { r: DB['KnightsReferenceImage'] };
 
 /**
  * The hidden check for this feed slot, or null for a queue item. The pool is read on every call a Knight makes, so a page
@@ -144,7 +180,18 @@ async function pickHiddenCheckIn(
     exclude?: number[];
     /** Rolls for an item the player has not reached yet; unset, the roll is fixed by their last vote. */
     slot?: number;
+    /** `skillCheckServeJudged`: a mod-confirmed check may be on an image the player already saw. */
+    serveJudged?: boolean;
+    /** The inquisitor queue is on: mod-confirmed checks are drawn too. Off by default. */
+    skillChecks?: boolean;
   }
+): Promise<HiddenCheckOffer | null> {
+  return drawHiddenCheck(db, input);
+}
+
+async function drawHiddenCheck(
+  db: Executor,
+  input: Parameters<typeof pickHiddenCheck>[1]
 ): Promise<HiddenCheckOffer | null> {
   if (!isRank(input.rank) || !canVote(input.rank, 'Knight')) return null;
   const seed = `${input.secret}:hidden:${input.userId}:${
@@ -154,7 +201,7 @@ async function pickHiddenCheckIn(
   // Its own digest: the pool roll must not reuse bytes `digest` already spends.
   const poolRoll = unit(createHash('sha256').update(`${seed}:probation`).digest(), 0);
   const share = input.probationShare ?? 0;
-  const pools: ServedStatus[] =
+  const statuses: ServedStatus[] =
     share <= 0
       ? [REFERENCE_STATUS.active]
       : poolRoll < share
@@ -167,7 +214,7 @@ async function pickHiddenCheckIn(
       eb.fn.min<number | null>('id').as('low'),
       eb.fn.max<number | null>('id').as('top'),
     ])
-    .where('pool', '=', REFERENCE_POOL.hiddenCheck)
+    .where('pool', 'in', checkPools(input.skillChecks))
     .where('questionKey', '=', input.questionKey)
     .executeTakeFirstOrThrow();
   const first = low ?? 0;
@@ -183,8 +230,21 @@ async function pickHiddenCheckIn(
     'img.width',
     'img.height',
   ] as const;
-  const walk = (status: ServedStatus, answers: AnswerGroup, from: 'at-or-after' | 'before') =>
-    eligibleReferences(db, input.userId, input.questionKey, [status], input.exclude)
+  const walk = (
+    pools: Pool[],
+    status: ServedStatus,
+    answers: AnswerGroup,
+    from: 'at-or-after' | 'before'
+  ) =>
+    eligibleReferences(
+      db,
+      input.userId,
+      input.questionKey,
+      [status],
+      input.exclude,
+      input.serveJudged,
+      pools
+    )
       .where((eb) =>
         answers === null ? eb('r.answer', 'not in', BUCKET_ANSWERS) : eb('r.answer', '=', answers)
       )
@@ -194,14 +254,29 @@ async function pickHiddenCheckIn(
       .limit(1)
       .executeTakeFirst();
 
-  let row: Awaited<ReturnType<typeof walk>> = undefined;
-  for (const status of pools) {
-    for (const group of bucketOrder(digest)) {
-      row = (await walk(status, group, 'at-or-after')) ?? (await walk(status, group, 'before'));
-      if (row) break;
+  const find = async (pools: Pool[]) => {
+    for (const status of statuses) {
+      for (const group of bucketOrder(digest)) {
+        const row =
+          (await walk(pools, status, group, 'at-or-after')) ??
+          (await walk(pools, status, group, 'before'));
+        if (row) return row;
+      }
     }
-    if (row) break;
-  }
+    return undefined;
+  };
+  // Only the reads that apply the mod-confirmed pool's safety exclusions fail closed: unreadable, the draw falls back to
+  // the other pool alone (`failClosed` logs the error).
+  const UNREADABLE = 'unreadable' as const;
+  const found = input.skillChecks
+    ? await failClosed<Awaited<ReturnType<typeof find>> | typeof UNREADABLE>(
+        db,
+        'knight-serve',
+        () => find(checkPools(true)),
+        UNREADABLE
+      )
+    : await find(checkPools(false));
+  const row = found === UNREADABLE ? await find(checkPools(false)) : found;
 
   if (!row || unit(digest, 0) >= input.rate) return null;
   return {
@@ -253,6 +328,10 @@ export async function answerHiddenCheck(
     answer: string;
     blockReason?: string | null;
     isModerator?: boolean;
+    /** `skillCheckServeJudged`: a mod-confirmed check may be answered on an image the player judged in the queue. */
+    serveJudged?: boolean;
+    /** The inquisitor queue is on: a mod-confirmed check may be answered. Off by default. */
+    skillChecks?: boolean;
   },
   deps: Pick<QueueDeps, 'now' | 'voteLimits'> & {
     mirrorXp?: XpMirror;
@@ -266,17 +345,21 @@ export async function answerHiddenCheck(
     const until = await pacingGate(trx, input, now, deps);
     if (until) return { status: 'limited', until };
 
-    const ref = await readWithoutJit(trx, (trx) =>
-      servableReferences(trx, REFERENCE_POOL.hiddenCheck, [
-        REFERENCE_STATUS.active,
-        REFERENCE_STATUS.probation,
-      ])
-        .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
-        .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'q.options'])
-        .where('r.id', '=', input.referenceId)
-        .where(notHiddenCreator(input.userId))
-        .executeTakeFirst()
-    );
+    const ref = await readWithoutJit(trx, async (trx) => {
+      const findRef = (pools: Pool[]) =>
+        servableReferences(trx, pools, [REFERENCE_STATUS.active, REFERENCE_STATUS.probation])
+          .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
+          .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'r.pool', 'q.options'])
+          .where('r.id', '=', input.referenceId)
+          .where(notHiddenCreator(input.userId))
+          .executeTakeFirst();
+      // The mod-confirmed pool's safety reads fail closed: unreadable, only the other pool is open to an answer.
+      return input.skillChecks
+        ? await failClosed(trx, 'knight-answer', () => findRef(checkPools(true)), null).then(
+            async (found) => found ?? (await findRef(checkPools(false)))
+          )
+        : await findRef(checkPools(false));
+    });
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
     const probation = ref.status === REFERENCE_STATUS.probation;
     // Fail closed on any other status.
@@ -301,6 +384,7 @@ export async function answerHiddenCheck(
         stage: 'Knight',
         options: ref.options as QuestionOption[],
         labelled: true,
+        judgedImageAllowed: !!input.serveJudged && ref.pool === REFERENCE_POOL.skillCheck,
       }
     );
     if (vote.status === 'rejected') return { status: 'rejected', reason: vote.reason };
@@ -398,33 +482,35 @@ const NOTICES_SHOWN = 5;
  * career. Reading changes nothing, so a preload cannot lose it.
  */
 export async function readHiddenNotices(db: Executor, playerId: number): Promise<CheckNotice[]> {
-  const rows = await readWithoutJit(db, (trx) =>
-    trx
-      .selectFrom('KnightsVote as v')
-      .leftJoin('KnightsReferenceImage as r', (join) => join.on(sql<SqlBool>`r.id = -v."itemId"`))
-      .leftJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
-      .leftJoin('Image as img', 'img.id', 'v.imageId')
-      .leftJoin('Post as p', 'p.id', 'img.postId')
-      .select((eb) => [
-        'v.itemId',
-        'v.createdAt',
-        'v.consequence',
-        'v.answer',
-        'r.answer as correct',
-        'q.options',
-        'img.url as imageKey',
-        servableImage(eb).as('servable'),
-      ])
-      .where('v.playerId', '=', playerId)
-      .where('v.consequence', 'is not', null)
-      .where('v.noticedAt', 'is', null)
-      .where(
-        sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
-      )
-      .orderBy('v.createdAt', 'desc')
-      .limit(NOTICES_SHOWN)
-      .execute()
-  );
+  const rows = await readWithoutJit(db, async (trx) => {
+    const read = (skillChecks: 'checked' | 'hidden') =>
+      trx
+        .selectFrom('KnightsVote as v')
+        .leftJoin('KnightsReferenceImage as r', (join) => join.on(sql<SqlBool>`r.id = -v."itemId"`))
+        .leftJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
+        .leftJoin('Image as img', 'img.id', 'v.imageId')
+        .leftJoin('Post as p', 'p.id', 'img.postId')
+        .select((eb) => [
+          'v.itemId',
+          'v.createdAt',
+          'v.consequence',
+          'v.answer',
+          'r.answer as correct',
+          'q.options',
+          'img.url as imageKey',
+          answeredImageServable(eb as never, skillChecks).as('servable'),
+        ])
+        .where('v.playerId', '=', playerId)
+        .where('v.consequence', 'is not', null)
+        .where('v.noticedAt', 'is', null)
+        .where(
+          sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
+        )
+        .orderBy('v.createdAt', 'desc')
+        .limit(NOTICES_SHOWN)
+        .execute();
+    return (await failClosed(trx, 'notice', () => read('checked'), null)) ?? (await read('hidden'));
+  });
   return rows.map((row) => {
     const options = (row.options ?? []) as QuestionOption[];
     const labelOf = (value: string) => options.find((o) => o.value === value)?.label ?? value;

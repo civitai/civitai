@@ -69,7 +69,6 @@ const BASELINE: Counts = {
   'src/components/CreatorShop/Services/ServiceOfferingCard.tsx': 1,
   'src/components/CreatorShop/Services/deals/DealActionsPanel.tsx': 5,
   'src/components/Events/ScoredEvent/EventHatTile.tsx': 1,
-  'src/components/Events/ScoredEvent/HatTurfEventSection.tsx': 1,
   'src/components/Events/ScoredEvent/MyEventHats.tsx': 1,
   'src/components/Events/ScoredEvent/MyHatCard.tsx': 1,
   'src/components/Events/ScoredEvent/ScoredEventHero.tsx': 1,

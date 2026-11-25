@@ -8,7 +8,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import {
+  BUYER_DISCLOSURE_VERSION,
+  SERVICES_TERMS_VERSION,
+} from '~/shared/constants/creator-service-terms.constants';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as AccessLog from '~/server/services/creator-service-deal-file-access';
@@ -187,6 +190,8 @@ const LATER_MIGRATIONS = [
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
   '20271120230000_service_deal_review_report',
+  '20271125130000_service_deal_buyer_disclosure',
+  '20271128130000_service_request_form',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -273,7 +278,9 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please draw my cat',
-    disclosureVersion: SERVICES_TERMS_VERSION,
+    disclosureVersion: BUYER_DISCLOSURE_VERSION,
+    // The disclosure a buyer under this flag is shown.
+    disclosureReviewEnabled: !!overrides.reviewEnabled,
     buzzType: 'yellow',
     // A buyer on the mature-capable domain who browses at PG only, as most do.
     servableLevels: ALL_LEVELS,
@@ -434,6 +441,7 @@ describe('request', () => {
   it.each([
     ['an empty version', ''],
     ['a superseded version', 'services-terms-1999-01-01'],
+    ["the seller terms' version", SERVICES_TERMS_VERSION],
   ])(
     'refuses a request sent with %s of the buyer disclosure, before any charge',
     async (_, disclosureVersion) => {
@@ -442,6 +450,63 @@ describe('request', () => {
       expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
     }
   );
+
+  it.each([
+    ['without reviews, shown the review disclosure', { disclosureReviewEnabled: true }],
+    [
+      'with reviews, shown the disclosure without them',
+      { reviewEnabled: true, disclosureReviewEnabled: false },
+    ],
+  ])('refuses a request %s, before any charge', async (_, overrides) => {
+    await expect(request(overrides)).rejects.toThrow(/Review the request terms/);
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses a request from an old page that names no disclosure form, before any charge', async () => {
+    await expect(request({ disclosureReviewEnabled: undefined })).rejects.toThrow(
+      'Review the request terms before sending. Nothing was charged.'
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // Legal's text as written (decision: civitai/civitai#10253): each deal keeps the version and the exact lines its buyer was shown.
+  const held = `${PRICE.toLocaleString()} Buzz is held now. Refunded if the seller declines, doesn't accept within 48 hours, or you withdraw before they accept.`;
+  const shared = [
+    held,
+    'Delivery within 3 days of acceptance. 1 revision included.',
+    "Accept or request an included revision. You can't reject a delivery, but you can ask to cancel. If you do nothing, it completes 72 hours after the latest delivery.",
+    "Either side can ask to cancel before completion. You're refunded if the other side agrees or doesn't answer within 48 hours. If they decline, a Civitai moderator decides.",
+  ];
+  const notParty =
+    "Civitai isn't a party to this deal. Don't pay or share payment details outside Civitai.";
+  it.each([
+    [
+      'without reviews',
+      false,
+      'You have 48 hours after completion to dispute. Then the seller is paid. Moderator decisions on disputes and cancellations are final on Civitai.',
+    ],
+    [
+      'with reviews',
+      true,
+      'You have 48 hours after completion to dispute. Then the seller is paid. If you review the work as Happy, the seller is paid right away and you can no longer dispute. Moderator decisions on disputes and cancellations are final on Civitai.',
+    ],
+  ])('stores the disclosure the buyer agreed to, %s', async (_, reviewEnabled, disputeLine) => {
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged());
+    const { id } = await request({ reviewEnabled, disclosureReviewEnabled: reviewEnabled });
+    expect(
+      await q(
+        `SELECT "buyerDisclosureVersion", "buyerDisclosureLines" FROM "ServiceDeal" WHERE id = $1`,
+        [id]
+      )
+    ).toEqual([
+      {
+        buyerDisclosureVersion: BUYER_DISCLOSURE_VERSION,
+        buyerDisclosureLines: [...shared, disputeLine, notParty],
+      },
+    ]);
+  });
 
   it('refuses a request at a price other than the one the buyer was shown', async () => {
     await q(`UPDATE "ServiceOffering" SET price = 50000`);
@@ -708,6 +773,159 @@ describe('license terms', () => {
   it('records no agreement on an offering with no license', async () => {
     const { id } = await request();
     expect(await deal(id)).toMatchObject({ licensePreset: null, licenseAgreedAt: null });
+  });
+});
+
+describe('a request form', () => {
+  /** Base 500 over 3 days; a style that adds 300 and 2 days, and a required brief. */
+  const FORM = {
+    questions: [
+      {
+        type: 'pickOne',
+        id: 'style',
+        label: 'Style',
+        options: [
+          { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+          { id: 'color', label: 'Full color', price: 300, days: 2 },
+        ],
+      },
+      { type: 'text', id: 'brief', label: 'Describe it', required: true },
+    ],
+  };
+  const withForm = (version = 1) =>
+    q(`UPDATE "ServiceOffering" SET "requestForm" = $1::jsonb, "requestFormVersion" = $2`, [
+      JSON.stringify(FORM),
+      version,
+    ]);
+  const COLOR = { style: 'color', brief: 'a tabby, sleeping' };
+
+  it('charges the total its answers give, and keeps the answers and the breakdown', async () => {
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const { id } = await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(await deal(id)).toMatchObject({
+      price: 800,
+      deliveryDays: 5,
+      formVersion: 1,
+      formAnswers: [
+        { label: 'Style', answer: 'Full color' },
+        { label: 'Describe it', answer: 'a tabby, sleeping' },
+      ],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it.each([
+    ['a total other than its answers give', { expectedPrice: 500, expectedDeliveryDays: 5 }],
+    ['days other than its answers give', { expectedPrice: 800, expectedDeliveryDays: 3 }],
+    ['an older form', { expectedPrice: 800, expectedDeliveryDays: 5, formVersion: 0 }],
+    [
+      'the terms of a page that saw no form',
+      {
+        expectedPrice: 500,
+        expectedDeliveryDays: 3,
+        formVersion: undefined,
+        formAnswers: undefined,
+      },
+    ],
+  ])('refuses a request with %s as changed terms', async (_n, overrides) => {
+    await withForm();
+    await expect(request({ formVersion: 1, formAnswers: COLOR, ...overrides })).rejects.toEqual(
+      expect.objectContaining({ code: 'CONFLICT' })
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+  });
+
+  it('refuses answers left out of a required question, and charges nothing', async () => {
+    await withForm();
+    await expect(
+      request({ expectedPrice: 500, formVersion: 1, formAnswers: { style: 'sketch' } })
+    ).rejects.toEqual(expect.objectContaining({ code: 'BAD_REQUEST' }));
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses answers sent after the seller removed the form', async () => {
+    await expect(request({ formVersion: 1, formAnswers: COLOR })).rejects.toEqual(conflict);
+  });
+
+  it('shows the deal page the answers and the breakdown, and neither without a form', async () => {
+    const view = async (id: number) => {
+      const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+      (
+        dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+      ).serviceDeal.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...row, offering: OFFERING_ROW, events: [] });
+      return deals.getServiceDealView({ dealId: id, userId: BUYER, servicesEnabled: true });
+    };
+    const plain = await request();
+    expect(await view(plain.id)).toMatchObject({ formAnswers: null, priceBreakdown: null });
+    await q(`UPDATE "ServiceDeal" SET status = 'Cancelled'`);
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const { id } = await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(await view(id)).toMatchObject({
+      formAnswers: [
+        { label: 'Style', answer: 'Full color' },
+        { label: 'Describe it', answer: 'a tabby, sleeping' },
+      ],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it('refuses a request whose text answer is blocked, before any hold or deal', async () => {
+    await withForm();
+    const scan = vi.mocked(throwOnBlockedUserContent);
+    scan.mockImplementation(async (text) => {
+      if (Array.isArray(text) && text.includes('blocked words'))
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'blocked' });
+    });
+    try {
+      await expect(
+        request({
+          expectedPrice: 800,
+          expectedDeliveryDays: 5,
+          formVersion: 1,
+          formAnswers: { style: 'color', brief: 'blocked words' },
+        })
+      ).rejects.toMatchObject({ message: 'blocked' });
+      expect(scan).toHaveBeenCalledTimes(2);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    } finally {
+      scan.mockImplementation(async () => undefined);
+    }
+  });
+
+  it('checks the text answers as it checks the request text', async () => {
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(vi.mocked(throwOnBlockedUserContent)).toHaveBeenCalledWith(
+      ['a tabby, sleeping'],
+      expect.objectContaining({ surface: 'creator-service-request' })
+    );
   });
 });
 
@@ -4396,8 +4614,8 @@ describe('review publishing and counters', () => {
 });
 
 describe('dispute reviews', () => {
-  const disputed = async (buyerId = BUYER) => {
-    const { id } = await request({ buyerId });
+  const disputed = async (buyerId = BUYER, overrides: Parameters<typeof request>[0] = {}) => {
+    const { id } = await request({ buyerId, ...overrides });
     await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
     await deliver(id);
     await deals.acceptServiceDealDelivery({ dealId: id, userId: buyerId });
@@ -4446,6 +4664,48 @@ describe('dispute reviews', () => {
       ?.latestReview;
   const resolve = (id: number, resolution: 'Refund' | 'Release') =>
     deals.resolveServiceDealDispute({ dealId: id, moderatorId: STRANGER, resolution });
+
+  it("shows the reviewer the buyer's form answers and the price they gave", async () => {
+    await q(`UPDATE "ServiceOffering" SET "requestForm" = $1::jsonb, "requestFormVersion" = 1`, [
+      JSON.stringify({
+        questions: [
+          {
+            type: 'pickOne',
+            id: 'style',
+            label: 'Style',
+            options: [
+              { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+              { id: 'color', label: 'Full color', price: 300, days: 2 },
+            ],
+          },
+        ],
+      }),
+    ]);
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const id = await disputed(BUYER, {
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: { style: 'color' },
+    });
+    const { deal } = await reviews.getServiceDisputeEvidence({ dealId: id, viewerId: STRANGER });
+    expect(deal).toMatchObject({
+      price: 800,
+      formAnswers: [{ label: 'Style', answer: 'Full color' }],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it('shows no form answers for a deal requested without a form', async () => {
+    const { deal } = await reviews.getServiceDisputeEvidence({
+      dealId: await disputed(),
+      viewerId: STRANGER,
+    });
+    expect(deal).toMatchObject({ formAnswers: null, priceBreakdown: null });
+  });
 
   it('refuses a review of a deal that is not Disputed, and writes nothing', async () => {
     const { id } = await request();

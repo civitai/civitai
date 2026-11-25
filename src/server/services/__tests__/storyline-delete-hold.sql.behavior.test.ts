@@ -10,8 +10,8 @@ vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * Deleting a storyline under an account hold, through the real hold helpers, in an in-process
- * Postgres built from the shipped storyline migrations plus hold tables shaped like production's.
+ * The copy a storyline delete keeps for moderators, in an in-process Postgres built from the shipped
+ * storyline migrations.
  */
 
 const { deleteStoryline } = await import('~/server/services/storyline.service');
@@ -103,9 +103,6 @@ beforeAll(async () => {
       "storylineId" int NOT NULL REFERENCES "Storyline"(id) ON DELETE CASCADE,
       "imageId" int NOT NULL REFERENCES "Image"(id) ON DELETE CASCADE,
       PRIMARY KEY ("storylineId", "imageId"));
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-    CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     CREATE TABLE "CommentTopic" ("entityType" text NOT NULL,
       "entityId" integer NOT NULL REFERENCES "Storyline"("id") ON DELETE CASCADE,
       PRIMARY KEY ("entityId", "entityType"));
@@ -128,7 +125,6 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.pg.exec(`
     DELETE FROM "Appeal";
-    DELETE FROM "EvidenceHold";
     DELETE FROM "StorylineCoverUpload";
     DELETE FROM "Image";
     DELETE FROM "StorylineCreateClick";
@@ -162,7 +158,7 @@ beforeEach(async () => {
   trackModActivity.mockReset();
 });
 
-describe('deleteStoryline under a real account hold', () => {
+describe('deleteStoryline keeping a copy', () => {
   const REPLIER = 4;
   const READER = 5;
   // Two chapters (1 by the owner, 2 by CONTRIBUTOR) on published posts with images, a reader's
@@ -185,8 +181,6 @@ describe('deleteStoryline under a real account hold', () => {
         (1, 'storyline', 1, ${CONTRIBUTOR}, NULL), (2, 'storyline', 1, ${REPLIER}, 1);
     `);
   beforeEach(seedStoryline);
-  const hold = (userId: number) =>
-    db.pg.exec(`INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${userId}, NULL)`);
   const reportIt = (id = 70) =>
     db.pg.exec(`
       INSERT INTO "Report" (id, status) VALUES (${id}, 'Pending');
@@ -253,25 +247,7 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await heldCopy()).toEqual(noCopy);
   });
 
-  it("deletes a held owner's storyline with a full copy, posts and images untouched", async () => {
-    const before = {
-      posts: await rows(`SELECT * FROM "Post" ORDER BY id`),
-      images: await rows(`SELECT * FROM "Image" ORDER BY id`),
-    };
-    await hold(OWNER);
-    expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
-    expect(await storylineIds()).toEqual([2]);
-    expect(await heldCopy()).toEqual(fullCopy(['owner', 'chapter-author']));
-    expect(await comments()).toEqual([]);
-    expect(before.posts).toHaveLength(2);
-    expect(before.images).toHaveLength(2);
-    expect({
-      posts: await rows(`SELECT * FROM "Post" ORDER BY id`),
-      images: await rows(`SELECT * FROM "Image" ORDER BY id`),
-    }).toEqual(before);
-  });
-
-  it("records its pictures and drafts in the copy, and keeps one for a held draft's author", async () => {
+  it('records its pictures and drafts in the copy', async () => {
     await db.pg.exec(`
       INSERT INTO "Post" (id, "userId") VALUES (503, 9);
       INSERT INTO "Image" (id, "userId") VALUES (603, ${OWNER}), (604, ${OWNER});
@@ -279,7 +255,7 @@ describe('deleteStoryline under a real account hold', () => {
       INSERT INTO "StorylineCoverUpload" ("storylineId", "imageId") VALUES (1, 603), (1, 604);
       INSERT INTO "StorylinePendingChapter" ("postId", "storylineId", "userId") VALUES (503, 1, 9);
     `);
-    await hold(9);
+    await reportIt();
     await deleteStoryline({ id: 1, userId: OWNER });
     expect(
       await rows(`SELECT "pendingPostIds", "pendingAuthorIds", "coverImageId", "heroImageId",
@@ -292,7 +268,7 @@ describe('deleteStoryline under a real account hold', () => {
         heroImageId: 603,
         sparkImageId: 604,
         coverUploadImageIds: [603, 604],
-        holdReasons: ['pending-author'],
+        holdReasons: ['open-report'],
       },
     ]);
     // The draft and the pictures stay.
@@ -305,13 +281,6 @@ describe('deleteStoryline under a real account hold', () => {
     ]);
   });
 
-  it("copies everything when only a chapter's author is held", async () => {
-    await hold(CONTRIBUTOR);
-    await deleteStoryline({ id: 1, userId: OWNER });
-    expect((await heldCopy()).chapters).toHaveLength(2);
-    expect((await heldCopy()).storyline).toMatchObject([{ holdReasons: ['chapter-author'] }]);
-  });
-
   it("copies everything when a chapter is a moderator's tombstone", async () => {
     await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 11`);
     await deleteStoryline({ id: 1, userId: OWNER });
@@ -320,25 +289,15 @@ describe('deleteStoryline under a real account hold', () => {
 
   it('a moderator deletes it too, answering the open report, with a full copy', async () => {
     await reportIt();
-    await hold(OWNER);
     await deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true });
     expect(await storylineIds()).toEqual([2]);
     expect(await heldCopy()).toEqual(
-      fullCopy(['open-report', 'owner', 'chapter-author'], {
+      fullCopy(['open-report'], {
         deletedById: MODERATOR,
         reportIds: [70],
       })
     );
     expect(await rows(`SELECT id, status FROM "Report"`)).toEqual([{ id: 70, status: 'Actioned' }]);
-  });
-
-  // Comments are not kept for a hold: a held commenter neither keeps a copy nor their comments.
-  it("deletes a held commenter's comments with it, keeping no copy", async () => {
-    await hold(REPLIER);
-    await deleteStoryline({ id: 1, userId: OWNER });
-    expect(await storylineIds()).toEqual([2]);
-    expect(await comments()).toEqual([]);
-    expect(await heldCopy()).toEqual(noCopy);
   });
 
   it('records every commenter in a copy kept for another reason', async () => {
@@ -352,23 +311,9 @@ describe('deleteStoryline under a real account hold', () => {
     ]);
   });
 
-  it('copies everything when a hold lands after the checks, by the delete statement itself', async () => {
-    const raw = pgliteRaw(db.pg);
-    w.$executeRaw.mockImplementation((async (
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) => {
-      if (strings.join('?').includes('DELETE FROM "Storyline"')) await hold(OWNER);
-      return raw.executeRaw(strings, ...values);
-    }) as never);
-    await deleteStoryline({ id: 1, userId: OWNER });
-    expect(await storylineIds()).toEqual([2]);
-    expect(await heldCopy()).toEqual(fullCopy(['owner', 'chapter-author']));
-  });
-
   // Ruling: the copy is written by the DELETE statement itself, never a statement before it.
   it('writes every copy in the DELETE statement itself', async () => {
-    await hold(OWNER);
+    await reportIt();
     w.$executeRaw.mockClear();
     await deleteStoryline({ id: 1, userId: OWNER });
     const statements = w.$executeRaw.mock.calls.map(([first]) =>
@@ -395,7 +340,7 @@ describe('deleteStoryline under a real account hold', () => {
       await outcome(() => deleteStoryline({ id: 1, userId: OWNER })),
     ];
 
-    it('answers alike reported or not, held or not, the first time and the second', async () => {
+    it('answers alike reported or not, the first time and the second', async () => {
       const plain = await ownerSees();
       expect(await heldCopy()).toEqual(noCopy);
 
@@ -405,7 +350,7 @@ describe('deleteStoryline under a real account hold', () => {
           DELETE FROM "HeldStoryline"; DELETE FROM "HeldStorylineChapter";
           DELETE FROM "HeldStorylineChapterEdge"; DELETE FROM "HeldStorylineBranchChoice";
           DELETE FROM "HeldStorylineCreateClick"; DELETE FROM "StorylineReport";
-          DELETE FROM "Report"; DELETE FROM "EvidenceHold"; DELETE FROM "CommentV3";
+          DELETE FROM "Report"; DELETE FROM "CommentV3";
           DELETE FROM "CommentTopic"; DELETE FROM "Image"; DELETE FROM "Post";
           INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt")
             VALUES (1, ${OWNER}, 'A story with no story', 1, now());
@@ -417,15 +362,9 @@ describe('deleteStoryline under a real account hold', () => {
       const reported = await ownerSees();
       expect((await heldCopy()).chapters).toHaveLength(2);
 
-      await seeds();
-      await hold(OWNER);
-      const held = await ownerSees();
-      expect((await heldCopy()).chapters).toHaveLength(2);
-
       expect(plain[0]).toBe(JSON.stringify({ value: { id: 1 } }));
       expect(plain[1]).toContain('NOT_FOUND');
       expect(reported).toEqual(plain);
-      expect(held).toEqual(plain);
     });
 
     it('answers anyone else not found, reported or not, deleted or not', async () => {
@@ -433,13 +372,11 @@ describe('deleteStoryline under a real account hold', () => {
       const unreported = await stranger();
       await reportIt();
       const reported = await stranger();
-      await hold(OWNER);
-      const held = await stranger();
       await deleteStoryline({ id: 1, userId: OWNER });
       const deleted = await stranger();
       const missing = await outcome(() => deleteStoryline({ id: 999, userId: CONTRIBUTOR }));
       expect(unreported).toContain('NOT_FOUND');
-      for (const answer of [reported, held, deleted, missing]) expect(answer).toBe(unreported);
+      for (const answer of [reported, deleted, missing]) expect(answer).toBe(unreported);
     });
 
     it('fails a copy that cannot be written as any failed delete fails, and keeps everything', async () => {
@@ -449,14 +386,14 @@ describe('deleteStoryline under a real account hold', () => {
         ALTER TABLE "HeldStoryline" ADD CONSTRAINT "no_copies" CHECK (false) NOT VALID;
       `);
       try {
-        await hold(OWNER);
+        await reportIt();
         const copyFailed = await outcome(() => deleteStoryline({ id: 1, userId: OWNER }));
         expect(await storylineIds()).toEqual([1, 2]);
         expect(await rows(`SELECT "entityId" FROM "PlacementSpace"`)).toEqual([{ entityId: 1 }]);
         expect(await comments()).toEqual([{ id: 1 }, { id: 2 }]);
-        await db.pg.exec(`DELETE FROM "EvidenceHold"`);
+        await db.pg.exec(`DELETE FROM "StorylineReport"; DELETE FROM "Report";`);
 
-        // An unheld owner's delete failing for any other reason.
+        // An unreported storyline's delete failing for any other reason.
         await db.pg.exec(`
           CREATE FUNCTION refuse_delete() RETURNS trigger LANGUAGE plpgsql AS
             $$ BEGIN RAISE EXCEPTION 'no'; END $$;

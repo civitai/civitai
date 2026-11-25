@@ -97,7 +97,6 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
@@ -126,6 +125,10 @@ CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL 
   WHERE id = ANY(ids) AND "ingestion" IS DISTINCT FROM 'Blocked' AND "blockedFor" IS NULL
 $$;
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+CREATE TABLE "ImageRatingRequest" (
+  "imageId" INTEGER NOT NULL, "userId" INTEGER NOT NULL, "nsfwLevel" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Pending', PRIMARY KEY ("imageId", "userId")
+);
 CREATE FUNCTION queue_cdn_access_sync(entity_id INTEGER, entity_type TEXT, payload JSONB)
   RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
@@ -283,5 +286,39 @@ describe('a moderator block of an image a stale User.image names', () => {
 
     expect(await ownerRow()).toEqual({ image: null, meta: {} });
     expect(bustedKeys()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
+  });
+});
+
+describe('updateImageNsfwLevel rating requests', () => {
+  const requests = async () =>
+    (
+      await db.query<{ imageId: number; userId: number; status: string }>(
+        `SELECT "imageId", "userId", "status" FROM "ImageRatingRequest" ORDER BY "imageId", "userId"`
+      )
+    ).rows;
+
+  beforeEach(async () => {
+    await db.query(
+      `INSERT INTO "ImageRatingRequest" ("imageId", "userId", "nsfwLevel", "status") VALUES
+        ($1, 7, 4, 'Pending'), ($1, 8, 4, 'Unactioned'), ($2, 7, 4, 'Pending')`,
+      [AVATAR_ID, OTHER_IMAGE_ID]
+    );
+  });
+
+  // An Inquisitor ruling passes a status: left Pending, the requests return to the rating queue on unlock.
+  it("settles only the image's Pending requests with the status given", async () => {
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 4, status: 'Actioned', userId: 1 });
+
+    expect(await requests()).toEqual([
+      { imageId: AVATAR_ID, userId: 7, status: 'Actioned' },
+      { imageId: AVATAR_ID, userId: 8, status: 'Unactioned' },
+      { imageId: OTHER_IMAGE_ID, userId: 7, status: 'Pending' },
+    ]);
+  });
+
+  it('leaves every request alone without a status', async () => {
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 4, userId: 1 });
+
+    expect((await requests()).map((r) => r.status)).toEqual(['Pending', 'Unactioned', 'Pending']);
   });
 });

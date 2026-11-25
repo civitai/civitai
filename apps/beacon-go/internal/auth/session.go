@@ -20,6 +20,8 @@ type SessionUser struct {
 	Username    string
 	IsModerator bool
 	Banned      bool
+	// Memorialized is `memorialized === true`: the account's holder has died (refusesMemorializedSession).
+	Memorialized bool
 	// Tier is `session.user.tier` when it is a string; TierSet is false when the cached user has no
 	// tier or a null one (the page-view row then carries the literal 'undefined').
 	Tier    string
@@ -124,6 +126,10 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
 		return nil, nil
 	}
+	// refusesMemorializedSession: a moderator's impersonation of a memorialized account still resolves.
+	if u.Memorialized && claims.ImpersonatedBy == nil {
+		return nil, nil
+	}
 	if r.OnSlot != nil {
 		r.OnSlot(CookieSlot(tokenCookie))
 	}
@@ -168,6 +174,7 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 	if b, ok := m["bannedAt"]; ok && b != nil {
 		u.Banned = true
 	}
+	u.Memorialized, _ = m["memorialized"].(bool)
 	switch t := m["tier"].(type) {
 	case nil:
 	case string:

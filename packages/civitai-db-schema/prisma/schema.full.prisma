@@ -1178,9 +1178,9 @@ model Model {
   @@index([updatedAt, id])
 }
 
-/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
-/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
-/// outlive the model and user.
+/// Every owner a model has had, including its first. Account restore reads it to find the models
+/// a deleted account handed to the placeholder owner. Append-only (a trigger refuses UPDATE and
+/// DELETE); no foreign keys, so rows outlive the model and user.
 model ModelOwnership {
   id        Int      @id @default(autoincrement())
   modelId   Int
@@ -1949,30 +1949,6 @@ model ComicProjectReport {
 
   @@id([reportId, comicProjectId])
   @@index([comicProjectId], type: Hash)
-}
-
-/// A copy of a held author's ResourceReview, written in the same statement as a delete that would
-/// cascade it. Purged once the author's hold ends.
-model HeldResourceReview {
-  /// The original ResourceReview id.
-  id             Int       @id
-  modelId        Int
-  modelVersionId Int
-  userId         Int
-  rating         Int
-  recommended    Boolean
-  details        String?
-  exclude        Boolean
-  nsfw           Boolean
-  tosViolation   Boolean
-  metadata       Json?
-  createdAt      DateTime
-  updatedAt      DateTime
-  heldAt         DateTime  @default(now())
-  /// The holds on the author when it was copied.
-  holdReasons    String[]
-
-  @@index([userId])
 }
 
 model ResourceReview {
@@ -3002,6 +2978,9 @@ model AppAccessRequest {
   reviewedAt   DateTime?
   reviewedById Int?
   reviewedBy   User?     @relation("AppAccessRequestReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  /// moderator | system (CHECK `AppAccessRequest_reviewSource_check`). Who decided the row, kept
+  /// apart from `reviewedById`, which a deleted moderator account sets NULL. NULL while pending.
+  reviewSource String?
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
@@ -7457,68 +7436,6 @@ model PersonalDataExport {
   @@index([status])
 }
 
-/// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
-/// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
-/// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
-/// later), or when a person releases it; clearing an image's review flag never ends it.
-model EvidenceHold {
-  id              Int       @id @default(autoincrement())
-  userId          Int
-  csamReportId    Int?
-  /// subject | secondary | manual
-  role            String
-  reportSentAt    DateTime?
-  /// NULL holds until released.
-  releaseAt       DateTime?
-  extendedUntil   DateTime?
-  /// Who asked for the extension, and their reference.
-  extensionRequestedBy String?
-  extensionReference   String?
-  reason          String
-  createdAt       DateTime  @default(now())
-  createdById     Int?
-  releasedAt      DateTime?
-  releasedById    Int?
-  releaseReason   String?
-
-  @@index([userId])
-}
-
-/// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
-/// is the post it was in, and nothing else records it. `prior*` are the image's ingestion, block
-/// reason and nsfwLevel before the trigger blocked it. Purged once no hold covers the owner.
-model EvidenceHoldImage {
-  imageId         Int      @id
-  userId          Int
-  postId          Int?
-  keptAt          DateTime @default(now())
-  priorIngestion  String?
-  priorBlockedFor String?
-  priorNsfwLevel  Int?
-}
-
-/// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
-/// Purged with the owner's `EvidenceHoldImage` rows once no hold covers them.
-model EvidenceHoldPost {
-  postId         Int       @id
-  userId         Int
-  title          String?
-  detail         String?
-  createdAt      DateTime?
-  publishedAt    DateTime?
-  modelVersionId Int?
-  collectionId   Int?
-  metadata       Json?
-  keptAt         DateTime  @default(now())
-}
-
-/// @view
-/// The owners with at least one active `EvidenceHold`.
-model EvidenceHeldUser {
-  userId    Int       @id
-  heldUntil DateTime?
-}
-
 model Link {
   id         Int      @id @default(autoincrement())
   url        String
@@ -8965,9 +8882,9 @@ model KnightsReferenceImage {
   id            Int      @id @default(autoincrement())
   imageId       Int      @unique
   questionKey   String   @default("knights.image.nsfwLevel")
-  pool          String // trials | hiddenCheck
+  pool          String // trials | hiddenCheck | skillCheck
   answer        String
-  source        String // core | harvested | agreement
+  source        String // core | harvested | agreement | inquisitor
   explanation   String? // required for core
   status        String   @default("active") // active | retired
   modActivityId Int? // the moderator ruling a harvested item came from
@@ -8979,6 +8896,37 @@ model KnightsReferenceImage {
 
   @@index([pool, status, source])
   @@index([modActivityId])
+}
+
+/// A settled rating item moderators review in game. Two agreeing votes confirm it as a skill check; a split or an excluded review ends there. The queueItemId foreign key (cascade) lives in the migration only, like the other Knights tables.
+model KnightsInquisitorReview {
+  id             Int       @id @default(autoincrement())
+  queueItemId    Int       @unique
+  imageId        Int
+  questionKey    String
+  consensusValue String // the players' settled answer (the item's resolvedValue)
+  status         String    @default("open") // open | confirmed | split | excluded | expired
+  confirmedValue String? // the level both moderators gave, on a confirmed review
+  claimedBy      Int? // the moderator whose closing vote is writing the image level
+  claimExpiresAt DateTime? // that claim's lease
+  createdAt      DateTime  @default(now())
+  closedAt       DateTime?
+  checkedAt      DateTime? // when the tick last checked its image against the safety exclusions
+
+  @@index([status, createdAt])
+  @@index([status, checkedAt])
+  @@index([imageId])
+}
+
+/// One moderator's vote on an inquisitor review. The reviewId foreign key (cascade) lives in the migration only.
+model KnightsInquisitorVote {
+  reviewId    Int
+  moderatorId Int
+  answer      String
+  createdAt   DateTime @default(now())
+
+  @@id([reviewId, moderatorId])
+  @@index([moderatorId, createdAt])
 }
 
 /// An image with a known yes/no answer to one yes/no question (kind `bool`), curated by moderators for grading Acolytes. Never touches Knight+ consensus. The imageId foreign key (cascade) lives in the migration only, like the other Knights tables.
@@ -10531,6 +10479,7 @@ model ComicPanel {
   @@index([projectId, chapterPosition, position])
   @@index([imageId])
   @@index([status])
+  @@index([workflowId])
 }
 
 model ComicProjectEngagement {
@@ -11856,6 +11805,11 @@ model ServiceOffering {
   sellerAffirmation Json?
   /// The seller lets buyers attach delivered work to their review. Off until the seller opts in.
   allowReviewWork   Boolean               @default(false)
+  /// Questions whose answers add to the price and days; null for a single-price service.
+  requestForm        Json?
+  requestFormVersion Int                   @default(0)
+  /// The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
+  fromPrice          Int?
   /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
   /// only in the transaction that publishes or hides a review; the deals job compares them to rows.
   happyCount        Int                   @default(0)
@@ -11911,6 +11865,10 @@ model ServiceDeal {
   licenseAllowResale        Boolean                 @default(false)
   /// When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
   licenseAgreedAt           DateTime?
+  /// The buyer disclosure version (`BUYER_DISCLOSURE_VERSION`) and its lines as the buyer was shown
+  /// them before the hold. Null on a deal made before they were recorded.
+  buyerDisclosureVersion    String?
+  buyerDisclosureLines      String[]
   /// The offering's maxNsfwLevel when requested; never re-read from the offering.
   maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)
@@ -11923,6 +11881,9 @@ model ServiceDeal {
   settledAt                 DateTime?
   chatId                    Int?
   requestText               String
+  formVersion               Int?
+  formAnswers               Json?
+  priceBreakdown            Json?
   requestedAt               DateTime                @default(now())
   acceptedAt                DateTime?
   dueAt                     DateTime?

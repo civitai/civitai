@@ -227,18 +227,4 @@ describe('createOwnerImageSearch', () => {
     const { hits } = await run(searchOwner, '  ');
     expect(hits[0].user).toBeUndefined();
   });
-
-  it('still answers a typed query from the semantic search, user as it returns it', async () => {
-    const searchImages = vi.fn(async () => ({
-      hits: [{ id: 9, user: { id: 3, username: 'other' } }],
-    }));
-    const searchOwner = createOwnerImageSearch({
-      searchImages: searchImages as never,
-      getMyImages: getMyImages as never,
-      getUser: () => caller,
-    });
-    const { hits } = await run(searchOwner, 'woodblock');
-    expect(searchImages).toHaveBeenCalledTimes(1);
-    expect(hits[0].user?.username).toBe('other');
-  });
 });

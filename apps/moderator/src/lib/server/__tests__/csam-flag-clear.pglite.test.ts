@@ -33,8 +33,7 @@ vi.mock('../deferred-block-effects', async (importOriginal) => ({
   fireDeferredBlockEffects,
 }));
 
-const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld, HOLD_MARKER_TABLE, HOLD_MARKER_VIEW } =
-  await import('../csam-flag-clear');
+const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld } = await import('../csam-flag-clear');
 
 const SCHEMA = `
 ${TEXT_SCAN_HOLD_TABLE_SQL}
@@ -83,18 +82,11 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
     meta: ban('Chargeback', 'Lost payment dispute', 'A payment on this account was reversed.'),
   },
   chargebackBanNoNotes: { id: 128, bannedAt: true, meta: ban('Chargeback') },
-  held: { id: 130 },
-  heldReleased: { id: 131 },
-  heldExpired: { id: 132 },
-  releasedWithReport: { id: 133 },
-  heldExtended: { id: 134 },
   mismatch: { id: 140 },
   reportedImage: { id: 150 },
   otherImageReported: { id: 151 },
   notedByPattern: { id: 160, bannedAt: true, meta: ban('Other', 'zzfixturenote') },
   otherBanUnset: { id: 161, bannedAt: true, meta: ban('Other', 'spam') },
-  driftProbe: { id: 170 },
-  lateMarker: { id: 171 },
 };
 
 let db: PGlite;
@@ -243,87 +235,8 @@ describe('a held user', () => {
   // The pre-check and the UPDATE each carry the hold; this pins the UPDATE's on its own.
   it.each(HELD)('is skipped by the update itself (%s)', async (key) => {
     const kysely = dbHandle.current as Kysely<never>;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id, 'none')).toEqual([]);
+    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id)).toEqual([]);
     expect(await flagged(USERS[key].id)).toHaveLength(3);
-  });
-});
-
-describe('a hold marker', () => {
-  beforeAll(async () => {
-    await db.exec(`
-      CREATE TABLE "${HOLD_MARKER_TABLE}" (
-        "id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "releasedAt" TIMESTAMP(3),
-        "releaseAt" TIMESTAMP(3), "extendedUntil" TIMESTAMP(3)
-      );
-      -- The view's WHERE as the migration that adds it writes it: released and expired holds drop out.
-      CREATE VIEW "${HOLD_MARKER_VIEW}" AS
-        SELECT "userId" FROM "${HOLD_MARKER_TABLE}"
-        WHERE "releasedAt" IS NULL
-          AND ("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())
-        GROUP BY "userId";
-      INSERT INTO "${HOLD_MARKER_TABLE}" ("userId", "releasedAt", "releaseAt", "extendedUntil") VALUES
-        (130, NULL, NULL, NULL),
-        (131, '2026-01-01', NULL, NULL),
-        (132, NULL, now() - interval '1 day', NULL),
-        (133, '2026-01-01', NULL, NULL),
-        (134, NULL, now() - interval '1 day', now() + interval '1 day');
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", "details") VALUES (133, NULL, '{}');
-    `);
-  });
-
-  afterAll(async () => {
-    await db.exec(`DROP VIEW IF EXISTS "${HOLD_MARKER_VIEW}"; DROP TABLE "${HOLD_MARKER_TABLE}"`);
-  });
-
-  it('refuses a user the marker view holds', async () => {
-    const id = USERS.held.id;
-
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(id)).toHaveLength(3);
-  });
-
-  it('is skipped by the update itself', async () => {
-    const kysely = dbHandle.current as Kysely<never>;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS.held.id, 'view')).toEqual([]);
-  });
-
-  // A released marker is how Legal lets a user go; the view is the one definition of held.
-  it('clears a user whose marker was released', async () => {
-    expect(await clear(USERS.heldReleased.id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-
-  it('clears a user whose marker expired unreleased', async () => {
-    expect(await clear(USERS.heldExpired.id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-
-  it('refuses a user whose expired marker was extended', async () => {
-    expect(await clear(USERS.heldExtended.id)).toEqual({ ok: false, reason: 'held' });
-  });
-
-  // A release lets the marker go, never a report.
-  it('refuses a user whose marker was released but who is named on a report', async () => {
-    expect(await clear(USERS.releasedWithReport.id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(USERS.releasedWithReport.id)).toHaveLength(3);
-  });
-
-  it('still clears a user with no hold', async () => {
-    expect(await clear(USERS.otherClean.id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-
-  // Built when neither object existed, the update must still see one that appeared since.
-  it('is skipped by an update built before the marker objects appeared', async () => {
-    const kysely = dbHandle.current as Kysely<never>;
-    const id = USERS.lateMarker.id;
-    expect(await clearRemovedFlagsUnlessHeld(kysely as never, id, 'none')).toEqual([]);
-    expect(await flagged(id)).toHaveLength(3);
-  });
-
-  it('refuses everyone while the table exists without its view', async () => {
-    await db.exec(`DROP VIEW "${HOLD_MARKER_VIEW}"`);
-    const id = USERS.driftProbe.id;
-
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(id)).toHaveLength(3);
   });
 });
 

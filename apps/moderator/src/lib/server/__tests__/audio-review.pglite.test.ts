@@ -53,7 +53,7 @@ const SONG = 601;
 const QUIET_SONG = 602;
 const RULED_SONG = 603;
 const PICTURE = 604;
-// Shares its key with an image still scanning, so the access rule withholds it without the grant.
+// Shares its key with an image blocked as CSAM, so the access rule withholds it without the grant.
 const WITHHELD = 605;
 // Blocked by an automated Block rule: its dismissal would restore it.
 const RULE_SONG = 607;
@@ -88,11 +88,11 @@ beforeEach(async () => {
       (${RULED_SONG}, 'ruled-key', 'audio', 'Scanned', NULL, ${OWNER}, '{"title": "Ruled"}'),
       (${PICTURE}, 'picture-key', 'image', 'Scanned', NULL, ${OWNER}, NULL),
       (${WITHHELD}, 'shared-key', 'audio', 'Blocked', 'moderated', ${OWNER}, '{"title": "Held"}'),
-      (606, 'shared-key', 'image', 'Pending', NULL, 1, NULL),
+      (606, 'shared-key', 'image', 'Blocked', 'CSAM', 1, NULL),
       (${RULE_SONG}, 'rule-key', 'audio', 'Blocked', 'moderated', ${OWNER}, '{"title": "Rule", "ruleId": 1}'),
       (620, 'cover-key', 'image', 'Scanned', NULL, ${OWNER}, NULL),
       (622, 'shared-cover', 'image', 'Blocked', 'moderated', ${OWNER}, NULL),
-      (623, 'shared-cover', 'image', 'Pending', NULL, 1, NULL);
+      (623, 'shared-cover', 'image', 'Blocked', 'CSAM', 1, NULL);
     INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview", "nsfwLevel") VALUES
       (621, 'quiet-cover', 'image', 'Scanned', ${OWNER}, 'minor', 1);
     UPDATE "Image" SET "nsfwLevel" = 2 WHERE id = 620;
@@ -394,11 +394,12 @@ describe('the open song details', () => {
   });
 
   it('sends a cover the player would show without its file to a moderator it is withheld from', async () => {
-    // A scanned own cover whose key a still-scanning image shares: the access rule withholds it.
+    // A scanned own cover whose key an image in the CSAM queue shares: the access rule withholds it.
     await db.exec(`
       INSERT INTO "Image" (id, url, type, ingestion, "userId", "nsfwLevel") VALUES
         (630, 'shared-scanned-cover', 'image', 'Scanned', ${OWNER}, 1),
         (631, 'shared-scanned-cover', 'image', 'Pending', 1, 0);
+      UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 631;
       UPDATE "Track" SET "coverImageId" = 630 WHERE "imageId" = ${QUIET_SONG};
       UPDATE "Image" SET "needsReview" = NULL WHERE id = 621;
     `);
@@ -448,11 +449,12 @@ describe('Remove cover on a reported song (S2)', () => {
       [RULE_SONG, null],
       [WITHHELD, null],
     ]);
-    // A cover a still-scanning image shares a key with is withheld without the grant.
+    // A cover an image in the CSAM queue shares a key with is withheld without the grant.
     await db.exec(`
       INSERT INTO "Image" (id, url, type, ingestion, "userId", "nsfwLevel") VALUES
         (630, 'shared-scanned-cover', 'image', 'Scanned', ${OWNER}, 1),
         (631, 'shared-scanned-cover', 'image', 'Pending', 1, 0);
+      UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 631;
       UPDATE "Track" SET "coverImageId" = 630 WHERE "imageId" = ${QUIET_SONG};
     `);
     await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 621`);
@@ -535,7 +537,7 @@ describe('Remove cover on a reported song (S2)', () => {
 
   it('refuses a cover withheld from the moderator as withheld, not as missing', async () => {
     await db.exec(`
-      INSERT INTO "Image" (id, url, type, ingestion, "userId") VALUES (632, 'cover-key', 'image', 'Pending', 1);
+      INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview") VALUES (632, 'cover-key', 'image', 'Pending', 1, 'csam');
     `);
     expect(
       await pageAction(
@@ -648,7 +650,7 @@ describe('the Appeals tab (S2)', () => {
   it('leaves out a list thumbnail withheld from the moderator', async () => {
     await db.exec(`
       UPDATE "Image" SET url = 'shared-thumb' WHERE id = ${ITS_COVER};
-      INSERT INTO "Image" (id, url, type, ingestion, "userId") VALUES (646, 'shared-thumb', 'image', 'Pending', 1);
+      INSERT INTO "Image" (id, url, type, ingestion, "userId", "needsReview") VALUES (646, 'shared-thumb', 'image', 'Pending', 1, 'csam');
     `);
     const thumb = async (user: typeof WITH_GRANT) =>
       (await appeals(user)).items.find((r) => r.id === APPEALED_SONG)?.coverUrl;

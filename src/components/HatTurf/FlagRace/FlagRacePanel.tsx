@@ -13,6 +13,7 @@ import {
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { ArtPlayButton } from '~/components/Events/ScoredEvent/ArtPlayButton';
 import { FALLBACK_COLOR } from '~/components/HatTurf/hat-turf.utils';
 import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
 import { useOpenFlagCrucible } from '~/components/HatTurf/FlagRace/FlagEnterButton';
@@ -49,11 +50,17 @@ export function FlagRacePanel({
   event,
   summary,
   onCollapse,
+  video,
+  duration,
 }: {
   event: string;
   summary: FlagSummary;
   /** Renders a collapse X; omit to hide it. */
   onCollapse?: () => void;
+  /** The Flag Race film's URL or CDN id; absent shows no play button. */
+  video?: string;
+  /** The film's length in seconds. */
+  duration?: number;
 }) {
   const teamColor = useTeamColor();
   const [dismissed, setDismissed] = useHowtoDismissed();
@@ -64,6 +71,15 @@ export function FlagRacePanel({
   return (
     <div className={classes.panel} data-testid="flag-race-panel">
       <img className={classes.art} src={ART} alt="" />
+      {video && (
+        <ArtPlayButton
+          video={video}
+          title="Flag Race"
+          duration={duration}
+          testId="flag-race"
+          className={classes.play}
+        />
+      )}
       {onCollapse && (
         <ActionIcon
           variant="filled"

@@ -182,9 +182,10 @@ describe('checkAppStepResources', () => {
 
     it.each([
       ['a Private', 20],
+      ['a Draft', 21],
       ['a Scheduled', 25],
-    ])('allows %s version to its owner', async (_, id) => {
-      await expect(check({ model: civitai(id) }, OWNER)).resolves.toEqual({ capOutput: false });
+    ])('allows %s version to its owner, capped', async (_, id) => {
+      await expect(check({ model: civitai(id) }, OWNER)).resolves.toEqual({ capOutput: true });
     });
 
     // Deliberate (see checkAppStepResources): do not add a moderator exemption back.

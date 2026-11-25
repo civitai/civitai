@@ -8,34 +8,37 @@
 //
 // PATHS. Collection names match `^[a-z][a-z0-9_]{0,31}$` and keys `[A-Za-z0-9._:-]{1,128}`,
 // so a segment starting with `_` can never be a collection name. Every non-collection
-// operation therefore sits at the COLLECTION position behind a leading `_`, and the fixed
-// words `counters` / `marks` only ever appear as the third segment, after a key — a position
-// where no collection or key is parsed (`STORAGE_RESERVED_SEGMENTS`, positions 0-based):
+// operation therefore sits at the COLLECTION position behind a leading `_`
+// (`STORAGE_RESERVED_SEGMENTS`, positions 0-based):
 //   []                               GET    info
 //   [c]                              GET    list            POST create
 //   ['_get', c]                      POST   get many  { keys }
 //   [c, key]                         GET    get     PUT put     DELETE delete
-//                                    PATCH  one update operator: $inc, $mark or $unmark
 //   [c, '@me']                       GET    getMine PUT putMine DELETE deleteMine  (keyedBy viewer)
 //   [c, '@me', parent]               the same, for keyedBy parent+viewer (`viewerKeyedRoute`)
-//   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
-//   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
-//   ['_publish', to]                 POST   publish   { from, keys, prune? }
-//   ['_unpublish', to]               POST   unpublish { keys }
-// `_publish` / `_unpublish` exist only while the per-app Flipt flag `app-blocks-storage-publish`
-// is on; off, they answer exactly as an unknown route (see PUBLISH below).
+//   [c, key, 'marks', 'report']      PUT    reportMark DELETE unreportMark  (compatibility alias)
 // `@me` sits at the KEY position and is outside the key grammar (`@`), so it is never a key.
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
 //
-// TALLIES AS UPDATE OPERATORS. A counter or a mark is an update operator on the document:
-// `PATCH /:c/:key` with exactly one of `{"$inc":{"<counter>":<by>}}`, `{"$mark":"<name>"}` or
-// `{"$unmark":"<name>"}` (`parseTallyPatch`). The PATCH is TRANSLATED into the per-tally route
-// the deprecated paths match and runs through the very same operation below, so every gate,
-// budget, moderation scan, import rule and reply is one code path for both. A tally never
-// touches a document's `data` or `version`. A PATCH carrying plain fields is refused: a
-// merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
-// with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
+// REMOVED (docs/app-storage-generic-core.md, rollout step 5): marks, counters, their tallies and
+// server-side publish. Their routes are not routes any more and answer exactly as any unknown
+// one: `PATCH /:c/:key` (the tally operators) a `405` naming the methods the path has,
+// `/:c/:key/counters/:name` and `/:c/:key/marks/:name` a `404 not_found`, `_publish` /
+// `_unpublish` a `404 not_found`, with ONE exception below. A list naming `markedBy` or `mark` is
+// refused as any unknown parameter, and `sort=counter:` / `sort=mark:` as any undeclared sort field. A document is
+// still presented with `counters: {}`, `marks: {}` and `viewer` (`presentDocs`), because
+// published SDK releases refuse a document without them. Reports go through the report API
+// (`doc-store-report-api.ts`); votes and per-viewer entries are viewer-keyed documents (`@me`).
+//
+// THE REPORT MARK ALIAS. Apps bundled with an SDK older than 0.30 report with
+// `collection.mark(key, 'report')`, i.e. `PUT /:c/:key/marks/report`, and the `report` mark worked
+// on every shared collection without being declared. So that path, and ONLY that mark name, stays:
+// a `PUT` files a report through `fileReport`, exactly the code the report API runs (same gates,
+// same budget, same `doc_mark` row and dedupe, same moderator queue), and answers `{marked: true}`,
+// the shape those SDKs read; a `DELETE` answers what it always did, `400 invalid_request` "a report
+// cannot be withdrawn", before any budget or trust lookup. Every other mark name is still no route.
+// It is public-route only: the internal route never served it.
 //
 // IMPORTS. Every collection route takes an optional `?from=<source blockId>`. A `from` naming the
 // token's OWN app (its blockId) is an own call, exactly as if `from` were omitted: same access,
@@ -62,11 +65,9 @@ import {
   recordAppStorageRequest,
   recordDocStoreError,
   recordDocStoreUnchangedWrite,
-  recordStorageTallyOp,
   type AppBlockRefusalBucket,
   type AppStorageVia,
   type DocStoreEndpoint,
-  type StorageTallyOp,
 } from '~/server/metrics/app-block-runtime.metrics';
 import {
   blockSubjectUserId,
@@ -78,12 +79,8 @@ import {
 } from '~/server/services/blocks/block-write-trust.service';
 import {
   assertCollection,
-  assertNotHooked,
-  assertPublishKeys,
-  assertPublishPair,
   assertShareWritable,
   PUBLISHED_NS,
-  refuseReportWithdrawal,
   refuseViewerKeyed,
   type DocStore,
 } from '~/server/services/apps/doc-store';
@@ -119,7 +116,6 @@ import {
 } from '~/server/services/apps/doc-store-viewer-keyed';
 import {
   DOC_STORE_BOUNDS,
-  DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
@@ -151,11 +147,9 @@ import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
   checkDocStoreRateLimit,
   DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
-  DOC_STORE_PUBLISH_BUDGET,
   DOC_STORE_READ_RATE_LIMIT_MAX,
   DOC_STORE_REPORT_RATE_LIMIT_MAX,
   DOC_STORE_SHARED_WRITE_BUDGET,
-  DOC_STORE_TALLY_RATE_LIMIT_MAX,
   reserveSharedWrite,
   type DocStoreRateBucket,
 } from '~/server/utils/shared-storage-rate-limit';
@@ -172,16 +166,10 @@ import {
 
 /** Every literal path segment, and the one position each may occupy. */
 const GET_MANY_SEGMENT = '_get';
-const PUBLISH_SEGMENT = '_publish';
-const UNPUBLISH_SEGMENT = '_unpublish';
-const COUNTERS_SEGMENT = 'counters';
+/** The removed per-mark path's segment, kept for the report mark alias only. */
 const MARKS_SEGMENT = 'marks';
 export const STORAGE_RESERVED_SEGMENTS = [
   { segment: GET_MANY_SEGMENT, position: 0 },
-  { segment: PUBLISH_SEGMENT, position: 0 },
-  { segment: UNPUBLISH_SEGMENT, position: 0 },
-  { segment: COUNTERS_SEGMENT, position: 2 },
-  { segment: MARKS_SEGMENT, position: 2 },
   { segment: VIEWER_KEYED_SEGMENT, position: 1 },
 ] as const;
 
@@ -189,20 +177,16 @@ export type StorageRoute =
   | { op: 'info' }
   | { op: 'list' | 'create'; collection: string }
   | { op: 'getMany'; collection: string }
-  // Server-side publish and unpublish into the shared collection `collection` (PUBLISH below).
-  | { op: 'publish' | 'unpublish'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
   // The viewer's own document in a viewer-keyed collection; run as get / put / delete at the
   // derived key (`viewerKeyedRoute`). `parent` is the raw path segment, checked there.
   | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null }
-  | { op: 'increment'; collection: string; key: string; name: string }
-  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
-  // An update operator on one document; translated by `parseTallyPatch` before it runs.
-  | { op: 'patch'; collection: string; key: string };
+  // The report mark alias (`PUT`/`DELETE /:c/:key/marks/report`, see the header): a report filed
+  // as the report API files it, and its refused withdrawal.
+  | { op: 'reportMark' | 'unreportMark'; collection: string; key: string };
 
-/** A route `run` executes: every route but `patch`, which is translated into one of these first. */
-type OperationRoute = Exclude<StorageRoute, { op: 'patch' }>;
-type TallyRoute = Extract<StorageRoute, { op: 'increment' | 'mark' | 'unmark' }>;
+/** A route `run` executes. */
+type OperationRoute = StorageRoute;
 
 type Match = { route: StorageRoute } | { methods: string[] } | null;
 
@@ -228,31 +212,23 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       return pick({ GET: { op: 'list', collection: a }, POST: { op: 'create', collection: a } });
     case 2:
       if (a === GET_MANY_SEGMENT) return pick({ POST: { op: 'getMany', collection: b } });
-      if (a === PUBLISH_SEGMENT) return pick({ POST: { op: 'publish', collection: b } });
-      if (a === UNPUBLISH_SEGMENT) return pick({ POST: { op: 'unpublish', collection: b } });
       if (a.startsWith('_')) return null;
       if (b === VIEWER_KEYED_SEGMENT) return pickMine(a, null);
       return pick({
         GET: { op: 'get', collection: a, key: b },
         PUT: { op: 'put', collection: a, key: b },
         DELETE: { op: 'delete', collection: a, key: b },
-        PATCH: { op: 'patch', collection: a, key: b },
       });
     case 3:
       if (a.startsWith('_') || b !== VIEWER_KEYED_SEGMENT) return null;
       return pickMine(a, c);
     case 4:
-      if (a.startsWith('_')) return null;
-      if (c === COUNTERS_SEGMENT) {
-        return pick({ POST: { op: 'increment', collection: a, key: b, name: d } });
-      }
-      if (c === MARKS_SEGMENT) {
-        return pick({
-          PUT: { op: 'mark', collection: a, key: b, name: d },
-          DELETE: { op: 'unmark', collection: a, key: b, name: d },
-        });
-      }
-      return null;
+      // Only the `report` mark: every other mark name, and every counter, is no route.
+      if (a.startsWith('_') || c !== MARKS_SEGMENT || d !== REPORT_MARK) return null;
+      return pick({
+        PUT: { op: 'reportMark', collection: a, key: b },
+        DELETE: { op: 'unreportMark', collection: a, key: b },
+      });
     default:
       return null;
   }
@@ -263,12 +239,10 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   const m = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
   const op = m && 'route' in m ? m.route.op : 'info';
   if (op === 'info') return 'storage_info';
+  if (op === 'reportMark' || op === 'unreportMark') return 'storage_report';
   if (op === 'list' || op === 'get' || op === 'getMany' || op === 'getMine') return 'storage_read';
-  if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
-  if (op === 'putMine' || op === 'deleteMine') return 'storage_write';
-  if (op === 'publish' || op === 'unpublish') return 'storage_write';
-  // increment, mark, unmark, and `patch` (whose only operators are tallies).
-  return 'storage_tally';
+  // create, put, delete, putMine, deleteMine.
+  return 'storage_write';
 }
 
 function pathSegments(req: NextApiRequest): string[] {
@@ -419,8 +393,8 @@ export function sendError(
 }
 
 /**
- * Whether `app-blocks-storage-unchanged-writes-free` is on for the REQUESTING app: evaluated, like
- * the publish flag (`isPublishRouteServed`), for the block token's app block id — not the
+ * Whether `app-blocks-storage-unchanged-writes-free` is on for the REQUESTING app: evaluated for
+ * the block token's app block id — not the
  * resolved store context's app, which is the SOURCE app through an import. The free-write counter
  * is labelled with the same app (`requestAppLabel`). No claims, no flag.
  */
@@ -437,14 +411,12 @@ function requestAppLabel(req: NextApiRequest): string {
 }
 
 /** The `details.bucket` of every limiter refusal this route raises. */
-type DocStoreRefusalBucket = DocStoreRateBucket | 'shared-write' | 'publish';
+type DocStoreRefusalBucket = DocStoreRateBucket | 'shared-write';
 const DOC_STORE_REFUSAL_BUCKETS: ReadonlySet<string> = new Set<DocStoreRefusalBucket>([
   'read',
   'write',
-  'tally',
   'report',
   'shared-write',
-  'publish',
 ]);
 
 /**
@@ -523,9 +495,6 @@ const dataSchema = z.record(z.string(), z.unknown());
 const putBody = z.strictObject({ data: dataSchema, ifVersion: z.number().optional() });
 const createBody = z.strictObject({ data: dataSchema });
 const getManyBody = z.strictObject({ keys: z.array(z.string()) });
-const incrementBody = z.strictObject({ by: z.number().optional() });
-// A mark carries no payload; `report` included.
-const markBody = z.strictObject({});
 
 /**
  * The largest request body read: one document at the store's own stored-size cap plus room for
@@ -538,9 +507,9 @@ export const STORAGE_BODY_LIMIT_BYTES = DOC_STORE_BOUNDS.docBytes + 16 * 1024;
 /** The request body stopped arriving (the client disconnected). Answered quietly. */
 class BodyAbortedError extends Error {}
 
-/** Read and parse a JSON request body; `undefined` when there is none. Only POST, PUT and PATCH. */
+/** Read and parse a JSON request body; `undefined` when there is none. Only POST and PUT. */
 async function readJsonBody(req: NextApiRequest): Promise<unknown> {
-  if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') return undefined;
+  if (req.method !== 'POST' && req.method !== 'PUT') return undefined;
   const tooLarge = () =>
     new DocStoreError('too_large', `request body exceeds ${STORAGE_BODY_LIMIT_BYTES} bytes`, {
       limit: STORAGE_BODY_LIMIT_BYTES,
@@ -580,141 +549,10 @@ export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   return parsed.data;
 }
 
-// ---------------------------------------------------------------------------
-// Update operators (PATCH)
-// ---------------------------------------------------------------------------
+// The report mark alias's body: none, or `{}` (a mark never carried a payload).
+const markBody = z.strictObject({});
 
-/** The update operators a PATCH may carry, and the tally route each one runs as. */
-const TALLY_OPERATORS = {
-  $inc: 'increment',
-  $mark: 'mark',
-  $unmark: 'unmark',
-} as const satisfies Record<string, TallyRoute['op']>;
-type TallyOperator = keyof typeof TALLY_OPERATORS;
-
-/**
- * Why a PATCH body was refused, in `details.reason` of an `invalid_request`: one stable value per
- * refusal, so a client can tell them apart without parsing the message.
- */
-export type TallyPatchRefusal =
-  | 'empty_patch'
-  | 'unknown_operator'
-  | 'multiple_operators'
-  | 'merge_patch_unsupported'
-  | 'malformed_operator';
-
-const isOperator = (field: string): field is TallyOperator =>
-  Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, field);
-
-const patchRefusal = (
-  reason: TallyPatchRefusal,
-  message: string,
-  extra?: Record<string, unknown>
-) => invalid(message, { reason, ...extra });
-
-/**
- * A PATCH body → the tally route it runs as, and the body that route's own parser reads. Only the
- * operator's SHAPE is checked here; every value (`by`, the counter or mark name, a report
- * withdrawal) is left to the operation, so it is validated by exactly the parser and the store
- * checks the deprecated routes use, in the same order.
- *
- * Refused (`invalid_request`, `details.reason`): no body or `{}` (`empty_patch`); a `$` key that
- * is not an operator (`unknown_operator`); two operators (`multiple_operators`); plain fields only
- * (`merge_patch_unsupported`, reserved for a merge-patch of `data`); and every other shape error
- * (`malformed_operator`): a JSON body that is not an object, an operator beside any other field (a
- * mark carries no payload, `report` included), `$inc` naming other than exactly one counter, and a
- * `$mark`/`$unmark` name that is not a string.
- */
-export function parseTallyPatch(
-  route: { collection: string; key: string },
-  body: unknown
-): { route: TallyRoute; body: unknown } {
-  if (body === undefined) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    throw patchRefusal(
-      'malformed_operator',
-      'PATCH body must be an object holding one update operator'
-    );
-  }
-  const fields = Object.keys(body);
-  if (fields.length === 0) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
-  const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
-  if (unknown !== undefined) {
-    throw patchRefusal('unknown_operator', `unknown update operator ${unknown}`, {
-      operator: unknown,
-    });
-  }
-  const operators = fields.filter(isOperator);
-  if (operators.length > 1) {
-    throw patchRefusal('multiple_operators', 'PATCH takes exactly one update operator', {
-      operators,
-    });
-  }
-  if (operators.length === 0) {
-    throw patchRefusal(
-      'merge_patch_unsupported',
-      'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document'
-    );
-  }
-  const [operator] = operators;
-  if (fields.length > 1) {
-    throw patchRefusal('malformed_operator', `${operator} cannot be combined with other fields`, {
-      operator,
-    });
-  }
-  const value = (body as Record<string, unknown>)[operator];
-  const at = { collection: route.collection, key: route.key };
-  if (operator === '$inc') {
-    const counters =
-      value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? Object.entries(value)
-        : [];
-    if (counters.length !== 1) {
-      throw patchRefusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
-    }
-    const [[name, by]] = counters;
-    // The deprecated route's own body, `{ by }`, read by its own parser in the operation.
-    return { route: { op: 'increment', ...at, name }, body: { by } };
-  }
-  if (typeof value !== 'string') {
-    throw patchRefusal('malformed_operator', `${operator} takes a mark name`, { operator });
-  }
-  // A mark's body is empty on the deprecated route too.
-  return { route: { op: TALLY_OPERATORS[operator], ...at, name: value }, body: undefined };
-}
-
-// The per-tally routes are deprecated as of 2026-11-09T00:00:00Z (RFC 9745 `@<unix-seconds>`).
-export const LEGACY_TALLY_DEPRECATED_AT = '@1794182400';
-
-/**
- * Sent on every response this handler gives for a deprecated per-tally PATH, whatever the method
- * (a 405 included). Not on the token middleware's own refusals (401/403/429), which are sent
- * before the handler runs. No `Sunset`: removal waits for the usage
- * `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
- */
-export const LEGACY_TALLY_HEADERS = {
-  Deprecation: LEGACY_TALLY_DEPRECATED_AT,
-  Link: '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"',
-} as const;
-
-const TALLY_METRIC_OP: Record<TallyRoute['op'], StorageTallyOp> = {
-  increment: 'inc',
-  mark: 'mark',
-  unmark: 'unmark',
-};
-
-/** A path the deprecated per-tally routes own: `[c, key, 'counters' | 'marks', name]`. */
-function isLegacyTallyPath(segments: readonly string[]): boolean {
-  return (
-    segments.length === 4 && (segments[2] === COUNTERS_SEGMENT || segments[2] === MARKS_SEGMENT)
-  );
-}
-
-function isTallyRoute(route: StorageRoute): route is TallyRoute {
-  return route.op === 'increment' || route.op === 'mark' || route.op === 'unmark';
-}
-
-const LIST_PARAMS = new Set(['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor']);
+const LIST_PARAMS = new Set(['sort', 'author', 'keyPrefix', 'limit', 'cursor']);
 const WHERE_PARAM = /^where\[([^\]]+)\]$/;
 
 /** `?where[f]=v&sort=…` → a store query. Unknown parameters are refused, not ignored. */
@@ -733,11 +571,11 @@ function parseListQuery(req: NextApiRequest, decl: DeclaredStorageCollection): D
     if (name === 'limit') {
       if (!/^[0-9]{1,3}$/.test(raw)) throw invalid('limit must be an integer');
       q.limit = Number(raw);
-    } else if (name === 'author' || name === 'markedBy') {
+    } else if (name === 'author') {
       if (raw !== 'me') throw invalid(`${name} must be "me"`);
-      q[name] = 'me';
+      q.author = 'me';
     } else {
-      q[name as 'sort' | 'mark' | 'keyPrefix' | 'cursor'] = raw;
+      q[name as 'sort' | 'keyPrefix' | 'cursor'] = raw;
     }
   }
   return q;
@@ -769,8 +607,7 @@ function whereValue(decl: DeclaredStorageCollection, field: string, raw: string)
 
 export type PresentedAuthor =
   | { kind: 'user'; isViewer: boolean; username?: string }
-  | { kind: 'app' }
-  | { kind: 'counter' };
+  | { kind: 'app' };
 
 export type PresentedDoc = {
   key: string;
@@ -786,19 +623,30 @@ export type PresentedDoc = {
   createdAt: string;
   updatedAt: string;
   author: PresentedAuthor;
-  counters: Record<string, number>;
-  marks: Record<string, number>;
-  viewer: { marks: string[] } | null;
+  /**
+   * 🔴 SDK COMPATIBILITY, NOT DATA. Counters, marks and their tallies were removed
+   * (docs/app-storage-generic-core.md, rollout step 5), but `@civitai/sdk` up to 0.30 refuses a
+   * document reply without `counters` and `marks` (each an object of numbers) and without
+   * `viewer` (`null`, or `{ marks: string[] }`): `toDocument` throws "malformed". So every
+   * document is sent with them EMPTY, on every collection, whatever its manifest declares:
+   * `{}`, `{}`, and `{ marks: [] }` for a signed-in viewer (`null` for an anonymous one). Drop
+   * them only once no supported SDK release reads them.
+   */
+  counters: Record<string, never>;
+  marks: Record<string, never>;
+  viewer: { marks: never[] } | null;
 };
 
 /**
  * Store records → wire documents. The store's `author.uid` is read here ONLY to look up a
  * username for a `showAuthor` collection, and is never copied to the output: every field of
- * `PresentedAuthor` is listed explicitly.
+ * `PresentedAuthor` is listed explicitly. `signedIn`: whether the request has a viewer, which
+ * decides the compatibility `viewer` field (`PresentedDoc`).
  */
 async function presentDocs(
   docs: readonly (DocRecord | null)[],
-  decl: DeclaredStorageCollection
+  decl: DeclaredStorageCollection,
+  signedIn: boolean
 ): Promise<(PresentedDoc | null)[]> {
   const usernames = new Map<number, string>();
   if (decl.showAuthor) {
@@ -828,26 +676,31 @@ async function presentDocs(
           createdAt: d.createdAt.toISOString(),
           updatedAt: d.updatedAt.toISOString(),
           author: author(d.author),
-          counters: d.counters,
-          marks: d.marks,
-          viewer: d.viewer,
+          counters: {},
+          marks: {},
+          viewer: signedIn ? { marks: [] } : null,
         }
       : null
   );
 }
 
-async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection) {
-  return (await presentDocs([doc], decl))[0] as PresentedDoc;
+async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection, signedIn: boolean) {
+  return (await presentDocs([doc], decl, signedIn))[0] as PresentedDoc;
 }
 
-/** `open`: whether a viewer-keyed collection takes `@me` writes (`isViewerKeyedWritable`). */
+/**
+ * `open`: whether a viewer-keyed collection takes `@me` writes (`isViewerKeyedWritable`).
+ * `counters` and `marks` are always empty, whatever the manifest declares: the store serves
+ * neither (docs/app-storage-generic-core.md, rollout step 5); the SDK's `StorageCollectionInfo`
+ * still types both as lists.
+ */
 function presentDeclaration(decl: DeclaredStorageCollection, open: boolean) {
   return {
     kind: decl.kind,
     visibility: decl.visibility,
     ...(decl.visibility === 'shared' ? { write: decl.write ?? 'own' } : {}),
-    counters: [...decl.counters],
-    marks: [...decl.marks],
+    counters: [],
+    marks: [],
     indexes: Object.fromEntries(decl.indexes),
     showAuthor: decl.showAuthor,
     ...(decl.keyedBy ? { keyedBy: decl.keyedBy, open } : {}),
@@ -906,12 +759,12 @@ function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
 }
 
 /**
- * A counter or mark on one of the SOURCE's shared collections, through an import: it changes
- * state other viewers of the source see, so it needs the viewer's publish consent there exactly
- * as a create or put does — whatever the collection's write policy, `none` included. An app's
- * own tallies are unchanged (`apps:storage` covers them); a private collection has none.
+ * A report on one of the SOURCE's shared collections, through an import: an authoring op there
+ * (`importOpOf`), so it needs the viewer's publish consent in the source exactly as a create or
+ * put does — whatever the collection's write policy. A report on the app's own documents needs
+ * only `apps:storage`.
  */
-function assertImportTallyPublishScope(access: StorageAccess, shared: boolean): void {
+function assertImportReportPublishScope(access: StorageAccess, shared: boolean): void {
   if (access.importedFrom === undefined || !shared) return;
   if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
   throw publishRefusal(access);
@@ -947,11 +800,9 @@ async function assertTrusted(uid: number): Promise<SessionUser> {
 }
 
 /**
- * THE REPORT GATE, shared by the `report` mark and the report API (`doc-store-report-api.ts`), in
- * this order: a signed-in viewer; through an import, the viewer's publish consent in the source; the
- * `report` bucket (one daily budget for both paths, same key); then, on a shared collection, the
- * trust gate. The mark path has already passed the first two and spent its tally token; re-running
- * them here is pure. Returns the viewer.
+ * THE REPORT GATE of the report API (`doc-store-report-api.ts`), in this order: a signed-in viewer;
+ * through an import, the viewer's publish consent in the source; the `report` bucket (a daily
+ * budget); then, on a shared collection, the trust gate. Returns the viewer.
  */
 export async function assertReportGate(
   access: StorageAccess,
@@ -959,10 +810,34 @@ export async function assertReportGate(
   shared: boolean
 ): Promise<number> {
   const uid = requireViewer(access);
-  assertImportTallyPublishScope(access, shared);
+  assertImportReportPublishScope(access, shared);
   await charge('report', access, req);
   if (shared) await assertTrusted(uid);
   return uid;
+}
+
+/**
+ * FILE ONE REPORT: the one code path behind the report API (`doc-store-report-api.ts`) and the
+ * report mark alias (`PUT /:c/:key/marks/report`). `access` is the access the report runs with (the
+ * source's, through an import) and `coll` its collection. In this order: a signed-in viewer; a
+ * shared collection, refused `400 invalid_request` before any budget; the report gate
+ * (`assertReportGate`); then the store's `report`, which writes the viewer's one report row (a
+ * repeat adds none) on a document that exists and is not hidden, and is what the moderator queue
+ * reads. No permission hook is asked: a hook must never silence a report.
+ */
+export async function fileReport(
+  access: StorageAccess,
+  coll: DocCollection,
+  key: string,
+  req: NextApiRequest,
+  store: DocStore
+): Promise<void> {
+  requireViewer(access);
+  if (coll.config.visibility !== 'shared') {
+    throw new DocStoreError('invalid_request', 'reports exist on shared collections only');
+  }
+  await assertReportGate(access, req, true);
+  await store.report(access.ctx, coll, key);
 }
 
 export async function charge(
@@ -1046,8 +921,7 @@ function refusePrivateMedia(
  *   the field it sits in (`sharedRefusalField`: a JSON path such as `data.actions[2].text`, or
  *   `key`), never the matched term or text, and raises the shared block alert.
  *
- * `resolvedMode`: the mode the caller already resolved for this app (a publish resolves it once
- * for all its documents); omitted, it is resolved here.
+ * `resolvedMode`: the mode the caller already resolved for this app; omitted, it is resolved here.
  */
 async function moderate(
   access: StorageAccess,
@@ -1306,11 +1180,14 @@ async function run(
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {
           readsPerMinute: DOC_STORE_READ_RATE_LIMIT_MAX,
-          // The per-viewer `write` bucket: private writes, every DELETE, each publish and
-          // unpublish call, and — only while `app-blocks-storage-unchanged-writes-free` is on for
-          // the app — every shared PUT, changed or not (the field keeps its name).
+          // The per-viewer `write` bucket: private writes, every DELETE, and — only while
+          // `app-blocks-storage-unchanged-writes-free` is on for the app — every shared PUT,
+          // changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
-          marksAndCountersPerMinute: DOC_STORE_TALLY_RATE_LIMIT_MAX,
+          // The marks-and-counters bucket is gone with marks and counters (rollout step 5). Kept at
+          // 0, not dropped: every SDK from 0.14 to 0.31 types it as a required number.
+          marksAndCountersPerMinute: 0,
+          // The report API's daily budget (`assertReportGate`).
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
           sharedWritesBurst: DOC_STORE_SHARED_WRITE_BUDGET.burst.capacity,
           sharedWritesPerDay: DOC_STORE_SHARED_WRITE_BUDGET.daily.capacity,
@@ -1323,27 +1200,44 @@ async function run(
   const coll = collectionOf(access, requested.collection);
   const decl = coll.config;
   const shared = decl.visibility === 'shared';
+  const signedIn = ctx.viewerUid !== null;
   const { route, keyed } = await viewerKeyedRoute(requested, access, coll);
   const written = async (doc: WrittenDocRecord) => {
-    const presented = await presentDoc(doc, decl);
+    const presented = await presentDoc(doc, decl, signedIn);
     return service ? { ...presented, seq: doc.seq, recordId: doc.recordId } : presented;
   };
 
   switch (route.op) {
+    case 'reportMark': {
+      // A mark carries no payload, `report` included: a body other than none or `{}` is refused.
+      parseBody(markBody, body);
+      await fileReport(access, coll, route.key, req, store);
+      // The shape the `report` mark always answered (SDK `toMarkResult`): never a count.
+      return ok({ marked: true });
+    }
+    case 'unreportMark':
+      // As the removed route answered it: a report cannot be withdrawn (re-filing after a
+      // moderator's dismissal would re-open it), refused before any budget or trust lookup.
+      throw new DocStoreError('invalid_request', 'a report cannot be withdrawn', {
+        mark: REPORT_MARK,
+      });
     case 'list': {
       const query = parseListQuery(req, decl);
       const result = await store.list(ctx, coll, query);
-      return ok({ items: await presentDocs(result.items, decl), nextCursor: result.nextCursor });
+      return ok({
+        items: await presentDocs(result.items, decl, signedIn),
+        nextCursor: result.nextCursor,
+      });
     }
     case 'get': {
       const doc = await store.get(ctx, coll, route.key);
       if (!doc) throw new DocStoreError('not_found', 'document not found');
-      return ok(await presentDoc(doc, decl));
+      return ok(await presentDoc(doc, decl, signedIn));
     }
     case 'getMany': {
       const { keys } = parseBody(getManyBody, body);
       const docs = await store.getMany(ctx, coll, keys);
-      return ok({ items: await presentDocs(docs, decl) });
+      return ok({ items: await presentDocs(docs, decl, signedIn) });
     }
     case 'create':
     case 'put':
@@ -1428,8 +1322,12 @@ async function run(
             authorUserId: uid,
           });
         }
-        // `{ deleted }` only on the public route: the tombstone's `seq` is the internal route's.
-        if (service && result.deleted) return ok({ deleted: true, seq: result.seq });
+        // `{ deleted }` only on the public route. The internal route adds the tombstone's `seq` and
+        // the key it removed: for an `@me` delete that is the derived key, which app-data-go never
+        // sent and needs to hide the document from its caches until the streams show the delete.
+        if (service && result.deleted) {
+          return ok({ deleted: true, seq: result.seq, key: route.key });
+        }
         return ok({ deleted: result.deleted });
       };
       if (!shared || route.op === 'delete') {
@@ -1440,9 +1338,9 @@ async function run(
       // A shared put that would change no stored row is free of the shared-write budget (FLAG:
       // `app-blocks-storage-unchanged-writes-free`, per app; off, this block is skipped). After
       // every check above, so it refuses exactly what any write does. Under the flag every shared
-      // put first spends one `write` token (the per-viewer request bucket, never refunded), as a
-      // publish does, so a loop of identical puts is still bounded. Then, when the store says the
-      // put would change nothing (`putIfUnchanged`: the publish rule plus the index rows), the
+      // put first spends one `write` token (the per-viewer request bucket, never refunded), so a
+      // loop of identical puts is still bounded. Then, when the store says the put would change
+      // nothing (`putIfUnchanged`: `classifyPublish` plus the index rows), the
       // answer is the stored document as a write returns it — no shared-write token, no
       // moderation scan, nothing written — counted per app. Anything else (a change, a stale
       // `ifVersion`, another author's or a hidden document) takes the ordinary write below. A
@@ -1459,274 +1357,7 @@ async function run(
       }
       return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
     }
-    case 'increment': {
-      const uid = requireViewer(access);
-      assertImportTallyPublishScope(access, shared);
-      const { by } = parseBody(incrementBody, body);
-      // The bucket first: a refused request costs no subject lookup.
-      await charge('tally', access, req);
-      const user = shared ? await assertTrusted(uid) : null;
-      // The permission hook, before the key scan below (a refusal spends no scan). It runs the
-      // store's request checks first on a hooked collection; with no hook it returns null at once.
-      const grant = await gateHook({
-        access,
-        coll,
-        store,
-        op: 'increment',
-        key: route.key,
-        tally: { name: route.name, by: by ?? 1 },
-        createsWhenAbsent: decl.write === 'none',
-      });
-      // Under `write: 'none'` an increment can CREATE a public document under the app's key. The
-      // store does not say whether this one did, so the key is scanned on every such increment.
-      const afterCommit =
-        user && decl.write === 'none'
-          ? await moderate(access, user, 'counter', route.key, { key: route.key })
-          : nothingAfterCommit;
-      // Only under `write: 'none'` can an increment create (and so stamp) a document.
-      const incremented = decl.write === 'none' ? await withSchemaMajor(access, coll) : coll;
-      const counted = await store.increment(ctx, incremented, route.key, route.name, by, {
-        hookPass: grant?.pass,
-      });
-      afterCommit();
-      // `{ value }` only on the public route: the mark sequence (and a creating increment's `seq`)
-      // are the internal route's.
-      if (service) {
-        return ok({
-          value: counted.value,
-          ...(counted.markSeq !== undefined ? { markSeq: counted.markSeq } : {}),
-          ...(counted.seq !== undefined ? { seq: counted.seq } : {}),
-        });
-      }
-      return ok({ value: counted.value });
-    }
-    case 'mark':
-    case 'unmark': {
-      // Before any budget or trust lookup: a withdrawal is a 400 for everyone.
-      if (route.op === 'unmark') refuseReportWithdrawal(route.name);
-      const uid = requireViewer(access);
-      assertImportTallyPublishScope(access, shared);
-      if (route.op === 'mark') parseBody(markBody, body);
-      await charge('tally', access, req);
-      if (route.op === 'mark' && route.name === REPORT_MARK) {
-        await assertReportGate(access, req, shared);
-      } else if (shared) {
-        await assertTrusted(uid);
-      }
-      // The permission hook. A `report` is exempt (`gateHook` returns null for it, and the store
-      // asks no pass for it): a hook must never be able to silence moderation reports.
-      const grant = await gateHook({
-        access,
-        coll,
-        store,
-        op: route.op,
-        key: route.key,
-        tally: { name: route.name },
-      });
-      const opts = { hookPass: grant?.pass };
-      const result =
-        route.op === 'mark'
-          ? await store.mark(ctx, coll, route.key, route.name, opts)
-          : await store.unmark(ctx, coll, route.key, route.name, opts);
-      // A report count is never exposed. The mark sequence is the internal route's only.
-      const markSeq = service && result.markSeq !== undefined ? { markSeq: result.markSeq } : {};
-      return ok(
-        route.name === REPORT_MARK
-          ? { marked: result.marked, ...markSeq }
-          : { marked: result.marked, count: result.count, ...markSeq }
-      );
-    }
-    case 'publish':
-      return ok(await runPublish(req, body, access, store, coll));
-    case 'unpublish':
-      return ok(await runUnpublish(req, body, access, store, coll));
   }
-}
-
-// ---------------------------------------------------------------------------
-// PUBLISH — server-side publish and unpublish
-// ---------------------------------------------------------------------------
-//
-// `POST /_publish/:to { from, keys, prune? }` copies the CALLING viewer's own private documents
-// at `keys` from the private `from` into the shared `to`, authored by that viewer: the server
-// reads the data from the viewer's own key space, never from the request. `POST /_unpublish/:to
-// { keys }` deletes the viewer's own copies. What a copy, a skip (`skipped[].reason`) and a prune
-// do, and how the per-user and app ceilings are charged: `publishCopies` / `unpublishCopies`
-// (`doc-store.ts`).
-//
-// Each copy is checked as a shared write is: the target's schema and `ownedModelVersions` rule
-// before any budget, then the moderation scan in the app's mode. Enforce: any hit refuses the
-// WHOLE publish, naming its key; shadow: scanned after commit. An unchanged copy is not scanned.
-// A key list over `DOC_STORE_PUBLISH_BOUNDS.maxKeys`, empty or with a duplicate is refused before
-// anything is spent.
-//
-// Budgets: every publish call first spends one token of the `write` bucket
-// (`DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX`) BEFORE the trust lookup and the source/target reads,
-// never refunded, so even a publish that changes nothing is throttled. It then spends one token of
-// `DOC_STORE_PUBLISH_BUDGET` — never `DOC_STORE_SHARED_WRITE_BUDGET` — given back when the publish
-// does not land or changes nothing.
-//
-// ⚠️ `prune` is scoped by `from`, not by where a copy came from: an app that feeds one shared
-// collection from SEVERAL private collections deletes the other sources' copies when it prunes
-// from one of them.
-//
-// FLAG: `app-blocks-storage-publish`, evaluated per app (entityId = the app block id, no context).
-// Off — the default, and when Flipt is unreachable — both paths answer as an unknown route.
-//
-// PERMISSION HOOKS: a shared collection with a `hook` refuses both publish into it and unpublish
-// from it (`invalid_request`, `reason: 'hooked_collection'`, before anything is charged): a hook
-// decides one write, and a batch that skipped it would fail open (`assertNotHooked`).
-
-/** Whether a matched route is served for this request: everything but publish, or publish with the flag on. */
-async function isPublishRouteServed(req: NextApiRequest, match: Match): Promise<boolean> {
-  if (!match || !('route' in match)) {
-    // A wrong method on a publish path: served only when the route itself would be.
-    const segs = pathSegments(req);
-    if (segs[0] !== PUBLISH_SEGMENT && segs[0] !== UNPUBLISH_SEGMENT) return true;
-  } else if (match.route.op !== 'publish' && match.route.op !== 'unpublish') {
-    return true;
-  }
-  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
-  if (!appBlockId) return false;
-  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_PUBLISH, appBlockId);
-}
-
-const publishBody = z.strictObject({
-  from: z.string(),
-  keys: z.array(z.string()),
-  prune: z.boolean().optional(),
-});
-const unpublishBody = z.strictObject({ keys: z.array(z.string()) });
-
-/** A refusal raised while handling one key, with that key added to its details. */
-function withKey(err: unknown, key: string): unknown {
-  if (!(err instanceof DocStoreError)) return err;
-  return new DocStoreError(err.code, err.message, { ...err.details, key });
-}
-
-/** A refusal of a publish that lost a race, not a bad request: no rejection token is charged. */
-const PUBLISH_RACE_REASONS: ReadonlySet<unknown> = new Set([
-  'source_changed',
-  'target_changed',
-  'concurrent_write',
-]);
-
-async function runPublish(
-  req: NextApiRequest,
-  body: unknown,
-  access: StorageAccess,
-  store: DocStore,
-  to: DocCollection
-): Promise<unknown> {
-  const { ctx } = access;
-  const uid = requireViewer(access);
-  const input = parseBody(publishBody, body);
-  const keys = assertPublishKeys(input.keys);
-  const from = collectionOf(access, input.from);
-  assertPublishPair(from, to);
-  assertPublishScope(access, to);
-  // The per-call throttle, BEFORE the trust lookup, the source/target reads and the ownership
-  // lookups below: never refunded, so a loop of publishes that change nothing is still bounded.
-  await charge('write', access, req);
-  const user = await assertTrusted(uid);
-
-  // What would be written, read now; every body is checked as a shared write's would be BEFORE
-  // the budget is spent. `publishCopies` re-reads them under lock and refuses any that changed.
-  const preview = await store.previewPublish(ctx, from, to, keys);
-  const toWrite = preview.flatMap((e) => (e.source ? [{ key: e.key, ...e.source }] : []));
-  for (const doc of toWrite) {
-    try {
-      validateDocAgainstCollectionSchema(ctx, to, doc.data);
-      await assertOwnedModelVersions(to.config, doc.data, uid);
-    } catch (err) {
-      throw withKey(err, doc.key);
-    }
-  }
-
-  const reservation = await reserveSharedWrite(uid, ctx.appId, DOC_STORE_PUBLISH_BUDGET);
-  if (!reservation.allowed) {
-    throw rateLimited('publish budget exhausted', 'publish', reservation.retryAfterSeconds);
-  }
-  let landed = false;
-  try {
-    const afterCommit = new Map<string, AfterCommit>();
-    // One mode for the whole publish (two Flipt evaluations), not one per document.
-    const mode = toWrite.length > 0 ? await resolveSharedDataModerationMode(ctx.appId) : undefined;
-    for (const doc of toWrite) {
-      try {
-        afterCommit.set(
-          doc.key,
-          await moderate(access, user, 'update', doc.key, { data: doc.data, key: doc.key }, mode)
-        );
-      } catch (err) {
-        throw withKey(err, doc.key);
-      }
-    }
-    const result = await store.publishCopies(ctx, from, await withSchemaMajor(access, to), {
-      keys,
-      checked: new Map(toWrite.map((d) => [d.key, d.hash])),
-      prune: input.prune ? { limit: DOC_STORE_PUBLISH_BOUNDS.pruneLimit } : undefined,
-    });
-    landed = true;
-    const changed = result.created.length + result.updated.length + result.pruned.length;
-    // Nothing changed: the publish cost nothing, so its token goes back.
-    if (changed === 0) await reservation.release({ rejected: false });
-    for (const key of [...result.created, ...result.updated]) afterCommit.get(key)?.();
-    await syncWithdrawn(ctx, result.pruned, uid);
-    return result;
-  } catch (err) {
-    if (!landed) {
-      // A publish that lost a race is not a bad request: no rejection charge.
-      const race = err instanceof DocStoreError && PUBLISH_RACE_REASONS.has(err.details?.reason);
-      await reservation.release({ rejected: !race && !isOurFault(err) });
-    }
-    throw err;
-  }
-}
-
-async function runUnpublish(
-  req: NextApiRequest,
-  body: unknown,
-  access: StorageAccess,
-  store: DocStore,
-  to: DocCollection
-): Promise<unknown> {
-  const uid = requireViewer(access);
-  const keys = assertPublishKeys(parseBody(unpublishBody, body).keys);
-  if (to.config.visibility !== 'shared') {
-    throw invalid('unpublish removes documents from a shared collection', {
-      reason: 'publish_visibility',
-    });
-  }
-  assertShareWritable(to);
-  // A hooked collection's documents are deleted one at a time, each decided by its hook.
-  assertNotHooked(to, 'unpublish');
-  // Before the `write` bucket is spent; the store refuses it again itself.
-  refuseViewerKeyed(to, 'unpublish');
-  // Like a delete: `apps:storage` only, no trust gate, the `write` bucket once per call.
-  await charge('write', access, req);
-  const result = await store.unpublishCopies(access.ctx, to, keys);
-  await syncWithdrawn(access.ctx, result.deleted, uid);
-  return result;
-}
-
-/**
- * The author removed published items: their App Store cards follow, as after a delete. One call
- * for all of them (at most 500): one parent-listing lookup, updates batched by `itemKey IN (…)`.
- * `syncStoreItem` never throws (it logs its own failures).
- */
-async function syncWithdrawn(
-  ctx: StorageAccess['ctx'],
-  keys: readonly string[],
-  uid: number
-): Promise<void> {
-  if (ctx.ns !== PUBLISHED_NS || keys.length === 0) return;
-  await syncStoreItem({
-    appBlockId: ctx.appId,
-    itemKey: keys,
-    change: 'withdrawn',
-    authorUserId: uid,
-  });
 }
 
 function deleteIfVersion(req: NextApiRequest): number | undefined {
@@ -1779,8 +1410,8 @@ export function otherAppSource(
 }
 
 /**
- * What an operation does, for an import: a read; a delete; or an authoring write (create, put,
- * a counter or a mark), the only kind that can need the viewer's publish consent in the source.
+ * What an operation does, for an import: a read; a delete; or an authoring write (create, put),
+ * the only kind that can need the viewer's publish consent in the source.
  * Every one but a read is refused through a read-only import.
  */
 function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
@@ -1792,11 +1423,7 @@ function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
   ) {
     return 'read';
   }
-  // `patch` carries only tally operators, each an authoring write like the routes it replaces.
-  // (`publish` / `unpublish` never reach an import: `assertNoStrayQuery` refuses their `from`.)
-  return route.op === 'delete' || route.op === 'deleteMine' || route.op === 'unpublish'
-    ? 'delete'
-    : 'author';
+  return route.op === 'delete' || route.op === 'deleteMine' ? 'delete' : 'author';
 }
 
 /**
@@ -1807,9 +1434,8 @@ function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
 function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute, via: AppStorageVia): void {
   if (route.op === 'list') return;
   const own = route.op === 'delete' || route.op === 'deleteMine' ? ['path', 'ifVersion'] : ['path'];
-  // A publish names its source in the BODY and runs in this app only: no `?from=` import.
   const allowed =
-    (route.op === 'info' && via === 'direct') || route.op === 'publish' || route.op === 'unpublish'
+    route.op === 'info' && via === 'direct'
       ? own
       : via === 'service' && route.op !== 'info'
       ? [...own, FROM_PARAM, MAJOR_PARAM]
@@ -1835,25 +1461,24 @@ export type StorageApiDeps = {
    * The route this handler serves (`app_storage_requests_total{via}`). `direct`, the default: the
    * public route. `service`: the signed internal route app-data-go forwards to
    * (`doc-store-internal-route.ts`), which serves only `SERVICE_OPS`, refuses every import
-   * `501 not_supported_here`, and answers each write's `seq` / `recordId` / `markSeq`.
+   * `501 not_supported_here`, and answers each write's `seq` / `recordId`.
    */
   via?: AppStorageVia;
 };
 
 /**
- * What the internal route serves: the writes, the tallies and `info` (WRITES-DESIGN.md, "the write
- * verbs and info only"). Reads stay on the streams. Publish and unpublish wait for the store to
- * answer each copied key's `seq`; until then they are not routes there.
+ * What the internal route serves: the document writes and `info` (WRITES-DESIGN.md, "the write
+ * verbs and info only"). Reads stay on the streams. The viewer-keyed writes (`putMine`,
+ * `deleteMine`: `PUT`/`DELETE …/@me[/:parent]`) are writes like any other, and app-data-go
+ * forwards them; `getMine` is a read and stays on the streams.
  */
 const SERVICE_OPS: ReadonlySet<StorageRoute['op']> = new Set<StorageRoute['op']>([
   'info',
   'create',
   'put',
   'delete',
-  'patch',
-  'increment',
-  'mark',
-  'unmark',
+  'putMine',
+  'deleteMine',
 ]);
 
 /** A route match as the internal route sees it: any op it does not serve is no route at all. */
@@ -1910,16 +1535,6 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
         via
       );
       if (!match) throw noSuchRoute();
-      // Off for this app, publish and unpublish are not routes at all: the same refusal as any
-      // unknown path, before any other gate (a wrong method's 405 included).
-      if (!(await isPublishRouteServed(req, match))) throw noSuchRoute();
-      // A deprecated per-tally path says so on every response the handler gives, a refusal and a
-      // wrong method's 405 included.
-      if (isLegacyTallyPath(pathSegments(req))) {
-        for (const [name, value] of Object.entries(LEGACY_TALLY_HEADERS)) {
-          res.setHeader(name, value);
-        }
-      }
       if ('methods' in match) {
         res.setHeader('Allow', match.methods.join(', '));
         sendEnvelope(
@@ -1993,13 +1608,8 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
               collection: route.collection,
               op: importOpOf(route),
             });
-      const raw = await readJsonBody(req);
-      // A PATCH runs as the tally route its operator names, with that route's own body.
-      const { route: op, body }: { route: OperationRoute; body: unknown } =
-        route.op === 'patch' ? parseTallyPatch(route, raw) : { route, body: raw };
-      if (isTallyRoute(op)) {
-        recordStorageTallyOp(TALLY_METRIC_OP[op.op], route.op === 'patch' ? 'v2' : 'legacy');
-      }
+      const body = await readJsonBody(req);
+      const op: OperationRoute = route;
       // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
       // reaches, the store gates every shared read on the token's viewer level.
       const gated = await withDocLevelGate(access, claims);

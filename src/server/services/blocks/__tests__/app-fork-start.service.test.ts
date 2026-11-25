@@ -98,6 +98,10 @@ const {
   isValidForkSlug,
   startAppFork,
 } = await import('~/server/services/blocks/app-fork-start.service');
+const { checkStorageMigrations } = await import('~/server/services/apps/storage-schema-migrations');
+const { appStorageScopeErrors, parseManifestStorage } = await import(
+  '~/shared/constants/block-storage.constants'
+);
 
 // ---------------------------------------------------------------------------
 // Fixtures — pairwise distinct, and distinct from every constant the assertions name.
@@ -861,6 +865,137 @@ describe('the fork seed pre-fills storage imports of the parent', () => {
     expect(none.scopes).toEqual(['apps:storage']);
     const bare = await seedManifest({ blockId: 'notes-app', name: 'Notes App', scopes: [] });
     expect(bare).toEqual({ blockId: 'notes-app-fork-ab12', name: 'Notes App', scopes: [] });
+  });
+});
+
+// docs/app-storage-generic-core.md, rollout step 3: a fork's first submit has no previous approved
+// version, so it may declare no mark, counter or write "none" (`deprecatedPrimitiveErrors`). The seed
+// strips them from the fork's OWN collections; the import of the parent's collections is unchanged.
+describe('the fork seed strips the deprecated tally primitives', () => {
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'vote-app-fork-ab12'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+  const SCHEMA = { type: 'object', properties: { title: { type: 'string', maxLength: 60 } } };
+
+  it('🔴 drops marks and counters, and a write "none" collection, keeping everything else', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      scopes: ['apps:storage'],
+      storage: {
+        collections: {
+          records: {
+            visibility: 'shared',
+            write: 'own',
+            marks: ['vote'],
+            counters: ['views'],
+            schema: SCHEMA,
+            indexes: { title: 'string' },
+            showAuthor: true,
+          },
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'], marks: ['played'] },
+          notes: { visibility: 'private' },
+        },
+      },
+    });
+    expect(manifest.storage.collections).toEqual({
+      records: {
+        visibility: 'shared',
+        write: 'own',
+        schema: SCHEMA,
+        indexes: { title: 'string' },
+        showAuthor: true,
+      },
+      notes: { visibility: 'private' },
+    });
+    // The import still reaches every exportable PARENT collection, the counter one included.
+    expect(manifest.storage.imports).toEqual([
+      { from: 'vote-app', collections: ['records', 'plays', 'notes'], access: 'readwrite' },
+    ]);
+    // The seed is a first version the submit check accepts as it stands.
+    expect(checkStorageMigrations(null, manifest).errors).toEqual([]);
+  });
+
+  it('positive control: the parent’s own storage, unstripped, is refused as a first version', () => {
+    const parent = {
+      storage: {
+        collections: {
+          records: { visibility: 'shared', write: 'own', marks: ['vote'] },
+        },
+      },
+    };
+    expect(checkStorageMigrations(null, parent).errors).toHaveLength(1);
+  });
+
+  it('🔴 a parent whose only collections are write "none" and not exportable seeds no storage, and no storage scope', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      // `apps:storage:read` is the legacy key-value scope: not tied to `storage`, so it stays.
+      scopes: ['apps:storage', 'user:read:self', 'apps:storage:publish', 'apps:storage:read'],
+      scopeJustifications: {
+        'apps:storage:publish': 'Lets voters post their picks.',
+        'user:read:self': 'Shows the voter their name.',
+      },
+      storage: {
+        collections: {
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'], exportable: false },
+        },
+      },
+    });
+    expect(manifest.storage).toBeUndefined();
+    expect(manifest.scopes).toEqual(['user:read:self', 'apps:storage:read']);
+    expect(manifest.scopeJustifications).toEqual({
+      'user:read:self': 'Shows the voter their name.',
+    });
+    // The seed passes the storage/scope cross-check as it stands.
+    // Parse errors would make the scope check return [] vacuously, so pin them empty first.
+    expect(parseManifestStorage(manifest).errors).toEqual([]);
+    expect(appStorageScopeErrors(manifest.scopes, parseManifestStorage(manifest))).toEqual([]);
+  });
+
+  it('positive control: a seed with no storage that keeps apps:storage is refused by the scope check', () => {
+    expect(appStorageScopeErrors(['apps:storage'], parseManifestStorage({}))).toEqual([
+      'scopes includes apps:storage but storage declares no collections — declare them under storage.collections, or remove the scope',
+    ]);
+  });
+
+  it('a parent whose storage survives the strip keeps apps:storage', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      scopes: ['apps:storage', 'user:read:self'],
+      storage: {
+        collections: {
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'], exportable: false },
+          notes: { visibility: 'private', exportable: false },
+        },
+      },
+    });
+    expect(manifest.storage).toEqual({
+      collections: { notes: { visibility: 'private', exportable: false } },
+    });
+    expect(manifest.scopes).toEqual(['apps:storage', 'user:read:self']);
+    // Parse errors would make the scope check return [] vacuously, so pin them empty first.
+    expect(parseManifestStorage(manifest).errors).toEqual([]);
+    expect(appStorageScopeErrors(manifest.scopes, parseManifestStorage(manifest))).toEqual([]);
+  });
+
+  it('a parent with only write "none" collections keeps the import, without an empty collections map', async () => {
+    const manifest = await seedManifest({
+      blockId: 'vote-app',
+      name: 'Vote App',
+      scopes: ['apps:storage'],
+      storage: { collections: { plays: { visibility: 'shared', write: 'none', counters: ['n'] } } },
+    });
+    expect(manifest.storage).toEqual({
+      imports: [{ from: 'vote-app', collections: ['plays'], access: 'readwrite' }],
+    });
   });
 });
 

@@ -10,7 +10,9 @@ import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 
 vi.mock('../../redis', () => ({ getSysRedis: () => ({}) }));
-const { caseIntake, RECEIPTS_PER_ADDRESS_PER_DAY } = await import('../case-intake-action');
+const { caseIntake, RECEIPTS_PER_ADDRESS_PER_DAY, receiptCapFromEnv } = await import(
+  '../case-intake-action'
+);
 const { IntakeRefusedError } = await import('../intake');
 const { TurnstileRefusedError } = await import('../turnstile');
 const { hashAddress } = await import('../send-notice');
@@ -73,8 +75,8 @@ beforeEach(async () => {
     "INSERT INTO process_definition (key) VALUES ('dmca-notice') RETURNING id"
   );
   const v = await pg.query<{ id: number }>(
-    "INSERT INTO process_definition_version (definition_id, definition, created_by_id) VALUES ($1, '{}', 1) RETURNING id",
-    [d.rows[0].id]
+    'INSERT INTO process_definition_version (definition_id, definition, created_by_id) VALUES ($1, $2, 1) RETURNING id',
+    [d.rows[0].id, JSON.stringify(definition)]
   );
   versionId = Number(v.rows[0].id);
   const main = await freshPglite();
@@ -147,7 +149,7 @@ describe('caseIntake', () => {
     expect(mail.replyTo).toBe('dmca@civitai.com');
     expect((mail as { from?: string }).from).toBe('Civitai DMCA <notices@civitai.com>');
     expect(mail.subject).toBe(`We received your request (${out.publicRef})`);
-    expect(mail.text).toContain('DMCA copyright notice on 20 November 2026, 16:05 UTC');
+    expect(mail.text).toContain('DMCA copyright notice on November 20, 2026, 4:05 PM UTC');
     const link = mail.text.match(/Continue: (\S+)/)![1];
     expect(link.startsWith(`https://civitai.example/requests/case/${out.publicRef}#t=`)).toBe(true);
     const token = link.split('#t=')[1];
@@ -224,7 +226,7 @@ describe('caseIntake', () => {
     expect(ev).toEqual([{ type: 'receipt-unsent' }]);
   });
 
-  it('stops emailing one address past the daily cap, still filing the case', async () => {
+  const fillReceipts = async () => {
     for (let i = 0; i < RECEIPTS_PER_ADDRESS_PER_DAY; i++) {
       const c = await pg.query<{ id: number }>(
         "INSERT INTO case_record (public_ref, process_key, definition_version_id, state, source, received_at) VALUES ($1, 'dmca-notice', $2, 'received', 'form', now()) RETURNING id",
@@ -235,10 +237,31 @@ describe('caseIntake', () => {
         [c.rows[0].id, hashAddress('a@example.com')]
       );
     }
+  };
+
+  it('stops emailing one address past the daily cap, still filing the case', async () => {
+    await fillReceipts();
     const out = await caseIntake(input(), deps());
     expect(out.receipt).toBe('capped');
     expect(send).not.toHaveBeenCalled();
     expect(await count('case_record')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY + 1);
+  });
+
+  it('emails the receipt past the daily cap when the cap is off', async () => {
+    await fillReceipts();
+    const out = await caseIntake(input(), { ...deps(), receiptsPerAddressPerDay: null });
+    await settled();
+    expect(out.receipt).toBe('queued');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the per-address cap from its env value: unset or junk keeps 5, 0 turns it off', () => {
+    expect(receiptCapFromEnv(undefined)).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('lots')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('-1')).toBe(RECEIPTS_PER_ADDRESS_PER_DAY);
+    expect(receiptCapFromEnv('0')).toBeNull();
+    expect(receiptCapFromEnv('20')).toBe(20);
   });
 
   it('flags a case whose submitter says the person shown is a minor, and alerts with the reference only', async () => {

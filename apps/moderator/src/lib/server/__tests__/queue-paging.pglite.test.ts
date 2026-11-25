@@ -137,6 +137,18 @@ describe('keyset queues reach every item exactly once', () => {
     expect(seen).toEqual(NEWEST_FIRST);
   });
 
+  it("never sends the uploader's legacy profile image on the image review queue", async () => {
+    await db.exec(`UPDATE "User" SET image = 'legacy-key' WHERE id = 7`);
+    await insertImages(`"needsReview"`, () => `'minor'`);
+    const { items } = await getImageReviewQueue({
+      needsReview: 'minor',
+      browsingLevel: 1,
+      limit: 4,
+    });
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) expect(item).not.toHaveProperty('userImage');
+  });
+
   it.each(LIMITS)('reported image queue at %i per page', async (limit) => {
     await insertImages(`"nsfwLevel"`, () => `1`);
     // Report ids run opposite to image ids, so the walk follows the report cursor, not the image id.

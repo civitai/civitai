@@ -125,8 +125,6 @@ export const NAVIGATION: NavLink[] = [
         countKey: reportCountKey('image'),
         shortcut: true,
       },
-      // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
-      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/scan-probe', label: 'Scan Probe' },

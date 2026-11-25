@@ -218,8 +218,8 @@ func TestAReadsFloorIsAnsweredOrRefusedNeverReadFromREST(t *testing.T) {
 // The keyed get answers from the stream only: the record (the newer of two rows of one key), a 404 for
 // a key it does not hold or a stream that holds nothing, and each refusal as its code. Writes off it
 // is the mux's 404.
-// Fails on origin/main: with writes on, GET of the key path is the mux's 405 there (only PUT, DELETE,
-// PATCH and OPTIONS are registered), so `g.status != 200` fails.
+// Fails on origin/main: with writes on, GET of the key path is the mux's 405 there (only PUT, DELETE
+// and OPTIONS are registered), so `g.status != 200` fails.
 func TestTheKeyedGetIsAnsweredFromTheStreamOnly(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 0))
 	s.reg.records["civitai_dave"] = []registry.Entity{
@@ -319,20 +319,23 @@ func TestEveryStreamReasonHasAnAnswer(t *testing.T) {
 	}
 }
 
-// A stream that holds nothing and names no head (the origin's answer to a token it refuses) still
-// sends the list to REST after an acknowledged write: an overlay never turns it into a one-record
-// registry answer.
+// A stream that holds nothing and names no head (the origin's answer to a token it refuses) stays an
+// empty answer after an acknowledged write: an overlay never turns it into a one-record answer. With
+// the writes on it is never read from REST either (CUT OVER).
 // Fails on 3c012af11b: the list answered `source: registry` with the overlay record alone.
 func TestAnAckNeverTurnsARefusedStreamIntoARegistryAnswer(t *testing.T) {
 	s := newWritesStack(t, newFakeWriteSite(t, 60))
 	s.store.by["civitai_erin"] = restAnswer{200, `{"items":[{"key":"e-1","data":{"text":"REST-E1"},"version":3}],"nextCursor":null}`}
-	if g := s.get(t, notesPath, "civitai_erin"); g.ans.Source != "rest" {
+	if g := s.get(t, notesPath, "civitai_erin"); g.ans.Source != "registry" || len(g.ans.Items) != 0 {
 		t.Fatalf("before: %s", g.body)
 	}
 	if rec := s.call(t, http.MethodPut, notesPath+"/e-2", "civitai_erin", `{"data":{"text":"PUT-61"}}`); rec.Code != 200 {
 		t.Fatalf("put: %d %s", rec.Code, rec.Body)
 	}
-	if g := s.get(t, notesPath, "civitai_erin"); g.ans.Source != "rest" || itemsOf(g) != `e-1={"text":"REST-E1"}` {
-		t.Fatalf("after the put: %s; want the REST answer", g.body)
+	if g := s.get(t, notesPath, "civitai_erin"); g.ans.Source != "registry" || len(g.ans.Items) != 0 {
+		t.Fatalf("after the put: %s; want the empty answer", g.body)
+	}
+	if s.store.calls.Load() != 0 {
+		t.Fatalf("🔴 REST was read %d times", s.store.calls.Load())
 	}
 }

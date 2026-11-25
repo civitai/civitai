@@ -22,6 +22,14 @@ import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  clickhouseDownloads,
+  queryDownloadsClickhouse,
+} from '~/server/clickhouse/downloads-client';
+import {
+  readsDedicatedDownloadsClickhouse,
+  withSharedClickhouseFallback,
+} from '~/server/services/downloads-clickhouse';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
@@ -2087,17 +2095,18 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
   ttl: CacheTTL.day,
-  cacheNotFound: false,
+  // A user with no downloads is cached as "none" too. The marker lives only 10 minutes because the
+  // download row reaches the table asynchronously: a lookup that lands after bustUserDownloadsCache's
+  // window but before the row does pins "none" for at most this long.
+  cacheNotFound: true,
+  notFoundTtl: CacheTTL.md,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};
     if (userIds.length === 0) return {};
+    const shared = clickhouse;
 
-    const results = await clickhouse.$query<{
-      userId: number;
-      modelVersionId: number;
-      fileId: number;
-      lastDownloaded: string;
-    }>`
+    type Row = { userId: number; modelVersionId: number; fileId: number; lastDownloaded: string };
+    const query = `
       SELECT
         userId,
         modelVersionId,
@@ -2109,6 +2118,17 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
       ORDER BY lastDownloaded DESC
       LIMIT 2000 BY userId
     `;
+    const readShared = () => shared.$query<Row>(query);
+    const results = readsDedicatedDownloadsClickhouse(
+      'user-downloads',
+      clickhouseDownloads !== undefined
+    )
+      ? await withSharedClickhouseFallback(
+          'user-downloads',
+          () => queryDownloadsClickhouse<Row>(query),
+          readShared
+        )
+      : await readShared();
 
     // Group by userId
     const grouped = results.reduce((acc, { userId, modelVersionId, fileId, lastDownloaded }) => {

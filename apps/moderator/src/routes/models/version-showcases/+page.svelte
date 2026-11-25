@@ -8,6 +8,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -99,14 +100,22 @@
         )}
       >
         <a href={imageLookupUrl(row.imageId)} class="shrink-0">
-          <EdgeImage
-            src={row.imageUrl}
-            type={row.imageType === 'video' ? 'video' : 'image'}
-            width={96}
-            blur={(row.nsfwLevel & ~SAFE_LEVELS) !== 0 ? 250 : undefined}
-            class="h-24 w-24 rounded object-cover"
-            alt="Featured image {row.imageId}"
-          />
+          {#if row.restricted}
+            <div
+              class="grid h-24 w-24 place-items-center rounded bg-dark-5 p-1 text-center text-[10px] text-dark-2"
+            >
+              {RETRACTED_REFUSED}
+            </div>
+          {:else}
+            <EdgeImage
+              src={row.imageUrl}
+              type={row.imageType === 'video' ? 'video' : 'image'}
+              width={96}
+              blur={(row.nsfwLevel & ~SAFE_LEVELS) !== 0 ? 250 : undefined}
+              class="h-24 w-24 rounded object-cover"
+              alt="Featured image {row.imageId}"
+            />
+          {/if}
         </a>
         <div class="min-w-0 flex-1 text-sm">
           <div class="flex flex-wrap items-baseline gap-x-2">

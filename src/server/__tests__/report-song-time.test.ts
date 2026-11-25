@@ -67,6 +67,13 @@ const filedDetails = () => reportCreate.mock.calls[0]?.[0].data.details;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // assertImageReportable's read: an image on no service review.
+  dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      Array.isArray(strings) && strings.join('').includes('"ServiceDealReviewImage"')
+        ? [{ buyerId: 9, sellerId: null, visible: null }]
+        : []
+    )) as never);
   dbMock.dbWrite.report.findFirst.mockResolvedValue(null);
   // A TOS report hides the image for its reporter.
   dbMock.dbWrite.imageEngagement.create.mockResolvedValue({} as never);

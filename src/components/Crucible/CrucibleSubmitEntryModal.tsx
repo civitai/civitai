@@ -46,6 +46,7 @@ import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import {
+  clipDisplaySeconds,
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
@@ -708,10 +709,12 @@ export default function CrucibleSubmitEntryModal({
             {
               label: 'Clip length',
               passes: isShortEnough,
-              passText: clipSeconds ? formatDuration(clipSeconds) : 'Within the limit',
-              failReason: `${formatDuration(Math.ceil(clipSeconds ?? 0))} (max ${formatDuration(
-                maxClipSeconds
-              )})`,
+              passText: clipSeconds
+                ? formatDuration(clipDisplaySeconds(clipSeconds, maxClipSeconds))
+                : 'Within the limit',
+              failReason: `${formatDuration(
+                clipDisplaySeconds(clipSeconds ?? 0, maxClipSeconds)
+              )} (max ${formatDuration(maxClipSeconds)})`,
             },
           ]
         : []),
@@ -743,10 +746,9 @@ export default function CrucibleSubmitEntryModal({
         : !isCompatibleNsfw
         ? `Content level mismatch (${imageNsfwLabel} ${noun}, requires ${requiredNsfwLabel})`
         : !isShortEnough
-        ? // Ceiling, so a 120.01s clip against a 120s limit does not render both as "2:00".
-          `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
-            maxClipSeconds as number
-          )})`
+        ? `Too long (${formatDuration(
+            clipDisplaySeconds(clipSeconds ?? 0, maxClipSeconds ?? null)
+          )}, max ${formatDuration(maxClipSeconds as number)})`
         : !levelAllowedByModels
         ? 'A required model allows only PG and PG-13'
         : !isRecentEnough

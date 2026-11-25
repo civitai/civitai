@@ -4,8 +4,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ArchiveModule from '../archive';
 
 const mocks = vi.hoisted(() => ({
-  holds: vi.fn(),
-  holdSqlArgs: vi.fn(),
   readySend: vi.fn(),
   builtSend: vi.fn(),
   refusedSend: vi.fn(),
@@ -17,17 +15,6 @@ vi.mock('../archive', async (importOriginal) => ({
   deleteObjects: mocks.del,
 }));
 
-vi.mock('~/server/services/legal-hold.service', async () => {
-  const { Prisma } = await import('@prisma/client');
-  return {
-    getAccountLegalHold: mocks.holds,
-    // A marker the claim test can find: the claim must carry the hold condition in its own WHERE.
-    accountHoldSql: (id: unknown, markerView: unknown) => {
-      mocks.holdSqlArgs(id, markerView);
-      return Prisma.sql`HOLD_CONDITION(${id})`;
-    },
-  };
-});
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
   personalDataExportReadyEmail: { send: mocks.readySend },
   personalDataExportBuiltEmail: { send: mocks.builtSend },
@@ -60,7 +47,6 @@ const writes = () =>
 
 beforeEach(() => {
   for (const m of Object.values(mocks)) m.mockReset();
-  mocks.holds.mockResolvedValue({ legs: [], markerView: true });
   mocks.readySend.mockResolvedValue(undefined);
   vi.mocked(dbMock.dbWrite.personalDataExport.findUnique).mockResolvedValue(built as never);
   vi.mocked(dbMock.dbWrite.user.findUnique).mockResolvedValue(OWNER as never);
@@ -70,7 +56,7 @@ beforeEach(() => {
   // No hold.
   vi.mocked(dbMock.dbWrite.$queryRaw)
     .mockReset()
-    .mockResolvedValue([{ present: false, review: false }] as never);
+    .mockResolvedValue([{ report: false, present: false, review: false }] as never);
 });
 
 /** The claim UPDATE: its SQL and the values bound into it. */
@@ -116,7 +102,6 @@ describe('releaseExport', () => {
     expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 42 } })
     );
-    expect(mocks.holds).toHaveBeenCalledWith(42);
     // The claim records who released it, only from built, and re-checks the hold in the same statement.
     const claim = claimCall()!;
     const sql = (claim[0] as unknown as string[]).join('?');
@@ -127,39 +112,30 @@ describe('releaseExport', () => {
     expect(claim[at + 1]).toBe(9);
   });
 
-  it.each([false, true])(
-    "re-checks the owner's holds in the claim, never the actor's (markerView %s)",
-    async (markerView) => {
-      mocks.holds.mockResolvedValue({ legs: [], markerView });
-      expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toMatchObject({
-        ok: true,
-      });
-      expect(mocks.holdSqlArgs).toHaveBeenCalledTimes(1);
-      const [id, view] = mocks.holdSqlArgs.mock.calls[0] as [{ values: unknown[] }, boolean];
-      expect(id.values).toEqual([42]);
-      expect(view).toBe(markerView);
-      // Every other fragment of the claim is over the owner too.
-      const fragments = claimCall()!
-        .slice(1)
-        .filter((v): v is { strings: string[]; values: unknown[] } =>
-          Boolean(v && typeof v === 'object' && 'strings' in v)
-        );
-      const caseHold = fragments.find((f) => f.strings.join('?').includes('"UserReport"'));
-      expect(caseHold?.values).toEqual([42]);
-    }
-  );
+  it("re-checks the owner's holds in the claim, never the actor's", async () => {
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toMatchObject({
+      ok: true,
+    });
+    const fragments = claimCall()!
+      .slice(1)
+      .filter((v): v is { strings: string[]; values: unknown[] } =>
+        Boolean(v && typeof v === 'object' && 'strings' in v)
+      );
+    const caseHold = fragments.find((f) => f.strings.join('?').includes('"UserReport"'));
+    expect(caseHold?.values).toEqual([42]);
+  });
 
-  it.each([[{ present: true, review: false }], [{ present: false, review: true }]])(
-    'refuses when the account is under a hold (#%#)',
-    async (found) => {
-      vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([found] as never);
-      expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
-        ok: false,
-        reason: 'held',
-      });
-      expect(mocks.readySend).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    [{ report: false, present: true, review: false }],
+    [{ report: false, present: false, review: true }],
+  ])('refuses when the account is under a hold (#%#)', async (found) => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([found] as never);
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+      ok: false,
+      reason: 'held',
+    });
+    expect(mocks.readySend).not.toHaveBeenCalled();
+  });
 
   it('keeps the export released when only the expiry write fails after sending', async () => {
     vi.mocked(dbMock.dbWrite.$executeRaw)
@@ -171,7 +147,9 @@ describe('releaseExport', () => {
   });
 
   it('refuses and sends nothing when a hold applies, and marks the export held', async () => {
-    mocks.holds.mockResolvedValue({ legs: ['report'], markerView: true });
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([
+      { report: false, present: true, review: false },
+    ] as never);
     const result = await releaseExport({ exportId: 5, actorId: 9, bucket, now });
     expect(result).toEqual({ ok: false, reason: 'held' });
     expect(mocks.readySend).not.toHaveBeenCalled();
@@ -182,7 +160,7 @@ describe('releaseExport', () => {
   });
 
   it('refuses, writing nothing, when the hold check cannot be read, so it can be pressed again', async () => {
-    mocks.holds.mockRejectedValue(new Error('db down'));
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockRejectedValue(new Error('db down'));
     const result = await releaseExport({ exportId: 5, actorId: 9, bucket, now });
     expect(result).toEqual({ ok: false, reason: 'unconfirmed' });
     expect(mocks.readySend).not.toHaveBeenCalled();

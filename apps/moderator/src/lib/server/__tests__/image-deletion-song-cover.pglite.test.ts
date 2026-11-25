@@ -73,8 +73,6 @@ CREATE TABLE "CsamReport" (
   "reportSentAt" TIMESTAMP(3),
   "archivedAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
-CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER, "postId" INTEGER);
 CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
@@ -154,11 +152,8 @@ describe('a moderator deleting a song', () => {
     expect(refused).toEqual([{ id: COVER, reason: 'review' }]);
   });
 
-  it('keeps a cover a CSAM report lists, and says so', async () => {
-    await db.exec(
-      `INSERT INTO "CsamReport" ("userId", images, "reportSentAt", "archivedAt")
-       VALUES (99, '[{"id": ${COVER}}]', now() - interval '400 days', now() - interval '390 days')`
-    );
+  it('keeps a cover blocked for CSAM, and says so', async () => {
+    await db.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${COVER}`);
     const refused = await deleteImages([SONG], MODERATOR);
     expect(await remaining()).toEqual([COVER]);
     expect(refused).toEqual([{ id: COVER, reason: 'review' }]);

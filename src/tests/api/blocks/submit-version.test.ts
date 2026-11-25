@@ -351,7 +351,24 @@ describe('POST /api/blocks/submit-version', () => {
       status: 'pending',
       listing,
       storageMigrationWarnings: [],
+      advisories: [],
     });
+  });
+
+  it('answers the service’s advisories, which never refuse the submit (the CLI prints advisories[].message)', async () => {
+    const advisories = [
+      {
+        code: 'default-theme',
+        message:
+          "This app uses Civitai's default theme. A distinct accent helps it stand out in the store: https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look",
+        docsUrl: 'https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look',
+      },
+    ];
+    mockSubmitVersion.mockResolvedValueOnce({ ...SERVICE_RESULT, advisories });
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ status: 'pending', advisories });
   });
 
   it('200s on success: decodes the bundle and calls the service with the moderator id', async () => {
@@ -368,6 +385,7 @@ describe('POST /api/blocks/submit-version', () => {
       listing: null,
       // Nor any schema-migration warning: the field is still there, empty.
       storageMigrationWarnings: [],
+      advisories: [],
     });
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const arg = mockSubmitVersion.mock.calls[0][0];
@@ -415,6 +433,17 @@ describe('POST /api/blocks/submit-version', () => {
     await invoke(makeReq({ body: { bundleBase64 } }), res);
     expect(res._status).toBe(400);
     expect(res._body).toEqual({ message: refusal.message, storageHookErrors: problems });
+  });
+
+  it('🔴 a module-graph refusal returns 400 with the structured moduleGraphErrors', async () => {
+    const { ModuleGraphRefusal } = await import('~/server/services/blocks/bundle-module-graph');
+    const problems = [{ kind: 'bare-specifier' as const, importer: 'main.js', specifier: 'react' }];
+    const refusal = new ModuleGraphRefusal(problems);
+    mockSubmitVersion.mockRejectedValue(refusal);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({ message: refusal.message, moduleGraphErrors: problems });
   });
 
   // ---------------------------------------------------------------------------

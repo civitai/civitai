@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
@@ -62,10 +62,11 @@ const {
  * only rows can test them — and nothing else in CI executes the migration SQL.
  */
 
-const MIGRATION = join(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261204120000_app_access_request/migration.sql'
-);
+const MIGRATIONS_DIR = join(__dirname, '../../../../packages/civitai-db-schema/prisma/migrations');
+const MIGRATIONS = [
+  '20261204120000_app_access_request',
+  '20271128120000_app_access_request_review_source',
+].map((dir) => join(MIGRATIONS_DIR, dir, 'migration.sql'));
 
 // A stand-in for the real `User` table, cut to what the queue and the auto-approval checks read
 // (same column names and types as the real table).
@@ -77,6 +78,22 @@ const PRELUDE = `CREATE TABLE "User" (
   "muted" BOOLEAN NOT NULL DEFAULT false,
   "deletedAt" TIMESTAMP(3),
   "meta" JSONB DEFAULT '{}'
+);
+CREATE TYPE "StrikeStatus" AS ENUM ('Active', 'Expired', 'Voided');
+CREATE TABLE "UserStrike" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "status" "StrikeStatus" NOT NULL DEFAULT 'Active',
+  "points" INTEGER NOT NULL DEFAULT 1,
+  "expiresAt" TIMESTAMP(3) NOT NULL
+);
+CREATE TABLE "ModActivity" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER,
+  "activity" TEXT NOT NULL,
+  "entityType" TEXT,
+  "entityId" INTEGER,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`;
 
 const MIRA_IDEA =
@@ -103,8 +120,12 @@ let mira: number;
 let tomasz: number;
 let moderator: number;
 
-const run = async (q: Prisma.Sql) =>
-  (await pg.query<Record<string, unknown>>(q.text, q.values)).rows;
+// `$queryRaw` is called both with a `Prisma.sql` object and as a tagged template (the strike
+// points read); both reach Postgres as the same parameterised text.
+const run = async (q: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
+  const sql = 'text' in q ? q : Prisma.sql(q, ...values);
+  return (await pg.query<Record<string, unknown>>(sql.text, sql.values)).rows;
+};
 
 // Every seeded account passes the auto-approval checks (verified email, not banned, not muted); a
 // test that needs one to fail breaks that one account itself.
@@ -124,6 +145,20 @@ const rowsFor = async (userId: number) =>
     )
   ).rows;
 
+const auditRows = async () =>
+  (
+    await pg.query<{ userId: number; activity: string; entityType: string; entityId: number }>(
+      'SELECT "userId", "activity", "entityType", "entityId" FROM "ModActivity" ORDER BY "id"'
+    )
+  ).rows;
+
+const strike = (userId: number, opts: { status?: string; expiresIn?: string } = {}) =>
+  pg.query(
+    `INSERT INTO "UserStrike" ("userId", "status", "expiresAt")
+     VALUES ($1, $2::"StrikeStatus", CURRENT_TIMESTAMP + $3::interval)`,
+    [userId, opts.status ?? 'Active', opts.expiresIn ?? '30 days']
+  );
+
 const asUser = (id: number) => ({ id, isModerator: false } as SessionUser);
 const submit = (userId: number, whatToBuild: string) =>
   submitAppAccessRequest({ user: asUser(userId), input: { whatToBuild } });
@@ -135,7 +170,7 @@ const decide = (id: number, decision: 'approved' | 'declined') =>
 beforeAll(async () => {
   pg = await PGlite.create();
   await pg.exec(PRELUDE);
-  await pg.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const file of MIGRATIONS) await pg.exec(readFileSync(file, 'utf8'));
 });
 
 afterAll(async () => {
@@ -143,7 +178,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pg.exec('TRUNCATE "AppAccessRequest", "User" RESTART IDENTITY');
+  await pg.exec(
+    'TRUNCATE "AppAccessRequest", "User", "UserStrike", "ModActivity" RESTART IDENTITY'
+  );
   // Three users whose ids differ, so a statement keyed on the wrong one cannot pass by accident.
   moderator = await seedUser('queue_reviewer');
   mira = await seedUser('mira_builds');
@@ -329,7 +366,9 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
       [mira]
     );
     await expect(submit(mira, MIRA_IDEA)).resolves.toMatchObject({ status: 'pending' });
-    await decide((await rowsFor(mira))[0].id, 'declined');
+    // Cleared by deleting the row, not declining it: a declined request now sends the next submit
+    // to the queue, which would hide whether the email read came from the primary.
+    await pg.query(`DELETE FROM "AppAccessRequest" WHERE "userId" = $1`, [mira]);
 
     // The same session (nothing about it changed) once the address is proven.
     await pg.query(`UPDATE "User" SET "emailVerified" = CURRENT_TIMESTAMP WHERE "id" = $1`, [mira]);
@@ -379,7 +418,10 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
   });
 
-  it('🔴 after a REVOKE, a new submit with the flag on is approved again (operator decision: re-grant is fine)', async () => {
+  // Moderation Lead decision: a revoke or a decline stays a moderator's call. Re-granting on the
+  // next submit would undo a revoke in one click, so a person with any declined request goes to
+  // the queue.
+  it('🔴 after a REVOKE, a new submit with the flag on goes to the queue, PENDING', async () => {
     flag.on.add(String(mira));
     const first = await submit(mira, MIRA_IDEA);
     await decide(first.id, 'declined');
@@ -387,14 +429,87 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     refreshSession.mockClear();
 
     const again = await submit(mira, MIRA_IDEA_AGAIN);
-    expect(again).toMatchObject({ status: 'approved', whatToBuild: MIRA_IDEA_AGAIN });
-    expect(again.id).not.toBe(first.id);
+    expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
     expect(await rowsFor(mira)).toEqual([
       { id: first.id, status: 'declined', whatToBuild: MIRA_IDEA },
-      { id: again.id, status: 'approved', whatToBuild: MIRA_IDEA_AGAIN },
+      { id: again.id, status: 'pending', whatToBuild: MIRA_IDEA_AGAIN },
     ]);
-    expect(await isApproved(mira)).toBe(true);
-    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'profile' });
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).not.toHaveBeenCalled();
+    // Only that person: someone with no decline is still approved.
+    flag.on.add(String(tomasz));
+    await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
+  });
+
+  it('🔴 a decline that commits BETWEEN the eligibility read and the approved insert is not undone: PENDING', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    flag.on.add(String(mira));
+    // The moderator's decline lands after the submit's eligibility read (no declined row yet) and
+    // before its approved INSERT: run the real `decide` just ahead of that one statement.
+    let injected = false;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (q: Prisma.Sql, ...values: unknown[]) => {
+      if (!injected && 'text' in q && q.text.includes(`'approved', CURRENT_TIMESTAMP`)) {
+        injected = true;
+        await decide(first.id, 'declined');
+      }
+      return run(q, ...values);
+    }) as never);
+    refreshSession.mockClear();
+
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
+    expect(injected).toBe(true);
+    expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await rowsFor(mira)).toEqual([
+      { id: first.id, status: 'declined', whatToBuild: MIRA_IDEA },
+      { id: again.id, status: 'pending', whatToBuild: MIRA_IDEA_AGAIN },
+    ]);
+    expect(await isApproved(mira)).toBe(false);
+    // The only session bust is the decline's own; the submit granted nothing.
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 a request a moderator DECLINED (never approved): the next submit with the flag on is PENDING', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'declined');
+    flag.on.add(String(mira));
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
+    expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await isApproved(mira)).toBe(false);
+  });
+
+  it('🔴 an account with an ACTIVE strike stays PENDING, with no audit row and no session refresh', async () => {
+    await strike(mira);
+    flag.on.add(String(mira));
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await isApproved(mira)).toBe(false);
+    expect(await auditRows()).toEqual([]);
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
+  it('an EXPIRED or VOIDED strike does not block an auto-approval', async () => {
+    await strike(mira, { expiresIn: '-1 day' });
+    await strike(mira, { status: 'Voided' });
+    flag.on.add(String(mira));
+    expect(await submit(mira, MIRA_IDEA)).toMatchObject({ status: 'approved' });
+  });
+
+  it('🔴 an auto-approval writes exactly ONE audit row: system actor, the request, autoApproveAppAccess', async () => {
+    flag.on.add(String(mira));
+    const row = await submit(mira, MIRA_IDEA);
+    expect(await auditRows()).toEqual([
+      {
+        userId: -1,
+        activity: 'autoApproveAppAccess',
+        entityType: 'appAccessRequest',
+        entityId: row.id,
+      },
+    ]);
+    // A moderator's approval is not an automatic one, and a refused submit audits nothing.
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await auditRows()).toHaveLength(1);
   });
 
   it('🔴 already approved (by a moderator or automatically): a submit is the same CONFLICT and writes nothing', async () => {
@@ -442,11 +557,22 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     await decide(t.id, 'approved');
 
     const { items } = await listAppAccessRequests({ status: 'approved', limit: 50 });
-    expect(items.map((i) => [i.id, i.reviewedById, i.reviewedByUsername])).toEqual([
-      [t.id, moderator, 'queue_reviewer'],
-      [auto.id, null, null],
+    expect(items.map((i) => [i.id, i.reviewedById, i.reviewedByUsername, i.reviewSource])).toEqual([
+      [t.id, moderator, 'queue_reviewer', 'moderator'],
+      [auto.id, null, null, 'system'],
     ]);
     expect(items.every((i) => i.reviewedAt instanceof Date)).toBe(true);
+  });
+
+  it('🔴 a moderator approval whose moderator account is DELETED keeps reviewSource moderator', async () => {
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+    await pg.query('DELETE FROM "User" WHERE "id" = $1', [moderator]);
+
+    const { items } = await listAppAccessRequests({ status: 'approved', limit: 50 });
+    expect(items.map((i) => [i.id, i.reviewedById, i.reviewSource])).toEqual([
+      [t.id, null, 'moderator'],
+    ]);
   });
 
   it('an EMPTY answer is stored as an empty string, pending or approved', async () => {
@@ -457,6 +583,39 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
 });
 
 describe('the migration’s own guards', () => {
+  it('🔴 the reviewSource backfill labels rows decided before the column, and a re-run changes nothing', async () => {
+    const legacy = async (sql: string) => (await pg.query<{ id: number }>(sql)).rows[0].id;
+    // Written as the code before the column did: an auto-approval sets reviewedAt in the INSERT.
+    const auto = await legacy(
+      `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt")
+       VALUES (${mira}, '', 'approved', CURRENT_TIMESTAMP) RETURNING "id"`
+    );
+    const byModerator = await legacy(
+      `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt", "reviewedById", "createdAt")
+       VALUES (${tomasz}, '', 'approved', CURRENT_TIMESTAMP, ${moderator}, CURRENT_TIMESTAMP - interval '1 hour') RETURNING "id"`
+    );
+    // A moderator's approval whose account was deleted since: no reviewer, decided later.
+    const deletedModerator = await legacy(
+      `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt", "createdAt")
+       VALUES (${moderator}, '', 'approved', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP - interval '1 hour') RETURNING "id"`
+    );
+    const sources = async () =>
+      (
+        await pg.query<{ id: number; reviewSource: string | null }>(
+          'SELECT "id", "reviewSource" FROM "AppAccessRequest" ORDER BY "id"'
+        )
+      ).rows;
+
+    for (let run = 0; run < 2; run++) {
+      await pg.exec(readFileSync(MIGRATIONS[1], 'utf8'));
+      expect(await sources()).toEqual([
+        { id: auto, reviewSource: 'system' },
+        { id: byModerator, reviewSource: 'moderator' },
+        { id: deletedModerator, reviewSource: null },
+      ]);
+    }
+  });
+
   it('🔴 the database refuses a second pending row for one user, whatever the service does', async () => {
     await submit(mira, MIRA_IDEA);
     await expect(

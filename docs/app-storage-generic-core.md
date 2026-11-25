@@ -1,7 +1,11 @@
 # App Storage: a generic collections core
 
-**Status:** design, decided (see "Decisions"); nothing built. Production usage was measured on
-2026-11-23 ("Inventory (2026-11-23)"). Code citations are to `main` at `f9cad06bca`.
+**Status:** decided (see "Decisions"). Rollout steps 1 to 4 are done; step 5 (removal) is in
+progress: the code removal has shipped, the hand-applied final cleanup has not run yet ("Rollout",
+step 5). Production usage was measured on 2026-11-23 ("Inventory (2026-11-23)"). Code citations in
+the sections above "Rollout" are to `main` at `f9cad06bca`, before the removal; the behaviour now
+in force is described in `docs/features/app-blocks.md` ("Document store: removed tallies and
+publish").
 
 App Storage (the document store behind `/api/v1/blocks/storage`, `src/server/services/apps/doc-store.ts`)
 grew feature-specific primitives next to its collections: marks, counters, tallies on every document,
@@ -83,6 +87,7 @@ pre-generated key). Viewer-keyed collections add a third way, below.
 | `GET`, `PUT`, `DELETE /:c/@me/:parent`                              | the viewer's document for `parent`            | **new**, `keyedBy: "parent+viewer"`                                                                                                                                                                          |
 | `PATCH /:c/:key` (`$inc`, `$mark`, `$unmark`)                       | tallies                                       | **removed**                                                                                                                                                                                                  |
 | `POST /:c/:key/counters/:name`, `PUT`/`DELETE /:c/:key/marks/:name` | tallies (already deprecated)                  | **removed**                                                                                                                                                                                                  |
+| `PUT`/`DELETE /:c/:key/marks/report`                                | the `report` mark                             | **kept as an alias** of the report API for SDKs older than 0.30: `PUT` files through `fileReport` and answers `{marked: true}`; `DELETE` stays `400` "a report cannot be withdrawn"                          |
 | `POST /_publish/:to`, `POST /_unpublish/:to`                        | publish (behind `app-blocks-storage-publish`) | **removed**                                                                                                                                                                                                  |
 
 `@me` cannot collide with a key: `@` is outside the key grammar (`DOC_STORE_BOUNDS.key`,
@@ -449,6 +454,14 @@ writes tombstones and refunds each document's author, not the caller as the auth
 vote made through `@me`, which were never written to `doc_mark`, so past that point the only way back
 is forward: fix the new version.
 
+The revert is a submit like any other, so it passes the rollout step 3 refusal of new marks, counters
+and `write: "none"` (`deprecatedPrimitiveErrors`), which compares it with the version it replaces and
+has no exemption for a revert. That holds because the migration version **keeps the source
+collection's old marks declared until `t`'s switch opens** (an assumption of this plan, not
+enforced by code: the old mark calls must keep working until then anyway). The version before it declares nothing the migration version does not, so the revert
+re-declares nothing. A migration version that dropped the marks early would make its own revert
+refused. Once `t` is open there is no revert, only forward versions, which may drop the marks.
+
 ### `doc_tally`
 
 Mark tallies (`kind = 'mark'`) are derived from `doc_mark` and are dropped, not migrated. Counter
@@ -506,6 +519,16 @@ purged in rollout step 4, and the purge, not this file, deletes them. `doc_mark`
 stay, as the report store. Its rollback re-creates the dropped tables empty; it cannot
 restore rows without that dump, which is why it runs last.
 
+**The step 4 tooling goes with step 5.** The writing maintenance ops (`migrateMarks`,
+`rollbackMarks`, `purgeCollection`, and the store's freeze, copy, verify and per-collection purge
+behind them) are removed: they read `doc_mark` vote rows, `doc_tally` and counter documents, which
+the final cleanup deletes or drops, so they must be gone before it runs. The run records they wrote
+stay readable (`apps.mod.docStore.maintenance.status`, `purgeDump`), and what protects user data in
+them stays: the 30-day dump expiry (`expire-storage-maintenance-dumps`) and the account wipe's
+enumeration and scrub of the runs (`scrubMaintRuns`). `appdata.maint_run` is kept until the last
+dump has expired. Removing the tooling assumes step 4 is finished: no counter document is left to
+purge and no migration target still waits for its copy.
+
 ## Manifest, schema majors and the SDK
 
 - **Majors.** A major is minted only by a non-additive change of a collection's `schema`
@@ -547,7 +570,7 @@ Each step names what ends it.
    other apps that declare tallies hold none and only change their manifests. Ends
    per target when its switch is open and its old calls stop, and per app when none of its
    documents has `author_kind = 'counter'`, removed by a purge that ran with no open report on them.
-5. **Remove when usage is zero for 7 days.** Zero means: `civitai_app_block_doc_store_tally_ops_total`
+5. **Remove when usage is zero.** As planned: remove when usage is zero for 7 days. Zero means: `civitai_app_block_doc_store_tally_ops_total`
    flat (it has no app label), `app_storage_requests_total{op}` flat for `increment`, `mark`, `unmark`,
    `patch`, `publish` and `unpublish` (its `app` label names the app; `recordAppStorageRequest`), and no
    non-report `doc_mark` or `doc_tally` row written, **and** no app's approved manifest head still
@@ -557,6 +580,20 @@ Each step names what ends it.
    SDK surface (major release) and Flipt flag go; the final cleanup SQL runs. Seven days and no longer
    because the inventory shows four apps with data and about 56 marks and 37 counter documents, all
    migrated or purged by step 4, so the window only has to cover clients still on an old app version.
+
+   **As done.** The removal went ahead as soon as usage was zero, with no soak and no `410`
+   release: the removed routes answer exactly as an unknown route does (`PATCH /:c/:key` `405`,
+   the per-tally and `_publish` / `_unpublish` paths `404 not_found`), with no `Deprecation`
+   header. Two approved apps still declared removed primitives, with no data under them: a counter
+   `plays` on a `write: "none"` collection, and a `vote` mark. Their manifests are not refused at
+   serve time: the parser is unchanged, `marks` and `counters` are inert, and `write: "none"` is
+   served read-only (the permanent branch in "Manifest fields"). Submit keeps the step 3 rule (no
+   NEW declaration; a collection may keep what its previous approved version declares), so those
+   two apps can ship unrelated versions and roll back. Documents still carry `counters: {}`,
+   `marks: {}` and `viewer` until no supported SDK release reads them (SDK 0.30 refuses a document
+   without them). The step 4 tooling went in the same removal ("Final cleanup"). The final cleanup
+   SQL is hand-applied after the code is deployed everywhere, as a separate change; it is not a
+   migration file in the repo.
 
 ## Registry and app-data-go impact
 
@@ -577,20 +614,20 @@ Each step names what ends it.
 - **Writes service API:** the `PATCH` (`$inc`, `$mark`, `$unmark`) and `publish` / `unpublish` routes
   leave; `PUT` / `DELETE .../records/@me[/:parent]` join.
 - **What does not get simpler:** counts come from listing, on the streams as on REST, and a votes
-  collection can outgrow a level stream's bound (2,500 records by default in #10165) long before its
+  collection can outgrow a level stream's bound (2,500 records by default in #10302) long before its
   board does. A board of thousands of items needs the later aggregate decision; this plan adds no
   exception to "reads stay on the streams".
 
 Disposition of the work already done:
 
-| Work                                                                             | State        | Becomes unused                                                                                                                                                  | Recommended                                                                                                                                                                                                                    |
-| -------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| #10165, adapter level streams                                                    | open, paused | `tallies` on entities, `meta.head.markSeq`, the `counters` level, `feedMarkHead`, `privateMarkHead`, `levelTallyKeys` and the mark-range poll, `presentTallies` | revise before it resumes: strip the mark half, keep level streams, `seq` heads, routing, bindings and the bound                                                                                                                |
-| #10130, the mark sequence and `mark_head` migration                              | merged, dark | all of it: `mark_head`, `doc_tally.mark_seq`, `SQL_TAKE_MARK_SEQ`, `withMarkHead`, lock (1c)                                                                    | keep dark (its probe makes it inert where the migration is absent); do not apply the migration to an environment that has not applied it; remove the code with the tally ops in step 5 and drop the table in the final cleanup |
-| #10128, `seq` and `recordId` in write answers; the private feed's `seq` and head | merged       | nothing                                                                                                                                                         | keep: the record overlay and floors need it                                                                                                                                                                                    |
-| #10142, the signed internal route (answers `seq`, `recordId`, `markSeq`)         | merged, dark | `markSeq` in tally answers                                                                                                                                      | keep; `markSeq` goes with the tally ops in step 5                                                                                                                                                                              |
-| #10143, app-data-go write routes                                                 | merged, dark | the `PATCH` operator forwarding (`patchOp` in `internal/writes/writes.go`); it never built `publish` / `unpublish` forwarding                                   | remove now if model-benchmarking's votes are migrated before its app-data-go cutover (recommended order); otherwise keep dark until its migration                                                                              |
-| #10158, read-your-writes overlay                                                 | merged, dark | nothing: it ships record overlays only, and lists marks overlays and the mark floor as not built                                                                | keep                                                                                                                                                                                                                           |
+| Work                                                                             | State        | Becomes unused                                                                                                                | Recommended                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #10302, adapter level streams of plain documents                                 | merged, dark | nothing: it never built the mark half (`tallies`, `meta.head.markSeq`, the `counters` level)                                  | keep; inert until a client is on its per-client allowlist. #10165 is closed, superseded by it                                                                                                                                  |
+| #10130, the mark sequence and `mark_head` migration                              | merged, dark | all of it: `mark_head`, `doc_tally.mark_seq`, `SQL_TAKE_MARK_SEQ`, `withMarkHead`, lock (1c)                                  | keep dark (its probe makes it inert where the migration is absent); do not apply the migration to an environment that has not applied it; remove the code with the tally ops in step 5 and drop the table in the final cleanup |
+| #10128, `seq` and `recordId` in write answers; the private feed's `seq` and head | merged       | nothing                                                                                                                       | keep: the record overlay and floors need it                                                                                                                                                                                    |
+| #10142, the signed internal route (answers `seq`, `recordId`, `markSeq`)         | merged, dark | `markSeq` in tally answers                                                                                                    | keep; `markSeq` goes with the tally ops in step 5                                                                                                                                                                              |
+| #10143, app-data-go write routes                                                 | merged, dark | the `PATCH` operator forwarding (`patchOp` in `internal/writes/writes.go`); it never built `publish` / `unpublish` forwarding | remove now if model-benchmarking's votes are migrated before its app-data-go cutover (recommended order); otherwise keep dark until its migration                                                                              |
+| #10158, read-your-writes overlay                                                 | merged, dark | nothing: it ships record overlays only, and lists marks overlays and the mark floor as not built                              | keep                                                                                                                                                                                                                           |
 
 ## Risks
 

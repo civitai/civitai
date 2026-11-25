@@ -10,13 +10,14 @@ const MAX_DAYS = 366;
 export default defineModeratorEndpoint('apps.assistantTrace.signals', {
   method: 'GET',
   summary:
-    'App submission signals in aggregate: per week, how many submissions were traced, how many kept the default theme, and turns/Buzz per traced build; and which developer docs the builds read.',
+    'App submission signals in aggregate: per week, how many submissions were traced, how many kept the default look, and turns/Buzz per traced build; and which developer docs the builds read.',
   returns:
-    '{ from, to, weeks: [{ week, submissions, withSessions, themeCustomized, themeDefault, themeUnknown, avgTurns, avgBuzz }], docsTopics: [{ topic, submissions, themeCustomized }] }',
+    '{ from, to, weeks: [{ week, submissions, withSessions, themeCustomized, themeDefault, themeUnknown, accentCustomized, accentDefault, accentUnknown, avgTurns, avgBuzz }], docsTopics: [{ topic, submissions, themeCustomized, accentCustomized }] }',
   notes: [
     'Read-only. Counts submissions that have a trace (tracing on at submit), every submitter included.',
     `Window \`[from, to)\`: defaults to the last ${DEFAULT_DAYS} days, at most ${MAX_DAYS}. Weeks start Monday (UTC).`,
-    '`avgTurns` / `avgBuzz` are over submissions with at least one traced chat. `docsTopics` (top 50) counts submissions whose chats read the page, and of those how many customised the theme.',
+    '`accent*` counts the look (`accentCustomized`: an own accent vs Civitai\'s stock look), every signals version judged by the same rule; use it for "kept the default look". `theme*` is the v1 signal, true on any colour literal of the app\'s own, so not the look.',
+    '`avgTurns` / `avgBuzz` are over submissions with at least one traced chat. `docsTopics` (top 50) counts submissions whose chats read the page, and of those how many have their own look (`accentCustomized`) and how many read customised by v1 (`themeCustomized`).',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({

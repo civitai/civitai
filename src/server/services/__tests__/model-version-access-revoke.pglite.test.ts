@@ -264,7 +264,12 @@ describe('moderatorRevokeEarlyAccess', () => {
       userId: BUYER_A,
       modelVersionId: VERSION_ID,
       permissions: 3,
-      meta: { 'download-buzzTransactionId': 'tx-second', 'download-purchasedAt': 'second' },
+      meta: {
+        'download-buzzTransactionId': 'tx-second',
+        'download-purchasedAt': 'second',
+        'download-amount': 800,
+        'download-buzzType': 'yellow',
+      },
       addedById: BUYER_A,
     });
 
@@ -274,7 +279,11 @@ describe('moderatorRevokeEarlyAccess', () => {
     expect(Object.keys(meta)).toEqual(['revocations']);
     expect(meta.revocations).toEqual([
       expect.objectContaining({ 'download-buzzTransactionId': `tx-${VERSION_ID}-${BUYER_A}` }),
-      expect.objectContaining({ 'download-buzzTransactionId': 'tx-second' }),
+      expect.objectContaining({
+        'download-buzzTransactionId': 'tx-second',
+        'download-amount': 800,
+        'download-buzzType': 'yellow',
+      }),
     ]);
   });
 

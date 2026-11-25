@@ -69,7 +69,10 @@ import {
 import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { canAccessGenerationResource } from '~/server/utils/resource-access';
+import {
+  canAccessGenerationResource,
+  isRestrictedGenerationResource,
+} from '~/server/utils/resource-access';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 
@@ -1502,8 +1505,7 @@ export async function getResourceData(
   ) {
     const isOwnedByUser = !!user.id && user.id === item.model.userId;
     const hasAccess = !!(item.hasAccess || isOwnedByUser || user.isModerator);
-    const isPrivate =
-      item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
+    const isPrivate = isRestrictedGenerationResource(item);
 
     const coverageAudienceFor = {
       member,

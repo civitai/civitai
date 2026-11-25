@@ -88,6 +88,7 @@ import { REDIS_KEYS } from '@civitai/redis';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
+import { memorialEffects } from '~/server/services/memorial-moderator';
 import {
   completeOnboardingHandler,
   setUserSettingHandler,
@@ -282,5 +283,31 @@ describe('user.completeOnboarding — Profile step writes identity unconditional
     } as never);
 
     expect(sharedCache.has(hubKey(USER_ID))).toBe(true);
+  });
+});
+
+/**
+ * Reversing a memorialization: the cached shape carries the `memorialized` marker every token resolve
+ * refuses on, so the reverse route's effect must bust it, or the account stays signed out for the
+ * rest of the entry's TTL.
+ */
+describe('memorial reverse → shaped session-user cache', () => {
+  it("busts the account's entry that carries the marker, and no one else's", async () => {
+    sharedCache.set(hubKey(USER_ID), { id: USER_ID, memorialized: true });
+    sharedCache.set(hubKey(USER_ID + 1), { id: USER_ID + 1 });
+
+    await memorialEffects.refreshSession(USER_ID);
+
+    expect(sharedCache.has(hubKey(USER_ID))).toBe(false);
+    expect(sharedCache.has(hubKey(USER_ID + 1))).toBe(true);
+  });
+
+  it('busts it through the direct fallback when the hub hop fails', async () => {
+    hubInvalidate.mockRejectedValue(new Error('hub unreachable'));
+    sharedCache.set(hubKey(USER_ID), { id: USER_ID, memorialized: true });
+
+    await memorialEffects.refreshSession(USER_ID);
+
+    expect(sharedCache.has(hubKey(USER_ID))).toBe(false);
   });
 });

@@ -9,11 +9,14 @@ import {
   type Dialect,
   type QueryResult,
 } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
+import { Availability } from '@civitai/db-schema/enums';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   closeYesNoItemRow,
   gradeKnightsVotes,
+  postHiddenFromKnights,
+  postShownToKnights,
   servableImage,
   servableImageForSweeps,
 } from './knights';
@@ -91,7 +94,6 @@ describe('servableImage', () => {
       CREATE TABLE "CsamReport" (
         id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB NOT NULL DEFAULT '{}', images JSONB NOT NULL DEFAULT '[]'
       );
-      CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL);
       INSERT INTO "User" (id) VALUES (1);
       INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
       INSERT INTO "Image" (id, "postId", minor, "acceptableMinor", "needsReview") VALUES
@@ -127,6 +129,56 @@ describe('servableImage', () => {
     expect(await servedBy(servableImageForSweeps)).toEqual([990000205, 990000206, 990000207]);
   });
 
+  // Moderation Lead ruling 2026-11-24 (docs/features/knights-sources.md).
+  it('hides the same availabilities whether the rule runs in SQL or on a row already read', async () => {
+    onTestFinished(async () => {
+      await pg.exec(
+        `DELETE FROM "Image" WHERE id >= 990000300; DELETE FROM "Post" WHERE id >= 100`
+      );
+    });
+    const values = Object.values(Availability);
+    for (const [index, availability] of values.entries()) {
+      await pg.query(
+        `INSERT INTO "Post" (id, "publishedAt", availability) VALUES ($1, now() - interval '1 day', $2)`,
+        [100 + index, availability]
+      );
+      await pg.query(`INSERT INTO "Image" (id, "postId") VALUES ($1, $2)`, [
+        990000300 + index,
+        100 + index,
+      ]);
+    }
+    const shown = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select('p.availability')
+      .where('img.id', '>=', 990000300)
+      .where(postShownToKnights)
+      .orderBy('img.id')
+      .execute();
+
+    expect(shown.map((r) => r.availability)).toEqual(
+      values.filter((a) => !postHiddenFromKnights(a))
+    );
+    expect(values.filter(postHiddenFromKnights)).toEqual(['Private']);
+    expect([null, undefined, 'NotYetAValue'].map(postHiddenFromKnights)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    await pg.query(
+      `INSERT INTO "Post" (id, "publishedAt", availability) VALUES (199, now() - interval '1 day', 'NotYetAValue')`
+    );
+    await pg.query(`INSERT INTO "Image" (id, "postId") VALUES (990000399, 199)`);
+    const unknownShown = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select('img.id')
+      .where('img.id', '=', 990000399)
+      .where(postShownToKnights)
+      .execute();
+    expect(unknownShown).toEqual([]);
+  });
+
   // Moderation Lead ruling 2026-11-23 on the Knights exclusions: CSAM-listed or held, ToS-violating, deleted-uploader and
   // deleted-model images fail the content rule, so sweeps retire them; a banned or muted uploader and a Draft or Private
   // model or version only hide the image, since each can be lifted.
@@ -137,7 +189,7 @@ describe('servableImage', () => {
           (5, NULL, NULL, false), (6, now(), NULL, false), (7, NULL, now(), false), (8, NULL, NULL, true),
           (9, NULL, NULL, false);
         INSERT INTO "CsamReport" ("userId", images) VALUES (NULL, '["990000303"]'), (5, '[]');
-        INSERT INTO "EvidenceHeldUser" ("userId") VALUES (9);
+        INSERT INTO "CsamReport" ("userId", images, details) VALUES (NULL, '[]', '{"secondaryUserId": "9"}');
         INSERT INTO "Model" (id, status, availability, "deletedAt") VALUES
           (201, 'Published', 'Public', NULL), (202, 'Deleted', 'Public', NULL), (203, 'Published', 'Public', now()),
           (204, 'Published', 'Public', NULL), (205, 'Published', 'Public', NULL), (206, 'Draft', 'Public', NULL),
@@ -181,7 +233,7 @@ describe('servableImage', () => {
       ['a ToS violation', 990000302],
       ['a listing on a CSAM report', 990000303],
       ['an uploader named on a CSAM report', 990000304],
-      ['an uploader under an evidence hold', 990000316],
+      ['an uploader named as the secondary user on a CSAM report', 990000316],
       ['a deleted uploader', 990000305],
       ['a deleted model version', 990000306],
       ['a deleted model', 990000307],

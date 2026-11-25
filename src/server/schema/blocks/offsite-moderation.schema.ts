@@ -192,8 +192,9 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   'storage-doc-delete',
   // Reviewed and kept: the document's open reports were dismissed (later reports re-open it).
   'storage-doc-dismiss',
-  // App Blocks DOCUMENT STORE data migration (`apps.mod.docStore.maintenance.*`,
-  // `storage-mark-migration.service.ts` is the only writer): a moderator moved one mark's rows of
+  // App Blocks DOCUMENT STORE data migration (rollout step 4 of docs/app-storage-generic-core.md;
+  // its tooling, the only writer, is removed, so no new row has these, and they stay for the
+  // history already written): a moderator moved one mark's rows of
   // one collection into a viewer-keyed collection (`storage-mark-migration`: freeze, copy, verify),
   // or purged every document of one collection (`storage-collection-purge`, also the mark
   // migration's rollback). Changes no listing state; withheld from the owner's history like the

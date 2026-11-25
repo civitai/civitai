@@ -912,6 +912,35 @@ describe('fast lane — agent-clean submissions sort first on the pending queue'
     }
   );
 
+  // The review boot check: the queue carries `previewBootCheck` from listPendingRequests.
+  const withBootCheck = (previewBootCheck: unknown) =>
+    onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'bc',
+        submittedAt: '2026-01-05T00:00:00Z',
+        previewState: 'preview-live',
+        previewBootCheck,
+        agentReview: cleanReview,
+      } as never),
+      vi.fn()
+    );
+
+  it("🔴 an enforced boot check that couldn't run keeps a live, clean row out of the fast lane", () => {
+    expect(reviewRowLane(withBootCheck({ result: 'unavailable', mode: 'enforce' }))).toEqual({
+      lane: 'flagged',
+      reasons: ["the boot check couldn't run"],
+    });
+  });
+
+  it.each([
+    { result: 'passed', mode: 'enforce' },
+    { result: 'unavailable', mode: 'shadow' },
+    { result: 'failed', mode: 'shadow' },
+    null,
+  ])('a boot check of %j leaves a live, clean row in the fast lane', (previewBootCheck) => {
+    expect(reviewRowLane(withBootCheck(previewBootCheck)).lane).toBe('agent-clean');
+  });
+
   it('🔴 an open review hold keeps an otherwise clean row out of the fast lane', () => {
     expect(reviewRowLane({ ...newClean, openHoldCount: 1 })).toEqual({
       lane: 'flagged',

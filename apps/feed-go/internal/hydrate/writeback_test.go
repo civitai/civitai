@@ -89,7 +89,7 @@ func TestWriteCachesAreMissLabels(t *testing.T) {
 			t.Errorf("primary cache %q is not a write cache", c)
 		}
 	}
-	if len(all) != 11 || !all.NeedsPrimary() || (WriteSet{MissMetrics: true, MissTagIDs: true}).NeedsPrimary() || (WriteSet{}).Any() {
+	if len(all) != 12 || !all.NeedsPrimary() || (WriteSet{MissMetrics: true, MissTagIDs: true}).NeedsPrimary() || (WriteSet{}).Any() {
 		t.Fatalf("AllWrites %v, or NeedsPrimary/Any wrong", all.Names())
 	}
 }

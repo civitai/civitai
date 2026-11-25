@@ -9,6 +9,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -94,14 +95,22 @@
     {#each data.items as p (p.id)}
       {@const verdict = acted.get(p.id)}
       <Card class="gap-0 overflow-hidden p-0 transition-opacity {verdict ? 'opacity-60' : ''}">
-        <a
-          href={`${data.civitaiUrl}/images/${p.imageId}`}
-          target="_blank"
-          rel="noreferrer"
-          class="block aspect-[3/4] overflow-hidden bg-muted"
-        >
-          <EdgeMedia src={p.imageUrl} type={p.imageType} width={450} class="size-full object-cover" />
-        </a>
+        {#if p.restricted}
+          <div
+            class="grid aspect-[3/4] place-items-center bg-muted p-4 text-center text-xs text-dark-2"
+          >
+            {RETRACTED_REFUSED}
+          </div>
+        {:else}
+          <a
+            href={`${data.civitaiUrl}/images/${p.imageId}`}
+            target="_blank"
+            rel="noreferrer"
+            class="block aspect-[3/4] overflow-hidden bg-muted"
+          >
+            <EdgeMedia src={p.imageUrl} type={p.imageType} width={450} class="size-full object-cover" />
+          </a>
+        {/if}
         <CardContent class="flex flex-col gap-2 p-2.5 text-sm">
           <div class="flex flex-wrap gap-1">
             {#each signals(p) as s (s.label)}

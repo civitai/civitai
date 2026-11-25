@@ -52,6 +52,7 @@ const SCHEMA = `
   CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public');
   CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
   CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+  CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
 `;
 
 const TIMED = [

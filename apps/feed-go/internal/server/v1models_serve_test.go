@@ -558,6 +558,48 @@ func TestServeV1ModelsUnsupportedInputs(t *testing.T) {
 	}
 }
 
+// countingSearcher answers every text search with no hit and counts the calls.
+type countingSearcher struct{ calls int }
+
+func (c *countingSearcher) SearchModelIDs(context.Context, v1models.SearchRequest) ([]int, error) {
+	c.calls++
+	return []int{}, nil
+}
+
+// A list text query is served only with FEED_GO_V1_MODELS_SERVE_QUERY (Config.ServeQuery): off, it is
+// the `v1-models-query` fallback with no search made, even with a search backend configured; on, it
+// is answered from the search (here no hit: Node's empty page). Through the real compute.
+func TestServeV1ModelsTextQuerySwitch(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		reg := prometheus.NewRegistry()
+		up := &v1Upstream{}
+		search := &countingSearcher{}
+		s := &Server{
+			Metrics: NewMetrics(reg), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			ServeV1Models: true, V1Fallback: up, Resolver: &auth.Resolver{},
+			V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+				Search: search,
+				Config: v1models.Config{BaseURL: "https://s.example", ImageLocation: "https://i.example", ServeQuery: on},
+			}},
+		}
+		w := httptest.NewRecorder()
+		s.ServeV1ModelsHTTP(w, v1Request("/api/v1/models?query=golden&limit=5", nil))
+		if !on {
+			if up.count() != 1 || search.calls != 0 || v1Count(t, reg, EndpointV1Models, "feed_go_fallback_total", map[string]string{"reason": "v1-models-query"}) != 1 {
+				t.Errorf("off: proxied=%d searches=%d, want 1 proxied under v1-models-query and no search", up.count(), search.calls)
+			}
+			continue
+		}
+		if up.count() != 0 || search.calls != 1 || w.Code != http.StatusOK || w.Body.String() != `{"items":[],"metadata":{}}` ||
+			w.Header().Get(ServedByHeader) != ServedByGo {
+			t.Errorf("on: proxied=%d searches=%d code=%d body=%s served-by=%s", up.count(), search.calls, w.Code, w.Body.String(), w.Header().Get(ServedByHeader))
+		}
+		if v := v1Count(t, reg, EndpointV1Models, "feed_go_requests_total", map[string]string{"outcome": "served_empty"}); v != 1 {
+			t.Errorf("on: served_empty = %v, want 1", v)
+		}
+	}
+}
+
 // The serve slots are the one shared pool, and the gauge names the model route holding one; both
 // model series exist at 0 before any request.
 func TestServeV1ModelsInFlightGauge(t *testing.T) {
@@ -631,7 +673,8 @@ func TestPublicEndpointNamesTheModelRoutes(t *testing.T) {
 		"/api/v1/models/42":   EndpointV1ModelsID,
 		"/api/v1/models/42/x": EndpointV1ModelsID,
 		"/api/v1/modelsx":     "",
-		"/api/v1/images":      "",
+		"/api/v1/images":      EndpointV1Images,
+		"/api/v1/images/42":   "",
 	} {
 		if got := PublicEndpoint(path); got != want {
 			t.Errorf("PublicEndpoint(%q) = %q, want %q", path, got, want)

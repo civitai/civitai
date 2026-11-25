@@ -20,10 +20,8 @@ import {
   type ChallengeJudgingCategory,
 } from '~/server/schema/challenge.schema';
 import { challengeJudgingEngineForCreate } from '~/server/services/challenge-judge.service';
-import {
-  getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { usesNsfwRubrics } from '~/server/services/challenge-category.service';
 import {
   CHALLENGE_JOB_BATCH_SIZE,
   DEFAULT_CATEGORY_ROWS,
@@ -1081,6 +1079,10 @@ export type RecentEntry = {
   username: string;
   url: string;
   nsfwLevel: number;
+  /** Read by the review shadow's gate; absent means not sendable. */
+  ingestion?: string;
+  blockedFor?: string | null;
+  needsReview?: string | null;
 };
 
 /** Row shape for resource selection queries (used by processing and testing). */
@@ -1137,7 +1139,7 @@ export async function resolveChallengeReviewInputs(challenge: {
 
   return {
     categories: userCategories?.map((c) => ({ key: c.key, name: c.label, criteria: c.criteria })),
-    nsfw: !getIsSafeBrowsingLevel(challenge.allowedNsfwLevel),
+    nsfw: usesNsfwRubrics(challenge.allowedNsfwLevel),
   };
 }
 

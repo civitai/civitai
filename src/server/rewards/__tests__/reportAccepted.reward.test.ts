@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Same mocked surface as stickerPlacementAccepted.reward.test.ts: base.reward builds a ClickHouse
-// client and buzz.service at import time.
+// Same mocked surface as stickerPlacementAccepted.reward.test.ts: base.reward builds the ClickHouse
+// and Buzz clients at import time.
 const h = vi.hoisted(() => ({
   insert: vi.fn(async () => undefined),
   createBuzzTransactionMany: vi.fn(async () => ({ transactions: [] })),
@@ -15,10 +15,10 @@ vi.mock('~/server/clickhouse/client', () => ({
     $query: vi.fn(async () => []),
   },
 }));
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => h.createBuzzTransactionMany(...(args as [])),
-  getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
   getTransactionByExternalId: vi.fn(async () => null),
+  getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
 }));
 
 import { fakeClickhouse } from '~/server/events/points/__tests__/clickhouse-wire';

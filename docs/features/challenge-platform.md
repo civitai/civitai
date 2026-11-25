@@ -21,8 +21,8 @@ entries/winners.
 
 | Source | Origin | Judging | Funding |
 |---|---|---|---|
-| `System` | AI-generated daily challenges (cron) | Fixed daily rubric (unless dynamic-judging flag on) | Platform prizes |
-| `Mod` | Moderator-created | Fixed rubric (unless dynamic-judging flag on) | Mod-configured |
+| `System` | AI-generated daily challenges (cron) | The day's rubric set: scheduled, rotating, or the fixed default (§3 Daily plan) | Platform prizes |
+| `Mod` | Moderator-created | Stored categories, or the fixed default | Mod-configured |
 | `User` | User-created ("public") | Creator-defined **weighted categories** | **Entry-fee funded** |
 
 Two Flipt flags gate the surface:
@@ -88,6 +88,28 @@ Transitions are date/job-driven and enforced at the application layer only (no D
 - `visibleAt` controls public feed appearance (default 7 days before `startsAt`; user challenges = `now()`).
 - Active-challenge edits are restricted to non-competitive fields.
 
+**Daily plan** (`src/server/games/daily-challenge/daily-schedule.ts`, `daily-plan.ts`) — what each System daily is
+generated and judged with, resolved at creation by `resolveDailyPlan`:
+- **Schedule:** `DAILY_CHALLENGE_SCHEDULE` maps a UTC start date to an occasion, a one-line brief, a rubric set and a
+  judge (by name; ids differ per environment). December 2026 is filled in, with comedy once a week. The occasion goes to the article writer as the creative angle on top
+  of the featured resource; the theme rules still anchor the theme to the resource. A missing judge name falls back
+  to the default judge.
+- **Rotation:** an unscheduled date gets `pickDailyRubricSet(date)`, a pure function of the date: comedy on
+  Fridays, the other ten sets cycled by day number so two days running never share a set; default judge.
+- **Rubric sets:** `DAILY_RUBRIC_SETS` (`challenge.constants.ts`), theme 50 in every set; `comedy` is
+  `DEFAULT_CATEGORY_ROWS` itself. The set is stored as the challenge's `judgingCategories`, shown in the Judging
+  panel, and recorded in `metadata.dailyPlan` (`setKey`, `source`, `judgeName`, `occasion`).
+- **Brakes:** Flipt `daily-challenge-schedule` (calendar entries) and `daily-challenge-rubric-rotation`
+  (unscheduled days), read once per creation batch. Both default-off: off, unknown or unreachable gives the fixed
+  rubric and default judge. The reschedule route reads them too; rows already written change only when
+  the route rewrites them.
+- **Already-queued rows:** `/api/admin/reschedule-daily-challenges` (webhook token) re-plans Scheduled System dailies
+  that have not started, have no entries and are not yet visible. GET is a dry run that returns each proposal with
+  the row's current values and their hash (keep the response: it is the only copy of the old rows); POST applies
+  exactly the reviewed proposals, re-deriving rubric and judge server-side and refusing a row that changed.
+  `rubricOnly=true` changes only rubric and judge, and may touch a visible daily that has not started;
+  `mode=defaults&rubricOnly=true` puts rubric and judge back to the default.
+
 **Runtime jobs**
 
 | Job | Schedule | Function |
@@ -122,8 +144,8 @@ Transitions are date/job-driven and enforced at the application layer only (no D
 **Owed reviews** — an entry whose review fails goes into `Challenge.metadata.pendingReview` and is retried on later ticks regardless of sampling, the `reviewedAt` window or the per-user cap. A failure counts as an attempt only on a tick where some other review succeeded, so a provider outage retries until it recovers; after 3 counted attempts the entry is dropped and logged. Winner picking waits while a challenge still owes reviews, up to 2 hours past `endsAt` (`OWED_REVIEW_GRACE_HOURS`); the challenge stays Active meanwhile, so the review job keeps working through the list.
 
 **Ranking**
-- `System`/`Mod` (fixed rubric): `Rating = average(theme, wittiness, humor, aesthetic)`.
-- `User` (weighted categories): `calculateWeightedCategoryScore` — see §6.
+- Every source: `calculateWeightedCategoryScore` over the challenge's stored categories (§6); a challenge with none
+  uses the fixed default (theme 50 / aesthetic 20 / humor 15 / wittiness 15).
 
 **Winner selection**: close collection → rank → dedup to each user's single best entry → send top `finalReviewAmount` (10) to the LLM for final winner selection with reasons → award winner prizes (yellow Buzz) → award entry-participation prizes (blue Buzz) → store `Challenge.metadata.completionSummary` (`{ judgingProcess, outcome, completedAt }`) → notify.
 
@@ -142,7 +164,36 @@ Participation prize: users with ≥ `entryPrizeRequirement` (10) valid entries g
 ## 5. Judging system
 
 ### Judges (`ChallengeJudge`)
-AI judge personas with custom prompts/bios. When `Challenge.judgeId` is set, the judge's profile is shown as the "creator" in feed + detail (**display-layer only** — `createdById` is unchanged, so owner checks must never use the displayed `createdBy.id`, which is `judgeUserId ?? createdById`). Selectable judges are a hardcoded whitelist, not a DB column.
+AI judge personas with custom prompts/bios. When `Challenge.judgeId` is set, the judge's profile is shown as the "creator" in feed + detail (**display-layer only** — `createdById` is unchanged, so owner checks must never use the displayed `createdBy.id`, which is `judgeUserId ?? createdById`). Judges offered to users are the `userSelectable` rows, falling back to the `USER_SELECTABLE_JUDGE_NAMES` whitelist.
+
+**Holiday judges (December 2026).** *Jolly CivBot* (CivBot after a festive firmware update: tinsel antenna, string
+lights for eyes, strong views on load-bearing gingerbread) and *Frost CivChan* (CivChan hosting the winter festival,
+scarf on, cocoa in hand, verdicts delivered like a weather report) alternate on the December dailies. Each is a
+Duplicate of CivBot / CivChan in the moderator judge panel with a persona block prepended to the system and content
+prompts: the voice changes, the scoring does not. Same user account as the source judge, not user-selectable. The
+Duplicate action does not copy `collectionPrompt`; copy it by hand. To change one mid-month, edit the copy in place
+(a new Duplicate gets a new id that already-planned rows do not point at). Deactivating a judge does not stop it
+judging rows that reference it (`getJudgingConfig` does not filter on `active`).
+
+**Recent winners (anti-sameness).** On a System daily whose rubric has Creativity or Wordplay, the review
+prompt lists why the last 10 System winners won, as data, and the judge scores a repeat of one of those
+ideas lower on those categories only (`recent-winners.ts`). The stored criteria of those categories say
+so, so the Judging panel tells entrants.
+
+**Judge-model shadow.** `reviewShadow` in the daily config (`{ model, sampleRate, provider? }`) reviews a
+sample with a second model and logs both to Axiom; only production scores reach users. It runs only on
+SFW System dailies, only for entries the scan has cleared at an SFW level that no moderator review
+holds, and only with a `provider`
+pin that denies data collection, e.g. `{ order: ['wafer/us'], allowFallbacks: false, dataCollection:
+'deny' }` (`shadowFor`). The shadow call carries `entry <imageId>` instead of the entrant's username,
+it gets no recent-winner ideas (judge-written reasons can name other entrants), so on a freshness
+day its Creativity and Wordplay scores are not comparable with production's, and its log
+records OpenRouter's generation id, which OpenRouter's generation API resolves to the host
+that served it. Recent-winner ideas on an SFW daily come only from SFW dailies whose winning image is
+still scanned SFW and not blocked, held or model-restricted.
+
+**Stopping a judge mid-challenge.** Each review tick loads a non-default judge fresh from the DB, so editing its
+prompts in the judge panel takes effect on the next tick; Re-judge Entries re-scores what it already judged.
 
 ### Dynamic judging categories (`ChallengeCategory`)
 Judging is category-driven: a challenge's `judgingCategories` (a weighted mix from a curated library) determines which scoring rubrics the judge applies. Behavior-preserving by default — the default rows (`theme 50 / aesthetic 20 / humor 15 / wittiness 15`) rank identically to the old fixed weights; outcomes change only when categories/weights are reshaped.
@@ -261,6 +312,8 @@ Creators can **view / edit their own `User` challenges only while `Scheduled` wi
 |---|---|---|
 | `challenge-platform-enabled` | `challengePlatform` | whole platform |
 | `user-challenges` | `userChallenges` | user create/manage (**tester rollout**) |
+| `daily-challenge-schedule` | — | daily calendar entries (§3 Daily plan) |
+| `daily-challenge-rubric-rotation` | — | rotating rubric on unscheduled dailies |
 
 Flipt is **GitOps-only** (writes via the GitOps repo, not the API).
 

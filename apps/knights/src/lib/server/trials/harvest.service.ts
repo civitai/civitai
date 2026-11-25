@@ -11,9 +11,8 @@ import {
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
-  servableImage,
-  servableImageForSweeps,
 } from '@civitai/db/knights';
+import { servableImage, servableImageForSweeps } from '../image-gate';
 import { HARVEST, type HarvestConfig, type HarvestSettings } from './config';
 import { takeAgreementIntake } from './agreement-intake.service';
 import { poolFor } from './pool';
@@ -222,7 +221,11 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
       .where('r.source', '!=', REFERENCE_SOURCE.core)
       .where((eb) =>
         eb.or([
-          eb('r.harvestedAt', '<', utc(agedOut)),
+          // A mod-confirmed check has no TTL: it leaves by the pool cap, Knights' failures, or its image moving off its level.
+          eb.and([
+            eb('r.harvestedAt', '<', utc(agedOut)),
+            eb('r.source', '!=', REFERENCE_SOURCE.inquisitor),
+          ]),
           eb.not(
             eb.exists(
               eb

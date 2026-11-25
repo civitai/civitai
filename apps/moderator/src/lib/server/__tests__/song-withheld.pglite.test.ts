@@ -60,7 +60,7 @@ beforeEach(async () => {
     INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other');
     INSERT INTO "Image" (id, url, type, ingestion, "blockedFor", "userId", metadata) VALUES
       (${WITHHELD}, 'shared-key', 'audio', 'Blocked', 'moderated', 7, '{"title": "Held"}'),
-      (503, 'shared-key', 'image', 'Pending', NULL, 8, NULL),
+      (503, 'shared-key', 'image', 'Blocked', 'CSAM', 8, NULL),
       (${OPEN}, 'open-key', 'audio', 'Blocked', 'moderated', 7, '{"title": "Open"}'),
       (${PICTURE}, 'picture-key', 'image', 'Scanned', NULL, 7, NULL);
     INSERT INTO "TrackLyrics" ("imageId", text, lines) VALUES

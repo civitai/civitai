@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import '~/__tests__/mocks/logging.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type * as Service from '~/server/services/feature-pages.service';
 
 const HUB = 'https://hub.test';
@@ -11,6 +12,7 @@ const REQUEST = 'urn:data.civitai.com:feature-pages/requests/dark-mode';
 let service: typeof Service;
 let fetchMock: ReturnType<typeof vi.fn>;
 let minted: number;
+let cache: ReturnType<typeof installFakeCacheRedis>;
 let signerReplies: Array<(token: string) => Response>;
 
 const json = (status: number, body: unknown) =>
@@ -23,7 +25,7 @@ beforeEach(async () => {
     FEATURE_PAGES_CLIENT_ID: 'client-id',
     FEATURE_PAGES_CLIENT_SECRET: 'client-secret',
   });
-  installFakeCacheRedis();
+  cache = installFakeCacheRedis();
   minted = 0;
   signerReplies = [];
   fetchMock = vi.fn(async (input: string, init: RequestInit) => {
@@ -47,6 +49,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  envMock.reset();
 });
 
 const signerCalls = () =>
@@ -66,20 +69,66 @@ describe('resolveFeaturePageEmbed', () => {
     'http://features.example.com/feature.html',
     'not a url',
   ])('refuses %s', (url) => {
-    expect(service.resolveFeaturePageEmbed(url, feature)).toBeNull();
+    expect(service.resolveFeaturePageEmbed(url, feature, 'civitai.com')).toBeNull();
   });
 
-  it('frames a page on another registrable domain, naming the feature', () => {
+  it('frames a page on another registrable domain, naming the feature and the serving host', () => {
     expect(
-      service.resolveFeaturePageEmbed('https://features.example.com/feature.html', feature)
+      service.resolveFeaturePageEmbed(
+        'https://features.example.com/feature.html',
+        feature,
+        'civitai.com'
+      )
     ).toEqual({
-      src: `https://features.example.com/feature.html?feature=${encodeURIComponent(feature)}`,
+      src: `https://features.example.com/feature.html?feature=${encodeURIComponent(
+        feature
+      )}&host=${encodeURIComponent('https://civitai.com')}`,
       origin: 'https://features.example.com',
     });
     expect(
-      service.resolveFeaturePageEmbed('http://127.0.0.1:7560/feature.html', feature)?.origin
+      service.resolveFeaturePageEmbed('http://127.0.0.1:7560/feature.html', feature, 'civitai.com')
+        ?.origin
     ).toBe('http://127.0.0.1:7560');
   });
+
+  it('outside production a local dev origin is the host; in production it is refused', () => {
+    const url = 'https://features.example.com/feature.html';
+    envMock.set({ NODE_ENV: 'test' });
+    expect(
+      new URL(
+        service.resolveFeaturePageEmbed(url, feature, 'localhost:3000')!.src
+      ).searchParams.get('host')
+    ).toBe('http://localhost:3000');
+    envMock.set({ NODE_ENV: 'production' });
+    expect(service.resolveFeaturePageEmbed(url, feature, 'localhost:3000')).toBeNull();
+    expect(service.resolveFeaturePageEmbed(url, feature, 'civitai.com')).not.toBeNull();
+  });
+
+  it.each([
+    ['civitai.com', 'https://civitai.com'],
+    ['civitai.red', 'https://civitai.red'],
+    ['CIVITAI.RED', 'https://civitai.red'],
+  ])('on %s, the host is that origin, whatever the configured URL names', (served, host) => {
+    const embed = service.resolveFeaturePageEmbed(
+      'https://features.example.com/feature.html?host=https://evil.example',
+      feature,
+      served
+    );
+    expect(new URL(embed!.src).searchParams.getAll('host')).toEqual([host]);
+  });
+
+  it.each([['civitai.green'], ['www.civitai.com'], ['civitai.com.evil.example'], [undefined]])(
+    'on an unlisted origin (%s) no frame is offered',
+    (served) => {
+      expect(
+        service.resolveFeaturePageEmbed(
+          'https://features.example.com/feature.html',
+          feature,
+          served
+        )
+      ).toBeNull();
+    }
+  );
 });
 
 describe('castFeaturePageVote', () => {
@@ -179,5 +228,115 @@ describe('getMyFeaturePageVotes', () => {
     const [[url, init]] = signerCalls();
     expect(url).toBe(`${SIGNER}/internal/mine`);
     expect(JSON.parse(String(init.body))).toEqual({ uid: 42, requests: [REQUEST] });
+  });
+});
+
+describe('getFeaturePageViewerHandle', () => {
+  const author = `h1:${'b'.repeat(64)}`;
+
+  it('asks the platform for the uid once, then serves the handle from cache', async () => {
+    signerReplies.push(() => json(200, { author }));
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+
+    const calls = signerCalls();
+    expect(calls.map(([url]) => url)).toEqual([`${SIGNER}/internal/handle?uid=42`]);
+  });
+
+  it.each([
+    ['a refusal', () => json(400, { code: 'bad_request' })],
+    ['a reply that is not a handle', () => json(200, { author: 'u42' })],
+  ])('gives no handle on %s, asks nothing for a minute, then asks again', async (_, reply) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      signerReplies.push(reply, () => json(200, { author }));
+
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      expect(signerCalls()).toHaveLength(1);
+
+      vi.setSystemTime(Date.now() + 61_000);
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on a platform that does not answer well before the signer timeout', async () => {
+    fetchMock.mockImplementation(async (input: string, init: RequestInit) => {
+      if (input === `${HUB}/api/auth/oauth/token`)
+        return json(200, { access_token: 'token-1', expires_in: 900 });
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      );
+    });
+    const started = Date.now();
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
+  it('gives up on a hub that does not mint a token, without waiting for the token timeout', async () => {
+    fetchMock.mockImplementation(
+      async (_: string, init: RequestInit) =>
+        new Promise<Response>((_, reject) =>
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+        )
+    );
+    const started = Date.now();
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    expect(Date.now() - started).toBeLessThan(2_500);
+    await vi.waitFor(() =>
+      expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42:miss`)).toBe(1)
+    );
+  });
+
+  it('caches a handle that arrives after the render gave up, for the next render', async () => {
+    let tokenAsked!: () => void;
+    const asked = new Promise<void>((resolve) => (tokenAsked = resolve));
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === `${HUB}/api/auth/oauth/token`) {
+        tokenAsked();
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return json(200, { access_token: 'token-1', expires_in: 900 });
+      }
+      return json(200, { author });
+    });
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    await asked;
+    await vi.waitFor(
+      () =>
+        expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42`)).not.toBeNull(),
+      { timeout: 3_000 }
+    );
+    await vi.waitFor(() =>
+      expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42:miss`)).toBeNull()
+    );
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    expect(signerCalls()).toHaveLength(1);
+  });
+});
+
+describe('getFeaturePageProps', () => {
+  it('serves the page private and never stored, so no shared cache can hand it to another viewer', async () => {
+    envMock.set({ FEATURE_PAGES_EMBED_URL: 'https://features.example.com/feature.html' });
+    const setHeader = vi.fn();
+
+    const result = await service.getFeaturePageProps({
+      ctx: {
+        query: { slug: 'dark-mode' },
+        req: { headers: { host: 'civitai.com' } },
+        res: { setHeader },
+      },
+      features: { featurePages: true },
+      session: null,
+    });
+
+    expect(result).toMatchObject({ props: { viewerAuthor: null } });
+    expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store');
   });
 });

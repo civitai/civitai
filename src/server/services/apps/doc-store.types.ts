@@ -8,6 +8,13 @@ import type {
 } from '~/shared/constants/block-storage.constants';
 
 /**
+ * The five selectable content-level bits (PG 1, PG-13 2, R 4, X 8, XXX 16): the registry level
+ * streams' bits, as a subscription's `meta.level` (`registry-adapter/level-feed.ts`) and as the
+ * store's level-stream selector (`levelChanges`, `levelDocuments`). The one list of them.
+ */
+export const LEVEL_STREAM_BITS = [1, 2, 4, 8, 16] as const;
+
+/**
  * One collection's declaration — the manifest parser's own type, so the store sees exactly
  * what the validator accepted at review. The store never reads `showAuthor` or
  * `ownedModelVersions`; the REST layer applies them (`doc-store-api.ts`,
@@ -82,10 +89,7 @@ export type DocRating = {
 
 export type DocAuthor =
   /** `uid` is for the envelope layer to resolve a username from; it must never reach a reader. */
-  | { kind: 'user'; uid: number; isViewer: boolean }
-  | { kind: 'app' }
-  /** Created by the first increment of a counter; nobody owns it. */
-  | { kind: 'counter' };
+  { kind: 'user'; uid: number; isViewer: boolean } | { kind: 'app' };
 
 export type DocRecord = {
   key: string;
@@ -94,10 +98,6 @@ export type DocRecord = {
   createdAt: Date;
   updatedAt: Date;
   author: DocAuthor;
-  counters: Record<string, number>;
-  marks: Record<string, number>;
-  /** Null for an anonymous viewer. */
-  viewer: { marks: string[] } | null;
   /** Server-set and read only; present only while levels are on (`DocStoreContext.levels`). */
   rating?: DocRating;
 };
@@ -126,11 +126,9 @@ export type DocDeleteResult = { deleted: true; seq: number } | { deleted: false 
 export type DocListQuery = {
   /** Equality on ONE declared index. */
   where?: Record<string, string | number | boolean>;
-  /** `[-]key|createdAt|updatedAt|<index>|counter:<name>|mark:<name>`. Default `key`. */
+  /** `[-]key|createdAt|updatedAt|<index>`. Default `key`. */
   sort?: string;
   author?: 'me';
-  markedBy?: 'me';
-  mark?: string;
   keyPrefix?: string;
   limit?: number;
   cursor?: string;
@@ -141,9 +139,8 @@ export type DocListResult = { items: DocRecord[]; nextCursor: string | null };
 /**
  * Stored usage for (app, ns), and for the viewer within it (null for an anonymous viewer).
  * `app` is the app's SHARED documents only — what the app ceiling (`appBytes` / `appDocs`)
- * measures. `viewer` is everything charged to the viewer: their private documents, the shared
- * documents they authored and the counter documents their increment created — what the
- * per-viewer ceiling (`userBytes` / `userDocs`) measures. So `viewer` can exceed `app`.
+ * measures. `viewer` is everything charged to the viewer: their private documents and the shared
+ * documents they authored — what the per-viewer ceiling (`userBytes` / `userDocs`) measures. So `viewer` can exceed `app`.
  */
 export type DocStoreUsage = {
   app: { bytes: number; docs: number };
@@ -187,9 +184,13 @@ export const DOC_STORE_BOUNDS = {
   listLimitDefault: 25,
   getManyMax: 100,
   cursorChars: 512,
-  incrementMax: 100,
 } as const;
 
+/**
+ * The one `doc_mark` name still written: a moderation report (the report API,
+ * `doc-store-report-api.ts`). Marks, counters and their tallies were removed from the core
+ * (docs/app-storage-generic-core.md, rollout step 5); `doc_mark` is the report store.
+ */
 export const REPORT_MARK = 'report';
 
 /**
@@ -229,9 +230,9 @@ export type DocStoreErrorCode =
   | 'index_building'
   | 'cursor_expired'
   /**
-   * The operation no longer exists here (410). Today: a `$mark` / `$unmark` of a mark whose rows
-   * were moved to a viewer-keyed collection (`details.reason: 'mark_migrated'`, with the target
-   * collection), refused from the moment the migration froze it (`migrateMarksToDocs`).
+   * The operation no longer exists here (410). Raised by nothing since the mark, counter and
+   * publish routes were removed (they now answer as unknown routes); kept so a client that
+   * learned the code still reads it, and for a later removal that wants one.
    */
   | 'removed'
   | 'too_large'
@@ -269,7 +270,7 @@ export type AccountWipeNamespaceResult = {
   /**
    * `namespace`: the namespace was the account's own dev namespace (`dev:<uid>`), so every row in
    * it was deleted. `user`: a namespace other users share (`prod`), so only what
-   * names the account was deleted (or, for a counter document, released).
+   * names the account was deleted.
    */
   mode: 'namespace' | 'user';
   /** Private documents deleted (their index rows went with them). */
@@ -283,9 +284,7 @@ export type AccountWipeNamespaceResult = {
   sharedDocs: number;
   /** Bytes refunded to the app (and the account's own usage) for those documents. */
   sharedBytes: number;
-  /** Counter-created documents whose creation was charged to the account: the uid dropped. */
-  counterDocsReleased: number;
-  /** The account's marks deleted, reports included; each one decremented its tally. */
+  /** The account's `doc_mark` rows deleted: its reports. */
   marks: number;
   /** Rows deleted in `namespace` mode, across every table (index rows not counted). */
   namespaceRows: number;
@@ -365,48 +364,18 @@ export function isDocStoreError(err: unknown, code?: DocStoreErrorCode): err is 
 }
 
 // ---------------------------------------------------------------------------
-// Server-side publish (`DocStore.publishCopies` / `unpublishCopies`)
+// The unchanged-put rule (`classifyPublish` in `doc-store.ts`)
 // ---------------------------------------------------------------------------
 
 /**
- * Bounds of one publish or unpublish call. `maxKeys` caps the keys a call names (more is refused
- * whole, `invalid_request` with `reason: 'too_many_keys'`); `pruneLimit` caps the copies one
- * publish prunes (the rest wait for the next call, `pruneIncomplete: true`).
- */
-export const DOC_STORE_PUBLISH_BOUNDS = { maxKeys: 500, pruneLimit: 500 } as const;
-
-/**
- * What a publish does with one requested key, decided from the caller's private document (the
- * source) and the shared document at the same key (the copy):
- * - `create`: no copy yet; `update`: the caller's own copy, with different content;
- * - `unchanged`: the caller's own copy with the same content: nothing is written;
- * - `missing`: the caller has no private document at that key;
- * - `not_author`: the copy belongs to someone else (or to no user): never touched;
- * - `hidden`: the caller's own copy, hidden by a moderator: never rewritten.
+ * What a write of a shared document's body would do, decided from the caller's body (the source)
+ * and the stored shared document at the same key (the copy). Named for the server-side publish it
+ * was built for (removed, docs/app-storage-generic-core.md rollout step 5); today only the free
+ * unchanged put (`putIfUnchanged`) reads it:
+ * - `create`: no stored document yet; `update`: the caller's own document, with different content;
+ * - `unchanged`: the caller's own document with the same content: nothing is written;
+ * - `missing`: no source body;
+ * - `not_author`: the stored document belongs to someone else (or to no user);
+ * - `hidden`: the caller's own document, hidden by a moderator.
  */
 export type PublishAction = 'create' | 'update' | 'unchanged' | 'missing' | 'not_author' | 'hidden';
-export type PublishSkipReason = Extract<PublishAction, 'missing' | 'not_author' | 'hidden'>;
-
-/** One requested key as a publish would treat it now (`DocStore.previewPublish`). */
-export type PublishPreviewEntry = {
-  key: string;
-  action: PublishAction;
-  /** The private body and its content hash; only for `create` and `update`. */
-  source?: { data: Record<string, unknown>; hash: string };
-};
-
-/** Every list holds keys in key order. */
-export type PublishResult = {
-  created: string[];
-  updated: string[];
-  unchanged: string[];
-  pruned: string[];
-  skipped: { key: string; reason: PublishSkipReason }[];
-  /** More copies were prunable than one call prunes: call again. */
-  pruneIncomplete: boolean;
-};
-
-export type UnpublishResult = {
-  deleted: string[];
-  skipped: { key: string; reason: 'missing' | 'not_author' }[];
-};

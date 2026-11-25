@@ -50,7 +50,7 @@ import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-read
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
-  stampWorkflowPublished,
+  stampPublishedTrainingRuns,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
@@ -162,7 +162,6 @@ import {
   toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
-  removedWithOwnerEditError,
   updateModelById,
   purgeHeldShowcase,
   queueModelEarlyAccessReindex,
@@ -250,8 +249,6 @@ import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidd
 import { notifyNewlyPinnedPosts } from '~/server/services/model-gallery-pin-notify.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
-import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
-import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import {
   trainingDataOwnerView,
   withoutEpochUrls,
@@ -987,11 +984,7 @@ export const publishModelHandler = async ({
       throw throwBadRequestError('Model is already published');
 
     const { isModerator } = ctx.user;
-    // A model a content wipe kept is publishable by a moderator only, whatever its status.
-    if (
-      !isModerator &&
-      (constants.modPublishOnlyStatuses.includes(model.status) || isRemovedWithOwner(model.meta))
-    )
+    if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
     // The model's status says nothing about its versions: one a moderator took down while the
     // model stayed public must not come back because its id was in this list. Refused here, before
@@ -1011,11 +1004,12 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    await assertTrainingSourcePublishable({
+    const publishingVersions = await assertTrainingSourcePublishable({
       modelId: input.id,
       meta: modelMeta,
       ownerId: model.userId,
       callerId: ctx.user.id,
+      versionIds: input.versionIds,
     });
     await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
@@ -1030,12 +1024,10 @@ export const publishModelHandler = async ({
           customMessage,
           ...rest
         } = stored || {};
-        // A moderator publishing a model a content wipe hid ends that removal: its record goes too.
-        return withModelRulesClearance(withoutRemovedWithOwner(rest), stored, isModerator);
+        return withModelRulesClearance(rest, stored, isModerator);
       },
       republishing,
       enforceModelRules: !isModerator,
-      refuseRemovedWithOwner: !isModerator,
     });
     // Held for review: not published, so no publish side effects below.
     if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
@@ -1065,13 +1057,13 @@ export const publishModelHandler = async ({
 
     // A scheduled publish skips this (status isn't Published yet) and the scheduled-publishing job
     // doesn't stamp either — the studio then just keeps offering its idempotent publish entry.
-    if (modelMeta?.trainingStudioWorkflowId && updatedModel.status === ModelStatus.Published) {
-      await stampWorkflowPublished({
+    if (updatedModel.status === ModelStatus.Published) {
+      await stampPublishedTrainingRuns({
         ownerId: updatedModel.userId,
         callerId: ctx.user.id,
-        workflowId: modelMeta.trainingStudioWorkflowId,
         modelId: updatedModel.id,
-        modelVersionId: updatedModel.modelVersions[0]?.id,
+        modelMeta,
+        versions: publishingVersions,
       });
     }
 
@@ -1855,7 +1847,6 @@ export const requestReviewHandler = async ({
       data: {},
       meta: (stored, row) => {
         assertReviewable(row?.status);
-        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
         return { ...stored, needsReview: true };
       },
     });
@@ -1954,7 +1945,6 @@ export const changeModelModifierHandler = async ({
       data: { mode },
       meta: (stored, row) => {
         assertModeChange(row?.mode);
-        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
         const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } = stored || {};
         if (mode === ModelModifier.Archived)
           return { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };
@@ -2749,7 +2739,7 @@ export const privateModelFromTrainingHandler = async ({
     // Publishes the model (privately), so the training-source check applies like any publish.
     const stored = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { userId: true, meta: true },
+      select: { userId: true, meta: true, modelVersions: { select: { id: true } } },
     });
     if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
       await assertTrainingSourcePublishable({
@@ -2757,6 +2747,8 @@ export const privateModelFromTrainingHandler = async ({
         meta: stored.meta as ModelMeta | null,
         ownerId: stored.userId,
         callerId: ctx.user.id,
+        // privateModelFromTraining publishes these, or every version when none are named.
+        versionIds: input.modelVersionIds ?? stored.modelVersions.map((version) => version.id),
       });
 
     const model = await privateModelFromTraining({
@@ -2821,11 +2813,17 @@ export const publishPrivateModelHandler = async ({
       throw throwAuthorizationError();
     }
 
+    // primary: guards the publish below, which makes the model's Published versions public.
+    const publishedVersions = await dbWrite.modelVersion.findMany({
+      where: { modelId: model.id, status: ModelStatus.Published },
+      select: { id: true },
+    });
     await assertTrainingSourcePublishable({
       modelId: model.id,
       meta: model.meta as ModelMeta | null,
       ownerId: model.userId,
       callerId: userId,
+      versionIds: publishedVersions.map((version) => version.id),
     });
     await assertNotCrossOwnerDuplicate({
       modelId: model.id,

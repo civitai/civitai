@@ -10,7 +10,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Client } from 'pg';
 import type { DocStoreClient, DocStoreDb } from '~/server/services/apps/doc-store';
 import {
-  APPDATA_TABLES,
+  APPDATA_SCHEMA_TABLES,
   isAccountWipeStatement,
   isAppPurgeStatement,
   isRaterLookupStatement,
@@ -79,9 +79,10 @@ export const MIGRATION_RECORD_ID_UNIQUE = path.resolve(
   '../migrations/20261119120200_appdata_doc_record_id_unique.sql'
 );
 /**
- * The mark sequence: the `mark_head` table and the `mark_seq` column of `doc_tally`. ON by
- * default, so every suite runs the store as an environment will once it is applied; a suite opts
- * out (`markHead: false`) to run the store as before it is.
+ * The (removed) mark sequence: the `mark_head` table and the `mark_seq` column of `doc_tally`. The
+ * store no longer names either (docs/app-storage-generic-core.md, rollout step 5); it is applied ON
+ * by default only so every suite runs against the schema environments hold until the hand-applied
+ * cleanup drops it. `markHead: false` builds the schema without it.
  */
 export const MIGRATION_MARK_HEAD_UP = path.resolve(
   __dirname,
@@ -296,7 +297,7 @@ export async function createPgliteHarness(opts: {
   if (opts.markHead !== false) await pg.exec(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
   if (opts.maintRun !== false) await pg.exec(readFileSync(MIGRATION_MAINT_RUN_UP, 'utf8'));
   if (!opts.rls) {
-    for (const t of APPDATA_TABLES) {
+    for (const t of APPDATA_SCHEMA_TABLES) {
       if (t === 'mark_head' && opts.markHead === false) continue;
       if (t === 'maint_run' && opts.maintRun === false) continue;
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);

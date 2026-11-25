@@ -15,8 +15,8 @@ export const resolveRestrictedNsfwVerdictInput = z.object({
     .describe('Why, or where the lead was escalated. Required to dismiss a minor lead.'),
   revision: z
     .string()
+    .min(1)
     .max(128)
-    .optional()
     .describe('The revision of the lead the moderator was shown; refused if it has changed.'),
 });
 

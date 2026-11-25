@@ -19,6 +19,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Model rule matches queue (moderator app) | [docs/features/text-scan.md](text-scan.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
+| Knights in-game inquisitor queue (moderators confirm skill checks) | [docs/features/knights-inquisitor.md](knights-inquisitor.md) |
 | Edit LoRA training (Training Studio before/after pairs) | [docs/features/edit-lora-training.md](edit-lora-training.md) |
 | Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
@@ -28,6 +29,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Comped membership gifts (moderator, no charge) | [docs/features/membership-gift-comps.md](membership-gift-comps.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
 | Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |
+| Memorialized profiles (accounts of creators who have died) | [docs/features/memorialized-profiles.md](memorialized-profiles.md) |
 | Web Push (browser push notifications) | [docs/features/web-push.md](web-push.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](entity-metrics.md) |
 | Creator engagement API (`GET /api/v1/creator/engagement`) | [docs/features/creator-engagement-api.md](creator-engagement-api.md) |

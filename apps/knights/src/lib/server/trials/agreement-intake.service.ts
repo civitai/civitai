@@ -7,8 +7,8 @@ import {
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
-  servableImage,
 } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import { BUCKET_LEVELS } from '../queue/feed';
 import { MODERATOR_RULING_ACTIVITY } from './harvest.service';
 
@@ -17,7 +17,7 @@ const DAY_MS = 86_400_000;
 export const AGREEMENT_INTAKE = {
   /** Distinct players who must all have given the settled answer at the Knight stage. */
   minPlayers: 3,
-  /** Live (probation or active) agreement references kept per level bucket. */
+  /** Live (probation or active) agreement references, of images players can be shown, kept per level bucket. */
   probationPerLevel: 40,
   /** Only items settled this recently are read. */
   maxAgeDays: 14,
@@ -37,16 +37,22 @@ export async function takeAgreementIntake(
   db: Kysely<DB>,
   { now, config = AGREEMENT_INTAKE }: { now: Date; config?: typeof AGREEMENT_INTAKE }
 ): Promise<{ added: number }> {
+  // A hidden image's reference is kept, not retired; it just frees its slot.
   const live = new Map(
     (
-      await db
-        .selectFrom('KnightsReferenceImage')
-        .select(['answer', (eb) => eb.fn.countAll<string>().as('n')])
-        .where('pool', '=', REFERENCE_POOL.hiddenCheck)
-        .where('source', '=', REFERENCE_SOURCE.agreement)
-        .where('status', 'in', LIVE)
-        .groupBy('answer')
-        .execute()
+      await readWithoutJit(db, (trx) =>
+        trx
+          .selectFrom('KnightsReferenceImage as r')
+          .innerJoin('Image as img', 'img.id', 'r.imageId')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select(['r.answer', (eb) => eb.fn.countAll<string>().as('n')])
+          .where('r.pool', '=', REFERENCE_POOL.hiddenCheck)
+          .where('r.source', '=', REFERENCE_SOURCE.agreement)
+          .where('r.status', 'in', LIVE)
+          .where(servableImage)
+          .groupBy('r.answer')
+          .execute()
+      )
     ).map((row) => [row.answer, Number(row.n)])
   );
   const since = new Date(now.getTime() - config.maxAgeDays * DAY_MS);

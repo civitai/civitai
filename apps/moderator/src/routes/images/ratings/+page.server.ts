@@ -5,17 +5,22 @@ import { parseQuery } from '$lib/server/query';
 import { getImageRatingRequests } from '$lib/server/image-rating-review.service';
 import { SongRatingRefusedError, updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { isRatingLevel } from '$lib/nsfw-levels';
-import { withheldRefusal } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
   limit: z.coerce.number().int().min(10).max(100).catch(50),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit } = parseQuery(url, querySchema);
-  const data = await getImageRatingRequests({ cursor, limit });
-  return { limit, wide: true, ...data };
+  const { items, nextCursor } = await getImageRatingRequests({ cursor, limit });
+  return {
+    limit,
+    wide: true,
+    items: await withheldRows(items, locals.user, 'image-ratings', (i) => i.id, withheldRow),
+    nextCursor,
+  };
 };
 
 // Access is enforced globally (hooks.server.ts). The mutation runs internally via Kysely.

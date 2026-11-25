@@ -284,6 +284,7 @@ function PartyFiles({
                         <IconDownload size={16} />
                       </Anchor>
                     )}
+                    {file.downloadOffDomain && <DownloadOffDomain />}
                     {canEdit && round === currentRound && file.status === 'Uploading' && (
                       <Button
                         size="compact-xs"
@@ -332,6 +333,18 @@ function PreviewOffDomain() {
       This preview isn&apos;t available on civitai.com.{' '}
       <Anchor href={redHref()} inherit>
         See it on civitai.red
+      </Anchor>
+    </Text>
+  );
+}
+
+function DownloadOffDomain() {
+  const redHref = useRedHref();
+  return (
+    <Text size="xs" c="dimmed">
+      Not downloadable on civitai.com.{' '}
+      <Anchor href={redHref()} inherit>
+        Download on civitai.red
       </Anchor>
     </Text>
   );
@@ -405,6 +418,13 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
                         </Text>
                       </Group>
                     </Anchor>
+                  ) : file.downloadOffDomain ? (
+                    <Group key={file.id} gap={6} wrap="nowrap">
+                      <Text size="sm" className="truncate">
+                        {file.fileName}
+                      </Text>
+                      <DownloadOffDomain />
+                    </Group>
                   ) : (
                     <Text key={file.id} size="sm" c="dimmed">
                       Sealed file · {formatBytes(file.size)}

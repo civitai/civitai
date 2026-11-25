@@ -1676,7 +1676,8 @@ qualifies while all three hold:
   ends gets no second head start. As a consequence, a version whose first scheduled date slipped by
   more than a day gets none at all.
 
-Paid-access versions qualify like free ones, and since §20 their buyers count toward the bar.
+Paid-access versions qualify like free ones, and since §20 their buyers count toward the bar (by
+price since §21).
 
 ### Measured before choosing (replica snapshot, 2026-11-20)
 
@@ -1724,3 +1725,39 @@ bar = likes + max(downloads - buyers, 0) / 6.4 + buyers >= 25
 - The migration (`20271123120000_model_hot_score_buyer_bar`) is applied by hand like §19's and
   rescores only the models whose versions its buyers lift over the bar. Its `rollback.sql`
   restores §19's functions and rescores every model with an access row on a version published since 2026-09-22.
+
+## 21. A buyer counts by what they paid, capped (2026-11-24)
+
+§20 counts every buyer as 1, so a 20,000 Buzz sale and a 100 Buzz sale move the bar alike. A buyer
+now counts by the price they paid, on a log curve with a cap:
+
+```
+bar          = likes + max(downloads - buyers, 0) / 6.4 + sum(buyer weight) >= 25
+buyer weight = least(1 + log2(max(price, 100) / 100) / 3, 3)
+```
+
+| Price (Buzz) | ≤ 100 | 200 | 800 | 3,200 | 6,400 and up |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Weight | 1 | 1.33 | 2 | 2.67 | 3 |
+
+- **Who is a buyer** is §20's rule, unchanged, and each buyer still replaces one download. A buyer
+  holding both a generation and a download purchase counts once, at the dearer one.
+- **The price** is the amount charged, sale discount included. A purchase records it on its grant
+  as `<kind>-amount`, with `<kind>-buzzType` (`EARLY_ACCESS_PURCHASES`). The Buzz ledger is not in
+  Postgres, so a purchase made before these keys existed takes the gate's current price for its
+  kind from `PaidAccess.terms`, with a generation price falling back to the download price as
+  `generationPrice()` does.
+- **Blue Buzz counts 1** at any price, because Blue is granted by rewards. An older purchase on a gate
+  that accepts Blue also counts 1, since its currency was not recorded. An unreadable amount or
+  price counts 1, and never fails the metrics write.
+- **Wash buying.** The owner is still excluded, but the code has no signal that links one account to
+  another, so an alt's purchase counts like anyone's. The cap of 3 is what bounds how much one
+  purchase can move the bar, and Blue purchases stay at 1 because Blue costs nothing to earn.
+- **Known over-count.** A purchase made before this release is priced at the gate's price now, so a
+  creator who raises the price after selling counts those buyers higher, and one who turns Blue off
+  after selling to Blue buyers counts those older purchases at the list price. Both are bounded by
+  the cap, and the 60-day window ends them.
+- The migration (`20271128120100_model_hot_score_buyer_price_weight`) is applied by hand, as §20's
+  is, after the app release that records the amount. It rescores only the models its weights lift
+  over the bar. Its `rollback.sql` restores §20's functions and rescores every model with an access
+  row on a version published since 2026-09-22.

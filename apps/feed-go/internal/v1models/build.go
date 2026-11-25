@@ -55,6 +55,14 @@ type Config struct {
 	RedHosts []string
 	// FetchConcurrency bounds the parallel reads (0 = DefaultFetchConcurrency).
 	FetchConcurrency int
+	// ServeQuery is FEED_GO_V1_MODELS_SERVE_QUERY (default off): a public list request with a text
+	// `query` is answered here (with Deps.Search) instead of falling back (`v1-models-query`).
+	ServeQuery bool
+	// ServeDataMiss is FEED_GO_V1_MODELS_SERVE_DATA_MISS (default off): on the public list, a
+	// model-data cache miss is computed with the cache's own lookup (it needs FEED_GO_COMPUTE_MISSES:
+	// Sources' Compute) instead of falling back (`v1-models-data-miss`). A shadow sample computes it
+	// whenever ComputeMisses is on, this switch or not (ListRequest.Serving).
+	ServeDataMiss bool
 }
 
 // Deps are what the port reads.
@@ -67,8 +75,11 @@ type Deps struct {
 	Addons func(context.Context) []browsing.Addon
 	// Blocked is the blocked browsing tag list (the list's `tag` filter); nil: a `tag` falls back.
 	Blocked *feed.BlockedTags
-	Config  Config
-	Now     func() time.Time
+	// Search is the models search index the Node app's text search reads (SEARCH_HOST); nil: a text
+	// `query` falls back (`v1-models-query`).
+	Search ModelSearcher
+	Config Config
+	Now    func() time.Time
 }
 
 func (d *Deps) now() time.Time {
@@ -251,7 +262,10 @@ func (d *Deps) getModelsRaw(ctx context.Context, in *RawInput, hidePrivate bool)
 	)
 	g := d.group(ctx)
 	g.Go(func(ctx context.Context) (err error) { users, pictures, err = d.Sources.Users(ctx, userIDs); return })
-	g.Go(func(ctx context.Context) (err error) { data, err = d.modelData(ctx, modelIDs); return })
+	g.Go(func(ctx context.Context) (err error) {
+		data, err = d.modelData(ctx, modelIDs, in.ComputeDataMiss)
+		return
+	})
 	g.Go(func(ctx context.Context) (err error) { gated, err = d.paidAccessGates(ctx, modelIDs); return })
 	if err := g.Wait(); err != nil {
 		return nil, "", err

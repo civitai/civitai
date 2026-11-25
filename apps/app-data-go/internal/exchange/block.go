@@ -134,6 +134,9 @@ const (
 	// BlockUnverifiable: the token could not be checked here (ErrBlockUnverifiable: the site's JWKS
 	// could not be fetched); not sent to the hub, not remembered.
 	BlockUnverifiable = "unverifiable"
+	// BlockRateLimited: the hub answered 429, or an earlier 429's wait was still running so the hub
+	// was not asked (RateLimitedError). No token issued, not remembered.
+	BlockRateLimited = "rate_limited"
 )
 
 // BlockCache makes at most one successful exchange per App Block token: the hub refuses a second
@@ -256,6 +259,8 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 		c.observe(BlockRefused, err)
 	case errors.Is(err, ErrBlockUnverifiable):
 		c.observe(BlockUnverifiable, nil)
+	case errors.As(err, new(*RateLimitedError)):
+		c.observe(BlockRateLimited, nil)
 	default:
 		c.observe(BlockFailed, nil)
 	}

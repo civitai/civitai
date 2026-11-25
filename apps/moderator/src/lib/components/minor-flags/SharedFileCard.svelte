@@ -1,7 +1,8 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { IconFileCheck } from '@tabler/icons-svelte';
+  import { IconFileCheck, IconPhotoOff } from '@tabler/icons-svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { WITHHELD_REFUSED } from '$lib/held-media';
   import MatureRestrictedBadge from '$lib/components/MatureRestrictedBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
@@ -59,13 +60,18 @@
 {#snippet cover(
   url: string | null | undefined,
   type: string | null | undefined,
-  restricted: boolean | null | undefined
+  restricted: boolean | null | undefined,
+  withheld: boolean | undefined = false
 )}
   <!-- Same box for both, filled per the design; cropped from the top, where a subject's face usually
        is. -->
   <div class="aspect-[4/5] w-full overflow-hidden rounded-md border border-dark-4 bg-dark-6 relative">
     <MatureRestrictedBadge restricted={!!restricted} class="absolute left-2 top-2 z-10" />
-    {#if url}
+    {#if withheld}
+      <div class="grid size-full place-items-center text-dark-2" title={WITHHELD_REFUSED}>
+        <IconPhotoOff size={24} aria-label={WITHHELD_REFUSED} />
+      </div>
+    {:else if url}
       <EdgeMedia
         src={url}
         type={(type ?? 'image') as 'image' | 'video'}
@@ -148,7 +154,7 @@
 
             <div class="grid grid-cols-2 gap-3">
               <div class="flex min-w-0 flex-col gap-1.5">
-                {@render cover(d.modelCoverUrl, d.modelCoverType, d.modelCoverRestricted)}
+                {@render cover(d.modelCoverUrl, d.modelCoverType, d.modelCoverRestricted, d.modelCoverWithheld)}
                 {@render heading(row.modelName, 'this model', modelUrl(civitaiUrl, modelId, ownVersion))}
                 <span class="text-[11px] text-dark-1">{row.username ?? `user #${row.userId}`}</span>
                 {#if d.modelCreatedAt}
@@ -160,7 +166,12 @@
               </div>
 
               <div class="flex min-w-0 flex-col gap-1.5">
-                {@render cover(d.minorModelCoverUrl, d.minorModelCoverType, d.minorModelCoverRestricted)}
+                {@render cover(
+                  d.minorModelCoverUrl,
+                  d.minorModelCoverType,
+                  d.minorModelCoverRestricted,
+                  d.minorModelCoverWithheld
+                )}
                 {@render heading(
                   seedName ?? `#${seedId}`,
                   'earlier model',

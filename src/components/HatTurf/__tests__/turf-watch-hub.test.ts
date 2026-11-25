@@ -18,7 +18,28 @@ const options = (sent: Sent[], event = 'birthday2026') => ({
   retryJitterMs: 1_000,
   // No page here: visibility is driven by hand where a test needs it.
   onVisible: () => () => undefined,
+  isHidden: () => false,
 });
+
+/** A page whose visibility the test sets: `show()` fires the hub's visible callback. */
+function page() {
+  let hidden = false;
+  let visible: () => void = () => undefined;
+  return {
+    hide: () => void (hidden = true),
+    show: () => {
+      hidden = false;
+      visible();
+    },
+    options: {
+      isHidden: () => hidden,
+      onVisible: (callback: () => void) => {
+        visible = callback;
+        return () => undefined;
+      },
+    },
+  };
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -187,6 +208,51 @@ describe('TurfWatchHub lapse guards', () => {
     visible();
     expect(sent).toEqual([{ event: 'birthday2026', imageIds: [51, 52, 53] }]);
     expect(heard).toEqual([[51, 52, 53]]);
+    hub.dispose();
+  });
+});
+
+describe('TurfWatchHub in a hidden page', () => {
+  test('sends no re-marks while hidden; shown again, re-marks once and every id catches up', () => {
+    const sent: Sent[] = [];
+    const heard: number[][] = [];
+    const tab = page();
+    const hub = new TurfWatchHub({ ...options(sent), ...tab.options });
+    hub.subscribe((ids) => heard.push(ids));
+    [61, 62].forEach((id) => hub.retain(id));
+    vi.advanceTimersByTime(250);
+    sent.length = 0;
+    tab.hide();
+    // Three ticks (40s, 80s, 120s) pass hidden: nothing is sent.
+    vi.advanceTimersByTime(130_000);
+    expect(sent).toEqual([]);
+    tab.show();
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [61, 62] }]);
+    expect(heard).toEqual([[61, 62]]);
+    // Visible again, the interval re-marks as before (next tick at 160s).
+    vi.advanceTimersByTime(30_000);
+    expect(sent).toHaveLength(2);
+    hub.dispose();
+  });
+
+  // A short suspension (a phone locked, a page restored from the back-forward cache) can stop
+  // the page's timers and its signal connection without a hidden tick; the catch-up is what
+  // recovers pushes missed meanwhile, so every return to visible re-marks and catches up.
+  test('shown again moments after a tick: still re-marks the set and every id catches up', () => {
+    const sent: Sent[] = [];
+    const heard: number[][] = [];
+    const tab = page();
+    const hub = new TurfWatchHub({ ...options(sent), ...tab.options });
+    hub.subscribe((ids) => heard.push(ids));
+    hub.retain(71);
+    // The tick at 40s re-marks the set; hidden at 45s, shown at 50s.
+    vi.advanceTimersByTime(45_000);
+    sent.length = 0;
+    tab.hide();
+    vi.advanceTimersByTime(5_000);
+    tab.show();
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [71] }]);
+    expect(heard).toEqual([[71]]);
     hub.dispose();
   });
 });

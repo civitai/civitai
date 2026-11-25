@@ -53,6 +53,8 @@ export type DealFileFacts = {
   status: ServiceDealFileStatus;
   scanStatus: ServiceDealFileScanStatus | null;
   canDownload: boolean;
+  /** Downloadable, but not from this domain. */
+  downloadOffDomain?: boolean;
 };
 
 const MB = 1024 * 1024;
@@ -228,7 +230,7 @@ export function buyerFinalsState(
   { owned }: { owned: boolean }
 ): FinalsState | null {
   if (finals.length === 0) return null;
-  if (finals.every((file) => file.canDownload)) return 'available';
+  if (finals.every((file) => file.canDownload || file.downloadOffDomain)) return 'available';
   if (finals.some((file) => file.scanStatus === 'Failed')) return 'failed';
   if (finals.some((file) => file.scanStatus !== 'Passed'))
     return owned ? 'checkingOwned' : 'checking';

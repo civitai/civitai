@@ -3,14 +3,15 @@ import {
   songAllowsRemix,
 } from '~/shared/form-graph/generation/audio/song-metadata';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
+import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { ilikeContains } from '~/server/utils/ilike';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
-import { ownerHeld } from '~/server/services/legal-hold.service';
 import {
   BlocklistStoreError,
   blocklistCall,
@@ -109,6 +110,7 @@ import {
   notReportListedSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
+  isReviewImageBlockedForViewer,
 } from '~/server/services/image-visibility.service';
 import {
   type MediaViewer,
@@ -278,7 +280,10 @@ import {
   queueComicsForPanelImages,
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
-import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
+import {
+  clearAccountDeletionImageMarkers,
+  type MarkerClearClient,
+} from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { invalidateImageVisibilityCaches } from '~/server/services/image-visibility-invalidation.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
@@ -715,7 +720,7 @@ async function deleteImageFromStorage({
   let outcome: StorageDeleteOutcome = 'deleted';
   try {
     // Every caller runs this after deleting the row, so a row with this url that still exists,
-    // this image's own included, is one the delete skipped (a hold marker keeps it) or another
+    // this image's own included, is one the delete skipped (a child-safety case keeps it) or another
     // image sharing the object. Either way the object stays.
     const imageWithSameUrl = await dbWrite.image.findFirst({
       select: { id: true },
@@ -905,19 +910,7 @@ export function attachTagsToImages<TImage extends { id: number }, TTag extends {
 
 type KeptImage = { imageId: number; userId: number; postId: number | null };
 
-/** Of `ids`, the ones a hold marker's delete trigger kept, with the post each was taken out of. */
-async function getKeptImages(ids: number[]) {
-  if (!ids.length) return [];
-  return dbWrite.$queryRaw<KeptImage[]>`
-    SELECT "imageId", "userId", "postId" FROM "EvidenceHoldImage"
-    WHERE "imageId" IN (${Prisma.join(ids)})
-  `;
-}
-
-/**
- * A kept image is now blocked (and, if a hold marker kept it, out of its post), so the caches a delete
- * busts are stale too.
- */
+/** A hidden image is now blocked, so the caches a delete busts are stale too. */
 async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
   const ids = kept.map((x) => x.imageId);
   const postIds = updatePosts ? uniq(kept.map((x) => x.postId).filter(isDefined)) : [];
@@ -1158,13 +1151,7 @@ async function deleteListedImages(
 
     keptForCase.push(...caseKept);
     coverIds.push(...coversOfDeletedSongs(covers, rows, ids));
-    // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
-    // caller's condition or ownership skipped.
-    const accounted = new Set([...rows.map((row) => row.id), ...caseKept, ...gone]);
-    const kept = [
-      ...(await getKeptImages(ids.filter((id) => !accounted.has(id)))),
-      ...hidden.map(({ id, userId, postId }) => ({ imageId: id, userId, postId })),
-    ];
+    const kept = hidden.map(({ id, userId, postId }) => ({ imageId: id, userId, postId }));
     await invalidateDeletedImages({
       rows,
       kept,
@@ -1205,8 +1192,8 @@ async function invalidateDeletedImages({
   const thumbnailParentIds = uniq(rows.map((row) => row.parentId).filter(isDefined));
   const results = await Promise.allSettled([
     queueImageSearchIndexUpdate({
-      // A row left in place by a condition or ownership stays in search; a blocked (hold-kept or
-      // hidden) or already-gone row leaves it.
+      // A row left in place by a condition or ownership stays in search; a hidden or already-gone
+      // row leaves it.
       ids: [...deletedIds, ...kept.map((x) => x.imageId), ...gone],
       action: SearchIndexUpdateQueueAction.Delete,
     }),
@@ -1634,6 +1621,123 @@ export function logNoticeUnderReview(images: { id: number; userId: number }[]) {
     logToAxiom({ type: 'warning', name: 'image-notice-under-review', imageId: id, userId });
 }
 
+/** The columns a CSAM block writes on an "Image" row. */
+export const CSAM_IMAGE_BLOCK = {
+  ingestion: 'Blocked',
+  nsfwLevel: NsfwLevel.Blocked,
+  blockedFor: BlockedReason.CSAM,
+} as const;
+
+/** A caller's transaction, as the CSAM block runs on it: its write of the block, and raw SQL. */
+export type CsamBlockTransaction = MarkerClearClient & {
+  /** Writes `CSAM_IMAGE_BLOCK` on exactly `ids`. */
+  writeBlock(ids: number[]): Promise<unknown>;
+};
+
+/**
+ * The CSAM block of listed images, on the caller's transaction: every filing path runs this one.
+ * The account-deletion markers go with the block, since a grace breadcrumb left on would let an
+ * account restore un-block it; a failure of either rolls the caller's transaction back.
+ */
+export async function blockImagesAsCsamInTransaction(ids: number[], tx: CsamBlockTransaction) {
+  if (!ids.length) return;
+  await tx.writeBlock(ids);
+  await clearAccountDeletionImageMarkers({ ids }, tx);
+}
+
+type BlockStepRunner = (step: string, fn: () => Promise<unknown>) => Promise<unknown>;
+
+/**
+ * What an image block runs besides its row write, the one list every block path uses. `alongside`
+ * may run while the write is in flight; `after` follows it, and queues the documents even when
+ * `beforeDocuments` (the moderator block's blocklist write) throws.
+ */
+function imageBlockSteps(ids: number[], run: BlockStepRunner = (_step, fn) => fn()) {
+  return {
+    alongside: () =>
+      Promise.all([
+        run('search', () =>
+          queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete })
+        ),
+        run('existence', () => invalidateManyImageExistence(ids)),
+        // A block bypasses `processImageScanWorkflow`, so the parent comic project is queued here;
+        // without it the comic stays indexed in its pre-block state.
+        run('comics', () => queueComicsForPanelImages(ids)),
+      ]),
+    after: async ({
+      postIds,
+      markersCleared = false,
+      beforeDocuments,
+    }: {
+      postIds: number[];
+      /** The caller cleared the account-deletion markers of every one of `ids`, with the block. */
+      markersCleared?: boolean;
+      beforeDocuments?: () => Promise<void>;
+    }) => {
+      // A block outranks an account-deletion grace block: left on, a later account restore would
+      // read the grace breadcrumbs and un-block it. After the write, not alongside it: both UPDATE
+      // the same rows by id, and two concurrent row-lock acquisitions over one id set can deadlock.
+      if (!markersCleared) await run('markers', () => clearAccountDeletionImageMarkers({ ids }));
+      // After the write commits, so a concurrent reader can't refill with the pre-block state.
+      if (postIds.length) await run('posts', () => bustCachesForPosts(postIds));
+      try {
+        await beforeDocuments?.();
+      } finally {
+        await run('documents', () => queueDocumentsForBlockedImages(ids));
+      }
+    },
+  };
+}
+
+/**
+ * Runs the block steps after a CSAM block commits, plus the home-block eviction a moderator block's
+ * write does itself. The caller clears the account-deletion markers with the block, where a failure
+ * is the block's. Never throws: the block stands, so a failed step is logged.
+ */
+export async function afterCsamImageBlock(target: { imageIds: number[] } | { userId: number }) {
+  const run: BlockStepRunner = async (step, fn) => {
+    try {
+      return await fn();
+    } catch (error) {
+      logToAxiom({
+        name: 'csam-image-block',
+        type: 'error',
+        message: `after-block step failed: ${step}`,
+        error: (error as Error)?.message,
+        payload: { important: true },
+      });
+    }
+  };
+  let imageIds: number[];
+  if ('userId' in target) {
+    await run('home-blocks', () => evictHomeBlocksForImages({ userId: target.userId }));
+    const owned = (await run('owned-ids', () =>
+      // primary: the ids of the block that just committed.
+      dbWrite.image.findMany({ where: { userId: target.userId }, select: { id: true } })
+    )) as { id: number }[] | undefined;
+    imageIds = owned?.map((image) => image.id) ?? [];
+  } else {
+    imageIds = target.imageIds;
+    if (!imageIds.length) return;
+    await run('home-blocks', () => evictHomeBlocksForImages({ imageIds }));
+  }
+  for (const ids of chunk(imageIds, 1000)) {
+    const steps = imageBlockSteps(ids, run);
+    await steps.alongside();
+    const posts = (await run('post-ids', () =>
+      // primary: the post ids of rows the block just wrote.
+      dbWrite.image.findMany({
+        where: { id: { in: ids }, postId: { not: null } },
+        select: { postId: true },
+      })
+    )) as { postId: number | null }[] | undefined;
+    await steps.after({
+      postIds: uniq((posts ?? []).map((p) => p.postId).filter(isDefined)),
+      markersCleared: true,
+    });
+  }
+}
+
 export async function handleBlockImages({
   ids: imageIds,
   userId,
@@ -1656,7 +1760,7 @@ export async function handleBlockImages({
   await Limiter({ batchSize: 100, limit: 10 }).process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
-    const invalidateExistence = invalidateManyImageExistence(ids);
+    const steps = imageBlockSteps(ids);
 
     let held = new Set<number>();
     let underReview = new Set<number>();
@@ -1673,56 +1777,39 @@ export async function handleBlockImages({
         })
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
-
-      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
-      invalidateExistence,
-      // Same reason as `handleUnblockImages` — moderator block bypasses
-      // `processImageScanWorkflow`, so we queue the parent comic project
-      // here directly. Without this the comic stays indexed under its
-      // pre-block (visible) state.
-      queueComicsForPanelImages(ids),
+      steps.alongside(),
     ]);
-    // A moderator block outranks an account-deletion grace block: left on, a later account restore
-    // would read the grace breadcrumbs and un-block what was just moderated. See
-    // `clearAccountDeletionImageMarkers`.
-    //
-    // Sequenced AFTER the batch above rather than joining it: both statements UPDATE the same rows
-    // by id, and two concurrent row-lock acquisitions over one id set are how you buy a deadlock
-    // for nothing. Nothing here depends on the order, so it costs a round trip and no risk.
-    await clearAccountDeletionImageMarkers({ ids });
-    // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
-    if (postIds.length) await bustCachesForPosts(postIds);
-    // The requeue runs even when the blocklist write throws: the block has landed.
-    try {
-      if (include?.includes('phash-block')) {
-        logCsamBlocklistNoHash(
-          ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
-          'block'
-        );
-        await bulkAddBlockedImages({
-          data: images
-            .map(({ id, blockedFor }) => {
-              const pHash = pHashes.get(id);
-              if (!pHash) return null;
-              return {
-                hash: pHash,
-                // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-                reason: removedForCsam.has(id)
-                  ? BlockImageReason.CSAM
-                  : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
-              };
-            })
-            .filter(isDefined),
-          context: {
-            step: 'block',
-            imageIds: images.map(({ id }) => id),
-            actorUserId: moderatorId,
-          },
-        });
-      }
-    } finally {
-      await queueDocumentsForBlockedImages(ids);
-    }
+    await steps.after({
+      postIds,
+      beforeDocuments: async () => {
+        if (include?.includes('phash-block')) {
+          logCsamBlocklistNoHash(
+            ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+            'block'
+          );
+          await bulkAddBlockedImages({
+            data: images
+              .map(({ id, blockedFor }) => {
+                const pHash = pHashes.get(id);
+                if (!pHash) return null;
+                return {
+                  hash: pHash,
+                  // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+                  reason: removedForCsam.has(id)
+                    ? BlockImageReason.CSAM
+                    : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
+                };
+              })
+              .filter(isDefined),
+            context: {
+              step: 'block',
+              imageIds: images.map(({ id }) => id),
+              actorUserId: moderatorId,
+            },
+          });
+        }
+      },
+    });
     if (include?.includes('user-notification')) {
       const notified = images.filter(
         (img) => !held.has(img.id) && !isFeedbackCaptureOwner(img.userId)
@@ -4592,6 +4679,9 @@ export async function filterPinnedImagesToVersion<T extends { id: number }>(
 
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
+  reviewId: number | null;
+  dealId: number | null;
+  sellerId: number | null;
   postId?: number | null;
   // User fields from JOIN (not in GetAllImagesRaw since main query uses cache)
   username: string | null;
@@ -4603,15 +4693,18 @@ export const getImage = async ({
   userId,
   isModerator,
   ownerSeesHeld = false,
+  shownReviewImageLevels,
 }: GetImageInput & {
   userId?: number;
   isModerator?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`: the image page's read, not a remix or other use. */
   ownerSeesHeld?: boolean;
+  /** `imageVisibilityConditions`' `shownReviewImageLevels`: the image page's read only. */
+  shownReviewImageLevels?: number;
 }) => {
   const AND = [
     Prisma.sql`i.id = ${id}`,
-    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, shownReviewImageLevels }),
   ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
@@ -4634,7 +4727,10 @@ export const getImage = async ({
       i."blockedFor",
       i.type,
       i.metadata,
-      i."nsfwLevel",
+      COALESCE(rw."level", i."nsfwLevel") AS "nsfwLevel",
+      rw."reviewId",
+      rw."dealId",
+      rw."sellerId",
       i.minor,
       i.poi,
       i."acceptableMinor",
@@ -4671,15 +4767,49 @@ export const getImage = async ({
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
     LEFT JOIN "Post" p ON p.id = i."postId"
+    LEFT JOIN LATERAL ${reviewOfImageSql} rw ON TRUE
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
 
-  const [{ userId: creatorId, username, userImage, deletedAt, reactions, ...firstRawImage }] =
-    rawImages;
+  const [
+    {
+      userId: creatorId,
+      username,
+      userImage,
+      deletedAt,
+      reactions,
+      reviewId,
+      dealId,
+      sellerId,
+      ...rawImage
+    },
+  ] = rawImages;
+  // A review image carries no generation data: it is the seller's work, uploaded by the buyer.
+  const firstRawImage = reviewId
+    ? { ...rawImage, hasMeta: false, hasPositivePrompt: false, remixOfId: null }
+    : rawImage;
+  const seller = sellerId
+    ? await dbRead.user.findUnique({
+        where: { id: sellerId },
+        select: { id: true, username: true, image: true, bannedAt: true, deletedAt: true },
+      })
+    : null;
+  if (
+    sellerId &&
+    (await isReviewImageBlockedForViewer({
+      viewerId: userId,
+      buyerId: creatorId,
+      sellerId,
+      isModerator,
+    }))
+  )
+    throw throwNotFoundError(`No image with id ${id}`);
+  const creditedSeller = seller && !seller.bannedAt && !seller.deletedAt ? seller : null;
+  const userIds = creditedSeller ? [creatorId, creditedSeller.id] : [creatorId];
 
-  const userCosmetics = await getCosmeticsForUsers([creatorId]);
-  const profilePictures = await getProfilePicturesForUsers([creatorId]);
+  const userCosmetics = await getCosmeticsForUsers(userIds);
+  const profilePictures = await getProfilePicturesForUsers(userIds);
 
   const imageMetrics = await getImageMetricsObject([firstRawImage]);
   const match = imageMetrics[firstRawImage.id];
@@ -4715,6 +4845,24 @@ export const getImage = async ({
     },
     stats: toImageV2Stats(match),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+    // The image's maker on a service review: the seller, credited although the buyer uploaded it.
+    reviewWork:
+      reviewId && dealId
+        ? {
+            reviewId,
+            dealId,
+            seller: creditedSeller
+              ? {
+                  id: creditedSeller.id,
+                  username: creditedSeller.username,
+                  image: creditedSeller.image,
+                  deletedAt: null,
+                  cosmetics: userCosmetics?.[creditedSeller.id] ?? [],
+                  profilePicture: profilePictures?.[creditedSeller.id] ?? null,
+                }
+              : null,
+          }
+        : null,
   };
 
   return image;
@@ -6669,6 +6817,13 @@ async function afterImageNsfwLevelSet({
   status?: UpdateImageNsfwLevelOutput['status'];
   activity: ImageModActivity['activity'];
 }) {
+  // Ahead of the cache work: a caller that sees the level landed does not retry when that throws.
+  if (status) {
+    await dbWrite.imageRatingRequest.updateMany({
+      where: { imageId: id, status: 'Pending' },
+      data: { status },
+    });
+  }
   await Promise.all([
     imageMetadataCache.refresh(id),
     refreshThumbnailCache(id),
@@ -6677,12 +6832,6 @@ async function afterImageNsfwLevelSet({
     postId ? bustCachesForPosts(postId) : undefined,
   ]);
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
-  if (status) {
-    await dbWrite.imageRatingRequest.updateMany({
-      where: { imageId: id, status: 'Pending' },
-      data: { status },
-    });
-  }
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId });
   await trackModActivity(userId, { entityType: 'image', entityId: id, activity });
 }
@@ -6772,7 +6921,7 @@ export async function updateImageNsfwLevel({
           userId: userId,
           weight: current.userId === userId ? 3 : 1,
         },
-        update: { nsfwLevel },
+        update: { nsfwLevel, status: 'Pending' },
       });
 
       if (current.userId === userId) {
@@ -8162,8 +8311,6 @@ async function getFailedEntryDrafts({
   servableLevels: number;
 }) {
   try {
-    const held = await ownerHeld(dbWrite, Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`);
-    if (held) return [];
     const rows = await dbRead.image.findMany({
       select: { ...myImagesSelect, pHash: true },
       where: {
@@ -8198,10 +8345,48 @@ async function getFailedEntryDrafts({
   }
 }
 
+/** How many of the owner's newest media a typed `getMyImages` query matches within. */
+export const OWN_MEDIA_QUERY_WINDOW = 1000;
+
+/** The owner's media among their newest `OWN_MEDIA_QUERY_WINDOW` whose prompt, post title or post tag contains `query`. */
+async function getOwnMediaIdsMatching({
+  userId,
+  types,
+  query,
+}: {
+  userId: number;
+  types: MediaType[];
+  query: string;
+}) {
+  const pattern = ilikeContains(query);
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    WITH recent AS (
+      SELECT i.id, i."postId", i.meta->>'prompt' AS prompt
+      FROM "Image" i
+      WHERE i."userId" = ${userId}
+        AND i.type = ANY(${types}::"MediaType"[])
+        AND i."postId" IS NOT NULL
+      ORDER BY i.id DESC
+      LIMIT ${OWN_MEDIA_QUERY_WINDOW}
+    )
+    SELECT r.id
+    FROM recent r
+    LEFT JOIN "Post" p ON p.id = r."postId"
+    WHERE r.prompt ILIKE ${pattern}
+      OR p.title ILIKE ${pattern}
+      OR EXISTS (
+        SELECT 1 FROM "TagsOnPost" top JOIN "Tag" t ON t.id = top."tagId"
+        WHERE top."postId" = r."postId" AND NOT top.disabled AND t.name ILIKE ${pattern}
+      )
+  `;
+  return rows.map((row) => row.id);
+}
+
 export const getMyImages = async ({
   mediaTypes,
   publishedOnly,
   includeEntryDrafts,
+  query,
   userId,
   limit,
   cursor = 0,
@@ -8217,12 +8402,18 @@ export const getMyImages = async ({
   };
 
   try {
+    const matchingIds = query
+      ? await getOwnMediaIdsMatching({ userId, types: type.in, query })
+      : undefined;
+    if (matchingIds && !matchingIds.length) return { items: [], nextCursor: undefined };
+
     const mediaQuery = dbRead.image.findMany({
       select: myImagesSelect,
       where: {
         userId,
         type,
         postId: { not: null },
+        ...(matchingIds && { id: { in: matchingIds } }),
         // Published-only callers render still-scanning images as pending rather than hiding them.
         ingestion: publishedOnly
           ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
@@ -8241,7 +8432,7 @@ export const getMyImages = async ({
       orderBy: { id: 'desc' },
     });
     const failedEntryDraftsQuery =
-      publishedOnly && includeEntryDrafts && !cursor
+      publishedOnly && includeEntryDrafts && !cursor && !query
         ? getFailedEntryDrafts({ userId, type, limit, servableLevels })
         : Promise.resolve([]);
     const [media, failedEntryDrafts] = await Promise.all([mediaQuery, failedEntryDraftsQuery]);

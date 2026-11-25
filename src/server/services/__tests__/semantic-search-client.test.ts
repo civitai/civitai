@@ -12,6 +12,7 @@ import {
   withWordMatchesFirst,
   queryKeywords,
   withTagMatchesFirst,
+  withPreferredTagFirst,
   type CandidateSource,
 } from '~/server/services/semantic-search-client';
 
@@ -275,6 +276,137 @@ describe('withTagMatchesFirst', () => {
   it('is the plain ranking when nothing carries the tag', async () => {
     const { source } = index([], [1, 2, 3]);
     expect((await page(withTagMatchesFirst(source, TAG), 0, 3)).ids).toEqual([1, 2, 3]);
+  });
+});
+
+describe('withPreferredTagFirst', () => {
+  const gate: ViewerGate = { kind: 'level', nsfwLevels: [1] };
+  const TAG = 900;
+  const ANCHOR = 77;
+  const WINDOW = 4;
+  // `tagged` holds the tag in the index; `similar` is the plain "more like this" ranking.
+  const index = (tagged: number[], similar: number[]) => {
+    const calls: Parameters<CandidateSource>[0][] = [];
+    const source: CandidateSource = async (args) => {
+      calls.push(args);
+      if (args.filter.tagIds?.includes(TAG)) {
+        const within = new Set(args.filter.ids);
+        // Out of similarity order, as an id-filtered query may return them.
+        const ids = similar.filter((id) => tagged.includes(id) && within.has(id)).reverse();
+        return { ids: ids.slice(args.offset, args.offset + args.limit) };
+      }
+      return { ids: similar.slice(args.offset, args.offset + args.limit) };
+    };
+    return { source, calls };
+  };
+  const page = (source: CandidateSource, offset: number, limit: number) =>
+    source({
+      query: { similarTo: ANCHOR },
+      filter: { gate },
+      offset,
+      limit,
+      viewer: { isModerator: false },
+    });
+
+  it('moves the tagged images among the closest ahead, in similarity order', async () => {
+    const { source } = index([4, 2, 9], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const ranked = withPreferredTagFirst(source, TAG, WINDOW);
+    expect((await page(ranked, 0, 6)).ids).toEqual([2, 4, 1, 3, 5, 6]);
+  });
+
+  it('never pulls in a tagged image from outside the window', async () => {
+    const { source } = index([2, 9], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const ranked = withPreferredTagFirst(source, TAG, WINDOW);
+    const all = [...(await page(ranked, 0, 5)).ids, ...(await page(ranked, 5, 5)).ids];
+    expect(all).toEqual([2, 1, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it('pages past the window on the plain ranking, without repeats or gaps', async () => {
+    const { source, calls } = index([3], [1, 2, 3, 4, 5, 6, 7]);
+    const ranked = withPreferredTagFirst(source, TAG, WINDOW);
+    expect((await page(ranked, 2, 3)).ids).toEqual([2, 4, 5]);
+    expect((await page(ranked, 5, 2)).ids).toEqual([6, 7]);
+    expect(calls.at(-1)).toMatchObject({ offset: 5, limit: 2, filter: { gate } });
+  });
+
+  it('asks for the tag only within the window, keeping the caller filter', async () => {
+    const { source, calls } = index([2], [1, 2, 3, 4, 5]);
+    await page(withPreferredTagFirst(source, TAG, WINDOW), 0, 2);
+    const matches = calls.find((call) => call.filter.tagIds?.includes(TAG));
+    expect(matches?.filter).toMatchObject({ gate, ids: [1, 2, 3, 4] });
+  });
+
+  it('is the plain ranking when nothing close carries the tag', async () => {
+    const { source } = index([9], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect((await page(withPreferredTagFirst(source, TAG, WINDOW), 0, 5)).ids).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+  });
+
+  it('reads a window wider than a block one block at a time, stopping at the end of the ranking', async () => {
+    const similar = Array.from({ length: 230 }, (_, i) => i + 1);
+    let inFlight = 0;
+    let most = 0;
+    const plainReads: { offset: number; limit: number }[] = [];
+    const source: CandidateSource = async (args) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      if (args.filter.tagIds?.includes(TAG)) return { ids: [230] };
+      plainReads.push({ offset: args.offset, limit: args.limit });
+      return { ids: similar.slice(args.offset, args.offset + args.limit) };
+    };
+    const { ids } = await page(withPreferredTagFirst(source, TAG, 250), 0, 3);
+    expect(ids).toEqual([230, 1, 2]);
+    expect(plainReads).toEqual([
+      { offset: 0, limit: 100 },
+      { offset: 100, limit: 100 },
+      { offset: 200, limit: 50 },
+    ]);
+    expect(most).toBe(1);
+  });
+
+  it('leaves a text search alone', async () => {
+    const { source, calls } = index([2], [1, 2, 3]);
+    await withPreferredTagFirst(
+      source,
+      TAG,
+      WINDOW
+    )({
+      query: { text: 'otters' },
+      filter: { gate },
+      offset: 0,
+      limit: 3,
+      viewer: { isModerator: false },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].filter.tagIds).toBeUndefined();
+  });
+
+  describe('on the wire', () => {
+    let bodies: { filter: { must: unknown[]; must_not: unknown[] }; limit: number }[];
+    beforeEach(() => {
+      setEnv({ SEARCH_SERVICE_URL: 'http://search.test/' });
+      bodies = [];
+      vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return Response.json({ result: { points: [{ id: 1 }, { id: 2 }] } });
+      });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('sends the matches query with the level filter, the tag, the window ids and no anchor', async () => {
+      const ranked = withPreferredTagFirst(searchServiceSource('images'), TAG, WINDOW);
+      await page(ranked, 0, 2);
+      const [plain, matches] = bodies;
+      expect(matches.filter.must).toEqual(
+        expect.arrayContaining([...plain.filter.must, { has_id: [1, 2] }])
+      );
+      expect(JSON.stringify(matches.filter.must)).toContain(String(TAG));
+      expect(matches.filter.must_not).toEqual(expect.arrayContaining([{ has_id: [ANCHOR] }]));
+      expect(plain.filter.must.length).toBeGreaterThan(0);
+    });
   });
 });
 

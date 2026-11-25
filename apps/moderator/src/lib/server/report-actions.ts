@@ -8,6 +8,7 @@ import { parseForm, parseIdList, userIdSchema, checkboxField } from './query';
 import { issueStrike, restoreImages, setImageFlag } from './user-actions.service';
 import {
   capturesSkippedNote,
+  reviewImagesSkippedNote,
   countBlockedImages,
   removeImagesWithFollowUps,
 } from './bulk-image.service';
@@ -153,6 +154,9 @@ export function reportModerationActions(pagePath: string) {
             : ` Struck ${result.struck.struck} owner${result.struck.struck === 1 ? '' : 's'}.`) +
           (result.struck.capturesSkipped
             ? ` ${capturesSkippedNote(result.struck.capturesSkipped)}`
+            : '') +
+          (result.struck.reviewImagesSkipped
+            ? ` ${reviewImagesSkippedNote(result.struck.reviewImagesSkipped)}`
             : '')
         : '';
 

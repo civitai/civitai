@@ -25,6 +25,7 @@ import { buildEntryScanCopy, PreviewRejectedError } from '~/server/utils/service
 import {
   openZip,
   readEntry,
+  openEntryStream,
   s3ZipSource,
   id3TagLength,
   listZipPaths,
@@ -239,6 +240,15 @@ async function validateZip({ zipfile, entries }: OpenedZip, shouldStop: () => bo
     if (shouldStop()) return null;
     const read = await readEntry(zipfile, entry, budget, () => false);
     if (read.kind === 'image') images.push(entry);
+    // A second read, on a budget of its own, so the archive's total is not counted twice. readEntry
+    // has already inflated this whole entry against the archive's limits, so this reads nothing the
+    // archive was not allowed, and the entry's own cap still applies.
+    else if (
+      !(await isTheDocumentItsNamed(entry.path, {
+        open: () => openEntryStream(zipfile, entry, { used: 0 }),
+      }))
+    )
+      throw new ZipRejectedError("A document in the archive isn't what its name says.");
   }
   return images;
 }
@@ -361,7 +371,7 @@ async function readHead(file: ClaimedFinal) {
 }
 
 /** Counted by claimed type, so false refusals show up after release. */
-const notItsFormat = (kind: 'model' | 'audio', extension: string) => {
+const notItsFormat = (kind: 'model' | 'audio' | 'document', extension: string) => {
   logUnpack('final is not its claimed format', { payload: { kind, extension } }, 'warning').catch(
     () => null
   );
@@ -404,6 +414,88 @@ async function isImageByContent(file: ClaimedFinal) {
       'This image format cannot be delivered. Use PNG, JPEG, WebP or GIF.'
     );
   return kind === 'image';
+}
+
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'yaml', 'yml', 'csv']);
+const PDF_END = Buffer.from('%%EOF');
+/** How far from the end a PDF's `%%EOF` may sit, and how much of its start is read. */
+const PDF_ENDS_BYTES = 1024;
+/** What may follow `%%EOF`: whitespace or NUL padding. */
+const PDF_PADDING = new Set([0x00, 0x09, 0x0a, 0x0c, 0x0d, 0x20]);
+
+type DocumentBytes = {
+  /** Every byte, in order. */
+  open: () => AsyncIterable<Buffer> | Promise<AsyncIterable<Buffer>>;
+  /** The first and last `bytes`, read without the rest when the source allows it. */
+  ends?: (bytes: number) => Promise<{ head: Buffer; tail: Buffer }>;
+};
+
+async function streamedEnds(open: DocumentBytes['open'], bytes: number) {
+  let head = Buffer.alloc(0);
+  let tail = Buffer.alloc(0);
+  for await (const chunk of await open()) {
+    if (head.length < bytes) head = Buffer.concat([head, chunk]).subarray(0, bytes);
+    tail = Buffer.concat([tail, chunk]);
+    if (tail.length > bytes) tail = tail.subarray(tail.length - bytes);
+  }
+  return { head, tail };
+}
+
+/**
+ * A PDF opens with its header line (`%PDF-1.7`), followed by no other format's signature, and ends
+ * with `%%EOF`.
+ */
+function isPdfShaped(head: Buffer, tail: Buffer) {
+  const header = /^%PDF-\d\.\d[ \t]*[\r\n]+/.exec(head.toString('latin1'));
+  if (!header) return false;
+  if (sniffEntry(head.subarray(header[0].length), { tsAnywhere: false }) !== 'other') return false;
+  const end = tail.lastIndexOf(PDF_END);
+  return end >= 0 && tail.subarray(end + PDF_END.length).every((byte) => PDF_PADDING.has(byte));
+}
+
+/**
+ * A document has no content scan, so a Final or a zip entry named as one must be what its name says,
+ * all of it: a text file is valid UTF-8 with no NUL byte anywhere, and a PDF is shaped like one
+ * (`isPdfShaped`). Anything else would be delivered unscanned, so it is refused.
+ */
+async function isTheDocumentItsNamed(name: string, { open, ends }: DocumentBytes) {
+  const extension = fileExtension(name);
+  const text = TEXT_EXTENSIONS.has(extension);
+  if (!text && extension !== 'pdf') return true;
+  if (!text) {
+    const { head, tail } = await (ends ?? ((bytes) => streamedEnds(open, bytes)))(PDF_ENDS_BYTES);
+    return isPdfShaped(head, tail);
+  }
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  try {
+    for await (const chunk of await open()) {
+      if (chunk.includes(0)) return false;
+      decoder.decode(chunk, { stream: true });
+    }
+    decoder.decode();
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ERR_ENCODING_INVALID_ENCODED_DATA') return false;
+    throw error;
+  }
+  return true;
+}
+
+async function readAll(stream: AsyncIterable<Buffer>) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+/** The Final's bytes, its ends read as two ranges. */
+async function finalBytes(file: ClaimedFinal): Promise<DocumentBytes> {
+  const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
+  return {
+    open: () => source.readRange(0, file.size),
+    ends: async (bytes) => ({
+      head: await readAll(source.readRange(0, Math.min(bytes, file.size))),
+      tail: await readAll(source.readRange(Math.max(0, file.size - bytes), file.size)),
+    }),
+  };
 }
 
 /** A Final that is itself an image has a single entry: the file. */
@@ -539,6 +631,8 @@ export async function unpackFinals({
       await unpackImage(file);
     } else if (await isImageByContent(file)) {
       await unpackImage(file);
+    } else if (!(await isTheDocumentItsNamed(file.fileName, await finalBytes(file)))) {
+      throw notItsFormat('document', extension);
     }
     await markUnpacked(file.id, extension !== 'zip');
     // A hand-off that fails is logged; `settleMalwareScans` submits it again.
@@ -801,27 +895,41 @@ export async function settleFinals() {
   return { finalsFailed: failed, finalsPassed: passed };
 }
 
+/** The last entry `deleteEntryScanCopies` tried. Kept in memory: a restart only starts it over. */
+let copiesCursor = 0;
+
 /**
- * Step 5: the copy of an image that passed has done its job. The copy of an image whose scan has not
- * finished, or that was rejected, is KEPT, even after its file was deleted: its Image row is what
- * the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
- * is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
+ * Step 5: the copy of an image that passed has done its job. This step KEEPS the copy of an image
+ * whose scan has not finished, or that was refused, even after its file was deleted: its Image row
+ * is what the moderation tooling reads, and deleting it would take the evidence with it. Only
+ * purgeRemovedFiles takes one, an over-level copy, with its file. A copy whose
+ * file is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it
  * passes. A delete that fails stays pointed at and is retried.
  */
 export async function deleteEntryScanCopies({ limit = 50 } = {}) {
+  // Each run starts after the last one's final row and wraps to the start, so copies kept for
+  // their case are tried again but cannot fill every batch.
   const rows = await dbWrite.$queryRaw<{ id: number; imageId: number; fileId: number | null }[]>`
     SELECT e."id", e."imageId", e."fileId" FROM "ServiceDealFileEntry" e
     WHERE e."imageId" IS NOT NULL AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-    ORDER BY e."id" LIMIT ${limit}::int`;
+    ORDER BY e."id" <= ${copiesCursor}::int, e."id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
+  copiesCursor = rows[rows.length - 1].id;
   const { deleteImages } = await import('~/server/services/image.service');
   let deleted = 0;
   for (const row of rows) {
     try {
-      await deleteImages([row.imageId], {
+      const gone = await deleteImages([row.imageId], {
         updatePosts: false,
         actor: { system: 'creator-service-deal-unpack' },
       });
+      // A copy kept for its case stays pointed at; one an earlier run deleted is let go.
+      const went =
+        gone?.some(({ id }) => id === row.imageId) ||
+        !(
+          await dbWrite.$queryRaw<unknown[]>`SELECT 1 FROM "Image" WHERE "id" = ${row.imageId}::int`
+        ).length;
+      if (!went) continue;
       if (row.fileId === null)
         await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
       else

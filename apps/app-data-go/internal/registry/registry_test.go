@@ -442,3 +442,69 @@ func TestNextReadsSeqAndHeadMeta(t *testing.T) {
 		}
 	}
 }
+
+// A level subscription names its level in the request's `meta`, sent as its compact JSON text; a
+// meta that is not one JSON object is refused before anything is sent. Fails on origin/main:
+// Request has no Meta there (the test does not compile).
+func TestSubscribeSendsMeta(t *testing.T) {
+	var got *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: end\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL}
+	s, err := c.Subscribe(context.Background(), Request{Schema: "s", Meta: []byte(" { \"level\" : 4 } ")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if q := got.URL.Query(); q.Get("meta") != `{"level":4}` || len(q["meta"]) != 1 {
+		t.Fatalf("meta sent %q", got.URL.RawQuery)
+	}
+	for _, bad := range []string{`[1]`, `{"level":`, `4`, `"x"`} {
+		got = nil
+		if _, err := c.Subscribe(context.Background(), Request{Schema: "s", Meta: []byte(bad)}); CodeOf(err) != BadRequest || got != nil {
+			t.Fatalf("meta %s: err %v, sent %v", bad, err, got != nil)
+		}
+	}
+	got = nil
+	s, err = c.Subscribe(context.Background(), Request{Schema: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if got.URL.Query().Has("meta") {
+		t.Fatalf("no meta given, sent %q", got.URL.RawQuery)
+	}
+}
+
+// An end names why the origin ended the stream in its `meta` (the level streams'
+// `{"reason":"levels_on"}`); an end whose data cannot be read, or whose meta is not an object, is an
+// end without one. Fails on origin/main: ParseEvent drops an end's data there.
+func TestEndReadsItsMeta(t *testing.T) {
+	for data, want := range map[string]string{
+		`{"meta":{"reason":"levels_on"}}`: `{"reason":"levels_on"}`,
+		`{}`:                              "",
+		`{"meta":null}`:                   "",
+		`{"meta":[1]}`:                    "",
+		`{oops`:                           "",
+	} {
+		ev, err := streamOf("event: end\ndata: " + data + "\n\n").Next()
+		if err != nil || ev.Type != End || string(ev.Meta) != want {
+			t.Fatalf("end %s: %+v (meta %s) %v, want meta %q", data, ev, ev.Meta, err, want)
+		}
+	}
+}
+
+// A level stream's entity carries the shared document's version and timestamps beside its key and
+// seq (level-feed.ts). Fails on origin/main: Entity has no Version, CreatedAt or UpdatedAt there.
+func TestNextReadsASharedDocumentsVersionAndTimes(t *testing.T) {
+	ev, err := streamOf("event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/records/k1\",\"schemas\":[\"s\"],\"rev\":\"r\"," +
+		"\"body\":{\"a\":1},\"key\":\"k1\",\"seq\":12,\"version\":3,\"createdAt\":\"2026-11-20T10:00:00.000Z\",\"updatedAt\":\"2026-11-21T11:00:00.000Z\"},\"cursor\":\"\"}\n\n").Next()
+	if err != nil || ev.Entity.Version != 3 || ev.Entity.CreatedAt != "2026-11-20T10:00:00.000Z" ||
+		ev.Entity.UpdatedAt != "2026-11-21T11:00:00.000Z" || ev.Entity.Seq != 12 || ev.Entity.Key != "k1" {
+		t.Fatalf("got %+v %v", ev.Entity, err)
+	}
+}

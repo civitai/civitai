@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -202,6 +203,30 @@ func TestLoadServeModelGetAllDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadGetAllServeHidePaidDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_HIDE_PAID", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeHidePaid != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_HIDE_PAID=%q -> %v, want %v", in, c.GetAllServeHidePaid, want)
+		}
+	}
+	// Its own switch: the route's and the other ports' switches do not turn it on.
+	t.Setenv("FEED_GO_GETALL_SERVE_HIDE_PAID", "")
+	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	if c, err := Load(); err != nil || c.GetAllServeHidePaid {
+		t.Fatalf("the other switches on: GetAllServeHidePaid=%v err=%v, want false", c.GetAllServeHidePaid, err)
+	}
+}
+
 func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -226,6 +251,266 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "")
 	if c, err := Load(); err != nil || !c.ServeInfinite || c.ServeModelGetAll {
 		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: ServeInfinite=%v ServeModelGetAll=%v err=%v, want true, false", c.ServeInfinite, c.ServeModelGetAll, err)
+	}
+}
+
+// FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS defaults off.
+func TestLoadGetAllUserCosmeticsMissDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeUserCosmeticsMiss != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS=%q -> %v, want %v", in, c.GetAllServeUserCosmeticsMiss, want)
+		}
+	}
+}
+
+// FEED_GO_INFINITE_SERVE_SORT_RANDOM is off unless set, and is its own switch: FEED_GO_SERVE_INFINITE
+// does not turn it on, and it does not turn on FEED_GO_SERVE_INFINITE.
+func TestLoadInfiniteServeSortRandomDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeSortRandom != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_SORT_RANDOM=%q -> %v, want %v", in, c.InfiniteServeSortRandom, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	if c, err := Load(); err != nil || c.InfiniteServeSortRandom || !c.ServeInfinite {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: InfiniteServeSortRandom=%v ServeInfinite=%v err=%v, want false, true", c.InfiniteServeSortRandom, c.ServeInfinite, err)
+	}
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	t.Setenv("FEED_GO_INFINITE_SERVE_SORT_RANDOM", "true")
+	if c, err := Load(); err != nil || !c.InfiniteServeSortRandom || c.ServeInfinite {
+		t.Fatalf("FEED_GO_INFINITE_SERVE_SORT_RANDOM=true alone: InfiniteServeSortRandom=%v ServeInfinite=%v err=%v, want true, false", c.InfiniteServeSortRandom, c.ServeInfinite, err)
+	}
+}
+
+// FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS is off unless set, and FEED_GO_SERVE_INFINITE does not
+// turn it on.
+func TestLoadInfiniteGallerySettingsMissDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeGallerySettingsMiss != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS=%q -> %v, want %v", in, c.InfiniteServeGallerySettingsMiss, want)
+		}
+	}
+}
+
+// The model.getAll input ports' switches default off, and each turns on only its own port.
+func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("unset: ids %v followed %v, want both off", c.GetAllServeInputIDs, c.GetAllServeInputFollowed)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	if c, err = Load(); err != nil || !c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("ids on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	if c, err = Load(); err != nil || c.GetAllServeInputIDs || !c.GetAllServeInputFollowed {
+		t.Fatalf("followed on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+}
+
+// FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS defaults off; TIER_METADATA_KEY is the app's own variable,
+// `tier` only when unset (`z.string().default('tier')`): set empty, it is the empty key.
+func TestLoadGetAllMembershipMiss(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeMembershipMiss != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS=%q -> %v, want %v", in, c.GetAllServeMembershipMiss, want)
+		}
+	}
+	for in, want := range map[string]string{"": "", "plan": "plan", "tier": "tier"} {
+		t.Setenv("TIER_METADATA_KEY", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.TierMetadataKey != want {
+			t.Errorf("TIER_METADATA_KEY=%q -> %q, want %q", in, c.TierMetadataKey, want)
+		}
+	}
+	t.Setenv("TIER_METADATA_KEY", "restored after the test")
+	if err := os.Unsetenv("TIER_METADATA_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TierMetadataKey != "tier" {
+		t.Errorf("TIER_METADATA_KEY unset -> %q, want tier", c.TierMetadataKey)
+	}
+}
+
+// FEED_GO_ANSWER_REGION_BLOCKED is off unless set: a blocked region is then handed back to the app.
+func TestLoadAnswerRegionBlockedDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_ANSWER_REGION_BLOCKED", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.AnswerRegionBlocked != want {
+			t.Errorf("FEED_GO_ANSWER_REGION_BLOCKED=%q -> %v, want %v", in, c.AnswerRegionBlocked, want)
+		}
+	}
+}
+
+// FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE is off unless set (a failed feed call is then handed back
+// to the app), and is its own: FEED_GO_SERVE_INFINITE and FEED_GO_ANSWER_REGION_BLOCKED do not turn
+// it on, nor it them.
+func TestLoadInfiniteAnswerFeedUnavailableDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteAnswerFeedUnavailable != want {
+			t.Errorf("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE=%q -> %v, want %v", in, c.InfiniteAnswerFeedUnavailable, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	t.Setenv("FEED_GO_ANSWER_REGION_BLOCKED", "true")
+	if c, err := Load(); err != nil || c.InfiniteAnswerFeedUnavailable || !c.ServeInfinite || !c.AnswerRegionBlocked {
+		t.Fatalf("the other switches alone: answer=%v ServeInfinite=%v AnswerRegionBlocked=%v err=%v, want false, true, true",
+			c.InfiniteAnswerFeedUnavailable, c.ServeInfinite, c.AnswerRegionBlocked, err)
+	}
+	t.Setenv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	t.Setenv("FEED_GO_ANSWER_REGION_BLOCKED", "")
+	if c, err := Load(); err != nil || !c.InfiniteAnswerFeedUnavailable || c.ServeInfinite || c.AnswerRegionBlocked {
+		t.Fatalf("the switch alone: answer=%v ServeInfinite=%v AnswerRegionBlocked=%v err=%v, want true, false, false",
+			c.InfiniteAnswerFeedUnavailable, c.ServeInfinite, c.AnswerRegionBlocked, err)
+	}
+}
+
+// The publishedOnly port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not
+// turn it on, and it does not turn on FEED_GO_SERVE_INFINITE.
+func TestLoadInfinitePublishedOnlyPortDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeInputPublishedOnly != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY=%q -> %v, want %v", in, c.InfiniteServeInputPublishedOnly, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	if c, err := Load(); err != nil || c.InfiniteServeInputPublishedOnly || !c.ServeInfinite {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: port=%v ServeInfinite=%v err=%v, want false, true", c.InfiniteServeInputPublishedOnly, c.ServeInfinite, err)
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	if c, err := Load(); err != nil || !c.InfiniteServeInputPublishedOnly || c.ServeInfinite {
+		t.Fatalf("the port's switch alone: port=%v ServeInfinite=%v err=%v, want true, false", c.InfiniteServeInputPublishedOnly, c.ServeInfinite, err)
+	}
+}
+
+// The postIds port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not turn
+// it on, and it does not turn on FEED_GO_SERVE_INFINITE.
+func TestLoadInfinitePostIDsPortDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeInputPostIDs != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS=%q -> %v, want %v", in, c.InfiniteServeInputPostIDs, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	if c, err := Load(); err != nil || c.InfiniteServeInputPostIDs || !c.ServeInfinite {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: port=%v ServeInfinite=%v err=%v, want false, true", c.InfiniteServeInputPostIDs, c.ServeInfinite, err)
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	if c, err := Load(); err != nil || !c.InfiniteServeInputPostIDs || c.ServeInfinite {
+		t.Fatalf("the port's switch alone: port=%v ServeInfinite=%v err=%v, want true, false", c.InfiniteServeInputPostIDs, c.ServeInfinite, err)
+	}
+}
+
+// The hubId port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not turn it
+// on, and it does not turn on FEED_GO_SERVE_INFINITE.
+func TestLoadInfiniteHubIDPortDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeInputHubID != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID=%q -> %v, want %v", in, c.InfiniteServeInputHubID, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	if c, err := Load(); err != nil || c.InfiniteServeInputHubID || !c.ServeInfinite {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: port=%v ServeInfinite=%v err=%v, want false, true", c.InfiniteServeInputHubID, c.ServeInfinite, err)
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	if c, err := Load(); err != nil || !c.InfiniteServeInputHubID || c.ServeInfinite {
+		t.Fatalf("the port's switch alone: port=%v ServeInfinite=%v err=%v, want true, false", c.InfiniteServeInputHubID, c.ServeInfinite, err)
 	}
 }
 
@@ -351,6 +636,25 @@ func TestLoadServingLimits(t *testing.T) {
 		if cfg.RequestBudget != c.wantBudget || cfg.CompletionConcurrency != c.wantConcurrency || cfg.JWKSRefresh != c.wantJWKS {
 			t.Errorf("budget=%q concurrency=%q jwks=%q -> %v %d %v, want %v %d %v", c.budget, c.concurrency, c.jwks,
 				cfg.RequestBudget, cfg.CompletionConcurrency, cfg.JWKSRefresh, c.wantBudget, c.wantConcurrency, c.wantJWKS)
+		}
+	}
+}
+
+// FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS is off unless set to a true value, and is its own switch:
+// FEED_GO_COMPUTE_MISSES on does not turn it on.
+func TestLoadComputeImageResourcesMiss(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "0": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ComputeImageResourcesMiss != want || !c.ComputeMisses {
+			t.Errorf("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS=%q -> %v (compute misses %v), want %v", in, c.ComputeImageResourcesMiss, c.ComputeMisses, want)
 		}
 	}
 }
@@ -740,5 +1044,23 @@ func TestCookieNamesPerMode(t *testing.T) {
 				t.Errorf("CookieNames(civitai.com) = %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// FEED_GO_SERVE_PARITY_SAMPLE_RATE: unset is 0 (the serve-side parity sampler off); a rate in [0, 1]
+// is read as is; junk, NaN or out of range is 0, never a rate that replays more than asked.
+func TestServeParityEnv(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for v, want := range map[string]float64{"": 0, "0.005": 0.005, "1": 1, "0": 0, "junk": 0, "-0.1": 0, "1.5": 0, "NaN": 0, "0.25": 0.25} {
+		t.Setenv("FEED_GO_SERVE_PARITY_SAMPLE_RATE", v)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeParityRate != want {
+			t.Errorf("FEED_GO_SERVE_PARITY_SAMPLE_RATE=%q reads %v, want %v", v, c.ServeParityRate, want)
+		}
 	}
 }

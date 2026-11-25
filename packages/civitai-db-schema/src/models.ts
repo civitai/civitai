@@ -1548,24 +1548,6 @@ export interface ComicProjectReport {
   report?: Report;
 }
 
-export interface HeldResourceReview {
-  id: number;
-  modelId: number;
-  modelVersionId: number;
-  userId: number;
-  rating: number;
-  recommended: boolean;
-  details: string | null;
-  exclude: boolean;
-  nsfw: boolean;
-  tosViolation: boolean;
-  metadata: JsonValue | null;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -2234,6 +2216,7 @@ export interface AppAccessRequest {
   reviewedAt: Date | null;
   reviewedById: number | null;
   reviewedBy?: User | null;
+  reviewSource: string | null;
 }
 
 export interface ApiKey {
@@ -4375,52 +4358,6 @@ export interface PersonalDataExport {
   requestedAt: Date | null;
 }
 
-export interface EvidenceHold {
-  id: number;
-  userId: number;
-  csamReportId: number | null;
-  role: string;
-  reportSentAt: Date | null;
-  releaseAt: Date | null;
-  extendedUntil: Date | null;
-  extensionRequestedBy: string | null;
-  extensionReference: string | null;
-  reason: string;
-  createdAt: Date;
-  createdById: number | null;
-  releasedAt: Date | null;
-  releasedById: number | null;
-  releaseReason: string | null;
-}
-
-export interface EvidenceHoldImage {
-  imageId: number;
-  userId: number;
-  postId: number | null;
-  keptAt: Date;
-  priorIngestion: string | null;
-  priorBlockedFor: string | null;
-  priorNsfwLevel: number | null;
-}
-
-export interface EvidenceHoldPost {
-  postId: number;
-  userId: number;
-  title: string | null;
-  detail: string | null;
-  createdAt: Date | null;
-  publishedAt: Date | null;
-  modelVersionId: number | null;
-  collectionId: number | null;
-  metadata: JsonValue | null;
-  keptAt: Date;
-}
-
-export interface EvidenceHeldUser {
-  userId: number;
-  heldUntil: Date | null;
-}
-
 export interface Link {
   id: number;
   url: string;
@@ -5458,6 +5395,28 @@ export interface KnightsReferenceImage {
   failures: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface KnightsInquisitorReview {
+  id: number;
+  queueItemId: number;
+  imageId: number;
+  questionKey: string;
+  consensusValue: string;
+  status: string;
+  confirmedValue: string | null;
+  claimedBy: number | null;
+  claimExpiresAt: Date | null;
+  createdAt: Date;
+  closedAt: Date | null;
+  checkedAt: Date | null;
+}
+
+export interface KnightsInquisitorVote {
+  reviewId: number;
+  moderatorId: number;
+  answer: string;
+  createdAt: Date;
 }
 
 export interface KnightsYesNoReference {
@@ -7262,6 +7221,9 @@ export interface ServiceOffering {
   removedById: number | null;
   sellerAffirmation: JsonValue | null;
   allowReviewWork: boolean;
+  requestForm: JsonValue | null;
+  requestFormVersion: number;
+  fromPrice: number | null;
   happyCount: number;
   reviewCount: number;
   happySortKey: number;
@@ -7299,12 +7261,17 @@ export interface ServiceDeal {
   licenseCustomText: string | null;
   licenseAllowResale: boolean;
   licenseAgreedAt: Date | null;
+  buyerDisclosureVersion: string | null;
+  buyerDisclosureLines: string[];
   maxNsfwLevel: number;
   status: ServiceDealStatus;
   heldAt: Date | null;
   settledAt: Date | null;
   chatId: number | null;
   requestText: string;
+  formVersion: number | null;
+  formAnswers: JsonValue | null;
+  priceBreakdown: JsonValue | null;
   requestedAt: Date;
   acceptedAt: Date | null;
   dueAt: Date | null;

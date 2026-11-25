@@ -53,6 +53,9 @@ export const PERMISSIONS = [
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
   // `src/server/services/moderator-grants.ts`), so rename the two together.
   { id: 'user.deleteAccount', label: 'Delete an account on its owner’s behalf (erasure request)' },
+  // Checked again by the main app's `/api/mod/user/memorial-*` by this literal (`ModeratorGrantId`),
+  // so rename the two together.
+  { id: 'user.memorialize', label: 'Memorialize an account (propose, confirm, reverse)' },
   // Same kind of right, narrower blast radius: the account stays, its reactions go. Checked again by
   // the main app's `/api/mod/user/reactions` and `/remove-reactions` by this literal
   // (`ModeratorGrantId`), so rename the two together.
@@ -121,8 +124,8 @@ export const PERMISSIONS = [
   // apart so a role can be given the Audit queues without the account-ending half of them.
   { id: 'audit.ban.execute', label: 'Ban an account from an audit queue' },
   // Also checked by the main app's `/api/mod/text-scan/csam-hold/resolve` by this literal (`ModeratorGrantId`
-  // in `src/server/services/moderator-grants.ts`); the /csam/text-holds and /evidence-holds page
-  // loads refuse without it too, so rename them together.
+  // in `src/server/services/moderator-grants.ts`); the /csam/text-holds page load
+  // refuses without it too, so rename them together.
   { id: 'csam.report.file', label: 'File a CSAM report' },
   // A removal that repeats the reason an approved appeal overturned is held until someone with this
   // confirms it on /images/re-removals; a holder's own such removals apply directly.

@@ -39,6 +39,12 @@ export function publishedManifest(manifest: unknown): Record<string, unknown> {
 }
 
 /**
+ * Strings in UTF-16 code-unit order (JavaScript's `<`), never locale order: the one comparator
+ * the sorted JSON and every served set in this adapter sort by.
+ */
+export const compareCodeUnits = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
  * JSON with keys sorted and `undefined` dropped, so a hash names a value, not a layout. Array order
  * is kept (it is meaningful here), unlike `stableStringify`; `canonicalJson` is avoided because its
  * module loads the system Redis client on import.
@@ -48,7 +54,7 @@ export function sortedKeyJson(value: unknown): string {
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      .sort(([a], [b]) => compareCodeUnits(a, b));
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${sortedKeyJson(v)}`).join(',')}}`;
   }
   return JSON.stringify(value);

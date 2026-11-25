@@ -453,28 +453,33 @@ export function readFpMirrorByUrns(db: Kysely<DB>, urns: string[]) {
   );
 }
 
-export type FpReconcileAction = 'restrict' | 'removeWanted' | 'due' | 'repost';
+export type FpReconcileAction = 'restrict' | 'removeWanted' | 'due' | 'repost' | 'stuck';
 
 /**
  * A reconcile mismatch, on a row not already due: owe the restriction again, record the removal the
- * platform holds, or push again (`repost`: the text too). Writes no belief about the platform.
+ * platform holds, push again (`repost`: the text too), or count it in the stuck alert (`stuck`, at
+ * `maxAttempts`). Writes no belief about the platform. False when the row was already due.
  */
 export async function markFpReconciled(
   db: Kysely<DB>,
   commentId: number,
-  action: FpReconcileAction
+  action: FpReconcileAction,
+  maxAttempts = 0
 ) {
   const set = {
     restrict: FP_RESTRICT_SET,
     removeWanted: `"removeWantedAt" = COALESCE("removeWantedAt", now()), "updatedAt" = now()`,
     due: `"nextPushAt" = now(), "pushAttempts" = 0, "updatedAt" = now()`,
     repost: `"pushedDigest" = NULL, "nextPushAt" = now(), "pushAttempts" = 0, "updatedAt" = now()`,
+    stuck: `"pushAttempts" = GREATEST("pushAttempts", $2::int), "updatedAt" = now()`,
   }[action];
-  await rows(
+  const updated = await rows(
     db,
-    `UPDATE "FeaturePageCommentMirror" SET ${set} WHERE "commentId" = $1 AND "nextPushAt" IS NULL`,
-    [commentId]
+    `UPDATE "FeaturePageCommentMirror" SET ${set} WHERE "commentId" = $1 AND "nextPushAt" IS NULL
+     RETURNING "commentId"`,
+    action === 'stuck' ? [commentId, maxAttempts] : [commentId]
   );
+  return updated.length > 0;
 }
 
 /**

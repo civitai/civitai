@@ -216,7 +216,8 @@ describe('submitVersion — keyedBy immutability against every approval', () => 
   const VOTES_NOW = {
     collections: {
       cards: { visibility: 'private', schema: V1_SCHEMA },
-      votes: { visibility: 'shared', write: 'none', counters: ['n'] },
+      // Not `write: "none"` + counters: those are refused as new declarations (below).
+      votes: { visibility: 'shared', write: 'own' },
     },
   };
   const OLD_VOTES = {
@@ -242,5 +243,83 @@ describe('submitVersion — keyedBy immutability against every approval', () => 
   it('positive control: without that approval the same submit is accepted', async () => {
     dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue(approvals(false));
     await expect(submit(VOTES_NOW)).resolves.toBeDefined();
+  });
+});
+
+// docs/app-storage-generic-core.md, rollout step 3: marks, counters and `write: "none"` are
+// deprecated. Submit refuses a NEW one against the previous approved version (what the store
+// enforces, `app_blocks.manifest`), and lets a collection keep, or drop, what it already declares.
+describe('submitVersion — removed marks, counters and write "none"', () => {
+  const VOTES = (extra: Record<string, unknown>) => ({
+    collections: {
+      cards: { visibility: 'private', schema: V1_SCHEMA },
+      votes: { visibility: 'shared', write: 'own', ...extra },
+    },
+  });
+  const ENFORCED = { blockId: SLUG, version: '1.0.0', storage: VOTES({ marks: ['vote'] }) };
+  const refusedFor = async (storageDecl: unknown) =>
+    submit(storageDecl).then(
+      () => null,
+      (e: unknown) => e as Error
+    );
+
+  beforeEach(() => {
+    dbMock.dbWrite.appBlock.findFirst.mockResolvedValue({ id: EXISTING_APP, manifest: ENFORCED });
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'pubreq_v1', manifest: ENFORCED },
+    ]);
+  });
+
+  it('🔴 refuses a mark the previous approved version did not declare on that collection, before anything is inserted', async () => {
+    const err = await refusedFor(VOTES({ marks: ['vote', 'down'] }));
+    expect(err?.name).toBe('StorageMigrationRefusal');
+    expect(err?.message).toContain(
+      'storage.collections.votes.marks: "down" is not declared on this collection by the previous approved version, and marks were removed'
+    );
+    expect(s3Send).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 refuses a new counter, and a new write "none" collection', async () => {
+    expect((await refusedFor(VOTES({ marks: ['vote'], counters: ['views'] })))?.message).toContain(
+      'storage.collections.votes.counters: "views" is not declared on this collection by the previous approved version, and counters were removed'
+    );
+    const none = await refusedFor({
+      collections: {
+        ...VOTES({ marks: ['vote'] }).collections,
+        plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+      },
+    });
+    expect(none?.message).toContain(
+      'storage.collections.plays.write: "none" is not declared on this collection by the previous approved version, and write "none" was removed'
+    );
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('keeping the declared mark is accepted', async () => {
+    const result = await submit(VOTES({ marks: ['vote'] }));
+    expect(result.slug).toBe(SLUG);
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('dropping it is accepted', async () => {
+    const result = await submit(VOTES({}));
+    expect(result.slug).toBe(SLUG);
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 a first version may declare none of them', async () => {
+    // No app yet: the baseline is empty.
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const err = await refusedFor(VOTES({ marks: ['vote'] }));
+    expect(err?.name).toBe('StorageMigrationRefusal');
+    expect(err?.message).toContain(
+      'storage.collections.votes.marks: marks were removed and cannot be declared on a new app (declared: "vote")'
+    );
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    // Positive control: the same first version without the mark passes this gate.
+    const without = await refusedFor(VOTES({}));
+    expect(without?.message ?? '').not.toContain('were removed');
   });
 });

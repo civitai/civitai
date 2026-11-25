@@ -26,7 +26,7 @@ const row = (
   name,
   slug: name?.toLowerCase() ?? null,
   usage,
-  holdings: { private: NONE, shared: NONE, hidden: NONE, counters: NONE, ...parts },
+  holdings: { private: NONE, shared: NONE, hidden: NONE, ...parts },
 });
 const ok = (apps: Extract<MyAppStorage, { status: 'ok' }>['apps']): MyAppStorage => ({
   status: 'ok',
@@ -74,23 +74,6 @@ describe('AppStorageCardView', () => {
     expect(onEmpty).toHaveBeenCalledWith(app);
   });
 
-  test('a user holding only a counter they started is told it stays, and cannot Empty', async () => {
-    const onEmpty = vi.fn();
-    await renderWithProviders(
-      <AppStorageCardView
-        onEmpty={onEmpty}
-        data={ok([
-          row('apb_c', 'Counter', { bytes: 2, docs: 1 }, { counters: { bytes: 2, docs: 1 } }),
-        ])}
-      />
-    );
-    const r = page.getByTestId('app-storage-row-apb_c');
-    await expect
-      .element(r.getByTestId('app-storage-kept-apb_c'))
-      .toHaveTextContent('1 item stays: counters you started.');
-    await expect.element(r.getByRole('button', { name: 'Empty' })).toBeDisabled();
-  });
-
   test('a user holding only posts moderation hid is told they stay, and cannot Empty', async () => {
     await renderWithProviders(
       <AppStorageCardView
@@ -118,8 +101,7 @@ describe('AppStorageCardView', () => {
             { bytes: 300, docs: 5 },
             {
               shared: { bytes: 100, docs: 1 },
-              hidden: { bytes: 100, docs: 1 },
-              counters: { bytes: 100, docs: 3 },
+              hidden: { bytes: 200, docs: 4 },
             }
           ),
           row('apb_p', 'Plain', { bytes: 40, docs: 1 }),
@@ -129,7 +111,7 @@ describe('AppStorageCardView', () => {
     const mixed = page.getByTestId('app-storage-row-apb_m');
     await expect
       .element(mixed.getByTestId('app-storage-kept-apb_m'))
-      .toHaveTextContent('4 items stay: counters you started and posts hidden by moderation.');
+      .toHaveTextContent('4 items stay: posts hidden by moderation.');
     await expect.element(mixed.getByRole('button', { name: 'Empty' })).toBeEnabled();
     const plain = page.getByTestId('app-storage-row-apb_p');
     await expect.element(plain.getByRole('button', { name: 'Empty' })).toBeEnabled();
@@ -148,7 +130,7 @@ describe('AppStorageCardView', () => {
               'apb_k',
               'Keeper',
               { bytes: 50, docs: 3 },
-              { private: { bytes: 20, docs: 1 }, counters: { bytes: 30, docs: 2 } }
+              { private: { bytes: 20, docs: 1 }, hidden: { bytes: 30, docs: 2 } }
             )}
             onIncludeSharedChange={vi.fn()}
           />
@@ -162,7 +144,7 @@ describe('AppStorageCardView', () => {
       </>
     );
     const kept = page.getByTestId('confirm-kept');
-    await expect.element(kept).toHaveTextContent('2 items stay: counters you started.');
+    await expect.element(kept).toHaveTextContent('2 items stay: posts hidden by moderation.');
     await expect.element(kept.getByRole('checkbox')).not.toBeInTheDocument();
     const shared = page.getByTestId('confirm-shared');
     await expect.element(shared).toHaveTextContent('You have no private data in Sharer.');
