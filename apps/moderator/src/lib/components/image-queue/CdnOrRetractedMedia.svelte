@@ -8,9 +8,9 @@
     retractedMediaUrl,
   } from '$lib/held-media';
 
-  // The public CDN first. Media it will not serve (a blocked image or video) is tried once more from
-  // storage through `/api/retracted-media`, which decides on the server whether this moderator may see
-  // it. Storage has the original only, so that copy is full size.
+  // The public CDN first. Media it will not serve (a blocked image or video) is tried once more,
+  // unless `unprocessed`, from storage through `/api/retracted-media`, which decides on the server
+  // whether this moderator may see it. Storage has the original only, so that copy is full size.
   let {
     item,
     width = 450,
@@ -34,7 +34,7 @@
   let fallback = $state<{ id: number; mode: 'retracted' | 'failed'; reason: string } | null>(null);
   const mode = $derived(fallback?.id === item.id ? fallback.mode : 'cdn');
 
-  const toStorage = (id: number) => {
+  const onCdnFailed = (id: number) => {
     if (fallback?.id === id) return;
     fallback = unprocessed
       ? { id, mode: 'failed', reason: MEDIA_UNPROCESSED }
@@ -46,7 +46,7 @@
   const onCdnError = (event: Event) => {
     const target = event.target;
     if (target instanceof HTMLSourceElement && target.nextElementSibling) return;
-    toStorage(item.id);
+    onCdnFailed(item.id);
   };
 
   // Server-rendered media can fail before hydration attaches the listener, so check once on mount. A
@@ -54,10 +54,10 @@
   function probe(span: HTMLSpanElement) {
     const id = item.id;
     const media = span.querySelector('img, video');
-    if (media instanceof HTMLImageElement && media.complete && media.naturalWidth === 0) toStorage(id);
+    if (media instanceof HTMLImageElement && media.complete && media.naturalWidth === 0) onCdnFailed(id);
     if (!(media instanceof HTMLVideoElement)) return;
     const timer = setTimeout(() => {
-      if (media.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) toStorage(id);
+      if (media.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) onCdnFailed(id);
     });
     return () => clearTimeout(timer);
   }

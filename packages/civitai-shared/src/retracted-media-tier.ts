@@ -102,8 +102,8 @@ export function moderatorMediaWhereSql(
   return heldLeg ? `(${openable} OR COALESCE(${heldItemImageSql(image)}, false))` : openable;
 }
 
-/** At most this many other rows on a url `csamRestrictedSql` and `urlSiblingsSql` read; a url with
- *  more is refused (`siblingsServable`). */
+/** At most this many other rows on a url `csamRestrictedSql` and `urlSiblingsSql` read; a url that
+ *  reaches it is refused (`siblingsServable`). */
 export const URL_SIBLING_CAP = 50;
 
 /**

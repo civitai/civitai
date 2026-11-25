@@ -2,7 +2,8 @@
  * Cases for the moderator-view rule (`moderatorWithheldSql`) that every suite reading it runs
  * against its own route: rows that share the target's url, and the post-text and article holds.
  * Each `mark` is plain SQL for a PGlite whose schema includes `CSAM_LINK_TABLES_SQL`;
- * `csamCaseCleanupSql` removes what any case wrote and clears the target's post.
+ * `csamCaseCleanupSql` removes what any case wrote and clears the target's post. The
+ * `restricts: false` cases pin the ruling in civitai/civitai#10377.
  */
 
 import { CSAM_HOLD_POST_UNPUBLISH_REASON } from '../held-url';

@@ -15,7 +15,7 @@ import { WITHHELD_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 
-/** `held` marks held media (`heldImageSql`), so its serve is recorded as a held view; who is served
+/** `kind: 'held'` marks held media (`heldImageSql`), so its serve is recorded as a held view; who is served
  *  it is `moderatorMediaWhereSql`'s call. */
 export type ModeratorMedia = {
   url: string;

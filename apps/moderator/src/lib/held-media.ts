@@ -12,7 +12,8 @@ export const RETRACTED_REFUSED =
  *  moderator. Names no reason. */
 export const WITHHELD_REFUSED = 'Not ruled on here. Ask a lead.';
 
-/** What a tile shows when no moderator could be served the file from storage either. */
+/** What a tile shows when the route has no file to serve for this image by its own facts
+ *  (`moderatorMediaUnavailable`). */
 export const RETRACTED_UNAVAILABLE =
   'Not available: the file may be deleted, or not stored for this image.';
 

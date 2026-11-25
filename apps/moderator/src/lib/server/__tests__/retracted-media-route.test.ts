@@ -138,9 +138,9 @@ describe('/api/retracted-media', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  // A probe is told the file is gone only when no moderator could be served it; anything else
-  // refused reads the same, so a withheld image is not told apart from a missing grant.
-  it('tells a refused probe the file is unavailable only when no moderator could be served it', async () => {
+  // A probe is told the file is gone only when the route has no file for it by the image's own
+  // facts; anything else refused reads the same, so a withheld image is not told apart from a missing grant.
+  it('tells a refused probe the file is unavailable only when there is no file to serve', async () => {
     getModeratorMedia.mockResolvedValue(null);
     const message = async (query: string) =>
       ((await (await call({ query })).res?.json()) as { message?: string } | undefined)?.message;
