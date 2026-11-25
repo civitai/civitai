@@ -928,6 +928,29 @@ const takeLift = (commentId: number, by?: number) =>
   );
 
 /**
+ * Why the platform's deciding verdict for this row is not confirmed as the moderator hide sent from
+ * here, or null when it is. Read alone: the comments page after the cursor just before its key.
+ */
+async function unconfirmedLift(row: FpMirrorFactsRow) {
+  if (!row.urn || !row.modHideSentAt) return 'no hide sent';
+  const key = row.urn.slice(row.urn.lastIndexOf('/') + 1);
+  const query = new URLSearchParams({
+    app: PLATFORM_FEATURE_PAGES_APP,
+    limit: '1',
+    cursor: key.slice(0, -1),
+  });
+  const reply = await callSigner(PLATFORM_COMMENTS_READ_PATH, { method: 'GET', query });
+  const page = commentsPageSchema.safeParse(reply.body);
+  if (reply.status !== 200 || !page.success) return `read failed: ${reply.status}`;
+  const [item] = page.data.items;
+  if (item?.urn !== row.urn) return item ? 'another comment read' : 'nothing read';
+  const v = item.verdict;
+  if (v?.source !== 'moderator' || v.verdict !== 'hidden') return 'not a moderator hide';
+  if (Date.parse(v.at ?? '') !== row.modHideSentAt.getTime()) return 'not the hide sent from here';
+  return null;
+}
+
+/**
  * The platform's moderator visible for a lift, by sourceId: it lifts the moderator hide and decides
  * for no version, so the site and the pipeline decide after it, a pipeline hide included. Sent under
  * the row's lease, from facts read under it, so a hide made since the page was read goes first.
@@ -946,11 +969,13 @@ async function sendModeratorLift(commentId: number, item: PlatformCommentItem) {
       })
     )
       return 'held' as const;
-    // Read again just before the send: the page may be minutes old. By source the platform says only
-    // whether it is hidden, not by whom, so a moderator hide made since the page was read is not
-    // told apart from ours here; anything but hidden sends nothing.
-    const held = await readBySource(commentId);
-    if (held.kind !== 'held' || held.state !== 'hidden') return 'skipped' as const;
+    // Confirmed again just before the send, as the page may be minutes old: only while the platform's
+    // deciding verdict is still the moderator hide sent from here. Anything else sends nothing.
+    const unconfirmed = await unconfirmedLift(row);
+    if (unconfirmed) {
+      log('warning', 'moderator lift unconfirmed', { commentId, reason: unconfirmed });
+      return 'unconfirmed' as const;
+    }
     const r = await send(PLATFORM_MOD_VERDICT_PATH, {
       target: { sourceId: commentId },
       verdict: 'visible',
@@ -960,7 +985,6 @@ async function sendModeratorLift(commentId: number, item: PlatformCommentItem) {
       log('error', 'moderator lift failed', { commentId, kind: r.kind });
       return 'skipped' as const;
     }
-    // The push then lifts the site's.
     await markFpReconciled(kyselyWrite, commentId, 'due');
     return 'sent' as const;
   } finally {
@@ -980,6 +1004,8 @@ export async function runFpReconcile() {
   let moderatorHidden = 0;
   let liftsLost = 0;
   let moderatorLifts = 0;
+  let liftsHeld = 0;
+  let liftsUnconfirmed = 0;
   do {
     const query = new URLSearchParams({
       app: PLATFORM_FEATURE_PAGES_APP,
@@ -998,6 +1024,8 @@ export async function runFpReconcile() {
         moderatorHidden,
         liftsLost,
         moderatorLifts,
+        liftsHeld,
+        liftsUnconfirmed,
         failed: true,
       };
     }
@@ -1041,7 +1069,8 @@ export async function runFpReconcile() {
       if (action === 'moderator-lift') {
         const lifted = await sendModeratorLift(row.commentId, item);
         if (lifted === 'sent') moderatorLifts += 1;
-        else if (lifted === 'held') moderatorHidden += 1;
+        else if (lifted === 'held') liftsHeld += 1;
+        else if (lifted === 'unconfirmed') liftsUnconfirmed += 1;
         continue;
       }
       if (action !== 'lift') {
@@ -1075,6 +1104,8 @@ export async function runFpReconcile() {
     moderatorHidden,
     liftsLost,
     moderatorLifts,
+    liftsHeld,
+    liftsUnconfirmed,
   };
   log('info', 'heartbeat', { job: 'reconcile', ...counts });
   return counts;

@@ -51,8 +51,6 @@ export class CsamHoldBusyError extends Error {
   }
 }
 
-export { csamHoldLockKey };
-
 /** Advisory lock shared with a decision's final update, so a decision cannot land between the ruled-text check and the write. */
 export const lockCsamHold = (
   tx: Pick<typeof dbWrite, '$executeRaw'>,

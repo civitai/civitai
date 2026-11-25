@@ -173,7 +173,6 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(decided(id)).toBe('visible');
     expect(await mirror.isFpCommentShown(id)).toBe(true);
 
-    // Settled: the next reconcile sends nothing more.
     expect(await reconcile()).toMatchObject({ moderatorLifts: 0, mismatched: 0 });
   });
 
@@ -235,7 +234,6 @@ describe("a moderator's dismissal of the scan's report", () => {
     ]);
     expect(await dismiss(userReport)).toBeNull();
 
-    // The main app's bulk ruling, of this one report: never a grant.
     await q(`UPDATE "Report" SET status = 'Pending', "statusSetBy" = NULL WHERE id = $1`, [
       reportId,
     ]);
@@ -264,21 +262,55 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(deciding(id)).toMatchObject({ source: 'moderator', verdict: 'hidden' });
   });
 
-  it('5b. what the platform holds is read again just before the send: not hidden there any more, nothing is sent', async () => {
+  /** A lift granted and pushed, with the daily page still showing our hide as it was. */
+  const staleOnThePage = async () => {
     const { id, reportId } = await hiddenByScan();
     await dismiss(reportId);
     await runMirror(mirror);
-    const page = (await import('~/server/services/feature-pages/__tests__/fp-harness')).platform;
     const ours = (await mirrorRow(id)).modHideSentAt as Date;
-    // The page still shows our hide; since then a moderator there has shown it.
-    page.readback = (items: unknown[]) =>
-      (items as { urn: string; verdict: unknown }[]).map((i) => ({
+    const asOurs = (items: unknown[]) =>
+      (items as { urn: string }[]).map((i) => ({
         ...i,
         verdict: { source: 'moderator', verdict: 'hidden', at: ours.toISOString() },
       }));
-    verdictAt('mod', id, 'visible', new Date(Date.now() + 1_000));
-    expect(await reconcile()).toMatchObject({ moderatorLifts: 0 });
+    return { id, asOurs };
+  };
+  const singleRead = (url: URL) => url.searchParams.get('limit') === '1';
+
+  it('5b. the hide is confirmed again just before the send: a newer moderator hide there, nothing is sent', async () => {
+    const { id, asOurs } = await staleOnThePage();
+    platform.readback = (items, url) => (singleRead(url) ? items : asOurs(items));
+    verdictAt('mod', id, 'hidden', new Date(Date.now() + 1_000));
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0, liftsUnconfirmed: 1 });
     expect(modVisibleBySource()).toHaveLength(0);
+  });
+
+  it('5d. a moderator visible there since the page was read: nothing is sent', async () => {
+    const { id, asOurs } = await staleOnThePage();
+    platform.readback = (items, url) =>
+      singleRead(url)
+        ? (items as { urn: string }[]).map((i) => ({
+            ...i,
+            verdict: { ...asOurs([i])[0].verdict, verdict: 'visible' },
+          }))
+        : asOurs(items);
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0, liftsUnconfirmed: 1 });
+    expect(modVisibleBySource()).toHaveLength(0);
+  });
+
+  it('5c. a single read that returns another comment, or nothing, confirms nothing', async () => {
+    const { asOurs } = await staleOnThePage();
+    platform.readback = (items, url) =>
+      singleRead(url)
+        ? (items as { urn: string }[]).map((i) => ({ ...asOurs([i])[0], urn: `${i.urn}x` }))
+        : asOurs(items);
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0, liftsUnconfirmed: 1 });
+    platform.readback = (items, url) => (singleRead(url) ? [] : asOurs(items));
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0, liftsUnconfirmed: 1 });
+    expect(modVisibleBySource()).toHaveLength(0);
+
+    platform.readback = (items) => asOurs(items);
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 1 });
   });
 
   it("5. never lifts a platform moderator's hide made after this mirror's", async () => {
@@ -310,7 +342,6 @@ describe("a moderator's dismissal of the scan's report", () => {
     await settle();
     expect(decided(id)).toBe('visible');
 
-    // The author edits; the new text is scanned and hidden.
     await q(`UPDATE "CommentV3" SET content = '<p>now a scam</p>' WHERE id = $1`, [id]);
     await q(
       `UPDATE "FeaturePageCommentMirror" SET version = version + 1, "contentAt" = now(),
@@ -324,7 +355,6 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(await mirrorRow(id)).toMatchObject({ scanHiddenVersion: 2, liftGrantedVersion: 1 });
     expect(modVisibleBySource()).toHaveLength(1);
 
-    // The new text's own report, dismissed, lifts it again for that text.
     expect(await dismiss(second)).toEqual({ commentId: id, version: 2 });
     await settle();
     expect(modVisibleBySource()).toHaveLength(2);
@@ -347,7 +377,6 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(platform.posts.filter((p) => p.text === 'edited')).toHaveLength(0);
     expect(modVisibleBySource()).toHaveLength(1);
 
-    // Its own clean scan sends it.
     await scanClean(id);
     await runMirror(mirror);
     expect(platform.posts.filter((p) => p.text === 'edited')).toHaveLength(1);
@@ -408,7 +437,6 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(await unaction(reportId)).toMatchObject({ held: 'reported' });
     expect((await commentOf(id)).hidden).toBe(true);
 
-    // Handled: the same dismissal lifts it.
     await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [pending]);
     expect(await dismiss(reportId)).toEqual({ commentId: id, version: 1 });
   });
