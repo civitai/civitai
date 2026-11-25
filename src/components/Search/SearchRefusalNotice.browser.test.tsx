@@ -44,6 +44,7 @@ describe('SearchRefusalNotice', () => {
     expect(text()).not.toMatch(/flagged terms/i);
   });
 
+  // Who sees the moderator line: moderators only (hq:clearer_message_when_3jez, ruling D4).
   test('a non-moderator never sees the moderator line, even if a refusedBy is passed', async () => {
     await renderWithProviders(<SearchRefusalNotice refusal="policy" refusedBy="query guard" />);
     await expect.element(page.getByText(SEARCH_POLICY_MESSAGE.title)).toBeVisible();

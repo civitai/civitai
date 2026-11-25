@@ -108,7 +108,7 @@ export function useQueryChallenges(
   return {
     challenges: items,
     isLoading: isLoading || loadingPreferences,
-    // The challenge feed's search falls back to the plain feed; both carry `refused`.
+    // The plain and semantic pages are different types; both may carry `refused`.
     serverRefusal: pageRefusal(
       data?.pages[0] as Parameters<typeof pageRefusal>[0],
       rest.isPlaceholderData

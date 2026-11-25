@@ -215,7 +215,8 @@ export function withRefusal<R extends object>(
 
 /**
  * The page a search without the semantic audit returns: nothing when its spelling correction was
- * refused (naming that verdict), else its page, refused only when the search service refused the text.
+ * refused (naming that verdict), else its page, marked refused only when it is empty and the search
+ * service refused the text.
  */
 export function finishUnauditedSearch<P extends { items: unknown[] }, N extends object>(
   page: P & { correctedQuery?: string },
@@ -420,7 +421,8 @@ export function beginSemanticAudit({
         );
       // A refused_ path (own images narrowed, a refused query by image) names its word verdict,
       // except refused_upload_level (an upload above the viewer's level), which is not marked
-      // refused; a served page is refused only when the search service refused its text.
+      // refused; a served page is refused only when it is empty and the search service refused its
+      // text.
       const path = searchPath ?? 'served';
       const by =
         path === 'refused_upload_level'
