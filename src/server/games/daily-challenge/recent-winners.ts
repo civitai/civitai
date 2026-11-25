@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { imageNotRestrictedSql } from '~/server/common/image-visibility';
+import { hasBlockMarkerSql, imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ChallengeJudgingCategory } from '~/server/schema/challenge.schema';
@@ -54,7 +54,7 @@ export async function getRecentWinnerIdeas(
       AND c.id <> ${excludeChallengeId}
       AND cw.reason IS NOT NULL
       AND cw.reason <> ${SOLE_WINNER_REASON}
-      AND i."blockedFor" IS NULL
+      AND NOT ${hasBlockMarkerSql()}
       AND i."needsReview" IS NULL
       AND ${imageNotRestrictedSql()}
       ${sfwFilter}

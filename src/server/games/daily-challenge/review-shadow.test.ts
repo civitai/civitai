@@ -122,25 +122,22 @@ describe('shadowSendable', () => {
     expect(shadowSendable(sendable)).toBe(true);
   });
 
+  // Source, challenge level, scan, hold and mature entries are covered through the job in
+  // daily-challenge-processing.banned-entrants.pglite.test.ts; these are the rows it cannot reach.
   it.each([
-    ['a user challenge', { ...sendable, source: ChallengeSource.User }],
-    ['a mod challenge', { ...sendable, source: ChallengeSource.Mod }],
-    [
-      'a challenge that allows mature levels',
-      { ...sendable, allowedNsfwLevel: NsfwLevel.PG | NsfwLevel.R },
-    ],
-    ['an unscanned entry', { ...sendable, entry: { ...sendable.entry, ingestion: 'Pending' } }],
     ['an entry with no scan state', { ...sendable, entry: { nsfwLevel: NsfwLevel.PG } }],
-    ['a blocked entry', { ...sendable, entry: { ...sendable.entry, blockedFor: 'tos' } }],
     [
-      'an entry held for moderator review',
-      { ...sendable, entry: { ...sendable.entry, needsReview: 'poi' } },
+      'an entry with no block state',
+      {
+        ...sendable,
+        entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', needsReview: null },
+      },
     ],
     [
       'an entry with no review state',
       { ...sendable, entry: { nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned', blockedFor: null } },
     ],
-    ['a mature entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: NsfwLevel.R } }],
+    ['a blocked entry', { ...sendable, entry: { ...sendable.entry, blockedFor: 'tos' } }],
     ['an unrated entry', { ...sendable, entry: { ...sendable.entry, nsfwLevel: 0 } }],
   ])('never sends %s', (_, input) => {
     expect(shadowSendable(input)).toBe(false);
