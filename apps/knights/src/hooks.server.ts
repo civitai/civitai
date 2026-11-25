@@ -35,7 +35,11 @@ export const init: ServerInit = () => {
     try {
       open();
     } catch (err) {
-      console.error(`[knights] redis-init-failed (${name})`, err);
+      // Only the error's name and code: a bad node URL error carries the raw URL, credentials included.
+      console.error(`[knights] redis-init-failed (${name})`, {
+        error: err instanceof Error ? err.name : typeof err,
+        code: (err as { code?: unknown } | null)?.code,
+      });
     }
   }
   void readiness.check();

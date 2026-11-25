@@ -130,13 +130,19 @@ describe('knights access gate', () => {
 
   it('server init survives a Redis client that cannot be built, and still opens the other', () => {
     getSysRedis.mockReset().mockImplementationOnce(() => {
-      throw new Error('REDIS_SYS_URL is not set');
+      throw Object.assign(new TypeError('Invalid URL'), {
+        code: 'ERR_INVALID_URL',
+        input: 'redis://user:hunter2@node-1:6379',
+      });
     });
     getCacheRedis.mockReset();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(() => (init as unknown as () => unknown)()).not.toThrow();
     expect(getCacheRedis).toHaveBeenCalledTimes(1);
-    expect(error).toHaveBeenCalledWith('[knights] redis-init-failed (sys)', expect.any(Error));
+    expect(error).toHaveBeenCalledWith('[knights] redis-init-failed (sys)', {
+      error: 'TypeError',
+      code: 'ERR_INVALID_URL',
+    });
     error.mockRestore();
   });
 
