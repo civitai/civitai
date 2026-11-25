@@ -110,26 +110,17 @@ export async function getPlayerStatus(
     .executeTakeFirst();
   if (!player) return null;
   const next = nextLadderEntry(player.rankType);
-  // Independent reads, sent together: the header and /play read this on every page load.
-  const [balance, daysPlayed, ledger, xpPending, fervorLedger, smites, heartBack] =
-    await Promise.all([
-      getGoldBalance(db, userId),
-      next && next.minDaysPlayed > 0 ? daysPlayedOf(db, userId) : 0,
-      ledgerOf(db, userId),
-      pendingXpOf(db, userId),
-      fervorLedgerOf(db, userId, now),
-      activeSmiteCount(db, userId),
-      heartBackOf(db, userId),
-    ]);
+  // One read at a time on purpose: the pool has 20 connections and the live stats broadcast reads this for several voters
+  // at once, so a fan-out here would starve the votes for a few milliseconds saved.
   return statusFrom(player.rankType, player.exp, {
     ...player,
-    goldSpendable: balance.convertible,
-    daysPlayed,
-    ledger,
-    xpPending,
-    fervorLedger,
-    smites,
-    heartBack,
+    goldSpendable: (await getGoldBalance(db, userId)).convertible,
+    daysPlayed: next && next.minDaysPlayed > 0 ? await daysPlayedOf(db, userId) : 0,
+    ledger: await ledgerOf(db, userId),
+    xpPending: await pendingXpOf(db, userId),
+    fervorLedger: await fervorLedgerOf(db, userId, now),
+    smites: await activeSmiteCount(db, userId),
+    heartBack: await heartBackOf(db, userId),
   });
 }
 
