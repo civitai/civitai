@@ -4068,6 +4068,10 @@ export type KnightsQueueItem = {
    * Yes/no items only: answers so far; serving finishes questions that are under way first.
    */
   voteCount: Generated<number>;
+  /**
+   * The settled value last recorded as the item's verdict label in the label store; null until then.
+   */
+  verdictLabelledValue: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

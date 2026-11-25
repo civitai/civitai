@@ -10,6 +10,12 @@ import {
   logSafely,
   type LabelLog,
 } from './labels';
+import {
+  ensureVerdictRule,
+  writeVerdictBatch,
+  type VerdictCursor,
+  type VerdictLabelConfig,
+} from './verdict-labels';
 
 export type PassLog = LabelLog;
 
@@ -17,6 +23,10 @@ export type LabelPassResult = {
   /** False when the time budget ran out; the next tick resumes from the data. */
   done: boolean;
   labelsWritten: number;
+  /** Verdict labels written; included in neither `labelsWritten` nor the vote counts. */
+  verdictLabelsWritten: number;
+  /** Settled verdicts not labelled because the image gate does not call their image servable. */
+  verdictLabelsExcluded: number;
   labelFailures: number;
 };
 
@@ -30,6 +40,8 @@ export async function runLabelPass(
     log?: PassLog;
     budgetMs?: number;
     batchSize?: number;
+    /** Verdict labels: off unless given and enabled. */
+    verdict?: VerdictLabelConfig;
   }
 ): Promise<LabelPassResult> {
   try {
@@ -51,11 +63,23 @@ async function labelPass(
     log,
     budgetMs = DEFAULTS.budgetMs,
     batchSize = DEFAULTS.batchSize,
-  }: { now: Date; log?: PassLog; budgetMs?: number; batchSize?: number }
+    verdict,
+  }: {
+    now: Date;
+    log?: PassLog;
+    budgetMs?: number;
+    batchSize?: number;
+    verdict?: VerdictLabelConfig;
+  }
 ): Promise<LabelPassResult> {
   const deadline = Date.now() + budgetMs;
   const outOfTime = () => Date.now() >= deadline;
-  const totals = { labelsWritten: 0, labelFailures: 0 };
+  const totals = {
+    labelsWritten: 0,
+    verdictLabelsWritten: 0,
+    verdictLabelsExcluded: 0,
+    labelFailures: 0,
+  };
 
   // Yes/no answers are labelled as given, not when graded; the cursor is their own.
   let done = true;
@@ -78,6 +102,11 @@ async function labelPass(
     done &&= kindDone;
   }
 
+  if (verdict?.enabled) {
+    if (outOfTime()) done = false;
+    else done &&= await verdictPass(db, { verdict, batchSize, outOfTime, log, totals });
+  }
+
   if (totals.labelFailures > 0) {
     await logSafely(log, {
       type: 'error',
@@ -86,9 +115,56 @@ async function labelPass(
       details: { labelFailures: totals.labelFailures, labelsWritten: totals.labelsWritten },
     });
   }
-  if (totals.labelsWritten > 0 || totals.labelFailures > 0)
+  if (totals.labelsWritten > 0 || totals.verdictLabelsWritten > 0 || totals.labelFailures > 0)
     await logPassSummary(db, log, { now, done, ...totals });
   return { done, ...totals };
+}
+
+/**
+ * Writes verdict labels up to the cap. A batch that raises is logged and counted as failures; it does not stop the vote
+ * labels, and nothing in it is marked, so the next pass tries it again. True when nothing is left to write.
+ */
+async function verdictPass(
+  db: Kysely<DB>,
+  {
+    verdict,
+    batchSize,
+    outOfTime,
+    log,
+    totals,
+  }: {
+    verdict: VerdictLabelConfig;
+    batchSize: number;
+    outOfTime: () => boolean;
+    log?: PassLog;
+    totals: { verdictLabelsWritten: number; verdictLabelsExcluded: number; labelFailures: number };
+  }
+): Promise<boolean> {
+  // The cap counts the verdicts a pass takes, labelled or not.
+  let left = verdict.cap ?? Number.POSITIVE_INFINITY;
+  try {
+    await ensureVerdictRule(db);
+    let cursor: VerdictCursor | null = null;
+    while (left > 0 && !outOfTime()) {
+      const limit = Math.min(batchSize, left);
+      const batch = await writeVerdictBatch(db, { after: cursor, limit, log });
+      totals.verdictLabelsWritten += batch.written;
+      totals.verdictLabelsExcluded += batch.excluded;
+      totals.labelFailures += batch.failed;
+      left -= batch.scanned;
+      cursor = batch.cursor;
+      if (batch.scanned < limit) return true;
+    }
+    return false;
+  } catch (error) {
+    totals.labelFailures += 1;
+    await logSafely(log, {
+      type: 'error',
+      name: 'knights-verdict-labels-failed',
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+    });
+    return false;
+  }
 }
 
 export async function convertedPerDay(
