@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -226,6 +227,85 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "")
 	if c, err := Load(); err != nil || !c.ServeInfinite || c.ServeModelGetAll {
 		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: ServeInfinite=%v ServeModelGetAll=%v err=%v, want true, false", c.ServeInfinite, c.ServeModelGetAll, err)
+	}
+}
+
+// FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS defaults off.
+func TestLoadGetAllUserCosmeticsMissDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeUserCosmeticsMiss != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS=%q -> %v, want %v", in, c.GetAllServeUserCosmeticsMiss, want)
+		}
+	}
+}
+
+// The model.getAll input ports' switches default off, and each turns on only its own port.
+func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("unset: ids %v followed %v, want both off", c.GetAllServeInputIDs, c.GetAllServeInputFollowed)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	if c, err = Load(); err != nil || !c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("ids on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	if c, err = Load(); err != nil || c.GetAllServeInputIDs || !c.GetAllServeInputFollowed {
+		t.Fatalf("followed on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+}
+
+// FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS defaults off; TIER_METADATA_KEY is the app's own variable,
+// `tier` only when unset (`z.string().default('tier')`): set empty, it is the empty key.
+func TestLoadGetAllMembershipMiss(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeMembershipMiss != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS=%q -> %v, want %v", in, c.GetAllServeMembershipMiss, want)
+		}
+	}
+	for in, want := range map[string]string{"": "", "plan": "plan", "tier": "tier"} {
+		t.Setenv("TIER_METADATA_KEY", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.TierMetadataKey != want {
+			t.Errorf("TIER_METADATA_KEY=%q -> %q, want %q", in, c.TierMetadataKey, want)
+		}
+	}
+	t.Setenv("TIER_METADATA_KEY", "restored after the test")
+	if err := os.Unsetenv("TIER_METADATA_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TierMetadataKey != "tier" {
+		t.Errorf("TIER_METADATA_KEY unset -> %q, want tier", c.TierMetadataKey)
 	}
 }
 
@@ -776,5 +856,23 @@ func TestCookieNamesPerMode(t *testing.T) {
 				t.Errorf("CookieNames(civitai.com) = %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// FEED_GO_SERVE_PARITY_SAMPLE_RATE: unset is 0 (the serve-side parity sampler off); a rate in [0, 1]
+// is read as is; junk, NaN or out of range is 0, never a rate that replays more than asked.
+func TestServeParityEnv(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for v, want := range map[string]float64{"": 0, "0.005": 0.005, "1": 1, "0": 0, "junk": 0, "-0.1": 0, "1.5": 0, "NaN": 0, "0.25": 0.25} {
+		t.Setenv("FEED_GO_SERVE_PARITY_SAMPLE_RATE", v)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeParityRate != want {
+			t.Errorf("FEED_GO_SERVE_PARITY_SAMPLE_RATE=%q reads %v, want %v", v, c.ServeParityRate, want)
+		}
 	}
 }

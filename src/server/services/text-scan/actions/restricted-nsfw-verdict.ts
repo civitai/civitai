@@ -150,7 +150,7 @@ export async function resolveRestrictedNsfwVerdict({
   userId: number;
   /** The lead's revision as the moderator's screen showed it: a ruling is refused once the lead, the
    *  model's flags and locks, or the scan shown have changed. */
-  revision?: string;
+  revision: string;
 }) {
   const note = reason?.trim() || null;
   const result = await dbWrite.$transaction(async (tx) => {
@@ -170,7 +170,7 @@ export async function resolveRestrictedNsfwVerdict({
     if (!row || !verdict || typeof verdict !== 'object')
       throw throwBadRequestError('This lead was ruled on meanwhile; reload.');
     // After the lock and before any write, so a refusal keeps the lead as it is.
-    if (revision !== undefined && revision !== (await currentRestrictedLeadRevision(tx, modelId)))
+    if (revision !== (await currentRestrictedLeadRevision(tx, modelId)))
       throw throwBadRequestError('This lead has changed since it was opened; reload.');
 
     const restriction = restrictionOf(row, verdict);

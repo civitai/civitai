@@ -52,6 +52,10 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// ServeParityRate is FEED_GO_SERVE_PARITY_SAMPLE_RATE (default 0 = off): the fraction of served
+	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
+	// [0, 1] or junk reads as 0.
+	ServeParityRate float64
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
@@ -72,6 +76,28 @@ type Config struct {
 	// route (`/api/trpc/model.getAll`). Off, every request there is the `model-getall-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeModelGetAll bool
+	// GetAllServeInputIDs / GetAllServeInputFollowed are FEED_GO_GETALL_SERVE_INPUT_IDS and
+	// FEED_GO_GETALL_SERVE_INPUT_FOLLOWED (each default off): compute a model.getAll request with
+	// `ids` / `followed` (DESIGN.md §15.2.4). Off, it is the `input-ids` / `input-followed` fallback, as
+	// before; they change nothing while ServeModelGetAll is off, except in the shadow.
+	GetAllServeInputIDs      bool
+	GetAllServeInputFollowed bool
+	// GetAllServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): on, a
+	// model.getAll page computes its owners' user-cosmetics misses (the image pages' lookup) instead
+	// of falling back (`user-cosmetics-miss`); written back only as FEED_GO_CACHE_WRITEBACK lists
+	// `user-cosmetics`. It needs the miss computation (FEED_GO_COMPUTE_MISSES, default on).
+	GetAllServeUserCosmeticsMiss bool
+	// GetAllServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (default off): on, a
+	// model.getAll page computes its owners' creator-membership misses (getValidCreatorMembershipMap's
+	// origin, on the replica) instead of falling back (`membership-miss`); written back only as
+	// FEED_GO_CACHE_WRITEBACK lists `creator-memberships`. It needs the miss computation
+	// (FEED_GO_COMPUTE_MISSES, default on).
+	GetAllServeMembershipMiss bool
+	// TierMetadataKey is TIER_METADATA_KEY, the Node app's own variable read as its
+	// `z.string().default('tier')` reads it: unset is `tier`, and any value set, the empty string
+	// included, is the key as given (set empty, Node reads `productMeta[""]`, so every tier is free).
+	// The product metadata key a membership's tier is read from.
+	TierMetadataKey string
 	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
@@ -241,6 +267,8 @@ func Load() (*Config, error) {
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 
+		ServeParityRate: rateEnv("FEED_GO_SERVE_PARITY_SAMPLE_RATE"),
+
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 
 		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
@@ -253,6 +281,12 @@ func Load() (*Config, error) {
 		AnswerRegionBlocked:  boolEnv("FEED_GO_ANSWER_REGION_BLOCKED", false),
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		GetAllServeInputIDs:          boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
+		GetAllServeInputFollowed:     boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
+		GetAllServeUserCosmeticsMiss: boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
+		GetAllServeMembershipMiss:    boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
+		TierMetadataKey:              tierMetadataKey(),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
@@ -559,6 +593,15 @@ func intEnv(k string, def int) int {
 	return def
 }
 
+// rateEnv is a sample rate in [0, 1]; unset, junk, NaN or out of range reads as 0 (off).
+func rateEnv(k string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(k)), 64)
+	if err != nil || !(v >= 0 && v <= 1) {
+		return 0
+	}
+	return v
+}
+
 // positiveIntEnv is intEnv where zero or a negative value also means the default.
 func positiveIntEnv(k string, def int) int {
 	if n := intEnv(k, def); n > 0 {
@@ -592,4 +635,13 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// tierMetadataKey is TIER_METADATA_KEY as the Node app's schema reads it (`z.string().default('tier')`):
+// `tier` only when unset; a set value, empty or not, as it is.
+func tierMetadataKey() string {
+	if v, ok := os.LookupEnv("TIER_METADATA_KEY"); ok {
+		return v
+	}
+	return "tier"
 }

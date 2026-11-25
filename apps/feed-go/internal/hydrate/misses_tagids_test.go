@@ -246,7 +246,7 @@ func TestMemoizedCaches(t *testing.T) {
 	want := map[string]bool{MissUserCosmetics: true, MissImageFrames: true, MissEventDecorations: true, MissImageMeta: false,
 		MissTagIDs: true, MissModelFrames: true, MissModelDecorations: true, MissVersionImages: true, MissMetrics: true,
 		"model-data": true, "model-tags": true, "official-models": true, "image-tags": true,
-		"user-follows": false, "version-showcase": false, "image-resources": false}
+		"user-follows": false, "version-showcase": false, "image-resources": false, "creator-memberships": false}
 	if len(want) != len(MissCaches) {
 		t.Fatalf("MissCaches %v; this test enumerates %d", MissCaches, len(want))
 	}

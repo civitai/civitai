@@ -8,6 +8,7 @@ import { fileReport } from '~/server/controllers/report.controller';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
+import { logToAxiom } from '~/server/logging/client';
 import {
   afterCommentsV3Deleted,
   deleteOwnCommentV3,
@@ -33,6 +34,12 @@ import {
   type SqlRunner,
   type StoredCommentV3,
 } from '~/server/services/commentv3/write.service';
+import {
+  callSigner,
+  isRouteMissing,
+  type SignerReply,
+  signerErrorCode,
+} from '~/server/services/feature-pages.service';
 import { fpPostDigest, fpWantDigest } from '~/server/services/feature-pages/comment-state';
 import { fpHtmlToText, fpTextToHtml } from '~/server/services/feature-pages/comment-text';
 import {
@@ -40,6 +47,11 @@ import {
   isFpCommentShown,
   pushNewFpComment,
 } from '~/server/services/feature-pages/mirror.service';
+import {
+  PLATFORM_SUBJECT_PATH,
+  PlatformRefusal,
+  subjectLookupSchema,
+} from '~/server/services/feature-pages/platform-wire';
 import { maskProfanityInChat } from '~/server/services/profanity-mask.service';
 import { handleLogError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
@@ -139,6 +151,30 @@ const upsertTopic = async (db: SqlRunner, urn: string) => {
   return { entityType: 'featurePage', entityId: rows[0].id };
 };
 
+/** Nothing is written for a subject the platform does not hold, braked or not. */
+async function assertSubjectHeld(subject: string) {
+  let reply: SignerReply;
+  try {
+    reply = await callSigner(PLATFORM_SUBJECT_PATH, {
+      method: 'GET',
+      query: new URLSearchParams({ urn: subject }),
+    });
+  } catch (e) {
+    throw tryAgain(e);
+  }
+  if (reply.status === 200 && subjectLookupSchema.safeParse(reply.body).success) return;
+  if (isRouteMissing(reply))
+    logToAxiom({
+      name: 'feature-pages',
+      type: 'error',
+      message: 'platform route missing',
+      payload: { path: PLATFORM_SUBJECT_PATH, status: reply.status },
+    });
+  if (!isRouteMissing(reply) && signerErrorCode(reply) === PlatformRefusal.UnknownSubject)
+    throw refused('Unknown feature');
+  throw tryAgain();
+}
+
 export async function postFeaturePageComment(
   ctx: ProtectedContext,
   input: FeaturePageCommentInput
@@ -172,6 +208,7 @@ export async function postFeaturePageComment(
     ownerIds: [parent?.userId],
     isModerator: ctx.user.isModerator,
   });
+  await assertSubjectHeld(input.subject);
   const pending = (content: string) =>
     fpWantDigest(
       'visible',

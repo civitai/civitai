@@ -976,6 +976,14 @@ export const getBlockLists = async (user?: { id: number; isModerator?: boolean }
   return { blockedBy: blockedBy.map((u) => u.id), blocked: blocked.map((u) => u.id) };
 };
 
+/** `getBlockLists` as one unbounded set, for the crucible visibility checks. */
+export const getAllBlockedCreatorIds = async (
+  user?: { id: number; isModerator?: boolean } | null
+) => {
+  const { blockedBy, blocked } = await getBlockLists(user);
+  return [...new Set([...blockedBy, ...blocked])];
+};
+
 /**
  * The crucibles this viewer may judge right now in which image `imageId` is someone else's entry
  * that judging can serve, short of the viewer's browsing level: `getJudgingPair`'s rules.
@@ -1006,8 +1014,12 @@ export async function getJudgingCrucibleIdsForImage({
   if (!entries.length) return [];
   const { canJudge } = await getCrucibleJudgeEligibility({ userId: viewerId, isModerator });
   if (!canJudge) return [];
-  const { blockedBy, blocked } = await getBlockLists({ id: viewerId, isModerator });
-  const viewer = { viewerId, isModerator, isGreen, blockedCreatorIds: [...blockedBy, ...blocked] };
+  const viewer = {
+    viewerId,
+    isModerator,
+    isGreen,
+    blockedCreatorIds: await getAllBlockedCreatorIds({ id: viewerId, isModerator }),
+  };
   const visible = await Promise.all(
     entries.map(({ crucibleId }) =>
       assertCrucibleVisible(crucibleId, viewer).then(

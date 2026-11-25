@@ -16,6 +16,13 @@ import {
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
 import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
+import {
+  KNIGHTS_APP_FUNCTIONS,
+  KNIGHTS_APP_GRANTS,
+  KNIGHTS_APP_ROLE,
+  KNIGHTS_APP_SCHEMAS,
+  KNIGHTS_APP_SEQUENCES,
+} from './knights-app-grants';
 
 const MIGRATIONS = [
   '20261209120000_knights_new_order_player_and_link_review',
@@ -30,6 +37,57 @@ const MIGRATIONS = [
     )
   )
 );
+
+export const IMAGE_GATE_MIGRATION = fileURLToPath(
+  new URL(
+    '../../../../packages/civitai-db-schema/prisma/migrations/20271127120000_knights_image_gate/migration.sql',
+    import.meta.url
+  )
+);
+
+/** Owns the tables and applies the image gate migration, as the tables' owner does in production. Not a superuser. */
+export const TABLE_OWNER = 'knights_table_owner';
+
+/**
+ * Months of "KnightsVote" partitions made up front, as the superuser: tests vote on fixed dates, and the owner's
+ * partition function only creates a month near the real one.
+ */
+const PARTITION_MONTHS = { from: { year: 2026, month: 1 }, count: 24 };
+
+async function applyImageGate(pg: PGlite) {
+  const months = Array.from({ length: PARTITION_MONTHS.count }, (_, i) => {
+    const start = new Date(
+      Date.UTC(PARTITION_MONTHS.from.year, PARTITION_MONTHS.from.month - 1 + i, 1)
+    );
+    const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+    const day = (d: Date) => d.toISOString().slice(0, 10);
+    const name = `KnightsVote_${start.getUTCFullYear()}_${String(start.getUTCMonth() + 1).padStart(
+      2,
+      '0'
+    )}`;
+    return `CREATE TABLE IF NOT EXISTS "${name}" PARTITION OF "KnightsVote" FOR VALUES FROM ('${day(
+      start
+    )}') TO ('${day(end)}');`;
+  });
+  await pg.exec(`${months.join('\n')}
+    CREATE ROLE ${TABLE_OWNER} NOLOGIN;
+    GRANT CREATE ON SCHEMA public TO ${TABLE_OWNER};
+    DO $$
+    DECLARE r record;
+    BEGIN
+      FOR r IN SELECT c.oid::regclass AS rel FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm')
+      LOOP
+        EXECUTE format('ALTER TABLE %s OWNER TO ${TABLE_OWNER}', r.rel);
+      END LOOP;
+    END $$;
+    SET ROLE ${TABLE_OWNER};`);
+  try {
+    await pg.exec(readFileSync(IMAGE_GATE_MIGRATION, 'utf8'));
+  } finally {
+    await pg.exec('RESET ROLE');
+  }
+}
 
 const STAND_INS = `
 CREATE TABLE "Image" (
@@ -340,29 +398,162 @@ afterEach(() => {
     throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
 });
 
-function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean): Dialect {
+/**
+ * Runs the app's statements as the production role (`KNIGHTS_APP_GRANTS`), so a query that reads a table the role has no
+ * grant on fails here, not in production. Fixtures written through `pg` run as the superuser. One gate orders both, so a
+ * fixture never runs under the role; a fixture that creates a table marks the grants for re-applying before the next app
+ * statement.
+ */
+type AppRole = {
+  run<T>(fn: () => Promise<T>): Promise<T>;
+  /** The role the session holds now, as far as the gate knows; switched only when it must, since each switch is a round trip. */
+  role: 'app' | 'superuser' | 'unknown';
+};
+
+const DDL =
+  /\b(create|alter)\s+(or\s+replace\s+)?(table|view|materialized\s+view|schema|function)\b/i;
+
+function appRoleGate(): AppRole {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    role: 'unknown',
+    run(fn) {
+      const next = tail.then(fn);
+      tail = next.catch(() => undefined);
+      return next;
+    },
+  };
+}
+
+async function grantAppRole(pg: PGlite) {
+  const present = new Set(
+    (
+      await pg.query<{ name: string }>(
+        `SELECT CASE WHEN n.nspname = 'public' THEN c.relname ELSE n.nspname || '.' || c.relname END AS name
+         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace`
+      )
+    ).rows.map((r) => r.name)
+  );
+  const quoted = (name: string) =>
+    name
+      .split('.')
+      .map((part) => `"${part}"`)
+      .join('.');
+  const schemas = (
+    await pg.query<{ name: string }>(`SELECT nspname AS name FROM pg_catalog.pg_namespace`)
+  ).rows.map((r) => r.name);
+  const functions = (
+    await pg.query<{ fn: string }>(
+      `SELECT format('%I.%I(%s)', n.nspname, p.proname, pg_catalog.pg_get_function_identity_arguments(p.oid)) AS fn
+       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname || '.' || p.proname = ANY($1)`,
+      [KNIGHTS_APP_FUNCTIONS]
+    )
+  ).rows.map((r) => r.fn);
+  const grants = [
+    ...KNIGHTS_APP_SCHEMAS.filter((s) => schemas.includes(s)).map(
+      (s) => `GRANT USAGE ON SCHEMA "${s}" TO ${KNIGHTS_APP_ROLE};`
+    ),
+    ...Object.entries(KNIGHTS_APP_GRANTS)
+      .filter(([table]) => present.has(table))
+      .map(
+        ([table, privileges]) =>
+          `GRANT ${privileges.join(', ')} ON ${quoted(table)} TO ${KNIGHTS_APP_ROLE};`
+      ),
+    ...KNIGHTS_APP_SEQUENCES.filter((s) => present.has(s)).map(
+      (s) => `GRANT USAGE ON SEQUENCE "${s}" TO ${KNIGHTS_APP_ROLE};`
+    ),
+    ...functions.map((fn) => `GRANT EXECUTE ON FUNCTION ${fn} TO ${KNIGHTS_APP_ROLE};`),
+  ];
+  if (grants.length) await pg.exec(grants.join('\n'));
+}
+
+/** `pg` for the test's fixtures: through the gate, as the superuser. */
+function fixturePg(pg: PGlite, gate: AppRole): PGlite {
+  return new Proxy(pg, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== 'function') return value;
+      if (prop !== 'query' && prop !== 'exec') return value.bind(target);
+      return (...args: unknown[]) =>
+        gate.run(async () => {
+          await becomeSuperuser(target, gate);
+          const result = await value.apply(target, args);
+          // Applied here, outside any transaction of the app's: a grant made inside one would go with its rollback.
+          if (DDL.test(String(args[0]))) await grantAppRole(target);
+          return result;
+        });
+    },
+  });
+}
+
+async function becomeSuperuser(pg: PGlite, gate: AppRole) {
+  if (gate.role === 'superuser') return;
+  // Fails inside a transaction a statement aborted; its ROLLBACK restores the role.
+  await pg.exec('RESET ROLE').catch(() => undefined);
+  gate.role = 'superuser';
+}
+
+async function asAppRole<T>(pg: PGlite, gate: AppRole, fn: () => Promise<T>): Promise<T> {
+  if (gate.role !== 'app') {
+    await pg.exec(`SET ROLE ${KNIGHTS_APP_ROLE}`);
+    gate.role = 'app';
+  }
+  try {
+    return await fn();
+  } catch (error) {
+    gate.role = 'unknown';
+    throw error;
+  }
+}
+
+function dialect(
+  pg: PGlite,
+  transactions: { open: number },
+  serialize: boolean,
+  appRole: AppRole | null,
+  asRole = true
+): Dialect {
   // A read carrying the CSAM subplans (`servableImageContent`) must run with JIT off in its transaction
   // (`readWithoutJit`): its inflated estimate would make a server with JIT on compile it for longer than it runs.
   let jitOff = false;
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
-      const text = compiled.sql.trim().toLowerCase();
-      if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
-      else if (text === 'set local jit = off') jitOff = transactions.open > 0;
-      else if (
-        compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
-        !(jitOff && transactions.open > 0)
-      ) {
-        jitViolations.push(compiled.sql.slice(0, 160));
-        throw new Error(
-          `A servableImageContent read ran with JIT on (wrap it in readWithoutJit): ${compiled.sql.slice(
-            0,
-            120
-          )}`
-        );
-      }
-      const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
-      return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
+      // Under the app role every statement, transaction control too, runs through the gate in call order, so the JIT
+      // bookkeeping below sees them in the order they run.
+      const run = async () => {
+        const text = compiled.sql.trim().toLowerCase();
+        if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
+        else if (text === 'set local jit = off') jitOff = transactions.open > 0;
+        else if (
+          compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
+          !(jitOff && transactions.open > 0)
+        ) {
+          jitViolations.push(compiled.sql.slice(0, 160));
+          throw new Error(
+            `A servableImageContent read ran with JIT on (wrap it in readWithoutJit): ${compiled.sql.slice(
+              0,
+              120
+            )}`
+          );
+        }
+        const send = () => pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
+        // Transaction control runs as is: a ROLLBACK must still run after a statement aborted the transaction.
+        const control = /^(begin|commit|rollback|savepoint|release)\b/.test(text);
+        let result;
+        if (!appRole) result = await send();
+        else if (control) {
+          // A ROLLBACK can undo a SET ROLE made inside the transaction.
+          appRole.role = 'unknown';
+          result = await send();
+        } else if (asRole) result = await asAppRole(pg, appRole, send);
+        else {
+          await becomeSuperuser(pg, appRole);
+          result = await send();
+        }
+        return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
+      };
+      return appRole ? appRole.run(run) : run();
     },
     // eslint-disable-next-line require-yield
     async *streamQuery() {
@@ -410,18 +601,40 @@ function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean)
   };
 }
 
-export async function createQueueDb({ serialize = false }: { serialize?: boolean } = {}): Promise<{
+/**
+ * Makes the skill-check columns of "KnightsImageGate" unreadable to the app role, and only those: the other columns
+ * still serve, as when one of the skill-check tables cannot be read. `SKILL_CHECK_GATE_READABLE` undoes it.
+ */
+export const SKILL_CHECK_GATE_UNREADABLE = `REVOKE SELECT ON "KnightsImageGate" FROM ${KNIGHTS_APP_ROLE};
+  GRANT SELECT ("imageId", "servable", "sweepServable") ON "KnightsImageGate" TO ${KNIGHTS_APP_ROLE};`;
+export const SKILL_CHECK_GATE_READABLE = `GRANT SELECT ON "KnightsImageGate" TO ${KNIGHTS_APP_ROLE};`;
+
+export async function createQueueDb({
+  serialize = false,
+  asSuperuser = false,
+}: {
+  serialize?: boolean;
+  /** Runs the app's statements as the superuser instead of `KNIGHTS_APP_ROLE`: only for code production never runs as it. */
+  asSuperuser?: boolean;
+} = {}): Promise<{
   pg: PGlite;
   db: Kysely<DB>;
+  /** The same database as the main app's role reads it (every table): for code only the main app runs. */
+  mainAppDb: Kysely<DB>;
   transactions: { open: () => number };
 }> {
   const pg = await PGlite.create({ parsers: { 1114: parseTimestampAsUtc } });
   await pg.exec(STAND_INS);
   for (const migration of MIGRATIONS) await pg.exec(readFileSync(migration, 'utf8'));
+  await pg.exec(`CREATE ROLE ${KNIGHTS_APP_ROLE} NOLOGIN`);
+  await applyImageGate(pg);
+  await grantAppRole(pg);
   const state = { open: 0 };
+  const gate = asSuperuser ? null : appRoleGate();
   return {
-    pg,
-    db: new Kysely<DB>({ dialect: dialect(pg, state, serialize) }),
+    pg: gate ? fixturePg(pg, gate) : pg,
+    db: new Kysely<DB>({ dialect: dialect(pg, state, serialize, gate) }),
+    mainAppDb: new Kysely<DB>({ dialect: dialect(pg, { open: 0 }, serialize, gate, false) }),
     transactions: { open: () => state.open },
   };
 }

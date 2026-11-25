@@ -76,7 +76,7 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 		return nil
 	}
 	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
-		TagGate: feed.ImageTagGate(blocked, addons)}
+		TagGate: feed.ImageTagGate(blocked, addons), TierMetadataKey: cfg.TierMetadataKey}
 	if cfg.CacheWriteBack.NeedsPrimary() {
 		c.Primary = primary
 	}
@@ -494,6 +494,9 @@ func run(log *slog.Logger) error {
 			CoverageNext:            cfg.CoverageNext,
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
+			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed},
+			ServeUserCosmeticsMiss:  cfg.GetAllServeUserCosmeticsMiss,
+			ServeMembershipMiss:     cfg.GetAllServeMembershipMiss,
 		},
 	}
 	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
@@ -585,7 +588,12 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
+		// The serve-side parity replays (FEED_GO_SERVE_PARITY_SAMPLE_RATE, default 0 = off) go to the
+		// same Node app through the same proxy code, but their own instance: a replay's failure is
+		// counted as its outcome (feed_go_serve_parity_total), never as a fallback proxy error.
+		srv.Parity = newServeParity(cfg.ServeParityRate, target, prop)
 	}
+	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil)
 	// The public /api/v1/models and /api/v1/images routes hand their fallbacks to the Node app that
 	// serves /api/v1, a different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the
 	// routes are not mounted).
@@ -613,7 +621,10 @@ func run(log *slog.Logger) error {
 	}
 
 	public := server.PublicMux(srv)
-	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
+	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
+		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed,
+		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss,
+		"FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", cfg.GetAllServeMembershipMiss)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)

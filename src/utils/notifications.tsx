@@ -84,12 +84,15 @@ export function showErrorNotification({
   title,
   autoClose,
   report,
+  position,
 }: {
   error: Error | { message: string } | { message: string }[];
   reason?: React.ReactNode;
   title?: string;
   autoClose?: number | false;
   report?: ReportProblem;
+  /** Unset: the provider's default corner. */
+  position?: NotificationData['position'];
 }) {
   const message = Array.isArray(error) ? (
     <ul>
@@ -119,6 +122,7 @@ export function showErrorNotification({
       : message,
     title,
     autoClose: autoClose ?? (reportable ? REPORTABLE_AUTO_CLOSE : DEFAULT_AUTO_CLOSE),
+    position,
   });
 }
 

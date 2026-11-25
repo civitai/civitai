@@ -285,6 +285,25 @@ describe('bust of a negatively cached id', () => {
     expect(t.read(keyFor(100))).toMatchObject({ id: 100, v: 'db-100-v0' });
   });
 
+  // Without markAbsent an SWR bust leaves an absent key alone, so a read inside a lagging origin's
+  // window caches the pre-write answer. With it, the absent key gets the window's marker.
+  it.each([
+    { markAbsent: false, marker: null },
+    { markAbsent: true, marker: { id: 100, debounce: true } },
+  ])('an SWR bust of an absent key (markAbsent: $markAbsent)', async ({ markAbsent, marker }) => {
+    const t = build({ swr: true });
+    await t.cache.bust(100, { debounceTime: 30, markAbsent });
+    expect(t.read(keyFor(100))).toEqual(marker);
+
+    vi.setSystemTime(T0 + 20_000);
+    expect(await t.cache.fetch([100])).toEqual({});
+    t.addRow(100);
+    vi.setSystemTime(T0 + 31_000);
+    expect(await t.cache.fetch([100])).toEqual(
+      markAbsent ? { 100: { id: 100, v: 'db-100-v0' } } : {}
+    );
+  });
+
   it('an SWR bust still backdates real entries in the same batch', async () => {
     const t = build({ swr: true });
     await t.cache.fetch([1, 100]);

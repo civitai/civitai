@@ -59,6 +59,8 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseDownloads } from '~/server/clickhouse/downloads-client';
+import { readsDedicatedDownloadsClickhouse } from '~/server/services/downloads-clickhouse';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
@@ -981,7 +983,19 @@ export async function getUserDownloadedModelVersions({
   return downloads.map((d) => ({ modelVersionId: d.modelVersionId }));
 }
 
+// With `user-downloads-dedicated-clickhouse` on, a bust holds the user back for this many seconds,
+// including a user with no cache entry yet (`markAbsent`). It must outlast the replica's write lag;
+// every bust restarts the window. Flag off: the cache's own bust, as before.
+const USER_DOWNLOADS_DEDICATED_BUST_WINDOW_SECONDS = 180;
+
 export async function bustUserDownloadsCache(userId: number) {
+  if (readsDedicatedDownloadsClickhouse('user-downloads', clickhouseDownloads !== undefined)) {
+    await userDownloadsCache.bust([userId], {
+      debounceTime: USER_DOWNLOADS_DEDICATED_BUST_WINDOW_SECONDS,
+      markAbsent: true,
+    });
+    return;
+  }
   await userDownloadsCache.bust([userId]);
 }
 
