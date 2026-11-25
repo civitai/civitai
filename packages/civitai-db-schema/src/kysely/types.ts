@@ -5853,6 +5853,9 @@ export type ServiceDeal = {
   settledAt: Timestamp | null;
   chatId: number | null;
   requestText: string;
+  formVersion: number | null;
+  formAnswers: unknown | null;
+  priceBreakdown: unknown | null;
   requestedAt: Generated<Timestamp>;
   acceptedAt: Timestamp | null;
   dueAt: Timestamp | null;
@@ -6135,6 +6138,15 @@ export type ServiceOffering = {
    * The seller lets buyers attach delivered work to their review. Off until the seller opts in.
    */
   allowReviewWork: Generated<boolean>;
+  /**
+   * Questions whose answers add to the price and days; null for a single-price service.
+   */
+  requestForm: unknown | null;
+  requestFormVersion: Generated<number>;
+  /**
+   * The cheapest total valid answers give; null without a form.
+   */
+  fromPrice: number | null;
   /**
    * Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
    * only in the transaction that publishes or hides a review; the deals job compares them to rows.

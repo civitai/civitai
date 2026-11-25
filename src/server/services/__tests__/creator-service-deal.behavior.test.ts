@@ -191,6 +191,7 @@ const LATER_MIGRATIONS = [
   '20271120100100_service_deal_reviews',
   '20271120230000_service_deal_review_report',
   '20271125130000_service_deal_buyer_disclosure',
+  '20271128130000_service_request_form',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -771,6 +772,102 @@ describe('license terms', () => {
   it('records no agreement on an offering with no license', async () => {
     const { id } = await request();
     expect(await deal(id)).toMatchObject({ licensePreset: null, licenseAgreedAt: null });
+  });
+});
+
+describe('a request form', () => {
+  /** Base 500 over 3 days; a style that adds 300 and 2 days, and a required brief. */
+  const FORM = {
+    questions: [
+      {
+        type: 'pickOne',
+        id: 'style',
+        label: 'Style',
+        options: [
+          { id: 'sketch', label: 'Sketch', price: 0, days: 0 },
+          { id: 'color', label: 'Full color', price: 300, days: 2 },
+        ],
+      },
+      { type: 'text', id: 'brief', label: 'Describe it', required: true },
+    ],
+  };
+  const withForm = (version = 1) =>
+    q(`UPDATE "ServiceOffering" SET "requestForm" = $1::jsonb, "requestFormVersion" = $2`, [
+      JSON.stringify(FORM),
+      version,
+    ]);
+  const COLOR = { style: 'color', brief: 'a tabby, sleeping' };
+
+  it('charges the total its answers give, and keeps the answers and the breakdown', async () => {
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const { id } = await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(await deal(id)).toMatchObject({
+      price: 800,
+      deliveryDays: 5,
+      formVersion: 1,
+      formAnswers: [
+        { label: 'Style', answer: 'Full color' },
+        { label: 'Describe it', answer: 'a tabby, sleeping' },
+      ],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it.each([
+    ['a total other than its answers give', { expectedPrice: 500, expectedDeliveryDays: 5 }],
+    ['days other than its answers give', { expectedPrice: 800, expectedDeliveryDays: 3 }],
+    ['an older form', { expectedPrice: 800, expectedDeliveryDays: 5, formVersion: 0 }],
+    [
+      'the terms of a page that saw no form',
+      {
+        expectedPrice: 500,
+        expectedDeliveryDays: 3,
+        formVersion: undefined,
+        formAnswers: undefined,
+      },
+    ],
+  ])('refuses a request with %s as changed terms', async (_n, overrides) => {
+    await withForm();
+    await expect(request({ formVersion: 1, formAnswers: COLOR, ...overrides })).rejects.toEqual(
+      expect.objectContaining({ code: 'CONFLICT' })
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+  });
+
+  it('refuses answers left out of a required question, and charges nothing', async () => {
+    await withForm();
+    await expect(
+      request({ expectedPrice: 500, formVersion: 1, formAnswers: { style: 'sketch' } })
+    ).rejects.toEqual(expect.objectContaining({ code: 'BAD_REQUEST' }));
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses answers sent after the seller removed the form', async () => {
+    await expect(request({ formVersion: 1, formAnswers: COLOR })).rejects.toEqual(conflict);
+  });
+
+  it('checks the text answers as it checks the request text', async () => {
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(vi.mocked(throwOnBlockedUserContent)).toHaveBeenCalledWith(
+      ['a tabby, sleeping'],
+      expect.objectContaining({ surface: 'creator-service-request' })
+    );
   });
 });
 

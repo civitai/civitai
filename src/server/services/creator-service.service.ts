@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { ImageReferenceInput } from '~/server/schema/image.schema';
@@ -26,6 +26,13 @@ import {
   serviceOfferingTakenDownKey,
 } from '@civitai/shared/service-offering-takedown';
 import { NotificationCategory } from '~/server/common/enums';
+import type { ServiceRequestForm } from '~/shared/utils/service-request-form';
+import {
+  serviceFormLabels,
+  serviceFormRange,
+  serviceFormRangeError,
+  serviceRequestFormSchema,
+} from '~/shared/utils/service-request-form';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
   GetServiceOfferingByIdInput,
@@ -78,6 +85,9 @@ export const serviceOfferingSelect = {
   licensePreset: true,
   licenseCustomText: true,
   licenseAllowResale: true,
+  requestForm: true,
+  requestFormVersion: true,
+  fromPrice: true,
   maxNsfwLevel: true,
   status: true,
   createdAt: true,
@@ -512,6 +522,7 @@ export async function upsertServiceOffering({
     licensePreset,
     licenseCustomText,
     licenseAllowResale,
+    requestForm,
     ...rest
   } = input;
   // Outside the rollout the license is left as it is: terms a seller set stay in force.
@@ -521,10 +532,17 @@ export async function upsertServiceOffering({
       : undefined;
   if (license?.licensePreset === ServiceLicensePreset.Custom && !license.licenseCustomText)
     throw throwBadRequestError('Write your license terms, or pick a preset.');
+  // Outside the rollout the form is left as it is too: a form already set still prices requests.
+  const form = licenseEditor ? requestForm : undefined;
   const fields = { ...rest, ...license };
   await assertCanSellServices(sellerId);
   await throwOnBlockedUserContent(
-    [fields.title, fields.description, license?.licenseCustomText ?? ''].filter(Boolean),
+    [
+      fields.title,
+      fields.description,
+      license?.licenseCustomText ?? '',
+      ...(form ? serviceFormLabels(form) : []),
+    ].filter(Boolean),
     { surface: 'creator-service-offering' }
   );
 
@@ -539,11 +557,13 @@ export async function upsertServiceOffering({
       ? await resolveServiceCoverImageId({ coverImage, sellerId, currentCoverId: null })
       : null;
     const declaredNsfwLevel = fields.declaredNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING;
+    const priced = requestFormFields(form ?? null, fields, form ? 1 : 0);
     // The record carries the offering's id, which exists only once it is created.
     const created = await dbWrite.$transaction(async (tx) => {
       const created = await tx.serviceOffering.create({
         data: {
           ...fields,
+          ...priced,
           declaredNsfwLevel,
           maxNsfwLevel: declaredNsfwLevel,
           coverImageId,
@@ -574,13 +594,26 @@ export async function upsertServiceOffering({
       coverImageId: true,
       licensePreset: true,
       licenseCustomText: true,
+      requestForm: true,
+      requestFormVersion: true,
     },
   });
   if (!existing) throw throwNotFoundError('Service not found');
+  const existingForm = existing.requestForm
+    ? serviceRequestFormSchema.parse(existing.requestForm)
+    : null;
+  const formChanged = form !== undefined && !sameForm(form, existingForm);
   const textChanged =
     existing.title !== fields.title ||
     existing.description !== fields.description ||
-    (license !== undefined && existing.licenseCustomText !== license.licenseCustomText);
+    (license !== undefined && existing.licenseCustomText !== license.licenseCustomText) ||
+    (formChanged && !sameLabels(form, existingForm));
+  // A new base price or days moves the range of a form left as it is, so it is checked again.
+  const priced = requestFormFields(
+    form === undefined ? existingForm : form,
+    fields,
+    existing.requestFormVersion + (formChanged ? 1 : 0)
+  );
   const coverImageId =
     coverImage === undefined
       ? undefined
@@ -618,6 +651,7 @@ export async function upsertServiceOffering({
     where: textChanged ? { ...owned, ingestion: existing.ingestion } : owned,
     data: {
       ...fields,
+      ...priced,
       ...(coverImageId !== undefined ? { coverImageId } : {}),
       // New text is shown once it is checked; a blocked offering's goes back below.
       ...(textChanged && existing.ingestion !== ServiceOfferingIngestionStatus.Blocked
@@ -635,6 +669,30 @@ export async function upsertServiceOffering({
     await requeueBlockedServiceOffering(id);
   return afterServiceOfferingWrite(id, { textChanged });
 }
+
+/**
+ * The form's columns for a save: refused when some valid answers would total outside the price
+ * bounds or add too many days. `fromPrice` is the cheapest total, what cards and sorting read.
+ */
+function requestFormFields(
+  form: ServiceRequestForm | null,
+  base: { price: number; deliveryDays: number },
+  requestFormVersion: number
+) {
+  if (!form) return { requestForm: Prisma.DbNull, fromPrice: null, requestFormVersion };
+  const error = serviceFormRangeError(form, base);
+  if (error) throw throwBadRequestError(error);
+  return {
+    requestForm: form as Prisma.InputJsonObject,
+    fromPrice: serviceFormRange(form, base).minPrice,
+    requestFormVersion,
+  };
+}
+
+const sameForm = (a: ServiceRequestForm | null, b: ServiceRequestForm | null) =>
+  JSON.stringify(a) === JSON.stringify(b);
+const sameLabels = (a: ServiceRequestForm | null, b: ServiceRequestForm | null) =>
+  JSON.stringify(a ? serviceFormLabels(a) : []) === JSON.stringify(b ? serviceFormLabels(b) : []);
 
 async function resolveServiceCoverImageId({
   coverImage,
