@@ -11,6 +11,7 @@ import {
   MAX_RESCAN_PER_REQUEST,
   RECENT_PENDING_DAYS,
 } from '$lib/server/ingestion.service';
+import { withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
@@ -18,7 +19,7 @@ const querySchema = z.object({
   view: z.enum(['recent', 'stuck']).catch('recent'),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit, view } = parseQuery(url, querySchema);
   const [{ items, nextCursor }, total, health] = await Promise.all([
     getImagesPendingIngestion({ cursor, limit, view }),
@@ -27,7 +28,16 @@ export const load: PageServerLoad = async ({ url }) => {
   ]);
   return {
     wide: true,
-    images: items,
+    images: await withheldRows(
+      items,
+      locals.user,
+      'to-ingest',
+      (i) => i.id,
+      (i) => ({
+        ...withheldRow(i),
+        metadata: null,
+      })
+    ),
     nextCursor,
     total,
     health,

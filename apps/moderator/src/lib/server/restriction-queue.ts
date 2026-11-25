@@ -14,7 +14,7 @@ import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/se
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import { parseRestrictionRuling, rulingReason } from '$lib/server/restriction-ruling';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
-import { planRemixSources } from '$lib/restrictions/origin';
+import { planRemixSources, triggerOrigin } from '$lib/restrictions/origin';
 import {
   getGenerationRestrictions,
   getRemixSources,
@@ -62,7 +62,11 @@ function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, 
  * The restriction queues' read: status (Pending by default), origin, sort, search and paging. The whole
  * page ships at once: selection is client state, so the remix sources for every row have to be on it.
  */
-export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
+export async function restrictionTriageLoad(
+  url: URL,
+  queue: QueueConfig,
+  user: App.Locals['user'] | undefined
+) {
   const { type, status, origin, sort, q, page, selected, username, userId } = parseQueueQuery(
     url,
     queue,
@@ -105,14 +109,25 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
   let sources: Record<number, RemixSource> = {};
   let sourcesFailed = false;
   try {
-    sources = Object.fromEntries((await getRemixSources(plan.lookup)).map((s) => [s.id, s]));
+    sources = Object.fromEntries((await getRemixSources(plan.lookup, user)).map((s) => [s.id, s]));
   } catch {
     sourcesFailed = true;
   }
+  // A remix's input images can be its source's own file, so they are shown only beside a source
+  // read and cleared for this moderator: not one withheld, missing, past the lookup cap, or unread.
+  const shownInputs = <R extends { triggers: RestrictionRow['triggers'] }>(row: R): R => ({
+    ...row,
+    triggers: row.triggers.map((trigger) => {
+      const id = triggerOrigin(trigger).imageId;
+      return id && !(sources[id] && !sources[id].restricted)
+        ? { ...trigger, inputImages: undefined, inputVideo: undefined }
+        : trigger;
+    }),
+  });
 
   return {
-    items,
-    pinned,
+    items: items.map(shownInputs),
+    pinned: pinned && shownInputs(pinned),
     selectedMissing,
     sources,
     sourcesFailed,

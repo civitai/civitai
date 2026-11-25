@@ -10,6 +10,7 @@ import {
   getOpenHelpRequests,
   resolveHelpRequest,
 } from '$lib/server/image-help.service';
+import { withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   request: z.coerce.number().int().positive().optional().catch(undefined),
@@ -23,7 +24,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // pane makes the page look broken when there is work waiting.
   const selectedId = request ?? requests[0]?.id;
   const selected = requests.find((r) => r.id === selectedId) ?? null;
-  const images = selected ? await getHelpRequestImages(selected.id) : [];
+  const images = selected
+    ? await withheldRows(
+        await getHelpRequestImages(selected.id),
+        locals.user,
+        'image-help',
+        (i) => i.id,
+        withheldRow
+      )
+    : [];
 
   return {
     requests,

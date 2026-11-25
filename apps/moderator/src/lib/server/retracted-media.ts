@@ -275,6 +275,24 @@ export async function listWithheldIds(
   });
 }
 
+/** `rows` with each row whose image is withheld from `user` replaced by `blank(row)`; a row with
+ *  no image id passes as it is. */
+export async function withheldRows<T, B>(
+  rows: T[],
+  user: App.Locals['user'] | undefined,
+  list: string,
+  imageId: (row: T) => number | null | undefined,
+  blank: (row: T) => B
+): Promise<(T | B)[]> {
+  const ids = rows.map(imageId).filter((id): id is number => id != null);
+  if (!ids.length) return rows;
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, list);
+  return rows.map((row) => {
+    const id = imageId(row);
+    return id != null && withheld.has(id) ? blank(row) : row;
+  });
+}
+
 /** The images among these withheld from `user` (`restrictedImageIds`). */
 export async function withheldImageIds(user: App.Locals['user'] | undefined, imageIds: number[]) {
   return [...(await restrictedImageIds(imageIds, { csamReview: holdsCsamReview(user) }))];
