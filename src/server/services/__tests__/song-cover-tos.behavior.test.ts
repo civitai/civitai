@@ -44,6 +44,8 @@ const POSTED_IMAGE = 125;
 const SONG_NO_COVER = 26;
 const SONG_REMOVED_COVER = 27;
 const REMOVED_COVER = 127;
+const SONG_AUDIO_COVER = 28;
+const AUDIO_AS_COVER = 128;
 const HELD_OWNER = 8;
 const PICTURE = 30;
 
@@ -103,12 +105,15 @@ const ROWS = `
     (${SONG_NO_COVER}, ${OWNER}, 5, 'audio', 'song-g', NULL, NULL, 'Scanned', NULL, 1, NULL),
     (${SONG_REMOVED_COVER}, ${OWNER}, 5, 'audio', 'song-h', NULL, NULL, 'Scanned', NULL, 1, NULL),
     (${REMOVED_COVER}, ${OWNER}, NULL, 'image', 'removed', NULL, 507, 'Blocked', 'moderated', 32, NULL),
-    (${PICTURE}, ${OWNER}, 9, 'image', 'picture', NULL, 508, 'Scanned', NULL, 1, NULL);
+    (${PICTURE}, ${OWNER}, 9, 'image', 'picture', NULL, 508, 'Scanned', NULL, 1, NULL),
+    (${SONG_AUDIO_COVER}, ${OWNER}, 5, 'audio', 'song-i', NULL, NULL, 'Scanned', NULL, 1, NULL),
+    (${AUDIO_AS_COVER}, ${OWNER}, NULL, 'audio', 'song-j', NULL, NULL, 'Scanned', NULL, 1, NULL);
   INSERT INTO "Track" ("imageId", "coverImageId") VALUES
     (${SONG}, ${COVER}), (${SONG_UNDER_REVIEW}, ${COVER_UNDER_REVIEW}),
     (${SONG_HELD_OWNER}, ${COVER_HELD_OWNER}), (${SONG_CSAM_HASH}, ${COVER_CSAM_HASH}),
     (${SONG_OTHERS_COVER}, ${OTHERS_IMAGE}), (${SONG_POSTED_COVER}, ${POSTED_IMAGE}),
-    (${SONG_NO_COVER}, NULL), (${SONG_REMOVED_COVER}, ${REMOVED_COVER});
+    (${SONG_NO_COVER}, NULL), (${SONG_REMOVED_COVER}, ${REMOVED_COVER}),
+    (${SONG_AUDIO_COVER}, ${AUDIO_AS_COVER});
   INSERT INTO "CsamReport" ("userId", details, images) VALUES (${HELD_OWNER}, '{}', '[]');
   INSERT INTO "BlockedImage" (hash, reason) VALUES (504, 'CSAM');
 `;
@@ -219,6 +224,7 @@ describe('Remove cover', () => {
     ['when the song has none', SONG_NO_COVER, 'This song has no cover to remove.'],
     ['when it is already removed', SONG_REMOVED_COVER, 'This song has no cover to remove.'],
     ['on an image that is not a song', PICTURE, 'This song has no cover to remove.'],
+    ['that is not a picture', SONG_AUDIO_COVER, 'This song has no cover to remove.'],
   ])('is refused for a cover %s, and changes nothing', async (_, songId, message) => {
     const before = await imageRows();
     await expect(

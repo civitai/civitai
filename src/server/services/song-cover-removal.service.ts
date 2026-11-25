@@ -28,6 +28,7 @@ export async function getSongCoverForRemoval(
     JOIN "Image" cov ON cov.id = t."coverImageId"
     WHERE t."imageId" = ${songId}
       AND s.type::text = 'audio'
+      AND cov.type::text = 'image'
       AND ${sql.raw(songsOwnCoverText('cov', 's'))}
       AND NOT ${sql.raw(blockMarkerText('cov'))}
   `.execute(db);
