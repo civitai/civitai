@@ -257,9 +257,9 @@ export const hubSourceExclusionSchema = z.object({
 export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 
 /**
- * A Model or ModelVersion source whose model is no longer published, told to the hub owner only.
- * Another user's model is `unavailable` whatever its status, so the label never says whether it was
- * deleted or unpublished; only the owner's own deleted model is `deleted`.
+ * What the hub owner is told about a Model or ModelVersion source: their own model is `deleted`;
+ * another user's model that is not published is `unavailable` whatever its status, so the label
+ * never says whether it was deleted or unpublished.
  */
 export type SourceModelState = 'deleted' | 'unavailable';
 

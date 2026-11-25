@@ -24,7 +24,7 @@ export type HubSourceCardProps = {
     enabled: boolean;
     exclude?: boolean;
     index: number;
-    /** Set when a Model or ModelVersion source's model is no longer published. Hub owner only. */
+    /** The owner's own deleted model, or another user's unpublished one. Sent to the hub owner only. */
     modelState?: SourceModelState;
   };
   /**

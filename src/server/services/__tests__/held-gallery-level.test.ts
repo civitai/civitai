@@ -328,10 +328,11 @@ describe('getDeletedModelVersionIds', () => {
   });
 
   it('names only the versions of a deleted model, whether or not their model is known', async () => {
-    // 20 is looked up, 30 comes with its model, 990's model is not deleted.
-    const deleted = await getDeletedModelVersionIds([10, 20, 30, 990], new Map([[30, 3]]));
+    // 20 is looked up; 30 comes mapped to deleted model 2, which the version cache would not say
+    // (it maps 30 to model 3), so the caller's map must be used; 990's model is not deleted.
+    const deleted = await getDeletedModelVersionIds([10, 20, 30, 990], new Map([[30, 2]]));
 
-    expect([...deleted]).toEqual([20]);
+    expect([...deleted]).toEqual([20, 30]);
   });
 
   it('names a deleted model version passed with its model', async () => {

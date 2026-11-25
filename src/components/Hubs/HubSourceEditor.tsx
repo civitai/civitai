@@ -36,7 +36,7 @@ export type HubSourceValue = {
    * match; null is a group of one, which is every source that predates the column.
    */
   groupKey?: number | null;
-  /** Set when a Model or ModelVersion source's model is no longer published. Hub owner only. */
+  /** The owner's own deleted model, or another user's unpublished one. Sent to the hub owner only. */
   modelState?: SourceModelState;
 };
 

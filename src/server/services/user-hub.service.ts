@@ -337,7 +337,7 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
   };
 }
 
-/** Of a hub's Model and ModelVersion sources, those whose model is no longer published. */
+/** Of a hub's Model and ModelVersion sources: the owner's own deleted models, and other users' unpublished ones. */
 async function getSourceModelStates(
   sources: { type: UserHubSourceType; targetId: number }[],
   hubOwnerId: number
@@ -1514,8 +1514,7 @@ export async function resolveHubSources({
   const { getDeletedModelVersionIds, getHeldGalleryLevel, getWithheldVersionIds } = await import(
     '~/server/services/model.service'
   );
-  // Dropped before the hold is read, so a deleted model can never hold the hub, and never while
-  // the hub still serves it.
+  // Dropped before the hold is read: a deleted model must not hold the hub.
   const deletedVersionIds = await getDeletedModelVersionIds(cappedVersionIds, modelOfVersion);
   const liveVersionIds = cappedVersionIds.filter((id) => !deletedVersionIds.has(id));
   // Moderators are neither held nor withheld, when the caller says so: they must see what they may

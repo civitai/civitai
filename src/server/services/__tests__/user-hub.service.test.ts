@@ -2245,10 +2245,13 @@ describe('getUserHubById', () => {
         id: 1,
         userId: 5,
         metadata: {},
-        sources: [20, 21, 22, 23, 24]
-          .map((targetId) => ({ type: UserHubSourceType.Model, targetId }))
-          .concat([{ type: UserHubSourceType.ModelVersion, targetId: 41 }])
-          .map((source) => ({ ...source, enabled: true, exclude: false })),
+        sources: [
+          ...[20, 21, 22, 23, 24].map((targetId) => ({
+            type: UserHubSourceType.Model as UserHubSourceType,
+            targetId,
+          })),
+          { type: UserHubSourceType.ModelVersion, targetId: 41 },
+        ].map((source) => ({ ...source, enabled: true, exclude: false })),
       });
       modelsOfVersionsMock.mockResolvedValue(new Map([[41, 22]]));
       // Answers the status filter the query sends, so a query without it returns every model.
