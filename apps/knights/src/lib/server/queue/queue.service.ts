@@ -190,9 +190,10 @@ export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;
  * player has already judged for the question, at any stage or in any earlier item.
  *
  * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
- * is full, the stage runs out or `rowBudget` rows are read. Most open items can be unservable (a draft or scheduled post, a deleted image), and
- * only the Image and Post rows tell, so a read per bucket would walk the whole stage once per bucket. A bucket that
- * cannot fill keeps the scan going to the budget, so the rounds read only what bucketing and the cursor need, and one more read fetches the served columns of the kept items alone.
+ * is full, the stage runs out or `rowBudget` rows are read. Most open items can be unservable (a draft or scheduled
+ * post, a deleted image), and only the Image and Post rows tell, so a read per bucket would walk the whole stage once
+ * per bucket. A bucket that cannot fill keeps the scan going to the budget, so the rounds read only what bucketing and
+ * the cursor need, and one more read fetches the served columns of the kept items alone.
  */
 async function stageWindow(
   db: Executor,
