@@ -154,8 +154,7 @@ export function withheldRow<T extends object>(row: T) {
   } as Omit<T, keyof ReturnType<typeof withheldMedia>> & ReturnType<typeof withheldMedia>;
 }
 
-/** Each row's cover images, those withheld from `user` with no key and nothing that says why, as the
- *  image queues send a withheld card. */
+/** Each row's cover images, with those withheld from `user` sent without their key. */
 export async function withheldCoverImages<T extends { coverImages: AppealCoverImage[] }>(
   rows: T[],
   user: App.Locals['user'] | undefined,

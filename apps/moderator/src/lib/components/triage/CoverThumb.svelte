@@ -4,8 +4,7 @@
   import { WITHHELD_REFUSED } from '$lib/held-media';
   import type { AppealCoverImage } from '$lib/server/minor-hash.service';
 
-  // A triage row's image thumbnail, for TriageRow's `coverMedia`. A model the CDN refuses still has
-  // its files in storage, which moderators may see; a withheld one shows no media at all.
+  // A cover the CDN refuses falls back to storage; a withheld one shows no media.
   let { image }: { image: AppealCoverImage } = $props();
 </script>
 
