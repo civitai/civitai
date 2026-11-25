@@ -204,7 +204,9 @@ and whichever side rules first takes it out of the other's queue. Off unless the
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
 any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. On a question, Skip is a "Not sure" answer pill (Space, the same `?/skip`
-action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. A run of questions opens with "Question time" and ends with a "Questions done"
+action: no pay, no smite, plus a `KnightsUnsure` row, best effort); ratings keep Skip. An Acolyte's practice pair has the same pill
+(`?/apprentice` with the answer `unsure`, `unsureApprentice`): a `KnightsUnsure` row and no answer row, so no XP, no smite and nothing
+in the accuracy window; the stream moves on as after an answer. A run of questions opens with "Question time" and ends with a "Questions done"
 banner ([motion](knights-motion-and-sound.md)). A hidden check is rolled only on a rating slot, at its own rate
 (`KNIGHTS_HIDDEN_CHECK_RATE`).
 

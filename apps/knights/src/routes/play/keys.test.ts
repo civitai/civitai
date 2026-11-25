@@ -102,8 +102,13 @@ describe('optionsOnScreen', () => {
 });
 
 describe('spaceSkips', () => {
-  it('leaves Space to the browser in the apprenticeship', () => {
-    expect(spaceSkips({ apprentice: { kind: 'question', options } })).toBe(false);
+  it('leaves Space to the browser on an apprenticeship rating, and sends "Not sure" on a practice pair', () => {
+    expect(
+      spaceSkips({ apprentice: { kind: 'question', options, item: { kind: 'rating' } } })
+    ).toBe(false);
+    expect(spaceSkips({ apprentice: { kind: 'question', options, item: { kind: 'yesno' } } })).toBe(
+      true
+    );
     expect(spaceSkips({ question: { options } })).toBe(true);
   });
 });

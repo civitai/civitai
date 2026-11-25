@@ -11,6 +11,9 @@ export const YESNO_ANSWERS = [
   { value: 'no', label: 'No' },
 ] as const;
 
+/** What the "Not sure" button sends on a yes/no question: no answer at all. */
+export const UNSURE_ANSWER = 'unsure';
+
 /** Written on each axis question row; `votesToResolve` is the label store's `minHuman`. The game decides by the rating `STAGE_RULES`, not these. */
 export const YESNO_CONSENSUS_VOTES = 5;
 export const YESNO_MAX_VOTES = 10;

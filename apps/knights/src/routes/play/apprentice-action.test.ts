@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const answerApprentice = vi.hoisted(() => vi.fn());
+const unsureApprentice = vi.hoisted(() => vi.fn());
 const acknowledgeCheckpoint = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
@@ -38,6 +39,7 @@ vi.mock('$lib/server/apprenticeship/runtime', () => ({
 }));
 vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
   answerApprentice,
+  unsureApprentice,
   acknowledgeCheckpoint,
   getApprentice: vi.fn(),
 }));
@@ -77,6 +79,7 @@ beforeEach(() => {
   getStanding.mockReset();
   getStanding.mockResolvedValue({ banned: false, muted: false });
   answerApprentice.mockReset();
+  unsureApprentice.mockReset();
   acknowledgeCheckpoint.mockReset();
 });
 
@@ -159,6 +162,27 @@ describe('apprentice action', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     answerApprentice.mockRejectedValue(new Error('down'));
     expect(await post(valid)).toMatchObject({ status: 500 });
+  });
+
+  it('sends "Not sure" on a pair to the ledger as no answer, and answers only success', async () => {
+    unsureApprentice.mockResolvedValue({ status: 'recorded' });
+
+    expect(
+      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'unsure' })
+    ).toEqual({ success: true });
+    expect(unsureApprentice).toHaveBeenCalledWith(
+      {},
+      { userId: 7, referenceId: 5, version: 'v1' },
+      expect.objectContaining({ skillCheckRate: 1 })
+    );
+    expect(answerApprentice).not.toHaveBeenCalled();
+  });
+
+  it('turns a refused "Not sure" into a 409', async () => {
+    unsureApprentice.mockResolvedValue({ status: 'rejected', reason: 'not-current' });
+    expect(
+      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'unsure' })
+    ).toMatchObject({ status: 409 });
   });
 
   it('moves past a checkpoint for the signed-in player', async () => {
