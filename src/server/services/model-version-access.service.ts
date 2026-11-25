@@ -6,7 +6,7 @@ import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 /**
  * The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). The
  * amount and currency paid weigh the buyer in the Hot head-start bar, which reads these keys in SQL
- * (migration 20271128120000_model_hot_score_buyer_price_weight).
+ * (migration 20271128120100_model_hot_score_buyer_price_weight).
  */
 export const EARLY_ACCESS_PURCHASES = [
   {
