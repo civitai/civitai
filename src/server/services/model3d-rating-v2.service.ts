@@ -1,6 +1,5 @@
 import { buildFliptContext } from '@civitai/flipt/context';
 import type { Model3dBlob, NsfwLevel } from '@civitai/orchestration-client';
-import { NsfwLevel as OrchestratorNsfwLevel } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -38,12 +37,9 @@ const REMEMBER_SECONDS = 30 * 24 * 60 * 60;
 const rememberedKey = (workflowId: string) =>
   `${REDIS_KEYS.GENERATION.MODEL3D_RATING_V2_MATURE}:${workflowId}` as const;
 
-/** Mature only when every angle has a v2 verdict and one of them is mature: a missing angle leaves the
- *  result to its current rating, since the v2 rater can only add the gate. */
+/** Mature when any angle has a mature v2 verdict; angles with no verdict add nothing. */
 export function anglesMature(verdicts: (boolean | null)[]): boolean {
-  return (
-    verdicts.length > 0 && verdicts.every((v) => v !== null) && verdicts.some((v) => v === true)
-  );
+  return verdicts.some((v) => v === true);
 }
 
 export type Model3dRatingV2Deps = {
@@ -87,8 +83,9 @@ const defaultDeps: Model3dRatingV2Deps = {
 
 /** The v2 rater's answer for a 3D result's preview renders. `unrateable`: the result's own preview set
  *  can't be sent (none, or a URL that isn't an orchestrator-hosted image), which the user controls, so it
- *  can't pass unrated. `clear` covers the flag being off and every system-side gap (a limit window,
- *  a rater error, a timeout, a partial rating): the post then decides on its current rating alone. */
+ *  can't pass unrated. `clear` covers the flag being off and every system-side gap (a full global
+ *  window, a rater error, a timeout, no verdict on any angle): the post then decides on its current
+ *  rating alone. */
 export type Model3dV2Verdict = 'mature' | 'clear' | 'unrateable';
 
 export async function rateModel3DByV2(
@@ -135,6 +132,9 @@ export async function rateModel3DByV2(
   return 'mature';
 }
 
+// No Yellow Buzz unlock is offered: the unlock releases only what the orchestrator itself rated mature.
+export const MODEL3D_V2_MATURE = "This 3D model's preview was rated mature, so it can't be posted.";
+
 export const MODEL3D_UNRATEABLE_PREVIEW =
   "This 3D model's preview couldn't be rated. Render it again, then post.";
 
@@ -180,9 +180,5 @@ export async function getModel3DPostBlock(
   const verdict = await rateModel3DByV2(rating, deps);
   if (verdict === 'unrateable') return MODEL3D_UNRATEABLE_PREVIEW;
   if (verdict !== 'mature') return undefined;
-  return getPolyGenPostBlock({
-    primaryModel,
-    effectiveNsfwLevel: OrchestratorNsfwLevel.R,
-    allowMatureContent,
-  });
+  return MODEL3D_V2_MATURE;
 }

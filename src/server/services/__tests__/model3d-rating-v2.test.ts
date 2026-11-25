@@ -63,10 +63,16 @@ const gate = (verdicts: (boolean | null)[], previewUrls = fourAngles, overrides 
     deps(verdicts, overrides).deps
   );
 
-// Justin, card 2026-11-25-200325: the v2 rater gates posting a 3D result (raise only).
+// The v2 rater can only add a post block for a 3D result, never clear one.
 describe('3D post gate with the v2 rater', () => {
   it('blocks a result without mature billing when one of four angles is mature', async () => {
     expect(await gate([false, false, true, false])).toMatch(/rated mature/);
+  });
+
+  it('a block from the v2 rater alone offers no Yellow Buzz unlock', async () => {
+    const block = await gate([true], [hosted(0)]);
+    expect(block).toMatch(/rated mature/);
+    expect(block).not.toMatch(/Yellow Buzz|[Uu]nlock/);
   });
 
   it('works with a single preview angle', async () => {
@@ -74,19 +80,17 @@ describe('3D post gate with the v2 rater', () => {
     expect(await gate([false], [hosted(0)])).toBeUndefined();
   });
 
-  it('a partly rated result keeps its current rating', async () => {
-    expect(await gate([true, null, false, false])).toBeUndefined();
+  it('a mature angle blocks even when another angle has no verdict', async () => {
+    expect(await gate([true, null, false, false])).toMatch(/rated mature/);
+    expect(await gate([null, null, false, false])).toBeUndefined();
   });
 
-  it('flag off, a refused limit or a rater failure keeps the current rating', async () => {
+  it('flag off or a full global window keeps the current rating', async () => {
     expect(
       await gate([true, true, true, true], fourAngles, { matureLevel: async () => null })
     ).toBeUndefined();
     expect(
       await gate([true, true, true, true], fourAngles, { claim: async () => false })
-    ).toBeUndefined();
-    expect(
-      await gate([true], [hosted(0)], { rate: async () => Promise.reject(new Error('down')) })
     ).toBeUndefined();
   });
 
@@ -239,10 +243,10 @@ describe('model3DPostImages', () => {
 });
 
 describe('anglesMature', () => {
-  it('needs every angle rated', () => {
+  it('any mature angle counts; no verdict adds nothing', () => {
     expect(anglesMature([])).toBe(false);
-    expect(anglesMature([false, false])).toBe(false);
+    expect(anglesMature([false, null])).toBe(false);
     expect(anglesMature([false, true])).toBe(true);
-    expect(anglesMature([null, true])).toBe(false);
+    expect(anglesMature([null, true])).toBe(true);
   });
 });
