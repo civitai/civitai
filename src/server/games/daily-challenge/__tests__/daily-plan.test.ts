@@ -13,6 +13,7 @@ const { dailyRubricSetRows } = await import('~/shared/constants/challenge.consta
 const { clearChallengeCategoryCache } = await import(
   '~/server/services/challenge-category.service'
 );
+const { FRESHNESS_CRITERIA_SUFFIX } = await import('~/server/games/daily-challenge/recent-winners');
 
 const defaultJudge = {
   judgeId: 1,
@@ -35,6 +36,11 @@ const holidayJudgeRow = {
 const [scheduledDate, entry] = Object.entries(DAILY_CHALLENGE_SCHEDULE)[0];
 const dec1 = new Date(`${scheduledDate}T00:00:00Z`);
 const setRows = () => dailyRubricSetRows(entry.set).map((c) => [c.key, c.weight]);
+// The first scheduled day's set carries creativity, the one freshness key in it.
+const freshnessKeys = (plan: { judgingCategories?: { key: string; criteria: string }[] | null }) =>
+  plan.judgingCategories
+    ?.filter((c) => c.criteria.endsWith(FRESHNESS_CRITERIA_SUFFIX))
+    .map((c) => c.key);
 const withFlags = (schedule: boolean, rotation: boolean) => ({
   defaultJudge,
   flags: { schedule, rotation },
@@ -56,6 +62,7 @@ describe('resolveDailyPlan', () => {
     expect(plan.judgeId).toBe(7);
     expect(plan.judgingConfig.prompts.systemMessage).toBe('jolly');
     expect(plan.judgingCategories?.map((c) => [c.key, c.weight])).toEqual(setRows());
+    expect(freshnessKeys(plan)).toEqual(['creativity']);
     expect(plan.occasion?.name).toBe(entry.occasion);
     expect(plan.occasion?.judgedOn).not.toContain('Theme');
     expect(plan.record).toEqual({
@@ -86,6 +93,7 @@ describe('resolveDailyPlan', () => {
     const plan = await resolveDailyPlan(dec1, withFlags(true, true));
 
     expect(plan.judgingCategories?.map((c) => [c.key, c.weight])).toEqual(setRows());
+    expect(freshnessKeys(plan)).toEqual(['creativity']);
   });
 
   it('keeps the day on the default judge when the scheduled judge does not exist', async () => {

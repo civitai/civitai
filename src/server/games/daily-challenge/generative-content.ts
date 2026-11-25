@@ -6,7 +6,12 @@ import type {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { logToAxiom } from '~/server/logging/client';
 import { civitaiLLM } from '~/server/services/ai/civitai-llm';
-import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
+import {
+  openrouter,
+  AI_MODELS,
+  type AIModel,
+  type OpenRouterProvider,
+} from '~/server/services/ai/openrouter';
 import type { SimpleMessage, TokenUsage } from '~/server/services/ai/openrouter';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
@@ -126,15 +131,16 @@ export function estimateBuzzCost(model: string, usage: TokenUsage): number {
 export async function getCompletionWithUsage<T>(
   model: AIModel,
   messages: SimpleMessage[],
-  retries: number
-): Promise<{ content: T; usage: TokenUsage }> {
+  retries: number,
+  provider?: OpenRouterProvider
+): Promise<{ content: T; usage: TokenUsage; generationId?: string }> {
   if (isCivitaiHostedModel(model)) {
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     const content = await civitaiLLM.getJsonCompletion<T>({ retries, model, messages });
     return { content, usage: { promptTokens: 0, completionTokens: 0 } };
   }
   if (!openrouter) throw new Error('OpenRouter not connected');
-  return openrouter.getJsonCompletionWithUsage<T>({ retries, model, messages });
+  return openrouter.getJsonCompletionWithUsage<T>({ retries, model, messages, provider });
 }
 
 type GenerateCollectionDetailsInput = {
@@ -383,12 +389,16 @@ type GenerateReviewInput = {
   imageUrl: string;
   config: JudgingConfig;
   model?: AIModel;
+  /** OpenRouter routing for `model`; ignored for Civitai-hosted models. */
+  provider?: OpenRouterProvider;
   // Creator/mod-defined judging categories. When present the review JSON schema is built from
   // these instead of the fixed theme/wittiness/humor/aesthetic set, and `key` selects each
   // category's rich scoring rubric for `{{SCORING_RUBRICS}}` injection (resolveRubricBlock).
   categories?: { key: string; name: string; criteria: string }[];
   // Selects NSFW rubric variants (ChallengeCategory.rubricNsfw, falling back to the SFW rubric).
   nsfw?: boolean;
+  /** Why recent winners won (recent-winners.ts). Present only where the page says repeats score lower. */
+  recentWinnerIdeas?: string[];
 };
 type GeneratedReview = {
   score: Score;
@@ -439,7 +449,7 @@ ${scoreLines}
 
 export async function generateReview(
   input: GenerateReviewInput
-): Promise<GeneratedReview & { usage: TokenUsage; model: AIModel }> {
+): Promise<GeneratedReview & { usage: TokenUsage; model: AIModel; generationId?: string }> {
   // Resolve the rubric block up front (it needs the DB-backed category library): the REAL
   // categories when present, else the canonical defaults so a migrated prompt with no categories
   // still gets the default blocks instead of a literal {{SCORING_RUBRICS}}. injectRubrics is a
@@ -462,10 +472,15 @@ export async function generateReview(
   }
 
   const model = input.model ?? DEFAULT_REVIEW_MODEL;
-  const { content: result, usage } = await getCompletionWithUsage<GeneratedReview>(
+  const {
+    content: result,
+    usage,
+    generationId,
+  } = await getCompletionWithUsage<GeneratedReview>(
     model,
     messages,
-    3
+    3,
+    input.provider
   );
 
   return {
@@ -476,6 +491,7 @@ export async function generateReview(
     aestheticFlaws: result.aestheticFlaws,
     usage,
     model,
+    generationId,
   };
 }
 
@@ -559,7 +575,10 @@ export function buildFallbackMessages(
 ): SimpleMessage[] {
   const themeElementsLine = formatThemeElementsLine(input.themeElements);
   const conceptLine = formatResourceConceptLine(input.resourceConcept);
-  const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${input.theme}${themeElementsLine}${conceptLine}\nCreator: ${input.creator}`;
+  const winnersLine = input.recentWinnerIdeas?.length
+    ? `\nRecent winning ideas: ${JSON.stringify(input.recentWinnerIdeas)}`
+    : '';
+  const userText = `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${input.theme}${themeElementsLine}${conceptLine}\nCreator: ${input.creator}${winnersLine}`;
   // Response schema keys on the REAL categories: a null/empty-category challenge keeps the fixed
   // RESPONSE_SCHEMA (lowercase theme/wittiness/humor/aesthetic). The rubric block was resolved by
   // the caller (generateReview) — defaults included — so sentinel replacement never leaves a
@@ -567,9 +586,12 @@ export function buildFallbackMessages(
   const responseSchema = input.categories?.length
     ? buildCategoryReviewSchema(input.categories)
     : RESPONSE_SCHEMA;
-  const reviewText = appendResourceFidelityClause(
-    injectRubrics(input.config.prompts.review, rubricBlock),
-    input.resourceConcept
+  const reviewText = appendFreshnessClause(
+    appendResourceFidelityClause(
+      injectRubrics(input.config.prompts.review, rubricBlock),
+      input.resourceConcept
+    ),
+    input.recentWinnerIdeas
   );
 
   return [
@@ -833,6 +855,14 @@ const RESOURCE_FIDELITY_CLAUSE =
 export function appendResourceFidelityClause(reviewPrompt: string, resourceConcept?: string) {
   if (!resourceConcept?.trim()) return reviewPrompt;
   return `${reviewPrompt}\n\n${RESOURCE_FIDELITY_CLAUSE}`;
+}
+
+const FRESHNESS_CLAUSE =
+  'FRESHNESS: the entry fields list recent winning ideas. On Creativity and Wordplay only, score an entry lower when its central idea repeats one of them; a similar subject or style alone is not a repeat. Never lower any other category for it.';
+
+export function appendFreshnessClause(reviewPrompt: string, recentWinnerIdeas?: string[]) {
+  if (!recentWinnerIdeas?.length) return reviewPrompt;
+  return `${reviewPrompt}\n\n${FRESHNESS_CLAUSE}`;
 }
 
 function prepareSystemMessage(

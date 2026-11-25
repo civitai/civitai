@@ -36,9 +36,9 @@ import { booleanString, numericString } from '~/utils/zod-helpers';
  * Re-plan already-queued System dailies onto daily-schedule.ts (docs/features/challenge-platform.md §3, Daily plan).
  *
  * GET is the dry run: it generates each row's proposal and returns it with the row's current values
- * and a hash of them. Keep that response; it is the only copy of the old rows. POST applies exactly
- * the proposals sent back, so what was reviewed is what lands, and refuses a row whose current values
- * no longer match the hash it was proposed against.
+ * and a hash of them. Keep that response; it is the only copy of the old rows. POST applies the
+ * article text sent back and refuses if the row, or the plan set its date resolves to, changed since
+ * the dry run; the judge is re-resolved at write time.
  *
  * Only a Scheduled System daily that has not started, has no entries, and (unless rubricOnly) is not
  * yet visible is touched, checked in the SELECT and again in the UPDATE. Article text is replaced

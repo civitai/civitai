@@ -98,7 +98,17 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { reviewWithFallback } from '~/server/games/daily-challenge/review-fallback';
-import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
+import {
+  reviewWithShadow,
+  shadowCreatorLabel,
+  shadowFor,
+} from '~/server/games/daily-challenge/review-shadow';
+import type { OpenRouterProvider } from '~/server/services/ai/openrouter';
+import {
+  getRecentWinnerIdeas,
+  hasFreshnessCategory,
+  SOLE_WINNER_REASON,
+} from '~/server/games/daily-challenge/recent-winners';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeCompleted,
@@ -764,6 +774,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     challengeRecord?.judgingCategories
   );
   const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+  const recentWinnerIdeas =
+    challengeRecord?.source === ChallengeSource.System && hasFreshnessCategory(userCategories)
+      ? await getRecentWinnerIdeas(currentChallenge.challengeId, {
+          sfwOnly: !usesNsfwRubrics(allowedNsfwLevel),
+        }).catch((e) => {
+          log('Recent winner ideas unavailable:', (e as Error).message);
+          return undefined;
+        })
+      : undefined;
 
   const judgingEngine = await resolveJudgingEngine(challengeRecord?.judgingEngine);
   const engineContext = buildJudgingEngineContext({
@@ -990,7 +1009,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."userId",
       u."username",
       i."url",
-      i."nsfwLevel"
+      i."nsfwLevel",
+      i."ingestion",
+      i."blockedFor",
+      i."needsReview"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1039,7 +1061,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       i."userId",
       u."username",
       i."url",
-      i."nsfwLevel"
+      i."nsfwLevel",
+      i."ingestion",
+      i."blockedFor",
+      i."needsReview"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -1060,7 +1085,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           i."userId",
           u."username",
           i."url",
-          i."nsfwLevel"
+          i."nsfwLevel",
+          i."ingestion",
+          i."blockedFor",
+          i."needsReview"
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "User" u ON u.id = i."userId"
@@ -1124,12 +1152,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         imageId: entry.imageId,
         nsfwLevel: entry.nsfwLevel,
       };
-      const runReview = (model?: string) =>
+      const runReview = (model?: string, provider?: OpenRouterProvider, forShadow = false) =>
         generateReview({
           theme: currentChallenge.theme,
           themeElements,
           resourceConcept,
-          creator: entry.username,
+          creator: forShadow ? shadowCreatorLabel(entry.imageId) : entry.username,
           imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
           config: judgingConfig,
           categories: userCategories?.map((c) => ({
@@ -1138,14 +1166,21 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
             criteria: c.criteria,
           })),
           nsfw: usesNsfwRubrics(allowedNsfwLevel),
+          // Judge-written reasons can name other entrants; the shadow gets no usernames.
+          recentWinnerIdeas: forShadow ? undefined : recentWinnerIdeas,
           model,
+          provider,
         });
       const review = await reviewWithShadow({
-        shadow: config.reviewShadow,
+        shadow: shadowFor(config.reviewShadow, {
+          source: challengeRecord?.source,
+          allowedNsfwLevel,
+          entry,
+        }),
         context: reviewContext,
-        run: (model) =>
+        run: (model, provider) =>
           model
-            ? runReview(model)
+            ? runReview(model, provider, true)
             : reviewWithFallback({
                 run: runReview,
                 fallbackModel: REVIEW_FALLBACK_MODEL,
@@ -1815,7 +1850,7 @@ export async function pickWinnersForChallenge(
         });
 
         const prize = currentChallenge.prizes[0]?.buzz ?? 0;
-        const soleWinnerReason = 'Sole eligible entrant';
+        const soleWinnerReason = SOLE_WINNER_REASON;
         winningEntries = [
           {
             userId: soleEntry.userId,
