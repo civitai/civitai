@@ -224,8 +224,8 @@ func TestASignedOutReadOfAnUnknownCollectionOpensOneStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	anon := Viewer{Anonymous: &Anonymous{Mask: 1 | 4 | 16, AppBlockID: "apb_bench"}}
-	made := "urn:schema:apps.civitai.com:bench-app/made-up@v1"
-	_, err := r.Read(ctx, anon, "bench-app", "made-up", 1, 0)
+	made := "urn:schema:apps.civitai.com:bench-app/phantom@v1"
+	_, err := r.Read(ctx, anon, "bench-app", "phantom", 1, 0)
 	var ended *session.EndedError
 	if !errors.As(err, &ended) || ended.Reason != "not_resolved" {
 		t.Fatalf("a made-up collection: %v, want not_resolved", err)

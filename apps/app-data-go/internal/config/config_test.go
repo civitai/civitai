@@ -122,6 +122,9 @@ func TestInvalidSettingsFailTheStart(t *testing.T) {
 		"no level streams":                {map[string]string{"APP_DATA_LEVEL_MAX_STREAMS": "0"}, "APP_DATA_LEVEL_MAX_STREAMS must be an integer"},
 		"no subscriptions":                {map[string]string{"APP_DATA_MAX_SUBSCRIPTIONS": "0"}, "APP_DATA_MAX_SUBSCRIPTIONS must be an integer"},
 		"overlay bound under one record":  {map[string]string{"APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM": "98303"}, "APP_DATA_MAX_OVERLAY_BYTES_PER_STREAM must be an integer"},
+		"budget under one level stream": {map[string]string{"APP_DATA_WRITES": "true", "APP_DATA_WRITES_SIGNING_KEY": strings.Repeat("k", 32),
+			"APP_DATA_BLOCK_JWKS_URL": "https://site.invalid/jwks", "APP_DATA_CACHE_BUDGET_BYTES": "8388608", "APP_DATA_LEVEL_MAX_BYTES": "8388609"},
+			"must hold at least one level stream"},
 		"budget under one private stream": {map[string]string{"APP_DATA_CACHE_BUDGET_BYTES": "8388608", "APP_DATA_MAX_BYTES_PER_STREAM": "8388609"}, "must hold at least one private stream"},
 	}
 	for name, tc := range cases {
