@@ -65,6 +65,7 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
+import { articleReadableWhere, canViewArticle } from '~/server/services/article-read';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import {
@@ -865,7 +866,6 @@ export const articleContentImageSelect = {
   modelRestricted: true,
 } satisfies Prisma.ImageSelect;
 
-
 /**
  * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
  * article's owner who uploaded it may see it. Read and save share this so a save keeps exactly what
@@ -880,15 +880,6 @@ function modelHidesArticleImage(
   return withheld.has(image.id) && !(viewerId === articleUserId && image.userId === articleUserId);
 }
 
-/** The article availability rule for reads. */
-export function canViewArticle(
-  article: { availability: Availability; userId: number | null },
-  viewer: { id?: number; isModerator?: boolean } | undefined
-) {
-  if (article.availability !== Availability.Private) return true;
-  return !!viewer?.isModerator || (viewer?.id !== undefined && article.userId === viewer.id);
-}
-
 export const getArticleById = async ({
   id,
   userId,
@@ -897,19 +888,7 @@ export const getArticleById = async ({
   try {
     const db = await getDbWithoutLag('article', id);
     const article = await db.article.findFirst({
-      where: {
-        id,
-        OR: !isModerator
-          ? [
-              {
-                publishedAt: { not: null },
-                status: ArticleStatus.Published,
-                ingestion: ArticleIngestionStatus.Scanned,
-              },
-              { userId },
-            ]
-          : undefined,
-      },
+      where: { id, ...articleReadableWhere({ id: userId, isModerator }) },
       // Include `moderatorNsfwLevel` here (not in the shared select) so the
       // edit form can render the override banner / picker. The public article
       // read payload is served by `getArticles`, not this function, so the

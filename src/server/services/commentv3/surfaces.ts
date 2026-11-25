@@ -4,7 +4,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { articleShareCookieName } from '~/server/services/article-share.helpers';
 import { getArticleByShareToken } from '~/server/services/article-share.service';
-import { canViewArticle } from '~/server/services/article.service';
+import { canViewArticle } from '~/server/services/article-read';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
