@@ -27,6 +27,7 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { ImageAskStep } from '~/components/Image/Remix/RemixAppModal';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { RemixAnswer } from '~/shared/remix-apps/define';
 import {
@@ -492,6 +493,18 @@ function RemixAppTestRun({ slug, onClose }: { slug: string; onClose: () => void 
               {text ? 'Answer' : 'Skip'}
             </Button>
           </Group>
+        )}
+        {state?.status === 'ask' && state.ask.kind === 'image' && (
+          <Stack gap={4}>
+            <Text size="sm" fw={600}>
+              {state.ask.prompt}
+            </Text>
+            <ImageAskStep
+              ask={state.ask}
+              pending={start.isPending}
+              onAnswer={(answer) => quote([...answers, answer])}
+            />
+          </Stack>
         )}
         {state?.status === 'priced' && ready && (
           <Group justify="space-between">
