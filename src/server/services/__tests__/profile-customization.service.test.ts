@@ -173,6 +173,19 @@ describe('getProfileCustomization', () => {
     });
   });
 
+  it('returns a sidebar colour set on its own, to visitors and to the owner to edit', async () => {
+    subscriptions = [subscription('gold')];
+    stored({
+      backgroundImageId: null,
+      backgroundImage: null,
+      pageTheme: { sidebar: { color: '#1b2a4a' } },
+    });
+    const visitor = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(visitor.pageTheme).toEqual({ sidebar: { color: '#1b2a4a' } });
+    const owner = await getProfileCustomization({ userId: OWNER, viewerId: OWNER });
+    expect(owner.stored?.pageTheme).toEqual({ sidebar: { color: '#1b2a4a' } });
+  });
+
   it('ignores a stored theme that is not the allowed shape', async () => {
     subscriptions = [subscription('gold')];
     stored({

@@ -18,6 +18,7 @@ import {
   profileCardBackground,
   profileCardInk,
   suggestedCardColor,
+  themePanel,
 } from '~/components/Profile/profile-card-color';
 import type { ProfilePageTheme, ProfileThemeMode } from '~/server/schema/user-profile.schema';
 import { profileCardOpacityDefault } from '~/server/schema/user-profile.schema';
@@ -27,9 +28,6 @@ type HashedImage = { hash?: string | null } | null | undefined;
 
 // A few tried colours beside the ones taken from the member's own images.
 const presets = ['#1b2a4a', '#2b3a2e', '#3d2c5c', '#f3ead7', '#d9e8f5', '#f6dfe5'];
-
-/** The theme's own panel colour, used at the chosen opacity when no colour is picked. */
-const themePanel: Record<Mode, string> = { dark: '#25262b', light: '#ffffff' };
 
 /** The theme surface a card sits on, for the preview. */
 const surface: Record<Mode, string> = { dark: '#1a1b1e', light: '#f1f3f5' };
@@ -242,11 +240,14 @@ export function CardColorPicker({
   );
 }
 
-function CustomColor({
+/** A colour wheel and a hex field, for the pickers' "+" popover. */
+export function CustomColor({
   value,
+  fallback = '#2b3a2e',
   onChange,
 }: {
   value: string | null;
+  fallback?: string;
   onChange: (value: string) => void;
 }) {
   const [draft, setDraft] = useState(value ?? '');
@@ -254,7 +255,7 @@ function CustomColor({
     <Stack gap="xs" w={220}>
       <ColorPicker
         format="hex"
-        value={value ?? '#2b3a2e'}
+        value={value ?? fallback}
         onChange={(next) => {
           setDraft(next);
           onChange(next);
@@ -265,7 +266,7 @@ function CustomColor({
         size="xs"
         label="Hex"
         value={draft}
-        placeholder="#1b2a4a"
+        placeholder={fallback}
         onChange={(event) => {
           const next = event.currentTarget.value.trim();
           setDraft(next);

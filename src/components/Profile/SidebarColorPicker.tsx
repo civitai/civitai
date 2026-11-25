@@ -1,17 +1,9 @@
-import {
-  ColorPicker,
-  ColorSwatch,
-  Group,
-  Input,
-  Stack,
-  Text,
-  TextInput,
-  UnstyledButton,
-} from '@mantine/core';
+import { ColorSwatch, Group, Input, Stack, Text, UnstyledButton } from '@mantine/core';
 import { IconBan, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
+import { CustomColor } from '~/components/Profile/CardColorPicker';
 import {
   darkenHex,
   profileCardInk,
@@ -22,8 +14,8 @@ type HashedImage = { hash?: string | null } | null | undefined;
 
 // Dark tones: the sidebar sits darker than the page, with the name and buttons on it.
 const presets = ['#1b2a4a', '#2b3a2e', '#3d2c5c', '#4a2333', '#3b2f24', '#24343a'];
+// The default dark base, as in ProfileLayout2's sidebar class (rgb(28 29 32)).
 const defaultSidebar = '#1c1d20';
-const hexPattern = /^#[0-9a-f]{6}$/i;
 const selectedRing = 'ring-2 ring-blue-5 ring-offset-2 ring-offset-transparent';
 
 /**
@@ -125,7 +117,7 @@ export function SidebarColorPicker({
                 </Tooltip>
               </Popover.Target>
               <Popover.Dropdown>
-                <CustomSidebarColor value={value} onChange={onChange} />
+                <CustomColor fallback={defaultSidebar} value={value} onChange={onChange} />
               </Popover.Dropdown>
             </Popover>
           </Group>
@@ -138,40 +130,5 @@ export function SidebarColorPicker({
         </Stack>
       </Group>
     </Input.Wrapper>
-  );
-}
-
-function CustomSidebarColor({
-  value,
-  onChange,
-}: {
-  value: string | null;
-  onChange: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState(value ?? '');
-  return (
-    <Stack gap="xs" w={220}>
-      <ColorPicker
-        format="hex"
-        value={value ?? defaultSidebar}
-        onChange={(next) => {
-          setDraft(next);
-          onChange(next);
-        }}
-        fullWidth
-      />
-      <TextInput
-        size="xs"
-        label="Hex"
-        value={draft}
-        placeholder={defaultSidebar}
-        onChange={(event) => {
-          const next = event.currentTarget.value.trim();
-          setDraft(next);
-          if (hexPattern.test(next)) onChange(next.toLowerCase());
-        }}
-        error={draft && !hexPattern.test(draft) ? 'Use #rrggbb' : undefined}
-      />
-    </Stack>
   );
 }

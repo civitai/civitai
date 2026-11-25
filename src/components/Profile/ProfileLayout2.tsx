@@ -21,7 +21,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
+import { SubnavProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import { ProfilePageCustomization } from '~/components/Profile/ProfilePageCustomization';
 import { usePathname } from 'next/navigation';
@@ -200,7 +200,7 @@ export function ProfileLayout2({
             </div>
           )
         }
-        subNav={blockedByThem ? null : <ProfileNavigation username={username} />}
+        subNav={blockedByThem ? null : <SubnavProfileNavigation username={username} />}
         announcements={false}
       >
         <div className="isolate min-h-full px-3" data-profile-content>

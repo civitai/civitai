@@ -368,7 +368,8 @@ describe('setPinnedItem', () => {
   let stored: ShowcaseItemSchema[];
   beforeEach(() => {
     stored = [];
-    db.userProfile.findUnique.mockImplementation((async () => ({ pinnedItems: stored })) as never);
+    db.userProfile.upsert.mockImplementation((async () => ({ pinnedItems: stored })) as never);
+    Object.assign(ownedBy.image, { 11: OWNER_ID, 12: OWNER_ID, 13: OWNER_ID });
     db.userProfile.updateMany.mockImplementation((async ({ data }: never) => {
       stored = (data as { pinnedItems: ShowcaseItemSchema[] }).pinnedItems;
       return { count: 1 };
@@ -401,6 +402,20 @@ describe('setPinnedItem', () => {
     ];
     await expect(pin('Image', OWN_IMAGE)).rejects.toThrow(/up to 3/);
     expect(stored).toHaveLength(3);
+  });
+
+  it('frees the slot of a pinned item that was deleted, so a new pin fits', async () => {
+    stored = [
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: 999 }, // deleted: no longer found among the owner's images
+    ];
+    await pin('Image', OWN_IMAGE);
+    expect(stored).toEqual([
+      { entityType: 'Image', entityId: 11 },
+      { entityType: 'Image', entityId: 12 },
+      { entityType: 'Image', entityId: OWN_IMAGE },
+    ]);
   });
 
   it('refuses a save over pins that changed since they were read', async () => {

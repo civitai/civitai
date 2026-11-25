@@ -5,6 +5,7 @@ import {
   profileBarBackground,
   profileCardBackground,
   profileCardInk,
+  themePanel,
 } from '~/components/Profile/profile-card-color';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Flags } from '~/shared/utils/flags';
@@ -96,7 +97,6 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
 
 // Text that stays legible on the member's card colour: Mantine's text variables, re-pointed inside
 // the tinted areas. Panels read the same variables from ProfileSection.module.css.
-const themePanel = { dark: '#25262b', light: '#ffffff' } as const;
 
 const inks = {
   dark: { text: '#212529', dimmed: '#495057', bright: '#000000', anchor: '#1864ab' },

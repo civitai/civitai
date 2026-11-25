@@ -364,6 +364,7 @@ export default function UserProfileEditModal() {
     profileSectionsSettings,
     creatorCardStatsPreferences,
     privacySettings,
+    sfwBackgroundImage,
   ] = form.watch([
     'badge',
     'nameplateId',
@@ -380,6 +381,7 @@ export default function UserProfileEditModal() {
     'profileSectionsSettings',
     'creatorCardStatsPreferences',
     'privacySettings',
+    'sfwBackgroundImage',
   ]);
   // Every owned badge, before the one-per-image dedupe: a duplicate-image badge has no tile but is owned.
   const ownedBadgeIds = useMemo(
@@ -902,7 +904,7 @@ export default function UserProfileEditModal() {
           name="sfwBackgroundImage"
           label="Page background (civitai.com)"
           description="Leave empty to use the page background above. Only a safe-for-work image shows on civitai.com."
-          aspectRatio={previewRatio(form.getValues('sfwBackgroundImage'))}
+          aspectRatio={previewRatio(sfwBackgroundImage)}
           previewWidth={constants.profile.coverImageWidth}
         />
       )}

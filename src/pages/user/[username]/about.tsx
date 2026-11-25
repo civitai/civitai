@@ -1,4 +1,4 @@
-import { Anchor, Button, Center, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconCalendar, IconId, IconMapPin, IconPencilMinus } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -77,7 +77,6 @@ function UserAboutPage() {
   const hasPinned = pinnedItems.length > 0;
   const hasContent = !!bio || !!about || hasPinned || !!location || links.length > 0;
 
-  // The design's right-hand column: labelled facts beside the About text.
   const label = (text: string) => (
     <Text size="xs" fw={700} tt="uppercase" c="dimmed" className="tracking-wider">
       {text}

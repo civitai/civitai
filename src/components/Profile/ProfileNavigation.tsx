@@ -49,16 +49,11 @@ const openProfileHiddenTabs =
 
 type ProfileNavigationProps = {
   username: string;
-  /**
-   * Where this copy renders. With the redesign the tabs sit under the banner and scroll with the
-   * page ('header'); otherwise they stay in the site's sub-navigation ('subnav').
-   */
-  placement?: 'subnav' | 'header';
 };
 
 const overviewPath = '[username]';
 
-export const ProfileNavigation = ({ username, placement = 'subnav' }: ProfileNavigationProps) => {
+export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -205,8 +200,6 @@ export const ProfileNavigation = ({ username, placement = 'subnav' }: ProfileNav
     />
   );
 
-  if (!!features.profileRedesign !== (placement === 'header')) return null;
-
   if (!features.profileRedesign || !isProfileOwner || !user) return segmentedControl;
 
   // Only the tabs this profile shows for other reasons; hiding one that never renders means nothing.
@@ -237,4 +230,10 @@ export const ProfileNavigation = ({ username, placement = 'subnav' }: ProfileNav
       </LegacyActionIcon>
     </div>
   );
+};
+
+/** The tabs in the site's sub-navigation; with the redesign they render under the banner instead. */
+export const SubnavProfileNavigation = ({ username }: ProfileNavigationProps) => {
+  const features = useFeatureFlags();
+  return features.profileRedesign ? null : <ProfileNavigation username={username} />;
 };

@@ -107,7 +107,6 @@ export const ShowcaseItemsInput = ({
     }
   };
 
-  // The picker's toggle: added at the end, never past the limit (the picker disables the rest).
   const onToggleItem = (item: ShowcaseItemSchema) => {
     const isShown = showcaseItems.some(
       (i) => i.entityId === item.entityId && i.entityType === item.entityType

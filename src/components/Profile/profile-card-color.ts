@@ -67,3 +67,6 @@ export function darkenHex(hex: string, amount: number) {
     )
     .join('')}`;
 }
+
+/** The theme's own panel colour, used at the chosen opacity when no colour is picked. */
+export const themePanel = { dark: '#25262b', light: '#ffffff' } as const;
