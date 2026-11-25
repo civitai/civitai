@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -154,7 +155,7 @@ func TestResolveHubSourcesVersionExpansion(t *testing.T) {
 		t.Fatalf("excluded versions %v, want [6402 6701 6702]", got.ExcludedVersionIDs)
 	}
 	// The cap: 760 explicit versions leave no budget (each model still gets 1) and the list is cut at 750.
-	var many []HubSourceRow
+	many := make([]HubSourceRow, 0, 761)
 	for i := range 760 {
 		many = append(many, HubSourceRow{Type: "ModelVersion", TargetID: 10_000 + i})
 	}
@@ -351,10 +352,7 @@ func TestParseInfiniteHubID(t *testing.T) {
 		t.Fatalf("hubId beside publishedOnly+userId: %v, want input-invalid", err)
 	}
 	// More than 50 exclusions.
-	many := `{"hubExcludedSources":[` + `{"type":"User","targetId":1}`
-	for range 50 {
-		many += `,{"type":"User","targetId":1}`
-	}
+	many := `{"hubExcludedSources":[` + `{"type":"User","targetId":1}` + strings.Repeat(`,{"type":"User","targetId":1}`, 50)
 	if _, err := ParseInfiniteWith(parseObj(t, many+`]}`), hubIDOn); fallback.Reason(err) != "input-invalid" {
 		t.Fatalf("51 exclusions: %v, want input-invalid", err)
 	}

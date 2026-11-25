@@ -517,7 +517,7 @@ func goldenHubRoutes(fx *goldenFixture) []testkit.Route {
 				if h.ID != goldenInt(args[0]) {
 					continue
 				}
-				if public && h.Availability != "Public" && !(owner && h.UserID == goldenInt(args[1])) {
+				if public && h.Availability != "Public" && (!owner || h.UserID != goldenInt(args[1])) {
 					break
 				}
 				return testkit.NewRows(cols, []any{h.ForcedBrowsingLevel}), nil
@@ -530,7 +530,7 @@ func goldenHubRoutes(fx *goldenFixture) []testkit.Route {
 				if h.ID != goldenInt(args[0]) {
 					continue
 				}
-				srcs := append(h.Sources[:0:0], h.Sources...)
+				srcs := slices.Clone(h.Sources)
 				sort.Slice(srcs, func(a, b int) bool { return srcs[a].ID < srcs[b].ID })
 				for _, src := range srcs {
 					if src.Enabled {
@@ -558,7 +558,7 @@ func goldenHubRoutes(fx *goldenFixture) []testkit.Route {
 				}
 			}
 			sort.Slice(list, func(a, b int) bool { return list[a].id > list[b].id })
-			var rows [][]any
+			rows := make([][]any, 0, len(list))
 			for _, r := range list {
 				rows = append(rows, []any{r.id, r.model, int64(r.rn)})
 			}
@@ -572,7 +572,7 @@ func goldenHubRoutes(fx *goldenFixture) []testkit.Route {
 				}
 			}
 			sort.Ints(ids)
-			var rows [][]any
+			rows := make([][]any, 0, len(ids))
 			for _, id := range ids {
 				rows = append(rows, []any{id})
 			}
