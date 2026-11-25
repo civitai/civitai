@@ -42,7 +42,7 @@ export const createReportForm = <TSchema extends z.ZodObject>({
     const song = target?.song;
     // Read once, when the form opens: the song keeps playing while it is filled in.
     const [startSec] = useState(() => (target && song ? songReportStartSec(target.entityId) : 0));
-    // Every reason's report on a song says when in the song (`timestampSec`), typed as m:ss.
+    // A report on a song says when in the song (timestampSec), as m:ss.
     const formSchema = useMemo(
       () =>
         song

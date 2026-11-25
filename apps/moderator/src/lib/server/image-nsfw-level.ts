@@ -46,8 +46,6 @@ type ImageNsfwLevelInput = {
 // Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
 // change.
 export async function updateImageNsfwLevel(input: ImageNsfwLevelInput): Promise<void> {
-  // One transaction, so the level never lands without its rating-request and Model3D writes, and the
-  // busts run only after a level has landed.
   const steps = await dbWrite.transaction().execute((trx) => writeImageNsfwLevel(trx, input));
   for (const step of steps) await step.run();
 }
@@ -67,11 +65,9 @@ export async function writeImageNsfwLevel(
     .where('id', '=', id)
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
-  // A locked level counts as a review in the main app's `imageReviewedSql`, which has no exception for
-  // songs, and only a song's own scans may review it: so a song is rated only once they have
-  // (`ingestion` Scanned). From then on its lock also stands in for a review: a rated song that a
-  // failed re-scan moves to Error (`markImageScanError`) keeps counting as reviewed. A path that
-  // changes a song's audio or lyrics must clear `nsfwLevelLocked`.
+  // A locked level counts as a review (imageReviewedSql has no song exception) and only a song's own
+  // scans may review it, so rate a song only once Scanned. A path that changes a song's audio or
+  // lyrics must clear nsfwLevelLocked.
   if (image.type === 'audio' && image.ingestion !== 'Scanned')
     throw new SongRatingRefusedError(
       id,

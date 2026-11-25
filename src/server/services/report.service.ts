@@ -392,16 +392,11 @@ type CreateReportProps = CreateReportInput & {
   foldIntoPendingOnly?: boolean;
 };
 /**
- * A song report says when in the song it is about, within the song's stored length; nothing else
- * carries a time. With no stored length any time is taken: refusing would leave the song unreportable.
- * "Photorealistic depiction of a minor" is not a reason a song can be reported for. A sticker report
- * is about the placement, so it takes no time, as on an image.
- *
- * The song rules apply only for a reporter with the music feature who may open the song; any other
- * image gets the image answer, so a refusal never tells a hidden song from a hidden image.
- *
- * For reports a user files (`createReportHandler`), not `createReport`: scanners and Knights file
- * image reports with no time and must keep landing on a song.
+ * Song reports carry a time within the stored length (any time when there is none: refusing would
+ * leave the song unreportable). The song rules apply only to a reporter who can open the song; any
+ * other image gets the image answer, so a refusal never tells a hidden song from a hidden image. For
+ * user-filed reports only: scanners and Knights file timeless image reports that must keep landing on
+ * a song.
  */
 export async function assertSongReportTime(
   input: CreateReportInput,

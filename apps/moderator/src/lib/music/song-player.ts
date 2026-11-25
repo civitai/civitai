@@ -120,11 +120,6 @@ export function createSongPlayer(store: VolumeStore) {
     volumeChanged(media: SongMedia) {
       store.write(media.volume);
     },
-    /**
-     * Starts song `imageId` at `seconds` on the card `cardKey` names, else on a card showing it: the
-     * one already playing it, else the first. False when no card on the page shows that song, or
-     * the card refuses (its file failed).
-     */
     playAt(imageId: number, seconds: number, cardKey?: SongCardKey): boolean {
       const shown = cards.get(imageId) ?? [];
       const entry =
@@ -192,13 +187,12 @@ export function playingLyricIndex<L extends { t: number | null }>(
 /** A report's mark on a song's seek bar: where it sits (0 to 100) and its hover text. */
 export type SeekMarker = { timeSec: number; percent: number; title: string };
 
-/**
- * The seek bar's report markers for a song `durationSec` long, earliest first. Reports at the same
- * second share one marker naming each reason once. A report without a time, or one outside the song
- * (the main app refuses those), draws nothing, and nothing is drawn until the length is known.
- */
+// A report filed at the upload's stored length stays on the bar when the file reads a little
+// shorter; the main app refuses anything further.
 const END_SLACK_SEC = 1;
 
+/** Reports in the same second share one marker. A report without a time, or past the song's end
+ *  plus END_SLACK_SEC, draws nothing; nothing is drawn until the length is known. */
 export function seekMarkers(
   reports: readonly { timeSec: number | null; label: string }[],
   durationSec: number
@@ -207,8 +201,6 @@ export function seekMarkers(
   const bySecond = new Map<number, { timeSec: number; labels: Set<string> }>();
   const timed = reports
     .filter((r): r is { timeSec: number; label: string } => r.timeSec != null)
-    // A report filed at the upload's stored length stays on the bar when the file reads a little
-    // shorter; the main app refuses anything further.
     .filter((r) => r.timeSec >= 0 && r.timeSec <= durationSec + END_SLACK_SEC)
     .sort((a, b) => a.timeSec - b.timeSec);
   for (const r of timed) {
