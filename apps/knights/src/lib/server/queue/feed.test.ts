@@ -82,9 +82,40 @@ describe('orderFeed', () => {
     expect(served).toHaveLength(4);
   });
 
-  it('keeps priority classes in order within a bucket', () => {
+  it('draws priority 1 below FEED.priorityOneShare, another priority above it', () => {
     const window = [candidate(1, { priority: 1 }), candidate(2, { priority: 3 })];
-    expect(order(window, { limit: 2 })).toEqual([1, 2]);
+    expect(order(window, { random: always, limit: 2 })).toEqual([1, 2]);
+    expect(order(window, { random: never, limit: 2 })).toEqual([2, 1]);
+  });
+
+  it('gives priority 1 about FEED.priorityOneShare of the picks while every priority has supply', () => {
+    const buckets = [
+      ['PG', 1],
+      ['PG-13', 1],
+      ['R', 2],
+      ['X', 2],
+      ['XXX', 2],
+    ] as const;
+    const window = buckets.flatMap(([bucket, priority], b) =>
+      [...Array(400).keys()].map((i) =>
+        candidate(b * 1000 + i + 1, { bucket, priority, createdAt: i })
+      )
+    );
+    const priorityOf = (id: number) => window.find((c) => c.id === id)?.priority;
+    expect(FEED.priorityOneShare).toBe(0.7);
+    for (const seed of [1, 7, 42]) {
+      const served = order(window, { random: seeded(seed), limit: 500 });
+      const share = served.filter((id) => priorityOf(id) === 1).length / served.length;
+      expect(share).toBeGreaterThan(0.65);
+      expect(share).toBeLessThan(0.75);
+    }
+  });
+
+  it('serves the other priorities alone once priority 1 runs out', () => {
+    const window = [candidate(1, { priority: 1 }), ...[2, 3, 4].map((id) => candidate(id))];
+    const served = order(window, { random: always, limit: 4 });
+    expect(served[0]).toBe(1);
+    expect([...served].sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
   });
 
   it('serves the escalated tier ahead of normal priority', () => {
@@ -101,26 +132,22 @@ describe('orderFeed', () => {
     expect([1, 2, 3, 4, 5, 6].map(firstFor)).toEqual(firsts);
   });
 
-  it('takes the oldest of the chosen bucket when the starvation draw lands, even against priority', () => {
+  it('takes the oldest of the chosen bucket when the starvation draw lands, even against the escalated tier', () => {
     const window = [
-      candidate(1, { createdAt: 50, priority: 1 }),
-      candidate(2, { createdAt: 10, priority: 3 }),
+      candidate(1, { createdAt: 50, tier: 0 }),
+      candidate(2, { createdAt: 10 }),
       candidate(3, { createdAt: 1, bucket: 'X' }),
     ];
     expect(order(window, { recent: ['X'], random: always, limit: 1 })).toEqual([2]);
     expect(order(window, { recent: ['X'], random: never, limit: 1 })).toEqual([1]);
   });
 
-  it('picks buckets with equal probability, whatever their size or priority', () => {
-    // PG holds most of the supply and the urgent class, as owner ratings do; the small buckets must still get their share.
+  it('picks buckets within a priority with equal probability, whatever their size', () => {
+    // PG holds most of the supply; the small buckets must still get their share.
     const sizes = { PG: 30, X: 3, XXX: 3 } as const;
     const window = Object.entries(sizes).flatMap(([bucket, size], b) =>
       [...Array(size).keys()].map((i) =>
-        candidate(b * 100 + i + 1, {
-          bucket: bucket as keyof typeof sizes,
-          priority: bucket === 'PG' ? 1 : 2,
-          createdAt: i,
-        })
+        candidate(b * 100 + i + 1, { bucket: bucket as keyof typeof sizes, createdAt: i })
       )
     );
     const bucketOf = (id: number) => window.find((c) => c.id === id)?.bucket;

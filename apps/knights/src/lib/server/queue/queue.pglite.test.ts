@@ -263,7 +263,7 @@ describe('getFeed', () => {
     expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([escalated, knightItem]);
   });
 
-  it('orders by priority then age, and skips hidden checks and Acolytes', async () => {
+  it('orders by priority then age when every draw favours the lowest priority, and skips hidden checks and Acolytes', async () => {
     await player(1, 'Knight');
     await player(2, 'Acolyte');
     for (const id of [10, 11, 12, 13]) await image(id);
@@ -272,7 +272,12 @@ describe('getFeed', () => {
     await item(12, { hidden: true });
     const mid = await item(13, { priority: 2 });
 
-    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([high, mid, low]);
+    // A draw of 0.2 takes priority 1 while it lasts, then the lowest priority left, and never the starvation path.
+    expect((await getFeed(db, 1, { random: () => 0.2 }))?.items.map((i) => i.id)).toEqual([
+      high,
+      mid,
+      low,
+    ]);
     expect(await getFeed(db, 2)).toBeNull();
   });
 
@@ -285,7 +290,10 @@ describe('getFeed', () => {
 
     expect((await getFeed(db, 1, { exclude: [first] }))?.items.map((i) => i.id)).toEqual([second]);
     expect(await getFeed(db, 1, { exclude: [first, second] })).toBeNull();
-    expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([first, second]);
+    expect((await getFeed(db, 2, { random: () => 0.2 }))?.items.map((i) => i.id)).toEqual([
+      first,
+      second,
+    ]);
   });
 
   it('serves only as many items as asked for', async () => {
@@ -295,7 +303,9 @@ describe('getFeed', () => {
     await item(11, { priority: 2 });
     await item(12, { priority: 3 });
 
-    expect((await getFeed(db, 1, { limit: 1 }))?.items.map((i) => i.id)).toEqual([first]);
+    expect((await getFeed(db, 1, { limit: 1, random: () => 0.2 }))?.items.map((i) => i.id)).toEqual(
+      [first]
+    );
   });
 
   it('fills the stretch from the chosen question even when another question has more items', async () => {
