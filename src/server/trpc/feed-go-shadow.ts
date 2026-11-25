@@ -648,8 +648,10 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
 
   /**
    * `begin` for a REST route: whether this request is sampled. The handler calls it after its cheap
-   * rejects (and its bulkhead slot, where it has one), captures its own JSON body (`captureRest`)
-   * and calls `finish`, which is where the in-flight slot and the token are taken. Never throws.
+   * rejects (and its bulkhead slot, where it has one), captures its own JSON body (`captureRest`;
+   * site-search: `captureSiteSearch`) and calls `finish`, which is where the in-flight slot and the
+   * token are taken. The `GET` routes' input is the query string; `POST /api/search/*`'s is the
+   * parsed JSON body as JSON.stringify writes it. Never throws.
    */
   function beginRest(
     endpoint: RestEndpoint,
@@ -659,7 +661,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       const route = restRoutes[endpoint];
       if (!route.url || config.rate <= 0) return undefined;
-      if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      const method = endpoint === 'site-search' ? 'POST' : 'GET';
+      if ((req.method ?? '').toUpperCase() !== method) return undefined;
       // The list's text search is mirrored only with FEED_GO_SHADOW_V1_MODELS_QUERY. A text query is
       // any value other than the one empty string (the handler's `if (query)`).
       if (endpoint === 'v1-models' && !config.v1ModelsQuery) {
@@ -682,7 +685,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const target = req.url ?? '';
       const q = target.indexOf('?');
       const path = q < 0 ? target : target.slice(0, q);
-      const input = q < 0 ? '' : target.slice(q + 1);
+      const input =
+        endpoint === 'site-search' ? JSON.stringify(req.body) : q < 0 ? '' : target.slice(q + 1);
+      if (typeof input !== 'string') return undefined;
       const headers = pickShadowHeaders(req);
       if (endpoint === 'v1-models' || endpoint === 'v1-models-id') {
         try {
@@ -736,36 +741,10 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
 
   /**
    * `beginRest` for `POST /api/search/*`: the handler calls it after its cheap rejects (the rate
-   * limit, the profanity refusal); its input is the parsed JSON body as JSON.stringify writes it.
-   * A request carrying an API credential is never mirrored. Never throws.
+   * limit, the profanity refusal). A request carrying an API credential is never mirrored.
    */
   function beginSiteSearch(req: ShadowRequestLike): FeedGoShadowSample | undefined {
-    try {
-      const route = restRoutes['site-search'];
-      if (!route.url || config.rate <= 0) return undefined;
-      if ((req.method ?? '').toUpperCase() !== 'POST') return undefined;
-      if (!route.enabled()) return undefined;
-      if (random() >= config.rate) return undefined;
-      if (hasApiCredential(req)) {
-        record('skipped_credential', 'site-search');
-        return undefined;
-      }
-      const input = JSON.stringify(req.body);
-      if (typeof input !== 'string') return undefined;
-      const target = req.url ?? '';
-      const q = target.indexOf('?');
-      const path = q < 0 ? target : target.slice(0, q);
-      return {
-        endpoint: 'site-search',
-        holdsSlot: false,
-        input,
-        path: path || undefined,
-        headers: pickShadowHeaders(req),
-        done: false,
-      };
-    } catch {
-      return undefined;
-    }
+    return beginRest('site-search', req);
   }
 
   /** The site-search handler's capture: references only, encoded later in `send`. Never throws. */

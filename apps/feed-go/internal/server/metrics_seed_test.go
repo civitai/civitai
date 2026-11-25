@@ -176,10 +176,12 @@ func TestShadowResultsAreSeeded(t *testing.T) {
 func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	// serve: 7 routes x (bulkhead, error, deadline, canceled, panic); shadow: 8 x 3; probe: 4 x 3;
-	// and the 216 request-determined serve series.
-	if n := testutil.CollectAndCount(m.Fallbacks); n != 7*5+8*3+4*3+216 {
-		t.Fatalf("feed_go_fallback_total has %d series at construction, want 287", n)
+	// The sum, in order: each serve route x (bulkhead, error, deadline, canceled, panic); each
+	// shadow endpoint x (deadline, canceled, panic); each probe endpoint x the same three; and the
+	// request-determined serve series (TestRequestFallbackReasonsAreSeeded).
+	const want = 7*5 + 8*3 + 4*3 + 216
+	if n := testutil.CollectAndCount(m.Fallbacks); n != want {
+		t.Fatalf("feed_go_fallback_total has %d series at construction, want %d", n, want)
 	}
 	cases := map[string]struct {
 		endpoints, reasons []string

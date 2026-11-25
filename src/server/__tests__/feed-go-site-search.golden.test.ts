@@ -20,9 +20,10 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type { SiteSearchRouteDeps } from '~/pages/api/search/[...path]';
+import type * as FeedGoShadowModule from '~/server/trpc/feed-go-shadow';
 
 const FIXTURE_DIR = join(process.cwd(), 'apps/feed-go/testdata/golden/site-search');
 const SEARCH_HOST = 'https://search.example.test';
@@ -50,6 +51,8 @@ type Fixture = {
 const state = vi.hoisted(() => ({
   fx: undefined as unknown as Fixture,
   calls: [] as { url: string; body: string }[],
+  // The feed-go shadow sampler the handler is given: none (never sampled) unless a case arms one.
+  shadow: undefined as FeedGoShadowModule.FeedGoShadow | undefined,
 }));
 
 type FakeReq = {
@@ -85,6 +88,14 @@ const deps = {
   },
   isProfane: async () => false,
   isPassthroughOn: () => state.fx.config.passthrough,
+  shadow: {
+    begin: (req: Parameters<FeedGoShadowModule.FeedGoShadow['beginSiteSearch']>[0]) =>
+      state.shadow?.beginSiteSearch(req),
+    capture: (...args: Parameters<FeedGoShadowModule.FeedGoShadow['captureSiteSearch']>) =>
+      state.shadow?.captureSiteSearch(...args),
+    finish: (...args: Parameters<FeedGoShadowModule.FeedGoShadow['finish']>) =>
+      state.shadow?.finish(...args),
+  },
 } as unknown as SiteSearchRouteDeps;
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
@@ -131,10 +142,12 @@ function fakeRes() {
 }
 
 let handler: RouteHandler;
+let shadowModule: typeof FeedGoShadowModule;
 
 beforeAll(async () => {
   const { createSiteSearchHandler } = await import('~/pages/api/search/[...path]');
   handler = createSiteSearchHandler(deps) as unknown as RouteHandler;
+  shadowModule = await import('~/server/trpc/feed-go-shadow');
 }, 180_000);
 
 beforeEach(() => {
@@ -207,4 +220,91 @@ describe('feed-go site-search golden fixtures: the real Node answer', () => {
     },
     120_000
   );
+});
+
+/**
+ * The route's feed-go shadow wiring (`src/pages/api/search/[...path].ts`), through the real handler
+ * and the real sampler with its flag on and every request sampled: only the sampler's POST to
+ * feed-go is observed instead of sent. The sampler's own unit tests
+ * (src/server/trpc/__tests__/feed-go-shadow.test.ts) call capture and finish themselves, so they
+ * cannot see a handler that never captures its 200 or never finishes the sample.
+ */
+describe('feed-go site-search: the shadow sample the route sends', () => {
+  const SHADOW_BASE = 'http://feed-go.test:9090';
+
+  function armShadow() {
+    const posts: { url: string; body: string }[] = [];
+    const outcomes: string[] = [];
+    const queued: Array<() => void> = [];
+    state.shadow = shadowModule.createFeedGoShadow({
+      config: shadowModule.readFeedGoShadowConfig({
+        FEED_GO_SHADOW_URL: SHADOW_BASE,
+        FEED_GO_SHADOW_SAMPLE_RATE: '1',
+        FEED_GO_SHADOW_MAX_PER_SECOND: '1000',
+      }),
+      enabled: () => false,
+      enabledSiteSearch: () => true,
+      random: () => 0,
+      fetch: (async (url: string, init: RequestInit) => {
+        posts.push({ url: String(url), body: String(init.body) });
+        return new Response(null, { status: 202 });
+      }) as unknown as typeof fetch,
+      record: (outcome) => void outcomes.push(outcome),
+      recordEncode: () => undefined,
+      now: () => 0,
+      schedule: (fn) => void queued.push(fn),
+    });
+    const flush = async () => {
+      while (queued.length) queued.shift()!();
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    };
+    return { posts, outcomes, flush };
+  }
+
+  const fixture = (file: string) => {
+    const found = fixtures.find((f) => f.file === file);
+    if (!found) throw new Error(`no fixture ${file}`);
+    return found.fx;
+  };
+
+  afterEach(() => {
+    state.shadow = undefined;
+  });
+
+  // models-signed-out-sfw-host: Node reshapes the backend's answer, so the backend's body, the call
+  // and Node's answer are three different documents. tools-passthrough: Node's answer is the
+  // backend's bytes.
+  it.each(['models-signed-out-sfw-host.json', 'tools-passthrough.json'])(
+    '%s: a 200 posts one sample with the backend call and the answer Node wrote',
+    async (file) => {
+      const fx = fixture(file);
+      const shadow = armShadow();
+      const res = await run(fx);
+      await shadow.flush();
+      expect(res.statusCode).toBe(200);
+      expect(shadow.outcomes).toEqual(['sent']);
+      expect(shadow.posts).toHaveLength(1);
+      expect(shadow.posts[0].url).toBe(`${SHADOW_BASE}/internal/shadow/api/search`);
+      const sent = JSON.parse(shadow.posts[0].body);
+      expect(sent).toMatchObject({
+        input: JSON.stringify(JSON.parse(fx.request.body)),
+        path: fx.request.path,
+        headers: { host: fx.request.host },
+        upstream: JSON.parse(fx.upstream!.body),
+        node: { upstream: fx.expect.call, body: JSON.parse(fx.expect.body!) },
+      });
+    },
+    120_000
+  );
+
+  it('a 4xx posts nothing', async () => {
+    const fx = fixture('fallback-upstream-400.json');
+    const shadow = armShadow();
+    const res = await run(fx);
+    await shadow.flush();
+    expect(res.statusCode).toBe(400);
+    expect(shadow.posts).toEqual([]);
+    // Finished, not abandoned: the sample is released as a non-200.
+    expect(shadow.outcomes).toEqual(['skipped_status']);
+  }, 120_000);
 });

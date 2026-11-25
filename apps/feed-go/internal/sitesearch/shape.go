@@ -125,9 +125,10 @@ func keepCopiesOf(copies, kept []byte, keptPresent bool) ([]byte, error) {
 	return appendArray(nil, out), nil
 }
 
-// shapeModelHit is shapeModelHit: `sfwName` is never sent; a viewer who gets the civitai.com face gets
-// it as `name` (only where the hit carries `name`), the highlight copy too; under a cap the images are
-// capped, and the copy keeps only the images the hit kept.
+// shapeModelHit mirrors shapeModelHit in site-search.service.ts: `sfwName` is never sent; a viewer
+// who gets the civitai.com face gets it as `name` (only where the hit carries `name`), the
+// highlight copy too; under a cap the images are capped, and the copy keeps only the images the hit
+// kept.
 func shapeModelHit(hit *object, v Viewer) error {
 	sfwName, hasSfw := hit.get("sfwName")
 	hit.del("sfwName")
@@ -176,9 +177,9 @@ func shapeModelHit(hit *object, v Viewer) error {
 	return nil
 }
 
-// shapeComicHit is shapeComicHit: under a cap a comic keeps its cover only when every level the cover
-// carries is inside the cap; an unrated cover counts as outside. Otherwise `coverImageUrl` is removed
-// from the hit and its highlight copy.
+// shapeComicHit mirrors shapeComicHit in site-search.service.ts: under a cap a comic keeps its
+// cover only when every level the cover carries is inside the cap; an unrated cover counts as
+// outside. Otherwise `coverImageUrl` is removed from the hit and its highlight copy.
 func shapeComicHit(hit *object, cap int) error {
 	if cap == 0 {
 		return nil
@@ -215,8 +216,9 @@ func shapeComicHit(hit *object, cap int) error {
 	return nil
 }
 
-// shapeBountyHit is shapeBountyHit: under a cap each image is capped (a bounty's own level passes when
-// any one image does), and the highlight copy keeps only the images the hit kept.
+// shapeBountyHit mirrors shapeBountyHit in site-search.service.ts: under a cap each image is capped
+// (a bounty's own level passes when any one image does), and the highlight copy keeps only the
+// images the hit kept.
 func shapeBountyHit(hit *object, cap int) error {
 	if cap == 0 {
 		return nil
@@ -255,10 +257,10 @@ func shapeBountyHit(hit *object, cap int) error {
 	return nil
 }
 
-// shapeCollectionHit is shapeCollectionHit with level (the cap, or the collection image level where
-// the site caps nothing): `srcs` (unrated) is dropped unless keepSrcs, which moves it to the end of the
-// object; the item images are capped; a cover outside the level becomes null, and so does the
-// highlight copy's.
+// shapeCollectionHit mirrors shapeCollectionHit in site-search.service.ts, with level (the cap, or
+// the collection image level where the site caps nothing): `srcs` (unrated) is dropped unless
+// keepSrcs, which moves it to the end of the object; the item images are capped; a cover outside
+// the level becomes null, and so does the highlight copy's.
 func shapeCollectionHit(hit *object, level int, keepSrcs bool) error {
 	if level == 0 {
 		return nil
@@ -334,9 +336,9 @@ func avatarIndex(uid string) bool {
 	return false
 }
 
-// capHitAvatar is capHitAvatar: under a cap a hit's user (a users hit itself) loses `image` (it has no
-// rating) and keeps `profilePicture` only when the hit's own picture is rated inside the cap; the
-// highlight copy follows the hit's verdict.
+// capHitAvatar mirrors capHitAvatar in site-search.service.ts: under a cap a hit's user (a users
+// hit itself) loses `image` (it has no rating) and keeps `profilePicture` only when the hit's own
+// picture is rated inside the cap; the highlight copy follows the hit's verdict.
 func capHitAvatar(uid string, hit *object, cap int) error {
 	holderOfHit := hit
 	if uid != UsersIndex {

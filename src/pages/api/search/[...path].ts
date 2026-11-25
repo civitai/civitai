@@ -72,14 +72,20 @@ function route(
 
 /**
  * What the handler reads from outside the request: the rate limit, the host's features, the
- * profanity verdict and the passthrough switch. The route uses the real ones; a test passes its own
- * (the feed-go golden fixtures answer each from the fixture).
+ * profanity verdict, the passthrough switch and the feed-go shadow sampler. The route uses the real
+ * ones; a test passes its own (the feed-go golden fixtures answer each from the fixture, and build a
+ * sampler with the flag on whose POST to feed-go they observe).
  */
 export type SiteSearchRouteDeps = {
   checkRateLimit: typeof checkSiteSearchRateLimit;
   getFeatures: typeof getFeatureFlagsLazy;
   isProfane: typeof isProfaneSearch;
   isPassthroughOn: typeof isSiteSearchPassthroughOn;
+  shadow: {
+    begin: typeof beginFeedGoShadowSiteSearch;
+    capture: typeof captureFeedGoShadowSiteSearch;
+    finish: typeof finishFeedGoShadow;
+  };
 };
 
 const siteSearchRouteDeps: SiteSearchRouteDeps = {
@@ -87,6 +93,11 @@ const siteSearchRouteDeps: SiteSearchRouteDeps = {
   getFeatures: getFeatureFlagsLazy,
   isProfane: isProfaneSearch,
   isPassthroughOn: isSiteSearchPassthroughOn,
+  shadow: {
+    begin: beginFeedGoShadowSiteSearch,
+    capture: captureFeedGoShadowSiteSearch,
+    finish: finishFeedGoShadow,
+  },
 };
 
 /** The route's handler, below the session: `user` is the session's user, or undefined. */
@@ -144,7 +155,7 @@ export function createSiteSearchHandler(
 
     // The feed-go shadow (default off): decided after the cheap rejects above; a sampled request
     // keeps the search call and the backend's answer for the mirror, sent after the response.
-    const sample = beginFeedGoShadowSiteSearch(req as NextApiRequest);
+    const sample = deps.shadow.begin(req as NextApiRequest);
     const observed: { upstream?: SiteSearchUpstream } = {};
     try {
       const { status, body, raw } = await route([req.query.path ?? []].flat(), req.body, viewer, {
@@ -158,7 +169,7 @@ export function createSiteSearchHandler(
           : {}),
       });
       if (sample && status === 200 && observed.upstream)
-        captureFeedGoShadowSiteSearch(sample, { ...observed.upstream, raw, body });
+        deps.shadow.capture(sample, { ...observed.upstream, raw, body });
       if (raw) {
         // Meilisearch's own JSON, unparsed: the same content type `res.json` would set.
         // Written with `res.end`: Next's `res.send` JSON.stringifies a Buffer to hash its ETag.
@@ -174,7 +185,7 @@ export function createSiteSearchHandler(
         res.setHeader('Retry-After', String(error.retryAfterSeconds));
       return res.status(error.status).json(error.toResponseBody());
     } finally {
-      if (sample) finishFeedGoShadow(sample, res.statusCode, res);
+      if (sample) deps.shadow.finish(sample, res.statusCode, res);
     }
   };
 }

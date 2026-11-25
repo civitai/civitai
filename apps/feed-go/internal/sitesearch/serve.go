@@ -28,10 +28,11 @@ type Answer struct {
 	Call UpstreamCall
 }
 
-// withViewerClauses is withViewerClauses: with no clause the client's filter as sent (absent stays
-// absent); otherwise a list of the client's parts (a string is one part, an empty string part is
-// dropped) followed by the clauses. The list form is what keeps a client string from closing a
-// parenthesis around them: Meilisearch parses each element on its own.
+// withViewerClauses mirrors withViewerClauses in site-search.service.ts: with no clause the
+// client's filter as sent (absent stays absent); otherwise a list of the client's parts (a string
+// is one part, an empty string part is dropped) followed by the clauses. The list form is what
+// keeps a client string from closing a parenthesis around them: Meilisearch parses each element on
+// its own.
 func withViewerClauses(f *Filter, raw []byte, clauses []string) ([]byte, bool) {
 	if len(clauses) == 0 {
 		return raw, f != nil
@@ -75,8 +76,9 @@ func withViewerClauses(f *Filter, raw []byte, clauses []string) ([]byte, bool) {
 	return append(out, ']'), true
 }
 
-// attributesToFetch is attributesToFetch: a models query that lists its attributes also fetches
-// `sfwName` (unless it lists it or `*`), which shapeModelHit removes again.
+// attributesToFetch mirrors attributesToFetch in site-search.service.ts: a models query that lists
+// its attributes also fetches `sfwName` (unless it lists it or `*`), which shapeModelHit removes
+// again.
 func attributesToFetch(uid string, attrs []string) []string {
 	if uid != ModelsIndex || slices.Contains(attrs, "sfwName") || slices.Contains(attrs, "*") {
 		return attrs
