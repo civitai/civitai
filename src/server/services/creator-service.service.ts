@@ -445,6 +445,29 @@ const feedOrderBy = {
 } satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
 
 /**
+ * The offerings after `cursor` in a price sort, NULLs last. Prisma's own cursor compares the cursor
+ * row's fromPrice in SQL, where a NULL is never past anything, so it would drop rows. Null when
+ * the cursor row is gone.
+ */
+async function pastFromPrice(cursor: number, sort: 'price_asc' | 'price_desc') {
+  const anchor = await dbRead.serviceOffering.findFirst({
+    where: { id: cursor },
+    select: { fromPrice: true },
+  });
+  if (!anchor) return null;
+  const past = sort === 'price_asc' ? 'gt' : 'lt';
+  return anchor.fromPrice === null
+    ? { fromPrice: null, id: { [past]: cursor } }
+    : {
+        OR: [
+          { fromPrice: { [past]: anchor.fromPrice } },
+          { fromPrice: anchor.fromPrice, id: { [past]: cursor } },
+          { fromPrice: null },
+        ],
+      };
+}
+
+/**
  * Active offerings across every seller whose storefront a visitor could open: the storefront's
  * listing rule, plus a published shop and no block either way (`assertCreatorShopVisible`), and
  * minus the creators this viewer hid. Owners and moderators get no bypass: the feed is what
@@ -465,12 +488,16 @@ export async function getServiceOfferingFeed({
 }) {
   const excludedSellerIds = viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [];
   const listable = listableServiceOfferingWhere({ browsingLevel, servable });
+  const byPrice = sort === 'price_asc' || sort === 'price_desc';
+  const pastCursor = byPrice && cursor ? await pastFromPrice(cursor, sort) : undefined;
+  if (pastCursor === null) return { items: [], nextCursor: undefined };
   const rows = await dbRead.serviceOffering.findMany({
     where: {
       ...listable,
       // Keep the listing rule's AND; the query only narrows it.
       AND: [
         ...listable.AND,
+        ...(pastCursor ? [pastCursor] : []),
         ...(query
           ? [
               {
@@ -494,7 +521,7 @@ export async function getServiceOfferingFeed({
     select: { ...serviceOfferingSelect, seller: { select: userWithCosmeticsSelect } },
     orderBy: feedOrderBy[sort],
     take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    ...(cursor && !byPrice ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
   const page = rows.slice(0, limit);
   return {
