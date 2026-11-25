@@ -100,7 +100,7 @@ function useOfferPrice(slug: string, imageId: number | undefined, enabled: boole
 }
 
 /** One of the viewer's own images; the server checks it is theirs and may be used. */
-function ImageAskStep({
+export function ImageAskStep({
   ask,
   pending,
   onAnswer,
