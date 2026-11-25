@@ -1,0 +1,30 @@
+{
+  "name": "facet-signed-out-sfw-host",
+  "description": "A facet search signed out on the SFW host with no text: the comics subset clause is added; facet values are never shaped.",
+  "request": {
+    "path": "/api/search/indexes/comics_v1/facet-search",
+    "body": "{\"facetName\":\"genre\",\"q\":\"\"}",
+    "host": "green.example.test"
+  },
+  "config": {
+    "passthrough": false
+  },
+  "viewer": null,
+  "upstream": {
+    "status": 200,
+    "body": "{\"facetHits\":[{\"value\":\"Action\",\"count\":2}],\"facetQuery\":null,\"processingTimeMs\":0}"
+  },
+  "expect": {
+    "call": {
+      "path": "/indexes/comics_v1/facet-search",
+      "body": {
+        "facetName": "genre",
+        "q": "",
+        "filter": [
+          "nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]"
+        ]
+      }
+    },
+    "body": "{\"facetHits\":[{\"value\":\"Action\",\"count\":2}],\"facetQuery\":null,\"processingTimeMs\":0}"
+  }
+}
