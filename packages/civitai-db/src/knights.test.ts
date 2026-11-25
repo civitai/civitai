@@ -257,6 +257,42 @@ describe('servableImage', () => {
       expect(await served(servableImage, id)).toBe(false);
       expect(await served(servableImageForSweeps, id)).toBe(true);
     });
+
+    describe('a file another row shares', () => {
+      beforeAll(async () => {
+        await pg.exec(`
+          INSERT INTO "Image" (id, "postId", url, "needsReview", "blockedFor") VALUES
+            (990000330, 1, 'f-queue', NULL, NULL), (990000331, 1, 'f-queue', 'csam', NULL),
+            (990000332, 1, 'f-block', NULL, NULL), (990000333, 1, 'f-block', NULL, 'CSAM'),
+            (990000334, 1, 'f-listed', NULL, NULL), (990000335, 1, 'f-listed', NULL, NULL),
+            (990000336, 1, 'f-deleted', NULL, NULL), (990000337, 1, 'f-deleted-clean', NULL, NULL),
+            (990000338, 1, 'f-clean', NULL, NULL), (990000339, 1, 'f-clean', NULL, NULL);
+          INSERT INTO "CsamReport" ("userId", images) VALUES (NULL, '["990000335"]');
+          INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "csamReview") VALUES
+            (990000398, 'f-deleted', true), (990000399, 'f-deleted-clean', false);
+        `);
+      });
+
+      it.each([
+        ['in the CSAM queue', 990000330],
+        ['blocked as CSAM', 990000332],
+        ['listed on a CSAM report', 990000334],
+        ['deleted by a moderator while in CSAM review', 990000336],
+      ])(
+        'refuses and lets sweeps retire a clean image whose file a row %s shares',
+        async (_, id) => {
+          expect(await served(servableImage, id)).toBe(false);
+          expect(await served(servableImageForSweeps, id)).toBe(false);
+        }
+      );
+
+      it('serves a clean image whose file only clean rows, or a deleted row not in review, share', async () => {
+        for (const id of [990000337, 990000338, 990000339]) {
+          expect(await served(servableImage, id)).toBe(true);
+          expect(await served(servableImageForSweeps, id)).toBe(true);
+        }
+      });
+    });
   });
 
   it('serves a clean image and refuses each minor flag', async () => {

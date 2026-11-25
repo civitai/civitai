@@ -63,7 +63,8 @@ export function heldImageSql(image: string): string {
  * Whether another image on the same stored url as the "Image" row aliased `image` is held by its
  * own state: a live row in the CSAM queue, blocked as CSAM (`heldItemImageSql`) or listed on any
  * CsamReport, or a moderator-deleted one that was in CSAM review or is listed. The same file must
- * not be served through a second row. Item-level only, never the owner's. Never NULL.
+ * not be served through a second row. Item-level only, never the owner's, which is why it is not
+ * `heldUrlSql` (held-url.ts), whose legs also read the owner, post and model. Never NULL.
  */
 export function sharedFileHeldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image === 'sf_i' || image === 'sf_d')

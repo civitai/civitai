@@ -1,6 +1,6 @@
--- "KnightsImageGate", regenerated: an image is out of every column when another "Image" row on the same stored url is
--- held or listed on a CsamReport (`sharedFileHeldImageSql` in packages/civitai-shared/src/held-media.ts, added to
--- `servableImageContent`). Same four columns, so CREATE OR REPLACE keeps the grants on the view.
+-- "KnightsImageGate", regenerated: an image is out of every column when another image on the same stored url is held
+-- by its own state (`sharedFileHeldImageSql`, packages/civitai-shared/src/held-media.ts). Same four columns, so
+-- CREATE OR REPLACE keeps the grants on the view.
 --
 -- Apply MANUALLY, per environment, as the owner of "Image" (SET ROLE <owner>), never as a superuser, after
 -- 20271127120000_knights_image_gate. Re-runnable. The SQL between the generated markers is `imageGateViewSql`'s output;
