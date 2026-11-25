@@ -19,6 +19,7 @@ import {
   shownReviewImageSql,
 } from '~/server/services/creator-service-review-image-sql';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { songsHiddenSql } from '~/server/services/song-visibility-sql';
 import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -238,25 +239,29 @@ export function imageVisibilityConditions({
   ];
 }
 
-/**
- * Songs are `Image` rows with `type = 'audio'`. A generic image read serves them only to `music`
- * flag holders (moderators hold it) and to their owner: this, as SQL over `"Image" i`, or
- * undefined when nothing is hidden. Give no `ownerId` to a read cached for many viewers, where a
- * viewer id in the statement would key the cache per user.
- */
-export function songsHiddenSql({ music, ownerId }: { music: boolean; ownerId?: number }) {
-  if (music) return undefined;
-  return ownerId
-    ? Prisma.sql`(i."type" != 'audio' OR i."userId" = ${ownerId})`
-    : Prisma.sql`i."type" != 'audio'`;
-}
+export { songsHiddenSql };
 
 /**
  * Whether generic image reads serve songs to `user`: the `music` flag, or a moderator (a Flipt answer
  * overrides the flag's role check, so a moderator outside its segment would otherwise lose them).
  */
-export const canSeeSongs = (user: SessionUser | undefined) =>
-  !!user?.isModerator || !!getFeatureFlagsLazy({ user }).music;
+export const canSeeSongs = (
+  user: SessionUser | undefined,
+  /** The caller's moderator view where it is narrower than the user's (`feedViewer`). */
+  isModerator = !!user?.isModerator
+) => isModerator || !!getFeatureFlagsLazy({ user }).music;
+
+/**
+ * `songsHiddenSql` over rows already read, for a cache filled for every viewer: `rows` without the
+ * songs `viewer` may not see (signed out when undefined).
+ */
+export function withoutHiddenSongs<T extends { type?: string | null; userId?: number | null }>(
+  rows: T[],
+  viewer: SessionUser | undefined
+) {
+  if (canSeeSongs(viewer)) return rows;
+  return rows.filter((row) => row.type !== 'audio' || (!!viewer && row.userId === viewer.id));
+}
 
 /**
  * The image's owner, rating and post, or NOT_FOUND unless the viewer may see its generation data:
@@ -270,10 +275,13 @@ export async function assertImageVisibleToViewer({
   withSignedOutVerdict = false,
   ownerSeesHeld = false,
   judgingCrucibleIds,
+  music,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
+  /** `imageVisibilityConditions`' `music`: pass `canSeeSongs` from a read that serves the image. */
+  music?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`. */
   ownerSeesHeld?: boolean;
   /** `imageVisibilityConditions`' `judgingCrucibleIds`. */
@@ -290,7 +298,11 @@ export async function assertImageVisibleToViewer({
   withSignedOutVerdict?: boolean;
 }) {
   const signedOutVerdict = withSignedOutVerdict
-    ? Prisma.sql`(${Prisma.join([Prisma.sql`TRUE`, ...imageVisibilityConditions({})], ' AND ')})`
+    ? Prisma.sql`(${Prisma.join(
+        // Signed out holds no `music` flag.
+        [Prisma.sql`TRUE`, ...imageVisibilityConditions({ music: false })],
+        ' AND '
+      )})`
     : Prisma.sql`NULL::boolean`;
   // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
   // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
@@ -313,7 +325,13 @@ export async function assertImageVisibleToViewer({
     WHERE ${Prisma.join(
       [
         Prisma.sql`i.id = ${id}`,
-        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, judgingCrucibleIds }),
+        ...imageVisibilityConditions({
+          userId,
+          isModerator,
+          ownerSeesHeld,
+          judgingCrucibleIds,
+          music,
+        }),
       ],
       ' AND '
     )}

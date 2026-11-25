@@ -30,6 +30,15 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFliptSync: (key: string, entityId?: string) =>
     key === 'music' ? entityId === String(FAN_ID) : null,
 }));
+// assertImageVisibleToViewer reads through Kysely; its statements get the PGlite answers below.
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
 vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
   queryWithTimeout: queryWithTimeoutMock,
@@ -43,9 +52,20 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   registerCounter: () => ({ inc: vi.fn() }),
 }));
 
-import { getAllImages, getImagesForModelVersion, getImagesForPosts } from '../image.service';
+import {
+  getAllImages,
+  getImagesForModelVersion,
+  getImagesForModelVersionCache,
+  getImagesForPosts,
+} from '../image.service';
+import { getCollectionCoverImages } from '~/server/services/collection.service';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getImageHandler } from '~/server/controllers/image.controller';
-import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  imageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
 
 const OWNER = 10;
 const STRANGER = 20;
@@ -181,8 +201,9 @@ describe('the image feed (getInfinite, getImagesAsPostsInfinite, v1 images, coll
     expect(await feedRows({ id: MOD, isModerator: true })).toEqual(ALL);
   });
 
-  it('keeps a cached model gallery free of any viewer id', async () => {
-    expect(await feedRows({ id: STRANGER }, { modelId: 1 })).toEqual(NO_SONGS);
+  it('serves the owner their song in a model gallery too, and a stranger none', async () => {
+    expect(await feedRows({ id: OWNER }, { modelId: 1 })).toEqual([...NO_SONGS, SONG]);
+    expect(await feedRows({ id: STRANGER }, { modelId: 1 })).toEqual([...NO_SONGS, STRANGERS_SONG]);
   });
 });
 
@@ -271,8 +292,9 @@ describe('model version images (getImagesForModelVersion)', () => {
       })
     );
 
-  it('serves no song without a viewer, as the shared cache reads it', async () => {
-    expect(await read()).toEqual(NO_SONGS);
+  // The shared cache is filled with no viewer; its readers drop songs per viewer (below).
+  it('keeps the song when read with no viewer, as the shared cache is filled', async () => {
+    expect(await read()).toEqual([...NO_SONGS, SONG]);
   });
 
   // The showcase holds the model owner's posts only, so STRANGERS_SONG is never in it.
@@ -280,5 +302,117 @@ describe('model version images (getImagesForModelVersion)', () => {
     expect(await read({ id: FAN })).toEqual([...NO_SONGS, SONG]);
     expect(await read({ id: OWNER })).toEqual([...NO_SONGS, SONG]);
     expect(await read({ id: STRANGER })).toEqual(NO_SONGS);
+  });
+});
+
+describe('the shared showcase cache (getImagesForModelVersionCache)', () => {
+  const read = async (viewer?: Viewer) => {
+    installFakeCacheRedis();
+    const image = (id: number, type: string, userId = OWNER) => ({
+      id,
+      userId,
+      type,
+      modelVersionId: 9,
+      nsfwLevel: 1,
+      minor: false,
+    });
+    await redis.packed.set(`${REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION}:9` as never, {
+      modelVersionId: 9,
+      images: [image(PICTURE, 'image'), image(VIDEO, 'video'), image(SONG, 'audio')],
+      cachedAt: new Date(),
+    });
+    return ids((await getImagesForModelVersionCache([9], asUser(viewer)))[9].images);
+  };
+
+  it('drops the song for a viewer without the flag, and keeps it for its owner', async () => {
+    expect(await read()).toEqual(NO_SONGS);
+    expect(await read({ id: STRANGER })).toEqual(NO_SONGS);
+    expect(await read({ id: OWNER })).toEqual([...NO_SONGS, SONG]);
+  });
+
+  it('keeps the song for a flagged viewer and a moderator', async () => {
+    expect(await read({ id: FAN })).toEqual([...NO_SONGS, SONG]);
+    expect(await read({ id: MOD, isModerator: true })).toEqual([...NO_SONGS, SONG]);
+  });
+});
+
+describe('reads that open an image by id (assertImageVisibleToViewer)', () => {
+  const opens = (viewer: Viewer, music?: boolean) =>
+    Promise.all(
+      ALL.map((id) =>
+        assertImageVisibleToViewer({
+          id,
+          userId: viewer?.id,
+          isModerator: viewer?.isModerator,
+          music,
+        }).then(
+          () => id,
+          () => undefined
+        )
+      )
+    ).then((found) => found.filter((id) => id !== undefined));
+
+  it('opens no song but their own to a viewer without the flag', async () => {
+    expect(await opens(undefined, false)).toEqual(NO_SONGS);
+    expect(await opens({ id: OWNER }, false)).toEqual([...NO_SONGS, SONG]);
+  });
+
+  it('opens every song to a flagged viewer and to a moderator', async () => {
+    expect(await opens({ id: STRANGER }, true)).toEqual(ALL);
+    expect(await opens({ id: MOD, isModerator: true }, false)).toEqual(ALL);
+  });
+
+  it('never calls a song visible signed out, for a shared cache', async () => {
+    const song = await assertImageVisibleToViewer({
+      id: SONG,
+      userId: OWNER,
+      music: false,
+      withSignedOutVerdict: true,
+    });
+    const picture = await assertImageVisibleToViewer({
+      id: PICTURE,
+      userId: OWNER,
+      music: false,
+      withSignedOutVerdict: true,
+    });
+    expect([song.visibleSignedOut, picture.visibleSignedOut]).toEqual([false, true]);
+  });
+});
+
+describe('collection covers (getCollectionCoverImages)', () => {
+  const songClauses = async (viewer: Viewer) => {
+    const statements: { text: string; values: unknown[] }[] = [];
+    const read = dbMock.dbRead.$queryRaw.getMockImplementation();
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      first: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      statements.push(Prisma.sql(first, ...values));
+      return [];
+    }) as never);
+    await getCollectionCoverImages({
+      collectionIds: [1],
+      imagesPerCollection: 10,
+      browsingLevel: 31,
+      showsImage: () => true,
+      viewer: asUser(viewer),
+    });
+    dbMock.dbRead.$queryRaw.mockImplementation(read!);
+    const stmt = statements.find((x) => x.text.includes('imageItemImage'))!;
+    return [...stmt.text.matchAll(SONG_CLAUSE)].map((m) =>
+      m[0].replace(/\$(\d+)/g, (_, n) => String(stmt.values[Number(n) - 1]))
+    );
+  };
+
+  // One per kind of item: an image, a post's, a model's, an article's and a 3D model's cover.
+  it("picks no song as a cover but the viewer's own, for a viewer without the flag", async () => {
+    expect(await songClauses(undefined)).toEqual(Array(5).fill(`i."type" != 'audio'`));
+    expect(await songClauses({ id: STRANGER })).toEqual(
+      Array(5).fill(`(i."type" != 'audio' OR i."userId" = ${STRANGER})`)
+    );
+  });
+
+  it('applies none for a flagged viewer', async () => {
+    expect(await songClauses({ id: FAN })).toEqual([]);
   });
 });

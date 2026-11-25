@@ -12,7 +12,10 @@ import { dbRead } from '~/server/db/client';
 import { getUserFollows, imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  canSeeSongs,
+} from '~/server/services/image-visibility.service';
 import {
   getUserCollectionPermissionsById,
   removeEntityFromAllCollections,
@@ -446,7 +449,7 @@ export const getImagesForModelVersionHandler = async ({
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
   const [byVersion, version] = await Promise.all([
-    getImagesForModelVersionCache([input.id]),
+    getImagesForModelVersionCache([input.id], ctx.user ?? undefined),
     dbRead.modelVersion.findUnique({
       where: { id: input.id },
       select: { modelId: true, model: { select: { userId: true, minor: true, sfwOnly: true } } },
@@ -1366,6 +1369,7 @@ export const getEntitiesCoverImageHandler = async ({
       ...input,
       include: ['tags'],
       viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
+      music: canSeeSongs(ctx.user ?? undefined),
       seesReportListed: seesReportListed(ctx),
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
@@ -1395,12 +1399,15 @@ export const getImageContestCollectionDetailsHandler = async ({
     const userId = ctx.user?.id;
     const isModerator = ctx.user?.isModerator;
     // An image the viewer may not open gets the same answer as an id with no contest entries.
-    const image = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).catch(
-      (error) => {
-        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
-        throw error;
-      }
-    );
+    const image = await assertImageVisibleToViewer({
+      id: input.id,
+      userId,
+      isModerator,
+      music: canSeeSongs(ctx.user ?? undefined),
+    }).catch((error) => {
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
+      throw error;
+    });
     if (!image) return { collectionItems: [], post: null };
 
     const collectionItems = await getImageContestCollectionDetails({

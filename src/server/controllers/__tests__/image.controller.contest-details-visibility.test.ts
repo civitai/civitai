@@ -98,6 +98,8 @@ describe('getImageContestCollectionDetailsHandler', () => {
       id: IMAGE_ID,
       userId: 900,
       isModerator: true,
+      // A moderator sees songs (canSeeSongs).
+      music: true,
     });
   });
 

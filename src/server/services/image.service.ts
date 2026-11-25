@@ -110,6 +110,7 @@ import {
   songsHiddenSql,
   imageBlockedForConditions,
   notReportListedSql,
+  withoutHiddenSongs,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
   isReviewImageBlockedForViewer,
@@ -2082,9 +2083,16 @@ export const getImageDetail = async ({
   userId,
   isModerator,
   ownerSeesHeld = false,
-}: GetByIdInput & { userId?: number; isModerator?: boolean; ownerSeesHeld?: boolean }) => {
+  music,
+}: GetByIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  ownerSeesHeld?: boolean;
+  /** `assertImageVisibleToViewer`'s `music`. */
+  music?: boolean;
+}) => {
   // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
-  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
+  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld, music });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
@@ -2952,11 +2960,9 @@ const getAllImagesUncaptured = async (
   if (types && types.length > 0) {
     AND.push(Prisma.sql`i.type = ANY(ARRAY[${Prisma.join(types)}]::"MediaType"[])`);
   }
-  // Model galleries are cached across viewers, so they exempt no owner (songsHiddenSql).
-  const songsHidden = songsHiddenSql({
-    music: canSeeSongs(user),
-    ownerId: modelId || modelVersionId || model3dId ? undefined : userId,
-  });
+  // The availability clause below already binds `userId` for every non-moderator, so the owner
+  // carve-out keeps a cached model gallery keyed as it was.
+  const songsHidden = songsHiddenSql({ music: canSeeSongs(user, isModerator), ownerId: userId });
   if (songsHidden) AND.push(songsHidden);
 
   // [x]
@@ -5040,8 +5046,9 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(...reviewedGalleryImageConditions(browsingLevel || allBrowsingLevelsFlag));
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
-  // A read without a viewer fills the shared cache, so it serves no song.
-  const songsHidden = songsHiddenSql({ music: !!user && canSeeSongs(user), ownerId: userId });
+  // A read without a viewer fills the shared cache: its readers drop songs per viewer
+  // (withoutHiddenSongs).
+  const songsHidden = user && songsHiddenSql({ music: canSeeSongs(user), ownerId: userId });
   if (songsHidden) imageWhere.push(songsHidden);
 
   const query = Prisma.sql`
@@ -5220,8 +5227,18 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   },
 });
 
-export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
-  const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
+/** The shared showcase cache, without the songs `viewer` may not see (signed out when undefined). */
+export async function getImagesForModelVersionCache(
+  modelVersionIds: number[],
+  viewer: SessionUser | undefined
+) {
+  const cached = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const images: typeof cached = {};
+  for (const versionId of Object.keys(cached))
+    images[versionId] = {
+      ...cached[versionId],
+      images: withoutHiddenSongs(cached[versionId].images, viewer),
+    };
   // `images` is keyed by model version id, so this lookup treats version ids as image ids and the
   // entry-level `tags` it attaches belong to an unrelated image; no consumer reads them. Each
   // image's own `tags` come from the cache's appendFn and are unaffected.
@@ -6137,10 +6154,13 @@ export const getEntityCoverImage = async ({
   viewer,
   eventDecorationViewer,
   seesReportListed = false,
+  music = false,
 }: GetEntitiesCoverImage & {
   include?: ['tags'];
   // Covers follow the parent entity's visibility for this viewer; undefined is signed out.
   viewer: CoverImageViewer;
+  /** The viewer may see songs (`canSeeSongs`); otherwise no song but their own is a cover. */
+  music?: boolean;
   // A bounty's own images follow the bounty search index's exclusions (its uploader keeps theirs)
   // unless this is set.
   seesReportListed?: boolean;
@@ -6164,6 +6184,7 @@ export const getEntityCoverImage = async ({
       ...imageVisibilityConditions({
         userId: signedIn ? viewerId ?? undefined : undefined,
         isModerator,
+        music,
       }),
     ],
     ' AND '
@@ -6175,7 +6196,11 @@ export const getEntityCoverImage = async ({
   ) AND ${minorMatureImageVisibleSql({
     userId: signedIn ? viewerId ?? undefined : undefined,
     isModerator,
-  })}`;
+  })} AND ${
+    (!isModerator &&
+      songsHiddenSql({ music, ownerId: signedIn ? viewerId ?? undefined : undefined })) ||
+    Prisma.sql`TRUE`
+  }`;
 
   // An unrated image is never a cover for anyone but moderators, owner included.
   const coverRated = Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR ${isModerator}::boolean)`;
@@ -7463,6 +7488,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     id,
     userId: viewer.user?.id,
     isModerator: viewer.user?.isModerator,
+    music: canSeeSongs(viewer.user ?? undefined),
     ownerSeesHeld: isSessionOrFullUserKey(viewer),
   });
   const showMedia = await viewerCanSeeImageMedia(viewer, visible);

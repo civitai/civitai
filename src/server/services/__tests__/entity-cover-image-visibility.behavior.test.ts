@@ -348,8 +348,12 @@ beforeAll(async () => {
 });
 
 type Viewer = (typeof viewers)[keyof typeof viewers];
-const coverOf = async (entityType: string, entityId: number, viewer: Viewer) => {
-  const covers = await getEntityCoverImage({ entities: [{ entityType, entityId }], viewer });
+const coverOf = async (entityType: string, entityId: number, viewer: Viewer, music = false) => {
+  const covers = await getEntityCoverImage({
+    entities: [{ entityType, entityId }],
+    viewer,
+    music,
+  });
   return covers[0]?.id ?? null;
 };
 
@@ -519,10 +523,23 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
   );
 
   it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
-    'gives a post no cover from a song held for csam review, for a %s viewer',
+    'gives a post no cover from a song held for csam review, for a %s viewer with the music flag',
     async (who) => {
-      expect(await coverOf('Post', 3901, viewers[who])).toBeNull();
-      expect(await coverOf('Post', 3902, viewers[who])).toBe(3912);
+      expect(await coverOf('Post', 3901, viewers[who], true)).toBeNull();
+      expect(await coverOf('Post', 3902, viewers[who], true)).toBe(3912);
+    }
+  );
+
+  it.each([
+    ['anonymous', null],
+    ['stranger', null],
+    ['owner', 3912],
+    ['moderator', 3912],
+  ] as const)(
+    'gives a post a song cover without the music flag only for its owner and moderators: %s',
+    async (who, cover) => {
+      expect(await coverOf('Post', 3902, viewers[who])).toBe(cover);
+      expect(await coverOf('Image', 3912, viewers[who])).toBe(cover);
     }
   );
 
