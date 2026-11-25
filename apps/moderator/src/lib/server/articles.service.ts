@@ -22,7 +22,6 @@ export type ModeratorArticleRow = {
   /** The cover is withheld from this moderator: no key and no type. */
   coverRestricted: boolean;
   username: string | null;
-  userImage: string | null;
 };
 
 export async function getModeratorArticles({
@@ -64,7 +63,6 @@ export async function getModeratorArticles({
       'Image.url as coverUrl',
       'Image.type as coverType',
       'User.username',
-      'User.image as userImage',
     ])
     .orderBy('Article.createdAt', 'desc')
     .limit(limit)

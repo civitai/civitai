@@ -99,6 +99,11 @@ describe('/articles/unpublished covers', () => {
   it('sends it to a moderator with the grant', async () => {
     expect(find(await articles(WITH_GRANT), 'id', 1)).toMatchObject({ coverUrl: KEY });
   });
+
+  it("never sends the author's legacy profile image", async () => {
+    await db.exec(`UPDATE "User" SET image = '${KEY}' WHERE id = ${OWNER}`);
+    for (const row of await articles(WITH_GRANT)) expect(row).not.toHaveProperty('userImage');
+  });
 });
 
 describe('/reports/user models tab covers', () => {
