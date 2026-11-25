@@ -11,7 +11,7 @@ import {
 import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
 import { heldImageSql, heldUserSql } from '@civitai/shared/held-media';
 import { heldUrlSql } from '@civitai/shared/held-url';
-import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
+import { semanticImageHeldText } from '~/server/services/semantic-image-flags.sql';
 
 /**
  * Which images `/api/mod/retracted-media` serves, and to whom: the shared `retracted-media-tier`

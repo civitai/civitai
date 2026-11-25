@@ -1,5 +1,4 @@
 import type { Pool } from 'pg';
-import { heldUserSql } from '../held';
 import { normalizeTitle, nsfwLevels } from '../models/document';
 import { bountyDocument } from './document';
 
@@ -20,7 +19,7 @@ const XXX = 16;
 export const BOUNTY_ELIGIBLE_SQL = `b."userId" IS NOT NULL AND b."userId" <> -1
   AND b.availability NOT IN ('Unsearchable', 'Private') AND NOT b.poi
   AND b."nsfwLevel" <> 0 AND (b."nsfwLevel" & ${BLOCKED}) = 0
-  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT ${heldUserSql('b."userId"')}`;
+  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL`;
 
 export type BountyPayload = {
   /** Exact-title key, see normalizeTitle. */

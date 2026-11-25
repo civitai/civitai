@@ -12,7 +12,7 @@ import {
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   resolveCoverImageId,
 } from '~/server/services/cover-image.service';
-import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
+import { semanticImageHeldText } from '~/server/services/semantic-image-flags.sql';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';

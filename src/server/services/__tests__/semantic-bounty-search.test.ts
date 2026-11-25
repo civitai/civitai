@@ -198,9 +198,9 @@ describe('semantic bounty search', () => {
       UPDATE "Bounty" SET poi = true WHERE id = 4;
       INSERT INTO "CsamReport" ("userId") VALUES (5);
       UPDATE "Bounty" SET "nsfwLevel" = 33 WHERE id = 6;`);
-    expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([1]);
-    // Dropped before the feed read, so nothing of theirs is fetched.
-    expect(h.fetched).toEqual([[1]]);
+    // 5's owner is named on a report. A held owner does not hide the row (civitai/civitai#10360).
+    expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([5, 1]);
+    expect(h.fetched).toEqual([[5, 1]]);
   });
 
   it('re-checks the level the feed serves at, XXX for a bounty marked nsfw', async () => {

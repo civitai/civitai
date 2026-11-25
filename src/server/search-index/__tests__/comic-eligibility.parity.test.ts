@@ -119,7 +119,7 @@ const spec: ParitySpec = {
       panels: [{}, { status: `'Pending'`, image: false, imageUrl: 'NULL' }],
     }),
     comic(15, 'deletedOwner', false, { project: `3, 'Active', false` }),
-    comic(16, 'ownerReported', false, { project: `4, 'Active', false` }),
+    comic(16, 'eligible:ownerReported', true, { project: `4, 'Active', false` }),
     withSql(
       comic(18, 'chapterPublic', false),
       `UPDATE "ComicChapter" SET availability = 'Private' WHERE "projectId" = 18`
@@ -147,9 +147,9 @@ const spec: ParitySpec = {
     comic(25, 'panelBlocked', false, {
       panels: [{ image: `'Scanned', NULL, false, 1, NULL, false, false, 32` }],
     }),
-    // A held panel image anywhere in the comic, even in an unpublished chapter.
+    // A panel image whose owner is reported, anywhere in the comic: holds hide nothing.
     withSql(
-      comic(26, 'panelImageHeld', false),
+      comic(26, 'eligible:panelImageHeld', true),
       `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (26, 2, 'Draft')`,
       `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (2601, 'Scanned', false, 4)`,
       `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (26, 2, 2601, 'u', 'Pending')`
@@ -162,14 +162,14 @@ const spec: ParitySpec = {
     comic(32, 'coverMinor', false, { cover: `'Scanned', NULL, false, 1, NULL, true` }),
     comic(33, 'coverPoi', false, { cover: `'Scanned', NULL, false, 1, NULL, false, true` }),
     comic(34, 'coverRated', false, { cover: `'Scanned', NULL, false, 1, NULL, false, false, 0` }),
-    comic(35, 'coverHeld', false, { cover: `'Scanned', NULL, false, 4` }),
+    comic(35, 'eligible:coverHeld', true, { cover: `'Scanned', NULL, false, 4` }),
     withSql(
       comic(36, 'coverListed', false, { cover: `'Scanned', NULL, false` }),
       `INSERT INTO "CsamReport" (images) VALUES ('[369]')`
     ),
-    // Chapter 1 clean; a Ready panel in a second Public chapter is held.
+    // Chapter 1 clean; a Ready panel in a second Public chapter has a reported owner: holds hide nothing.
     withSql(
-      comic(37, 'heldPanelInSecondChapter', false),
+      comic(37, 'eligible:heldPanelInSecondChapter', true),
       `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (37, 2, 'Published')`,
       `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (3701, 'Scanned', false, 4)`,
       `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (37, 2, 3701, 'u', 'Ready')`
@@ -188,8 +188,18 @@ const spec: ParitySpec = {
       `INSERT INTO "Image" (id, ingestion, "tosViolation", minor) VALUES (3901, 'Scanned', false, true)`,
       `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (39, 2, 3901, 'u', 'Ready')`
     ),
+    // A panel image listed on a report, anywhere in the comic, even in an unpublished chapter.
+    withSql(
+      comic(40, 'panelListed', false),
+      `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (40, 2, 'Draft')`,
+      `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (4001, 'Scanned', false, 1)`,
+      `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (40, 2, 4001, 'u', 'Pending')`,
+      `INSERT INTO "CsamReport" (images) VALUES ('[4001]')`
+    ),
   ],
   clauses: [
+    'panelListed',
+    'coverListed',
     'status',
     'tosViolation',
     'systemUser',
@@ -202,7 +212,6 @@ const spec: ParitySpec = {
     'panelImageTos',
     'everyReadyPanelClean',
     'deletedOwner',
-    'ownerReported',
     'chapterPublic',
     'projectUnrated',
     'projectBlocked',
@@ -211,7 +220,6 @@ const spec: ParitySpec = {
     'panelPoi',
     'panelUnrated',
     'panelBlocked',
-    'panelImageHeld',
     'coverScanned',
     'coverNotInReview',
     'coverTos',
@@ -219,9 +227,6 @@ const spec: ParitySpec = {
     'coverMinor',
     'coverPoi',
     'coverRated',
-    'coverHeld',
-    'coverListed',
-    'heldPanelInSecondChapter',
     'flaggedPanelInSecondChapter',
   ],
   site: async (prisma) =>
