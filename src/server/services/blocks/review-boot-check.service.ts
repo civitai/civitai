@@ -46,7 +46,10 @@ import {
 export const BOOT_CHECK_CLIENT_TIMEOUT_MS = 35_000;
 /** The pause before the single retry of an `unavailable` attempt. */
 export const BOOT_CHECK_RETRY_DELAY_MS = 2_000;
-/** Longest `firstError` stored on the detail (it is shown to moderators and the author). */
+/**
+ * Longest `firstError` stored on the detail. Shown to moderators only: an author is given a fixed
+ * reason instead (`redactDeployDetailForAuthor`).
+ */
 const FIRST_ERROR_MAX_CHARS = 300;
 
 /** The rollout mode. Any answer other than `shadow` / `enforce`, a read error included, is off. */
@@ -198,6 +201,8 @@ export async function callBootChecker(
   if (body.result !== 'passed' && body.result !== 'failed') {
     return unavailable('body', 'checker body has no result');
   }
+  // 🔴 `passed` only means a BLOCK_READY message arrived; see `decideBootCheckSettle` for why that
+  // is not yet proof the app booted.
   return {
     result: body.result,
     ms: typeof body.ms === 'number' && Number.isFinite(body.ms) ? Math.round(body.ms) : null,
@@ -318,6 +323,13 @@ export type BootCheckDecision = {
 /**
  * 🔴 THE shadow/enforce switch, pure. Only an ENFORCED `failed` fails the preview; shadow always
  * goes live, and `unavailable` goes live in both modes (fail-open).
+ *
+ * 🔴 KNOWN GAP — MUST BE ADDRESSED BEFORE THE FLAG MOVES TO `enforce`: a `passed` result means a
+ * message of type BLOCK_READY was posted during the check, and nothing ties it to a completed
+ * SDK handshake. A bundle that posts BLOCK_READY itself, without initialising anything, passes,
+ * so under `enforce` a pass would clear the boot-check hold for an app that never boots. This
+ * change does not alter pass/fail semantics; the check needs a ready signal the bundle cannot
+ * fake before it gates anything.
  */
 export function decideBootCheckSettle(
   mode: ReviewBootCheckRecordedMode,
