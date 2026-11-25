@@ -477,7 +477,7 @@ export const orchestratorRouter = router({
       } = input;
       // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
       assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
-      // Fail closed: `z.any()` lets any shape through, and only a list of strings is checked.
+      // `z.any()` leaves tags unchecked: reject anything but a list of strings, then app-block tags.
       if (inputTags != null) {
         if (!Array.isArray(inputTags) || inputTags.some((tag) => typeof tag !== 'string'))
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'tags must be a list of strings.' });

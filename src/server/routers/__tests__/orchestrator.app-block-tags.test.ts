@@ -46,7 +46,7 @@ const errorOf = (p: Promise<unknown>) =>
     (e: { code?: string; message?: string }) => ({ code: e.code, message: e.message })
   );
 
-// Decision: only an App Blocks submit puts an app-block tag on a workflow; this generation entry
+// Decision (civitai/civitai#10435): only an App Blocks submit puts an app-block tag on a workflow; this generation entry
 // refuses one through the same check the workflow tag patch uses.
 describe('generateFromGraph app-block tags', () => {
   beforeEach(() => vi.clearAllMocks());

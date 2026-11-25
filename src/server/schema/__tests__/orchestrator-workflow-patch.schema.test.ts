@@ -39,7 +39,7 @@ describe('orchestrator.patch workflow patches', () => {
   });
 });
 
-// Decision: only an App Blocks submit puts an app-block tag on a workflow; an owner may still
+// Decision (civitai/civitai#10435): only an App Blocks submit puts an app-block tag on a workflow; an owner may still
 // remove one. Keep removal open: it narrows an app's access and fails closed.
 describe('orchestrator.patch workflow tags', () => {
   const tags = (...input: { tag: string; op: 'add' | 'remove' }[]) =>
