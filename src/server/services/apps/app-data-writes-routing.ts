@@ -7,8 +7,11 @@
  * flag (`blockInitAppData` in `blockInitFragmentGate.ts`). The `appData` key is present only when
  * every one of these holds, and ABSENT otherwise:
  *  - the mint is a PRODUCTION page run: the page path (entity `none`) of an approved app, not a
- *    dev-tunnel preview. The dev-tunnel, private-run and review-preview tokens come from other
- *    mint branches or endpoints, which never call this;
+ *    dev-tunnel preview. A dev-tunnel preview of an APPROVED app takes the same mint path as a
+ *    production run and DOES reach this, marked only by the request's `devTunnel: true`, so the
+ *    explicit `devTunnel` check below is what excludes it. The other dev-tunnel tokens (an
+ *    ephemeral or owned non-approved app), the private-run token and the review-preview token come
+ *    from other mint branches or endpoints, which never call this;
  *  - the token is a block token (an OAuth token is not served by the service);
  *  - `APP_DATA_SERVICE_PUBLIC_URL` is set to a plain https URL;
  *  - the app's blockId is a slug the service accepts;
