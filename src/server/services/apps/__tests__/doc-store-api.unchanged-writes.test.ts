@@ -979,7 +979,7 @@ describe('the signed internal route', () => {
     expect((await row(A, b.key))?.seq).toBe(b.seq);
   });
 
-  it("a delete answers its tombstone's seq; a delete that removed nothing answers none", async () => {
+  it("a delete answers its tombstone's seq and the key it removed; a delete that removed nothing answers none", async () => {
     const A = freshApp();
     const t = await mint(A, V1);
     const put1 = await expectOk(
@@ -1001,7 +1001,9 @@ describe('the signed internal route', () => {
         query: { from: A.blockId },
       })
     );
-    expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A) });
+    // The key: what the overlay hides. For an `@me` delete it is the derived key, which the
+    // caller never sent, so the answer is the only place it learns it.
+    expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A), key: 'del-1' });
     expect((del.body as { seq: number }).seq).toBeGreaterThan((put1.body as { seq: number }).seq);
     const again = await expectOk(
       send({
@@ -1013,6 +1015,16 @@ describe('the signed internal route', () => {
       })
     );
     expect(again.body).toEqual({ deleted: false });
+  });
+
+  it('the public route answers a delete exactly `{ deleted: true }`: no seq, no key', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(
+      call({ token: t, method: 'PUT', path: '/drafts/del-pub-7', body: { data: { n: 47 } } })
+    );
+    const del = await expectOk(call({ token: t, method: 'DELETE', path: '/drafts/del-pub-7' }));
+    expect(del.body).toEqual({ deleted: true });
   });
 
   it('a mark answers markSeq on the internal route only', async () => {

@@ -1462,8 +1462,12 @@ async function run(
             authorUserId: uid,
           });
         }
-        // `{ deleted }` only on the public route: the tombstone's `seq` is the internal route's.
-        if (service && result.deleted) return ok({ deleted: true, seq: result.seq });
+        // `{ deleted }` only on the public route. The internal route adds the tombstone's `seq` and
+        // the key it removed: for an `@me` delete that is the derived key, which app-data-go never
+        // sent and needs to hide the document from its caches until the streams show the delete.
+        if (service && result.deleted) {
+          return ok({ deleted: true, seq: result.seq, key: route.key });
+        }
         return ok({ deleted: result.deleted });
       };
       if (!shared || route.op === 'delete') {

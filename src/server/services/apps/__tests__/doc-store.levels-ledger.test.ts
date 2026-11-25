@@ -72,6 +72,8 @@ const EXEMPT: Record<string, string> = {
     "the per-collection purge's dump: moderator maintenance, stored beside the delete, never returned to an app",
   SQL_PRIVATE_FEED_DOCS:
     "the registry private stream: one user's OWN private documents (never a shared one), streamed only to that user's token",
+  SQL_VIEWER_FEED_DOCS:
+    "the registry per-viewer stream: one user's OWN shared documents, through the predicate's author arm at the token's domain ceiling, streamed only to that user's token",
 };
 
 /**
