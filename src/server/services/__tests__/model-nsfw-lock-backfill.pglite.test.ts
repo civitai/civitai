@@ -43,6 +43,7 @@ beforeAll(async () => {
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, nsfw boolean NOT NULL DEFAULT true,
       minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
+      "sfwOnly" boolean NOT NULL DEFAULT false,
       status text NOT NULL DEFAULT 'Published',
       "deletedAt" timestamp(3), "lockedProperties" text[], meta jsonb
     );
@@ -338,6 +339,19 @@ describe('model nsfw lock backfill: revert', () => {
     expect(await revertScanLocks([ELIGIBLE])).toEqual([]);
   });
 
+  it.each([
+    ['minor', `minor = true`],
+    ['poi', `poi = true`],
+    ['SFW-only', `"sfwOnly" = true`],
+  ])('leaves a model flagged %s since the unlock', async (_flag, set) => {
+    await unlockScanLocks([ELIGIBLE]);
+    await db.exec(`UPDATE "Model" SET ${set} WHERE id = ${ELIGIBLE}`);
+    const before = await row(ELIGIBLE);
+    expect(await nextRevertBatch(SCAN, 0, 100)).toEqual([]);
+    expect(await revertScanLocks([ELIGIBLE])).toEqual([]);
+    expect(await row(ELIGIBLE)).toEqual(before);
+  });
+
   it('reverts a model a moderator ruled on only before the unlock (control)', async () => {
     await unlockScanLocks([ELIGIBLE_RULED_BEFORE]);
     expect(await revertScanLocks([ELIGIBLE_RULED_BEFORE])).toEqual([ELIGIBLE_RULED_BEFORE]);
@@ -545,6 +559,24 @@ describe('model nsfw lock backfill: profanity locks', () => {
         'it carries a text-scan marker from before the unlock',
         `UPDATE "Model" SET meta = meta || '{"systemNsfwLock": {"source": "text-scan", "at": "2020-01-01T00:00:00Z"}}'
          WHERE id = $ID`,
+      ],
+      [
+        'it was locked again since, with no marker and no moderator activity',
+        `UPDATE "Model" SET "lockedProperties" = array_append("lockedProperties", 'nsfw') WHERE id = $ID`,
+      ],
+      [
+        // As applyRaisedRestrictions writes an owner's minor flag on a model with no lock or marker.
+        'the owner flagged it minor since',
+        `UPDATE "Model" SET minor = true, nsfw = false, "sfwOnly" = true WHERE id = $ID`,
+      ],
+      [
+        'it is minor now, with the rating unchanged',
+        `UPDATE "Model" SET minor = true WHERE id = $ID`,
+      ],
+      ['it is poi now, with the rating unchanged', `UPDATE "Model" SET poi = true WHERE id = $ID`],
+      [
+        'it is SFW-only now, with the rating unchanged',
+        `UPDATE "Model" SET "sfwOnly" = true WHERE id = $ID`,
       ],
       [
         'its text-scan marker has no readable time',

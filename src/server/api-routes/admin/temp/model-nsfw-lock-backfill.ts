@@ -231,10 +231,12 @@ const unlockedStateSql = (bucket: Bucket) =>
 /**
  * A model an unlock run of the bucket changed and no revert has put back yet. A moderator's decision
  * since the unlock wins over a revert: a model they ruled on since is left as it is, and so is one
- * no longer as the unlock left it (`unlockedStateSql`).
+ * no longer as the unlock left it (`unlockedStateSql`). A model now minor, poi or SFW-only is left too:
+ * the unlock never touched one, and a lock put back on it would hold a rating it may not carry.
  */
 const revertableSql = (bucket: Bucket) => Prisma.sql`
   jsonb_typeof(m.meta) = 'object'
+  AND NOT (m.minor OR m.poi OR m."sfwOnly")
   AND m.meta->'nsfwLockBackfill'->>'bucket' = ${bucket}
   AND (m.meta->'nsfwLockBackfill'->>'revertedAt') IS NULL
   AND jsonb_typeof(m.meta->'nsfwLockBackfill'->'priorLockedProperties') = 'array'
