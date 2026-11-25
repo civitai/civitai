@@ -2,7 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import {
+  AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M,
   isAgentReviewModelId,
+  isWithinAgentReviewPriceCeiling,
   type AgentReviewModelOption,
 } from '~/shared/constants/agent-review-model.constants';
 
@@ -82,7 +84,19 @@ export const getAgentReviewModelOptions = createTtlMemo(
 );
 
 /**
+ * The models a moderator can pick: the cached list, without those priced above the input-price
+ * ceiling. This is the picker's view only; {@link resolveAgentReviewModel} is what enforces it.
+ */
+export async function getPickableAgentReviewModels(): Promise<AgentReviewModelOption[]> {
+  return (await getAgentReviewModelOptions()).filter(isWithinAgentReviewPriceCeiling);
+}
+
+/**
  * The listed entry for a model a moderator chose, with its price.
+ *
+ * 🔴 THE ENFORCEMENT POINT FOR THE PRICE CEILING. The picker only hides dearer models; a typed or
+ * crafted id reaches here, and a model whose input price is above
+ * `AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M` is refused.
  *
  * The price is what keeps the per-run cost cap honest: the review agent estimates its spend from
  * token counts and a per-model price, so a model it is not given a price for would be costed at
@@ -105,6 +119,12 @@ export async function resolveAgentReviewModel(id: string): Promise<AgentReviewMo
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: `"${id}" is not a tool-capable model on OpenRouter. Pick one from the list, or leave the model blank to use the default.`,
+    });
+  }
+  if (!isWithinAgentReviewPriceCeiling(found)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `"${id}" costs $${found.promptPerM} per million input tokens, above the $${AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M} limit for agent reviews. Pick a cheaper model, or leave the model blank to use the default.`,
     });
   }
   return found;

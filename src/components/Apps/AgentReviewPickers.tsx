@@ -5,6 +5,7 @@ import {
   type AgentReportRunSummary,
 } from '~/components/Apps/agentReviewReport';
 import {
+  AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M,
   formatModelPricePerM,
   isAgentReviewModelId,
   type AgentReviewModelOption,
@@ -75,7 +76,7 @@ export function AgentReviewModelInput({
           ? "OpenRouter's model list is unavailable right now, so other models can't be used. Leave this blank to run on the default model."
           : modelsQuery.isError
           ? 'Could not load the model list. Leave this blank to run on the default model.'
-          : 'Blank uses the default model. The per-run cost cap applies to any model.'
+          : `Blank uses the default model. Models up to $${AGENT_REVIEW_MODEL_MAX_PROMPT_PER_M} per million input tokens; the per-run cost cap applies to any model.`
       }
       renderOption={({ option }) => {
         const m = byId.get(option.value);

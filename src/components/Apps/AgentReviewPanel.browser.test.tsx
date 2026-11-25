@@ -1048,6 +1048,20 @@ describe('AgentReviewPanel — re-run on a chosen model', () => {
       .toBeInTheDocument();
   });
 
+  test('the field states the input-price ceiling', async () => {
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await expect
+      .element(
+        page.getByText(
+          'Blank uses the default model. Models up to $5 per million input tokens; the per-run cost cap applies to any model.'
+        )
+      )
+      .toBeInTheDocument();
+  });
+
   test('the picker lists OpenRouter models with their price', async () => {
     mocks.agentReport = FULL_REPORT;
     mocks.agentModels = {
