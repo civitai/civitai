@@ -51,7 +51,9 @@ var forwardingHeaders = []string{"Forwarded", "X-Forwarded-Host", "X-Forwarded-P
 // The proxy has its own transport, keeping idle connections for idle (fallbackIdleTimeout in
 // production; a test passes a shorter one), not DefaultTransport's 90 s. With prop (tracing on) the
 // outbound request carries the trace context of its own context (prop.Inject), replacing an inbound
-// traceparent. A request that fails before
+// traceparent when that context holds a span (server.proxy starts one). A context without one
+// injects nothing, so the inbound trace headers would pass through: the serve-side parity replay
+// (no span, server/serveparity.go) strips them itself. A request that fails before
 // the Node app's response starts is answered 502 and reported to onError (if non-nil) with
 // proxyErrorCanceled or proxyErrorUpstream; one that fails mid-body is aborted by ReverseProxy
 // (http.ErrAbortHandler) and not reported.

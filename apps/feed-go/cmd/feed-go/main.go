@@ -588,7 +588,12 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
+		// The serve-side parity replays (FEED_GO_SERVE_PARITY_SAMPLE_RATE, default 0 = off) go to the
+		// same Node app through the same proxy code, but their own instance: a replay's failure is
+		// counted as its outcome (feed_go_serve_parity_total), never as a fallback proxy error.
+		srv.Parity = newServeParity(cfg.ServeParityRate, target, prop)
 	}
+	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil)
 	// The public /api/v1/models and /api/v1/images routes hand their fallbacks to the Node app that
 	// serves /api/v1, a different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the
 	// routes are not mounted).

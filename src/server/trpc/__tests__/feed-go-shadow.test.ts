@@ -482,6 +482,29 @@ describe('createFeedGoShadow — sampling decision', () => {
       {},
       request({ query: { trpc: 'image.getImagesAsPostsInfinite,user.getCreator', input: INPUT } }),
     ],
+    // feed-go's serve-side parity replay of a request it served (feed-go-parity-replay.ts), on each
+    // mirrored procedure with its flag on: feed-go compares it itself.
+    [
+      'a feed-go parity replay',
+      {},
+      request({ headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' } }),
+    ],
+    [
+      'a feed-go parity replay of image.getInfinite',
+      { infinite: true },
+      request({
+        headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' },
+        query: { trpc: 'image.getInfinite', input: INPUT },
+      }),
+    ],
+    [
+      'a feed-go parity replay of model.getAll',
+      { models: true },
+      request({
+        headers: { host: 'civitai.com', 'x-feed-go-parity-replay': '1' },
+        query: { trpc: 'model.getAll', input: INPUT },
+      }),
+    ],
   ])('does not sample: %s', async (_name, opts, req) => {
     const h = harness(opts as Parameters<typeof harness>[0]);
     expect(serve(h, req)).toBeUndefined();

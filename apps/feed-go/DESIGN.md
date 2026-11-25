@@ -1168,6 +1168,78 @@ read), the served share (2) and the DB reads per page (3) both step up at that d
 reclassification, not Go serving better or reading more: a window that spans the deploy mixes the two
 definitions, so read both figures over a window that begins after it.
 
+### 7.2 Serve-side parity (`FEED_GO_SERVE_PARITY_SAMPLE_RATE`, default 0 = off)
+
+The shadow comparison needs Node to serve the request. Once a tRPC route is served from Go for
+every user, Node answers only the fallbacks, and the body parity of what Go serves goes dark. The
+serve-side sampler (`internal/server/serveparity.go`) keeps it lit from the Go side: for a sampled
+fraction of the requests this service **served** (`served` / `served_empty`) on `as-posts`,
+`infinite` and `model-getall`, it replays the same request to the Node app and compares Node's body
+with what Go served.
+
+- **Off the latency path.** The sample is decided after `trpc.WriteResult`; it copies the served
+  superjson envelope (an answer written as devalue keeps its value, encoded as superjson in the
+  background, the format both the shadow compute and Node's replay answer use) and the request's
+  method, URL, host, client address and headers, before the answer's buffer is released. The replay
+  runs in its own goroutine after the handler has finished with the response and never touches it:
+  a replay that fails, times out or panics changes nothing the client received.
+- **Upstream and viewer.** The replay goes through the fallback proxy code to the same Node app as a
+  hand-back (`FEED_GO_FALLBACK_URL`), but its own instance, so its failures are counted as its
+  outcome, never in `feed_go_fallback_proxy_errors_total`. It carries the original's headers,
+  cookies included, so Node resolves the same session and computes for the same viewer; the
+  original `Accept-Encoding` is dropped so the transport negotiates (and decodes) its own
+  compression, and so are the client's `traceparent`, `tracestate` and `baggage` (the replay is not
+  part of the user's request, and the span-less background context would inject nothing over
+  them). A request with an API credential (an `Authorization` header or a `?token=`) is never
+  replayed (`skipped_credential`): Node would resolve the key's own viewer and scopes again.
+- **Marked.** The replay carries `X-Feed-Go-Parity-Replay: 1` (`ParityReplayHeader`). The Node app
+  (`src/server/trpc/feed-go-parity-replay.ts`) then does not shadow-sample it (it would be posted
+  back here as a second comparison of the same request), writes it as superjson, never devalue,
+  and leaves it out of its per-procedure metrics (`civitai_app_trpc_procedure_duration_seconds`,
+  the call-traffic and caller counters, `src/server/trpc.ts`): after a procedure moves to Go the
+  replays would otherwise be a large share of what reads as Node's calls and latency there. Its
+  slow-procedure log still names a slow replay. The replay's compute is still real Node CPU.
+- **Bounds** (constants, no setting): at most `DefaultServeParityWorkers` (4) replays in flight per
+  pod, taken without waiting: a replay past it is dropped (`dropped_queue`), never queued. Each
+  replay, Node's answer and the comparison included, has `DefaultServeParityTimeout` (10 s;
+  `timeout`). A pod holding three quarters or more of its serve slots (`FEED_GO_MAX_IN_FLIGHT`)
+  skips the replay (`skipped_bulkhead`). Node's body is read up to the shadow sample's bound
+  (32 MiB; past it `bad_body`). Shutdown stops new replays and cancels and waits for the running
+  ones with the shadow samples; both count `skipped_closing` (a rollout, never `timeout`). A replay in flight makes any overlapping shadow
+  phase non-solo (§10.1).
+- **Outcomes.** `feed_go_serve_parity_total{feed_endpoint,outcome}`, one per sampled served request:
+  `compared`, `dropped_queue`, `skipped_bulkhead`, `skipped_credential`, `skipped_closing`,
+  `upstream_error` (Node unreachable or the connection broken), `upstream_status` (a status other
+  than 200, e.g. Node's own bulkhead's 429), `timeout`, `bad_body` (not a tRPC result). A body
+  that is a tRPC result but not a superjson envelope (Node answered devalue: a web release without
+  the marker) is `compared` with result `bad_request`.
+- **Same comparator, same series.** A compared replay runs `compareAnswer`, the function the shadow
+  path runs (`shadow.Compare`, the route's classifier, the response headers of
+  `shadow.ComparedHeaders` picked as the Node sampler picks them), into the same families:
+  `feed_go_shadow_compare_total`, `feed_go_shadow_field_diffs_total` and
+  `feed_go_shadow_response_total`, each with a `source` label, `shadow` for a Node sample and
+  `serve-parity` for a replay. A query that sums by `feed_endpoint` (the recorded parity ratios)
+  reads both; `source` splits them. The replay results are seeded at 0 per endpoint (`match`,
+  `fields`, `order`, `membership`, `bad_request`, and `match_empty` where an answer can be trivial).
+
+**Time skew runs the other way.** A shadow sample is computed by Go milliseconds AFTER Node answered;
+a replay is computed by Node AFTER Go answered: the replay starts once the served answer is written,
+and Node then runs its whole compute (session, gates, feed service, page query, hydration), so the
+gap is Go's write plus Node's own latency, typically longer than shadow's. Within it a page can
+legitimately move: a newly published post or image enters page 1 (`membership`), a reaction count
+or metric hash changes (`stats.*` value diffs), a re-ranked feed reorders (`order`). The comparator
+hides none of it. Read the replay's `membership` / `order` / `stats.*` categories against the same
+categories under `source="shadow"` over the same window (the shadow sampler keeps running on the
+fallbacks): a replay-only excess on busy first pages is the skew; one on later pages or on a field
+that does not change with time is a difference to explain. Node's per-entity caches are warm for a
+replay (Go wrote back, or Node fills them as it answers), so the replay cannot see the cold-cache
+gap §7 describes either; that is the Go-first probe's (§7.1).
+
+**Sizing the rate.** A replay costs Node one compute of the request, so the rate is a share of the
+served volume Node answers again: 0.5% of a route's served requests is 0.5% extra Node load on that
+procedure. Pick it so each route gets a few hundred compares per hour (the parity alert's guard is
+100 per hour), and raise it on the route that falls short.
+
 ## 8. Flags the Node path reads, and what this service does with them
 
 This service evaluates one Flipt flag, `image-metrics-dedicated-clickhouse`, itself (`internal/flipt`,

@@ -52,6 +52,10 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// ServeParityRate is FEED_GO_SERVE_PARITY_SAMPLE_RATE (default 0 = off): the fraction of served
+	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
+	// [0, 1] or junk reads as 0.
+	ServeParityRate float64
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
@@ -262,6 +266,8 @@ func Load() (*Config, error) {
 		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
+
+		ServeParityRate: rateEnv("FEED_GO_SERVE_PARITY_SAMPLE_RATE"),
 
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 
@@ -585,6 +591,15 @@ func intEnv(k string, def int) int {
 		return n
 	}
 	return def
+}
+
+// rateEnv is a sample rate in [0, 1]; unset, junk, NaN or out of range reads as 0 (off).
+func rateEnv(k string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(k)), 64)
+	if err != nil || !(v >= 0 && v <= 1) {
+		return 0
+	}
+	return v
 }
 
 // positiveIntEnv is intEnv where zero or a negative value also means the default.

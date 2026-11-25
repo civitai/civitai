@@ -858,3 +858,21 @@ func TestCookieNamesPerMode(t *testing.T) {
 		})
 	}
 }
+
+// FEED_GO_SERVE_PARITY_SAMPLE_RATE: unset is 0 (the serve-side parity sampler off); a rate in [0, 1]
+// is read as is; junk, NaN or out of range is 0, never a rate that replays more than asked.
+func TestServeParityEnv(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for v, want := range map[string]float64{"": 0, "0.005": 0.005, "1": 1, "0": 0, "junk": 0, "-0.1": 0, "1.5": 0, "NaN": 0, "0.25": 0.25} {
+		t.Setenv("FEED_GO_SERVE_PARITY_SAMPLE_RATE", v)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeParityRate != want {
+			t.Errorf("FEED_GO_SERVE_PARITY_SAMPLE_RATE=%q reads %v, want %v", v, c.ServeParityRate, want)
+		}
+	}
+}

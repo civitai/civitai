@@ -719,10 +719,10 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	// 21: feed_go_shadow_compare_viewer_total (model-associated's per-viewer-class results) and
-	// feed_go_devalue_write_total included.
-	if checked != 21 {
-		t.Fatalf("checked %d per-endpoint families, want 21 (a family was renamed or lost)", checked)
+	// 22: feed_go_shadow_compare_viewer_total (model-associated's per-viewer-class results),
+	// feed_go_devalue_write_total and feed_go_serve_parity_total included.
+	if checked != 22 {
+		t.Fatalf("checked %d per-endpoint families, want 22 (a family was renamed or lost)", checked)
 	}
 }
 
