@@ -5,7 +5,7 @@ const { callModEndpoint } = vi.hoisted(() => ({ callModEndpoint: vi.fn() }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/version-showcase.service', () => ({ listFeaturedImages: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ callModEndpoint }));
-// The withheld-image gate is pinned in image-action-access.pglite.test.ts.
+// The withheld-image gate is pinned in withheld-actions.pglite.test.ts.
 vi.mock('$lib/server/retracted-media', () => ({ withheldRefusal: async () => null }));
 
 const { actions } = await import('../+page.server');

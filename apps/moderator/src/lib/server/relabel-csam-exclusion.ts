@@ -3,8 +3,9 @@ import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 
 /**
  * Which of `imageIds` the relabel set must never contain: images a CSAM report or block touches (or
- * whose owner it touches), and images the moderator views withhold without the CSAM grant. Run against the main database, at build time and again each time
- * an item is served, since a report can arrive after the item was sampled.
+ * whose owner it touches), and images the moderator views withhold without the CSAM grant. Run
+ * against the main database, at build time and again each time an item is served, since a report
+ * can arrive after the item was sampled.
  *
  * Every signal is used, because none is complete on its own: a later moderator removal
  * overwrites `blockedFor`, and an unsent `CsamReport` can have its image list replaced. The
