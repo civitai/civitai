@@ -359,10 +359,24 @@ describe('a model carousel tile (ImagePreview) the CDN refuses', () => {
     viewer.isModerator = false;
     features.modRetractedMedia = false;
     cdn.refuses = false;
+    cdn.failedBeforeAttach = null;
   });
 
   test("moves a moderator's scanned image to the retracted-media route", async () => {
     setUp(true);
+    await render();
+    await expect.poll(routeImg).not.toBeNull();
+  });
+
+  // A server-rendered image can fail before hydration attaches onError, and that event is not replayed.
+  test("moves a moderator's image that failed before it was attached", async () => {
+    setUp(true);
+    cdn.refuses = false;
+    cdn.failedBeforeAttach = await new Promise<HTMLImageElement>((resolve) => {
+      const img = new Image();
+      img.onerror = () => resolve(img);
+      img.src = '/__missing__.png';
+    });
     await render();
     await expect.poll(routeImg).not.toBeNull();
   });
