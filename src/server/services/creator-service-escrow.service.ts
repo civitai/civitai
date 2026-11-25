@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isSafeToRetry } from '@civitai/buzz';
 import { dbWrite } from '~/server/db/client';
-import { liveFile } from '~/server/services/creator-service-deal-file-sql';
+import { fileImageGone, liveFile } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   serviceDealExhaustedLegsGauge,
@@ -129,10 +129,10 @@ type ServiceDealHoldReason =
   (typeof SERVICE_DEAL_HOLD_REASONS)[keyof typeof SERVICE_DEAL_HOLD_REASONS];
 
 /**
- * The deal's current round has at least one final, and every final in it is Ready and passed
- * scanning: a final not yet Ready blocks, as it blocks delivery (`dealReadyToDeliver`). The
- * buyer downloads the finals only once the deal completes, so completing it and paying the seller
- * both wait on this. `deal` names the deal row in the surrounding statement.
+ * The deal's current round has at least one final, and every final in it is Ready, passed scanning
+ * and still has every scanned image (`fileImageGone`): a final not yet Ready blocks, as it blocks
+ * delivery (`dealReadyToDeliver`). The buyer downloads the finals only once the deal completes, so
+ * completing it and paying the seller both wait on this. `deal` names the deal row in the surrounding statement.
  */
 export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) => Prisma.sql`(
   EXISTS (
@@ -145,7 +145,7 @@ export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) =>
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
       AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
       AND (f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
-        OR f."status" <> 'Ready'::"ServiceDealFileStatus")
+        OR f."status" <> 'Ready'::"ServiceDealFileStatus" OR ${fileImageGone(Prisma.sql`f`)})
   )
 )`;
 

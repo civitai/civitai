@@ -1044,6 +1044,21 @@ const withDeleteTransaction = <T>(
     ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 120_000 })
     : run(kyselyOver(dbWrite));
 
+/**
+ * A deal file's scan copy is what its file is checked against, so only a moderator or the system
+ * deletes one. Refuses the whole delete, so the caller is told rather than handed a partial one.
+ */
+async function assertNoDealFileImages(ids: number[]) {
+  if (!ids.length) return;
+  const [pointed] = await dbWrite.$queryRaw<unknown[]>`
+    SELECT 1 FROM "ServiceDealFileEntry" WHERE "imageId" = ANY(${ids}::int[]) LIMIT 1`;
+  if (pointed)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This image is part of a delivery file and cannot be deleted.',
+    });
+}
+
 /** `deleteImages`, with the images it left for their child-safety case. */
 export async function deleteImagesWithOutcome(
   ids: number[],
@@ -1064,6 +1079,7 @@ export async function deleteImagesWithOutcome(
     }
 ): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
+  if (deletedById !== undefined && !moderatorDelete) await assertNoDealFileImages(uniq(ids));
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);

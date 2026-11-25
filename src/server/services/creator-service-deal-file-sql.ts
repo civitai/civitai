@@ -17,6 +17,16 @@ const DEAL = Prisma.sql`"ServiceDeal"`;
 export const liveFile = (f: Prisma.Sql) => Prisma.sql`${f}."removedAt" IS NULL`;
 
 /**
+ * An entry of the file still points at an image that is gone, so nothing shows the image was not
+ * held: the file is refused to everyone and does not count as clear. `f` names the file row.
+ */
+export const fileImageGone = (f: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ServiceDealFileEntry" e
+  WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")
+)`;
+
+/**
  * The kinds the Final scan pipeline (unpack, repack, malware scan, verdict) runs on, as text to
  * compare `"kind"::text` with: the pipeline must keep running on a database that does not have the
  * Attachment value yet. Only the scan steps use it: what gates delivery and payout counts Finals

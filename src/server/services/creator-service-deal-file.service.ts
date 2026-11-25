@@ -26,6 +26,7 @@ import { holdServiceDealForReview } from '~/server/services/creator-service-escr
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import {
   dealReadyToDeliver,
+  fileImageGone,
   liveFile,
   SCANNED_FILE_KINDS,
 } from '~/server/services/creator-service-deal-file-sql';
@@ -1224,9 +1225,7 @@ const finalLevelColumns = Prisma.sql`f."scannedEtag",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
-      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-        WHERE e."fileId" = f."id" AND e."imageId" IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "imageGone",
+      ${fileImageGone(Prisma.sql`f`)} AS "imageGone",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
           AND e."failReason" IS DISTINCT FROM ${SERVICE_FINAL_OVER_LEVEL_REASON}) AS "entryRefused"`;

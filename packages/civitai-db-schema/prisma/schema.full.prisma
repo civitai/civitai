@@ -12087,6 +12087,7 @@ model ServiceDealFileEntry {
   createdAt  DateTime                  @default(now())
 
   @@unique([fileId, entryIndex])
+  @@index([imageId])
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

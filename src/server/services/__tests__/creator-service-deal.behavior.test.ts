@@ -2195,6 +2195,32 @@ describe('the finals gate and dispute resolution', () => {
     expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
   });
 
+  it.each([
+    ['pays a release whose final still has its scanned image', false],
+    ['holds a release whose final lost its scanned image, and pays nothing', true],
+  ])('%s', async (_n, imageGone) => {
+    const id = await completed();
+    await windowClosed(id);
+    const [{ id: imageId }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url) VALUES ('scan') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size", "imageId", "scanStatus")
+         SELECT f.id, f."dealId", 0, 'a.png', 1, $2, 'Passed' FROM "ServiceDealFile" f
+         WHERE f."dealId" = $1 AND f.kind = 'Final'`,
+      [id, imageId]
+    );
+    if (imageGone) await q(`DELETE FROM "Image" WHERE id = $1`, [imageId]);
+    expect(await escrow.sweepServiceDealReleases()).toEqual({
+      considered: 1,
+      released: imageGone ? 0 : 1,
+    });
+    if (!imageGone) return;
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect((await deal(id)).status).toBe('Disputed');
+    expect((await disputeRow(id)).disputeReason).toBe(escrow.FINAL_SCAN_FAILED);
+  });
+
   it('sends a delivered deal to the moderators, but never one whose payout is claimed', async () => {
     const id = await delivered();
     expect(await escrow.holdServiceDealForReview(id, escrow.FINAL_SCAN_FAILED)).toBe(true);

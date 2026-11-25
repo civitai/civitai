@@ -126,6 +126,7 @@ const BASE_SCHEMA = `
     data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
     UNIQUE ("entityType", "entityId", type)
   );
+  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
 `;
 
 beforeAll(async () => {
@@ -137,7 +138,7 @@ beforeAll(async () => {
 const reset = () =>
   holder.db.exec(`
     SET session_replication_role = replica;
-    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue";
+    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue", "ServiceDealFileEntry";
     SET session_replication_role = DEFAULT;
   `);
 
@@ -163,7 +164,7 @@ beforeEach(async () => {
     if (/FROM "PostText"/.test(sql.text))
       return sql.values.filter((v) => heldTextPosts.has(v as number)).map((postId) => ({ postId }));
     if (
-      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
+      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"|FROM "ServiceDealFileEntry"/.test(
         sql.text
       )
     )
@@ -382,6 +383,34 @@ describe('an owner deleting their post keeps shop artwork only for a plain image
 });
 
 // The member limit lives in the shared delete; these pin that each service hands it the actor.
+describe('an image a deal file entry points at', () => {
+  beforeEach(() =>
+    holder.db.query(`INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES ($1)`, [imageOf(PLAIN)])
+  );
+
+  it('is refused to its owner, and the row and the file stay', async () => {
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await queuedFiles()).toEqual([]);
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
+  it.each([
+    ['a moderator', { id: MODERATOR, isModerator: true }],
+    ['the system', { system: 'creator-service-deal-unpack' }],
+  ])('is deleted by %s', async (_, actor) => {
+    await deleteImages([imageOf(PLAIN)], { actor });
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+
+  it('control: the owner still deletes an image no entry points at', async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } });
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+});
+
 describe("a member deleting another member's content", () => {
   const STRANGER = { id: 4242, isModerator: false };
 
