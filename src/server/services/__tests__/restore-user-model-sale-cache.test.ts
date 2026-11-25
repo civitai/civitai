@@ -172,8 +172,8 @@ describe("restoreUser -> which orphaned models are the account's", () => {
 
 describe('restoreUser -> the purge it disarms', () => {
   // The real restore, with the real disarm against Postgres: the disarm keys off the grace
-  // breadcrumb, so it has to run before anything in the restore clears one. A reorder that strips
-  // the breadcrumbs first, or moves the disarm out of the restore, leaves the grace purge armed.
+  // breadcrumb, so it has to run before anything in the restore clears one. A step that strips the
+  // breadcrumbs first leaves the grace purge armed.
   it('drops the grace purge and keeps the purge of a block written during the grace period', async () => {
     const db = new PGlite();
     await db.exec(`
