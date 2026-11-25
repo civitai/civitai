@@ -337,14 +337,17 @@ describe('challenges: a refused page', () => {
     version: 'v1',
     refused: true,
   };
-  const minusRefused = ({ refused, ...rest }: { refused?: unknown }) => rest;
+  const minusRefused = (page: object) => {
+    const { refused, ...rest } = page as { refused?: unknown };
+    return rest;
+  };
 
   it('marks a page with no matches as not refused', async () => {
     expect(await run([], { user: VIEWER }).result).toEqual({ ...NO_MATCH, refused: false });
   });
 
   it.each([
-    ['by the word audit', () => h.includesInappropriate.mockReturnValue('poi'), undefined],
+    ['by the word audit', () => h.includesInappropriate.mockReturnValue('poi' as never), undefined],
     ['by the search service', () => undefined, enforceFlag],
   ])('is, %s, a no-match page plus `refused` for a non-moderator', async (_, setup, guard) => {
     setup();
@@ -355,7 +358,7 @@ describe('challenges: a refused page', () => {
   });
 
   it('names the check to a moderator', async () => {
-    h.includesInappropriate.mockReturnValue('poi');
+    h.includesInappropriate.mockReturnValue('poi' as never);
     expect(await run([1], { user: MOD }).result).toMatchObject({
       refused: true,
       refusedBy: 'real people',
@@ -371,7 +374,7 @@ describe('challenges: a refused page', () => {
 
   it('names a refused spelling correction to a moderator', async () => {
     h.includesInappropriate.mockImplementation(({ prompt }) =>
-      prompt === 'corrected' ? 'blocked' : false
+      prompt === 'corrected' ? ('blocked' as never) : false
     );
     expect(await run([1], { user: MOD, correctedQuery: 'corrected' }).result).toMatchObject({
       refused: true,

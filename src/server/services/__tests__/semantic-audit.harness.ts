@@ -52,7 +52,7 @@ export function describeSemanticAuditContract({
     mode: 'shadow',
     version: 'v1',
   };
-  const enforceFlag = { ...shadowFlag, mode: 'enforce', refused: true };
+  const enforceFlag = { ...shadowFlag, mode: 'enforce', refused: true as const };
   const entry = () => recorded.mock.calls.at(-1)?.[0] as SemanticAuditEntry | undefined;
   beforeEach(() => recorded.mockClear());
 
@@ -73,7 +73,10 @@ export function describeSemanticAuditContract({
     const MOD = { ...AUDIT_VIEWER, isModerator: true } as SessionUser;
     // What every service answers when nothing matched, besides the mark.
     const NO_MATCH = { items: [], nextCursor: undefined, correctedQuery: undefined };
-    const minusRefused = ({ refused, ...rest }: { refused?: unknown }) => rest;
+    const minusRefused = (page: object) => {
+      const { refused, ...rest } = page as { refused?: unknown };
+      return rest;
+    };
 
     it('marks a page with no matches as not refused', async () => {
       expect(await run({ source: source(pass, []), user: AUDIT_VIEWER })).toEqual({
