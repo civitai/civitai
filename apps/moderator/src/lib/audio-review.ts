@@ -396,7 +396,7 @@ export type SongDisputeRow = {
   /** The list thumbnail: the cover as the public player shows it. */
   coverUrl: string | null;
   owner: { id: number; username: string | null } | null;
-  /** The level the owner saw when they disputed it. */
+  /** The level the owner saw when they disputed it; the ruling is judged on `songLevel`. */
   currentLevel: number | null;
   /** The level they ask for. */
   suggestedLevel: number | null;
@@ -404,9 +404,10 @@ export type SongDisputeRow = {
   songLevel: number | null;
   /** The owner's words. */
   message: string | null;
-  state: DisputeSongState;
-  /** This song's disputes so far, this one included: 2 or more is a repeat. */
-  disputes: number;
+  /** Null when withheld. */
+  state: DisputeSongState | null;
+  /** This song's disputes so far, this one included: 2 or more is a repeat. Null when withheld. */
+  disputes: number | null;
   /** The last ruling on an earlier dispute of this song. */
   earlier: { status: string; appliedLevel: number | null; resolvedAt: Date | null } | null;
 };

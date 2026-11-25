@@ -52,14 +52,15 @@
       : SSR_PENDING
   );
 
-  // The dispute as /ratings' decision form reads it: a song that is gone is a deleted entity, whose
-  // ruling closes the dispute and applies nothing.
+  // The dispute as /ratings' decision form reads it, its "current" the song's live level (what the
+  // resolver keeps or changes, which may differ from what the owner saw): a song that is gone is a
+  // deleted entity, whose ruling closes the dispute and applies nothing.
   const dispute = $derived(
     row.currentLevel != null && row.suggestedLevel != null
       ? {
           id: row.id,
           entityType: SONG_ENTITY_TYPE as 'Song',
-          currentLevel: row.currentLevel,
+          currentLevel: row.songLevel ?? row.currentLevel,
           suggestedLevel: row.suggestedLevel,
           levelOptions: [...SONG_RATING_LEVELS],
           entity: row.state === 'gone' ? null : row,
@@ -114,7 +115,7 @@
         <SongBadge class="h-[17px] px-1.5 text-[11px]" />
         {@render chip('Rating dispute', 'bg-blue-500/15 text-blue-300')}
         {@render chip('Pending', 'bg-amber-500/15 text-amber-300')}
-        {#if row.disputes > 1}{@render chip(`Repeat ×${row.disputes}`, 'bg-amber-500/15 text-amber-300')}{/if}
+        {#if (row.disputes ?? 0) > 1}{@render chip(`Repeat ×${row.disputes}`, 'bg-amber-500/15 text-amber-300')}{/if}
       {/snippet}
       {#snippet links()}
         {#if !row.withheld}
@@ -221,7 +222,13 @@
   {#snippet info()}
     {#if !row.withheld}
       <div class="grid grid-cols-2 gap-2">
-        {@render levelCard('Current', level(row.currentLevel), 'when the owner disputed it')}
+        {@render levelCard(
+          'Current',
+          level(row.songLevel ?? row.currentLevel),
+          row.songLevel != null && row.songLevel !== row.currentLevel
+            ? `${level(row.currentLevel)} when disputed`
+            : 'current rating'
+        )}
         {@render levelCard('Owner asks', level(row.suggestedLevel), 'approving applies this', 'blue')}
       </div>
 
@@ -239,7 +246,11 @@
     <TriageCard title="This dispute" dense accent="blue">
       {@render fact(
         'Filed',
-        `${shortAge(row.waitingSince)} ago · ${row.disputes > 1 ? `${ordinal(row.disputes)} dispute` : 'first dispute'}`
+        `${shortAge(row.waitingSince)} ago${
+          row.disputes == null
+            ? ''
+            : ` · ${row.disputes > 1 ? `${ordinal(row.disputes)} dispute` : 'first dispute'}`
+        }`
       )}
       {#if row.earlier}
         {@render fact('Earlier dispute', earlierText(row.earlier))}

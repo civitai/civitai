@@ -89,7 +89,9 @@ function moderatorLevelsFor(
 }
 
 // The owner's notice compares labels against the snapshot (two NSFW levels on a model both read NSFW),
-// and a challenge or crucible can already sit at the applied level live.
+// and a challenge or crucible can already sit at the applied level live. A song is judged on its live
+// level alone: a moderator may have rated it since the owner disputed it, and its snapshot is then
+// a change, not a keep.
 function keepsRating(
   entityType: RatingReviewEntityType,
   snapshotLevel: number,
@@ -97,7 +99,8 @@ function keepsRating(
   appliedLevel: number
 ): boolean {
   const label = ratingReviewLevelLabel(entityType, appliedLevel);
-  if (label === ratingReviewLevelLabel(entityType, snapshotLevel)) return true;
+  if (entityType !== 'Song' && label === ratingReviewLevelLabel(entityType, snapshotLevel))
+    return true;
   return liveLevel != null && getHighestBrowsingLevelBit(ratingBits(liveLevel)) === appliedLevel;
 }
 
@@ -1098,6 +1101,7 @@ export async function resolveRatingReview(input: {
         .selectFrom('Image')
         .select([
           'ingestion',
+          'nsfwLevel',
           sql<number | null>`("scanJobs"->>'retryCount')::int`.as('retryCount'),
           sql<
             string | null
@@ -1112,9 +1116,12 @@ export async function resolveRatingReview(input: {
         ])
         .where('id', '=', entityId)
         .where('type', '=', 'audio')
+        // Locked so another rating cannot land between the keep check below and the write.
+        .forUpdate()
         .executeTakeFirst();
       song = found && !songNeverReviewable(found) ? found : undefined;
       exists = !!song;
+      liveLevel = song ? found?.nsfwLevel : undefined;
     } else if (entityType === 'Challenge') {
       challenge = await readLiveChallenge(trx, entityId);
       exists = !!challenge;

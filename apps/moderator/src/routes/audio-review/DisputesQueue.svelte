@@ -172,7 +172,7 @@
           <IconArrowRight class="size-3 text-dark-2" aria-hidden="true" />
           <LevelChip tone="ask" label={songRatingLabel(row.suggestedLevel)} />
         {/if}
-        {#if row.disputes > 1}
+        {#if (row.disputes ?? 0) > 1}
           <span class="rounded bg-amber-500/15 px-1.5 py-px text-[11px] font-medium text-amber-300">
             Repeat ×{row.disputes}
           </span>

@@ -227,7 +227,14 @@ describe('the Disputes tab', () => {
       suggestedLevel: null,
       songLevel: null,
       earlier: null,
+      state: null,
+      disputes: null,
     });
+    // Its ask is not shown, so it is in neither ask chip.
+    expect((await disputes(WITHOUT_GRANT)).facets).toEqual({ all: 3, lower: 1, higher: 1 });
+    expect((await disputes(WITHOUT_GRANT, { filter: 'higher' })).items.map((r) => r.id)).toEqual([
+      SCANNING_DISPUTE,
+    ]);
     // Its title does not find it; its id does.
     expect((await disputes(WITHOUT_GRANT, { q: 'concrete' })).items).toEqual([]);
     expect(
@@ -282,6 +289,24 @@ describe('ruling a song dispute', () => {
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({ userId: OWNER, type: 'rating-review-rejected' })
     );
+  });
+
+  it("judges a keep on the song's live level, not the level the owner disputed", async () => {
+    // Rated R by a moderator after the owner disputed PG-13.
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = ${SONG}`);
+    expect(await resolve({ reviewId: String(DISPUTE), appliedLevel: '4' })).toMatchObject({
+      status: 409,
+      data: { key: DISPUTE },
+    });
+    expect(await review(DISPUTE)).toMatchObject({ status: 'Pending' });
+    expect(await song(SONG)).toEqual({ nsfwLevel: 4, nsfwLevelLocked: false });
+    // The disputed level is a change from R: no reason needed, and it is applied.
+    expect(await resolve({ reviewId: String(DISPUTE), appliedLevel: '2' })).toMatchObject({
+      success: true,
+      status: 'Unactioned',
+    });
+    expect(await review(DISPUTE)).toMatchObject({ status: 'Unactioned', appliedLevel: 2 });
+    expect(await song(SONG)).toEqual({ nsfwLevel: 2, nsfwLevelLocked: true });
   });
 
   it('refuses a song its own scans have not reviewed, changing nothing', async () => {

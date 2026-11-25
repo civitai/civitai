@@ -940,9 +940,13 @@ export async function getSongDisputes({
       disputes: (decidedOf.get(d.songId) ?? 0) + 1,
       asks,
     };
+    // Nothing about the song: not its levels (so no ask chip), its scan state or its disputes.
     if (withheld.has(d.songId))
       return {
         ...base,
+        asks: null,
+        state: null,
+        disputes: null,
         withheld: true,
         title: null,
         url: null,
