@@ -14,19 +14,25 @@ export const VERDICT_LABELLER_REF = 'knights:verdict';
 
 export type VerdictLabelConfig = { enabled: boolean; cap?: number };
 
+/** The most verdicts one pass takes; the env can only lower it. */
+export const VERDICT_LABEL_CAP = 500;
+
 const ON_VALUES = ['true', '1', 'yes', 'on'];
 
 /**
- * `KNIGHTS_VERDICT_LABELS` switches verdict labels on (off when unset or anything else); `KNIGHTS_VERDICT_LABEL_CAP` limits
- * the labels one pass writes. A cap that is set but is not a whole number above 0 keeps the switch off.
+ * `KNIGHTS_VERDICT_LABELS` switches verdict labels on (off when unset or anything else); `KNIGHTS_VERDICT_LABEL_CAP` lowers
+ * the verdicts one pass takes (labelled or not) below `VERDICT_LABEL_CAP`. A cap that is set but is not a whole number
+ * above 0 keeps the switch off.
  */
 export function verdictLabelConfig(env: Record<string, string | undefined>): VerdictLabelConfig {
   if (!ON_VALUES.includes((env.KNIGHTS_VERDICT_LABELS ?? '').trim().toLowerCase()))
     return { enabled: false };
   const raw = env.KNIGHTS_VERDICT_LABEL_CAP?.trim();
-  if (!raw) return { enabled: true };
+  if (!raw) return { enabled: true, cap: VERDICT_LABEL_CAP };
   const cap = Number(raw);
-  return Number.isInteger(cap) && cap > 0 ? { enabled: true, cap } : { enabled: false };
+  return Number.isInteger(cap) && cap > 0
+    ? { enabled: true, cap: Math.min(cap, VERDICT_LABEL_CAP) }
+    : { enabled: false };
 }
 
 export async function ensureVerdictRule(db: Kysely<DB>): Promise<void> {
@@ -57,8 +63,12 @@ type Row = {
   gaveUp: boolean;
 };
 
-/** A settled rating verdict whose label is not recorded yet, or whose value changed since. Matches the partial index. */
-const pending = sql`i."status" = 'Resolved' AND i."verdictLabelledValue" IS DISTINCT FROM i."resolvedValue"
+/**
+ * A final rating verdict (written back to the image, so the write-back can no longer reroute it) whose label is not done
+ * yet, or whose value changed since. Matches the partial index.
+ */
+const pending = sql`i."status" = 'Resolved' AND i."appliedAt" IS NOT NULL
+  AND i."verdictLabelledValue" IS DISTINCT FROM i."resolvedValue"
   AND NOT i."isHiddenCheck" AND i."resolvedValue" IS NOT NULL AND i."resolvedAt" IS NOT NULL`;
 
 const refOf = (alias: 'i' | 'b') =>

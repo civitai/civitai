@@ -40,7 +40,6 @@ export async function runLabelPass(
     log?: PassLog;
     budgetMs?: number;
     batchSize?: number;
-    /** Verdict labels: off unless given and enabled. */
     verdict?: VerdictLabelConfig;
   }
 ): Promise<LabelPassResult> {

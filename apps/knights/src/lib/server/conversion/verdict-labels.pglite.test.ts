@@ -17,8 +17,8 @@ let db: Kysely<DB>;
 const log = vi.fn();
 
 /** `null` runs the pass as the tick did before verdict labels existed: no verdict config at all. */
-const pass = (verdict: { enabled: boolean; cap?: number } | null = ON) =>
-  runLabelPass(db, { now: NOW, log, verdict: verdict ?? undefined });
+const pass = (verdict: { enabled: boolean; cap?: number } | null = ON, batchSize?: number) =>
+  runLabelPass(db, { now: NOW, log, verdict: verdict ?? undefined, batchSize });
 
 type Label = {
   sourceRef: string;
@@ -56,7 +56,7 @@ const wait = () =>
   pg.exec(`UPDATE label_store.record_failure SET "createdAt" = "createdAt" - interval '1 hour'`);
 
 let nextItem = 1;
-/** A rating queue item for the image, settled on `value` unless another status is given. */
+/** A rating queue item for the image, settled on `value` and written back unless told otherwise. */
 async function item(
   imageId: number,
   value: string | null,
@@ -66,20 +66,32 @@ async function item(
     hidden = false,
     reason = null,
     questionKey = 'knights.image.nsfwLevel',
+    applied = true,
   }: {
     status?: string;
     resolvedAt?: string;
     hidden?: boolean;
     reason?: string | null;
     questionKey?: string;
+    applied?: boolean;
   } = {}
 ): Promise<number> {
   const id = nextItem++;
   await pg.query(
     `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","status","isHiddenCheck",
-       "resolvedValue","resolvedAt","reason","updatedAt")
-     VALUES ($1,$2,$3,'test','Knight',5,$4,$5,$6,$7::timestamp,$8,now())`,
-    [id, questionKey, imageId, status, hidden, value, value === null ? null : resolvedAt, reason]
+       "resolvedValue","resolvedAt","reason","appliedAt","updatedAt")
+     VALUES ($1,$2,$3,'test','Knight',5,$4,$5,$6,$7::timestamp,$8,CASE WHEN $9 THEN $7::timestamp END,now())`,
+    [
+      id,
+      questionKey,
+      imageId,
+      status,
+      hidden,
+      value,
+      value === null ? null : resolvedAt,
+      reason,
+      applied && value !== null,
+    ]
   );
   return id;
 }
@@ -243,6 +255,37 @@ describe('verdict labels', () => {
     });
   });
 
+  it('labels a settled verdict only once it is written back, and never one the write-back rerouted', async () => {
+    const pendingId = await item(101, '8', { applied: false });
+    await item(102, null, { status: 'Inquisitor', applied: false });
+    await item(103, '4', { status: 'Closed', reason: 'moderator-ruled', applied: false });
+
+    expect(await pass()).toMatchObject({ verdictLabelsWritten: 0, labelFailures: 0 });
+    expect(await verdictLabels()).toEqual([]);
+
+    await pg.query(`UPDATE "KnightsQueueItem" SET "appliedAt" = "resolvedAt" WHERE "id" = $1`, [
+      pendingId,
+    ]);
+    expect(await pass()).toMatchObject({ verdictLabelsWritten: 1 });
+    expect((await verdictLabels()).map((l) => l.sourceRef)).toEqual([
+      `KnightsVerdict:${pendingId}:8`,
+    ]);
+  });
+
+  it('walks the backlog in batches, counting the verdicts the gate keeps out', async () => {
+    await item(101, '8', { resolvedAt: '2026-12-10 11:00:00' });
+    await item(102, '2', { resolvedAt: '2026-12-10 12:00:00' });
+    await item(103, '4', { resolvedAt: '2026-12-10 13:00:00' });
+    await pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE "id" = 102`);
+
+    expect(await pass(ON, 1)).toMatchObject({
+      verdictLabelsWritten: 2,
+      verdictLabelsExcluded: 1,
+      done: true,
+    });
+    expect((await verdictLabels()).map((l) => l.value)).toEqual(['8', '4']);
+  });
+
   it('labels only settled rating verdicts', async () => {
     await item(101, null, { status: 'Open' });
     await item(102, null, { status: 'Inquisitor' });
@@ -330,9 +373,15 @@ describe('verdictLabelConfig', () => {
     expect(verdictLabelConfig({})).toEqual({ enabled: false });
     expect(verdictLabelConfig({ KNIGHTS_VERDICT_LABELS: 'off' })).toEqual({ enabled: false });
     expect(verdictLabelConfig({ KNIGHTS_VERDICT_LABELS: 'garbage' })).toEqual({ enabled: false });
-    expect(verdictLabelConfig({ KNIGHTS_VERDICT_LABELS: ' On ' })).toEqual({ enabled: true });
+    expect(verdictLabelConfig({ KNIGHTS_VERDICT_LABELS: ' On ' })).toEqual({
+      enabled: true,
+      cap: 500,
+    });
     expect(
-      verdictLabelConfig({ KNIGHTS_VERDICT_LABELS: 'true', KNIGHTS_VERDICT_LABEL_CAP: '500' })
+      verdictLabelConfig({ KNIGHTS_VERDICT_LABELS: 'true', KNIGHTS_VERDICT_LABEL_CAP: '40' })
+    ).toEqual({ enabled: true, cap: 40 });
+    expect(
+      verdictLabelConfig({ KNIGHTS_VERDICT_LABELS: 'true', KNIGHTS_VERDICT_LABEL_CAP: '100000' })
     ).toEqual({ enabled: true, cap: 500 });
     // A cap that does not parse keeps the switch off rather than writing without a limit.
     expect(
