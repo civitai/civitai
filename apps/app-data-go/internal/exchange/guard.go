@@ -1,6 +1,7 @@
 package exchange
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -45,10 +46,30 @@ func ClientIP(ctx context.Context) string {
 	return ip
 }
 
-// The per-address budget for exchanges of hub tokens this replica has not seen exchanged: a burst of
-// NewTokenBurst, refilled one every NewTokenEvery (20 a minute). A token the hub issued an exchange for
-// is never charged again (knownMemory), so a viewer pays once per token per replica start; the budget
-// only binds an address presenting many different tokens, which is what a flood of made-up ones is.
+// budgetKey is the budget ip is charged to: an IPv4 address itself, an IPv6 address its /64. One host
+// is routinely handed a whole /64 and may use any address in it, so a per-address key would hand it a
+// fresh burst per address. An ip that does not parse is its own key. The hub is still told ip itself
+// (Exchanger.Exchange).
+func budgetKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+	return netip.PrefixFrom(addr, 64).Masked().String()
+}
+
+// The per-address budget for lookups of hub tokens this replica has not seen exchanged: a burst of
+// NewTokenBurst, refilled one every NewTokenEvery (20 a minute). An address is an IPv4 address or an
+// IPv6 /64 (budgetKey). A token is charged before the hub is asked, so the budget bounds how many
+// distinct unproven tokens an address can have the hub look up, concurrent or not; the charge is given
+// back when the hub exchanges the token, or when the hub was never asked (its per-client hold). So only
+// tokens the hub could not exchange stay charged: many viewers with real tokens behind one address
+// never spend it, a flood of made-up tokens does. A token the hub exchanged is never charged again
+// (knownMemory).
 const (
 	NewTokenBurst = 20
 	NewTokenEvery = 3 * time.Second
@@ -62,11 +83,12 @@ const knownMemory = time.Hour
 // hub. Short: an app re-enabled or a grant re-made is seen again within it.
 const refusalMemory = 2 * time.Minute
 
-// The bounds of the guard's three maps. Past MaxKnownTokens a successful token is not remembered (it is
-// charged again on its next exchange); past MaxRememberedRefusals (block.go, the same bound) a refusal
-// is not remembered (the hub is asked again); past MaxThrottledAddresses a new address is admitted
-// untracked: the hub's own per-subject limit is the backstop then, and a flood of addresses never
-// refuses a viewer here.
+// The bounds of the guard's maps. Past MaxKnownTokens a successful token is not remembered (it is
+// charged again on its next exchange, and given the charge back); past MaxRememberedRefusals (block.go,
+// the same bound) a refusal is not remembered (the hub is asked again). At MaxThrottledAddresses a new
+// address takes the place of the address charged least recently: never admitted untracked, which would
+// turn the throttle off for every address once one flood filled the table. The address dropped is the
+// one whose budget has refilled the longest, so it loses at most a partial refill.
 const (
 	MaxKnownTokens        = 50_000
 	MaxThrottledAddresses = 50_000
@@ -76,6 +98,7 @@ const (
 const (
 	GuardThrottled  = "throttled"  // the address has spent its budget for new tokens
 	GuardRemembered = "remembered" // the hub refused this token within refusalMemory
+	GuardJoined     = "joined"     // the same token's exchange was in flight: its answer was shared
 )
 
 // ThrottledError is an exchange not made because the viewer's address has presented too many tokens
@@ -92,10 +115,13 @@ func (e *ThrottledError) Error() string {
 // Guard sits in front of the user exchange (Exchanger.Exchange), so a flood of made-up `civitai_`
 // tokens costs this service neither the hub's per-client budget nor its hold:
 //
-//   - a token the hub refused is answered that refusal again for refusalMemory, the hub not asked;
-//   - a token not seen exchanged here is charged to the viewer's address (ClientIP of the context), a
-//     budget of NewTokenBurst refilled every NewTokenEvery; past it the exchange is ThrottledError and
-//     the hub is not asked. A request with no address is not charged (ClientIPHeader).
+//   - a token the hub refused as a subject (subjectRefusal) is answered that refusal again for
+//     refusalMemory, the hub not asked;
+//   - concurrent exchanges of one token are one call to the hub, its answer shared (GuardJoined);
+//   - a token not seen exchanged here is charged to the viewer's address (ClientIP of the context,
+//     budgetKey), a budget of NewTokenBurst refilled every NewTokenEvery; past it the exchange is
+//     ThrottledError and the hub is not asked. A request with no address is not charged
+//     (ClientIPHeader).
 //
 // Entries are keyed by the SHA-256 of the whole token; no token is stored.
 type Guard struct {
@@ -103,14 +129,18 @@ type Guard struct {
 	Hub func(ctx context.Context, subject string) (Token, error)
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
-	// Observe is told each exchange not sent (GuardThrottled, GuardRemembered). Nil is none.
+	// Observe is told each exchange not sent (GuardThrottled, GuardRemembered, GuardJoined). Nil is none.
 	Observe func(outcome string)
 
 	mu      sync.Mutex
 	known   map[[sha256.Size]byte]time.Time
 	refused map[[sha256.Size]byte]remembered
-	addrs   map[string]*allowance
-	swept   time.Time
+	// addrs holds each tracked address's element of recent, which runs from the most recently charged
+	// (front) to the least (back).
+	addrs    map[string]*list.Element
+	recent   *list.List
+	inflight map[[sha256.Size]byte]*flight
+	swept    time.Time
 }
 
 type remembered struct {
@@ -118,22 +148,42 @@ type remembered struct {
 	until time.Time
 }
 
-// allowance is an address's budget: tokens left at `at`.
+// allowance is an address's budget: tokens left at `at`, its last charge.
 type allowance struct {
+	key  string
 	left float64
 	at   time.Time
 }
 
-// Exchange is Hub's exchange of subject, unless subject was refused within refusalMemory or the
-// viewer's address has spent its budget for new tokens.
+// flight is one exchange at the hub, awaited by the exchanges of the same token that came after it.
+type flight struct {
+	done chan struct{}
+	tok  Token
+	err  error
+}
+
+// NewRouter is the Router the user exchange user is served through, behind a Guard telling observe
+// (nil: none) each exchange not sent; and the Guard. main and the api tests both build it here, so the
+// guard a test exercises is the one served. The block exchange (Router.Blocks) is set by the caller.
+func NewRouter(user func(ctx context.Context, subject string) (Token, error), observe func(outcome string)) (*Router, *Guard) {
+	g := &Guard{Hub: user, Observe: observe}
+	return &Router{User: g.Exchange}, g
+}
+
+// Exchange is Hub's exchange of subject, unless subject was refused within refusalMemory, the same
+// subject's exchange is in flight (its answer is this one's), or the viewer's address has spent its
+// budget for new tokens.
 func (g *Guard) Exchange(ctx context.Context, subject string) (Token, error) {
 	k := sha256.Sum256([]byte(subject))
-	now := g.now()
 	g.mu.Lock()
+	// Read under the lock, so the charges' times never run backwards (charge, sweep).
+	now := g.now()
 	if g.known == nil {
 		g.known = map[[sha256.Size]byte]time.Time{}
 		g.refused = map[[sha256.Size]byte]remembered{}
-		g.addrs = map[string]*allowance{}
+		g.addrs = map[string]*list.Element{}
+		g.recent = list.New()
+		g.inflight = map[[sha256.Size]byte]*flight{}
 	}
 	if now.Sub(g.swept) >= sweepEvery {
 		g.sweep(now)
@@ -144,55 +194,110 @@ func (g *Guard) Exchange(ctx context.Context, subject string) (Token, error) {
 		g.observe(GuardRemembered)
 		return Token{}, r.err
 	}
+	if f, ok := g.inflight[k]; ok {
+		g.mu.Unlock()
+		g.observe(GuardJoined)
+		select {
+		case <-f.done:
+			// The first caller's own context ended its call: that says nothing of this one's.
+			if (errors.Is(f.err, context.Canceled) || errors.Is(f.err, context.DeadlineExceeded)) && ctx.Err() == nil {
+				return g.Exchange(ctx, subject)
+			}
+			return f.tok, f.err
+		case <-ctx.Done():
+			return Token{}, ctx.Err()
+		}
+	}
+	var charged *allowance
 	if until, ok := g.known[k]; !ok || !now.Before(until) {
-		if wait := g.charge(ClientIP(ctx), now); wait > 0 {
+		var wait time.Duration
+		if charged, wait = g.charge(ClientIP(ctx), now); wait > 0 {
 			g.mu.Unlock()
 			g.observe(GuardThrottled)
 			return Token{}, &ThrottledError{RetryAfter: wait}
 		}
 	}
+	f := &flight{done: make(chan struct{})}
+	g.inflight[k] = f
 	g.mu.Unlock()
 
-	tok, err := g.Hub(ctx, subject)
+	f.tok, f.err = g.Hub(ctx, subject)
 
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	delete(g.inflight, k)
 	switch {
-	case err == nil:
+	case f.err == nil:
 		delete(g.refused, k)
 		if _, ok := g.known[k]; ok || len(g.known) < MaxKnownTokens {
 			g.known[k] = now.Add(knownMemory)
 		}
-	case errors.Is(err, ErrRefused):
+		charged.refund()
+	case subjectRefusal(f.err):
 		delete(g.known, k)
 		if len(g.refused) < MaxRememberedRefusals {
-			g.refused[k] = remembered{err: err, until: now.Add(refusalMemory)}
+			g.refused[k] = remembered{err: f.err, until: now.Add(refusalMemory)}
 		}
+	case held(f.err):
+		charged.refund()
 	}
-	return tok, err
+	g.mu.Unlock()
+	close(f.done)
+	return f.tok, f.err
 }
 
-// charge takes one from ip's budget at now: zero when it had one (or ip is untracked), else how long
-// until it has. g.mu is held.
-func (g *Guard) charge(ip string, now time.Time) time.Duration {
+// subjectRefusal reports whether err is the hub refusing the subject token itself (apps/auth
+// user-exchange.ts): `invalid_grant` (not found, expired, its user or app not admitted) or
+// `invalid_scope` (outside the user's grant). Only those are remembered per token. The hub's other
+// refusals are of this service's client or request (`invalid_client`, `invalid_target`,
+// `invalid_request`), or ambiguous (`unauthorized_client` is the relay not listed as well as the app):
+// remembering them per token would keep refusing every viewer after the client is fixed.
+func subjectRefusal(err error) bool {
+	var re *RefusedError
+	return errors.As(err, &re) && (re.Code == "invalid_grant" || re.Code == "invalid_scope")
+}
+
+// held reports whether err is the hub's per-client hold (RateLimitedError, not Scoped): the subject was
+// not looked up. The hub's per-viewer 429 (Scoped) follows lookups made, and stays charged.
+func held(err error) bool {
+	var rl *RateLimitedError
+	return errors.As(err, &rl) && !rl.Scoped
+}
+
+// charge takes one from the budget of ip's address (budgetKey) at now: the allowance charged (nil for
+// a request with no address) and zero, or how long until it has one. At MaxThrottledAddresses the
+// address charged least recently is dropped for a new one. g.mu is held.
+func (g *Guard) charge(ip string, now time.Time) (*allowance, time.Duration) {
 	if ip == "" {
-		return 0
+		return nil, 0
 	}
-	a := g.addrs[ip]
-	if a == nil {
+	key := budgetKey(ip)
+	el := g.addrs[key]
+	if el == nil {
 		if len(g.addrs) >= MaxThrottledAddresses {
-			return 0
+			oldest := g.recent.Back()
+			g.recent.Remove(oldest)
+			delete(g.addrs, oldest.Value.(*allowance).key)
 		}
-		a = &allowance{left: NewTokenBurst, at: now}
-		g.addrs[ip] = a
+		el = g.recent.PushFront(&allowance{key: key, left: NewTokenBurst, at: now})
+		g.addrs[key] = el
 	}
+	g.recent.MoveToFront(el)
+	a := el.Value.(*allowance)
 	a.left = min(float64(NewTokenBurst), a.left+float64(now.Sub(a.at))/float64(NewTokenEvery))
 	a.at = now
 	if a.left >= 1 {
 		a.left--
-		return 0
+		return a, 0
 	}
-	return time.Duration((1 - a.left) * float64(NewTokenEvery))
+	return nil, time.Duration((1 - a.left) * float64(NewTokenEvery))
+}
+
+// refund gives back a charge. On a nil allowance (nothing charged) it does nothing; on one dropped from
+// the table since, it changes nothing that is read. g.mu is held.
+func (a *allowance) refund() {
+	if a != nil {
+		a.left = min(float64(NewTokenBurst), a.left+1)
+	}
 }
 
 // sweep forgets what has expired, and each address whose budget is full again. g.mu is held.
@@ -207,11 +312,11 @@ func (g *Guard) sweep(now time.Time) {
 			delete(g.refused, k)
 		}
 	}
+	// recent runs from the latest charge to the oldest: the full budgets are at its back.
 	full := time.Duration(NewTokenBurst) * NewTokenEvery
-	for ip, a := range g.addrs {
-		if now.Sub(a.at) >= full {
-			delete(g.addrs, ip)
-		}
+	for el := g.recent.Back(); el != nil && now.Sub(el.Value.(*allowance).at) >= full; el = g.recent.Back() {
+		g.recent.Remove(el)
+		delete(g.addrs, el.Value.(*allowance).key)
 	}
 }
 

@@ -463,6 +463,70 @@ func TestAWaitingExchangeEndsWithItsContext(t *testing.T) {
 	}
 }
 
+// When the first caller's own context ends its call, a caller that waited on it asks the hub itself.
+func TestAWaitingExchangeOutlivesTheFirstCallersContext(t *testing.T) {
+	g, h, _ := newGuard()
+	b := &blockingHub{h: h, release: make(chan struct{})}
+	g.Hub = b.exchange
+	joined := make(chan struct{}, 1)
+	g.Observe = func(o string) {
+		if o == GuardJoined {
+			joined <- struct{}{}
+		}
+	}
+	first, cancel := context.WithCancel(from("198.51.100.7"))
+	leader := make(chan error, 1)
+	go func() {
+		_, err := g.Exchange(first, "civitai_alice")
+		leader <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if b.calls() > 0 {
+			break
+		}
+	}
+	waiter := make(chan error, 1)
+	go func() {
+		tok, err := g.Exchange(from("198.51.100.8"), "civitai_alice")
+		if err == nil && tok.Access != "x.civitai_alice" {
+			err = fmt.Errorf("token %q", tok.Access)
+		}
+		waiter <- err
+	}()
+	<-joined
+	cancel()
+	if err := <-leader; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the first caller: %v", err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if b.calls() > 1 {
+			break
+		}
+	}
+	close(b.release)
+	if err := <-waiter; err != nil {
+		t.Fatalf("the waiter was handed the first caller's cancellation: %v", err)
+	}
+	if n := b.calls(); n != 2 {
+		t.Fatalf("hub calls %d, want 2", n)
+	}
+}
+
+// NewRouter serves the user exchange through its Guard: a refused token is remembered, not re-sent.
+func TestNewRouterPutsTheGuardInFrontOfTheUserExchange(t *testing.T) {
+	h := &guardHub{valid: map[string]bool{}, asked: map[string]int{}}
+	var outcomes []string
+	r, g := NewRouter(h.exchange, func(o string) { outcomes = append(outcomes, o) })
+	for range 3 {
+		if _, err := r.Exchange(context.Background(), "civitai_made-up"); !errors.Is(err, ErrRefused) {
+			t.Fatalf("%v", err)
+		}
+	}
+	if h.asked["civitai_made-up"] != 1 || len(outcomes) != 2 || outcomes[0] != GuardRemembered || g.Hub == nil || r.Blocks != nil {
+		t.Fatalf("asked %d, observed %v", h.asked["civitai_made-up"], outcomes)
+	}
+}
+
 // Distinct made-up tokens sent at once from one address are bounded as when sent one by one: the
 // charge is taken before the hub is asked. (An invariant guard: it held before the refund too.)
 func TestConcurrentMadeUpTokensFromOneAddressAreStillBounded(t *testing.T) {

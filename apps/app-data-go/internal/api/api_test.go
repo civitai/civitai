@@ -303,8 +303,8 @@ func newStackWith(t *testing.T, registryOn, blockOn bool, opts session.Options) 
 	opts.NotPrivateCooldown, opts.ExpiryMargin = time.Hour, 30*time.Second
 	ex := &exchange.Exchanger{Config: exchange.Config{URL: s.hub.srv.URL, ClientID: "relay-client",
 		ClientSecret: "relay-secret", Resource: "https://apps.invalid"}}
-	s.guard = &exchange.Guard{Hub: ex.Exchange, Observe: func(o string) { s.m.UserExchangeGuard.WithLabelValues(o).Inc() }}
-	router := &exchange.Router{User: s.guard.Exchange}
+	var router *exchange.Router
+	router, s.guard = exchange.NewRouter(ex.Exchange, func(o string) { s.m.UserExchangeGuard.WithLabelValues(o).Inc() })
 	if blockOn {
 		router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: opts.ExpiryMargin,
 			Observe: func(outcome, code string) {

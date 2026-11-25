@@ -53,7 +53,7 @@ var BlockOutcomes = []string{
 }
 
 // GuardOutcomes are the `outcome` values of app_data_user_exchange_guarded_total (exchange.Guard*).
-var GuardOutcomes = []string{exchange.GuardThrottled, exchange.GuardRemembered}
+var GuardOutcomes = []string{exchange.GuardThrottled, exchange.GuardRemembered, exchange.GuardJoined}
 
 // WriteOps are the `op` values of app_data_writes_total and app_data_write_forward_seconds (the
 // write routes, WRITES-DESIGN.md "The API"; publish and unpublish are not served yet). A PATCH is
@@ -131,7 +131,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		}, []string{"outcome", "error"}),
 		UserExchangeGuard: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_user_exchange_guarded_total",
-			Help: "Hub-token exchanges not sent to the hub, by outcome (throttled: the viewer's address presented too many tokens not seen exchanged; remembered: the hub refused this token moments ago).",
+			Help: "Hub-token exchanges not sent to the hub, by outcome (throttled: the viewer's address presented too many tokens not seen exchanged; remembered: the hub refused this token moments ago; joined: the same token's exchange was in flight, its answer shared).",
 		}, []string{"outcome"}),
 		Writes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_writes_total",
