@@ -4,13 +4,15 @@ A song is an `Image` row with `type: audio`, behind the `music` feature flag (`u
 the client, `ctx.features.music` on the server). With the flag off, songs are not created and none of the
 surfaces below change anything.
 
-Without the flag a viewer gets no song from a generic image read either, except their own: the image
-feeds (every feed route loads its rows through `getAllImagesUncaptured`, so `image.getInfinite`,
-`image.getImagesAsPostsInfinite`, `/api/v1/images`, collection and profile galleries), `image.get`,
-post image lists (`getImagesForPosts`) and model-version showcases (`getImagesForModelVersion`). The
-clause is `songsHiddenSql` (`image-visibility.service.ts`). A cached model gallery and the shared
-model-version cache exempt no owner. feed-go cannot read the flag, so its port hides other users' songs
-from everyone but moderators.
+Without the flag a viewer gets no song from a generic image read either, except their own (moderators
+see them all): the image feeds (every feed route loads its rows through `getAllImagesUncaptured`, so
+`image.getInfinite`, `image.getImagesAsPostsInfinite`, `/api/v1/images`, collection, profile and model
+galleries), `image.get` and the by-id reads behind `assertImageVisibleToViewer` (generation data,
+detail, contest details), entity and collection covers, post image lists (`getImagesForPosts`) and
+model-version showcases. The clause is `songsHiddenSql` (`image-visibility.service.ts`); the shared
+showcase cache (`imagesForModelVersionsCache`) keeps songs and its readers drop them per viewer
+(`withoutHiddenSongs`), and the collections search index holds no song cover. feed-go reads the
+`music` flag per viewer from Flipt (`internal/server/music.go`) and applies the same rule.
 
 - **Global player:** `src/store/music-player.store.ts` holds the current song, Up next and playback; one
   `<audio>` element (`MusicPlayerAudio`) plays it. Every surface starts a song with `playFromList`.
