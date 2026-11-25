@@ -50,12 +50,14 @@ const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
 const UNCHANGED_FLAG = 'app-blocks-storage-unchanged-writes-free';
 const LEVELS_FLAG = 'app-blocks-shared-doc-levels';
+const VIEWER_KEYED_OPEN_FLAG = 'app-blocks-storage-viewer-keyed-open';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   const isFlipt = async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return false;
     if (flag === ENFORCE_FLAG) return true;
     if (flag === LEVELS_FLAG) return h.levelsFlag;
+    if (flag === VIEWER_KEYED_OPEN_FLAG) return true;
     if (flag === UNCHANGED_FLAG) {
       h.unchangedFlagEntities.push(entityId);
       return h.unchangedFlag;
@@ -1015,6 +1017,68 @@ describe('the signed internal route', () => {
       })
     );
     expect(again.body).toEqual({ deleted: false });
+  });
+
+  it('🔴 an `@me` put and delete are served there, and the delete answers the DERIVED key it removed, never the raw path segment', async () => {
+    envMock.set({
+      APP_DATA_WRITES_SIGNING_KEY: SIGNING_KEY,
+      APP_STORAGE_VIEWER_KEY_SECRET: 'unchanged-viewer-key-secret-7d31',
+    });
+    const PARENT = 'post-6152';
+    const A = freshApp({
+      scopes: SCOPES,
+      storage: {
+        collections: {
+          ...MANIFEST.storage.collections,
+          likes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' },
+        },
+      },
+    });
+    const t = await mint(A, V1);
+    try {
+      await expectOk(
+        send({
+          internal: true,
+          token: t,
+          method: 'PUT',
+          path: `/likes/@me/${PARENT}`,
+          query: { from: A.blockId },
+          body: { data: { n: 61 } },
+        })
+      );
+      // The key the store holds the document at: the parent, a colon, a 26-character digest.
+      const stored = await harness.raw(
+        `SELECT key FROM appdata.doc WHERE app_id = $1 AND ns = 'prod' AND coll = 'likes'`,
+        [A.id]
+      );
+      expect(stored.length).toBe(1);
+      const derived = (stored[0] as { key: string }).key;
+      expect(derived).toMatch(/^post-6152:[a-z2-7]{26}$/);
+      const del = await expectOk(
+        send({
+          internal: true,
+          token: t,
+          method: 'DELETE',
+          path: `/likes/@me/${PARENT}`,
+          query: { from: A.blockId },
+        })
+      );
+      expect(del.body).toEqual({ deleted: true, seq: await lastSeq(A), key: derived });
+      expect((del.body as { key: string }).key).not.toBe(PARENT);
+      expect((del.body as { key: string }).key).not.toBe('@me');
+      // The read of the same document is not a route there: reads stay on the streams.
+      const read = await send({
+        internal: true,
+        token: t,
+        method: 'GET',
+        path: `/likes/@me/${PARENT}`,
+        query: { from: A.blockId },
+      });
+      expect(read.status).toBe(404);
+      expect((read.body as { code: string }).code).toBe('not_found');
+    } finally {
+      envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: undefined });
+    }
   });
 
   it('the public route answers a delete exactly `{ deleted: true }`: no seq, no key', async () => {

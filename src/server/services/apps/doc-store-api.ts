@@ -1881,13 +1881,17 @@ export type StorageApiDeps = {
 /**
  * What the internal route serves: the writes, the tallies and `info` (WRITES-DESIGN.md, "the write
  * verbs and info only"). Reads stay on the streams. Publish and unpublish wait for the store to
- * answer each copied key's `seq`; until then they are not routes there.
+ * answer each copied key's `seq`; until then they are not routes there. The viewer-keyed writes
+ * (`putMine`, `deleteMine`: `PUT`/`DELETE …/@me[/:parent]`) are writes like any other, and
+ * app-data-go forwards them; `getMine` is a read and stays on the streams.
  */
 const SERVICE_OPS: ReadonlySet<StorageRoute['op']> = new Set<StorageRoute['op']>([
   'info',
   'create',
   'put',
   'delete',
+  'putMine',
+  'deleteMine',
   'patch',
   'increment',
   'mark',

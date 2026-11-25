@@ -7,9 +7,18 @@ import { composeAdapter, resolveViewerFromCatalog } from '~/server/registry-adap
 import { parsePrivateRelays } from '~/server/registry-adapter/private-feed';
 import type { Adapter, StreamEvent } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
-import { createSubscriber } from '~/server/registry-adapter/subscription';
+import {
+  bindCursor,
+  createSubscriber,
+  requestBinding,
+} from '~/server/registry-adapter/subscription';
 import type { ViewerDocSource } from '~/server/registry-adapter/viewer-feed';
-import { createViewerFeed, viewerStreamsOn } from '~/server/registry-adapter/viewer-feed';
+import {
+  DEFAULT_VIEWER_STREAM_RECORDS,
+  createViewerFeed,
+  parseViewerStreamMaxRecords,
+  viewerStreamsOn,
+} from '~/server/registry-adapter/viewer-feed';
 import type {
   CollectionReadDecision,
   CollectionReadRefusal,
@@ -192,9 +201,10 @@ const wake = () => wakers.splice(0).forEach((w) => w());
 
 let store: ReturnType<typeof createMemorySnapshotStore>;
 
-const viewerFeed = (relays = parsePrivateRelays(RELAY)) =>
+const viewerFeed = (relays = parsePrivateRelays(RELAY), maxRecords?: number) =>
   createViewerFeed({
     relays,
+    ...(maxRecords !== undefined ? { maxRecords } : {}),
     source,
     resolve: resolveViewerFromCatalog(
       async () => catalog(),
@@ -229,13 +239,13 @@ const entityStreams: Adapter = {
     throw new Error('the entity streams are not under test');
   },
 };
-const composed = (viewer = true) =>
+const composed = (viewer = true, maxRecords?: number) =>
   composeAdapter(
     entityStreams,
     publicFeed(),
     undefined,
     undefined,
-    viewer ? viewerFeed() : undefined
+    viewer ? viewerFeed(undefined, maxRecords) : undefined
   );
 
 type UserToken = Extract<VerifiedToken, { userId: number }>;
@@ -481,13 +491,50 @@ describe('an explicit refusal: no mask, nothing held, never an empty stream with
     ['an unlisted relay', 'unlisted-relay'],
     ['a token without AppDataRead', 'no-appdataread'],
     ['no token at all', undefined],
-  ])('🔴 %s: live names the head and no mask, and nothing is sent', async (_label, bearer) => {
-    seedVotes();
-    const run = await open(bearer);
-    expect(upserted(run.events)).toEqual([]);
-    expect(metaOf(run.events, 'live')).toEqual([{ head: { seq: 9 }, levels: 'on' }]);
-    await close(run);
-  });
+  ])(
+    '🔴 %s: refused by the token gate before ANY read (catalog, flag, head), so live names no mask, no head, no levels',
+    async (_label, bearer) => {
+      seedVotes();
+      let catalogReads = 0;
+      let flagReads = 0;
+      const feed = createViewerFeed({
+        relays: parsePrivateRelays(RELAY),
+        source,
+        resolve: resolveViewerFromCatalog(
+          async () => {
+            catalogReads += 1;
+            return catalog();
+          },
+          async () => {
+            flagReads += 1;
+            return levelsOn;
+          }
+        ),
+        decide,
+        runGateReadable: async () => runGateReadable,
+        instanceRevoked: async (id) => revoked.has(id),
+        store,
+        pollMs: 60_000,
+        sleep,
+      });
+      const run = subscribe(
+        composeAdapter(entityStreams, publicFeed(), undefined, undefined, feed),
+        await principalOf(bearer)
+      );
+      await settle(run, 1);
+      expect(upserted(run.events)).toEqual([]);
+      // As the private feed: the token gate runs first, so a token that may read no per-viewer
+      // stream costs no catalog, flag or head lookup, and its meta carries nothing it read.
+      expect(metaOf(run.events, 'live')).toEqual([{}]);
+      expect(reads).toEqual([]);
+      expect([catalogReads, flagReads]).toEqual([0, 0]);
+      // And on every poll after it.
+      expect(await poll(run)).toEqual([]);
+      expect(reads).toEqual([]);
+      expect([catalogReads, flagReads]).toEqual([0, 0]);
+      await close(run);
+    }
+  );
 
   it('🔴 a predicate refusal and a revoked install send no mask and Delete what was held; admitted again, the mask and the documents come back', async () => {
     seedVotes();
@@ -586,7 +633,93 @@ describe('not resolved, off, and the gRPC binding', () => {
   });
 });
 
+describe('the bound: a per-viewer stream past maxRecords ends too_large, never a truncated set', () => {
+  /** `n` of the viewer's own unrated votes, keys sorting in order. */
+  const seedMine = (n: number) => {
+    for (let i = 0; i < n; i++) put('votes', `bound-${String(i).padStart(5, '0')}`, VIEWER, null);
+  };
+
+  it('🔴 one past the bound ends the snapshot too_large; exactly at it, every document is served', async () => {
+    // A bound that is not a multiple of the page (500), so the last page is cut by the bound.
+    const BOUND = 1_237;
+    seedMine(BOUND);
+    const at = subscribe(composed(true, BOUND), await principalOf('hub'));
+    await settle(at, 1);
+    expect(keysOf(at.events).length).toBe(BOUND);
+    await close(at);
+
+    put('votes', 'bound-99999', VIEWER, null);
+    reads = [];
+    const over = subscribe(composed(true, BOUND), await principalOf('hub'));
+    await over.done;
+    expect(over.events).toEqual([{ type: 'end', meta: { reason: 'too_large' } }]);
+    // It read the versions up to one row past the bound (pages of 500, 500, then 238) and stopped
+    // there: no document body was read.
+    expect(reads).toEqual(['head', 'versions:31', 'versions:31', 'versions:31']);
+  });
+
+  it('🔴 a live stream that grows past the bound ends too_large on its next poll', async () => {
+    const BOUND = 613;
+    seedMine(BOUND);
+    const run = subscribe(composed(true, BOUND), await principalOf('hub'));
+    await settle(run, 1);
+    expect(keysOf(run.events).length).toBe(BOUND);
+    put('votes', 'bound-99999', VIEWER, null);
+    wake();
+    await run.done;
+    expect(run.events[run.events.length - 1]).toEqual({
+      type: 'end',
+      meta: { reason: 'too_large' },
+    });
+  });
+
+  it('the default bound is far above every tier’s default quota; the env must be above it', () => {
+    expect(parseViewerStreamMaxRecords(undefined)).toBe(20_000);
+    expect(parseViewerStreamMaxRecords('')).toBe(20_000);
+    expect(DEFAULT_VIEWER_STREAM_RECORDS).toBe(20_000);
+    expect(parseViewerStreamMaxRecords('25000')).toBe(25_000);
+    for (const bad of ['10000', '999', '-1', '2.5e4x', 'many', '20000.5']) {
+      expect(() => parseViewerStreamMaxRecords(bad)).toThrow(
+        'REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS must be an integer above 10000'
+      );
+    }
+  });
+});
+
 describe('bindings: a per-viewer cursor binds its schema, subject, audience and level binding', () => {
+  it('🔴 a cursor resumed by ANOTHER user’s token (same audience, same binding) is refused as expired, before live', async () => {
+    // seedVotes holds a vote of OTHER's, so a resume served under OTHER would have one to send.
+    seedVotes();
+    const run = await open('hub');
+    const { cursor } = cursorOf(run.events);
+    await close(run);
+    // The request binding (`subscription.ts`) is a public digest that names the subject, so a holder
+    // of another's cursor re-binds it to their own subject: only the stored state's subject check
+    // can refuse it. Without the re-bind the core's binding check refuses first, and this case
+    // would never reach the feed's.
+    const otherPrincipal = await principalOf('other');
+    const inner = cursor.replace(/^b1\.[0-9a-f]+\./, '');
+    expect(inner).not.toBe(cursor);
+    const rebound = bindCursor(
+      inner,
+      requestBinding({ schema: VOTES, urns: [] }, otherPrincipal.subject)
+    );
+    const other = subscribe(composed(), otherPrincipal, VOTES, rebound);
+    const err = await other.done;
+    expect(err).toBeInstanceOf(ProtocolError);
+    expect((err as ProtocolError).code).toBe('cursor_expired');
+    expect((err as ProtocolError).message).toBe('the cursor was issued to another token subject');
+    expect(other.events).toEqual([]);
+    // Positive control: OTHER's own fresh subscription is served, and the viewer's cursor resumes.
+    const fresh = await open('other');
+    expect(keysOf(fresh.events)).toEqual(['rec7:other-pg']);
+    await close(fresh);
+    const same = subscribe(composed(), await principalOf('hub'), VOTES, cursor);
+    await settle(same, wakers.length + 1);
+    expect(same.events.map((e) => e.type)).toEqual(['live']);
+    await close(same);
+  });
+
   it('🔴 a cursor resumed with another ceiling is refused as expired, before live; its own token resumes', async () => {
     seedVotes();
     const run = await open('block-exact');

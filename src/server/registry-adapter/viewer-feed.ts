@@ -23,15 +23,18 @@
  * one URN. A viewer's document is on this stream whatever its rating, and also on the level stream
  * of its bit once rated: the consumer deduplicates by key.
  *
- * THE META. `live` and every `progress` carry `{head: {seq}, levels: "on"|"off", keyedBy?, mask?}`:
+ * THE META. `live` and every `progress` carry
+ * `{head?: {seq}, levels?: "on"|"off", keyedBy?, mask?}`:
  *   - `head`: the app namespace's write head, read BEFORE the rows (as the private and level feeds
- *     read it): every write at or below it is in what the poll read;
+ *     read it): every write at or below it is in what the poll read. Absent for a token the token
+ *     gate refuses: that poll reads nothing (see AN EXPLICIT REFUSAL);
  *   - `levels`: the app's content-levels mode (`app-blocks-shared-doc-levels`; unreadable is on);
+ *     absent with the head;
  *   - `keyedBy`: the collection's declared `keyedBy`, absent when it declares none;
  *   - `mask`: the viewer's level mask, the level bits of others' documents this viewer may be
  *     served (an integer within 31): for a block-exchange token
  *     `resolveViewerBrowsingLevel(ceiling, viewer level)` when the token carries the viewer's level,
- *     else (a token minted before the hub wrote it) `audienceDocLevel(audience) & ceiling`; ANDed
+ *     else (a token minted before the hub wrote it) `onlySelectableLevels(ceiling)`; ANDed
  *     with `audienceDocLevel(audience)` in both cases, which carries the region hold; for a token
  *     with no block binding, `audienceDocLevel(audience)`.
  *
@@ -41,7 +44,17 @@
  * NO `mask`. A consumer must read that as "refused", never as an empty collection: the stream never
  * sends an empty stream WITH a mask for a refused viewer. A later poll that admits the viewer again
  * sends a meta with the mask and upserts the documents again. An `apps_disabled` refusal while the
- * run gate cannot be read ends the stream `unavailable` instead, as the private feed's does.
+ * run gate cannot be read ends the stream `unavailable` instead, as the private feed's does. The
+ * token gate (no user, an unlisted relay, no `AppDataRead`) runs FIRST, before the catalog, the
+ * levels flag or the head is read, as the private feed's does: such a token costs no lookup, and
+ * its meta names no head and no levels either (nothing was read).
+ *
+ * THE BOUND. A poll reads at most {@link ViewerFeedOptions.maxRecords} of the viewer's documents
+ * (`REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS`, {@link parseViewerStreamMaxRecords}): far above
+ * what the per-user document quota lets one viewer hold in one app at any tier's default, so only
+ * a quota raised past it (or a quota bug) reaches it. Past it the stream ENDS
+ * `{reason: "too_large"}` rather than serving a truncated set: a per-viewer stream is the viewer's
+ * own documents and the gate of their shared read, so it is either whole or not served.
  *
  * NOT RESOLVED. A schema whose collection does not resolve (no approved app, not a shared
  * collection, a major not minted, or the predicate's app is not the catalog's) ends the stream
@@ -129,9 +142,36 @@ export type ViewerFeedOptions = {
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   onError?: (err: unknown) => void;
   now?: () => number;
+  /** {@link parseViewerStreamMaxRecords}; {@link DEFAULT_VIEWER_STREAM_RECORDS} when absent. */
+  maxRecords?: number;
 };
 
 export const VIEWER_PAGE = 500;
+/**
+ * The most documents a code-default tier lets one user hold in one app (`apps.storage-docs`, the
+ * highest tier's limit in `usage-limits.ts`): a bound at or below it would end a viewer's stream at
+ * a quota the platform grants.
+ */
+export const MIN_VIEWER_STREAM_RECORDS = 10_000;
+/** The default bound: twice {@link MIN_VIEWER_STREAM_RECORDS}, twenty times the base quota. */
+export const DEFAULT_VIEWER_STREAM_RECORDS = 20_000;
+
+/**
+ * `REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS`: an integer strictly above
+ * {@link MIN_VIEWER_STREAM_RECORDS}; unset or empty is {@link DEFAULT_VIEWER_STREAM_RECORDS}.
+ * Anything else refuses to start.
+ */
+export function parseViewerStreamMaxRecords(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_VIEWER_STREAM_RECORDS;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n <= MIN_VIEWER_STREAM_RECORDS) {
+    throw new Error(
+      `REGISTRY_ADAPTER_VIEWER_STREAM_MAX_RECORDS must be an integer above ${MIN_VIEWER_STREAM_RECORDS}`
+    );
+  }
+  return n;
+}
+
 const STATE_FORMAT = 'v1';
 const CURSOR_RE = /^v1\.([0-9a-f]{32})$/;
 /** Folded into the read digest, so a change to what an entity carries re-sends every entity. */
@@ -145,11 +185,12 @@ type ViewerState = {
   /** The block binding's ceiling and viewer level, null without a binding (or level). */
   ceiling: number | null;
   viewerLevel: number | null;
-  appId: string;
-  family: string;
-  /** The head the poll that computed this state read, before its rows. */
-  head: number;
-  levels: 'on' | 'off';
+  /** Null in a state the token gate refused: nothing was read. */
+  appId: string | null;
+  family: string | null;
+  /** The head the poll that computed this state read, before its rows; null when it read none. */
+  head: number | null;
+  levels: 'on' | 'off' | null;
   keyedBy: string | null;
   /** The viewer's mask; null while the viewer is refused (see AN EXPLICIT REFUSAL). */
   mask: number | null;
@@ -166,8 +207,8 @@ export function viewerMeta(
   state: Pick<ViewerState, 'head' | 'levels' | 'keyedBy' | 'mask'>
 ): EventMeta {
   return {
-    ...headMeta(state.head),
-    levels: state.levels,
+    ...(state.head !== null ? headMeta(state.head) : {}),
+    ...(state.levels !== null ? { levels: state.levels } : {}),
     ...(state.keyedBy ? { keyedBy: state.keyedBy } : {}),
     ...(state.mask !== null ? { mask: state.mask } : {}),
   };
@@ -192,11 +233,12 @@ export function viewerMask(reader: Pick<Reader, 'block'>, audience: Audience): n
   return held & onlySelectableLevels(block.maxBrowsingLevel);
 }
 
-const end = (reason: 'not_resolved') => new StreamEnd({ reason });
+const end = (reason: 'not_resolved' | 'too_large') => new StreamEnd({ reason });
 
 export function createViewerFeed(opts: ViewerFeedOptions) {
   const claimer = createClaimer();
   const now = opts.now ?? Date.now;
+  const bound = opts.maxRecords ?? DEFAULT_VIEWER_STREAM_RECORDS;
 
   const stateKey = (s: Pick<ViewerState, 'schema' | 'subject' | 'audience'>) =>
     `${s.schema}#viewer#${s.subject}#${s.audience}`;
@@ -260,15 +302,19 @@ export function createViewerFeed(opts: ViewerFeedOptions) {
     return state;
   };
 
+  /** Every row, in pages; past {@link bound} rows the stream ends `too_large` (THE BOUND). */
   async function readPaged<T extends { key: string }>(
-    page: (afterKey: string) => Promise<T[]>
+    page: (afterKey: string, limit: number) => Promise<T[]>
   ): Promise<T[]> {
     const out: T[] = [];
     let after = '';
     for (;;) {
-      const rows = await page(after);
+      // Never more than one row past the bound: what proves the set is over it.
+      const limit = Math.min(VIEWER_PAGE, bound + 1 - out.length);
+      const rows = await page(after, limit);
       out.push(...rows);
-      if (rows.length < VIEWER_PAGE) return out;
+      if (out.length > bound) throw end('too_large');
+      if (rows.length < limit) return out;
       after = rows[rows.length - 1].key;
     }
   }
@@ -283,17 +329,42 @@ export function createViewerFeed(opts: ViewerFeedOptions) {
     ctx: AdapterContext,
     audience: Audience
   ): Promise<{ next: ViewerState; entities: Map<string, Entity> }> {
+    const reader = ctx.reader;
+    // The token gate, BEFORE the catalog, the levels flag or the head is read (as the private
+    // feed's): a token that may read no per-viewer stream costs no lookup, and is told nothing.
+    if (privateTokenGate(opts.relays, reader) !== null) {
+      return {
+        next: {
+          v: STATE_FORMAT,
+          schema,
+          subject: reader?.subject ?? '',
+          audience: audience.key,
+          ...bindingOf(reader),
+          appId: null,
+          family: null,
+          head: null,
+          levels: null,
+          keyedBy: null,
+          mask: null,
+          read: null,
+          issuedAt: 0,
+          served: [],
+        },
+        entities: new Map<string, Entity>(),
+      };
+    }
     const s = await opts.resolve(schema);
     if (!s) throw end('not_resolved');
-    if (prev && prev.appId !== s.appId) {
+    if (prev?.appId && prev.appId !== s.appId) {
       throw cursorExpired('the collection now belongs to a different app');
     }
     const digest = familyDigest(s.family);
     // The head, BEFORE any row (as the private and level feeds read it).
     const head = await opts.source.head(s.appId);
-    if (prev && head < prev.head) throw cursorExpired('the namespace seq went back');
+    if (prev && prev.head !== null && head < prev.head) {
+      throw cursorExpired('the namespace seq went back');
+    }
 
-    const reader = ctx.reader;
     const base = {
       v: STATE_FORMAT,
       schema,
@@ -311,7 +382,6 @@ export function createViewerFeed(opts: ViewerFeedOptions) {
       entities: new Map<string, Entity>(),
     });
 
-    if (privateTokenGate(opts.relays, reader) !== null) return refused(prev?.keyedBy ?? null);
     const { userId, clientId, block } = reader as Reader & { userId: number };
     if (block && (await opts.instanceRevoked(block.blockInstanceId, userId))) {
       return refused(prev?.keyedBy ?? null);
@@ -346,8 +416,8 @@ export function createViewerFeed(opts: ViewerFeedOptions) {
         : audienceDocLevel(audience.allowed)
       : null;
 
-    const versions = await readPaged((after) =>
-      opts.source.versions(s.appId, s.collection, userId, domain, after, VIEWER_PAGE)
+    const versions = await readPaged((after, limit) =>
+      opts.source.versions(s.appId, s.collection, userId, domain, after, limit)
     );
     const read = sha256Hex(
       sortedKeyJson({
@@ -362,8 +432,8 @@ export function createViewerFeed(opts: ViewerFeedOptions) {
 
     const claims = claimer(s.family, digest);
     const entities = new Map<string, Entity>();
-    const docs = await readPaged((after) =>
-      opts.source.documents(s.appId, s.collection, userId, domain, after, VIEWER_PAGE)
+    const docs = await readPaged((after, limit) =>
+      opts.source.documents(s.appId, s.collection, userId, domain, after, limit)
     );
     for (const d of docs) {
       const schemas = claims(d.data);
@@ -440,7 +510,7 @@ export function createViewerFeed(opts: ViewerFeedOptions) {
       const { next, entities } = step;
       // Against the newest head this stream SENT, too (a head-only move is not saved).
       const sentHead = (JSON.parse(sent) as { head?: { seq?: number } }).head?.seq;
-      if (sentHead !== undefined && next.head < sentHead) {
+      if (sentHead !== undefined && next.head !== null && next.head < sentHead) {
         throw cursorExpired('the namespace seq went back');
       }
       const was = new Map(before.served);
