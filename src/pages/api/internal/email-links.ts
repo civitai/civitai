@@ -17,8 +17,8 @@ import { TokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
  * other scheme is refused), and a body naming anything else is refused whole. A template whose
  * links carry a one-time token never calls this (createEmail's `oneTimeTokenLinks`).
  *
- * Authenticated by AUTH_INTERNAL_TOKEN as the Bearer, like /api/internal/email-events. Unset or
- * blank here, every call is refused (503).
+ * Authenticated by AUTH_INTERNAL_TOKEN through TokenSecuredEndpoint (the moderator app sends it as
+ * the Bearer), like /api/internal/email-events. Unset or blank here, every call is refused (503).
  */
 
 // A web link as written in the attribute: absolute http(s) or a path. Anything else (mailto:,

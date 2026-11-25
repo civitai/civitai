@@ -140,6 +140,23 @@ describe('createRemoteLinkTracker', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('a timeout pauses the main app too, so the next send waits on nothing', async () => {
+    let clock = 1_000_000;
+    const fetch = vi.fn(
+      (_u: string, init: RequestInit) =>
+        new Promise<Response>((_, reject) =>
+          init.signal!.addEventListener('abort', () => reject(init.signal!.reason))
+        )
+    );
+    const onError = vi.fn();
+    const t = tracker(fetch, { timeoutMs: 20, pauseMs: 30_000, now: () => clock, onError });
+    expect(await t(send, hrefs)).toEqual(hrefs);
+    expect(onError).toHaveBeenCalledWith('TimeoutError');
+    clock += 29_999;
+    expect(await t(send, hrefs)).toEqual(hrefs);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('a refusal pauses nothing', async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 401 }));
     const t = tracker(fetch, { now: () => 5 });
