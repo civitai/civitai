@@ -281,7 +281,7 @@ describe('exportWorkflows', () => {
     expect(yielded).toBeLessThan(MONGO_DOC_CAP + 2);
   });
 
-  /** Stored shape: PascalCase keys. */
+  /** Stored shape: PascalCase keys, except inside Metadata, which keeps the site's own camelCase. */
   const storedDoc = () => ({
     _id: '777-1',
     Status: 3,
@@ -450,17 +450,60 @@ describe('exportWorkflows', () => {
         expect(isUserGeneration({ Steps: [step(t, '0'), step('textToImage', '1')] }), t).toBe(true);
     });
 
-    it('keeps every step type whose output the generator shows the user', () => {
-      // The generator's own list: a type added there and not here would drop those generations.
+    /**
+     * The generator's own list of what a user sees: `normalizeStepOutput`'s switch, read as text
+     * (step type -> the output keys it reads). A type or output key added there and not here would
+     * silently drop those generations or their files from the export.
+     */
+    const generatorOutputs = () => {
       const src = readFileSync(
         resolve(__dirname, '../../orchestrator/orchestration-new.service.ts'),
         'utf8'
       );
       const start = src.indexOf('export function normalizeStepOutput');
-      const body = src.slice(start, src.indexOf('\n}\n', start));
-      const cases = [...body.matchAll(/case '(\w+)':/g)].map((m) => m[1]);
-      expect(cases.length).toBeGreaterThan(10);
-      for (const c of cases) expect(USER_STEP_TYPES.has(c.toLowerCase()), c).toBe(true);
+      const end = src.indexOf('\n}\n', start);
+      if (start < 0 || end < 0 || !src.slice(start, end).includes('switch (step.$type)'))
+        throw new Error(
+          'normalizeStepOutput is no longer a switch on step.$type: update this test'
+        );
+      const parts = src.slice(start, end).split(/case '(\w+)':/);
+      const out = new Map<string, string[]>();
+      let next: string[] = [];
+      for (let i = parts.length - 2; i >= 1; i -= 2) {
+        const keys = [...parts[i + 1].matchAll(/output\.(\w+)/g)].map((m) => m[1]);
+        // A case with no body of its own falls through to the next one.
+        if (keys.length) next = [...new Set(keys)];
+        out.set(parts[i], next);
+      }
+      // polyGen's primary model is read through a helper (getPolyGenPrimaryModel).
+      out.get('polyGen')?.push('model');
+      return out;
+    };
+
+    it('keeps every step type whose output the generator shows the user', () => {
+      const types = [...generatorOutputs().keys()];
+      expect(types.length).toBeGreaterThan(10);
+      for (const c of types) expect(USER_STEP_TYPES.has(c.toLowerCase()), c).toBe(true);
+    });
+
+    it('writes every output file the generator shows the user, as a link', () => {
+      const pascal = (k: string) => k[0].toUpperCase() + k.slice(1);
+      for (const [type, keys] of generatorOutputs()) {
+        expect(keys.length, `${type} reads no output keys`).toBeGreaterThan(0);
+        for (const key of keys) {
+          const url = `https://blob/${type}-${key}`;
+          const file = { Url: url, Width: 1, JobId: 'j' };
+          const value =
+            key === 'basicAnimations' ? { WalkingModel: file } : key.endsWith('s') ? [file] : file;
+          const doc = {
+            ...storedDoc(),
+            Steps: [{ _t: type, Name: '0', Output: { [pascal(key)]: value } }],
+          };
+          const text = JSON.stringify(reduceWorkflow(doc));
+          expect(text, `${type}.${key}`).toContain(url);
+          expect(text, `${type}.${key}`).not.toContain('JobId');
+        }
+      }
     });
 
     it('writes none of the check workflows into the file', async () => {

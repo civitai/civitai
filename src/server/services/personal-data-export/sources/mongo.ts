@@ -60,12 +60,11 @@ const NESTED_DENY_RE =
   /(callback|scan|hash|blobkey|trace|moderat|safety|classif|score|label|verdict|audit|xguard|clavata|matchedterm|matchedregex|threshold|policy|rating|flagged|^category$|reason|blocked|^user$|^messages$|responseformat|chattemplate)/i;
 
 /**
- * Step types the generator submits for a user. Language-model steps are not listed: their input
- * carries the site's own instructions.
+ * Step types the generator submits for a user: every type `normalizeStepOutput`
+ * (orchestration-new.service.ts) shows the user, which a test checks, plus training.
+ * Language-model steps are not listed: their input carries the site's own instructions.
  */
 export const USER_STEP_TYPES: ReadonlySet<string> = new Set(
-  // The step types whose output the generator shows the user (`normalizeStepOutput` in
-  // orchestration-new.service.ts), plus training.
   [
     'textToImage',
     'imageGen',
@@ -149,8 +148,15 @@ const MEDIA: Shape = {
   Width: 'leaf',
   Height: 'leaf',
   Duration: 'leaf',
+  Format: 'leaf',
   NSFWLevel: 'leaf',
 };
+
+const ANIMATIONS: Shape = Object.fromEntries(
+  ['Walking', 'Running'].flatMap((m) =>
+    ['Model', 'FbxModel', 'ArmatureModel'].map((f) => [`${m}${f}`, MEDIA])
+  )
+);
 
 const STEP: Shape = {
   _t: 'leaf',
@@ -161,10 +167,22 @@ const STEP: Shape = {
   CompletedAt: 'leaf',
   Cost: { Base: 'leaf', Factors: 'tree', Fixed: 'tree', Fees: 'tree', Tips: PAYMENT_TIPS },
   Input: 'tree',
+  // Every output key the generator shows the user (`normalizeStepOutput`), plus training epochs.
   Output: {
     Images: MEDIA,
+    Image: MEDIA,
     Video: MEDIA,
+    AdditionalVideos: MEDIA,
     Blob: MEDIA,
+    Blobs: MEDIA,
+    Model: MEDIA,
+    FbxModel: MEDIA,
+    Thumbnail: MEDIA,
+    RiggedModel: MEDIA,
+    RiggedFbxModel: MEDIA,
+    AnimatedModel: MEDIA,
+    AnimatedFbxModel: MEDIA,
+    BasicAnimations: ANIMATIONS,
     Epochs: { EpochNumber: 'leaf', Model: MEDIA, Samples: MEDIA },
   },
   Jobs: { Status: 'leaf', StartedAt: 'leaf', CompletedAt: 'leaf', Cost: 'leaf' },
