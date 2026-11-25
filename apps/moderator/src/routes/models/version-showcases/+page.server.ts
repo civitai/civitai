@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { listFeaturedImages } from '$lib/server/version-showcase.service';
+import { withheldRows } from '$lib/server/retracted-media';
 import { callModEndpoint } from '$lib/server/user-actions.service';
 import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
@@ -14,7 +15,7 @@ const querySchema = z.object({
   removed: z.literal('1').optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { image, model, author, removed } = parseQuery(url, querySchema);
   const { items, hasMore } = await listFeaturedImages({
     imageId: image,
@@ -24,7 +25,13 @@ export const load: PageServerLoad = async ({ url }) => {
     limit: LIMIT,
   });
   return {
-    items,
+    items: await withheldRows(
+      items.map((row) => ({ ...row, restricted: false })),
+      locals.user,
+      'version-showcases',
+      (row) => row.imageId,
+      (row) => ({ ...row, imageUrl: '', restricted: true })
+    ),
     hasMore,
     limit: LIMIT,
     filters: { image: image ?? null, model: model ?? null, author, removed: removed === '1' },

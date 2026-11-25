@@ -17,6 +17,7 @@ import type { TriggerOrigin } from '$lib/restrictions/origin';
 import { planRecheck, recheckResult, type Recheck } from '$lib/restrictions/recheck';
 import { isoTriggerTime } from '$lib/restrictions/trigger-evidence';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
+import { withheldRows } from './retracted-media';
 
 // Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
 // live in a client-safe module because the filter component needs them as values — see the note there.
@@ -399,9 +400,15 @@ export type RemixSource = {
   nsfwLevel: number;
   /** The stored generation prompt, for the diff against what was submitted. */
   prompt: string | null;
+  /** Withheld from this moderator: no key and no prompt. */
+  restricted?: true;
 };
 
-export async function getRemixSources(ids: readonly number[]): Promise<RemixSource[]> {
+/** The remix sources, with those withheld from `viewer` sent with no key or prompt. */
+export async function getRemixSources(
+  ids: readonly number[],
+  viewer: App.Locals['user'] | undefined
+): Promise<RemixSource[]> {
   if (!ids.length) return [];
   const rows = await dbRead
     .selectFrom('Image as i')
@@ -414,5 +421,11 @@ export async function getRemixSources(ids: readonly number[]): Promise<RemixSour
     ])
     .where('i.id', 'in', [...ids])
     .execute();
-  return rows.map((r) => ({ ...r, type: r.type as MediaType }));
+  return withheldRows(
+    rows.map((r): RemixSource => ({ ...r, type: r.type as MediaType })),
+    viewer,
+    'remix-sources',
+    (s) => s.id,
+    (s): RemixSource => ({ ...s, url: '', prompt: null, restricted: true })
+  );
 }

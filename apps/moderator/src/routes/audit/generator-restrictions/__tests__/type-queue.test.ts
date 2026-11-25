@@ -63,8 +63,9 @@ type LoadResult = {
   sourcesNotLoaded: number[];
 };
 const runLoad = (search = '') =>
-  (load as unknown as (e: { url: URL }) => Promise<LoadResult>)({
+  (load as unknown as (e: { url: URL; locals: object }) => Promise<LoadResult>)({
     url: new URL(`https://moderator.example/audit/generator-restrictions${search}`),
+    locals: { user: { id: 7 } },
   });
 
 const formEvent = (fields: Record<string, string>) => {
@@ -268,7 +269,7 @@ describe('generator-restrictions load — deep link', () => {
 
     await runLoad('?selected=99');
 
-    expect(getRemixSources).toHaveBeenCalledWith([77]);
+    expect(getRemixSources).toHaveBeenCalledWith([77], { id: 7 });
   });
 });
 
@@ -583,8 +584,9 @@ describe('generator-restrictions load — origin and sources', () => {
     sourcesFailed: boolean;
   };
   const run = (search = '') =>
-    (load as unknown as (e: { url: URL }) => Promise<TriageResult>)({
+    (load as unknown as (e: { url: URL; locals: object }) => Promise<TriageResult>)({
       url: new URL(`https://moderator.example/audit/generator-restrictions${search}`),
+      locals: { user: { id: 7 } },
     });
 
   it('passes a known origin filter to the list and to the facets', async () => {
@@ -629,7 +631,7 @@ describe('generator-restrictions load — origin and sources', () => {
 
     const data = await run();
 
-    expect(getRemixSources).toHaveBeenCalledWith([11, 12]);
+    expect(getRemixSources).toHaveBeenCalledWith([11, 12], { id: 7 });
     expect(Object.keys(data.sources)).toEqual(['11']);
     expect(data.sourcesFailed).toBe(false);
   });

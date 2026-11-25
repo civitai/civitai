@@ -3,16 +3,22 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseIdList, parseQuery } from '$lib/server/query';
 import { getImageTagReviewQueue, moderateImageTags } from '$lib/server/image-tags.service';
+import { withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
   limit: z.coerce.number().int().min(10).max(100).catch(50),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit } = parseQuery(url, querySchema);
-  const data = await getImageTagReviewQueue({ cursor, limit });
-  return { limit, wide: true, ...data };
+  const { items, nextCursor } = await getImageTagReviewQueue({ cursor, limit });
+  return {
+    limit,
+    wide: true,
+    items: await withheldRows(items, locals.user, 'image-tags', (i) => i.id, withheldRow),
+    nextCursor,
+  };
 };
 
 // Access is enforced globally (hooks.server.ts). `disable=true` approves the removal (tag disabled),

@@ -62,7 +62,11 @@ function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, 
  * The restriction queues' read: status (Pending by default), origin, sort, search and paging. The whole
  * page ships at once: selection is client state, so the remix sources for every row have to be on it.
  */
-export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
+export async function restrictionTriageLoad(
+  url: URL,
+  queue: QueueConfig,
+  user: App.Locals['user'] | undefined
+) {
   const { type, status, origin, sort, q, page, selected, username, userId } = parseQueueQuery(
     url,
     queue,
@@ -105,7 +109,7 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
   let sources: Record<number, RemixSource> = {};
   let sourcesFailed = false;
   try {
-    sources = Object.fromEntries((await getRemixSources(plan.lookup)).map((s) => [s.id, s]));
+    sources = Object.fromEntries((await getRemixSources(plan.lookup, user)).map((s) => [s.id, s]));
   } catch {
     sourcesFailed = true;
   }
