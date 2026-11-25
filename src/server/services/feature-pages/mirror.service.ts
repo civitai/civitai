@@ -472,7 +472,8 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     });
   let sentAt = '';
   // Already hidden there when this mirror first hides it: another's hide, never lifted from here.
-  let foreign = false;
+  // Kept while the hide stands; only the read before a first hide decides it again.
+  let foreign = row.pushedState === 'mod-hidden' && row.modHideOrigin === 'foreign';
   const modHide = () => ({
     modHide: {
       at: new Date(sentAt),
@@ -623,8 +624,8 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       if (held.kind === 'retry') return fail(held.status, 'by-source');
       if (held.kind === 'held') {
         if (held.state === 'erased') return erased();
-        foreign =
-          state === 'mod-hidden' && row.pushedState !== 'mod-hidden' && held.state === 'hidden';
+        if (state === 'mod-hidden' && row.pushedState !== 'mod-hidden')
+          foreign = held.state === 'hidden';
         urn = held.urn;
         platformDigest = held.digest;
         steps.push('by-source');

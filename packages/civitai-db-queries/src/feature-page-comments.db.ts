@@ -58,6 +58,8 @@ export type FpMirrorFactsRow = {
   scanHide: boolean;
   /** The `at` of the last moderator hide sent. */
   modHideSentAt: Date | null;
+  /** Whose hide that was: 'foreign' (hidden there first by another) stays until shown again. */
+  modHideOrigin: string | null;
   /** The text version a moderator lifted the scan's hide for. */
   liftGrantedVersion: number | null;
   /**
@@ -72,7 +74,7 @@ const FACTS = `
          m."pushedDigest", m."platformDigest", m."pendingDigest", m."pushAttempts", m."nextPushAt",
          m."updatedAt"::text AS "mirrorUpdatedAt", m."postAttemptedAt", m."subjectMissingAt",
          m."removeWantedAt", m."restrictedAt", m."postSeq", m."goneAt", m."contentAt",
-         m."modHideSentAt", m."liftGrantedVersion",
+         m."modHideSentAt", m."modHideOrigin", m."liftGrantedVersion",
          COALESCE(m."modHideOrigin" = 'scan' AND m."liftGrantedAt" > m."modHideSentAt"
            AND m."liftGrantedVersion" = m.version, false) AS "liftGranted",
          COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false) AS "scanHide",
@@ -604,6 +606,7 @@ export async function unactionReportLiftingScanHide(
       // The scan's own report on the scan's current hide: a lift it cannot make now leaves it open
       // and says why, so the hide is never left with nobody told.
       const [wait] = await rows<{
+        foreign: boolean;
         reported: boolean;
         pushing: boolean;
         author: boolean;
@@ -611,7 +614,8 @@ export async function unactionReportLiftingScanHide(
         version: boolean;
       }>(
         trx,
-        `SELECT ${openPersonReport('m."commentId"', '$2')} AS reported,
+        `SELECT COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
+           ${openPersonReport('m."commentId"', '$2')} AS reported,
            COALESCE(m."leaseUntil" > now(), false) AS pushing,
            (u.id IS NULL OR u."deletedAt" IS NOT NULL OR u."bannedAt" IS NOT NULL OR u.muted) AS author,
            ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
@@ -627,7 +631,7 @@ export async function unactionReportLiftingScanHide(
            AND m."removeWantedAt" IS NULL`,
         [commentId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
       );
-      const held = (['reported', 'pushing', 'author', 'held', 'version'] as const).find(
+      const held = (['foreign', 'reported', 'pushing', 'author', 'held', 'version'] as const).find(
         (why) => wait?.[why]
       );
       if (held) return { changed: false, lifted: null, held };
@@ -669,6 +673,7 @@ export async function unactionReportLiftingScanHide(
            AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
            AND c."hiddenAt" = m."scanHiddenAt" AND m."scanHiddenVersion" = m.version
            AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL
+           AND m."modHideOrigin" IS DISTINCT FROM 'foreign'
            AND (m."leaseUntil" IS NULL OR m."leaseUntil" < now())
            AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND NOT u.muted
            AND NOT ${csamQueueHeldText('CommentV3', 'm."commentId"')}

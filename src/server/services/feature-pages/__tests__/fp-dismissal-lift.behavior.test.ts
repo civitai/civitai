@@ -29,7 +29,7 @@ import {
 } from '~/server/services/feature-pages/__tests__/fp-harness';
 
 // A moderator's dismissal of the scan's report on a Feature Pages comment, from the scan's hide to
-// what the platform shows, against the platform's decider.
+// what the platform shows, against the platform's decider. Who may lift what: civitai/civitai#10409.
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({ kysely: null as unknown }));
@@ -319,10 +319,79 @@ describe("a moderator's dismissal of the scan's report", () => {
     const { reportId } = await scanHides(id);
     await runMirror(mirror);
     expect(await mirrorRow(id)).toMatchObject({ modHideOrigin: 'foreign' });
-    expect(await dismiss(reportId)).not.toBeNull();
+    await heldOpen(id, reportId, 'foreign');
     expect(await settle()).toMatchObject({ moderatorLifts: 0 });
     expect(modVisibleBySource()).toHaveLength(0);
     expect(deciding(id)).toMatchObject({ source: 'moderator', verdict: 'hidden' });
+  });
+
+  /** Hidden on the platform by another moderator first, then by the scan here. */
+  const hiddenThereFirst = async () => {
+    const id = (await seedFpComment(mirror, 'hidden there first')).comment.sourceId;
+    verdictAt('mod', id, 'hidden', new Date(Date.now() - 1_000));
+    await scanHides(id);
+    await runMirror(mirror);
+    expect(await mirrorRow(id)).toMatchObject({ modHideOrigin: 'foreign' });
+    return id;
+  };
+  const resent = async (id: number) => {
+    const before = (await mirrorRow(id)).modHideSentAt as Date;
+    await runMirror(mirror);
+    const row = await mirrorRow(id);
+    expect((row.modHideSentAt as Date).getTime()).toBeGreaterThan(before.getTime());
+    return row;
+  };
+  const neverLifted = async (id: number, reportId: number) => {
+    await heldOpen(id, reportId, 'foreign');
+    expect(await settle()).toMatchObject({ moderatorLifts: 0 });
+    expect(modVisibleBySource()).toHaveLength(0);
+    expect(deciding(id)).toMatchObject({ source: 'moderator', verdict: 'hidden' });
+  };
+
+  it("5e. another's hide stays another's after an edit sends the hide again", async () => {
+    const id = await hiddenThereFirst();
+    await q(
+      `UPDATE "Report" SET status = 'Actioned' WHERE id IN (SELECT "reportId" FROM "CommentV3Report" WHERE "commentId" = $1)`,
+      [id]
+    );
+    await q(`UPDATE "CommentV3" SET content = '<p>edited, still flagged</p>' WHERE id = $1`, [id]);
+    await q(
+      `UPDATE "FeaturePageCommentMirror" SET version = version + 1, "contentAt" = now(),
+         "nextPushAt" = now() WHERE "commentId" = $1`,
+      [id]
+    );
+    await flagScan(id);
+    const reportId = await rescanHides(id, await judgedText(id));
+    expect(await resent(id)).toMatchObject({ modHideOrigin: 'foreign', scanHiddenVersion: 2 });
+    await neverLifted(id, reportId);
+  });
+
+  it("5f. another's hide stays another's after a scan retry sends the hide again", async () => {
+    const id = await hiddenThereFirst();
+    await q(
+      `UPDATE "Report" SET status = 'Actioned' WHERE id IN (SELECT "reportId" FROM "CommentV3Report" WHERE "commentId" = $1)`,
+      [id]
+    );
+    const reportId = await rescanHides(id, await judgedText(id));
+    await q(`UPDATE "FeaturePageCommentMirror" SET "nextPushAt" = now() WHERE "commentId" = $1`, [
+      id,
+    ]);
+    expect(await resent(id)).toMatchObject({ modHideOrigin: 'foreign' });
+    await neverLifted(id, reportId);
+  });
+
+  it("5g. the scan's own hide sent again stays the scan's, and its dismissal lifts it", async () => {
+    const { id, reportId } = await hiddenByScan();
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
+    const second = await rescanHides(id, await judgedText(id));
+    await q(`UPDATE "FeaturePageCommentMirror" SET "nextPushAt" = now() WHERE "commentId" = $1`, [
+      id,
+    ]);
+    expect(await resent(id)).toMatchObject({ modHideOrigin: 'scan' });
+    expect(await dismiss(second)).toEqual({ commentId: id, version: 1 });
+    await settle();
+    expect(modVisibleBySource()).toHaveLength(1);
+    expect(decided(id)).toBe('visible');
   });
 
   /** A lift granted and pushed, with the daily page still showing our hide as it was. */

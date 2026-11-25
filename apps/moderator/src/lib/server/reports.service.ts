@@ -540,6 +540,7 @@ async function perReportType<V>(
 
 /** Why the scan's report was left open: the comment it hid cannot be shown again yet. */
 const SCAN_LIFT_HELD = {
+  foreign: 'It was hidden by another action on the platform first, so it stays hidden.',
   reported: 'Someone else has also reported this comment. Rule on that report first.',
   pushing: 'This comment is being sent to the platform. Try again in a minute.',
   author: "The comment's author is banned or muted, so it stays hidden.",

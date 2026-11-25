@@ -11,10 +11,7 @@ import { SYSTEM_USER_ID } from '../users.service';
  * service: only the per-report status action, set Unactioned, lifts the scan's hide.
  */
 
-const { dbHandle, rewardReportReporters } = vi.hoisted(() => ({
-  dbHandle: { current: null as unknown },
-  rewardReportReporters: vi.fn(),
-}));
+const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
 vi.mock('../db', () => ({
   get dbRead() {
@@ -26,7 +23,12 @@ vi.mock('../db', () => ({
     return dbHandle.current;
   },
 }));
-vi.mock('../rewards', () => ({ rewardReportReporters }));
+// A dismissal pays no reporter: any reward write fails the test.
+vi.mock('../clickhouse', () => ({
+  getClickhouse: () => {
+    throw new Error('a dismissal wrote a report reward');
+  },
+}));
 vi.mock('../redis', () => ({
   getRedis: () => ({ sAdd: vi.fn(), sRem: vi.fn(), del: vi.fn(), set: vi.fn(), get: vi.fn() }),
 }));
@@ -59,7 +61,7 @@ CREATE TABLE "CommentV3" ("id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, 
   "hidden" BOOLEAN NOT NULL DEFAULT false, "hiddenAt" TIMESTAMPTZ(6), "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "deletedAt" TIMESTAMPTZ(6), "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT now());
 CREATE TABLE "FeaturePageCommentMirror" ("commentId" INTEGER PRIMARY KEY, "version" INTEGER NOT NULL DEFAULT 1,
-  "goneCause" TEXT, "removeWantedAt" TIMESTAMPTZ(6), "scanHiddenAt" TIMESTAMPTZ(6), "scanHiddenVersion" INTEGER, "scanHideReportId" INTEGER,
+  "goneCause" TEXT, "removeWantedAt" TIMESTAMPTZ(6), "scanHiddenAt" TIMESTAMPTZ(6), "scanHiddenVersion" INTEGER, "scanHideReportId" INTEGER, "modHideOrigin" TEXT,
   "liftGrantedAt" TIMESTAMPTZ(6), "liftGrantedBy" INTEGER, "liftGrantedVersion" INTEGER,
   "nextPushAt" TIMESTAMPTZ(6), "leaseUntil" TIMESTAMPTZ(6), "pushAttempts" INTEGER NOT NULL DEFAULT 0, "pendingDigest" TEXT,
   "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT now());
