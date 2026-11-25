@@ -45,6 +45,7 @@
   import { browsingLevelLabels } from '@civitai/shared';
   import { serviceReviewReportActionAllowed } from '@civitai/shared/post-text-report';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import type { PageData } from './$types';
@@ -627,7 +628,15 @@
             {#if review.images.length}
               <div class="mb-2 flex flex-wrap gap-2">
                 {#each review.images as image (image.id)}
-                  <EdgeMedia src={image.url} width={200} alt="Review image" class="h-24 w-24 rounded object-cover" />
+                  {#if image.restricted}
+                    <div
+                      class="grid h-24 w-24 place-items-center rounded bg-dark-5 p-1 text-center text-[10px] text-dark-2"
+                    >
+                      {RETRACTED_REFUSED}
+                    </div>
+                  {:else}
+                    <EdgeMedia src={image.url} width={200} alt="Review image" class="h-24 w-24 rounded object-cover" />
+                  {/if}
                 {/each}
               </div>
             {/if}

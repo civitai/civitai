@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 
 /**
  * Which of `imageIds` the relabel set must never contain, because a CSAM report or CSAM block
@@ -8,7 +9,8 @@ import { sql } from 'kysely';
  * Every signal is used, because none is complete on its own: a later moderator removal
  * overwrites `blockedFor`, and an unsent `CsamReport` can have its image list replaced. The
  * `Report` arms match only rows written before `report.create` stopped taking the CSAM reason.
- * The owner checks are deliberately broader than the ticket's "CSAM-reported images".
+ * The owner checks and the withheld arm (`moderatorWithheldSql`, for every labeler) go beyond
+ * CSAM-reported images.
  */
 export const csamExcludedImageIds = (imageIds: number[]) => sql<{ id: number }>`
   WITH candidate AS (SELECT DISTINCT unnest(${imageIds}::int[]) AS id),
@@ -33,4 +35,5 @@ export const csamExcludedImageIds = (imageIds: number[]) => sql<{ id: number }>`
      OR EXISTS (
        SELECT 1 FROM "Image" o WHERE o."userId" = i."userId" AND o."blockedFor" = 'CSAM'
      )
+     OR ${sql.raw(moderatorWithheldSql('i', { csamReview: false }))}
 `;

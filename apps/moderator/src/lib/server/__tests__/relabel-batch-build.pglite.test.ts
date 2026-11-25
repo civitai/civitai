@@ -18,6 +18,7 @@ import {
   type RelabelBuildOptions,
 } from '../relabel-batch-build';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MODERATOR_SCHEMA = readFileSync(
@@ -26,15 +27,15 @@ const MODERATOR_SCHEMA = readFileSync(
 );
 
 // The main-database tables the build reads, cut to the columns it touches.
-const MAIN_TABLES = `
-CREATE TABLE "Image" (
-  id int PRIMARY KEY, "userId" int NOT NULL, ingestion text NOT NULL, "needsReview" text,
-  "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 1, type text NOT NULL DEFAULT 'image'
-);
-CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
+// The shared withhold rule's tables (the CSAM exclusion reads it), each image on its own url.
+const MAIN_TABLES = `${INQUISITOR_IMAGE_SCHEMA}
+CREATE SEQUENCE image_url;
+ALTER TABLE "Image" ALTER COLUMN url SET DEFAULT ('key-' || nextval('image_url')),
+  ALTER COLUMN "nsfwLevel" SET DEFAULT 1;
+ALTER TABLE "CsamReport" ALTER COLUMN images SET DEFAULT '[]';
+CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL, status text, details jsonb, "userId" int);
 CREATE TABLE "ImageReport" ("reportId" int NOT NULL, "imageId" int NOT NULL);
 CREATE TABLE "UserReport" ("reportId" int NOT NULL, "userId" int NOT NULL);
-CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
 CREATE TABLE "Appeal" (
   id serial PRIMARY KEY, "entityId" int NOT NULL, "entityType" text NOT NULL, status text NOT NULL,
   "resolvedAt" timestamp, "createdAt" timestamp NOT NULL DEFAULT now()
