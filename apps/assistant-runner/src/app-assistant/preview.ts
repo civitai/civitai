@@ -425,9 +425,8 @@ export class RunnerPreview {
    * `install-failed` unless it exited 0. It runs inside the start's turn of `#serial`, so a
    * `start_preview` meanwhile waits.
    *
-   * Known trade-off: the page's request may time out upstream while a first install still runs. The runner goes on all the same: the install finishes (or is killed at
-   * its bound), and the next click finds the dependencies installed and installs nothing (or, while
-   * that install still runs, is told it is still installing).
+   * The install keeps running if the page's request times out upstream; the next Restart finds it
+   * installed, or is told it is still installing.
    */
   async #install(dir: string, signal?: AbortSignal): Promise<void> {
     let installed: { text: string; isError: boolean };

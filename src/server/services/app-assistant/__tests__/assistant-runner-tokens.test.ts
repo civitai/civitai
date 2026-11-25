@@ -26,10 +26,10 @@ const keys = testKeyPair();
 const GRANT = { userId: 42, conversationId: 'c-1', idempotencyKey: 'k-1' };
 
 /**
- * What a Restart preview's own calls before its tunnel's start may add to its two waits: listing
- * and opening the app's sandbox, polling it while it starts, the dev server's status, manifest
- * reads and its last probe, and the two checks before an install (is it installed, does another
- * install run). The old 2-minute pre-start allowance, less the two waits.
+ * What a Restart preview's own calls before its tunnel's start add on top of its waits (for the
+ * app to start, for the install, for the dev server to listen): listing and opening the app's
+ * sandbox, polling it while it starts, the dev server's status, manifest reads and its last probe,
+ * and the two checks before an install (is it installed, does another install run).
  */
 const SETUP_CALLS_ALLOWANCE_MS = 40_000;
 
