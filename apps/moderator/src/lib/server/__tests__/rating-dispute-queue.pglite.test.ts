@@ -739,4 +739,27 @@ describe('ratingDisputeTriageLoad withheld images', () => {
     expect(granted.preview.images.map((i) => i.url)).toEqual(['held-key', 'open-key']);
     expect(granted.entity).toMatchObject({ coverUrl: 'held-key' });
   });
+
+  it("sends an Article's own withheld cover with no key to a moderator without the grant", async () => {
+    const held = await seedImage({ url: 'article-held' });
+    const open = await seedImage({ url: 'article-open' });
+    await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = $1`, [held]);
+    const heldArticle = await seedEntity(db, 'Article', { userId: alice });
+    const openArticle = await seedEntity(db, 'Article', { userId: alice });
+    await db.query(`UPDATE "Article" SET "coverId" = $1 WHERE id = $2`, [held, heldArticle]);
+    await db.query(`UPDATE "Article" SET "coverId" = $1 WHERE id = $2`, [open, openArticle]);
+    const heldReview = await fileReview({ entityType: 'Article', entityId: heldArticle });
+    const openReview = await fileReview({ entityType: 'Article', entityId: openArticle });
+
+    const without = (await load('?tab=articles', WITHOUT_GRANT)).items;
+    const entity = (id: number) => without.find((i) => i.id === id)?.entity;
+    expect(entity(heldReview)).toMatchObject({ coverUrl: null, coverType: null });
+    expect(JSON.stringify(without)).not.toContain('article-held');
+    expect(entity(openReview)).toMatchObject({ coverUrl: 'article-open' });
+
+    const granted = (await load('?tab=articles')).items;
+    expect(granted.find((i) => i.id === heldReview)?.entity).toMatchObject({
+      coverUrl: 'article-held',
+    });
+  });
 });

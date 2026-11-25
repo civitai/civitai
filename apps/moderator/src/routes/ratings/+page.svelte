@@ -254,7 +254,11 @@
           onselect={state.select}
         >
           {#snippet coverMedia()}
-            {#if row.preview.images[0]?.restricted}<CoverThumb image={row.preview.images[0]} />{/if}
+            {#if row.entity && 'coverRestricted' in row.entity}
+              <CoverThumb image={{ id: row.entityId, url: '', nsfwLevel: 0, restricted: true }} />
+            {:else if row.preview.images[0]?.restricted}
+              <CoverThumb image={row.preview.images[0]} />
+            {/if}
           {/snippet}
           {#snippet coverIcon()}<IconPhoto aria-hidden="true" />{/snippet}
           {#snippet badges()}

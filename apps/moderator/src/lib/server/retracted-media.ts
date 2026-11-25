@@ -16,6 +16,7 @@ import { insertModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 import type { AppealCoverImage, MinorHashMatchDetail } from './minor-hash.service';
 import type { ModelPreview } from './model-preview.service';
+import type { ComFace } from '$lib/com-face';
 
 /** `kind: 'held'` marks held media (`heldImageSql`), so its serve is recorded as a held view; who is served
  *  it is `moderatorMediaWhereSql`'s call. */
@@ -154,16 +155,25 @@ export function withheldRow<T extends object>(row: T) {
   } as Omit<T, keyof ReturnType<typeof withheldMedia>> & ReturnType<typeof withheldMedia>;
 }
 
-/** Each row's cover images, with those withheld from `user` sent without their key. */
-export async function withheldCoverImages<T extends { coverImages: AppealCoverImage[] }>(
+/** Each row's cover images and civitai.com face cover, with those withheld from `user` sent without
+ *  their key. */
+export async function withheldCoverImages<
+  T extends { coverImages: AppealCoverImage[]; comFace?: ComFace | null }
+>(
   rows: T[],
   user: App.Locals['user'] | undefined,
   list: string
 ): Promise<(Omit<T, 'coverImages'> & { coverImages: AppealCoverImage[] })[]> {
-  const ids = rows.flatMap((row) => row.coverImages.map((image) => image.id));
+  const ids = rows.flatMap((row) => [
+    ...row.coverImages.map((image) => image.id),
+    ...(row.comFace?.cover ? [row.comFace.cover.id] : []),
+  ]);
   const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, list);
   return rows.map((row) => ({
     ...row,
+    ...(row.comFace?.cover && withheld.has(row.comFace.cover.id)
+      ? { comFace: { ...row.comFace, cover: { ...row.comFace.cover, url: '', restricted: true } } }
+      : {}),
     coverImages: row.coverImages.map((image) =>
       withheld.has(image.id)
         ? { id: image.id, url: '', nsfwLevel: image.nsfwLevel, restricted: true }
@@ -219,13 +229,20 @@ export async function withheldHashDetail(
   return {
     ...detail,
     ...(blank(detail.modelCoverId)
-      ? { modelCoverId: null, modelCoverUrl: null, modelCoverType: null, modelCoverWithheld: true }
+      ? {
+          modelCoverId: null,
+          modelCoverUrl: null,
+          modelCoverType: null,
+          modelCoverRestricted: null,
+          modelCoverWithheld: true,
+        }
       : {}),
     ...(blank(detail.minorModelCoverId)
       ? {
           minorModelCoverId: null,
           minorModelCoverUrl: null,
           minorModelCoverType: null,
+          minorModelCoverRestricted: null,
           minorModelCoverWithheld: true,
         }
       : {}),

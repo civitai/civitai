@@ -205,29 +205,43 @@ async function decorate(
   const found = rows.map(
     (r) => previews.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? { total: 0, images: [] }
   );
+  // An Article's own cover rides along as one more image, so the one read decides it too.
+  const articleCover = (r: RatingReviewRow) =>
+    r.entityType === 'Article' && r.entity?.coverId != null && r.entity.coverUrl
+      ? [{ id: r.entity.coverId, url: r.entity.coverUrl, nsfwLevel: r.entity.nsfwLevel }]
+      : [];
   const shown = await withheldCoverImages(
-    found.map((p) => ({ coverImages: p.images })),
+    rows.map((r, i) => ({
+      coverImages: [...found[i].images, ...articleCover(r)],
+      comFace: r.entity?.comFace,
+    })),
     user,
     'rating-disputes'
   );
   return rows.map((r, i) => {
+    const images = shown[i].coverImages.slice(0, found[i].images.length);
     const preview: RatingReviewImages = {
       total: found[i].total,
-      images: shown[i].coverImages.map((img) =>
+      images: images.map((img) =>
         img.restricted ? { ...img, type: 'image' } : img
       ) as RatingReviewImage[],
     };
     const cover = preview.images[0];
+    const ownCover = shown[i].coverImages[found[i].images.length];
+    const face = shown[i].comFace;
+    const entity = r.entity && (face === undefined ? r.entity : { ...r.entity, comFace: face });
     return {
       ...r,
       entity:
-        r.entity && r.entityType !== 'Article'
+        entity && r.entityType !== 'Article'
           ? {
-              ...r.entity,
+              ...entity,
               coverUrl: cover && !cover.restricted ? cover.url : null,
               coverType: cover?.type ?? null,
             }
-          : r.entity,
+          : entity && ownCover?.restricted
+          ? { ...entity, coverUrl: null, coverType: null, coverRestricted: true as const }
+          : entity,
       ownerDisputeCount: owners.get(r.id) ?? 0,
       preview,
       scannedText: texts.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? null,

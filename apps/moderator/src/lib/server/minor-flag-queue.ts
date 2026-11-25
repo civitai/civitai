@@ -204,7 +204,13 @@ export async function loadNeedsReviewQueue(
     sources,
     total,
     chipCounts,
-    restrictedVerdicts,
+    restrictedVerdicts: (
+      await withheldCoverImages(
+        restrictedVerdicts.map((v) => ({ ...v, coverImages: [] })),
+        user,
+        'model-flag-restricted-verdicts'
+      )
+    ).map(({ coverImages: _, ...v }) => v),
     restrictedVerdictTotal,
     ...queue,
     items: await withheldCoverImages(queue.items, user, 'model-flag-needs-review'),

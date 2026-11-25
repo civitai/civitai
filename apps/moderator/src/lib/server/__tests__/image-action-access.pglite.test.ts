@@ -1210,6 +1210,34 @@ describe("the model flag appeals queue's cover images", () => {
     const { withheldCoverImages } = await import('../retracted-media');
     expect(await withheldCoverImages(rows(), WITH_GRANT as never, 'test')).toEqual(rows());
   });
+
+  const faced = (coverId: number) => [
+    {
+      coverImages: [],
+      comFace: {
+        name: 'face',
+        url: 'https://civitai.com/models/1',
+        coverPicked: true,
+        cover: { id: coverId, url: `key-${coverId}`, type: 'image' as const, nsfwLevel: 1 },
+      },
+    },
+  ];
+
+  it('sends a withheld civitai.com face cover with no key, and an open one as it is, without the grant', async () => {
+    const { withheldCoverImages } = await import('../retracted-media');
+    const [withheld] = await withheldCoverImages(faced(WITHHELD), WITHOUT_GRANT as never, 'test');
+    expect(withheld.comFace?.cover).toEqual({
+      id: WITHHELD,
+      url: '',
+      type: 'image',
+      nsfwLevel: 1,
+      restricted: true,
+    });
+    const [open] = await withheldCoverImages(faced(CONTROL), WITHOUT_GRANT as never, 'test');
+    expect(open.comFace?.cover).toMatchObject({ url: `key-${CONTROL}` });
+    const [granted] = await withheldCoverImages(faced(WITHHELD), WITH_GRANT as never, 'test');
+    expect(granted.comFace?.cover).toMatchObject({ url: `key-${WITHHELD}` });
+  });
 });
 
 describe("the model flag detail panes' images", () => {

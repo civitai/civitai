@@ -41,6 +41,8 @@ export type RatingReviewEntitySummary = {
   override: number | null;
   /** Set for an Article only; every other type's cover is the first image of its preview set. */
   coverUrl: string | null;
+  /** The Article's cover image, so a withheld one can be blanked; absent on every other type. */
+  coverId?: number | null;
   coverType: MediaType | null;
   /** A Model's civitai.com face, null when it has none; absent on every other type. */
   comFace?: ComFace | null;
@@ -160,6 +162,7 @@ async function loadSummaries(
           'a.nsfwLevel',
           'a.moderatorNsfwLevel',
           'a.cover',
+          'a.coverId',
           'i.url',
           'i.type',
         ])
@@ -172,6 +175,7 @@ async function loadSummaries(
           nsfwLevel: r.nsfwLevel,
           override: r.moderatorNsfwLevel,
           coverUrl: r.url ?? r.cover,
+          coverId: r.coverId,
           coverType: (r.type as MediaType | null) ?? null,
           parentId: null,
         });
@@ -728,6 +732,7 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
             override: s.override,
             coverUrl: s.coverUrl,
             coverType: s.coverType,
+            ...(t === 'Article' && { coverId: s.coverId ?? null }),
             ...(t === 'Model' && { comFace: comFaces.get(s.id) ?? null }),
           }
         : null,
