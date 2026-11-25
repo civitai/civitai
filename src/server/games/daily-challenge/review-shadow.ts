@@ -38,8 +38,8 @@ export function shadowSendable({
 }
 
 /**
- * The shadow config to run for this entry, or null. A config with no provider pin that denies
- * data collection never sends: without one the call goes to any host on the account's defaults.
+ * The shadow config to run for this entry, or null. Never sends unless the config pins a provider
+ * with dataCollection "deny"; otherwise the call goes to any host on the account defaults.
  */
 export function shadowFor(
   shadow: ReviewShadowConfig | null | undefined,

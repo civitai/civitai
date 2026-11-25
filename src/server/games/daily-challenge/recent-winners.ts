@@ -8,6 +8,8 @@ export const FRESHNESS_CATEGORY_KEYS = new Set(['creativity', 'wordplay']);
 export const FRESHNESS_CRITERIA_SUFFIX = ' Ideas that repeat a recent winner score lower.';
 
 const RECENT_WINNER_LIMIT = 10;
+// Stored when one entrant was eligible; it describes no idea.
+export const SOLE_WINNER_REASON = 'Sole eligible entrant';
 const RECENT_WINNER_IDEA_MAX_LENGTH = 200;
 
 /** True only for a stored rubric whose page tells entrants that repeats score lower. */
@@ -49,6 +51,7 @@ export async function getRecentWinnerIdeas(
     WHERE c.source = 'System'
       AND c.id <> ${excludeChallengeId}
       AND cw.reason IS NOT NULL
+      AND cw.reason <> ${SOLE_WINNER_REASON}
       AND i."blockedFor" IS NULL
       AND i."needsReview" IS NULL
       ${sfwFilter}

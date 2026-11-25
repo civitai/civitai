@@ -185,7 +185,8 @@ sample with a second model and logs both to Axiom; only production scores reach 
 SFW System dailies, only for entries the scan has cleared at an SFW level, and only with a `provider`
 pin that denies data collection, e.g. `{ order: ['wafer/us'], allowFallbacks: false, dataCollection:
 'deny' }` (`shadowFor`). The shadow call carries `entry <imageId>` instead of the entrant's username,
-and its log records OpenRouter's generation id, which OpenRouter's generation API resolves to the host
+it gets no recent-winner ideas (judge-written reasons can name other entrants), and its log
+records OpenRouter's generation id, which OpenRouter's generation API resolves to the host
 that served it. Recent-winner ideas on an SFW daily come only from SFW dailies whose winning image is
 still scanned SFW and not blocked or held.
 

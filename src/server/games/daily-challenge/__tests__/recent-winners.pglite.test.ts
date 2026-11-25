@@ -60,7 +60,8 @@ describe('getRecentWinnerIdeas', () => {
         (9, 16, 'the challenge being judged', now()),
         (1, 17, 'image not scanned yet', now()),
         (1, 18, 'image unrated', now()),
-        (4, 19, 'challenge level unset', now());
+        (4, 19, 'challenge level unset', now()),
+        (1, 10, 'Sole eligible entrant', now());
     `);
     vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation((async (
       strings: TemplateStringsArray,

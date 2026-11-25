@@ -75,12 +75,17 @@ describe('getJsonCompletionWithUsage provider', () => {
 
   it('sends the pin over the default, and keeps it on both retry paths', async () => {
     send
-      .mockResolvedValueOnce(replyWith(''))
-      .mockResolvedValueOnce(replyWith('not json'))
-      .mockResolvedValueOnce(replyWith('{}'));
+      .mockResolvedValueOnce({ ...replyWith(''), id: 'gen-1' })
+      .mockResolvedValueOnce({ ...replyWith('not json'), id: 'gen-2' })
+      .mockResolvedValueOnce({ ...replyWith('{}'), id: 'gen-3' });
 
-    await openrouter!.getJsonCompletionWithUsage({ messages, retries: 2, provider: pin });
+    const result = await openrouter!.getJsonCompletionWithUsage({
+      messages,
+      retries: 2,
+      provider: pin,
+    });
 
+    expect(result.generationId).toBe('gen-3');
     expect(send).toHaveBeenCalledTimes(3);
     for (const call of send.mock.calls) expect(call[0].provider).toEqual(pin);
   });

@@ -107,6 +107,7 @@ import type { OpenRouterProvider } from '~/server/services/ai/openrouter';
 import {
   getRecentWinnerIdeas,
   hasFreshnessCategory,
+  SOLE_WINNER_REASON,
 } from '~/server/games/daily-challenge/recent-winners';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -1162,7 +1163,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
             criteria: c.criteria,
           })),
           nsfw: usesNsfwRubrics(allowedNsfwLevel),
-          recentWinnerIdeas,
+          // Judge-written reasons can name other entrants; the shadow gets no usernames.
+          recentWinnerIdeas: forShadow ? undefined : recentWinnerIdeas,
           model,
           provider,
         });
@@ -1845,7 +1847,7 @@ export async function pickWinnersForChallenge(
         });
 
         const prize = currentChallenge.prizes[0]?.buzz ?? 0;
-        const soleWinnerReason = 'Sole eligible entrant';
+        const soleWinnerReason = SOLE_WINNER_REASON;
         winningEntries = [
           {
             userId: soleEntry.userId,

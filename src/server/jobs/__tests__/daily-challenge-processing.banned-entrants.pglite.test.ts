@@ -514,6 +514,7 @@ describe('entries whose featured resource cannot run on their checkpoint', () =>
   });
 });
 
+// Pins docs/features/challenge-platform.md §5, Judge-model shadow.
 describe('the judge-model shadow', () => {
   const SHADOW_MODEL = 'shadow/model';
   const shadowConfig = (provider?: object) => ({
@@ -575,6 +576,7 @@ describe('the judge-model shadow', () => {
   });
 });
 
+// Pins docs/features/challenge-platform.md §5, Recent winners.
 describe('recent winner ideas', () => {
   const disclosedRubric = withFreshnessCriteria([
     { key: 'theme', label: 'Theme', criteria: 'On theme.', weight: 50 },
@@ -604,6 +606,40 @@ describe('recent winner ideas', () => {
     expect(ideasSent().every((ideas) => ideas?.[0] === 'a past winning idea')).toBe(true);
     expect(winnerQueries).toHaveLength(1);
     expect(winnerQueries[0]).toContain('"allowedNsfwLevel" <> 0');
+  });
+
+  it('never reach the shadow model, while the production judge gets them', async () => {
+    challengeRecordOverrides = { judgingCategories: disclosedRubric };
+    vi.mocked(getChallengeConfig).mockResolvedValue({
+      judgedTagId: JUDGED_TAG,
+      reviewMeTagId: REVIEW_ME_TAG,
+      reviewAmount: { min: 6, max: 12 },
+      maxScoredPerUser: 5,
+      defaultJudgeId: 1,
+      defaultJudge: null,
+      reviewShadow: {
+        model: 'shadow/model',
+        sampleRate: 1,
+        provider: { order: ['wafer/us'], allowFallbacks: false, dataCollection: 'deny' },
+      },
+    } as never);
+    await reviewedImageIds();
+
+    const byRun = (shadow: boolean) =>
+      mockGenerateReview.mock.calls
+        .filter(([args]) => ((args as { model?: string }).model === 'shadow/model') === shadow)
+        .map(([args]) => (args as { recentWinnerIdeas?: string[] }).recentWinnerIdeas);
+    expect(byRun(true).length).toBeGreaterThan(0);
+    expect(byRun(true).every((ideas) => ideas === undefined)).toBe(true);
+    expect(byRun(false).every((ideas) => ideas?.[0] === 'a past winning idea')).toBe(true);
+    vi.mocked(getChallengeConfig).mockResolvedValue({
+      judgedTagId: JUDGED_TAG,
+      reviewMeTagId: REVIEW_ME_TAG,
+      reviewAmount: { min: 6, max: 12 },
+      maxScoredPerUser: 5,
+      defaultJudgeId: 1,
+      defaultJudge: null,
+    } as never);
   });
 
   it('read every System winner on a mature daily', async () => {
