@@ -31,9 +31,8 @@ export function withFreshnessCriteria(categories: ChallengeJudgingCategory[]) {
 /**
  * Why the latest System daily winners won, for the review prompt. The reasons are judge-written
  * from entrants' images, so they are capped and flattened and go under the untrusted-fields
- * preamble. An SFW challenge re-checks the winning image's scan today, since it may have been
- * re-rated since it won. Stricter than `winnerImageFields`, which serves a winner image: any
- * moderator hold keeps a reason out of the prompt.
+ * preamble. Any moderator hold or block keeps a reason out. An SFW challenge also re-checks the
+ * winning image's scan and rating today, since it may have been re-rated since it won.
  */
 export async function getRecentWinnerIdeas(
   excludeChallengeId: number,

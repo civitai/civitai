@@ -157,18 +157,13 @@ describe('shadowFor', () => {
     expect(shadowFor(shadow, input)).toBe(shadow);
   });
 
-  it.each([
-    ['no provider pin', { model: 'm', sampleRate: 1 }],
-    [
-      'a pin that allows data collection',
-      { model: 'm', sampleRate: 1, provider: { ...deny, dataCollection: 'allow' as const } },
-    ],
-  ])('never runs with %s', (_, shadow) => {
+  // No pin, and an unsendable entry, are covered through the job in the banned-entrants PGlite suite.
+  it('never runs with a pin that allows data collection', () => {
+    const shadow = {
+      model: 'm',
+      sampleRate: 1,
+      provider: { ...deny, dataCollection: 'allow' as const },
+    };
     expect(shadowFor(shadow, input)).toBeNull();
-  });
-
-  it('never runs on an unsendable entry, pin or not', () => {
-    const shadow = { model: 'm', sampleRate: 1, provider: deny };
-    expect(shadowFor(shadow, { ...input, source: ChallengeSource.User })).toBeNull();
   });
 });

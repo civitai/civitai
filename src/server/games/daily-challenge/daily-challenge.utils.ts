@@ -71,7 +71,8 @@ const challengeConfigSchema = z.object({
   defaultJudgeId: z.number().nullable(),
   // Cached full judge config - populated when defaultJudgeId is set
   defaultJudge: judgingConfigSchema.nullable(),
-  // Candidate model reviewed alongside production and logged to Axiom; null turns it off.
+  // Candidate model reviewed alongside production and logged to Axiom; null, or no provider with
+  // dataCollection 'deny', turns it off (shadowFor).
   reviewShadow: z
     .object({
       model: z.string(),
