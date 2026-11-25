@@ -33,6 +33,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ratingDisputeEnabled } from '~/server/schema/rating-review.schema';
+import { songDisputable } from '@civitai/shared/rating-review';
 import {
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
@@ -89,7 +90,7 @@ export function canDisputeSongRating({
   return (
     isOwner &&
     ratingDisputeEnabled(features, 'Song') &&
-    (ingestion === undefined || ingestion === 'Scanned')
+    (ingestion === undefined || songDisputable(ingestion))
   );
 }
 

@@ -12,6 +12,7 @@ import {
   ratingReviewModeratorLevels,
   ratingReviewOwnerLevels,
   effectiveScanFailureClass,
+  songDisputable,
   songNeverReviewable,
   songScanStateOf,
   textScanNsfwReason,
@@ -227,5 +228,24 @@ describe('the effective scan failure class, as the ingest cron reads it', () => 
         failureReason: 'could not decode the file',
       })
     ).toBe(true);
+  });
+});
+
+describe('songDisputable', () => {
+  // The owner may dispute only the rating its own scans gave; a moderator rules on nothing else.
+  it('is true only for a song its own scans reviewed', () => {
+    expect(songDisputable('Scanned')).toBe(true);
+    for (const ingestion of [
+      'Pending',
+      'Error',
+      'Rescan',
+      'Blocked',
+      'NotFound',
+      'PendingManualAssignment',
+    ])
+      expect({ ingestion, disputable: songDisputable(ingestion) }).toEqual({
+        ingestion,
+        disputable: false,
+      });
   });
 });

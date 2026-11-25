@@ -257,6 +257,12 @@ export function songScanStateOf(ingestion: string, scanJobs: unknown): SongScanS
   };
 }
 
+/** Whether the owner may dispute a song's rating: only once its own scans reviewed it, the rating a
+ *  moderator may rule on. The main app's song menu and its dispute writer both ask this. */
+export function songDisputable(ingestion: string): boolean {
+  return ingestion === 'Scanned';
+}
+
 /** A removed song, a lost file, or a scan past its retry ceiling: its own scans will never review it. */
 export function songNeverReviewable({
   ingestion,

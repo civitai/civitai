@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import {
   collectionRatingLevel,
   modelRatingLevel,
+  songDisputable,
   songNeverReviewable,
   songScanStateOf,
   textScanNsfwReason,
@@ -54,7 +55,7 @@ export const SONG_UNREVIEWABLE_MESSAGE =
 const REMOVED_SONG_STATES: string[] = [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound];
 
 function songDisputeRestriction(ingestion: string, scanJobs: unknown): string | undefined {
-  if (ingestion === ImageIngestionStatus.Scanned) return undefined;
+  if (songDisputable(ingestion)) return undefined;
   if (REMOVED_SONG_STATES.includes(ingestion)) return SONG_REMOVED_MESSAGE;
   return songNeverReviewable(songScanStateOf(ingestion, scanJobs))
     ? SONG_UNREVIEWABLE_MESSAGE
