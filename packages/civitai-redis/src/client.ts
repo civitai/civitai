@@ -3241,6 +3241,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // Workflows the v2 rater rated mature (key :<workflowId>); a later post attempt keeps the gate
     // without re-rating.
     MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
+    MODEL3D_PREVIEW_V2_PENDING: 'generation:model3d-preview-v2-pending',
   },
   TRAINING: {
     // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),

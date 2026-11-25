@@ -332,6 +332,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
         'server/services/comics/orchestrator-chat.ts:CHAT_COMPLETION_WAIT_SECONDS',
         'server/services/creator-service-deal-video-preview.ts:TRANSCODE_WAIT_SECONDS',
         'server/services/model-sfw-face.service.ts:DRAFT_WAIT_SECONDS',
+        'server/services/model3d-rating-v2.service.ts:PREVIEW_WAIT_SECONDS',
         'server/services/orchestrator/orchestrator.service.ts:PERCEPTUAL_HASH_WAIT_SECONDS',
         'server/services/product-badge.service.ts:30',
         'server/services/rating-v2.service.ts:WAIT_SECONDS',
