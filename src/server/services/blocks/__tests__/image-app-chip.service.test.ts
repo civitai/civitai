@@ -47,6 +47,7 @@ vi.mock('~/server/utils/image-media-visibility', async (importOriginal) => ({
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { postAppChipQuery } from '~/server/services/blocks/post-app-chip.logic';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Pairwise distinct, so a mutant reading the marker for the wrong id cannot pass.
 const IMAGE_ID = 145511044;
@@ -111,6 +112,7 @@ describe('marker present → the chip', () => {
       id: IMAGE_ID,
       userId: 77,
       isModerator: false,
+      ownerSeesHeld: true,
     });
     expect(mockCanSeeMedia).toHaveBeenCalledWith(ctx, visibleRow);
     expect(dbMock.dbRead.image.findUnique).toHaveBeenCalledWith({
@@ -131,6 +133,21 @@ describe('marker present → the chip', () => {
       name: 'Character Sheet Studio',
       iconUrl: null,
     });
+  });
+});
+
+describe("the owner's view of a held image", () => {
+  it('is asked for on a session and withheld on a scoped key', async () => {
+    await read();
+    expect(mockAssertVisible).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ownerSeesHeld: true })
+    );
+
+    const scoped = { ...(ctx as object), apiKeyId: 5, tokenScope: TokenScope.MediaRead } as never;
+    await readImageAppChip({ imageId: IMAGE_ID, ctx: scoped, host: HOST });
+    expect(mockAssertVisible).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ownerSeesHeld: false })
+    );
   });
 });
 
