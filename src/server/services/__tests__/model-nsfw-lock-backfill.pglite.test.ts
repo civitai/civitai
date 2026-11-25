@@ -14,7 +14,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /** What follows a write run, passed in: the cache bust and a profanity unlock's forced text scan. */
 const scanModelText = vi.fn<(id: number) => Promise<string>>(async () => 'submitted');
-const effects = { bustPublicModelResponseCache: vi.fn(), scanModelText };
+const updateModelNsfwLevels = vi.fn();
+const effects = { bustPublicModelResponseCache: vi.fn(), scanModelText, updateModelNsfwLevels };
 
 const {
   backfillSchema,
@@ -428,6 +429,7 @@ describe('model nsfw lock backfill: profanity locks', () => {
     );
     scanModelText.mockReset();
     effects.bustPublicModelResponseCache.mockClear();
+    updateModelNsfwLevels.mockClear();
     scanModelText.mockResolvedValue('submitted');
   });
 
@@ -624,6 +626,8 @@ describe('model nsfw lock backfill: profanity locks', () => {
         notSubmitted: [],
         relocked: [],
         relockedCount: 0,
+        ratingRestored: [],
+        ratingRestoredCount: 0,
       });
       expect(effects.bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
       expect(effects.bustPublicModelResponseCache).toHaveBeenCalledWith(result.changed);
@@ -644,6 +648,9 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(result.scans?.notSubmitted.sort()).toEqual(failed);
       expect(result.scans?.relocked.sort()).toEqual(failed);
       expect(result.scans?.relockedCount).toBe(2);
+      // No owner change in the window: no rating comes back (control for the case below).
+      expect(result.scans?.ratingRestoredCount).toBe(0);
+      expect(updateModelNsfwLevels).not.toHaveBeenCalled();
       // Locked again with the filter's exact marker, so its rating is held as before the unlock.
       const after = await row(ELIGIBLE);
       expect(after.lockedProperties).toEqual(before.lockedProperties);
@@ -664,6 +671,32 @@ describe('model nsfw lock backfill: profanity locks', () => {
       // Nor reported as a revert skipped for its rating: it is locked, not waiting on a revert.
       await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
       expect((await ratingChangedSinceUnlock()).ids).not.toContain(ELIGIBLE);
+    });
+
+    it('puts the prior rating back when the owner unticked mature before a failed scan', async () => {
+      scanModelText.mockImplementation(async (id: number) => {
+        if (id !== ELIGIBLE) return 'submitted';
+        // The owner saves inside the window the unlock opened.
+        await db.query(`UPDATE "Model" SET nsfw = false WHERE id = $1`, [ELIGIBLE]);
+        return 'skipped/in-flight';
+      });
+      const result = await unlockRun();
+      expect(result.scans).toMatchObject({
+        relocked: [ELIGIBLE],
+        ratingRestored: [ELIGIBLE],
+        ratingRestoredCount: 1,
+      });
+      const after = await row(ELIGIBLE);
+      expect(after.nsfw).toBe(true);
+      expect(after.lockedProperties).toEqual(['nsfw', 'tags']);
+      expect(after.meta.systemNsfwLock).toEqual(profanityMarker);
+      expect(await scanOf(ELIGIBLE)).toMatchObject({
+        status: 'relocked-nsfw-restored',
+        reason: 'skipped/in-flight',
+      });
+      expect(updateModelNsfwLevels).toHaveBeenCalledWith([ELIGIBLE]);
+      const dry = await runBackfill(backfillSchema.parse({ bucket: PROFANITY }), effects);
+      expect(dry.counts).toMatchObject({ unlockedUnscanned: 0 });
     });
 
     it('counts unlocks a call left with no scan outcome', async () => {
