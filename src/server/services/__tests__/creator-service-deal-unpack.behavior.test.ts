@@ -1840,13 +1840,16 @@ describe('copies of scanned images', () => {
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
   });
 
-  it('keeps an entry pointed at a copy gone without this delete, and counts it', async () => {
+  it('keeps an entry pointed at a copy gone without this delete, and counts it hourly', async () => {
     const { fileId } = await settled();
-    expect(await unpack.countDanglingScanCopies()).toBe(0);
+    const hour = 60 * 60_000;
+    const at = Date.now() + 1000 * hour;
+    expect(await unpack.countDanglingScanCopies({ now: at })).toBe(0);
     await q(`DELETE FROM "Image" WHERE id = 1`);
     expect(await unpack.deleteEntryScanCopies()).toBe(0);
     expect((await entries(fileId))[0]).toMatchObject({ imageId: 1, scanKey: 'scan-key-1' });
-    expect(await unpack.countDanglingScanCopies()).toBe(1);
+    expect(await unpack.countDanglingScanCopies({ now: at + hour - 1 })).toBeNull();
+    expect(await unpack.countDanglingScanCopies({ now: at + hour })).toBe(1);
   });
 
   it('keeps the copy of an image still being scanned, however old and whatever becomes of its file', async () => {
@@ -1915,27 +1918,15 @@ describe('copies of scanned images', () => {
       await files.deleteServiceDealFile({ fileId, userId: SELLER });
       return { dealId, fileId };
     }
-    const disputeToolSees = async (dealId: number, fileId: number) => {
-      const reviewer = {
-        userId: 99,
-        isModerator: true,
-        canReviewCsam: true,
-        moderatorFetch: true,
-        servableLevels: allBrowsingLevelsFlag,
-      };
-      const listed = (await files.listServiceDealFiles({ dealId, ...reviewer })).find(
-        (row) => row.id === fileId
-      );
-      const download = await files.resolveServiceDealFileDownload({ fileId, ...reviewer });
-      return { listed: listed?.canDownload, downloaded: download !== null };
-    };
 
     it('keeps the pointer, so the file is refused and kept, when the image went some other way', async () => {
       const { dealId, fileId } = await removedFinal({ imageGoneFirst: true });
       expect((await entries(fileId))[0].imageId).not.toBeNull();
-      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: false, downloaded: false });
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: false,
+        downloaded: false,
+      });
       await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() - interval '1 day'`);
-      expect(await files.purgeRemovedFiles()).toBe(0);
       expect(await files.purgeRemovedFiles()).toBe(0);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
     });
@@ -1943,7 +1934,10 @@ describe('copies of scanned images', () => {
     it('lets go of a copy its own delete removed', async () => {
       const { dealId, fileId } = await removedFinal({ imageGoneFirst: false });
       expect((await entries(fileId))[0].imageId).toBeNull();
-      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: true, downloaded: true });
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: true,
+        downloaded: true,
+      });
     });
   });
 
@@ -2260,15 +2254,40 @@ describe('the finals malware scan flag', () => {
   });
 });
 
-/** What a CSAM reviewer who is no party to the deal is offered of a file, and gets. */
-async function reviewerSees(dealId: number, fileId: number, servableLevels: number) {
-  const reviewer = { userId: 99, isModerator: true, canReviewCsam: true, servableLevels };
-  const listed = (await files.listServiceDealFiles({ dealId, ...reviewer })).find(
+type FileCaller = {
+  userId: number;
+  isModerator: boolean;
+  servableLevels: number;
+  canReviewCsam?: boolean;
+  moderatorFetch?: boolean;
+};
+
+/** Whether the list offers `caller` a download of the file, and whether the download serves it. */
+async function callerSees(dealId: number, fileId: number, caller: FileCaller) {
+  const listed = (await files.listServiceDealFiles({ dealId, ...caller })).find(
     (row) => row.id === fileId
   );
-  const download = await files.resolveServiceDealFileDownload({ fileId, ...reviewer });
+  const download = await files.resolveServiceDealFileDownload({ fileId, ...caller });
   return { listed: listed?.canDownload, downloaded: download !== null };
 }
+
+/** The moderator dispute tool, as the mod endpoints call the service. */
+const DISPUTE_TOOL: FileCaller = {
+  userId: 99,
+  isModerator: true,
+  canReviewCsam: true,
+  moderatorFetch: true,
+  servableLevels: allBrowsingLevelsFlag,
+};
+
+/** What a CSAM reviewer who is no party to the deal is offered of a file, and gets. */
+const reviewerSees = (dealId: number, fileId: number, servableLevels: number) =>
+  callerSees(dealId, fileId, {
+    userId: 99,
+    isModerator: true,
+    canReviewCsam: true,
+    servableLevels,
+  });
 
 // Decided in civitai/civitai#10422.
 describe('a Final rated outside the domain', () => {
@@ -2367,27 +2386,19 @@ describe('a Final rated outside the domain', () => {
 
   describe('once an image in it is gone', () => {
     /** What the seller, the buyer and the moderator dispute tool are offered of the file, and get. */
-    const everyoneSees = async (dealId: number, fileId: number) => {
-      const callers = {
-        seller: { userId: SELLER, isModerator: false, servableLevels: 31 },
-        buyer: { userId: BUYER, isModerator: false, servableLevels: 31 },
-        disputeTool: {
-          userId: 99,
-          isModerator: true,
-          moderatorFetch: true,
-          servableLevels: allBrowsingLevelsFlag,
-        },
-      };
-      const seen: Record<string, { listed?: boolean; downloaded: boolean }> = {};
-      for (const [name, caller] of Object.entries(callers)) {
-        const listed = (await files.listServiceDealFiles({ dealId, ...caller })).find(
-          (row) => row.id === fileId
-        );
-        const download = await files.resolveServiceDealFileDownload({ fileId, ...caller });
-        seen[name] = { listed: listed?.canDownload, downloaded: download !== null };
-      }
-      return seen;
-    };
+    const everyoneSees = async (dealId: number, fileId: number) => ({
+      seller: await callerSees(dealId, fileId, {
+        userId: SELLER,
+        isModerator: false,
+        servableLevels: 31,
+      }),
+      buyer: await callerSees(dealId, fileId, {
+        userId: BUYER,
+        isModerator: false,
+        servableLevels: 31,
+      }),
+      disputeTool: await callerSees(dealId, fileId, DISPUTE_TOOL),
+    });
     const refused = { listed: false, downloaded: false };
     const served = { listed: true, downloaded: true };
 
@@ -3552,21 +3563,6 @@ describe('a video Final', () => {
   });
 
   describe("the dispute tool's list offers a download exactly when its download serves one", () => {
-    /** What the moderator dispute tool lists for the file, and gets, as the mod endpoints call them. */
-    const disputeToolSees = async (dealId: number, fileId: number) => {
-      const reviewer = {
-        userId: 99,
-        isModerator: true,
-        canReviewCsam: true,
-        servableLevels: allBrowsingLevelsFlag,
-        moderatorFetch: true,
-      };
-      const listed = (await files.listServiceDealFiles({ dealId, ...reviewer })).find(
-        (row) => row.id === fileId
-      );
-      const download = await files.resolveServiceDealFileDownload({ fileId, ...reviewer });
-      return { listed: listed?.canDownload, downloaded: download !== null };
-    };
     const remove = (fileId: number) =>
       q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
 
@@ -3574,7 +3570,10 @@ describe('a video Final', () => {
       const { dealId, fileId } = await videoFinal(4);
       s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
       if (removed) await remove(fileId);
-      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: true, downloaded: true });
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: true,
+        downloaded: true,
+      });
     });
 
     it.each([false, true])('a Final rated Blocked, removed: %s', async (removed) => {
@@ -3584,7 +3583,10 @@ describe('a video Final', () => {
       s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
       await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = 32 WHERE "fileId" = $1`, [fileId]);
       if (removed) await remove(fileId);
-      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: true, downloaded: true });
+      expect(await callerSees(dealId, fileId, DISPUTE_TOOL)).toEqual({
+        listed: true,
+        downloaded: true,
+      });
     });
   });
 

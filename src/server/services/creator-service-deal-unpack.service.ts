@@ -895,11 +895,16 @@ export async function settleFinals() {
   return { finalsFailed: failed, finalsPassed: passed };
 }
 
+/** When `countDanglingScanCopies` last counted. Kept in memory: a restart only counts sooner. */
+let danglingCountedAt = 0;
+
 /**
- * Logs how many entries point at an image that is gone, counts only: each refuses and keeps its
- * file, and a growing count is a backlog someone should look at.
+ * Counts and logs entries pointing at a gone image, at most hourly. Each refuses and keeps its file
+ * (`imageGone`), so a growing count is a backlog. Null when it did not count this run.
  */
-export async function countDanglingScanCopies() {
+export async function countDanglingScanCopies({ now = Date.now() } = {}) {
+  if (now - danglingCountedAt < 60 * 60_000) return null;
+  danglingCountedAt = now;
   const [{ dangling }] = await dbWrite.$queryRaw<{ dangling: number }[]>`
     SELECT count(*)::int AS dangling FROM "ServiceDealFileEntry" e
     WHERE e."imageId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")`;

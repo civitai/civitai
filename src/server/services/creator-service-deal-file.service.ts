@@ -1261,7 +1261,8 @@ function finalLevelGate(
   // A file of any kind held for CSAM or a minor goes only through the CSAM path, never this route,
   // rated or not. Its uploader still gets their own original back, unless an image in it is blocked.
   if (row.csamHeld && !(ownOriginal && !row.imageBlocked)) return 'refused';
-  // Fails closed: the entry's verdict outlives its image, and a gone image may have been held.
+  // Fails closed: the entry's verdict outlives its image, and a gone image may have been held. An
+  // entry refused for anything but its rating also refuses its uploader's own original.
   if (row.imageGone || (ownOriginal && row.entryRefused)) return 'refused';
   if (row.kind !== 'Final') return 'served';
   const video = isFinalVideoName(row.fileName);
