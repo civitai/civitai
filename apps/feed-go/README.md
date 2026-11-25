@@ -21,7 +21,7 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 | --------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `FEED_GO_ADDR` (`:8080`)          | `GET /api/trpc/image.getImagesAsPostsInfinite`         | the procedure; only listens when `FEED_GO_FALLBACK_URL` is set                                                                                  |
 |                                   | `GET /api/trpc/model.getAll`                           | computed only with `FEED_GO_SERVE_MODEL_GETALL=true` (default off: proxied to the Node app as the `model-getall-off` fallback; DESIGN.md §15.8) |
-|                                   | `GET /api/trpc/image.getInfinite`                      | computed only with `FEED_GO_SERVE_INFINITE=true` (default off: proxied to the Node app as the `infinite-off` fallback; DESIGN.md §14.8)         |
+|                                   | `GET /api/trpc/image.getInfinite`                      | computed only with `FEED_GO_SERVE_INFINITE=true` (default off: proxied to the Node app as the `infinite-off` fallback; DESIGN.md §14.8); a collection's Random sort only with `FEED_GO_INFINITE_SERVE_SORT_RANDOM=true` too (default off, §14.9) |
 |                                   | `GET /api/v1/models`, `GET /api/v1/models/{id}`        | mounted only with `FEED_GO_V1_FALLBACK_URL`; computed only with `FEED_GO_SERVE_V1_MODELS=true` (default off: proxied as `v1-models-off`; §16.8) |
 |                                   | `GET /api/v1/images`                                   | mounted only with `FEED_GO_V1_IMAGES_FALLBACK_URL`, its one fallback upstream; computed only with `FEED_GO_SERVE_V1_IMAGES=true` (default off: proxied as `v1-images-off`; §13.8) |
 | `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz`                                         | liveness / readiness                                                                                                                            |
@@ -116,20 +116,28 @@ are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default
 caches `FEED_GO_CACHE_WRITEBACK` lists (default none), e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`; the names
 are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-frames`, `event-decorations`,
 `tag-ids`, `model-frames`, `model-decorations`, `version-images`, `model-data`, `model-tags`,
-`official-models`, `metrics`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
+`official-models`, `metrics`, `creator-memberships`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
 `model-data` cache also needs `DATABASE_URL`, the primary. Each write is counted in
 `feed_go_cache_writes_total{cache,result}` (`written` | `nx_lost` | `error`; not per endpoint), and
 `FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0) logs each written key, rate-limited, never its value
 (DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
-falls back (`index-feed-unconfigured`). The public `/api/v1/models` routes hand their fallbacks to
+falls back (`index-feed-unconfigured`). `FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS` (default off)
+answers an `image.getInfinite` gallery-settings miss from the model's row (its hold only, lag-aware,
+never written back; DESIGN.md §14.9) instead of the `gallery-settings-miss` fallback; the computed
+misses are counted as `feed_go_cache_miss_total{cache="gallery-hold"}`, which is not a
+`FEED_GO_CACHE_WRITEBACK` name. The public `/api/v1/models` routes hand their fallbacks to
 `FEED_GO_V1_FALLBACK_URL`, the Node app that serves `/api/v1` (a different upstream from
 `FEED_GO_FALLBACK_URL`'s; deployment config, not set here); `FEED_GO_SERVE_V1_MODELS=true` without it
 fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). Both
 routes hand every API credential to the Node app (`bearer-token`); `GET /api/v1/models/{id}` stops
 doing so with `FEED_GO_V1_BEARER_AUTH` on (default off; needs `FEED_GO_BEARER_AUTH`): a credential
 Node answers with the body any caller gets is computed here, and every other one falls back with
-its own reason (DESIGN.md §16.10). The list keeps every API credential a fallback. Credentialed
+its own reason (DESIGN.md §16.10). The list keeps every API credential a fallback. A list request
+with a text `query` is answered from the search index the Node app reads (`SEARCH_HOST`,
+`SEARCH_API_KEY`, `MEILI_CALL_TIMEOUT_MS` capped at 2.5 s, the `MEILI_CIRCUIT_*` breaker settings)
+only with `FEED_GO_V1_MODELS_SERVE_QUERY` on (default off: `v1-models-query`; DESIGN.md §16.11); a
+search the breaker or the 4-call cap rejects is handed back as `v1-models-query`. Credentialed
 requests reach this service only once the deployment's routing sends them here: the bypass that
 sends them to the Node app is narrowed to the list path (not removed) when `[id]` serves them. The
 REST endpoint's shadow also needs
@@ -145,7 +153,12 @@ are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). 
 computed only behind `FEED_GO_GETALL_SERVE_INPUT_IDS` / `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both
 default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). An owner's user-cosmetics miss on a
 `model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
-`user-cosmetics-miss` fallback; DESIGN.md §15.2.5). The `feed_endpoint`
+`user-cosmetics-miss` fallback; DESIGN.md §15.2.5), and an owner's creator-membership miss only with
+`FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off: the `membership-miss` fallback; DESIGN.md §15.2.6),
+reading the tier under the app's own `TIER_METADATA_KEY`. `image.getInfinite`'s
+`publishedOnly` input is computed only behind `FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY` (default
+off: the `input-publishedOnly` fallback; DESIGN.md §14.2.1), and its `postIds` input only behind `FEED_GO_INFINITE_SERVE_INPUT_POST_IDS`
+(default off: the `input-postIds` fallback; DESIGN.md §14.2.2). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 

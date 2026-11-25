@@ -6,12 +6,18 @@ import { notifyAppAccessDecision } from '~/server/services/app-access-request-no
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { dbWrite } from '~/server/db/client';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
+import { constants } from '~/server/common/constants';
+import { accountStandingFromPoints } from '~/server/schema/strike.schema';
+import { getActiveStrikePoints } from '~/server/services/strike.service';
 import type {
   DecideAppAccessRequestInput,
   ListAppAccessRequestsInput,
   SubmitAppAccessRequestInput,
 } from '~/server/schema/app-access-request.schema';
-import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
+import type {
+  AppAccessRequestStatus,
+  AppAccessReviewSource,
+} from '~/shared/constants/app-access-request.constants';
 import { handleLogError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
 
@@ -25,11 +31,12 @@ import type { SessionUser } from '~/types/session';
  * REQUESTER's cached session after it commits: without that, the hub keeps serving the old value
  * for up to its 4h TTL and an approval (or a revoke) changes nothing until then.
  *
- * An approved row comes from one of two places: a moderator's `decide`, which records who
- * approved it, or `submit` itself while `app-access-auto-approve` is on for the requester and their
- * account passes {@link isEligibleForAutoApproval} — that row has a review time and NO reviewer,
- * which is how the queue tells the two apart. Either way it is the same grant, and a moderator
- * revokes it the same way.
+ * An approved row comes from one of two places: a moderator's `decide` (`reviewSource`
+ * 'moderator', with who approved it), or `submit` itself while `app-access-auto-approve` is on for
+ * the requester and their account passes {@link isEligibleForAutoApproval} (`reviewSource`
+ * 'system', no reviewer, and a ModActivity row). The queue reads `reviewSource`, never a missing
+ * reviewer, which a deleted moderator account also leaves. Either way it is the same grant, and a
+ * moderator revokes it the same way.
  *
  * Raw SQL rather than the Prisma model API because the one-pending-per-user rule lives in a PARTIAL
  * unique index (`AppAccessRequest_userId_pending_key`), and only `ON CONFLICT … WHERE` can target
@@ -53,6 +60,8 @@ export type AppAccessRequestQueueItem = AppAccessRequestView & {
   username: string | null;
   reviewedById: number | null;
   reviewedByUsername: string | null;
+  /** NULL on pending rows, and on a since-deleted moderator's decision from before the column. */
+  reviewSource: AppAccessReviewSource | null;
 };
 
 const VIEW_COLUMNS = Prisma.raw(`"id", "whatToBuild", "status", "createdAt", "reviewedAt"`);
@@ -96,10 +105,12 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
  * not banned, is not muted, and does not still owe the site's email check — the same rule the rest
  * of the site applies, {@link requiresEmailVerification}: only an account stamped at onboarding as
  * having to prove its email fails it until it does; an older account with no verified email
- * passes; and the person has no declined request, so a moderator's decline or revoke is never
- * undone by the next submit. Every field is read from the PRIMARY at submit time rather than from
- * the session, which can be hours old: a ban, a mute or a verification since must count. A person
- * who fails any check still gets a request, pending, for a moderator to decide.
+ * passes; the person has no declined request, so a moderator's decline or revoke is never undone by
+ * the next submit; and the account is in good standing by its active strikes, the same {@link
+ * accountStandingFromPoints} rule the profile and the moderator tools show. Every field is read
+ * from the PRIMARY at submit time rather than from the session, which can be hours old: a ban, a
+ * mute or a verification since must count. A person who fails any check still gets a request,
+ * pending, for a moderator to decide.
  */
 async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
   const [row] = await dbWrite.$queryRaw<
@@ -115,8 +126,8 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
     ) AS "inGoodStanding", "emailVerified", "meta"
     FROM "User" WHERE "id" = ${userId}
   `);
-  if (!row) return false;
-  return row.inGoodStanding === true && !requiresEmailVerification(row);
+  if (!row || row.inGoodStanding !== true || requiresEmailVerification(row)) return false;
+  return accountStandingFromPoints(await getActiveStrikePoints(userId, dbWrite)).good;
 }
 
 /**
@@ -155,14 +166,26 @@ export async function submitAppAccessRequest({
     // decline that landed since gets a new pending request. Two submits racing each other can
     // still leave two approved rows, which the revoke sweep in `decide` covers. `reviewedById`
     // stays NULL — no moderator decided this.
+    //
+    // The audit row is written in the SAME statement rather than through `trackModActivity`
+    // afterwards: a data-modifying CTE commits with the insert or not at all, so there is exactly
+    // one audit row per auto-approval and never an approval without one.
     const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
-      INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt")
-      SELECT ${userId}::int, ${input.whatToBuild}::text, 'approved', CURRENT_TIMESTAMP
-      WHERE NOT EXISTS (
-        SELECT 1 FROM "AppAccessRequest"
-        WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved', 'declined')
+      WITH approved AS (
+        INSERT INTO "AppAccessRequest"
+          ("userId", "whatToBuild", "status", "reviewedAt", "reviewSource")
+        SELECT ${userId}::int, ${input.whatToBuild}::text, 'approved', CURRENT_TIMESTAMP, 'system'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "AppAccessRequest"
+          WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved', 'declined')
+        )
+        RETURNING ${VIEW_COLUMNS}
+      ), audit AS (
+        INSERT INTO "ModActivity" ("userId", "entityType", "activity", "entityId")
+        SELECT ${constants.system.user.id}::int, 'appAccessRequest', 'autoApproveAppAccess', "id"
+        FROM approved
       )
-      RETURNING ${VIEW_COLUMNS}
+      SELECT * FROM approved
     `);
     if (row) {
       // Best-effort, after the commit, as in `decide`: a failed bust is bounded by the session TTL.
@@ -207,7 +230,7 @@ export async function listAppAccessRequests(
   const rows = await dbWrite.$queryRaw<AppAccessRequestQueueItem[]>(Prisma.sql`
     SELECT
       r."id", r."userId", u."username", r."whatToBuild", r."status",
-      r."createdAt", r."reviewedAt", r."reviewedById",
+      r."createdAt", r."reviewedAt", r."reviewedById", r."reviewSource",
       rv."username" AS "reviewedByUsername"
     FROM "AppAccessRequest" r
     JOIN "User" u ON u."id" = r."userId"
@@ -276,7 +299,8 @@ export async function decideAppAccessRequest({
     UPDATE "AppAccessRequest" r
     SET "status" = ${input.decision},
         "reviewedAt" = CURRENT_TIMESTAMP,
-        "reviewedById" = ${moderatorId}
+        "reviewedById" = ${moderatorId},
+        "reviewSource" = 'moderator'
     FROM target t
     WHERE r."id" = t."id"
        OR (t."prev" = 'approved' AND r."userId" = t."userId" AND r."status" = 'approved')

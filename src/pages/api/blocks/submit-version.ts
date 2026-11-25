@@ -182,10 +182,12 @@ export default AuthedEndpoint(
         { isStorageMigrationRefusal },
         { isStorageHookRefusal },
         { isManifestValidationRefusal },
+        { isModuleGraphRefusal },
       ] = await Promise.all([
         import('~/server/services/apps/storage-schema-migrations'),
         import('~/server/services/apps/storage-hooks'),
         import('~/server/services/blocks/manifest-submit-validation'),
+        import('~/server/services/blocks/bundle-module-graph'),
       ]);
       // A schema-migration refusal also carries the structured list (collection, pointer,
       // keyword, old → new) so a client can show each breaking change.
@@ -196,6 +198,8 @@ export default AuthedEndpoint(
         ...(isStorageHookRefusal(err) ? { storageHookErrors: err.problems } : {}),
         // A manifest the approve-time validator refuses carries every validator error.
         ...(isManifestValidationRefusal(err) ? { manifestErrors: err.errors } : {}),
+        // A module-graph refusal carries every import that would not load (importer, specifier).
+        ...(isModuleGraphRefusal(err) ? { moduleGraphErrors: err.problems } : {}),
       });
     }
   },

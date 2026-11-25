@@ -342,8 +342,9 @@ describe('getInquisitorQueue media for a withheld image', () => {
   it('draws an image whose url another row keeps as restricted without the grant, and a clean one from the CDN', async () => {
     await db.query(
       `INSERT INTO "Image" ("id","url","name","type","nsfwLevel","nsfwLevelLocked","ingestion") VALUES
-        (990000020,'k1',NULL,'image',4,false,'Pending')`
+        (990000020,'k1',NULL,'image',4,false,'Scanned')`
     );
+    await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 990000020`);
     await insertItem(1, 1, 'Inquisitor');
     await insertItem(3, 3, 'Inquisitor');
 

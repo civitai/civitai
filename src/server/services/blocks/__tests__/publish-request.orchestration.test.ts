@@ -554,6 +554,58 @@ beforeEach(() => {
 // ---- submitVersion ---------------------------------------------------------
 
 describe('submitVersion', () => {
+  /**
+   * 🔴 MODULE-GRAPH LINT at submit: a no-build bundle whose page imports a module the app server
+   * would not send as JavaScript is REFUSED before the upload or the insert, naming the file.
+   * The same bundle importing a `.mjs` module is accepted (control).
+   */
+  describe('the module-graph lint', () => {
+    const bundleImporting = (target: string) =>
+      makeBundle({
+        [MANIFEST_PATH]: JSON.stringify(manifest()),
+        'index.html': '<!doctype html><script type="module" src="./main.js"></script>',
+        'main.js': `import './${target}';`,
+        [target]: 'export {}',
+      });
+    const s3Puts = () =>
+      mockS3Send.mock.calls.filter((c) => c[0].constructor.name === 'PutObjectCommand');
+
+    it('🔴 a page importing ./x.ts is refused before the upload, naming the file', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      await expect(
+        submitVersion({ bundleBuffer: await bundleImporting('x.ts'), submittedByUserId: 42 })
+      ).rejects.toThrow(
+        'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it.'
+      );
+      expect(s3Puts()).toHaveLength(0);
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('🔴 the block starter shape (package.json, no buildCommand, /src/main.ts) is accepted: the platform builds it', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      const bundleBuffer = await makeBundle({
+        [MANIFEST_PATH]: JSON.stringify(manifest()),
+        'package.json': JSON.stringify({
+          name: 'starter',
+          type: 'module',
+          scripts: { build: 'vite build' },
+        }),
+        'index.html': '<!doctype html><script type="module" src="/src/main.ts"></script>',
+        'src/main.ts':
+          "import '@civitai/sdk/safe-storage';\nimport { startBlock } from './block.js';",
+        'src/block.ts': 'export function startBlock(): void {}',
+      });
+      await submitVersion({ bundleBuffer, submittedByUserId: 42 });
+      expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+    });
+
+    it('control: the same bundle importing ./x.mjs is accepted', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      await submitVersion({ bundleBuffer: await bundleImporting('x.mjs'), submittedByUserId: 42 });
+      expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+    });
+  });
+
   it('happy path — first version inserts a pending row with computed diffs', async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle();

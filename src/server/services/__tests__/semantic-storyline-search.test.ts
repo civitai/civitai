@@ -240,14 +240,15 @@ describe('semantic storyline search', () => {
     expect(h.feedCalls).toEqual([expect.objectContaining({ ids: [1] })]);
   });
 
-  it("does not serve a held owner's or held chapter-1 author's storyline", async () => {
+  // Holds hide nothing; an image in CSAM review still does.
+  it("serves a held owner's or chapter-1 author's storyline, not one with an image in CSAM review", async () => {
     await storyline(1);
     await storyline(2, { owner: 77 });
     await storyline(3, { owner: 3, author: 78 });
     await storyline(4);
     await h.pg!.exec(`INSERT INTO "CsamReport" ("userId") VALUES (77), (78);
       UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 400;`);
-    expect(shown(await search([4, 3, 2, 1]))).toEqual([1]);
+    expect(shown(await search([4, 3, 2, 1]))).toEqual([3, 2, 1]);
   });
 
   it('does not serve a storyline that lost eligibility since it was indexed', async () => {

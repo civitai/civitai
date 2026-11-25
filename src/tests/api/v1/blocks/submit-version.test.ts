@@ -667,6 +667,32 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(res._getJSONData()).toEqual({ message: refusal.message, storageHookErrors: problems });
   });
 
+  it('🔴 a module-graph refusal returns 400 with the structured moduleGraphErrors', async () => {
+    const { ModuleGraphRefusal } = await import('~/server/services/blocks/bundle-module-graph');
+    const problems = [
+      {
+        kind: 'non-js-extension' as const,
+        importer: 'main.js',
+        specifier: './x.ts',
+        resolved: 'x.ts',
+      },
+    ];
+    const refusal = new ModuleGraphRefusal(problems);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(refusal);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    expect(res._getJSONData()).toEqual({
+      message:
+        'This bundle\'s JavaScript would not load in the browser: main.js imports "./x.ts" (x.ts), but the app server sends only .js and .mjs files as JavaScript, so the browser will not run it. Ship browser-ready .js or .mjs files, or have the platform build them: add a package.json with a build script, a committed lockfile, and output in dist/, build/ or the manifest\'s outputDir (the platform builds every bundle that has a package.json).',
+      moduleGraphErrors: problems,
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // #4059 build provenance. 🔴 THIS is the route the `civitai` CLI posts to —
   // the session route beside it is the mod-browser front door. Wiring only that

@@ -134,10 +134,6 @@ export async function fetchDownloadCount(userKey: string): Promise<number> {
     return data[0]?.count ?? 0;
   };
 
-  // The `download-count-dedicated-clickhouse` flag. The dedicated replica answers the same 24h
-  // distinct-version count from its own tables: per-user rows for a user id, and a 48h table keyed
-  // by `downloadIpHash` for an address, which needs the hash key. Values go in as query
-  // parameters, never into the text.
   if (!readsDedicatedDownloadsClickhouse('download-count', clickhouseDownloads !== undefined)) {
     return readShared();
   }
@@ -153,6 +149,8 @@ export async function fetchDownloadCount(userKey: string): Promise<number> {
       readShared
     );
   }
+  // Addresses are looked up by downloadIpHash because the dedicated replica never stores raw
+  // addresses; without the hash key they stay on the shared client.
   const hashKey = env.CLICKHOUSE_DOWNLOADS_IP_HASH_KEY;
   if (!hashKey) return readShared();
   return withSharedClickhouseFallback(

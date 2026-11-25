@@ -1,5 +1,3 @@
-// Every connection field is passed, the password included when unset, so none of the shared
-// client's credentials can reach this server through the factory's env defaults.
 import type { CustomClickHouseClient } from '@civitai/clickhouse/client';
 import { registerCounterWithLabels } from '@civitai/telemetry/client';
 import { env } from '~/env/server';
@@ -23,6 +21,8 @@ const shouldConnect =
   !env.IS_BUILD && env.CLICKHOUSE_DOWNLOADS_HOST && env.CLICKHOUSE_DOWNLOADS_USERNAME;
 
 // Process-global, as in ./client: one client per process however many module graphs load this.
+// Every connection field is passed, password included even when unset, so the factory's env
+// defaults cannot fill in the shared client's credentials.
 export const clickhouseDownloads: CustomClickHouseClient | undefined = !shouldConnect
   ? undefined
   : (globalThis.globalClickhouseDownloads ??= createClickhouseMetricsClient({
@@ -34,9 +34,9 @@ export const clickhouseDownloads: CustomClickHouseClient | undefined = !shouldCo
       onRetry: (outcome) => retryCounter.inc({ outcome }),
     }));
 
-// Sent with every read, so the server does not keep running one the client has given up on: it
-// stops a read after 2s of execution (the client's own timeout is 2s without a byte), and cancels
-// one whose connection the client has closed (a timed-out read already re-run on the shared client).
+// Sent with every read so the server stops a read the client has given up on: max_execution_time
+// matches DOWNLOADS_CLICKHOUSE_REQUEST_TIMEOUT_MS, and a read whose connection the client closed
+// (one already re-run on the shared client) is cancelled.
 export const DOWNLOADS_CLICKHOUSE_QUERY_SETTINGS = {
   max_execution_time: 2,
   cancel_http_readonly_queries_on_client_close: 1,

@@ -142,12 +142,13 @@ describe('userDownloadsCache: users with no downloads', () => {
   });
 });
 
+// The 180 s window comes from civitai#10352: the dedicated downloads replica lands rows up to about
+// 2 minutes late, plus margin. The 145/170/181/301 s probes below derive from it; retune them
+// together with the debounce in bustUserDownloadsCache (user.service.ts).
 describe('userDownloadsCache: the bust window follows user-downloads-dedicated-clickhouse', () => {
-  // With the flag on, the row can land about two minutes after the download on the dedicated
-  // replica, so the bust window (180 s) must outlast that. Here the row lands 150 s after the
-  // bust, and a lookup 145 s after it runs before the row is there: far past the cache's default
-  // 10 s window, which re-cached the pre-download answer at that lookup. With the flag off the bust
-  // keeps that 10 s default, as before.
+  // Here the row lands 150 s after the bust, and a lookup 145 s after it runs before the row is
+  // there: far past the cache's default 10 s window, which re-cached the pre-download answer at
+  // that lookup. With the flag off the bust keeps that 10 s default, as before.
   beforeEach(() => {
     dedicated.configured = true;
     dedicated.flags['user-downloads-dedicated-clickhouse'] = true;
@@ -222,7 +223,7 @@ describe('userDownloadsCache: the bust window follows user-downloads-dedicated-c
   });
 
   // Control: with the flag off a bust leaves an absent key alone, as before, so a lookup 5 s after
-  // it caches "none" and a row landing at 20 s is not seen at 30 s.
+  // it caches "none", and the row added after that lookup is not seen at 30 s.
   it('flag off, no cache entry yet: the bust writes nothing, as before', async () => {
     dedicated.flags['user-downloads-dedicated-clickhouse'] = false;
     await bustUserDownloadsCache(NO_DOWNLOADS);

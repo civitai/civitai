@@ -21,6 +21,23 @@ const { clearNotificationEmailEnabledCache, getEmailUnsubscribeUrl, sendNotifica
   await import('~/server/services/notification-email.service');
 const unsubscribe = (await import('~/pages/api/notifications/email-unsubscribe'))
   .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
+const { verifyEmailClick } = await import('~/server/email/link-tracking');
+const { decode: decodeHtml } = await import('he');
+
+/** Where a tracked link leads: the site path its signed click redirect sends the reader to. */
+const leadsTo = (href: string) => {
+  const url = new URL(decodeHtml(href));
+  expect(url.pathname).toBe('/api/email/click');
+  return verifyEmailClick(Object.fromEntries(url.searchParams))?.to;
+};
+/** Every tracked link's destination, in order. */
+const linksIn = (html: string) =>
+  [...html.matchAll(/href="([^"]+\/api\/email\/click\?[^"]+)"/g)].map(([, href]) => leadsTo(href!));
+/** The button's destination and label. */
+const buttonIn = (html: string) => {
+  const m = html.match(/<a class="em-btn" href="([^"]+)"[^>]*>([^<]*)<\/a>/);
+  return m ? { to: leadsTo(m[1]!), label: m[2] } : null;
+};
 
 /** The app-review outcomes an app developer is emailed about the moment they happen. */
 const APP_REVIEW_TYPES = [
@@ -125,7 +142,7 @@ describe('app-review notifications send email', () => {
     expect(mail.text).toContain(sentence);
     expect(mail.text).toContain('View on Civitai: http://localhost:3000/apps/build?view=apps');
     expect(mail.html).toContain('Spends Buzz without asking');
-    expect(mail.html).toContain('href="http://localhost:3000/apps/build?view=apps"');
+    expect(linksIn(mail.html)).toContain('/apps/build?view=apps');
   });
 
   it('the approved email says the app was approved and opens its run page', async () => {
@@ -147,9 +164,7 @@ describe('app-review notifications send email', () => {
     expect(mail.text).toContain(sentence);
     expect(mail.text).toContain('Open your app: http://localhost:3000/apps/run/pixel-pal');
     expect(mail.html).toContain(sentence.replace(/"/g, '&quot;'));
-    expect(mail.html).toMatch(
-      /<a class="em-btn" href="http:\/\/localhost:3000\/apps\/run\/pixel-pal"[^>]*>Open your app<\/a>/
-    );
+    expect(buttonIn(mail.html)).toEqual({ to: '/apps/run/pixel-pal', label: 'Open your app' });
     expect(mail.html).not.toContain('View on Civitai');
     expect(mail.html).toContain('<h1 class="em-h1"');
     // One-click unsubscribe is unchanged.
@@ -174,9 +189,8 @@ describe('app-review notifications send email', () => {
     expect(outcome.sent).toBe(1);
     const mail = vi.mocked(sendEmail).mock.calls[0]![0];
     expect(mail.text).toContain('View on Civitai: http://localhost:3000/apps/build?view=apps');
-    expect(mail.html).toMatch(
-      /<a class="em-btn" href="http:\/\/localhost:3000\/apps\/build\?view=apps"[^>]*>View on Civitai<\/a>/
-    );
+    expect(buttonIn(mail.html)).toEqual({ to: '/apps/build?view=apps', label: 'View on Civitai' });
+    expect(linksIn(mail.html).filter((to) => to?.startsWith('/apps/run/'))).toEqual([]);
     expect(mail.html).not.toContain('/apps/run/');
     expect(mail.html).not.toContain('Open your app');
   });

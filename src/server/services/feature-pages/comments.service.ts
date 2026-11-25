@@ -77,6 +77,10 @@ const tryAgain = (cause?: unknown) =>
 class BlockedContent extends Error {}
 class EditAlreadyApplied extends Error {}
 class DuplicateRequest extends Error {}
+
+const log = (message: string, payload: MixedObject) =>
+  logToAxiom({ name: 'feature-pages', type: 'error', message, payload });
+
 /** The recent edit requestIds a comment remembers, so a resend is recognised. */
 const FP_EDIT_REQUESTS_KEPT = 20;
 /** Blocked text answers 'blocked' in the frame: the writer can change it and send again. */
@@ -164,12 +168,7 @@ async function assertSubjectHeld(subject: string) {
   }
   if (reply.status === 200 && subjectLookupSchema.safeParse(reply.body).success) return;
   if (isRouteMissing(reply))
-    logToAxiom({
-      name: 'feature-pages',
-      type: 'error',
-      message: 'platform route missing',
-      payload: { path: PLATFORM_SUBJECT_PATH, status: reply.status },
-    });
+    log('platform route missing', { path: PLATFORM_SUBJECT_PATH, status: reply.status });
   if (!isRouteMissing(reply) && signerErrorCode(reply) === PlatformRefusal.UnknownSubject)
     throw refused('Unknown feature');
   throw tryAgain();

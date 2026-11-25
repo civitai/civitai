@@ -93,7 +93,7 @@ modelTagCache) are held out of its cache: the mirror runs the cache's lookup ove
 the rows its queries return (`db.modelDataVersions`, `db.modelHashes`, `db.tagsOnModels`) and what
 the fetch writes (`expect.writes`); the harness runs every served fixture with write-back off (the
 cache untouched) and on (exactly those writes). Extra keys: `config` holds the model flag mirrors;
-`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username). Raise
+`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username), each `paidAccess` row with the gated model's `versionIds` (what Hide Paid drops). Raise
 `goldenMinModels` with the count.
 
 ## model-assoc

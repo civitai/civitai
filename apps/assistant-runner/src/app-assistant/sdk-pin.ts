@@ -10,31 +10,22 @@ import {
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
 
 import type { Logger } from '../core/interfaces';
+import { npmInstallCommand, runNpmInstall } from './npm-install';
 import { exitCodeOf, manifestOf, outputOf, projectDirOf } from './preview';
 
 /** How long a reply's start waits for the pin check's reads: past it, the reply goes without. */
 export const SDK_PIN_READ_TIMEOUT_MS = 5_000;
-/**
- * The sandbox's own bound on the upgrade's `npm install` (its `timeout_ms`: the sandbox kills the
- * install's whole process group past it, and answers). An App Block has a handful of dependencies
- * and keeps its `node_modules` across a pause, so bumping one of them is an install of seconds to a
- * few tens of seconds; 90 s leaves room for a cold npm cache without letting a wedged registry hold
- * the reply.
- */
-export const SDK_INSTALL_TIMEOUT_MS = 90_000;
 /**
  * The upgrade's budget, judged between its steps: a step that ends past it is followed by the
  * rollback, never by the next step. No step is cut off mid-call: cancelling an MCP call does not stop
  * the command in the sandbox (sandbox-mcp answers each request on its own server, so a cancel never
  * reaches the install; only closing the connection kills it), so an install "abandoned" by the
  * runner would keep running beside the rollback's. Every step has its own bound instead: the
- * install's `SDK_INSTALL_TIMEOUT_MS` in the sandbox, the dev server's wait to listen
+ * install's `NPM_INSTALL_TIMEOUT_MS` in the sandbox, the dev server's wait to listen
  * (`DEV_SERVER_WAIT_MS`), and each call's MCP timeout. 150 s is the install's 90 s, a restart's
  * ~30 s, and the reads and writes around them.
  */
 export const SDK_UPGRADE_TIMEOUT_MS = 150_000;
-/** How long one MCP call waits past the sandbox's own bound on its command, for its answer. */
-const CALL_SLACK_MS = 10_000;
 /** The most of `package-lock.json` that is kept to put back: an app's lockfile larger than this is not upgraded. */
 const LOCKFILE_MAX_BYTES = 1024 * 1024;
 /** How many tries an app gets per conversation for one (declared, installed) pair: once, and once more. */
@@ -421,15 +412,10 @@ export class SdkUpgrades {
 
   /** `cd <dir> && npm install`, told to the gates; whether it exited 0. */
   async #install(input: SdkUpgradeInput, dir: string): Promise<boolean> {
-    const command = `cd ${dir} && npm install --no-audit --no-fund`;
+    const command = npmInstallCommand(dir);
     let result: { text: string; isError: boolean };
     try {
-      result = await input.sandbox.call(
-        'run_command',
-        { command, timeout_ms: SDK_INSTALL_TIMEOUT_MS },
-        undefined,
-        { timeoutMs: SDK_INSTALL_TIMEOUT_MS + CALL_SLACK_MS }
-      );
+      result = await runNpmInstall(input.sandbox, dir);
     } catch (error) {
       // No answer: it may have changed files all the same.
       input.report?.({

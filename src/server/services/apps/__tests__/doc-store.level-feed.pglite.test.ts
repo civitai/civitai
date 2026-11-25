@@ -290,7 +290,7 @@ describe('the level streams over the store (rls on)', () => {
     expect(JSON.stringify(e)).not.toMatch(/tallies|marks|counters|report|author|viewer/);
     // One sequence: the head it names is the store's seq head, and nothing else.
     expect(metaOf(run.events, 'live')).toEqual([
-      { head: { seq: await feed.feedHead(app) }, levels: 'on', block: app },
+      { head: { seq: await feed.feedHead(app) }, levels: 'on', block: app, truncated: false },
     ]);
     await close(run);
   });
@@ -314,7 +314,7 @@ describe('the level streams over the store (rls on)', () => {
       ['p04-r', { t: 'body-p04-r-v2' }, seqAfter],
     ]);
     expect(metaOf(afterWrite, 'progress')).toEqual([
-      { head: { seq: await feed.feedHead(app) }, levels: 'on', block: app },
+      { head: { seq: await feed.feedHead(app) }, levels: 'on', block: app, truncated: false },
     ]);
     await close(run);
   });

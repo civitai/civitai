@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { escape as escapeHtml } from 'he';
 import * as z from 'zod';
+import { lifecycleTemplateForOptOut } from '~/server/email/lifecycle-opt-outs';
+import { recordEmailEvents } from '~/server/email/send-tracking';
 import { notificationSettingsUrl } from '~/server/email/templates/notification.email';
 import { digestCycleParam, recordDigestEvents } from '~/server/notifications/digest-tracking';
 import { MISSED_DIGEST_EMAIL_TYPE } from '~/server/notifications/missed-digest.constants';
@@ -48,10 +50,31 @@ export default PublicEndpoint(
     if (req.method === 'POST') {
       const turnedOff = await optOutOfNotificationEmail(u, t);
       // A digest's links also carry the pass it was sent in (`c`), so its unsubscribes count per
-      // pass. Only the call that turned it off records one: a repeat POST counts nothing.
-      if (turnedOff && t === MISSED_DIGEST_EMAIL_TYPE)
-        await recordDigestEvents([
-          { event: 'unsubscribe', userId: u, cycleStartedAt: digestCycleParam(req.query.c) },
+      // pass. A lifecycle email's opt-out is also an emailEvents row, against the send its link
+      // names (`e`, added per send by base.email.ts). Both are unsigned: they can only mislabel the
+      // user's own row. The campaign is the send row's, joined on the send id. Only the call that
+      // turned it off records: a repeat POST counts nothing.
+      const template = lifecycleTemplateForOptOut(t);
+      if (turnedOff)
+        await Promise.all([
+          t === MISSED_DIGEST_EMAIL_TYPE
+            ? recordDigestEvents([
+                { event: 'unsubscribe', userId: u, cycleStartedAt: digestCycleParam(req.query.c) },
+              ])
+            : undefined,
+          template
+            ? recordEmailEvents([
+                {
+                  event: 'unsubscribe',
+                  sendId: typeof req.query.e === 'string' ? req.query.e : '',
+                  template,
+                  mailClass: 'lifecycle',
+                  campaign: '',
+                  variant: '',
+                  userId: u,
+                },
+              ])
+            : undefined,
         ]);
       return res.status(200).send(page(`<p>You won't get emails for "${name}" any more.</p>`));
     }

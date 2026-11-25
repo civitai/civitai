@@ -1185,7 +1185,8 @@ func TestWithWritesOnTheWriteRoutesAreServed(t *testing.T) {
 			t.Errorf("%s %s: %d, %d forwarded; want %d, %d", w.method, w.path, rec.Code, forwarded.Load(), want, sent)
 		}
 	}
-	if g := s.get(t, notesPath, "civitai_writes_on"); g.status != 200 || g.ans.Source != "rest" {
+	// With the writes on a read is a cut-over app's: never REST, so with no registry it is refused.
+	if g := s.get(t, notesPath, "civitai_writes_on"); g.status != 503 || !strings.Contains(g.body, `"registry_off"`) || s.store.calls.Load() != 0 {
 		t.Fatalf("the read: %d %s", g.status, g.body)
 	}
 	if rec := s.call(t, "OPTIONS", notesPath, "", ""); rec.Code != 204 || !strings.Contains(rec.Header().Get("Access-Control-Allow-Methods"), "POST") ||

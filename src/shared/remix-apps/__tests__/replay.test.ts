@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defineRemixApp, type RemixCtx, type RemixImage } from '~/shared/remix-apps/define';
 import {
+  checkRemixReplay,
   REMIX_RUN_LIMITS,
   RemixReplayError,
   replayRemixApp,
@@ -200,5 +201,60 @@ describe('replay checks', () => {
       status: 'effect',
       index: 0,
     });
+  });
+});
+
+describe('an image answer', () => {
+  const ref = { url: 'https://image.example/jacket.png', width: 600, height: 900 };
+  const references = new Map([[21, ref]]);
+  const asks = (then: (ctx: RemixCtx, picked: RemixImage) => Promise<RemixImage[]>) =>
+    appOf(async (ctx) => then(ctx, (await ctx.ask({ kind: 'image', prompt: 'Jacket' }))!));
+  const log: RemixLogEntry[] = [{ type: 'ask', answer: 21 }];
+
+  it('reaches a step as an input, never the run as an output', async () => {
+    // POSITIVE CONTROL: the same reference is accepted as a step's input.
+    const asInput = asks(async (ctx, picked) => {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'Wear it',
+        images: [ctx.source, picked],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      return images;
+    });
+    expect(await replayRemixApp(asInput, source, log, references)).toMatchObject({
+      status: 'effect',
+      effect: { type: 'workflow', request: { images: [{ url: source.url }, ref] } },
+    });
+    await expect(
+      replayRemixApp(
+        asks(async (_, picked) => [picked]),
+        source,
+        log,
+        references
+      )
+    ).rejects.toThrow('returned an image this run did not make');
+  });
+
+  it('is refused from a user app, whose sandbox would have to be handed the image', () => {
+    const asking = (kind: 'image' | 'text') => ({
+      effects: [
+        {
+          type: 'ask',
+          spec:
+            kind === 'text'
+              ? { kind, prompt: 'Jacket', maxLength: 10 }
+              : { kind, prompt: 'Jacket' },
+        },
+      ],
+    });
+    // POSITIVE CONTROL: a text ask stops the run there.
+    expect(checkRemixReplay('probe', source, [], asking('text')).outcome).toMatchObject({
+      status: 'effect',
+    });
+    expect(() => checkRemixReplay('probe', source, [], asking('image'))).toThrow(
+      'user apps cannot yet'
+    );
   });
 });

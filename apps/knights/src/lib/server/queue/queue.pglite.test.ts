@@ -1,12 +1,17 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { sql, type Kysely, type KyselyPlugin } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { countOpenServableKnightItems, readWithoutJit } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { engage, lockImage } from '../../../test/seed';
+import {
+  EXCLUSION_TABLES,
+  exclusionCases,
+  extraExclusionCases,
+} from '../../../test/skill-check-exclusions';
 import { PROGRESSION } from '../progression/config';
 import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
@@ -369,6 +374,64 @@ describe('getFeed', () => {
 
     const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
     expect(served).toContain(x);
+  });
+
+  it('stops a stage scan whose buckets cannot fill at the row budget', async () => {
+    await player(1, 'Knight');
+    // 350 PG items then one X item, under a budget that ends inside the second round: that round is cut to what is left
+    // of the budget and the scan stops there, before the X item, instead of reading on to the end of the stage.
+    const ids = await sameAgeStage([...Array<number>(350).fill(1), 8]);
+    const watched = watchFeedReads();
+
+    const served =
+      (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
+    expect(served).not.toContain(ids[350]);
+  });
+
+  it('never reads or serves an image the gate refuses when the row budget cuts the scan short', async () => {
+    await player(1, 'Knight');
+    // The skill-check cases the serve gate refuses too (the rest only bar an image from skill checks).
+    const serveRefusals = [
+      'tos-violation',
+      'held-media',
+      'reported-image',
+      'uploader-banned-or-muted',
+      'held-media, image leg (flagged for CSAM review)',
+      'uploader-banned-or-muted, deleted leg',
+    ];
+    const refusals = [...exclusionCases(() => pg), ...extraExclusionCases(() => pg)].filter(
+      ([label]) => serveRefusals.includes(label)
+    );
+    expect(refusals.map(([label]) => label)).toEqual(serveRefusals);
+    // 100 PG items, then one R item per refusal and one clean R item, then PG items: the R bucket is empty, so the scan
+    // keeps any R row it reads. A 250-row budget cuts the second round to 150 rows, which reach past them.
+    const firstRefused = 100;
+    const clean = firstRefused + refusals.length;
+    const ids = await sameAgeStage([
+      ...Array<number>(firstRefused).fill(1),
+      ...Array<number>(refusals.length + 1).fill(4),
+      ...Array<number>(250).fill(1),
+    ]);
+    // The refusals write rows that name these image ids, which later tests reuse.
+    onTestFinished(async () => {
+      await pg.exec(`TRUNCATE ${EXCLUSION_TABLES} RESTART IDENTITY CASCADE`);
+    });
+    // sameAgeStage puts item ids[k] on image 100_001 + k.
+    for (const [k, [, refuse]] of refusals.entries()) await refuse(100_001 + firstRefused + k);
+    const refused = ids.slice(firstRefused, clean);
+    const servable = await readWithoutJit(db, (trx) => servableItems(trx).select('i.id').execute());
+    expect(servable.filter((r) => refused.includes(r.id))).toEqual([]);
+    const watched = watchFeedReads();
+
+    const served =
+      (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
+    // The full read fetches the served columns of every item the scan kept: the R row past the refused ones is kept.
+    expect(watched.fullReads.flat()).toContain(ids[clean]);
+    expect(watched.rounds.flat().filter((id) => refused.includes(id))).toEqual([]);
+    expect(watched.fullReads.flat().filter((id) => refused.includes(id))).toEqual([]);
+    expect(served.filter((id) => refused.includes(id))).toEqual([]);
   });
 
   it('scans a stage whose buckets cannot fill in doubling rounds, and fetches the full rows of the kept items only', async () => {

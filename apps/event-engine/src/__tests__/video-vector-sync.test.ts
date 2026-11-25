@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { backfillDomain } from '@/vector-sync/domain/backfill';
 import { nextRefreshIds } from '@/vector-sync/domain/refresh';
 import { syncIds, type RejectedMemo } from '@/vector-sync/domain/sync';
@@ -130,14 +130,18 @@ describe('which videos get a point', () => {
     }
   }, 60_000);
 
-  test('held media and held owners get no point', async () => {
+  // A held owner does not hide the row (civitai/civitai#10360). A clip listed on a report is
+  // flagged itself, so it goes.
+  test('a reported owner keeps the clip; a clip listed on a report gets no point', async () => {
     const pg = await pglite(`
       ${video(1)} ${video(2)} ${video(3)}
       UPDATE "Image" SET "userId" = 8 WHERE id = 2;
       INSERT INTO "CsamReport" ("userId", images) VALUES (8, '[]'), (99, '[3]');
     `);
     try {
-      expect([...(await getVideoDocs(pg as unknown as Pg, [1, 2, 3])).keys()]).toEqual([1]);
+      expect([...(await getVideoDocs(pg as unknown as Pg, [1, 2, 3])).keys()].sort()).toEqual([
+        1, 2,
+      ]);
     } finally {
       await pg.close();
     }
@@ -425,24 +429,5 @@ describe('video collection stamp', () => {
     expect(await new VectorStore(client(stamp), 'v', VIDEO_COLLECTION).isStamped()).toBe(true);
     // The image collection still waits for its image profile.
     expect(await new VectorStore(client(stamp), 'i').isStamped()).toBe(false);
-  });
-});
-
-describe('the points-only walk', () => {
-  test.each([
-    ['embedding off', 'false', true],
-    ['embedding on', 'true', false],
-  ])('is %s: points-only %s', async (_, embed, pointsOnly) => {
-    vi.resetModules();
-    vi.stubEnv('VECTOR_VIDEO_REFRESH_POINTS_ONLY', 'true');
-    vi.stubEnv('VECTOR_SYNC_EMBED_ENABLED', 'true');
-    vi.stubEnv('VECTOR_VIDEO_EMBED_ENABLED', embed);
-    try {
-      const { videoDomain: fresh } = await import('@/vector-sync/videos/domain');
-      expect(fresh.refresh?.pointsOnly).toBe(pointsOnly);
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
   });
 });

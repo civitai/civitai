@@ -87,6 +87,9 @@ type Metrics struct {
 	// APP_DATA_WRITES is off.
 	FloorReopens *prometheus.CounterVec
 	Overlays     *prometheus.CounterVec
+	// SignedOutReads counts signed-out viewers' shared reads by outcome (Outcomes); zero while
+	// APP_DATA_WRITES is off.
+	SignedOutReads *prometheus.CounterVec
 }
 
 // Stats is what the session manager holds now (session.Stats), read at scrape time.
@@ -137,6 +140,10 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Name: "app_data_cache_overlays_total",
 			Help: "Acknowledged writes shown over their token's stream until it shows them, by kind (record, delete_marker).",
 		}, []string{"kind"}),
+		SignedOutReads: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_signed_out_reads_total",
+			Help: "Signed-out viewers' shared-collection reads, served from the level streams, by outcome.",
+		}, []string{"outcome"}),
 	}
 	gauge := func(name, help string, pick func(s, l, r, b int) int) prometheus.Collector {
 		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
@@ -144,7 +151,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		})
 	}
 	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges,
-		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays,
+		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays, m.SignedOutReads,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
@@ -172,6 +179,9 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 	}
 	for _, k := range OverlayKinds {
 		m.Overlays.WithLabelValues(k)
+	}
+	for _, o := range Outcomes {
+		m.SignedOutReads.WithLabelValues(o)
 	}
 	for _, op := range WriteOps {
 		m.WriteForward.WithLabelValues(op)

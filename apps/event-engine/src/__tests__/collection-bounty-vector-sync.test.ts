@@ -8,7 +8,7 @@ import { getCollectionDocs } from '@/vector-sync/collections/source';
 type Pg = Parameters<typeof getCollectionDocs>[0];
 
 describe('collection payload, against the real query', () => {
-  test('keeps public, rated, unblocked collections with an accepted item, of active unheld owners', async () => {
+  test('keeps public, rated, unblocked collections with an accepted item, of active owners, held or not', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();
     await pg.exec(`
@@ -37,7 +37,8 @@ describe('collection payload, against the real query', () => {
     `);
     try {
       const docs = await getCollectionDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      expect([...docs.keys()]).toEqual([1]);
+      // 8's owner is held. A held owner does not hide the row (civitai/civitai#10360).
+      expect([...docs.keys()]).toEqual([1, 8]);
       expect(docs.get(1)).toMatchObject({
         title_normalized: 'neon cities',
         type: 'Image',
@@ -58,7 +59,7 @@ describe('collection payload, against the real query', () => {
 });
 
 describe('bounty payload, against the real query', () => {
-  test('keeps visible, rated, unblocked, non-poi bounties of active unheld owners, with their feed fields', async () => {
+  test('keeps visible, rated, unblocked, non-poi bounties of active owners, held or not, with their feed fields', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     // event-engine's node10 resolution can't see pglite's exports map, so the subpath is untyped.
     const citextPath = '@electric-sql/pglite/contrib/citext';
@@ -108,7 +109,8 @@ describe('bounty payload, against the real query', () => {
     `);
     try {
       const docs = await getBountyDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      expect([...docs.keys()]).toEqual([1, 9]);
+      // 8's owner is held. A held owner does not hide the row (civitai/civitai#10360).
+      expect([...docs.keys()]).toEqual([1, 8, 9]);
       // The feed serves a bounty marked nsfw at XXX, whatever its rated level.
       expect(docs.get(9)?.nsfwLevel).toEqual([16]);
       expect(docs.get(1)).toMatchObject({

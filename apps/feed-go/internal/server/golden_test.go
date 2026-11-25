@@ -50,8 +50,8 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 87
-	goldenMinModels   = 46
+	goldenMinInfinite = 123
+	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -107,13 +107,30 @@ type goldenFixture struct {
 		// ComputeMissesOff runs the model harness with FEED_GO_COMPUTE_MISSES off (a fixture of a
 		// fallback only that state still has).
 		ComputeMissesOff bool `json:"computeMissesOff"`
+		// ServeSortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM (feed.InfinitePorts.SortRandom; absent:
+		// off, a collection's Random sort falls back).
+		ServeSortRandom bool `json:"serveSortRandom"`
+		// ServeGallerySettingsMiss is FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS (infinite/
+		// fixtures; absent: off, a gallery-settings miss falls back).
+		ServeGallerySettingsMiss bool `json:"serveGallerySettingsMiss"`
 		// ServeInputIDs / ServeInputFollowed are the model.getAll input ports' switches
 		// (FEED_GO_GETALL_SERVE_INPUT_IDS / _FOLLOWED; absent: off, the fixture's shape falls back).
 		ServeInputIDs      bool `json:"serveInputIds"`
 		ServeInputFollowed bool `json:"serveInputFollowed"`
+		// ServeHidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID (absent: off, Hide Paid falls back).
+		ServeHidePaid bool `json:"serveHidePaid"`
 		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
 		// off, an owner's user-cosmetics miss falls back).
 		ServeUserCosmeticsMiss bool `json:"serveUserCosmeticsMiss"`
+		// ServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (model-getall/; absent: off, an
+		// owner's creator-membership miss falls back).
+		ServeMembershipMiss bool `json:"serveMembershipMiss"`
+		// ServePublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY (infinite/ fixtures; absent:
+		// off, the fixture's `publishedOnly` falls back).
+		ServePublishedOnly bool `json:"servePublishedOnly"`
+		// ServePostIDs is FEED_GO_INFINITE_SERVE_INPUT_POST_IDS (infinite/ fixtures; absent: off, the
+		// fixture's `postIds` falls back).
+		ServePostIDs bool `json:"servePostIds"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -231,6 +248,29 @@ func goldenTimeVal(t goldenTime) any {
 		return nil
 	}
 	return *t.T
+}
+
+// goldenJSONTypeText is jsonb_typeof and `->>` of a JSON value: nil, nil for none (SQL NULL), else its
+// type and its text (a string unquoted).
+func goldenJSONTypeText(r json.RawMessage) (any, any) {
+	if len(r) == 0 || string(r) == "null" {
+		return nil, nil
+	}
+	var v any
+	if err := json.Unmarshal(r, &v); err != nil {
+		return nil, nil
+	}
+	switch t := v.(type) {
+	case string:
+		return "string", t
+	case float64:
+		return "number", string(r)
+	case bool:
+		return "boolean", string(r)
+	case []any:
+		return "array", string(r)
+	}
+	return "object", string(r)
 }
 
 func goldenJSONVal(r json.RawMessage) any {
@@ -361,6 +401,14 @@ type goldenDB struct {
 		ModelID int `json:"modelId"`
 		TagID   int `json:"tagId"`
 	} `json:"tagsOnModels"`
+	// Subscriptions are the CustomerSubscription rows (with their product's metadata, both as JSON
+	// text) getValidCreatorMembershipMap's origin read for a model-getall fixture's cold membership
+	// keys, after its status filter.
+	Subscriptions []struct {
+		UserID          int    `json:"userId"`
+		Metadata        string `json:"metadata"`
+		ProductMetadata string `json:"productMetadata"`
+	} `json:"subscriptions"`
 	// OfficialModels are the official, published models getOfficialModelIds' fetchFn reads (a fixture
 	// whose request reads the official-models entry).
 	OfficialModels []struct {
@@ -382,8 +430,9 @@ type goldenDB struct {
 		} `json:"contributors"`
 	} `json:"collections"`
 	PaidAccess []struct {
-		ModelID  int        `json:"modelId"`
-		Deadline goldenTime `json:"deadline"`
+		ModelID    int        `json:"modelId"`
+		Deadline   goldenTime `json:"deadline"`
+		VersionIDs []int      `json:"versionIds"`
 	} `json:"paidAccess"`
 	CoverImages []struct {
 		ID             int `json:"id"`
@@ -435,6 +484,9 @@ type goldenCollectionItem struct {
 	AddedByID    *int    `json:"addedById"`
 	Note         *string `json:"note"`
 	TagID        *int    `json:"tagId"`
+	// SortKeys is the item's Random sort key by seed, as Postgres computes it
+	// (`abs(mod(hashtext(concat(<id>::text, '<seed>')), 1000000000))`; a Random fixture only).
+	SortKeys map[string]int `json:"sortKeys"`
 }
 
 // goldenModelRow is one row of model.getAll's page query (getModelsRaw's SELECT).
@@ -634,6 +686,9 @@ var (
 	goldenReCollection = regexp.MustCompile(`ci\."collectionId" = \$(\d+)`)
 	goldenReCollTag    = regexp.MustCompile(`ci\."tagId" = \$(\d+)`)
 	goldenReCollOwner  = regexp.MustCompile(`ci\."status" <> 'REJECTED' AND ci\."addedById" = \$(\d+)`)
+	// A collection page's Random order: the seed the CTE hashes with, and its cursor clause.
+	goldenReCollSeed   = regexp.MustCompile(`hashtext\(concat\(ci\.id::text, \$(\d+)::text\)\)`)
+	goldenReCollRandom = regexp.MustCompile(`WHERE \(\s*"sortKey" < \$(\d+)\s*OR \(\s*"sortKey" = \$(\d+)\s*AND "imageId" < \$(\d+)\s*\)\s*\)`)
 	goldenReMinorOwner = regexp.MustCompile(`\(i\."acceptableMinor" = FALSE OR i\."userId" = \$(\d+)\)`)
 	// The minor content rule (minorMatureImageVisibleSql): a minor-flagged image rated NULL, 0 or at
 	// least the captured level is kept only for the bound owner (none bound: for nobody).
@@ -1015,6 +1070,65 @@ func goldenCollectionRows(sql string, args []any, kept []goldenImage, itemOf map
 	}
 	byItem := strings.Contains(sql, `ORDER BY ct."collectionItemId" DESC`)
 	asc := strings.Contains(sql, `ORDER BY i."id" ASC`)
+	// The Random order: each item's sort key under the bound seed (the fixture's, from Postgres), the
+	// CTE's own cursor clause, then `ct."sortKey" DESC, i."id" DESC`.
+	seedArg, random := goldenArg(args, goldenReCollSeed, sql)
+	if random != strings.Contains(sql, `ORDER BY ct."sortKey" DESC, i."id" DESC`) {
+		return nil, errors.New("golden: a seeded sort key without the Random order, or the order without the seed")
+	}
+	if random {
+		seed, ok := seedArg.(string)
+		if !ok {
+			return nil, fmt.Errorf("golden: the Random seed is bound as %T, want text", seedArg)
+		}
+		keyOf := func(r joined) (int, error) {
+			k, ok := r.item.SortKeys[seed]
+			if !ok {
+				return 0, fmt.Errorf("golden: item %d has no sort key for seed %q", r.item.ID, seed)
+			}
+			return k, nil
+		}
+		keys := make(map[int]int, len(rows))
+		for _, r := range rows {
+			k, err := keyOf(r)
+			if err != nil {
+				return nil, err
+			}
+			keys[r.item.ID] = k
+		}
+		if m := goldenReCollRandom.FindStringSubmatch(sql); m != nil {
+			at := func(s string) int { n, _ := strconv.Atoi(s); return goldenInt(args[n-1]) }
+			if m[1] != m[2] {
+				return nil, errors.New("golden: the Random cursor compares two different sort keys")
+			}
+			ck, cid := at(m[1]), at(m[3])
+			var paged []joined
+			for _, r := range rows {
+				if k := keys[r.item.ID]; k < ck || (k == ck && r.img.ID < cid) {
+					paged = append(paged, r)
+				}
+			}
+			rows = paged
+		}
+		if goldenReCursor.MatchString(sql) {
+			return nil, errors.New("golden: a Random page with a getCursor clause")
+		}
+		sort.SliceStable(rows, func(a, b int) bool {
+			if ka, kb := keys[rows[a].item.ID], keys[rows[b].item.ID]; ka != kb {
+				return ka > kb
+			}
+			return rows[a].img.ID > rows[b].img.ID
+		})
+		if limit, ok := goldenArg(args, goldenReLimit, sql); ok && len(rows) > goldenInt(limit) {
+			rows = rows[:goldenInt(limit)]
+		}
+		cols := append(append([]string(nil), goldenImageColumns...), "collectionItemNote", "collectionItemStatus", "collectionItemAddedById")
+		out := make([][]any, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, append(r.img.row(keys[r.item.ID]), goldenPtr(r.item.Note), r.item.Status, goldenPtr(r.item.AddedByID)))
+		}
+		return testkit.NewRows(cols, out...), nil
+	}
 	if !byItem && !asc && !strings.Contains(sql, `ORDER BY i."id" DESC`) {
 		return nil, errors.New("golden: a collection page in an order the fake does not evaluate")
 	}
@@ -1147,6 +1261,18 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 				}
 			}
 			return testkit.NewRows([]string{"userId", "mode"}, rows...), nil
+		}},
+		// The gallery-hold computation of a gallery-settings miss (getGallerySettingsByModelId's
+		// rebuild): each existing model's flags and its stored level's JSON type and text.
+		{Match: `SELECT id, minor, "sfwOnly", jsonb_typeof("gallerySettings"->'level')`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, m := range db.Models {
+				if goldenHas(goldenInts(args[0]), m.ID) {
+					typ, text := goldenJSONTypeText(m.GalleryLevel)
+					rows = append(rows, []any{m.ID, m.Minor, m.SfwOnly, typ, text})
+				}
+			}
+			return testkit.NewRows([]string{"id", "minor", "sfwOnly", "levelType", "level"}, rows...), nil
 		}},
 		{Match: `SELECT minor, "sfwOnly"`, Rows: func(args []any) (*testkit.Rows, error) {
 			for _, m := range db.Models {
@@ -1537,7 +1663,11 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 		Now:            nowFn,
 	}
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
-		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn}}
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
+		Ports: feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly, PostIDs: fx.Config.ServePostIDs,
+			SortRandom: fx.Config.ServeSortRandom, GallerySettingsMiss: fx.Config.ServeGallerySettingsMiss},
+		RandomSeed:   &feed.RandomSeed{Sys: sys},
+		GalleryHolds: sources}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
@@ -1895,10 +2025,10 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 			var rows [][]any
 			for _, p := range db.PaidAccess {
 				if goldenHas(goldenInts(args[0]), p.ModelID) {
-					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline)})
+					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline), p.VersionIDs})
 				}
 			}
-			return testkit.NewRows([]string{"modelId", "deadline"}, rows...), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}, rows...), nil
 		}},
 		{Match: `FROM "Image" i`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -1945,6 +2075,17 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 				}
 			}
 			return testkit.NewRows([]string{"userId", "targetUserId"}, rows...), nil
+		}},
+		// getValidCreatorMembershipMap's origin (a cold membership key): the fixture's subscription rows
+		// of the ids asked.
+		{Match: `FROM "CustomerSubscription" cs`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.Subscriptions {
+				if goldenHas(goldenInts(args[0]), r.UserID) {
+					rows = append(rows, []any{int64(r.UserID), r.Metadata, r.ProductMetadata})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "metadata", "productMetadata"}, rows...), nil
 		}},
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
@@ -2198,7 +2339,7 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 	blocked := &feed.BlockedTags{Cache: env.cache}
 	// As main: the model feed shares the miss computation.
 	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons),
-		WriteBack: goldenWrites(writeBack)}
+		WriteBack: goldenWrites(writeBack), TierMetadataKey: "tier"}
 	if writeBack {
 		compute.Primary = db
 	}
@@ -2216,8 +2357,9 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
 			VisibleDecorationEvents: events,
-			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed},
+			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed, HidePaid: fx.Config.ServeHidePaid},
 			ServeUserCosmeticsMiss:  fx.Config.ServeUserCosmeticsMiss,
+			ServeMembershipMiss:     fx.Config.ServeMembershipMiss,
 		},
 		Now: env.now,
 	}

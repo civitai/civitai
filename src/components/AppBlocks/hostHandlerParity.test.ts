@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   INVENTORY,
+  UNIVERSAL_ERROR_KEYS,
   checkReplyKeys,
   parseDeclaredKeys,
   type HostFile,
@@ -286,6 +287,14 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       expect(checkReplyKeys('SUBMIT_WORKFLOW', { requestId: 'r', error: 'x' }).problems).toEqual([
         "SUBMIT_WORKFLOW: the reply has a top-level `error`, but errorKeys is 'none'",
       ]);
+      // `rateLimit` is a universal ERROR key: any error reply may carry it, no success reply.
+      const rateLimit = { retryAfterSeconds: 1, retryAt: '2031-01-01T00:00:00.000Z' };
+      expect(
+        checkReplyKeys('GET_VIEWER', { requestId: 'r', error: 'x', rateLimit }).problems
+      ).toEqual([]);
+      expect(
+        checkReplyKeys('GET_VIEWER', { requestId: 'r', viewer: { id: 1 }, rateLimit }).problems
+      ).toEqual(['GET_VIEWER: the reply carries `rateLimit`, which replyKeys does not declare']);
     });
 
     it('the forward matrix rows agree with the declared shapes, on each host', () => {
@@ -390,9 +399,12 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
             continue;
           }
           const { required, optional } = names(declared);
-          expect([...seen].sort(), `${type}: ${outcome} keys the pins cover`).toEqual(
-            [...required, ...optional].sort()
-          );
+          // A universal error key is allowed on every type, so a pin may show it or not.
+          const listed = (k: string) => outcome === 'success' || !UNIVERSAL_ERROR_KEYS.includes(k);
+          expect(
+            [...seen].filter(listed).sort(),
+            `${type}: ${outcome} keys the pins cover`
+          ).toEqual([...required, ...optional].filter(listed).sort());
         }
       }
       // Positive control for the host-written check above: IframeHost writes the batch
@@ -482,6 +494,55 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
           `REQUEST-style '${type}' is exempted from PageBlockHost — it MUST carry a rationale`
         ).toBe(true);
       }
+    }
+  });
+
+  describe('rateLimit forwarding (civitai/civitai#10367)', () => {
+    // A catch block that turns the caught error into a reply's `error` must also forward its
+    // rateLimit meta, or an app cannot read which limit refused it or when to retry. The forward
+    // matrix pins the behaviour for the forwarded types only, so this is what reaches every
+    // other handler, and every handler added later.
+    const BUILDS_ERROR_FROM_ERR =
+      /\b(?:err instanceof Error \? err\.message|\w*Error\w*\(err\)|classify\w*\(err\))/;
+    const FORWARDS_RATE_LIMIT = /\b(?:rateLimitReplyFields|sharedStorageErrorReply)\(err\)/;
+    // Catch blocks that build an error from `err` and rightly forward nothing, by a fragment of
+    // their body. A per-file batch upload failure is nested inside the batch's `results`, never
+    // a top-level error reply.
+    const EXEMPT = { 'PageBlockHost.tsx': ['uploaded.set(file.index'] } as Record<string, string[]>;
+
+    function catchBlocks(src: string): string[] {
+      const out: string[] = [];
+      for (const m of src.matchAll(/catch \(err\) \{/g)) {
+        let i = m.index + m[0].length;
+        for (let depth = 1; depth > 0 && i < src.length; i++) {
+          if (src[i] === '{') depth++;
+          else if (src[i] === '}') depth--;
+        }
+        out.push(src.slice(m.index, i));
+      }
+      return out;
+    }
+
+    for (const host of ['IframeHost.tsx', 'PageBlockHost.tsx'] as const) {
+      it(`${host}: every catch block that replies with the caught error forwards its rateLimit`, () => {
+        const building = catchBlocks(HOST_SRC[host]).filter((b) => BUILDS_ERROR_FROM_ERR.test(b));
+        expect(building.length, `${host}: positive control, catch blocks found`).toBeGreaterThan(
+          10
+        );
+        const missing = building.filter((b) => !FORWARDS_RATE_LIMIT.test(b));
+        const exempt = EXEMPT[host] ?? [];
+        // A ledger: an exemption that no longer matches a block fails too.
+        expect(
+          exempt.filter((frag) => !missing.some((b) => b.includes(frag))),
+          `${host}: stale exemptions`
+        ).toEqual([]);
+        expect(
+          missing
+            .filter((b) => !exempt.some((frag) => b.includes(frag)))
+            .map((b) => b.replace(/\s+/g, ' ').slice(0, 200)),
+          `${host}: catch blocks that drop the rateLimit meta (spread rateLimitReplyFields(err))`
+        ).toEqual([]);
+      });
     }
   });
 });

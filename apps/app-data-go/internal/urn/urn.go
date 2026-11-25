@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Namespace is the registry adapter's namespace (urn.ts REGISTRY_NAMESPACE).
@@ -46,6 +47,19 @@ func CollectionSchema(slug, collection string, major int) (string, error) {
 		return "", fmt.Errorf("%w: major", ErrInvalid)
 	}
 	return fmt.Sprintf("urn:schema:%s:%s/%s@v%d", Namespace, slug, collection, major), nil
+}
+
+// ViewerSchema is the schema URN of one viewer's stream of a shared collection major,
+// `urn:schema:apps.civitai.com:<slug>/<collection>.viewer@v<major>` (WRITES-DESIGN.md, "Feed
+// routing"): every document of the collection the token's user authored. `.` is outside the
+// collection grammar, so it never names a collection's own schema.
+func ViewerSchema(slug, collection string, major int) (string, error) {
+	s, err := CollectionSchema(slug, collection, major)
+	if err != nil {
+		return "", err
+	}
+	at := strings.LastIndex(s, "@v")
+	return s[:at] + ".viewer" + s[at:], nil
 }
 
 // ValidSlug reports whether slug is an app slug the adapter would name (urn.ts SLUG_RE).

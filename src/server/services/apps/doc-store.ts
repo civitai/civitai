@@ -963,6 +963,32 @@ const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::tex
   ORDER BY d.key
   LIMIT $6::int`;
 
+// VIEWER FEED (`createDocStorePrivateFeed`'s `viewerVersions` / `viewerDocuments`, for
+// `registry-adapter/viewer-feed.ts`): ONE user's OWN documents (`author_kind = 'user'` and
+// `author_uid` = that user, so never a counter document and never another author's) of one SHARED
+// collection (`scope_uid = 0`) of one app's production namespace, as REST's author arm of
+// `sharedDocLevelVisible` shows them to their author: with content levels on (`$7` the token's
+// domain ceiling), an unrated, pending or stale-rated document always, a rated one only within the
+// ceiling; with levels off (`$7` NULL), every one. Never a moderator-hidden row. Each is a PLAIN
+// document, as a level stream carries it. Keyset by key, on `doc_author_idx`.
+// $1 app, $2 ns, $3 coll, $4 user, $5 after key, $6 limit, $7 domain ceiling or NULL
+const VIEWER_FEED_OWN = `d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = $4::int
+    AND d.hidden_at IS NULL
+    AND ($7::int IS NULL OR ${sharedDocLevelVisible('$4::int', '$7::int', '$7::int')})`;
+const SQL_VIEWER_FEED_VERSIONS = `SELECT d.key, d.version, d.seq
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND ${VIEWER_FEED_OWN}
+    AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// Its full twin: the same rows with their data and timestamps.
+const SQL_VIEWER_FEED_DOCS = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND ${VIEWER_FEED_OWN}
+    AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+
 // A report (`name` = `REPORT_MARK`, the only name written). It carries no payload: the table's
 // nullable `reason` column is never written. $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user
 const SQL_INSERT_MARK = `INSERT INTO appdata.doc_mark AS mk (app_id, ns, coll, key, name, user_id)
@@ -1557,6 +1583,10 @@ export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
  * public feed nor the block-token store carries a read keyed on a caller-supplied user id; its
  * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`. `privateHead` reads
  * the namespace's write head (`SQL_FEED_HEAD`), which a stream reads before its keyset.
+ * `viewerVersions` and `viewerDocuments` read ONE user's OWN documents of a SHARED collection for
+ * the registry adapter's per-viewer streams (`viewer-feed.ts`), keyed on a user id the same way, so
+ * they live here, behind the same ledger, and the per-viewer stream passes a user only after the
+ * same collection-read predicate admitted them.
  */
 export function createDocStorePrivateFeed(deps: DocStoreDeps) {
   return buildDocStore(deps).privateFeed;
@@ -1570,6 +1600,9 @@ export type DocStorePrivateFeed = ReturnType<typeof createDocStorePrivateFeed>;
 export type PrivateFeedVersion = { key: string; recordId: string; version: number; seq: number };
 /** One private document, as `privateDocuments` reads it. */
 export type PrivateFeedDocument = PrivateFeedVersion & { data: Record<string, unknown> };
+
+/** One of a viewer's own shared documents' identity, as `viewerVersions` reads it. */
+export type ViewerFeedVersion = { key: string; version: number; seq: number };
 
 /** Most rows one feed page may ask for. */
 export const FEED_MAX_PAGE = 1000;
@@ -3684,13 +3717,74 @@ function buildDocStore(deps: DocStoreDeps) {
     }));
   }
 
+  /** The viewer feed's bound values: {@link privateFeedParams}, and the domain ceiling or null. */
+  function viewerFeedParams(
+    appId: string,
+    coll: string,
+    userId: number,
+    domain: number | null,
+    afterKey: string,
+    limit: number
+  ) {
+    if (domain !== null && !(Number.isSafeInteger(domain) && domain >= 0)) {
+      throw invalid('feed: malformed level');
+    }
+    const { ctx, params } = privateFeedParams(appId, coll, userId, afterKey, limit);
+    return { ctx, params: [...params, domain] };
+  }
+
+  /**
+   * One page of `userId`'s OWN documents in the shared collection `coll`, by key: key, version and
+   * seq. `domain` is the token's domain ceiling while content levels are on, null while they are
+   * off (`SQL_VIEWER_FEED_VERSIONS`).
+   */
+  async function viewerVersions(
+    appId: string,
+    coll: string,
+    userId: number,
+    domain: number | null,
+    afterKey: string,
+    limit: number
+  ): Promise<ViewerFeedVersion[]> {
+    const { ctx, params } = viewerFeedParams(appId, coll, userId, domain, afterKey, limit);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_VIEWER_FEED_VERSIONS, params)).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      version: Number(r.version),
+      seq: seqOf(r.seq),
+    }));
+  }
+
+  /** {@link viewerVersions} as plain documents, with their data and timestamps. */
+  async function viewerDocuments(
+    appId: string,
+    coll: string,
+    userId: number,
+    domain: number | null,
+    afterKey: string,
+    limit: number
+  ): Promise<LevelStreamDocument[]> {
+    const { ctx, params } = viewerFeedParams(appId, coll, userId, domain, afterKey, limit);
+    const rows = await withTx(ctx, async (c) => (await c.query(SQL_VIEWER_FEED_DOCS, params)).rows);
+    return rows.map(levelRow);
+  }
+
   return {
     store,
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness, levelChanges, levelDocuments },
     // `privateHead` is the public feed's head read: the namespace's newest seq, one counter for
     // every collection of the app, private and shared (`SQL_CHARGE_APP`).
-    privateFeed: { privateVersions, privateDocuments, privateHead: feedHead },
+    privateFeed: {
+      privateVersions,
+      privateDocuments,
+      privateHead: feedHead,
+      viewerVersions,
+      viewerDocuments,
+    },
     moderation: createModeration({ withTx, charge }),
     rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: {

@@ -64,6 +64,77 @@ func TestV1ModelsValidate(t *testing.T) {
 	}
 }
 
+// FEED_GO_V1_MODELS_SERVE_QUERY is off unless set to a true value, and is its own switch; the search
+// backend is the Node app's own SEARCH_HOST / SEARCH_API_KEY, bounded by MEILI_CALL_TIMEOUT_MS
+// (default 2500 ms, Node's default). On without SEARCH_HOST, startup is refused.
+func TestLoadV1ModelsServeQuery(t *testing.T) {
+	t.Setenv("FEED_GO_SERVE_V1_MODELS", "true")
+	t.Setenv("FEED_GO_V1_BEARER_AUTH", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_V1_MODELS_SERVE_QUERY", in)
+		if got := LoadV1Models().ServeQuery; got != want {
+			t.Errorf("FEED_GO_V1_MODELS_SERVE_QUERY=%q -> %v, want %v", in, got, want)
+		}
+	}
+	t.Setenv("SEARCH_HOST", " http://search.example.test:7700 ")
+	t.Setenv("SEARCH_API_KEY", "k")
+	t.Setenv("MEILI_CALL_TIMEOUT_MS", "")
+	c := LoadV1Models()
+	if c.SearchHost != "http://search.example.test:7700" || c.SearchAPIKey != "k" || c.SearchTimeout != 2500*time.Millisecond {
+		t.Errorf("search settings %q %q %v", c.SearchHost, c.SearchAPIKey, c.SearchTimeout)
+	}
+	for in, want := range map[string]time.Duration{"800": 800 * time.Millisecond, "0": 2500 * time.Millisecond, "x": 2500 * time.Millisecond} {
+		t.Setenv("MEILI_CALL_TIMEOUT_MS", in)
+		if got := LoadV1Models().SearchTimeout; got != want {
+			t.Errorf("MEILI_CALL_TIMEOUT_MS=%q -> %v, want %v", in, got, want)
+		}
+	}
+	// The Node app's circuit settings: unset or not a positive integer is 0 (the client's default).
+	t.Setenv("MEILI_CIRCUIT_TRIP_THRESHOLD", "")
+	t.Setenv("MEILI_CIRCUIT_WINDOW_SECONDS", "x")
+	t.Setenv("MEILI_CIRCUIT_COOLDOWN_SECONDS", "-3")
+	if c := LoadV1Models(); c.CircuitTripThreshold != 0 || c.CircuitWindow != 0 || c.CircuitCooldown != 0 {
+		t.Errorf("circuit defaults %d %v %v, want zeros", c.CircuitTripThreshold, c.CircuitWindow, c.CircuitCooldown)
+	}
+	t.Setenv("MEILI_CIRCUIT_TRIP_THRESHOLD", "7")
+	t.Setenv("MEILI_CIRCUIT_WINDOW_SECONDS", "45")
+	t.Setenv("MEILI_CIRCUIT_COOLDOWN_SECONDS", "12")
+	if c := LoadV1Models(); c.CircuitTripThreshold != 7 || c.CircuitWindow != 45*time.Second || c.CircuitCooldown != 12*time.Second {
+		t.Errorf("circuit settings %d %v %v, want 7 45s 12s", c.CircuitTripThreshold, c.CircuitWindow, c.CircuitCooldown)
+	}
+	for _, c := range []struct {
+		serve bool
+		host  string
+		ok    bool
+	}{{false, "", true}, {true, "h", true}, {true, "", false}} {
+		err := V1Models{ServeQuery: c.serve, SearchHost: c.host}.Validate(false)
+		if (err == nil) != c.ok {
+			t.Errorf("serveQuery=%v host=%q: %v, want ok %v", c.serve, c.host, err, c.ok)
+		}
+	}
+}
+
+// FEED_GO_V1_MODELS_SERVE_DATA_MISS is off unless set to a true value; on without the miss
+// computation (FEED_GO_COMPUTE_MISSES) startup is refused.
+func TestLoadV1ModelsServeDataMiss(t *testing.T) {
+	t.Setenv("FEED_GO_SERVE_V1_MODELS", "true")
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_V1_MODELS_SERVE_DATA_MISS", in)
+		if got := LoadV1Models().ServeDataMiss; got != want {
+			t.Errorf("FEED_GO_V1_MODELS_SERVE_DATA_MISS=%q -> %v, want %v", in, got, want)
+		}
+	}
+	for _, c := range []struct{ on, compute, ok bool }{
+		{false, false, true}, {false, true, true}, {true, true, true}, {true, false, false},
+	} {
+		err := V1Models{ServeDataMiss: c.on}.ValidateMisses(c.compute)
+		if (err == nil) != c.ok {
+			t.Errorf("serveDataMiss=%v computeMisses=%v: %v, want ok %v", c.on, c.compute, err, c.ok)
+		}
+	}
+}
+
 // FEED_GO_SERVE_V1_IMAGES is off unless set to a true value, and is its own switch: the models one
 // does not turn it on, nor it the models one.
 func TestLoadV1ImagesServeDefaultsOff(t *testing.T) {

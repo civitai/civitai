@@ -16,6 +16,7 @@ import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
+import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
 
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
@@ -234,6 +235,12 @@ export type FeedGoShadowConfig = {
    * request with an Authorization credential, described rather than forwarded (see the module doc).
    */
   v1ModelsCredentials?: boolean;
+  /**
+   * `FEED_GO_SHADOW_V1_MODELS_QUERY` (`true` or `1`; default off): mirror a `GET /api/v1/models`
+   * request with a text `query` (the search path). Off, such a request is never sampled, as before
+   * feed-go answered it.
+   */
+  v1ModelsQuery?: boolean;
 };
 
 type Env = Record<string, string | undefined>;
@@ -301,6 +308,9 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     probeV1ImagesRate: envNumber(env.FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE, 0, 0, 1),
     v1ModelsCredentials: ['true', '1'].includes(
       (env.FEED_GO_SHADOW_V1_MODELS_CREDENTIALS ?? '').trim().toLowerCase()
+    ),
+    v1ModelsQuery: ['true', '1'].includes(
+      (env.FEED_GO_SHADOW_V1_MODELS_QUERY ?? '').trim().toLowerCase()
     ),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
@@ -526,6 +536,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       if (config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      // feed-go's own replay of a request it served (feed-go-parity-replay.ts): it compares that
+      // answer itself, so a sample of it would only be a second comparison of the same request.
+      if (isFeedGoParityReplay(req.headers)) return undefined;
       // Exactly the mirrored procedures, unbatched (the web client never batches either:
       // NEVER_BATCH_PROCEDURES in src/utils/trpc.ts).
       const procedure = req.query.trpc;
@@ -582,6 +595,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const route = restRoutes[endpoint];
       if (!route.url || config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      // The list's text search is mirrored only with FEED_GO_SHADOW_V1_MODELS_QUERY. A text query is
+      // any value other than the one empty string (the handler's `if (query)`).
+      if (endpoint === 'v1-models' && !config.v1ModelsQuery) {
+        const q = req.query.query;
+        if (q !== undefined && q !== '') return undefined;
+      }
       if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
       // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`): never mirrored,
