@@ -30,7 +30,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       locals.user,
       'version-showcases',
       (row) => row.imageId,
-      (row) => ({ ...row, imageUrl: '', restricted: true })
+      (row) => ({ ...row, imageUrl: '', imageType: 'image', restricted: true })
     ),
     hasMore,
     limit: LIMIT,

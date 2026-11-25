@@ -82,6 +82,7 @@ CREATE TABLE "ModelVersionShowcaseItem" (
   "imageId" INTEGER, "modelVersionId" INTEGER, source TEXT, site TEXT, "addedById" INTEGER,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(), removed BOOLEAN NOT NULL DEFAULT false
 );
+CREATE TABLE "ScannerContentSnapshot" ("contentHash" TEXT, scanner TEXT, content JSONB);
 `;
 
 let db: PGlite;
@@ -282,5 +283,48 @@ describe('/audit/generator-restrictions remix sources', () => {
 
   it('sends it to a moderator with the grant', async () => {
     expect(scan(await sources(WITH_GRANT), WITHHELD)).toMatchObject({ url: KEY });
+  });
+
+  it('does not say what kind of media a withheld source is', async () => {
+    await db.exec(`UPDATE "Image" SET type = 'video' WHERE id = ${WITHHELD}`);
+    expect(scan(await sources(WITHOUT_GRANT), WITHHELD)).toMatchObject({ type: 'image' });
+  });
+
+  // So the page says the sources could not be loaded, rather than showing every one withheld.
+  it('throws when the withheld read fails', async () => {
+    await db.exec(`DROP TABLE "ImageCdnModeratorDelete"`);
+    await expect(sources(WITHOUT_GRANT)).rejects.toThrow();
+  });
+});
+
+describe('/audit/scanner-audit focused item content', () => {
+  const content = async (user: User, imageId: number) => {
+    const { GET } = await import(
+      '../../../routes/audit/scanner-audit/[mode]/[label]/content/+server'
+    );
+    const url = new URL('http://moderator.test/audit/scanner-audit/media/x/content');
+    url.searchParams.set('contentHash', `hash-${imageId}`);
+    url.searchParams.set('scanner', 'image_ingestion');
+    url.searchParams.set('entityId', String(imageId));
+    const res = await GET({ url, locals: { user, grants: {} } } as never);
+    return (await res.json()) as Row;
+  };
+
+  it('sends a withheld image as unavailable, with no key, to a moderator without the grant', async () => {
+    const body = await content(WITHOUT_GRANT, WITHHELD);
+    expect(body).toMatchObject({ imageId: WITHHELD, unavailable: true });
+    expect(body.imageUrl).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain(KEY);
+  });
+
+  it('sends the control image with its key', async () => {
+    expect(await content(WITHOUT_GRANT, CONTROL)).toMatchObject({
+      imageUrl: CONTROL_KEY,
+      unavailable: false,
+    });
+  });
+
+  it('sends the withheld image to a moderator with the grant', async () => {
+    expect(await content(WITH_GRANT, WITHHELD)).toMatchObject({ imageUrl: KEY });
   });
 });

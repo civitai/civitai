@@ -14,7 +14,7 @@ import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/se
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import { parseRestrictionRuling, rulingReason } from '$lib/server/restriction-ruling';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
-import { planRemixSources } from '$lib/restrictions/origin';
+import { planRemixSources, triggerOrigin } from '$lib/restrictions/origin';
 import {
   getGenerationRestrictions,
   getRemixSources,
@@ -113,10 +113,21 @@ export async function restrictionTriageLoad(
   } catch {
     sourcesFailed = true;
   }
+  // A remix's input images can be its source's own file, so a source withheld from this moderator,
+  // or one whose withheld read failed, takes them off the card too.
+  const shownInputs = <R extends { triggers: RestrictionRow['triggers'] }>(row: R): R => ({
+    ...row,
+    triggers: row.triggers.map((trigger) => {
+      const id = triggerOrigin(trigger).imageId;
+      return id && (sourcesFailed || sources[id]?.restricted)
+        ? { ...trigger, inputImages: undefined, inputVideo: undefined }
+        : trigger;
+    }),
+  });
 
   return {
-    items,
-    pinned,
+    items: items.map(shownInputs),
+    pinned: pinned && shownInputs(pinned),
     selectedMissing,
     sources,
     sourcesFailed,

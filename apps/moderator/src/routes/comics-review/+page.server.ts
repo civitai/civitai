@@ -48,6 +48,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       (panel) => ({
         ...panel,
         imageUrl: '',
+        imageType: 'image' as const,
+        tosViolation: false,
+        ingestion: 'Scanned',
         prompt: null,
         promptHighlight: null,
         needsReview: null,

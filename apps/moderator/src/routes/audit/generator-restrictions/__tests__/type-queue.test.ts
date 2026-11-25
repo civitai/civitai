@@ -648,4 +648,49 @@ describe('generator-restrictions load — origin and sources', () => {
     expect(data.sourcesFailed).toBe(true);
     expect(data.sources).toEqual({});
   });
+
+  // A remix's input images can be its source's own file.
+  const remixRow = () =>
+    row({
+      triggers: [
+        {
+          key: 'a',
+          prompt: 'p',
+          origin: { remix: { imageId: 11, verified: true, promptMatch: 'edited' } },
+          inputImages: ['https://cdn.test/source-input'],
+          inputVideo: 'https://cdn.test/source-video',
+        },
+      ],
+    });
+  const inputsOf = (data: unknown) =>
+    (data as { items: { triggers: { inputImages?: string[]; inputVideo?: string }[] }[] }).items[0]
+      .triggers[0];
+
+  it('takes the input images off a trigger whose remix source is withheld', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockResolvedValue([
+      { id: 11, url: '', type: 'image', nsfwLevel: 1, prompt: null, restricted: true },
+    ]);
+
+    const trigger = inputsOf(await run());
+
+    expect(trigger.inputImages).toBeUndefined();
+    expect(trigger.inputVideo).toBeUndefined();
+  });
+
+  it('takes them off when the source read fails', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockRejectedValue(new Error('down'));
+
+    expect(inputsOf(await run()).inputImages).toBeUndefined();
+  });
+
+  it('keeps them for a source the moderator can see', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [remixRow()], totalCount: 1 });
+    getRemixSources.mockResolvedValue([
+      { id: 11, url: 'u', type: 'image', nsfwLevel: 1, prompt: 'x' },
+    ]);
+
+    expect(inputsOf(await run()).inputImages).toEqual(['https://cdn.test/source-input']);
+  });
 });

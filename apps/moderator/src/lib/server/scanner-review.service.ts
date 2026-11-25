@@ -360,8 +360,11 @@ export async function focusedRun(input: {
   return { items, totalAvailable: allRows.length, verdictedInLookback, lookbackDays: lookback };
 }
 
-export async function focusedItemContent(item: ScanContentItem): Promise<ScanContent> {
-  const [content] = await getScanContents([item]);
+export async function focusedItemContent(
+  item: ScanContentItem,
+  viewer: App.Locals['user'] | undefined
+): Promise<ScanContent> {
+  const [content] = await getScanContents([item], viewer);
   return content ?? { contentHash: item.contentHash, scanner: item.scanner, unavailable: true };
 }
 
