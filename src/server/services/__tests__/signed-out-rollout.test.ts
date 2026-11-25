@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'http';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   isFlipt: vi.fn(async () => false),
@@ -75,6 +75,10 @@ describe('applySignedOutRolloutFlags', () => {
   // The evaluator reads the Flipt module the registry loads; load it before the first case.
   beforeAll(async () => {
     await getFeatureFlagsAsync({});
+  });
+  // That load evaluates the registry (entity `anonymous`): only this describe's own calls count.
+  beforeEach(() => {
+    mocks.isFliptSync.mockClear();
   });
 
   it("evaluates each key for the visitor's bucket entity, never for `anonymous`", () => {
