@@ -3274,6 +3274,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
     // src/lib/server/oauth/offline-grant.ts.
     REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
+    // A ban's mark on a self-only client it disabled: see src/server/services/oauth-ban-marker.ts.
+    BAN_DISABLED: 'oauth:ban-disabled',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
