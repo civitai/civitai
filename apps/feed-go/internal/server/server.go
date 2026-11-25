@@ -111,8 +111,8 @@ func verifiedCrawler(r *http.Request) bool {
 
 // Server wires a request to the port.
 type Server struct {
-	// Readiness answers the internal /readyz (nil = always ready); Drain fails it at shutdown.
-	Readiness *Readiness
+	// Readiness answers the internal /readyz (the zero value is ready); Drain fails it at shutdown.
+	Readiness Readiness
 	Resolver  *auth.Resolver
 	Deps      *feed.Deps
 	Hosts     browsing.HostColors

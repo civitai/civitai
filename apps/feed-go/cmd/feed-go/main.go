@@ -595,7 +595,6 @@ func run(log *slog.Logger) error {
 		log.Error("flag not read; every hubId request falls back", "flag", server.UserHubsFlag, "err", err)
 	}
 	srv := &server.Server{
-		Readiness:        &server.Readiness{},
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,
@@ -732,7 +731,7 @@ func run(log *slog.Logger) error {
 	// router still sends here are answered, not refused), then they close and drain.
 	log.Info("draining: readiness failing, listeners still serving", "FEED_GO_SHUTDOWN_DELAY_MS",
 		cfg.ShutdownDelay.Milliseconds())
-	server.Drain(srv.Readiness, func() { time.Sleep(cfg.ShutdownDelay) }, func() {
+	server.Drain(&srv.Readiness, func() { time.Sleep(cfg.ShutdownDelay) }, func() {
 		// One grace period for the whole sequence: first cancel the shadow samples and wait for them to
 		// return (they hold replica connections), then drain the listeners' in-flight requests; the
 		// deferred closes of the pool and both redis clients run after both.

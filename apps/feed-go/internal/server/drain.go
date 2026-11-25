@@ -7,14 +7,14 @@ import (
 
 // Readiness is the internal listener's /readyz: 200 until Drain begins, 503 after. Liveness stays on
 // /healthz, which never fails here, so a draining pod leaves rotation without being restarted.
-// A nil *Readiness reads as always ready.
+// The zero value is ready.
 type Readiness struct{ draining atomic.Bool }
 
 // StartDraining makes /readyz answer 503 from now on.
 func (r *Readiness) StartDraining() { r.draining.Store(true) }
 
 // Draining reports whether StartDraining has run.
-func (r *Readiness) Draining() bool { return r != nil && r.draining.Load() }
+func (r *Readiness) Draining() bool { return r.draining.Load() }
 
 func (r *Readiness) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	if r.Draining() {

@@ -40,7 +40,6 @@ func get(url string) (int, error) {
 // the public listener close (a new connection is refused).
 func TestDrainOrder(t *testing.T) {
 	s := muxServer()
-	s.Readiness = &Readiness{}
 	internal := InternalMux(s, okHandler(), false)
 	public, publicURL := listen(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -60,7 +59,7 @@ func TestDrainOrder(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Drain(s.Readiness, func() {
+		Drain(&s.Readiness, func() {
 			close(inWait)
 			<-release
 		}, func() {
@@ -104,10 +103,10 @@ func TestDrainOrder(t *testing.T) {
 	}
 }
 
-// A nil Readiness (a Server built without one) reads as ready, and the route still exists.
-func TestReadyzNilIsReady(t *testing.T) {
+// A Server that has not started draining answers /readyz 200 (the zero value is ready).
+func TestReadyzZeroValueIsReady(t *testing.T) {
 	internal := InternalMux(muxServer(), okHandler(), false)
 	if code := statusOf(internal, "/readyz"); code != http.StatusOK {
-		t.Fatalf("/readyz with nil Readiness: %d, want 200", code)
+		t.Fatalf("/readyz before draining: %d, want 200", code)
 	}
 }
