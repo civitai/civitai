@@ -1,4 +1,5 @@
 import { constants } from '~/server/common/constants';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { crc32, deflateSync } from 'zlib';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -2297,6 +2298,31 @@ describe('a Final rated outside the domain', () => {
     expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
   });
 
+  it('gives a seller who moderates their own original of a held file, never its delivery copy', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    await q(`UPDATE "Image" SET minor = true`);
+    const asSeller = (delivered: boolean) =>
+      files.resolveServiceDealFileDownload({
+        fileId,
+        userId: SELLER,
+        isModerator: true,
+        delivered,
+        servableLevels: 31,
+      });
+    expect(await asSeller(false)).toMatchObject({ key: (await fileRow(fileId)).s3Key });
+    expect(await asSeller(true)).toBeNull();
+    // The list answers for the original.
+    const [listedFile] = (
+      await files.listServiceDealFiles({
+        dealId,
+        userId: SELLER,
+        isModerator: true,
+        servableLevels: 31,
+      })
+    ).filter((row) => row.id === fileId);
+    expect(listedFile).toMatchObject({ canDownload: true });
+  });
+
   it('is not refused because its owner is named on a CSAM report, only for its own flag', async () => {
     const { dealId, fileId } = await completedRatedFinal('result.zip');
     await q(`UPDATE "Image" SET "userId" = $1`, [SELLER]);
@@ -3414,6 +3440,43 @@ describe('a video Final', () => {
       });
     expect(await asModerator(false)).toBeNull();
     expect(await asModerator(true)).toMatchObject({ versionId: 'ver1' });
+  });
+
+  describe("the dispute tool's list offers a download exactly when its download serves one", () => {
+    /** What the moderator dispute tool lists for the file, and gets, as the mod endpoints call them. */
+    const disputeToolSees = async (dealId: number, fileId: number) => {
+      const reviewer = {
+        userId: 99,
+        isModerator: true,
+        canReviewCsam: true,
+        servableLevels: allBrowsingLevelsFlag,
+        moderatorFetch: true,
+      };
+      const listed = (await files.listServiceDealFiles({ dealId, ...reviewer })).find(
+        (row) => row.id === fileId
+      );
+      const download = await files.resolveServiceDealFileDownload({ fileId, ...reviewer });
+      return { listed: listed?.canDownload, downloaded: download !== null };
+    };
+    const remove = (fileId: number) =>
+      q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [fileId]);
+
+    it.each([false, true])('a video never stamped, removed: %s', async (removed) => {
+      const { dealId, fileId } = await videoFinal(4);
+      s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+      if (removed) await remove(fileId);
+      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: true, downloaded: true });
+    });
+
+    it.each([false, true])('a Final rated Blocked, removed: %s', async (removed) => {
+      const { dealId, fileId } = await videoFinal(4);
+      await judged(fileId, 4);
+      await completed(dealId);
+      s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+      await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = 32 WHERE "fileId" = $1`, [fileId]);
+      if (removed) await remove(fileId);
+      expect(await disputeToolSees(dealId, fileId)).toEqual({ listed: true, downloaded: true });
+    });
   });
 
   it.each([

@@ -689,7 +689,6 @@ async function deleteFileObjects(
  * since: a rating mismatch, not a verdict on the content. It does not keep a removed file, and its
  * copy is deleted by the purge, with the file. `e` names the entry row.
  */
-// Keeps evidence, so it counts more than csamHeld, which only refuses serving: poi and ingestion too.
 export const entryOnlyOverLevel = (e: Prisma.Sql) => Prisma.sql`(
   ${e}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
   AND ${e}."failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
@@ -1055,6 +1054,7 @@ export async function listServiceDealFiles({
   isModerator,
   canReviewCsam = false,
   servableLevels,
+  moderatorFetch = false,
 }: {
   dealId: number;
   userId: number;
@@ -1063,6 +1063,8 @@ export async function listServiceDealFiles({
   canReviewCsam?: boolean;
   /** What this domain may show; a preview rated outside it is listed without its URL. */
   servableLevels: number;
+  /** The moderator dispute tool: `canDownload` answers for its download, as `resolveServiceDealFileDownload` does. */
+  moderatorFetch?: boolean;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
     SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
@@ -1086,6 +1088,7 @@ export async function listServiceDealFiles({
     ORDER BY f."round", f."id"`;
 
   const privileged = isSeller || isModerator;
+  const disputeReview = isModerator && moderatorFetch;
   // A removed file is for moderators who are not a party to the deal.
   const seesRemoved = isModerator && !isSeller && !isBuyer;
   return rows.flatMap((row): ListedFile[] => {
@@ -1106,7 +1109,7 @@ export async function listServiceDealFiles({
           canDownload:
             canReviewCsam &&
             !isUploaderKey(row.s3Key) &&
-            finalLevelGate(row, servableLevels, false) === 'served',
+            finalLevelGate(row, servableLevels, disputeReview) === 'served',
           removedAt: row.removedAt,
         },
       ];
@@ -1134,7 +1137,7 @@ export async function listServiceDealFiles({
           canDownload:
             row.status === 'Ready' &&
             (owner || cleared) &&
-            finalLevelGate(row, servableLevels, false, isBuyer) === 'served',
+            finalLevelGate(row, servableLevels, disputeReview, isBuyer) === 'served',
         },
       ];
     }
@@ -1149,7 +1152,9 @@ export async function listServiceDealFiles({
       row.status === 'Ready' &&
       (privileged ||
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
-    const levelGate = allowed ? finalLevelGate(row, servableLevels, false, isSeller) : 'refused';
+    const levelGate = allowed
+      ? finalLevelGate(row, servableLevels, disputeReview, isSeller)
+      : 'refused';
     const downloadable = levelGate === 'served';
     const lockedFinal = buyerOnly && row.kind === 'Final' && !allowed;
     const offDomain =
@@ -1231,9 +1236,8 @@ type FinalLevelFacts = {
 /**
  * Whether a Final's rating lets this domain serve it: a video, or a file whose images were rated (an
  * image, or a zip of them), goes only where that rating may be shown. The list and the download
- * share this gate; only the download passes `disputeReview`. `ownOriginal` is the uploader taking
- * back their own original, never the delivery copy. 'offDomain': rated, but outside this domain's
- * levels.
+ * share this gate; the dispute tool passes `disputeReview` to both. 'offDomain': rated, but outside
+ * this domain's levels.
  */
 function finalLevelGate(
   row: { kind: ServiceDealFileKind; fileName: string } & FinalLevelFacts,
