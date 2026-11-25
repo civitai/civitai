@@ -60,7 +60,8 @@ func TestTheGuardThrottlesAnAddressPresentingManyNewTokens(t *testing.T) {
 		switch {
 		case errors.As(err, &te):
 			throttled++
-			if errors.Is(err, ErrRefused) || te.RetryAfter <= 0 || te.RetryAfter > NewTokenEvery {
+			if errors.Is(err, ErrRefused) || te.RetryAfter <= 0 || te.RetryAfter > NewTokenEvery ||
+				te.Error() != "exchange: too many new tokens from this address (retry in 3s)" {
 				t.Fatalf("throttled answer %v", err)
 			}
 		case !errors.Is(err, ErrRefused):
@@ -224,7 +225,7 @@ func TestTheExchangeForwardsTheViewersAddressOnly(t *testing.T) {
 		_, _ = io.WriteString(w, `{"access_token":"eyJexchanged","expires_in":900}`)
 	})
 	_, _ = e.Exchange(WithClientIP(context.Background(), "203.0.113.5"), "civitai_user-token")
-	_, _ = e.Exchange(context.Background(), "civitai_user-token")
+	_, _ = e.Exchange(WithClientIP(context.Background(), ""), "civitai_user-token")
 	if len(got) != 2 || got[0] != "203.0.113.5" || got[1] != "" {
 		t.Fatalf("X-Forwarded-For %q", got)
 	}
