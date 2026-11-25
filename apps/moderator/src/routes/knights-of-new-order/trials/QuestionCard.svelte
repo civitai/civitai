@@ -5,15 +5,15 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { NOTE_MAX, YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import type { YesNoQuestionItem } from '$lib/server/knights/yesno-question.service';
+  import TrialMedia from './TrialMedia.svelte';
 
-  let { item }: { item: YesNoQuestionItem } = $props();
+  let { item }: { item: YesNoQuestionItem & { restricted: boolean } } = $props();
 
   const isOpen = $derived(item.status === 'Open');
   const pending = $derived(
@@ -67,9 +67,8 @@
   data-testid="question-card"
 >
   <a href={imageLookupUrl(item.imageId)} class="shrink-0 self-start">
-    <EdgeMedia
-      src={item.imageKey}
-      name={item.imageName}
+    <TrialMedia
+      {item}
       width={240}
       alt="Image {item.imageId}"
       class="max-h-64 rounded-md"
