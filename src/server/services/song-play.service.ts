@@ -1,16 +1,10 @@
 import { prefixCacheKey } from '@civitai/redis';
-import { Prisma } from '@prisma/client';
 import type { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
+import { readSong } from '~/server/services/song-read.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { checkSongPlayRateLimit, songPlayActor } from '~/server/utils/song-play-rate-limit';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import {
-  isCountablePlay,
-  SONG_PLAY_MIN_LISTEN_SEC,
-  storedSongDurationSec,
-} from '~/shared/utils/song-play';
+import { isCountablePlay, SONG_PLAY_MIN_LISTEN_SEC } from '~/shared/utils/song-play';
 
 /**
  * Song plays: "Play = 30 s listened or full track if shorter", the owner's own plays included. The client is
@@ -36,24 +30,12 @@ const countedKey = (actor: string, imageId: number) =>
 
 const NOT_COUNTED = { counted: false } as const;
 
-/** The song when the public may see it, with its stored duration; null otherwise. */
-async function readPublicSong(imageId: number) {
-  const { imageVisibilityConditions } = await import('~/server/services/image-visibility.service');
-  const [song] = await dbRead.$queryRaw<
-    { id: number; type: MediaType; duration: unknown }[]
-  >(Prisma.sql`
-    SELECT i.id, i.type, i.metadata->'duration' AS duration
-    FROM "Image" i
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE ${Prisma.join([Prisma.sql`i.id = ${imageId}`, ...imageVisibilityConditions({})], ' AND ')}
-  `);
-  if (!song || song.type !== MediaType.audio) return null;
-  return { durationSec: storedSongDurationSec(song.duration) };
-}
-
 /** The song when this requester's play of it may count; null when the song or requester is refused. */
 async function readCountableSong(ctx: SongPlayContext, imageId: number) {
-  const song = await readPublicSong(imageId);
+  const { imageVisibilityConditions } = await import('~/server/services/image-visibility.service');
+  const song = await readSong(imageId, {
+    visibility: { conditions: imageVisibilityConditions({}) },
+  });
   if (!song) return null;
   if (ctx.user) {
     const { getMetricExcludedUserIds } = await import(

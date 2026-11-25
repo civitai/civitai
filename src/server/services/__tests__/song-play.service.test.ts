@@ -2,9 +2,45 @@ import { prefixCacheKey } from '@civitai/redis';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import type { CompiledQuery } from 'kysely';
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import type * as ExcludedUsers from '~/server/services/metric-excluded-users.service';
 
 const excluded = vi.hoisted(() => ({ ids: [] as number[] }));
+// The song read goes to the database through Kysely; this answers it with the rows a test sets.
+const songRead = vi.hoisted(() =>
+  vi.fn<(query: CompiledQuery) => Promise<unknown[]>>(async () => [])
+);
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => {
+  const { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } = await import(
+    'kysely'
+  );
+  const connection = {
+    executeQuery: async (query: CompiledQuery) => ({ rows: (await songRead(query)) as never[] }),
+    // eslint-disable-next-line require-yield
+    async *streamQuery(): AsyncIterableIterator<never> {
+      throw new Error('not used');
+    },
+  };
+  const noop = async () => undefined;
+  const kyselyRead = new Kysely<never>({
+    dialect: {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => ({
+        init: noop,
+        acquireConnection: async () => connection,
+        beginTransaction: noop,
+        commitTransaction: noop,
+        rollbackTransaction: noop,
+        releaseConnection: noop,
+        destroy: noop,
+      }),
+      createIntrospector: (k) => new PostgresIntrospector(k),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    },
+  });
+  return { ...(await importOriginal<typeof KyselyDb>()), kyselyRead };
+});
 
 // `updateEntityMetric` reads the `disable-app-entity-metrics` kill switch.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
@@ -18,7 +54,7 @@ vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal
 // The Redis and db clients come from the canonical shared mocks.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
-import { dbMock } from '~/__tests__/mocks/db.mock';
+import '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { trackRouter } from '~/server/routers/track.router';
@@ -35,8 +71,7 @@ const T0 = new Date('2026-11-13T12:00:00Z').getTime();
 // The hybrid mock's nodes are vivified spies at any depth; typing each one buys nothing here.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const r = redisMock.redis as unknown as Record<string, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const queryRaw = dbMock.dbRead.$queryRaw as unknown as any;
+const queryRaw = songRead;
 
 const track = { entityMetric: vi.fn(async () => true), view: vi.fn(async () => true) };
 
@@ -183,9 +218,12 @@ describe('song play counting', () => {
   it('reads the song through the public image visibility rule', async () => {
     await startAt(0);
     await completeAt(30);
-    const [query] = queryRaw.mock.calls[0] as [Prisma.Sql];
-    expect(query.sql).toContain(Prisma.join(imageVisibilityConditions({}), ' AND ').sql);
-    expect(query.values).toContain(SONG_ID);
+    const [query] = queryRaw.mock.calls[0];
+    // Placeholders are numbered from the statement's start, so compare the text around them.
+    const text = (sql: string) => sql.replace(/\$\d+|\?/g, '?');
+    const visibility = Prisma.join(imageVisibilityConditions({}), ' AND ');
+    expect(text(query.sql)).toContain(text(visibility.sql));
+    expect(query.parameters).toContain(SONG_ID);
   });
 
   describe('does not count, and writes nothing', () => {

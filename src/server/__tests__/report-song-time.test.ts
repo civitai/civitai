@@ -13,7 +13,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 const pg = { db: null as unknown as PGlite };
 vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
   ...(await importOriginal<typeof KyselyDb>()),
-  kyselyV3Read: pgliteKysely(() => pg.db),
+  kyselyRead: pgliteKysely(() => pg.db),
 }));
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -22,18 +22,25 @@ const IMAGE = 2;
 const SONG_NO_LENGTH = 3;
 const HIDDEN_SONG = 4;
 const HIDDEN_IMAGE = 5;
-const VISIBLE = [SONG, IMAGE, SONG_NO_LENGTH];
+// The reporter's own unpublished song: theirs to open, not the public's.
+const OWN_UNPUBLISHED_SONG = 6;
+const VISIBLE = [SONG, IMAGE, SONG_NO_LENGTH, OWN_UNPUBLISHED_SONG];
 
 beforeAll(async () => {
   pg.db = new PGlite();
   await pg.db.exec(`
-    CREATE TABLE "Image" (id int PRIMARY KEY, type text NOT NULL, metadata jsonb);
-    INSERT INTO "Image" VALUES
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, type text NOT NULL, metadata jsonb, "postId" int, "userId" int
+    );
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int, "publishedAt" timestamp);
+    INSERT INTO "Post" VALUES (1, 52, NULL);
+    INSERT INTO "Image" (id, type, metadata) VALUES
       (${SONG}, 'audio', '{"duration": 180}'),
       (${IMAGE}, 'image', '{}'),
       (${SONG_NO_LENGTH}, 'audio', '{}'),
       (${HIDDEN_SONG}, 'audio', '{"duration": 180}'),
       (${HIDDEN_IMAGE}, 'image', '{}');
+    INSERT INTO "Image" VALUES (${OWN_UNPUBLISHED_SONG}, 'audio', '{"duration": 60}', 1, 52);
   `);
 });
 afterAll(async () => {
@@ -145,6 +152,18 @@ describe('a sticker report on a song', () => {
       message: 'Only a report on a song can carry a time.',
     });
     expect(reportCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('a song the reporter can open and the public cannot', () => {
+  // Who may report it is getVisibleSongIds' call; the song read must not narrow it to public songs.
+  it('takes the song rules: filed with its time, refused past its end', async () => {
+    const id = OWN_UNPUBLISHED_SONG;
+    await report({ id, details: { violation: 'Graphic violence', timestampSec: 30 } });
+    expect(filedDetails()).toMatchObject({ timestampSec: 30 });
+    await expect(
+      report({ id, details: { violation: 'Graphic violence', timestampSec: 61 } })
+    ).rejects.toMatchObject({ message: 'That time is past the end of the song.' });
   });
 });
 
