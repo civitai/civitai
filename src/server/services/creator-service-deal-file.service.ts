@@ -49,6 +49,7 @@ import {
   SERVICE_FINAL_MAX_FILES,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
   SERVICE_PREVIEW_GIVE_UP_MS,
+  SERVICE_FINAL_OVER_LEVEL_REASON,
   SERVICE_PREVIEW_OVER_LEVEL_REASON,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
@@ -528,14 +529,15 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     // so an unpack still attaching copies waits for this to finish.
     await tx.$queryRaw`
       SELECT 1 FROM "ServiceDealFileEntry" e WHERE e."fileId" = ${fileId}::int FOR UPDATE OF e`;
-    // An image that passed has no more use for its copy.
+    // An image that passed, or was refused only for its rating, has no more use for its copy.
+    const copyDone = Prisma.sql`(e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+      OR ${entryOnlyOverLevel(Prisma.sql`e`)})`;
     const copies = await tx.$queryRaw<{ imageId: number }[]>`
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
-      WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
-        AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
+      WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL AND ${copyDone}`;
     await tx.$executeRaw`
-      UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL
-      WHERE "fileId" = ${fileId}::int AND "scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
+      UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
+      WHERE e."fileId" = ${fileId}::int AND ${copyDone}`;
     // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below must depend
     // on the file alone, never on what keeps it.
     const [file] = await tx.$queryRaw<
@@ -667,13 +669,32 @@ async function deleteFileObjects(
 }
 
 /**
+ * An image entry refused only for a rating above its deal's level, whose image nothing has flagged
+ * since: a rating mismatch, not a verdict on the content. It does not keep a removed file, and its
+ * copy goes with the file. `e` names the entry row.
+ */
+export const entryOnlyOverLevel = (e: Prisma.Sql) => Prisma.sql`(
+  ${e}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+  AND ${e}."failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
+  AND NOT EXISTS (SELECT 1 FROM "Image" oi WHERE oi."id" = ${e}."imageId"
+    AND (oi."ingestion" <> 'Scanned'::"ImageIngestionStatus" OR oi."needsReview" IS NOT NULL
+      OR oi."poi" OR oi."minor" OR oi."blockedFor" IS NOT NULL
+      OR (oi."id")::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})))
+)`;
+
+/** An image entry whose copy is still the moderators' evidence. `e` names the entry row. */
+const entryKept = (e: Prisma.Sql) => Prisma.sql`(
+  ${e}."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus" AND NOT ${entryOnlyOverLevel(e)}
+)`;
+
+/**
  * Whether a file must be kept when it is removed, judged from the row each time: a scan of it has not
  * passed (an image in it, its own scan copy, or a processing step still running). `f` names the
  * file row.
  */
 const mustKeep = (f: Prisma.Sql) => Prisma.sql`(
   EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-    WHERE e."fileId" = ${f}."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
+    WHERE e."fileId" = ${f}."id" AND ${entryKept(Prisma.sql`e`)})
   OR (${f}."imageId" IS NOT NULL AND ${f}."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
   OR (${f}."processingAt" IS NOT NULL AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus")
 )`;
@@ -703,7 +724,17 @@ const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
       AND ${f}."kind" <> 'Preview'::"ServiceDealFileKind"
       AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
       AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-        WHERE e."fileId" = ${f}."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"))
+        WHERE e."fileId" = ${f}."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+          AND NOT ${entryOnlyOverLevel(Prisma.sql`e`)}))
+    -- Failed only for a rating above the deal's level: every other image passed, and no malware.
+    OR (${f}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+      AND ${f}."kind" <> 'Preview'::"ServiceDealFileKind"
+      AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
+      AND EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = ${f}."id" AND ${entryOnlyOverLevel(Prisma.sql`e`)})
+      AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = ${f}."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
+          AND NOT ${entryOnlyOverLevel(Prisma.sql`e`)}))
     OR (${f}."kind" = 'Preview'::"ServiceDealFileKind"
       AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"))
   AND NOT ${mustKeep(f)}

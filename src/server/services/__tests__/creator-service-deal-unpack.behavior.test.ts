@@ -1788,16 +1788,70 @@ describe('copies of scanned images', () => {
       expect((await orphans()).map((r) => r.imageId)).toEqual([null, 2, null]);
     });
 
-    it("rejects the image that comes back above the deal's limit, and keeps its copy", async () => {
+    it("drops the copy of the image that comes back above the deal's limit; the rejected one's stays", async () => {
       await threeImages();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4 WHERE id = 3`);
       await unpack.settleEntryScans();
-      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect(await unpack.deleteEntryScanCopies()).toBe(1);
+      expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 2 }]);
       expect((await orphans()).map((r) => [r.scanStatus, r.imageId])).toEqual([
         ['Passed', null],
         ['Failed', 2],
-        ['Failed', 3],
+        ['Failed', null],
       ]);
+    });
+
+    it.each([
+      ['flagged as a minor since', ', minor = true'],
+      ['listed on a child-safety report since', ''],
+    ])("keeps the copy of an image above the deal's limit that is %s", async (_n, flags) => {
+      await threeImages();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4 WHERE id = 3`);
+      await unpack.settleEntryScans();
+      if (flags) await q(`UPDATE "Image" SET ${flags.slice(2)} WHERE id = 3`);
+      else await q(`INSERT INTO "CsamReport" ("userId", images) VALUES (9, '[{"id": 3}]')`);
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await orphans()).map((r) => r.imageId)).toEqual([null, 2, 3]);
+    });
+  });
+
+  describe("a Final refused only for a rating above the deal's level", () => {
+    /** A one-image zip Final rated `flags` above the PG-13 deal, settled, then deleted by its seller. */
+    async function overLevelFinal(flags = '') {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      await unpack.unpackFinals();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4${flags}`);
+      await unpack.settleEntryScans();
+      await unpack.settleFinals();
+      expect((await fileRow(fileId)).scanStatus).toBe('Failed');
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() - interval '1 day'`);
+      return fileId;
+    }
+
+    it('keeps its copy while it is listed', async () => {
+      const dealId = await accepted();
+      const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      await unpack.unpackFinals();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4`);
+      await unpack.settleEntryScans();
+      expect(await unpack.deleteEntryScanCopies()).toBe(0);
+      expect((await entries(fileId))[0].imageId).not.toBeNull();
+    });
+
+    it('is purged once removed, with its copy', async () => {
+      const fileId = await overLevelFinal();
+      expect(await q(`SELECT id FROM "Image"`)).toEqual([]);
+      expect(await files.purgeRemovedFiles()).toBe(1);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toEqual([]);
+    });
+
+    it('is kept, with its copy, when the image is also flagged', async () => {
+      const fileId = await overLevelFinal(', minor = true');
+      expect(await q(`SELECT id FROM "Image"`)).toHaveLength(1);
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).toHaveLength(1);
     });
   });
 });
