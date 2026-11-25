@@ -46,6 +46,20 @@ func UserContext(u TargetUser, deploymentID string) map[string]string {
 	return ctx
 }
 
+// AnonymousEntityID is the entity id the Node app's feature flags evaluate a request without a session
+// user with (hasFeature: `user ? String(user.id) : 'anonymous'`).
+const AnonymousEntityID = "anonymous"
+
+// AnonymousContext is buildFliptContext() as the Node app builds it without a user: `isLoggedIn`
+// 'false', and `deploymentId` only when deploymentID (FLIPT_DEPLOYMENT_ID) is set.
+func AnonymousContext(deploymentID string) map[string]string {
+	ctx := map[string]string{"isLoggedIn": "false"}
+	if deploymentID != "" {
+		ctx["deploymentId"] = deploymentID
+	}
+	return ctx
+}
+
 // ErrBackoff is UserFlag answering without asking Flipt, because a read failed within Backoff.
 var ErrBackoff = errors.New("flipt: backing off after a failed read")
 

@@ -124,6 +124,11 @@ type Config struct {
 	// row (its hold only, never written back), as the Node rebuild decides it, instead of the
 	// `gallery-settings-miss` fallback. Needs FEED_GO_COMPUTE_MISSES (otherwise the miss falls back).
 	InfiniteServeGallerySettingsMiss bool
+	// InfiniteServeInputHubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID (default off): compute an
+	// `image.getInfinite` request with `hubId` (a user-composed hub, and its `hubExcludedSources`;
+	// feed.InfinitePorts.HubID), reading the `user-hubs` flag per viewer from FLIPT_URL. Off, such a
+	// request is the `input-hubId` (or `input-hubExcludedSources`) fallback, as before the port.
+	InfiniteServeInputHubID bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
 	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
@@ -311,6 +316,7 @@ func Load() (*Config, error) {
 		InfiniteServeGallerySettingsMiss: boolEnv("FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", false),
 
 		InfiniteServeInputPostIDs: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", false),
+		InfiniteServeInputHubID:   boolEnv("FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", false),
 
 		InfiniteAnswerFeedUnavailable: boolEnv("FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", false),
 

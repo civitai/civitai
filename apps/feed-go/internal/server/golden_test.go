@@ -50,7 +50,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 123
+	goldenMinInfinite = 150
 	goldenMinModels   = 53
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -131,6 +131,12 @@ type goldenFixture struct {
 		// ServePostIDs is FEED_GO_INFINITE_SERVE_INPUT_POST_IDS (infinite/ fixtures; absent: off, the
 		// fixture's `postIds` falls back).
 		ServePostIDs bool `json:"servePostIds"`
+		// ServeHubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID (infinite/ fixtures; absent: off, the
+		// fixture's `hubId` falls back).
+		ServeHubID bool `json:"serveHubId"`
+		// UserHubs is what the `user-hubs` flag reads for the fixture's viewer (Server.UserHubs): "on",
+		// "off" or "error" (a failed read); absent: no flag reader configured.
+		UserHubs string `json:"userHubs"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -306,6 +312,8 @@ type goldenDB struct {
 		// BaseModel is the version's `baseModel` (only in a fixture whose query filters by `baseModels`).
 		BaseModel string `json:"baseModel"`
 	} `json:"modelVersions"`
+	// Hubs are the UserHub rows (with their UserHubSource rows) a `hubId` fixture's request reads.
+	Hubs   []goldenHub `json:"hubs"`
 	Models []struct {
 		ID           int             `json:"id"`
 		UserID       int             `json:"userId"`
@@ -473,6 +481,123 @@ type goldenDB struct {
 		Meta            string  `json:"meta"`
 		RejectionReason *string `json:"rejectionReason"`
 	} `json:"cosmeticShopItems"`
+}
+
+// goldenHub is one UserHub row and its UserHubSource rows.
+type goldenHub struct {
+	ID                  int    `json:"id"`
+	UserID              int    `json:"userId"`
+	Availability        string `json:"availability"`
+	ForcedBrowsingLevel int    `json:"forcedBrowsingLevel"`
+	Sources             []struct {
+		ID       int    `json:"id"`
+		Type     string `json:"type"`
+		TargetID int    `json:"targetId"`
+		Enabled  bool   `json:"enabled"`
+		Exclude  bool   `json:"exclude"`
+		GroupKey *int   `json:"groupKey"`
+	} `json:"sources"`
+}
+
+// goldenHubRoutes answer the hub resolution's reads (feed.GalleryStore's HubReader) from the
+// fixture's tables: the hub row under hubViewerWhere (the visibility clause asserted to be the one
+// for the viewer the request carries), its enabled sources in id order, the per-model version ranking,
+// an excluded model's versions, and the taken-down models among a hub's versions.
+func goldenHubRoutes(fx *goldenFixture) []testkit.Route {
+	db := &fx.DB
+	return []testkit.Route{
+		{Match: `FROM "UserHub" h`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			cols := []string{"forcedBrowsingLevel"}
+			public := strings.Contains(sql, `h.availability = 'Public'`)
+			owner := strings.Contains(sql, `h."userId" = $2`)
+			if owner && len(args) != 2 || !owner && len(args) != 1 || owner && !public {
+				return nil, fmt.Errorf("golden: an unexpected hub visibility clause (%d args): %s", len(args), sql)
+			}
+			for _, h := range db.Hubs {
+				if h.ID != goldenInt(args[0]) {
+					continue
+				}
+				if public && h.Availability != "Public" && !(owner && h.UserID == goldenInt(args[1])) {
+					break
+				}
+				return testkit.NewRows(cols, []any{h.ForcedBrowsingLevel}), nil
+			}
+			return testkit.NewRows(cols), nil
+		}},
+		{Match: `FROM "UserHubSource" s`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, h := range db.Hubs {
+				if h.ID != goldenInt(args[0]) {
+					continue
+				}
+				srcs := append(h.Sources[:0:0], h.Sources...)
+				sort.Slice(srcs, func(a, b int) bool { return srcs[a].ID < srcs[b].ID })
+				for _, src := range srcs {
+					if src.Enabled {
+						rows = append(rows, []any{src.Type, src.TargetID, src.Exclude, goldenPtr(src.GroupKey)})
+					}
+				}
+			}
+			return testkit.NewRows([]string{"type", "targetId", "exclude", "groupKey"}, rows...), nil
+		}},
+		{Match: `ROW_NUMBER() OVER (PARTITION BY mv."modelId" ORDER BY mv.id DESC)`, Rows: func(args []any) (*testkit.Rows, error) {
+			byModel := map[int][]int{}
+			for _, v := range db.ModelVersions {
+				if goldenHas(goldenInts(args[0]), v.ModelID) {
+					byModel[v.ModelID] = append(byModel[v.ModelID], v.ID)
+				}
+			}
+			type ranked struct{ id, model, rn int }
+			var list []ranked
+			for m, ids := range byModel {
+				sort.Sort(sort.Reverse(sort.IntSlice(ids)))
+				for i, id := range ids {
+					if i+1 <= goldenInt(args[1]) {
+						list = append(list, ranked{id, m, i + 1})
+					}
+				}
+			}
+			sort.Slice(list, func(a, b int) bool { return list[a].id > list[b].id })
+			var rows [][]any
+			for _, r := range list {
+				rows = append(rows, []any{r.id, r.model, int64(r.rn)})
+			}
+			return testkit.NewRows([]string{"id", "modelId", "rn"}, rows...), nil
+		}},
+		{Match: `SELECT id FROM "ModelVersion" WHERE "modelId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var ids []int
+			for _, v := range db.ModelVersions {
+				if goldenHas(goldenInts(args[0]), v.ModelID) {
+					ids = append(ids, v.ID)
+				}
+			}
+			sort.Ints(ids)
+			var rows [][]any
+			for _, id := range ids {
+				rows = append(rows, []any{id})
+			}
+			return testkit.NewRows([]string{"id"}, rows...), nil
+		}},
+		{Match: `SELECT id, "userId", mode::text FROM "Model"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, m := range db.Models {
+				if goldenHas(goldenInts(args[0]), m.ID) {
+					rows = append(rows, []any{m.ID, m.UserID, goldenPtr(m.Mode)})
+				}
+			}
+			return testkit.NewRows([]string{"id", "userId", "mode"}, rows...), nil
+		}},
+	}
+}
+
+// goldenUserHubs is the `user-hubs` flag as a fixture's config states it (nil: no reader).
+type goldenUserHubs string
+
+func (g goldenUserHubs) Enabled(context.Context, string, map[string]string) (bool, error) {
+	if g == "error" {
+		return false, errors.New("golden: the user-hubs flag read failed")
+	}
+	return g == "on", nil
 }
 
 // goldenCollectionItem is one CollectionItem row.
@@ -1426,7 +1551,7 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 			}
 			return testkit.NewRows([]string{"id", "username", "deletedAt", "image"}, rows...), nil
 		}},
-	}, goldenTagRoutes(db)...)}
+	}, append(goldenHubRoutes(fx), goldenTagRoutes(db)...)...)}
 }
 
 // --- the feed service fake -----------------------------------------------------------------------
@@ -1665,10 +1790,14 @@ func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv
 	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn},
 		Ports: feed.InfinitePorts{PublishedOnly: fx.Config.ServePublishedOnly, PostIDs: fx.Config.ServePostIDs,
-			SortRandom: fx.Config.ServeSortRandom, GallerySettingsMiss: fx.Config.ServeGallerySettingsMiss},
+			SortRandom: fx.Config.ServeSortRandom, GallerySettingsMiss: fx.Config.ServeGallerySettingsMiss,
+			HubID: fx.Config.ServeHubID},
 		RandomSeed:   &feed.RandomSeed{Sys: sys},
 		GalleryHolds: sources}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
+	if fx.Config.UserHubs != "" {
+		s.UserHubs = goldenUserHubs(fx.Config.UserHubs)
+	}
 
 	headers := map[string]string{}
 	for k, v := range fx.Request.Headers {
