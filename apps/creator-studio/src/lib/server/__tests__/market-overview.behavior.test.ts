@@ -47,7 +47,7 @@ vi.mock('@civitai/db/kysely', () => {
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 const { readMarketSnapshot } = await import('../market-overview');
-const { marketView } = await import('$lib/analytics/market-overview');
+const { assertFloor, marketView } = await import('$lib/analytics/market-overview');
 
 const SDXL = 'SDXL 1.0';
 const PONY = 'Pony';
@@ -113,6 +113,15 @@ beforeAll(async () => {
     ),
     // Ungated free SDXL LoRAs: 2 sellers, which with the 3 gated-free sellers makes 5.
     ...[34, 35].map((owner) => model({ owner })),
+    // NSFW-only and not minor: listed on civitai.red alone, and counted.
+    ...[61, 62, 63, 64, 65].map((owner) =>
+      model({ owner, nsfwLevel: 16, gate: { terms: download(150) } })
+    ),
+    // An open 7-day early-access window counts; an expired one is no gate at all.
+    ...[71, 72, 73, 74, 75].map((owner) =>
+      model({ owner, gate: { terms: download(150), timeframeDays: 7, endsAt: '2099-01-01' } })
+    ),
+    model({ owner: 76, gate: { terms: download(150), timeframeDays: 7, endsAt: '2020-01-01' } }),
     // A model listed on no site (minor, with no SFW level) and a draft are never counted.
     model({ owner: 41, nsfwLevel: 16, minor: true, gate: { terms: download(150) } }),
     model({ owner: 42, status: 'Draft', gate: { terms: download(150) } }),
@@ -141,11 +150,14 @@ describe('Creator Studio paid-model market overview', () => {
   it('shows a cell with 5 sellers and leaves a 4-seller cell out of every figure', async () => {
     const snapshot = await readMarketSnapshot({} as never);
     const view = marketView(snapshot, {});
-    // 6 SDXL download-priced + 6 generation-only versions. The 5 Pony versions are in no total, and neither are the
-    // draft and the model no site lists, though both share the SDXL cell's price.
-    expect(view.paid.versions).toBe(12);
-    expect(view.paid.permanent).toBe(12);
-    expect(view.histogram.map((b) => b.versions)).toEqual([0, 6, 0, 6, 0, 0]);
+    // The 5 Pony versions are in no total, and neither are the draft and the model no site lists, though both
+    // share the SDXL cell's price.
+    expect(view.paid.versions).toBe(22);
+    expect(view.paid.permanent).toBe(17);
+    expect(view.paid.early).toBe(5);
+    expect(view.histogram.map((b) => b.versions)).toEqual([0, 16, 0, 6, 0, 0]);
+    expect(marketView(snapshot, { rating: 'nsfw' }).paid.versions).toBe(5);
+    expect(marketView(snapshot, { rating: 'sfw' }).paid.versions).toBe(17);
     // The Pony cell, and the top-band cell that holds one seller.
     expect(snapshot.suppressed.paid).toBe(2);
     expect(marketView(snapshot, { ecosystem: 'Pony' }).paid.versions).toBe(0);
@@ -153,14 +165,22 @@ describe('Creator Studio paid-model market overview', () => {
 
   it('counts a model with versions in two cells once', async () => {
     const view = marketView(await readMarketSnapshot({} as never), {});
-    expect(view.paid.models).toBe(11);
+    expect(view.paid.models).toBe(21);
   });
 
   it('counts free generation as free, a model with any paid version as paid, and a draft gate as no gate', async () => {
     const view = marketView(await readMarketSnapshot({} as never), {});
-    // 3 free-generation models, 2 ungated, and the one gated only on a draft; not the mixed one.
-    expect(view.free.models).toBe(6);
-    expect(view.free.versions).toBe(6);
-    expect(view.paidShare).toBeCloseTo(11 / 17);
+    // 3 free-generation models, 2 ungated, the one gated only on a draft and the expired window; not the mixed one.
+    expect(view.free.models).toBe(7);
+    expect(view.free.versions).toBe(7);
+    expect(view.paidShare).toBeCloseTo(21 / 28);
+  });
+
+  it('refuses a snapshot that holds a cell under the floor', async () => {
+    const snapshot = await readMarketSnapshot({} as never);
+    const [first] = Object.keys(snapshot.cellSellers);
+    expect(() =>
+      assertFloor({ ...snapshot, cellSellers: { ...snapshot.cellSellers, [first]: 4 } })
+    ).toThrow();
   });
 });

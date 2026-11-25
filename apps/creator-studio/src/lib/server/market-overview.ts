@@ -119,11 +119,16 @@ const marketCache = createCache({
 // createCache fails open: with Redis down every view would refill. This instance serves its last good snapshot
 // instead, and a failed fill (including a floor breach) never replaces it.
 let lastGood: MarketSnapshot | null = null;
+// After a failed fill, wait this long before scanning again, so a pod with nothing cached doesn't rescan per request.
+const RETRY_AFTER_MS = 60_000;
+let failedAt = 0;
 
 export async function getMarketSnapshot(): Promise<MarketSnapshot | null> {
+  if (Date.now() - failedAt < RETRY_AFTER_MS) return lastGood;
   try {
     lastGood = await marketCache.get({});
   } catch (error) {
+    failedAt = Date.now();
     getLogger().logToAxiom({ name: 'market-overview-fill-failed', error: safeError(error) });
   }
   return lastGood;
