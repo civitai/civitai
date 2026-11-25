@@ -1019,9 +1019,17 @@ describe('submitEntry — maximum clip length', () => {
     await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
 
+  it('accepts a clip over the maximum by no more than container padding', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue(
+      imageRow(MediaType.video, { duration: 120.4 })
+    );
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
   it('rejects a clip over the maximum', async () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue(
-      imageRow(MediaType.video, { duration: 120.01 })
+      imageRow(MediaType.video, { duration: 120.51 })
     );
 
     await expect(submit()).rejects.toThrow(/at most 2:00/);
@@ -1032,7 +1040,7 @@ describe('submitEntry — maximum clip length', () => {
     // `formatDuration` rounds, so a fractional overshoot printed "at most 2:00; this one is 2:00"
     // — an entrant told the entry is too long and shown two identical numbers.
     dbMock.dbRead.image.findUnique.mockResolvedValue(
-      imageRow(MediaType.video, { duration: 120.01 })
+      imageRow(MediaType.video, { duration: 120.51 })
     );
 
     await expect(submit()).rejects.toThrow(/at most 2:00; this one is 2:01/);

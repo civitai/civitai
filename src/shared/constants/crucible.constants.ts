@@ -174,11 +174,31 @@ export const crucibleSupportsVideoSettings = (contentType: MediaType) =>
   contentType === MediaType.video;
 
 /**
+ * Slack over `maxClipSeconds`: container padding makes a 30s video generated on Civitai measure
+ * up to 30.418s, so without it an on-site clip fails a limit of its own length.
+ */
+export const CRUCIBLE_CLIP_LENGTH_TOLERANCE_SECONDS = 0.5;
+
+/**
  * Whether a clip may be entered. A crucible with no `maxClipSeconds` takes any length, and a
  * video whose duration was never recorded is accepted rather than blocked on missing metadata.
  */
 export const clipLengthAllowed = (durationSeconds: number | null, maxClipSeconds: number | null) =>
-  maxClipSeconds == null || durationSeconds == null || durationSeconds <= maxClipSeconds;
+  maxClipSeconds == null ||
+  durationSeconds == null ||
+  durationSeconds <= maxClipSeconds + CRUCIBLE_CLIP_LENGTH_TOLERANCE_SECONDS;
+
+/**
+ * The length to show beside "max <limit>". An allowed clip inside the tolerance shows as the limit,
+ * not a rounded-up second over it; a rejected one is ceiled so it never reads as equal to the limit
+ * (at a 0.5s tolerance rounding alone already lands over; the ceiling holds if the tolerance shrinks).
+ */
+export const clipDisplaySeconds = (durationSeconds: number, maxClipSeconds: number | null) =>
+  !clipLengthAllowed(durationSeconds, maxClipSeconds)
+    ? Math.ceil(durationSeconds)
+    : maxClipSeconds == null
+    ? durationSeconds
+    : Math.min(durationSeconds, maxClipSeconds);
 
 /**
  * `timeupdate` fires about every 250ms during playback. A gap larger than this is a seek or a
