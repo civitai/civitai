@@ -184,6 +184,18 @@ describe('personal-data-export column policy, over every planned read', () => {
         transformRow(planFor(table), { [col]: OTHER }, SUBJECT).out[col],
         `${table}.${col}`
       ).toBe(STAFF_PLACEHOLDER);
+    // Who decided an appeal or a report the user filed, including the system account (-1) and a
+    // low staff id: both are staff, never a number in the file.
+    for (const [table, col] of [
+      ['Appeal', 'resolvedBy'],
+      ['Report', 'statusSetBy'],
+    ])
+      for (const by of [-1, 1, OTHER]) {
+        const row = { id: 7, userId: SUBJECT, status: 'Approved', [col]: by };
+        expect(transformRow(planFor(table), row, SUBJECT).out[col], `${table}.${col}=${by}`).toBe(
+          STAFF_PLACEHOLDER
+        );
+      }
     // Another user's id is not staff: a received message keeps its sender's id.
     expect(transformRow(planFor('ChatMessage.received'), { userId: 555 }, SUBJECT).out.userId).toBe(
       555

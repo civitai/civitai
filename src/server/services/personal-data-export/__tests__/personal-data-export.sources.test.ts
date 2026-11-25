@@ -277,29 +277,113 @@ describe('exportWorkflows', () => {
     expect(yielded).toBeLessThan(MONGO_DOC_CAP + 2);
   });
 
-  it('drops tokens and blocked outputs from a document', () => {
-    const doc = {
-      _id: '777-1',
-      callbackUrl: 'https://x/cb?token=1',
-      accessToken: 'abc',
-      steps: [
+  /** The stored shape (PascalCase), as a key census of real documents showed it. */
+  const storedDoc = () => ({
+    _id: '777-1',
+    Status: 3,
+    CreatedAt: new Date('2026-11-06T00:00:00Z'),
+    Tags: ['gen'],
+    CallbackUrl: 'https://x/cb?token=1',
+    AccessToken: 'abc',
+    PromptScan: { ScanContract: 'c', Scores: { A: 0.9 }, TriggeredLabels: ['x'] },
+    TraceContext: { TraceParent: '00-abc-def-01' },
+    Metadata: { params: { _v: { prompt: 'meta cat', seed: 1 } }, purpose: 'internal' },
+    Steps: [
+      {
+        _t: 'textToImage',
+        Name: '0',
+        Input: { Prompt: 'a cat', NegativePrompt: 'blurry', Seed: 5, User: 'u', Trace: 1 },
+        Output: {
+          Images: [
+            { _id: 'ok', Url: 'https://blob/ok', Width: 512, JobId: 'j', BlockedReason: null },
+            { _id: 'bad', Url: 'https://blob/bad', BlockedReason: 'policy' },
+          ],
+          ModerationStatus: 1,
+          Rating: { general: 0.9 },
+        },
+        State: { DestinationBlobKey: 'k', JobImageHashes: { j: ['h'] }, Errors: ['e'] },
+        Metadata: { requested_model: 'm' },
+      },
+    ],
+  });
+
+  it("keeps the user's own prompt and settings and the outputs not blocked", () => {
+    const out = reduceWorkflow(storedDoc()) as Record<string, any>;
+    expect(out.Steps[0].Input).toEqual({ Prompt: 'a cat', NegativePrompt: 'blurry', Seed: 5 });
+    expect(out.Metadata.params).toEqual({ _v: { prompt: 'meta cat', seed: 1 } });
+    expect(out.Steps[0].Output.Images).toEqual([{ _id: 'ok', Url: 'https://blob/ok', Width: 512 }]);
+    expect(out).toMatchObject({ _id: '777-1', Status: 3, Tags: ['gen'] });
+    expect(out.CreatedAt).toBe('2026-11-06T00:00:00.000Z');
+  });
+
+  it('writes only listed keys: no prompt check, credentials, storage keys, trace or state', () => {
+    const out = reduceWorkflow(storedDoc()) as Record<string, any>;
+    for (const k of ['PromptScan', 'TraceContext', 'CallbackUrl', 'AccessToken'])
+      expect(out, k).not.toHaveProperty(k);
+    expect(out.Metadata).not.toHaveProperty('purpose');
+    expect(Object.keys(out.Steps[0]).sort()).toEqual(['Input', 'Name', 'Output', '_t']);
+    expect(Object.keys(out.Steps[0].Output)).toEqual(['Images']);
+    const text = JSON.stringify(out);
+    for (const s of ['Scores', 'TriggeredLabels', 'ScanContract', 'https://blob/bad', '00-abc'])
+      expect(text, s).not.toContain(s);
+  });
+
+  it('drops an unknown key the orchestrator adds later, at the top and inside a step', () => {
+    const doc = { ...storedDoc(), NewInternalThing: { x: 1 } };
+    doc.Steps[0] = { ...doc.Steps[0], NewStepThing: 'y' } as (typeof doc.Steps)[0];
+    const out = reduceWorkflow(doc) as Record<string, any>;
+    expect(out).not.toHaveProperty('NewInternalThing');
+    expect(out.Steps[0]).not.toHaveProperty('NewStepThing');
+  });
+
+  it('leaves out whole workflows the site ran as automated checks, and keeps generations', async () => {
+    const check = {
+      _id: '777-2',
+      Metadata: { purpose: 'text-scan-preview' },
+      Steps: [
         {
-          prompt: 'a cat',
-          output: {
-            images: [
-              { id: 'ok', url: 'https://blob/ok' },
-              { id: 'bad', url: 'https://blob/bad', blockedReason: 'policy' },
-            ],
-          },
+          _t: 'ChatCompletionStep',
+          Name: 'textScan',
+          Input: { Messages: [{ _t: 'SystemMessage', Content: 'SYSTEM-TEXT' }] },
         },
       ],
     };
-    const out = JSON.stringify(reduceWorkflow(doc));
-    expect(out).toContain('a cat');
-    expect(out).toContain('https://blob/ok');
-    expect(out).not.toContain('https://blob/bad');
-    expect(out).not.toContain('accessToken');
-    expect(out).not.toContain('callbackUrl');
+    // A check with no purpose set is still caught by its step.
+    const unlabeled = { ...check, _id: '777-3', Metadata: {} };
+    const collection: WorkflowCollection = {
+      find() {
+        return Object.assign(
+          (async function* () {
+            yield storedDoc();
+            yield check;
+            yield unlabeled;
+          })(),
+          { close: async () => undefined }
+        );
+      },
+    };
+    const { files, writer } = memoryWriter();
+    const entry = await exportWorkflows({ userId: SUBJECT, writer, collection });
+    const text = files.get(entry.file)!;
+    expect(entry.rows).toBe(1);
+    expect(text).toContain('"777-1"');
+    expect(text).toContain('a cat');
+    expect(text).not.toContain('777-2');
+    expect(text).not.toContain('777-3');
+    expect(text).not.toContain('SYSTEM-TEXT');
+  });
+
+  it("inside the user's settings, still drops credential and check-shaped keys", () => {
+    const doc = storedDoc();
+    doc.Steps[0].Input = {
+      ...doc.Steps[0].Input,
+      ApiKey: 'k',
+      SafetyScore: 0.2,
+      Messages: [{ Content: 'x' }],
+    } as never;
+    const input = (reduceWorkflow(doc) as Record<string, any>).Steps[0].Input;
+    for (const k of ['ApiKey', 'SafetyScore', 'Messages']) expect(input).not.toHaveProperty(k);
+    expect(input.Prompt).toBe('a cat');
   });
 
   it('refuses a user id that is not a positive integer', () => {

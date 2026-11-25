@@ -41,17 +41,19 @@ describe('csvCell', () => {
 describe('reduceWorkflow', () => {
   it('keeps dates as ISO text, and drops blocked outputs and detection keys in any shape', () => {
     const out = reduceWorkflow({
-      createdAt: new Date('2026-11-06T00:00:00Z'),
-      output: { url: 'https://blob/bad', blockedReason: 'x' },
-      ok: { url: 'https://blob/ok', blocked: false },
-      xguardResult: { s: 1 },
-      scores: [0.1],
-    }) as Record<string, unknown>;
-    expect(out.createdAt).toBe('2026-11-06T00:00:00.000Z');
-    expect(out).not.toHaveProperty('output');
-    expect(out.ok).toEqual({ url: 'https://blob/ok', blocked: false });
-    expect(out).not.toHaveProperty('xguardResult');
-    expect(out).not.toHaveProperty('scores');
+      CreatedAt: new Date('2026-11-06T00:00:00Z'),
+      Steps: [
+        {
+          Output: { Video: { Url: 'https://blob/bad', BlockedReason: 'x' } },
+          Input: { Prompt: 'p', xguardResult: { s: 1 }, scores: [0.1] },
+        },
+        { Output: { Video: { Url: 'https://blob/ok', BlockedReason: null } } },
+      ],
+    }) as Record<string, any>;
+    expect(out.CreatedAt).toBe('2026-11-06T00:00:00.000Z');
+    expect(out.Steps[0].Output).toEqual({});
+    expect(out.Steps[1].Output.Video).toEqual({ Url: 'https://blob/ok' });
+    expect(out.Steps[0].Input).toEqual({ Prompt: 'p' });
   });
 
   it('marks the file partial when the server time limit ends the read, and closes the cursor', async () => {
