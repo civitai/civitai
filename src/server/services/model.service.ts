@@ -4887,8 +4887,7 @@ export const upsertModel = async (
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
-    // the old level listed, and even when a step before it throws.
+    // The owner's notice follows the level refresh, so a slow notice cannot keep the old level listed.
     try {
       // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
       // the gate ran: it read the description before blurb expansion, not the text stored.
@@ -7474,8 +7473,7 @@ export async function migrateResourceToCollection({
     },
     { timeout: 60000, maxWait: 10000 }
   );
-  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
-  // notice cannot keep the old level listed, and even when one of them throws.
+  // The owners' notices follow the level refresh, as in upsertModel.
   try {
     // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
     // each was given its version's stored level. Versions first: the model level reads them.

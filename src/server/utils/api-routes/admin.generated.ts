@@ -42,6 +42,8 @@ export const routes: ApiRoutes = {
   'refresh-sessions': () => import('~/server/api-routes/admin/refresh-sessions'),
   'refresh-user-sessions': () => import('~/server/api-routes/admin/refresh-user-sessions'),
   'rescan-images': () => import('~/server/api-routes/admin/rescan-images'),
+  'reschedule-daily-challenges': () =>
+    import('~/server/api-routes/admin/reschedule-daily-challenges'),
   'send-discount': () => import('~/server/api-routes/admin/send-discount'),
   'system-account-api-key': () => import('~/server/api-routes/admin/system-account-api-key'),
   'system-account-profile': () => import('~/server/api-routes/admin/system-account-profile'),

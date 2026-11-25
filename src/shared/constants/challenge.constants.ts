@@ -123,6 +123,7 @@ export const CHALLENGE_PRESET_CATEGORIES = {
   humor: { label: 'Humor', group: 'Comedy / Playful', criteria: 'How funny or amusing the entry is; higher for genuinely funny results.' },
   wittiness: { label: 'Wittiness', group: 'Comedy / Playful', criteria: 'Cleverness and conceptual wit of the idea; higher for sharp, clever concepts.' },
   absurdity: { label: 'Absurdity', group: 'Comedy / Playful', criteria: 'Surreal, ridiculous invention; higher for wonderfully absurd ideas.' },
+  wordplay: { label: 'Wordplay', group: 'Comedy / Playful', criteria: 'A visual pun, double meaning or hidden joke the image itself shows; higher for wordplay that rewards a second look.' },
   cuteness: { label: 'Cuteness', group: 'Cute / Wholesome', criteria: 'How adorable or endearing the subject is; higher for irresistibly cute results.' },
   charm: { label: 'Charm', group: 'Cute / Wholesome', criteria: 'Overall charm and likeability; higher for warm, appealing entries.' },
   wholesomeness: { label: 'Wholesomeness', group: 'Cute / Wholesome', criteria: 'How heartwarming or wholesome the mood is; higher for uplifting, feel-good images.' },
@@ -176,6 +177,39 @@ export const DEFAULT_CATEGORY_ROWS: CategoryWeightRow[] = [
   { ...makeRow('humor'), weight: 15 },
   { ...makeRow('aesthetic'), weight: 20 },
 ];
+
+// Named rubrics the system daily rotates through (docs/features/challenge-platform.md §3). Theme is
+// 50 in every set so the theme gate weighs the same every day; only the other half changes.
+export const DAILY_RUBRIC_SETS = {
+  craft: { label: 'Craft', weights: { theme: 50, technical: 20, aesthetic: 20, detail: 10 } },
+  cozy: { label: 'Cozy', weights: { theme: 50, charm: 20, wholesomeness: 15, aesthetic: 15 } },
+  mood: { label: 'Mood', weights: { theme: 50, emotion: 25, cinematics: 15, aesthetic: 10 } },
+  story: {
+    label: 'Story',
+    weights: { theme: 50, storytelling: 25, creativity: 15, aesthetic: 10 },
+  },
+  clever: { label: 'Clever', weights: { theme: 50, wordplay: 25, wittiness: 15, aesthetic: 10 } },
+  epic: { label: 'Epic', weights: { theme: 50, epicness: 20, worldbuilding: 20, aesthetic: 10 } },
+  cute: { label: 'Cute', weights: { theme: 50, cuteness: 25, charm: 15, aesthetic: 10 } },
+  action: { label: 'Action', weights: { theme: 50, dynamism: 20, intensity: 15, cinematics: 15 } },
+  spooky: { label: 'Spooky', weights: { theme: 50, dread: 20, creepiness: 20, aesthetic: 10 } },
+  glam: { label: 'Glam', weights: { theme: 50, elegance: 25, glamour: 15, aesthetic: 10 } },
+  // The pre-rotation daily rubric itself, not a copy of it.
+  comedy: { label: 'Comedy', weights: null },
+} as const satisfies Record<
+  string,
+  { label: string; weights: Partial<Record<ChallengeCategoryKey, number>> | null }
+>;
+export type DailyRubricSetKey = keyof typeof DAILY_RUBRIC_SETS;
+
+export function dailyRubricSetRows(setKey: DailyRubricSetKey): CategoryWeightRow[] {
+  const { weights } = DAILY_RUBRIC_SETS[setKey];
+  if (!weights) return DEFAULT_CATEGORY_ROWS;
+  return Object.entries(weights).map(([key, weight]) => ({
+    ...makeRow(key as ChallengeCategoryKey),
+    weight,
+  }));
+}
 
 // Judges a public-challenge creator may pick. Keyed on NAME (env-stable). "CivChan NSFW" is
 // excluded even though user challenges can allow NSFW levels — it shares CivChan's userId, and

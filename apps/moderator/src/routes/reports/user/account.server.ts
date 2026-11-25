@@ -71,9 +71,11 @@ export async function loadAccount(user: number, tab: SuspectTab, url: URL, local
   // Each tab loads only its own data. The image grid and the account history are the two heavy reads,
   // and a moderator settling a spam report from the profile never opens either.
   const [details, suspect, models, accountHistory, timedMute, reports] = await Promise.all([
-    getReportedAccountDetails(user),
-    tab === 'images' ? getSuspectImages(user, filters, { page: imgPage }) : null,
-    tab === 'models' ? getReportedAccountModels(user) : null,
+    getReportedAccountDetails(user, locals.user),
+    tab === 'images'
+      ? getSuspectImages(user, filters, { page: imgPage, viewer: locals.user })
+      : null,
+    tab === 'models' ? getReportedAccountModels(user, locals.user) : null,
     // Retool's top-left was three tabs — ModActivity / Reports / UserReport History — and the whole
     // point of this screen is not leaving it.
     tab === 'activity' ? loadAccountHistory(user, locals.user.username ?? null) : null,

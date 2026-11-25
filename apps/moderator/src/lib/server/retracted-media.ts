@@ -155,6 +155,14 @@ export function withheldRow<T extends object>(row: T) {
   } as Omit<T, keyof ReturnType<typeof withheldMedia>> & ReturnType<typeof withheldMedia>;
 }
 
+/** What a withheld cover image is sent as: no key, nothing but its id and level. */
+export const blankCover = (image: { id: number; nsfwLevel: number | null }) => ({
+  id: image.id,
+  url: '',
+  nsfwLevel: image.nsfwLevel ?? 0,
+  restricted: true as const,
+});
+
 /** Each row's cover images and civitai.com face cover, with those withheld from `user` sent without
  *  their key. */
 export async function withheldCoverImages<
@@ -175,9 +183,7 @@ export async function withheldCoverImages<
       ? { comFace: { ...row.comFace, cover: { ...row.comFace.cover, url: '', restricted: true } } }
       : {}),
     coverImages: row.coverImages.map((image) =>
-      withheld.has(image.id)
-        ? { id: image.id, url: '', nsfwLevel: image.nsfwLevel, restricted: true }
-        : image
+      withheld.has(image.id) ? blankCover(image) : image
     ),
   }));
 }
@@ -272,6 +278,24 @@ export async function listWithheldIds(
       },
     });
     return new Set(imageIds);
+  });
+}
+
+/** `rows` with each row whose image is withheld from `user` replaced by `blank(row)`; a row with
+ *  no image id passes as it is. */
+export async function withheldRows<T, B>(
+  rows: T[],
+  user: App.Locals['user'] | undefined,
+  list: string,
+  imageId: (row: T) => number | null | undefined,
+  blank: (row: T) => B
+): Promise<(T | B)[]> {
+  const ids = rows.map(imageId).filter((id): id is number => id != null);
+  if (!ids.length) return rows;
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, list);
+  return rows.map((row) => {
+    const id = imageId(row);
+    return id != null && withheld.has(id) ? blank(row) : row;
   });
 }
 

@@ -6,7 +6,7 @@ import { getComicReviewQueue } from '$lib/server/comic-review.service';
 import { acceptImage, blockImage } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { heldRemovalMessage } from '$lib/server/removal-hold';
-import { withheldRefusal } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRows } from '$lib/server/retracted-media';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 import type { RequestEvent } from './$types';
 
@@ -26,7 +26,7 @@ const querySchema = z.object({
   needsReview: z.enum(REVIEW_REASONS.map((r) => r.value) as [string, ...string[]]).catch('all'),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit, needsReview } = parseQuery(url, querySchema);
   const { items, nextCursor } = await getComicReviewQueue({
     limit,
@@ -35,10 +35,28 @@ export const load: PageServerLoad = async ({ url }) => {
   });
   return {
     // Highlight the prompt server-side — the word lists are server-only.
-    items: items.map((panel) => ({
-      ...panel,
-      promptHighlight: panel.prompt ? getPromptHighlightSegments(panel.prompt) : null,
-    })),
+    items: await withheldRows(
+      items.map((panel) => ({
+        ...panel,
+        promptHighlight: panel.prompt ? getPromptHighlightSegments(panel.prompt) : null,
+        restricted: false,
+      })),
+      locals.user,
+      'comics-review',
+      (panel) => panel.imageId,
+      (panel) => ({
+        ...panel,
+        imageUrl: '',
+        imageType: 'image' as const,
+        tosViolation: false,
+        ingestion: 'Scanned',
+        prompt: null,
+        promptHighlight: null,
+        needsReview: null,
+        blockedFor: null,
+        restricted: true,
+      })
+    ),
     nextCursor,
     limit,
     needsReview,

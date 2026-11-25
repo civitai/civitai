@@ -45,3 +45,8 @@ export function reportHeldGridView(count: number) {
     keepalive: true,
   }).catch(() => null);
 }
+
+/** A remix source withheld from this moderator: neither its media nor its prompt is shown, so the
+ *  submitted prompt is not compared with it. */
+export const WITHHELD_SOURCE =
+  'The source image is withheld from you, so its prompt is not compared. Ask a lead.';

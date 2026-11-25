@@ -198,6 +198,8 @@ type GenerateArticleInput = {
   };
   /** The featured resource's concrete subject (generateResourceConcept). Anchors theme drift. */
   resourceConcept?: string;
+  /** A scheduled day's occasion and the rubric it is judged on (daily-schedule.ts). */
+  occasion?: DailyOccasion;
   image: {
     id: number;
     url: string;
@@ -217,9 +219,17 @@ type GeneratedArticle = {
   theme: string;
   themeElements: string[];
 };
+export type DailyOccasion = {
+  name: string;
+  brief: string;
+  /** Labels of the non-theme categories the day is judged on, e.g. ["Wordplay", "Wittiness"]. */
+  judgedOn: string[];
+};
+
 export async function generateArticle({
   resource,
   resourceConcept,
+  occasion,
   image,
   config,
   model,
@@ -227,7 +237,12 @@ export async function generateArticle({
   const conceptLine = resourceConcept?.trim()
     ? `\nWhat this resource depicts: ${resourceConcept.trim()}`
     : '';
-  const userText = `${ARTICLE_FIELDS_PREAMBLE}\n\nResource title: ${resource.title}${conceptLine}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`;
+  const occasionLine = occasion
+    ? `\nToday's occasion: ${occasion.name}. ${
+        occasion.brief
+      }\nBesides the theme, entries are judged on: ${occasion.judgedOn.join(', ')}.`
+    : '';
+  const userText = `${ARTICLE_FIELDS_PREAMBLE}\n\nResource title: ${resource.title}${conceptLine}${occasionLine}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`;
 
   const { result } = await withFallback('article', model, (selectedModel) =>
     pickClient(selectedModel).getJsonCompletion<GeneratedArticle>({
@@ -251,7 +266,8 @@ export async function generateArticle({
         - The list as a whole must describe what the featured resource CONTRIBUTES — its material, style, technique, or subject class — not the subject of the one example image you were shown. If the resource turns things into a material, the elements are that material's look, and they must hold for whatever subject an entrant picks.
         - Do NOT swap the subject for an adjacent category. A Moroccan tagine resource is not a desserts theme; a scrimshaw resource is not a musical-instruments theme. If you cannot connect an idea to what the resource depicts, drop the idea, not the resource.
         - Generic mood words ("whimsical", "playful", "vibrant", "magical") are not subject matter. At most one element may be a mood; the rest must be things visible in an image.
-        - Add your creative angle ON TOP of the resource's subject, never in place of it.`
+        - Add your creative angle ON TOP of the resource's subject, never in place of it.
+        - When an occasion is given, it IS the creative angle: the theme puts the resource's subject into that occasion, and at most two themeElements may come from the occasion. Write the article so entrants know what the day is judged on; a day judged on wordplay needs a theme with room for a pun the image itself can show.`
         ),
         {
           role: 'user' as const,

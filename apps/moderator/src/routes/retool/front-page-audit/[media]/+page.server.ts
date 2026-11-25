@@ -5,7 +5,7 @@ import { canAccess } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { validNsfwLevels } from '@civitai/shared';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
-import { withheldRefusal } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 import {
   getSweep,
   voteOnTag,
@@ -77,7 +77,13 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
       )
     : windowed;
 
-  const items = await getSweep({ nsfwLevels, order, media, since });
+  const items = await withheldRows(
+    await getSweep({ nsfwLevels, order, media, since }),
+    locals.user,
+    'front-page-audit',
+    (i) => i.id,
+    (i) => ({ ...withheldRow(i), aiNsfwLevel: null, moderatedTags: [] as never[] })
+  );
 
   return {
     nsfwLevels,
