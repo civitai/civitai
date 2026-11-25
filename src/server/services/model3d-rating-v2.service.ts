@@ -30,7 +30,7 @@ export const MODEL3D_RATING_V2_GLOBAL_LIMIT = {
   windowSeconds: 24 * 60 * 60,
 };
 const WAIT_SECONDS = 20;
-/** The preview graph renders at most this many angles; only the first this many are sent. */
+/** Cap on preview angles sent to the rater in one call. */
 export const MAX_ANGLES = 4;
 /** How long a mature v2 verdict holds the gate for that workflow without asking again. */
 const REMEMBER_SECONDS = 30 * 24 * 60 * 60;
@@ -81,11 +81,8 @@ const defaultDeps: Model3dRatingV2Deps = {
   },
 };
 
-/** The v2 rater's answer for a 3D result's preview renders. `unrateable`: the result's own preview set
- *  can't be sent (none, or a URL that isn't an orchestrator-hosted image), which the user controls, so it
- *  can't pass unrated. `clear` covers the flag being off and every system-side gap (a full global
- *  window, a rater error, a timeout, no verdict on any angle): the post then decides on its current
- *  rating alone. */
+/** `unrateable`: the result's own preview set can't be sent, which the user controls, so it can't pass
+ *  unrated. `clear`: no gate; the post decides on its current rating. */
 export type Model3dV2Verdict = 'mature' | 'clear' | 'unrateable';
 
 export async function rateModel3DByV2(

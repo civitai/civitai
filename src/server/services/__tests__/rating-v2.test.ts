@@ -59,6 +59,53 @@ describe('rateImagesV2', () => {
   });
 });
 
+describe('rateImagesV2 wire shape', () => {
+  beforeEach(() => orch.submitWorkflow.mockReset());
+
+  it('one imageScanning step per item on the v2 rater, free to the user', async () => {
+    orch.submitWorkflow.mockResolvedValue({ data: { steps: [] } });
+    await rate();
+    const call = orch.submitWorkflow.mock.calls[0][0];
+    expect(call.query).toEqual({ wait: 1 });
+    expect(call.body.currencies).toEqual([]);
+    expect(call.body.steps).toEqual([
+      expect.objectContaining({
+        $type: 'imageScanning',
+        name: '0',
+        input: { image: items[0].mediaUrl, 'rater-model': 'radio-alpha' },
+      }),
+      expect.objectContaining({
+        $type: 'imageScanning',
+        name: '1',
+        input: { image: items[1].mediaUrl, 'rater-model': 'radio-alpha' },
+      }),
+    ]);
+  });
+
+  it('a failed step or a rating that is not ok gives no verdict', async () => {
+    orch.submitWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            name: '0',
+            status: 'failed',
+            output: { ratingV2: { status: 'ok', sexual: { label: 'S4' }, restricted: true } },
+          },
+          {
+            name: '1',
+            status: 'succeeded',
+            output: { ratingV2: { status: 'error', sexual: { label: 'S4' }, restricted: true } },
+          },
+        ],
+      },
+    });
+    expect(await rate()).toEqual([
+      { key: 'a', mature: null },
+      { key: 'b', mature: null },
+    ]);
+  });
+});
+
 describe('matureLevelOf', () => {
   it('reads s1-s4 and nothing else', () => {
     expect(matureLevelOf('s2')).toBe(2);
