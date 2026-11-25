@@ -82,4 +82,8 @@ describe('/api/metrics publishes the host-media safety counters at 0', () => {
     );
     expect(await scrape()).toMatch(line);
   });
+
+  it('civitai_app_block_unlock_outcome_unknown_total is exposed at 0 on a pod that never fired it', async () => {
+    expect(await scrape()).toMatch(/^civitai_app_block_unlock_outcome_unknown_total 0$/m);
+  });
 });
