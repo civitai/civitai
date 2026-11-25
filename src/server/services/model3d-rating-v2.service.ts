@@ -138,6 +138,23 @@ export async function rateModel3DByV2(
 export const MODEL3D_UNRATEABLE_PREVIEW =
   "This 3D model's preview couldn't be rated. Render it again, then post.";
 
+/** What a 3D post shows as its cover and the images the v2 rater is shown for it: the preview renders,
+ *  or, with none, the auto-thumbnail the cover falls back to. The cover is always one of the rated. */
+export function model3DPostImages<T extends { url?: string | null }>(
+  renders: readonly (T | null | undefined)[],
+  thumbnail: T | null | undefined
+): { coverOverride: T | undefined; cover: T | undefined; ratedUrls: string[] } {
+  const rendered = renders.filter((img): img is T & { url: string } => !!img?.url);
+  const coverOverride = rendered[0];
+  const cover = coverOverride ?? thumbnail ?? undefined;
+  const ratedUrls = rendered.length
+    ? rendered.map((img) => img.url)
+    : cover?.url
+    ? [cover.url]
+    : [];
+  return { coverOverride, cover, ratedUrls };
+}
+
 /** The post gate with the v2 rater added: today's block, else a block when the v2 rater calls the
  *  result mature. It is asked only when the current rating would let a result without mature-content
  *  billing through. */

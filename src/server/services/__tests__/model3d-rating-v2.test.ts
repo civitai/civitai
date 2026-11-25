@@ -4,6 +4,7 @@ import type { NextApiRequest } from 'next';
 import {
   anglesMature,
   getModel3DPostBlock,
+  model3DPostImages,
   rateModel3DByV2,
   MODEL3D_RATING_V2_GLOBAL_LIMIT,
   MODEL3D_RATING_V2_RATE_LIMIT,
@@ -215,6 +216,25 @@ describe('3D post gate with the v2 rater', () => {
   it("draws on its own limits, never the Training Studio's", () => {
     expect(MODEL3D_RATING_V2_RATE_LIMIT.key).not.toBe(STUDIO_DATASET_RATING_RATE_LIMIT.key);
     expect(MODEL3D_RATING_V2_GLOBAL_LIMIT.key).not.toBe(STUDIO_DATASET_RATING_GLOBAL_LIMIT.key);
+  });
+});
+
+describe('model3DPostImages', () => {
+  const thumb = { url: hosted(9) };
+  it('with no preview render, rates exactly the thumbnail the post shows', () => {
+    const { cover, ratedUrls, coverOverride } = model3DPostImages([], thumb);
+    expect(coverOverride).toBeUndefined();
+    expect(ratedUrls).toEqual([cover?.url]);
+    expect(cover).toBe(thumb);
+  });
+  it('with renders, the cover is the first render and is rated', () => {
+    const renders = [null, { url: hosted(0) }, { url: hosted(1) }];
+    const { cover, ratedUrls } = model3DPostImages(renders, thumb);
+    expect(cover?.url).toBe(hosted(0));
+    expect(ratedUrls).toEqual([hosted(0), hosted(1)]);
+  });
+  it('a thumbnail with no image gives nothing to rate', () => {
+    expect(model3DPostImages([], { url: null }).ratedUrls).toEqual([]);
   });
 });
 

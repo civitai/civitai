@@ -66,7 +66,10 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
-import { getModel3DPostBlock } from '~/server/services/model3d-rating-v2.service';
+import {
+  getModel3DPostBlock,
+  model3DPostImages,
+} from '~/server/services/model3d-rating-v2.service';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageNotRestrictedWhere, withServableImage } from '~/server/common/image-visibility';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
@@ -349,7 +352,10 @@ export const ensureModel3DFromWorkflow = async ({
     const previewStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'model3DPreview') as
       | { output?: { images?: ImageBlob[] } }
       | undefined;
-    const thumbnailOverride = previewStep?.output?.images?.find((img) => !!img?.url);
+    const { coverOverride: thumbnailOverride, ratedUrls } = model3DPostImages(
+      previewStep?.output?.images ?? [],
+      polyGenStep.output.thumbnail
+    );
 
     // Same gate the generator UI applies: the mesh blob is never rated by the
     // orchestrator, so the effective rating comes from the preview renders /
@@ -361,21 +367,14 @@ export const ensureModel3DFromWorkflow = async ({
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
-    const previewRenderUrls = (previewStep?.output?.images ?? []).flatMap((img) =>
-      img?.url ? [img.url] : []
-    );
     const postBlock = await getModel3DPostBlock({
       primaryModel,
       effectiveNsfwLevel,
       allowMatureContent: workflow.allowMatureContent,
       user,
       req: ctx.req,
-      // A result with no preview render (FBX-only Tripo quad) is rated on its auto-thumbnail.
-      previewUrls: previewRenderUrls.length
-        ? previewRenderUrls
-        : polyGenStep.output.thumbnail?.url
-        ? [polyGenStep.output.thumbnail.url]
-        : [],
+      // A result with no preview render (FBX-only Tripo quad) is rated on the auto-thumbnail it shows.
+      previewUrls: ratedUrls,
       workflowId: input.workflowId,
     });
     if (postBlock) throw throwBadRequestError(postBlock);
