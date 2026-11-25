@@ -6,7 +6,10 @@ import { renderWithProviders as renderInProviders } from '../../../test/componen
 import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import type { SearchRefusal } from '~/components/Search/search-refusal';
-import { SemanticSearchError } from '~/components/SemanticSearch/SemanticSearchError';
+import {
+  SemanticSearchError,
+  semanticSearchStatus,
+} from '~/components/SemanticSearch/SemanticSearchError';
 import { SEARCH_POLICY_MESSAGE } from '~/shared/constants/search-refusal.constants';
 
 // The notice reads the real session; each test picks whose.
@@ -93,5 +96,37 @@ describe('SemanticSearchError', () => {
       .element(page.getByText('Search is unavailable right now, try again.'))
       .toBeVisible();
     expect(text()).not.toContain(SEARCH_POLICY_MESSAGE.title);
+  });
+});
+
+describe('the semantic image search page', () => {
+  const status = (over: Partial<Parameters<typeof semanticSearchStatus>[0]>) =>
+    semanticSearchStatus({
+      enabled: true,
+      isLoading: false,
+      error: null,
+      empty: true,
+      idleMessage: 'idle',
+      emptyMessage: 'nothing matched',
+      ...over,
+    });
+
+  test("shows the minors notice for text the browser's check catches, never searching it", async () => {
+    // A caught text is not searched, so the page is not enabled for it.
+    await renderWithProviders(<>{status({ refusal: 'illegal', enabled: false })}</>);
+    await expect.element(page.getByText(/involving minors/i)).toBeVisible();
+    expect(text()).not.toContain(SEARCH_POLICY_MESSAGE.title);
+  });
+
+  test('shows the policy message for a refusal only the server made (control)', async () => {
+    await renderWithProviders(<>{status({ serverRefusal: {} })}</>);
+    await expect.element(page.getByText(SEARCH_POLICY_MESSAGE.title)).toBeVisible();
+    expect(text()).not.toMatch(/involving minors|nothing matched/i);
+  });
+
+  test('a search that found nothing says so, and found results show no status', async () => {
+    await renderWithProviders(<>{status({})}</>);
+    await expect.element(page.getByText('nothing matched')).toBeVisible();
+    expect(status({ empty: false })).toBeNull();
   });
 });

@@ -213,6 +213,29 @@ export function withRefusal<R extends object>(
     : { ...page, refused: true };
 }
 
+/**
+ * The page a search without the semantic audit returns: nothing when its spelling correction was
+ * refused (naming that verdict), else its page, refused only when the search service refused the text.
+ */
+export function finishUnauditedSearch<P extends { items: unknown[] }, N extends object>(
+  page: P & { correctedQuery?: string },
+  none: N,
+  {
+    user,
+    refused,
+    correctionVerdict,
+    guard,
+  }: {
+    user: { isModerator?: boolean | null } | undefined;
+    refused: boolean;
+    correctionVerdict: QueryRefusal;
+    guard: GuardRead | undefined;
+  }
+) {
+  if (refused) return withRefusal(none, user, refusedByWord(correctionVerdict) ?? 'error');
+  return withRefusal(page, user, page.items.length ? undefined : refusedByGuard(guard));
+}
+
 export type DryRunOutcome = { verdict: QueryRefusal; result: 'allow' | 'narrow' | 'refuse' };
 
 /**

@@ -798,7 +798,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               </Stack>
             );
           }
-          // Every refusal but the minors one: the policy message, naming no term or rule.
           const refusedBy = Object.hasOwn(REFUSAL_ITEMS, key)
             ? refusedByOf(REFUSAL_ITEMS[key])
             : undefined;

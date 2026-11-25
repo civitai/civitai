@@ -1588,6 +1588,8 @@ describe('search by uploaded image', () => {
   it('returns nothing for an upload above the viewer, without asking the index', async () => {
     const { page, calls } = await run(R, PG | 2);
     expect(page.items).toEqual([]);
+    // A level refusal of the upload, not of any words: not marked refused.
+    expect(page).toMatchObject({ refused: false });
     expect(calls).toHaveLength(0);
     expect(h.recordAudit).toHaveBeenLastCalledWith(
       expect.objectContaining({ searchPath: 'refused_upload_level', resultIds: [] })

@@ -148,7 +148,6 @@ export const semanticImageSearchRouter = router({
           correctedQuery: undefined,
           latencyMs: 0,
           refused: result.refused,
-          // Present only on a moderator's refused page, as the service set it.
           ...('refusedBy' in result && result.refusedBy !== undefined
             ? { refusedBy: result.refusedBy }
             : {}),

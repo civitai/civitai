@@ -8,8 +8,7 @@ import {
   queryVerdictLevel,
   recordRefusal,
   semanticQueryRefusal,
-  refusedByGuard,
-  refusedByWord,
+  finishUnauditedSearch,
   semanticSearchPrelude,
   withRefusal,
   type QueryRefusal,
@@ -209,11 +208,10 @@ export async function searchSemanticChallenges({
     payload: { returned: search.state.returned, shown: page.items.length },
   });
 
-  if (search.state.refused)
-    return withRefusal(none, user, refusedByWord(correctionVerdict) ?? 'error');
-  return withRefusal(
-    { ...page, correctedQuery: search.state.correctedQuery },
+  return finishUnauditedSearch({ ...page, correctedQuery: search.state.correctedQuery }, none, {
     user,
-    page.items.length ? undefined : refusedByGuard(search.state.first?.guard)
-  );
+    refused: search.state.refused,
+    correctionVerdict,
+    guard: search.state.first?.guard,
+  });
 }

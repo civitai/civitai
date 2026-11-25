@@ -11,7 +11,6 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { NoContent } from '~/components/NoContent/NoContent';
 import type { FeedbackRating } from '~/components/SemanticSearch/SemanticSearchFeedback';
 import { SemanticSearchFeedback } from '~/components/SemanticSearch/SemanticSearchFeedback';
 import type { PickedTag } from '~/components/SemanticSearch/TagMultiPicker';
@@ -23,9 +22,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
-import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { pageRefusal } from '~/components/Search/search-refusal';
-import { SemanticSearchError } from '~/components/SemanticSearch/SemanticSearchError';
+import { semanticSearchStatus } from '~/components/SemanticSearch/SemanticSearchError';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 
 export function SemanticImageSearch() {
   const router = useRouter();
@@ -55,7 +54,9 @@ export function SemanticImageSearch() {
     baseModels,
     types,
   };
-  const enabled = !!input.query || !!input.imageId;
+  // As the feeds: a query the browser refuses is never searched.
+  const { refusal } = useSearchRefusal(input.query, 'images_semantic', 'semantic');
+  const enabled = (!!input.query && !refusal) || !!input.imageId;
   const options = {
     getNextPageParam: (lastPage: { nextCursor?: number }) => lastPage.nextCursor,
     retry: false,
@@ -113,6 +114,17 @@ export function SemanticImageSearch() {
     if (!q) return;
     router.push({ pathname: '/search/semantic', query: { q } }, undefined, { shallow: true });
   };
+
+  const status = semanticSearchStatus({
+    refusal,
+    serverRefusal,
+    enabled,
+    isLoading,
+    error: isError ? error : null,
+    empty: !items.length,
+    idleMessage: `Enter a query to search ${videos ? 'videos' : 'images'} by meaning.`,
+    emptyMessage: `No ${videos ? 'videos' : 'images'} matched. Try other words or fewer filters.`,
+  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -190,23 +202,7 @@ export function SemanticImageSearch() {
         />
       )}
 
-      {!enabled ? (
-        <NoContent
-          message={`Enter a query to search ${videos ? 'videos' : 'images'} by meaning.`}
-        />
-      ) : isLoading ? (
-        <Center p="xl">
-          <Loader />
-        </Center>
-      ) : isError ? (
-        <SemanticSearchError error={error} />
-      ) : !items.length && serverRefusal ? (
-        <SearchRefusalNotice refusal="policy" refusedBy={serverRefusal.refusedBy} />
-      ) : !items.length ? (
-        <NoContent
-          message={`No ${videos ? 'videos' : 'images'} matched. Try other words or fewer filters.`}
-        />
-      ) : (
+      {status ?? (
         <div className="relative">
           <ImagesProvider images={items}>
             <MasonryColumnsVirtual
