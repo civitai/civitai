@@ -3553,7 +3553,7 @@ describe('approveRequest', () => {
       placedByUsername: 'civitai',
       placedByLabel: 'Boot check',
       reason:
-        'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold.',
+        'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold',
     };
 
     it('🔴 an open boot-check hold refuses approve on the primary, before anything is committed', async () => {
@@ -3571,7 +3571,7 @@ describe('approveRequest', () => {
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
       ).rejects.toThrow(
-        'This app has 1 open review hold: Boot check (civitai): The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold.. Clear them, or approve with an override reason.'
+        'This app has 1 open review hold: Boot check (civitai): The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold. Clear them, or approve with an override reason.'
       );
       expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
       expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();

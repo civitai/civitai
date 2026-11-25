@@ -108,7 +108,7 @@ const FAILED = {
 };
 const PASSED = { ...FAILED, result: 'passed', consoleErrors: [], nonJsModuleResponses: 0 };
 const HOLD_REASON =
-  'The app loaded but never sent BLOCK_READY within 10s (first error: Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "application/octet-stream"). A build of this app that passes the boot check clears this hold.';
+  'The app loaded but never sent BLOCK_READY within 10s (first error: Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "application/octet-stream"). A build of this app that passes the boot check clears this hold';
 const HELD_MESSAGE = `This app has 1 open review hold: Boot check (civitai): ${HOLD_REASON}. Clear them, or approve with an override reason.`;
 
 let raw: Raw;

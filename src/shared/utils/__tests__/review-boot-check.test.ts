@@ -71,10 +71,10 @@ describe('bootCheckFailureError', () => {
   });
   it('the hold reason, with and without a first error, and the clear reason', () => {
     expect(bootCheckHoldReason('TypeError: boom.')).toBe(
-      'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold.'
+      'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold'
     );
     expect(bootCheckHoldReason(null)).toBe(
-      'The app loaded but never sent BLOCK_READY within 10s. A build of this app that passes the boot check clears this hold.'
+      'The app loaded but never sent BLOCK_READY within 10s. A build of this app that passes the boot check clears this hold'
     );
     expect(BOOT_CHECK_HOLD_CLEAR_REASON).toBe('A later build of this app passed the boot check.');
     expect(BOOT_CHECK_HOLD_LABEL).toBe('Boot check');

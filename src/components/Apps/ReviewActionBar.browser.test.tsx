@@ -392,7 +392,7 @@ describe('ReviewActionBar — review boot check', () => {
     placedByUsername: 'civitai',
     placedByLabel: 'Boot check',
     reason:
-      'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold.',
+      'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold',
     createdAt: new Date(),
     clearedAt: null,
     clearedByUserId: null,

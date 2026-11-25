@@ -113,12 +113,15 @@ export const BOOT_CHECK_APPROVE_REFUSAL =
 /** The `placed_by_label` of the boot check's review hold (placed by the system user). */
 export const BOOT_CHECK_HOLD_LABEL = 'Boot check';
 
-/** The reason the boot-check hold carries: what the check saw, and what lifts it. */
+/**
+ * The reason the boot-check hold carries: what the check saw, and what lifts it. No trailing full
+ * stop: the hold refusal appends its own (`<reason>. Clear them, …`), so one here would double it.
+ */
 export function bootCheckHoldReason(firstError: string | null): string {
   return (
     `The app loaded but never sent BLOCK_READY within ${READY_WINDOW_SECONDS}s` +
     (firstError ? ` (first error: ${firstError.replace(/[.\s]+$/, '')})` : '') +
-    '. A build of this app that passes the boot check clears this hold.'
+    '. A build of this app that passes the boot check clears this hold'
   );
 }
 
