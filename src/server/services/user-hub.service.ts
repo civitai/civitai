@@ -323,7 +323,43 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
     select: hubSelect,
   });
   if (!hub) throw throwNotFoundError('Hub not found');
-  return toHubDetail(hub, userId);
+  const detail = toHubDetail(hub, userId);
+  // The owner is told which Model and ModelVersion sources are of a deleted model, which serve
+  // nothing, so they can tell which to remove. Only that: the source's own label is what is shown.
+  const deleted = detail.isOwner ? await getDeletedSourceKeys(detail.sources) : new Set<string>();
+  return {
+    ...detail,
+    sources: detail.sources.map((source) => ({
+      ...source,
+      deleted: deleted.has(hubSourceKey(source)),
+    })),
+  };
+}
+
+async function getDeletedSourceKeys(sources: { type: UserHubSourceType; targetId: number }[]) {
+  const ids = (type: UserHubSourceType) =>
+    sources.filter((source) => source.type === type).map((source) => source.targetId);
+  const modelIds = ids(UserHubSourceType.Model);
+  const versionIds = ids(UserHubSourceType.ModelVersion);
+  // Loaded on demand: the model service imports the image service, which imports this one.
+  const { getDeletedModelVersionIds } = await import('~/server/services/model.service');
+  const [deletedModels, deletedVersionIds] = await Promise.all([
+    modelIds.length
+      ? dbRead.model.findMany({
+          where: { id: { in: modelIds }, status: ModelStatus.Deleted },
+          select: { id: true },
+        })
+      : [],
+    getDeletedModelVersionIds(versionIds),
+  ]);
+  return new Set([
+    ...deletedModels.map((model) =>
+      hubSourceKey({ type: UserHubSourceType.Model, targetId: model.id })
+    ),
+    ...[...deletedVersionIds].map((targetId) =>
+      hubSourceKey({ type: UserHubSourceType.ModelVersion, targetId })
+    ),
+  ]);
 }
 
 /**
@@ -1468,24 +1504,29 @@ export async function resolveHubSources({
   const cappedVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
   if (allVersionIds.length > cappedVersionIds.length) truncated = true;
   // Loaded on demand: the model service imports the image service, which imports this one.
-  const { getHeldGalleryLevel, getWithheldVersionIds } = await import(
+  const { getDeletedModelVersionIds, getHeldGalleryLevel, getWithheldVersionIds } = await import(
     '~/server/services/model.service'
   );
+  // A deleted model's versions are no source at all, for every viewer: they neither serve the hub
+  // nor hold it. Dropped here, before both, so the hold can never lift while the hub still serves
+  // that model.
+  const deletedVersionIds = await getDeletedModelVersionIds(cappedVersionIds, modelOfVersion);
+  const liveVersionIds = cappedVersionIds.filter((id) => !deletedVersionIds.has(id));
   // Moderators are neither held nor withheld, when the caller says so: they must see what they may
   // need to remove. A taken-down model's versions leave the hub, except for its owner. The hold is
   // read over the versions before that, so the two run together; a withheld model can only narrow
   // it. Versions expanded from a Model source already carry their model; only the rest are looked up.
   const [withheldVersionIds, heldBrowsingLevel] =
-    cappedVersionIds.length && !holdExempt
+    liveVersionIds.length && !holdExempt
       ? await Promise.all([
-          getWithheldVersionIds(cappedVersionIds, galleryOwnerId),
+          getWithheldVersionIds(liveVersionIds, galleryOwnerId),
           getHeldGalleryLevel({
-            modelIds: [...new Set(cappedVersionIds.flatMap((id) => modelOfVersion.get(id) ?? []))],
-            modelVersionIds: cappedVersionIds.filter((id) => !modelOfVersion.has(id)),
+            modelIds: [...new Set(liveVersionIds.flatMap((id) => modelOfVersion.get(id) ?? []))],
+            modelVersionIds: liveVersionIds.filter((id) => !modelOfVersion.has(id)),
           }),
         ])
       : [new Set<number>(), undefined];
-  const modelVersionIds = cappedVersionIds.filter((id) => !withheldVersionIds.has(id));
+  const modelVersionIds = liveVersionIds.filter((id) => !withheldVersionIds.has(id));
 
   return {
     userIds: byType(UserHubSourceType.User),

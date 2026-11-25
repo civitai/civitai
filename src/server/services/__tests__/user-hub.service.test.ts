@@ -9,18 +9,24 @@ import type * as SystemCache from '~/server/services/system-cache';
 //     without its content-rating cap (forcedBrowsingLevel).
 // Neither shows up as an error at any layer, so only a test pins them.
 
-const { permissionsMock, replacedTagIdsMock, heldLevelMock, withheldVersionsMock } = vi.hoisted(
-  () => ({
-    permissionsMock: vi.fn(),
-    replacedTagIdsMock: vi.fn(),
-    heldLevelMock: vi.fn(),
-    withheldVersionsMock: vi.fn(),
-  })
-);
+const {
+  permissionsMock,
+  replacedTagIdsMock,
+  heldLevelMock,
+  withheldVersionsMock,
+  deletedVersionsMock,
+} = vi.hoisted(() => ({
+  permissionsMock: vi.fn(),
+  replacedTagIdsMock: vi.fn(),
+  heldLevelMock: vi.fn(),
+  withheldVersionsMock: vi.fn(),
+  deletedVersionsMock: vi.fn(),
+}));
 
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: heldLevelMock,
   getWithheldVersionIds: withheldVersionsMock,
+  getDeletedModelVersionIds: deletedVersionsMock,
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -102,6 +108,7 @@ beforeEach(() => {
   replacedTagIdsMock.mockResolvedValue([]);
   heldLevelMock.mockResolvedValue(undefined);
   withheldVersionsMock.mockResolvedValue(new Set());
+  deletedVersionsMock.mockResolvedValue(new Set());
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
@@ -539,6 +546,51 @@ describe('resolveHubSources source expansion', () => {
     // Model 20's version is known to be model 20's; only the explicit version is looked up.
     expect(heldLevelMock).toHaveBeenCalledWith({ modelIds: [20], modelVersionIds: [41] });
     expect(result?.heldBrowsingLevel).toBe(1);
+  });
+
+  // #317: a deleted, never-published SFW-only model held a hub for days after it was deleted.
+  describe('a deleted model', () => {
+    beforeEach(() => {
+      findFirstHub.mockResolvedValue({
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10 },
+          { type: UserHubSourceType.Model, targetId: 20 },
+        ],
+      });
+      stubVersions({ 20: [30] });
+      heldLevelMock.mockResolvedValue(1);
+    });
+
+    it('neither serves the hub nor holds it', async () => {
+      deletedVersionsMock.mockResolvedValue(new Set([30]));
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(deletedVersionsMock).toHaveBeenCalledWith([30], new Map([[30, 20]]));
+      expect(result?.modelVersionIds).toEqual([]);
+      expect(result?.heldBrowsingLevel).toBeUndefined();
+      expect(result?.userIds).toEqual([10]);
+    });
+
+    it('still holds the hub while the model is not deleted (control)', async () => {
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.modelVersionIds).toEqual([30]);
+      expect(result?.heldBrowsingLevel).toBe(1);
+    });
+
+    it('serves nothing from it to a viewer exempt from the hold either', async () => {
+      deletedVersionsMock.mockResolvedValue(new Set([30]));
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        isModerator: true,
+        holdExempt: true,
+      });
+
+      expect(result?.modelVersionIds).toEqual([]);
+    });
   });
 
   it('expands a model source into its versions alongside explicit versions', async () => {
@@ -2172,6 +2224,36 @@ describe('getUserHubById', () => {
     const hub = await getUserHubById({ id: 1 });
 
     expect(hub.isOwner).toBe(false);
+  });
+
+  // #317: the owner could not tell which source was their deleted model.
+  it('marks a deleted model source for the owner, and tells no one else', async () => {
+    const sources = [
+      { type: UserHubSourceType.Model, targetId: 20, enabled: true, exclude: false },
+      { type: UserHubSourceType.Model, targetId: 21, enabled: true, exclude: false },
+      { type: UserHubSourceType.ModelVersion, targetId: 41, enabled: true, exclude: false },
+      { type: UserHubSourceType.ModelVersion, targetId: 42, enabled: true, exclude: false },
+    ];
+    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources });
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 20 }] as never);
+    deletedVersionsMock.mockResolvedValue(new Set([42]));
+
+    const owner = await getUserHubById({ id: 1, userId: 5 });
+    expect(owner.sources.map((s) => [s.targetId, s.deleted])).toEqual([
+      [20, true],
+      [21, false],
+      [41, false],
+      [42, true],
+    ]);
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [20, 21] }, status: ModelStatus.Deleted } })
+    );
+    expect(deletedVersionsMock).toHaveBeenCalledWith([41, 42]);
+
+    vi.clearAllMocks();
+    const stranger = await getUserHubById({ id: 1, userId: 999 });
+    expect(stranger.sources.some((s) => s.deleted)).toBe(false);
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
   });
 });
 

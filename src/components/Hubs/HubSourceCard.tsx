@@ -23,6 +23,8 @@ export type HubSourceCardProps = {
     enabled: boolean;
     exclude?: boolean;
     index: number;
+    /** Of a deleted model: it serves nothing. Set for the owner only. */
+    deleted?: boolean;
   };
   /**
    * The rest of this tag AND-group, beyond `source`. Empty or absent for every other
@@ -108,7 +110,9 @@ export function HubSourceCard({
             c={on ? color : 'dimmed'}
             className="tracking-wide"
           >
-            {source.exclude ? `${label} · kept out` : label}
+            {[label, source.exclude && 'kept out', source.deleted && 'deleted']
+              .filter(Boolean)
+              .join(' · ')}
           </Text>
           {grouped ? (
             <>

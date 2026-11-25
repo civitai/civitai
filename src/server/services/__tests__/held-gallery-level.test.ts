@@ -10,8 +10,13 @@ vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   getCreatorGalleryHiddenUserIds: vi.fn(async () => []),
 }));
 
-const { bustPostVersionCache, getHeldGalleryLevel, getHeldLevelsByPost, getWithheldVersionIds } =
-  await import('~/server/services/model.service');
+const {
+  bustPostVersionCache,
+  getDeletedModelVersionIds,
+  getHeldGalleryLevel,
+  getHeldLevelsByPost,
+  getWithheldVersionIds,
+} = await import('~/server/services/model.service');
 
 // Model 1 is minor with PG stored, model 2 is SFW-only with PG13 stored, model 3 is unflagged.
 const models: Record<number, { minor: boolean; sfwOnly: boolean; level: number }> = {
@@ -304,5 +309,32 @@ describe('getWithheldVersionIds', () => {
   it('names no version it cannot find', async () => {
     dbMock.dbRead.modelVersion.findMany.mockResolvedValueOnce([] as never);
     expect([...(await getWithheldVersionIds([42]))]).toEqual([]);
+  });
+});
+
+describe('getDeletedModelVersionIds', () => {
+  beforeEach(() => {
+    // Model 2 is deleted; the fake answers the status the query asks for, so a query that stops
+    // asking for one returns every model.
+    const status: Record<number, string> = { 1: 'Published', 2: 'Deleted', 3: 'Unpublished' };
+    dbMock.dbRead.model.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] }; status?: string };
+    }) =>
+      where.id.in
+        .filter((id) => where.status === undefined || status[id] === where.status)
+        .map((id) => ({ id }))) as never);
+  });
+
+  it('names only the versions of a deleted model, whether or not their model is known', async () => {
+    // 20 is looked up, 30 comes with its model, 990 does not exist.
+    const deleted = await getDeletedModelVersionIds([10, 20, 30, 990], new Map([[30, 3]]));
+
+    expect([...deleted]).toEqual([20]);
+  });
+
+  it('names a deleted model version passed with its model', async () => {
+    expect([...(await getDeletedModelVersionIds([21], new Map([[21, 2]])))]).toEqual([21]);
   });
 });

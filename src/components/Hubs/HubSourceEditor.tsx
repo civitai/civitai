@@ -35,6 +35,8 @@ export type HubSourceValue = {
    * match; null is a group of one, which is every source that predates the column.
    */
   groupKey?: number | null;
+  /** A Model or ModelVersion source whose model is deleted: it serves nothing. Owner only. */
+  deleted?: boolean;
 };
 
 /**
@@ -171,6 +173,12 @@ function SourceChip({
       >
         {hubSourceKindLabel(first.type)}
       </Badge>
+
+      {first.deleted && (
+        <Badge size="xs" variant="outline" color="gray" className="shrink-0">
+          Deleted
+        </Badge>
+      )}
 
       {addControl}
 
