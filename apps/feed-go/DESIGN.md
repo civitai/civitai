@@ -804,9 +804,14 @@ it is never less correct than not routing it — only its share of fallbacks cha
   procedure, so the main gains are the larger idle pool and the error counter. A failure before the
   Node app's response starts is a 502 and `feed_go_fallback_proxy_errors_total{reason="upstream"}`
   (logged), or `reason="canceled"`; one mid-body aborts the response and is not counted.
-- **Shutdown.** On SIGTERM, within one 15 s grace period: new shadow samples are dropped, the running
-  ones are cancelled and waited for, then both listeners drain their in-flight requests, and only then
-  are the replica pool and both Redis clients closed.
+- **Shutdown.** On SIGTERM, `/readyz` answers 503 at once while both listeners keep serving, for
+  `FEED_GO_SHUTDOWN_DELAY_MS` (default 10 s; 0 = no wait), so the router stops sending new requests
+  before the listener closes instead of having them refused. `/healthz` (liveness) stays 200
+  throughout. Then, within one 15 s grace period: new shadow samples are dropped, the running ones are
+  cancelled and waited for, then both listeners drain their in-flight requests, and only then are the
+  replica pool and both Redis clients closed. Set the delay above the readiness probe's period ×
+  failure threshold plus the router's endpoint propagation, and the pod's termination grace above the
+  delay + 15 s + a margin.
 
 ### 6.2 The API request policy
 
@@ -1643,7 +1648,7 @@ None of this is in this PR.
   small variant (a `VERSION` file, or a version-only `package.json` plus its lockfile importer) before
   a release can be cut. Both Dockerfile base images are already pinned by digest.
 - **Workload:** a Deployment on the same pool class as the Node API pods it is compared with, two
-  container ports (public 8080, internal 9090), liveness/readiness on `:9090/healthz`.
+  container ports (public 8080, internal 9090), liveness on `:9090/healthz`, readiness on `:9090/readyz` (fails from SIGTERM on; §6.1 Shutdown).
 - **Services:** an internal Service for 9090 (metrics scrape + shadow posts from the Node pods); a
   public route for 8080 only when serving starts.
 - **Secrets / env:** the replica URL, both Redis URLs (plus `REDIS_SYS_SENTINELS` /

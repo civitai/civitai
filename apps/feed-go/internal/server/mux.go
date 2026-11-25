@@ -31,14 +31,17 @@ func PublicMux(s *Server) *http.ServeMux {
 	return mux
 }
 
-// InternalMux is the internal listener's routes: metrics, health, the shadow endpoints, the Go-first
+// InternalMux is the internal listener's routes: metrics, liveness (/healthz), readiness (/readyz), the shadow endpoints, the Go-first
 // probe endpoint (`/internal/probe/<procedure>`), and — only when
 // withPprof (FEED_GO_PPROF) — the net/http/pprof handlers under /debug/pprof/, so a CPU profile can be
 // pulled through a port-forward (`/debug/pprof/profile?seconds=30`).
 func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", metrics)
+	// Liveness: 200 while the process serves, draining included. Readiness is /readyz, separate so a
+	// shutdown can fail it without the liveness probe restarting the pod mid-drain.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.Handle("/readyz", s.Readiness)
 	mux.HandleFunc("/internal/shadow/"+Procedure, s.ShadowHandler)
 	mux.HandleFunc("/internal/shadow"+V1ImagesPath, s.ShadowV1Handler)
 	mux.HandleFunc("/internal/shadow"+V1ModelsPath, s.ShadowV1ModelsHandler)

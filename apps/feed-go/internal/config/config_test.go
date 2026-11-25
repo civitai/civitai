@@ -640,6 +640,26 @@ func TestLoadServingLimits(t *testing.T) {
 	}
 }
 
+// FEED_GO_SHUTDOWN_DELAY_MS: unset, negative or junk is the 10 s default; 0 is an explicit "no wait".
+func TestLoadShutdownDelay(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]time.Duration{
+		"": 10 * time.Second, "junk": 10 * time.Second, "-1": 10 * time.Second,
+		"0": 0, "2500": 2500 * time.Millisecond, "30000": 30 * time.Second,
+	} {
+		t.Setenv("FEED_GO_SHUTDOWN_DELAY_MS", in)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ShutdownDelay != want {
+			t.Errorf("FEED_GO_SHUTDOWN_DELAY_MS=%q -> %v, want %v", in, cfg.ShutdownDelay, want)
+		}
+	}
+}
+
 // FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS is off unless set to a true value, and is its own switch:
 // FEED_GO_COMPUTE_MISSES on does not turn it on.
 func TestLoadComputeImageResourcesMiss(t *testing.T) {
