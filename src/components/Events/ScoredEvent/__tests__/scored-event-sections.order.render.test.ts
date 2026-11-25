@@ -27,6 +27,13 @@ const PINK_THIRD: Team[] = [{ team: 'Pink', score: 4200, rank: 3 }];
 let teams: Team[] | undefined = PINK_THIRD;
 let snapshotAt = new Date();
 let turfLive = true;
+const PACE = {
+  teams: [{ team: 'Pink', pct: 12 }],
+  week: { from: '2026-11-24T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' },
+  badge: null,
+};
+let pace: typeof PACE | null = PACE;
+let media: { comeback?: { video?: string; duration?: number } } | undefined;
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
@@ -43,15 +50,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1 }) },
-    'hatTurf.getComebackPace': {
-      useQuery: () => ({
-        data: {
-          teams: [{ team: 'Pink', pct: 12 }],
-          week: { from: '2026-11-24T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' },
-          badge: null,
-        },
-      }),
-    },
+    'hatTurf.getComebackPace': { useQuery: () => ({ data: pace }) },
+    'hatTurf.getEventMedia': { useQuery: () => ({ data: media }) },
   }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
@@ -119,6 +119,8 @@ afterEach(() => {
   teams = PINK_THIRD;
   snapshotAt = new Date();
   turfLive = true;
+  pace = PACE;
+  media = undefined;
 });
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -206,6 +208,45 @@ describe('ScoredEventSections order', () => {
       'topHats',
       'hats',
     ]);
+  });
+
+  it('leaves out the Comeback Cup while there is no pace to show', () => {
+    pace = null;
+    expect(sections({ joined: false, ended: false })).not.toContain('comeback');
+  });
+
+  it("lists the Cup's teams in the order the pace read ranks them, each with its signed pace", () => {
+    pace = {
+      ...PACE,
+      teams: [
+        { team: 'Blue', pct: 30 },
+        { team: 'Pink', pct: 12 },
+        { team: 'Gold', pct: -40 },
+      ],
+    };
+    sections({ joined: true, ended: false });
+    const rows = [...host!.querySelectorAll('[data-testid="comeback-cup-team"]')];
+    expect(rows.map((r) => r.textContent?.match(/Blue|Pink|Gold/)?.[0])).toEqual([
+      'Blue',
+      'Pink',
+      'Gold',
+    ]);
+    expect(rows[0].textContent).toContain('+30%');
+    expect(rows[2].textContent).toContain('−40%');
+    expect(rows[1].hasAttribute('data-mine')).toBe(true);
+  });
+
+  it("plays the Cup film from the event's media, and offers no play button without one", () => {
+    sections({ joined: false, ended: false });
+    expect(host!.querySelector('[data-testid="comeback-cup-play"]')).toBeNull();
+    act(() => root?.unmount());
+    host?.remove();
+    media = { comeback: { video: 'cup-film', duration: 29 } };
+    sections({ joined: false, ended: false });
+    expect(host!.querySelector('[data-testid="comeback-cup-play"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="comeback-cup-duration"]')?.textContent).toContain(
+      '0:29'
+    );
   });
 
   it('leaves out Top turf players until turf is live', () => {

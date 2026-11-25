@@ -72,6 +72,19 @@ type InfiniteInput struct {
 	// request's board color (getNewCreatorUserIds), and the addons resolved under the `newCreators`
 	// scope.
 	NewCreators bool
+	// PublishedOnly is `publishedOnly: true` (read only with InfinitePorts.PublishedOnly; otherwise a
+	// truthy value falls back as `input-publishedOnly`). The handler withdraws it unless `userId` is
+	// the viewer's own (ServeInfinite); kept, it routes the request to Postgres beside a `userId`
+	// (requiresImageDbPath) and is the feed mapper's empty page without one (`flag:publishedOnly`).
+	PublishedOnly bool
+}
+
+// InfinitePorts are image.getInfinite's input shapes ported behind their own serve switch, each off
+// by default: off, the shape falls back exactly as before the port.
+type InfinitePorts struct {
+	// PublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY: compute a request with
+	// `publishedOnly`.
+	PublishedOnly bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
@@ -139,9 +152,15 @@ var infiniteAbsentKeys = func() map[string]bool {
 // ignored alone.
 var hatKeys = []string{"hatSort", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats"}
 
-// ParseInfinite validates image.getInfinite's decoded input. A shape outside the supported subset is
-// a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST).
+// ParseInfinite is ParseInfiniteWith with every port's switch off.
 func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
+	return ParseInfiniteWith(m, InfinitePorts{})
+}
+
+// ParseInfiniteWith validates image.getInfinite's decoded input. A shape outside the supported subset
+// is a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST). A
+// shape in ports is read rather than refused only when its switch is on.
+func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, error) {
 	for _, k := range hatKeys {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.New("infinite-hat-turf")
@@ -154,7 +173,11 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 	if recentlyAdded {
 		parsed = without(parsed, "sort")
 	}
-	base, err := parseInput(parsed, infiniteUnsupported, infiniteAbsentKeys, true)
+	unsupported := infiniteUnsupported
+	if ports.PublishedOnly {
+		unsupported = withoutKey(unsupported, "publishedOnly")
+	}
+	base, err := parseInput(parsed, unsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +252,25 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		}
 		in.NewCreators = b
 	}
+	if v, ok := m["publishedOnly"]; ok && ports.PublishedOnly {
+		b, isBool := v.(bool) // z.boolean().optional(): a null or anything else is Node's BAD_REQUEST
+		if !isBool {
+			return nil, fallback.NewfSafe("input-invalid", "publishedOnly", "publishedOnly: %T", v)
+		}
+		in.PublishedOnly = b
+	}
 	return in, nil
+}
+
+// withoutKey is list without key (a copy).
+func withoutKey(list []string, key string) []string {
+	out := make([]string, 0, len(list))
+	for _, k := range list {
+		if k != key {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // inputIDs reads `ids` (z.array(z.number()).max(200).optional()), kept as sent. A present value that
@@ -413,12 +454,29 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 }
 
 // dbPath is requiresImageDbPath for the supported inputs: a post's media, a collection, reactions,
-// ids, a model without a version (the feed has no model dimension), or prioritizedUserIds with a
-// model or version scope. Every other shape it lists falls back in parsing.
+// ids, a model without a version (the feed has no model dimension), prioritizedUserIds with a model
+// or version scope, or `publishedOnly` beside a `userId` (the own-content submit pickers; read on the
+// input after the handler's withdrawal, withPublishedOnlyScoped). Every other shape it lists falls
+// back in parsing.
 func (in *InfiniteInput) dbPath() bool {
 	return in.PostID != 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
 		(in.ModelID != 0 && in.ModelVersionID == 0) ||
-		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0))
+		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0)) ||
+		(in.PublishedOnly && in.UserID != 0)
+}
+
+// withPublishedOnlyScoped is getInfiniteImagesHandler's `scopedInput`: `publishedOnly` beside a
+// `userId` that is not the viewer's own (`unhatted.userId !== user?.id`; signed out or banned, no
+// viewer, so any `userId`) is withdrawn, so it neither routes the request to Postgres nor reaches the
+// feed mapper. Only `userId` is compared: a `username` scope keeps the flag. in itself when nothing
+// is withdrawn, else a copy.
+func (in *InfiniteInput) withPublishedOnlyScoped(viewerID int) *InfiniteInput {
+	if !in.PublishedOnly || in.UserID == 0 || in.UserID == viewerID {
+		return in
+	}
+	cp := *in
+	cp.PublishedOnly = false
+	return &cp
 }
 
 // addonScope is the scope the addons resolve under: `newCreators` for the board (both
@@ -671,6 +729,9 @@ type InfiniteDeps struct {
 	// NewCreators reads the "new & upcoming" boards (`newCreators`); nil = not configured (a request
 	// with `newCreators: true` falls back).
 	NewCreators *NewCreatorBoards
+	// Ports are the input shapes served behind their own switch (ParseInfiniteWith), all off by
+	// default.
+	Ports InfinitePorts
 }
 
 // InfiniteRequest is one call.
@@ -726,6 +787,11 @@ func infiniteFilters(in *InfiniteInput, addons []browsing.Addon, level int, view
 // value) for the supported subset.
 func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*InfiniteAnswer, error) {
 	in := req.Input
+	if req.Viewer != nil {
+		in = in.withPublishedOnlyScoped(req.Viewer.ID)
+	} else {
+		in = in.withPublishedOnlyScoped(0)
+	}
 	useIndex := d.Config.ImageIndexFeed && !in.dbPath()
 	if useIndex && d.Feed == nil {
 		return nil, fallback.New("index-feed-unconfigured")
@@ -910,6 +976,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		RequiringMeta:         in.RequiringMeta,
 		HasPrioritizedUserIDs: in.prioritized(),
 		Pending:               in.Pending,
+		PublishedOnly:         in.PublishedOnly,
 		Techniques:            in.Techniques,
 		Tools:                 in.Tools,
 		BaseModels:            in.BaseModels,

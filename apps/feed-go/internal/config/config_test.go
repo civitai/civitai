@@ -203,6 +203,30 @@ func TestLoadServeModelGetAllDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadGetAllServeHidePaidDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_HIDE_PAID", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeHidePaid != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_HIDE_PAID=%q -> %v, want %v", in, c.GetAllServeHidePaid, want)
+		}
+	}
+	// Its own switch: the route's and the other ports' switches do not turn it on.
+	t.Setenv("FEED_GO_GETALL_SERVE_HIDE_PAID", "")
+	t.Setenv("FEED_GO_SERVE_MODEL_GETALL", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	if c, err := Load(); err != nil || c.GetAllServeHidePaid {
+		t.Fatalf("the other switches on: GetAllServeHidePaid=%v err=%v, want false", c.GetAllServeHidePaid, err)
+	}
+}
+
 func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -323,6 +347,34 @@ func TestLoadAnswerRegionBlockedDefaultsOff(t *testing.T) {
 		if c.AnswerRegionBlocked != want {
 			t.Errorf("FEED_GO_ANSWER_REGION_BLOCKED=%q -> %v, want %v", in, c.AnswerRegionBlocked, want)
 		}
+	}
+}
+
+// The publishedOnly port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not
+// turn it on, nor it FEED_GO_SERVE_INFINITE.
+func TestLoadInfinitePublishedOnlyPortDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.InfiniteServeInputPublishedOnly != want {
+			t.Errorf("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY=%q -> %v, want %v", in, c.InfiniteServeInputPublishedOnly, want)
+		}
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", "")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "true")
+	if c, err := Load(); err != nil || c.InfiniteServeInputPublishedOnly || !c.ServeInfinite {
+		t.Fatalf("FEED_GO_SERVE_INFINITE=true alone: port=%v ServeInfinite=%v err=%v, want false, true", c.InfiniteServeInputPublishedOnly, c.ServeInfinite, err)
+	}
+	t.Setenv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", "true")
+	t.Setenv("FEED_GO_SERVE_INFINITE", "")
+	if c, err := Load(); err != nil || !c.InfiniteServeInputPublishedOnly || c.ServeInfinite {
+		t.Fatalf("the port's switch alone: port=%v ServeInfinite=%v err=%v, want true, false", c.InfiniteServeInputPublishedOnly, c.ServeInfinite, err)
 	}
 }
 
@@ -856,5 +908,23 @@ func TestCookieNamesPerMode(t *testing.T) {
 				t.Errorf("CookieNames(civitai.com) = %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// FEED_GO_SERVE_PARITY_SAMPLE_RATE: unset is 0 (the serve-side parity sampler off); a rate in [0, 1]
+// is read as is; junk, NaN or out of range is 0, never a rate that replays more than asked.
+func TestServeParityEnv(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for v, want := range map[string]float64{"": 0, "0.005": 0.005, "1": 1, "0": 0, "junk": 0, "-0.1": 0, "1.5": 0, "NaN": 0, "0.25": 0.25} {
+		t.Setenv("FEED_GO_SERVE_PARITY_SAMPLE_RATE", v)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeParityRate != want {
+			t.Errorf("FEED_GO_SERVE_PARITY_SAMPLE_RATE=%q reads %v, want %v", v, c.ServeParityRate, want)
+		}
 	}
 }

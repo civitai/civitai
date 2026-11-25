@@ -1,0 +1,796 @@
+{
+  "name": "hide-paid-creator-private-free-version",
+  "description": "Hide Paid on a creator’s page (Private versions are listed there): a model whose only free version is Private shows it; a model with only a paid version, if the page query returned it, has no version left and is left out.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": [],
+    "serveHidePaid": true
+  },
+  "request": {
+    "input": "{\"json\":{\"sort\":\"Highest Rated\",\"limit\":10,\"browsingLevel\":1,\"username\":\"artist_two\",\"hidePaid\":\"true\"}}",
+    "headers": {
+      "host": "blue.example.test"
+    },
+    "session": {
+      "userId": 1003
+    }
+  },
+  "redis": {
+    "packed:caches:basic-tags:702": {
+      "value": {
+        "id": 702,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQK+pG5hbWWlc3R5bGWpbnNmd0xldmVsAaR0eXBlrVVzZXJHZW5lcmF0ZWSoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:basic-users:1002": {
+      "value": {
+        "id": 1002,
+        "username": "artist_two",
+        "image": null,
+        "deletedAt": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+laW1hZ2XAqWRlbGV0ZWRBdMCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:cosmetics2:Model:5022": {
+      "value": {
+        "equippedToId": 5022,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0Tnqhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:cosmetics2:Model:5023": {
+      "value": {
+        "equippedToId": 5023,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0Tn6hub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:cosmetics2:Model:5024": {
+      "value": {
+        "equippedToId": 5024,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0ToKhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:data-for-model-2:5022": {
+      "value": {
+        "modelId": 5022,
+        "hashes": [
+          "HASH5022"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6033,
+            "index": 0,
+            "name": "v6033",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Flux.1 D",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6033</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE56maGFzaGVzkahIQVNINTAyMqR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF5GlaW5kZXgApG5hbWWldjYwMzO0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKhGbHV4LjEgRK1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/ah1YIK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2oeqaCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9usTxwPmFib3V0IDYwMzM8L3A+rHRyYWluZWRXb3Jkc5Gkd29yZKV2YWVJZMCnY292ZXJlZMOrY292ZXJlZE5leHTDqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:data-for-model-2:5023": {
+      "value": {
+        "modelId": 5023,
+        "hashes": [
+          "HASH5023"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6034,
+            "index": 0,
+            "name": "v6034",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Illustrious",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6034</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE5+maGFzaGVzkahIQVNINTAyM6R0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF5KlaW5kZXgApG5hbWWldjYwMzS0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKtJbGx1c3RyaW91c61iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/ah1YIK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2oeqaCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9usTxwPmFib3V0IDYwMzQ8L3A+rHRyYWluZWRXb3Jkc5Gkd29yZKV2YWVJZMCnY292ZXJlZMOrY292ZXJlZE5leHTDqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:data-for-model-2:5024": {
+      "value": {
+        "modelId": 5024,
+        "hashes": [
+          "HASH5024"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6035,
+            "index": 0,
+            "name": "v6035",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6035</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          },
+          {
+            "id": 6036,
+            "index": 0,
+            "name": "v6036",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Private",
+            "nsfwLevel": 1,
+            "description": "<p>about 6036</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE6CmaGFzaGVzkahIQVNINTAyNKR0YWdzkKh2ZXJzaW9uc5LeABKiaWTNF5OlaW5kZXgApG5hbWWldjYwMzW0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKRQb255rWJhc2VNb2RlbFR5cGWoU3RhbmRhcmSpY3JlYXRlZEF01v9qHVggrnRyYWluaW5nU3RhdHVzwKtwdWJsaXNoZWRBdNb/ah6poKZzdGF0dXOpUHVibGlzaGVkpWZsYWdzAKxhdmFpbGFiaWxpdHmmUHVibGljqW5zZndMZXZlbAGrZGVzY3JpcHRpb26xPHA+YWJvdXQgNjAzNTwvcD6sdHJhaW5lZFdvcmRzkaR3b3JkpXZhZUlkwKdjb3ZlcmVkw6tjb3ZlcmVkTmV4dMPeABKiaWTNF5SlaW5kZXgApG5hbWWldjYwMza0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKRQb255rWJhc2VNb2RlbFR5cGWoU3RhbmRhcmSpY3JlYXRlZEF01v9qHVggrnRyYWluaW5nU3RhdHVzwKtwdWJsaXNoZWRBdNb/ah6poKZzdGF0dXOpUHVibGlzaGVkpWZsYWdzAKxhdmFpbGFiaWxpdHmnUHJpdmF0Zaluc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9usTxwPmFib3V0IDYwMzY8L3A+rHRyYWluZWRXb3Jkc5Gkd29yZKV2YWVJZMCnY292ZXJlZMOrY292ZXJlZE5leHTDqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:images-for-model-version-2:6034": {
+      "value": {
+        "modelVersionId": 6034,
+        "images": [
+          {
+            "id": 8331,
+            "userId": 1002,
+            "name": "img-8331.png",
+            "url": "00000000-0000-4000-8000-000000008331",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8331",
+            "modelVersionId": 6034,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzReSpmltYWdlc5HeABKiaWTNIIumdXNlcklkzQPqpG5hbWWsaW1nLTgzMzEucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MzMxqW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MzMxrm1vZGVsVmVyc2lvbklkzReSpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:images-for-model-version-2:6036": {
+      "value": {
+        "modelVersionId": 6036,
+        "images": [
+          {
+            "id": 8351,
+            "userId": 1002,
+            "name": "img-8351.png",
+            "url": "00000000-0000-4000-8000-000000008351",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8351",
+            "modelVersionId": 6036,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzReUpmltYWdlc5HeABKiaWTNIJ+mdXNlcklkzQPqpG5hbWWsaW1nLTgzNTEucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MzUxqW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MzUxrm1vZGVsVmVyc2lvbklkzReUpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:model-tags:5022": {
+      "value": {
+        "modelId": 5022,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE56mdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:model-tags:5023": {
+      "value": {
+        "modelId": 5023,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE5+mdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:model-tags:5024": {
+      "value": {
+        "modelId": 5024,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE6CmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1002": {
+      "value": {
+        "userId": 1002,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D6qhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8331": {
+      "value": {
+        "imageId": 8331,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNIIukdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8351": {
+      "value": {
+        "imageId": 8351,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNIJ+kdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-cosmetics:1002": {
+      "value": {
+        "userId": 1002,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D6qhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-metric-privacy-defaults:1002": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "session:data2:1003": {
+      "value": {
+        "id": 1003,
+        "username": "viewer_three",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPrqHVzZXJuYW1lrHZpZXdlcl90aHJlZatpc01vZGVyYXRvcsKoYmFubmVkQXTApHRpZXLA"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[{\"id\":703,\"name\":\"BlockedName\"}]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [
+      {
+        "cursor": null,
+        "bound": null,
+        "rows": [
+          {
+            "id": 5022,
+            "name": "Golden model 5022",
+            "sfwName": null,
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-13T10:00:00.000Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 65,
+              "thumbsUpCount": 55,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1002,
+            "cursorId": "55|65|5022"
+          },
+          {
+            "id": 5023,
+            "name": "Golden model 5023",
+            "sfwName": null,
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-13T10:00:00.000Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 60,
+              "thumbsUpCount": 50,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1002,
+            "cursorId": "50|60|5023"
+          },
+          {
+            "id": 5024,
+            "name": "Golden model 5024",
+            "sfwName": null,
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-13T10:00:00.000Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 55,
+              "thumbsUpCount": 45,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1002,
+            "cursorId": "45|55|5024"
+          }
+        ]
+      }
+    ],
+    "paidAccess": [
+      {
+        "modelId": 5022,
+        "deadline": null,
+        "versionIds": [
+          6033
+        ]
+      },
+      {
+        "modelId": 5024,
+        "deadline": null,
+        "versionIds": [
+          6035
+        ]
+      }
+    ],
+    "coverImages": [],
+    "tags": [],
+    "creators": [
+      {
+        "username": "artist_two",
+        "id": 1002
+      }
+    ]
+  },
+  "expect": {
+    "envelope": {
+      "json": {
+        "items": [
+          {
+            "id": 5023,
+            "name": "Golden model 5023",
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": "2026-06-01T10:00:00.000Z",
+            "lastVersionAt": "2026-06-13T10:00:00.000Z",
+            "publishedAt": "2026-06-02T10:00:00.000Z",
+            "locked": false,
+            "mode": null,
+            "availability": "Public",
+            "userId": 1002,
+            "earlyAccessDeadline": null,
+            "hasActivePaidAccess": false,
+            "hasSfwFace": false,
+            "baseModels": [
+              "Illustrious"
+            ],
+            "user": {
+              "id": 1002,
+              "username": "artist_two",
+              "deletedAt": null,
+              "image": null,
+              "profilePicture": null,
+              "cosmetics": []
+            },
+            "cosmetic": null,
+            "eventDecoration": null,
+            "tags": [
+              702
+            ],
+            "hashes": [
+              "hash5023"
+            ],
+            "hiddenMetrics": {
+              "buzz": false,
+              "downloads": false,
+              "generations": false
+            },
+            "rank": {
+              "downloadCount": 60,
+              "thumbsUpCount": 50,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "version": {
+              "id": 6034,
+              "index": 0,
+              "name": "v6034",
+              "earlyAccessTimeFrame": 0,
+              "baseModel": "Illustrious",
+              "baseModelType": "Standard",
+              "createdAt": "2026-06-01T10:00:00.000Z",
+              "trainingStatus": null,
+              "publishedAt": "2026-06-02T10:00:00.000Z",
+              "status": "Published",
+              "flags": 0,
+              "availability": "Public",
+              "nsfwLevel": 1,
+              "description": "<p>about 6034</p>",
+              "trainedWords": [
+                "word"
+              ],
+              "vaeId": null,
+              "covered": true,
+              "coveredNext": true
+            },
+            "images": [
+              {
+                "id": 8331,
+                "userId": 1002,
+                "name": "img-8331.png",
+                "url": "00000000-0000-4000-8000-000000008331",
+                "nsfwLevel": 1,
+                "width": 832,
+                "height": 1216,
+                "hash": "UHASH8331",
+                "type": "image",
+                "metadata": {
+                  "width": 832,
+                  "height": 1216
+                },
+                "remixOfId": null,
+                "poi": false,
+                "minor": false,
+                "tags": [
+                  501
+                ]
+              }
+            ],
+            "canGenerate": true
+          },
+          {
+            "id": 5024,
+            "name": "Golden model 5024",
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": "2026-06-01T10:00:00.000Z",
+            "lastVersionAt": "2026-06-13T10:00:00.000Z",
+            "publishedAt": "2026-06-02T10:00:00.000Z",
+            "locked": false,
+            "mode": null,
+            "availability": "Public",
+            "userId": 1002,
+            "earlyAccessDeadline": null,
+            "hasActivePaidAccess": false,
+            "hasSfwFace": false,
+            "baseModels": [
+              "Pony"
+            ],
+            "user": {
+              "id": 1002,
+              "username": "artist_two",
+              "deletedAt": null,
+              "image": null,
+              "profilePicture": null,
+              "cosmetics": []
+            },
+            "cosmetic": null,
+            "eventDecoration": null,
+            "tags": [
+              702
+            ],
+            "hashes": [
+              "hash5024"
+            ],
+            "hiddenMetrics": {
+              "buzz": false,
+              "downloads": false,
+              "generations": false
+            },
+            "rank": {
+              "downloadCount": 55,
+              "thumbsUpCount": 45,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "version": {
+              "id": 6036,
+              "index": 0,
+              "name": "v6036",
+              "earlyAccessTimeFrame": 0,
+              "baseModel": "Pony",
+              "baseModelType": "Standard",
+              "createdAt": "2026-06-01T10:00:00.000Z",
+              "trainingStatus": null,
+              "publishedAt": "2026-06-02T10:00:00.000Z",
+              "status": "Published",
+              "flags": 0,
+              "availability": "Private",
+              "nsfwLevel": 1,
+              "description": "<p>about 6036</p>",
+              "trainedWords": [
+                "word"
+              ],
+              "vaeId": null,
+              "covered": true,
+              "coveredNext": true
+            },
+            "images": [
+              {
+                "id": 8351,
+                "userId": 1002,
+                "name": "img-8351.png",
+                "url": "00000000-0000-4000-8000-000000008351",
+                "nsfwLevel": 1,
+                "width": 832,
+                "height": 1216,
+                "hash": "UHASH8351",
+                "type": "image",
+                "metadata": {
+                  "width": 832,
+                  "height": 1216
+                },
+                "remixOfId": null,
+                "poi": false,
+                "minor": false,
+                "tags": [
+                  501
+                ]
+              }
+            ],
+            "canGenerate": true
+          }
+        ],
+        "nextCursor": null
+      },
+      "meta": {
+        "values": {
+          "items.0.createdAt": [
+            "Date"
+          ],
+          "items.0.lastVersionAt": [
+            "Date"
+          ],
+          "items.0.publishedAt": [
+            "Date"
+          ],
+          "items.0.version.createdAt": [
+            "Date"
+          ],
+          "items.0.version.publishedAt": [
+            "Date"
+          ],
+          "items.1.createdAt": [
+            "Date"
+          ],
+          "items.1.lastVersionAt": [
+            "Date"
+          ],
+          "items.1.publishedAt": [
+            "Date"
+          ],
+          "items.1.version.createdAt": [
+            "Date"
+          ],
+          "items.1.version.publishedAt": [
+            "Date"
+          ],
+          "nextCursor": [
+            "undefined"
+          ]
+        },
+        "v": 1
+      }
+    },
+    "writes": {}
+  }
+}

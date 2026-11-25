@@ -137,6 +137,11 @@ func TestMapRefusals(t *testing.T) {
 		{"requiringMeta before pending", func(q *Query) { q.RequiringMeta = true; q.Pending = true }, "flag:requiringMeta", false},
 		{"remixOfId before pending", func(q *Query) { q.HasRemixOfID = true; q.Pending = true }, "input:remixOfId", false},
 		{"pending before a bad cursor", func(q *Query) { q.Pending = true; q.CursorText = "abc" }, "flag:pending", false},
+		// publishedOnly right after pending, and before any refusal Node answers with a 400.
+		{"publishedOnly", func(q *Query) { q.PublishedOnly = true }, "flag:publishedOnly", false},
+		{"pending before publishedOnly", func(q *Query) { q.Pending = true; q.PublishedOnly = true }, "flag:pending", false},
+		{"publishedOnly before an unknown sort", func(q *Query) { q.PublishedOnly = true; q.Sort = "Random" }, "flag:publishedOnly", false},
+		{"publishedOnly before a bad cursor", func(q *Query) { q.PublishedOnly = true; q.CursorText = "abc" }, "flag:publishedOnly", false},
 	}
 	for _, c := range cases {
 		q := base()

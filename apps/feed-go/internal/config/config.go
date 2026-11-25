@@ -52,6 +52,10 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// ServeParityRate is FEED_GO_SERVE_PARITY_SAMPLE_RATE (default 0 = off): the fraction of served
+	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
+	// [0, 1] or junk reads as 0.
+	ServeParityRate float64
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
@@ -78,6 +82,10 @@ type Config struct {
 	// before; they change nothing while ServeModelGetAll is off, except in the shadow.
 	GetAllServeInputIDs      bool
 	GetAllServeInputFollowed bool
+	// GetAllServeHidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID (default off): compute a model.getAll
+	// request with Hide Paid on, with the port of the free-version rule (DESIGN.md §15.2.7). Off, it
+	// is the `input-hidePaid` fallback.
+	GetAllServeHidePaid bool
 	// GetAllServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): on, a
 	// model.getAll page computes its owners' user-cosmetics misses (the image pages' lookup) instead
 	// of falling back (`user-cosmetics-miss`); written back only as FEED_GO_CACHE_WRITEBACK lists
@@ -98,6 +106,10 @@ type Config struct {
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
+	// InfiniteServeInputPublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY (default off):
+	// compute an `image.getInfinite` request with `publishedOnly` (feed.InfinitePorts). Off, such a
+	// request is the `input-publishedOnly` fallback, as before the port.
+	InfiniteServeInputPublishedOnly bool
 	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): answer a public request from a
 	// region on REGION_BLOCK_CONFIG with the app's own 451 here (server.Server.AnswerRegionBlocked).
 	// Off, it is the `region-blocked` fallback, proxied to the Node app, which answers the 451.
@@ -263,6 +275,8 @@ func Load() (*Config, error) {
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 
+		ServeParityRate: rateEnv("FEED_GO_SERVE_PARITY_SAMPLE_RATE"),
+
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 
 		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
@@ -276,11 +290,13 @@ func Load() (*Config, error) {
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
-		GetAllServeInputIDs:          boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
-		GetAllServeInputFollowed:     boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
-		GetAllServeUserCosmeticsMiss: boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
-		GetAllServeMembershipMiss:    boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
-		TierMetadataKey:              tierMetadataKey(),
+		GetAllServeInputIDs:             boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
+		GetAllServeInputFollowed:        boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
+		GetAllServeHidePaid:             boolEnv("FEED_GO_GETALL_SERVE_HIDE_PAID", false),
+		GetAllServeUserCosmeticsMiss:    boolEnv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", false),
+		GetAllServeMembershipMiss:       boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
+		TierMetadataKey:                 tierMetadataKey(),
+		InfiniteServeInputPublishedOnly: boolEnv("FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", false),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
@@ -585,6 +601,15 @@ func intEnv(k string, def int) int {
 		return n
 	}
 	return def
+}
+
+// rateEnv is a sample rate in [0, 1]; unset, junk, NaN or out of range reads as 0 (off).
+func rateEnv(k string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(k)), 64)
+	if err != nil || !(v >= 0 && v <= 1) {
+		return 0
+	}
+	return v
 }
 
 // positiveIntEnv is intEnv where zero or a negative value also means the default.
