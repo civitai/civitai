@@ -6144,7 +6144,7 @@ export type ServiceOffering = {
   requestForm: unknown | null;
   requestFormVersion: Generated<number>;
   /**
-   * The cheapest total valid answers give; null without a form.
+   * The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
    */
   fromPrice: number | null;
   /**

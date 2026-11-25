@@ -855,6 +855,63 @@ describe('a request form', () => {
     await expect(request({ formVersion: 1, formAnswers: COLOR })).rejects.toEqual(conflict);
   });
 
+  it('shows the deal page the answers and the breakdown, and neither without a form', async () => {
+    const view = async (id: number) => {
+      const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+      (
+        dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+      ).serviceDeal.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...row, offering: OFFERING_ROW, events: [] });
+      return deals.getServiceDealView({ dealId: id, userId: BUYER, servicesEnabled: true });
+    };
+    const plain = await request();
+    expect(await view(plain.id)).toMatchObject({ formAnswers: null, priceBreakdown: null });
+    await q(`UPDATE "ServiceDeal" SET status = 'Cancelled'`);
+    await withForm();
+    buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));
+    const { id } = await request({
+      expectedPrice: 800,
+      expectedDeliveryDays: 5,
+      formVersion: 1,
+      formAnswers: COLOR,
+    });
+    expect(await view(id)).toMatchObject({
+      formAnswers: [
+        { label: 'Style', answer: 'Full color' },
+        { label: 'Describe it', answer: 'a tabby, sleeping' },
+      ],
+      priceBreakdown: [
+        { label: 'Base', price: 500, days: 3 },
+        { label: 'Full color', price: 300, days: 2 },
+      ],
+    });
+  });
+
+  it('refuses a request whose text answer is blocked, before any hold or deal', async () => {
+    await withForm();
+    const scan = vi.mocked(throwOnBlockedUserContent);
+    scan.mockImplementation(async (text) => {
+      if (Array.isArray(text) && text.includes('blocked words'))
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'blocked' });
+    });
+    try {
+      await expect(
+        request({
+          expectedPrice: 800,
+          expectedDeliveryDays: 5,
+          formVersion: 1,
+          formAnswers: { style: 'color', brief: 'blocked words' },
+        })
+      ).rejects.toMatchObject({ message: 'blocked' });
+      expect(scan).toHaveBeenCalledTimes(2);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    } finally {
+      scan.mockImplementation(async () => undefined);
+    }
+  });
+
   it('checks the text answers as it checks the request text', async () => {
     await withForm();
     buzz.createMultiAccountBuzzTransaction.mockResolvedValue(charged(800));

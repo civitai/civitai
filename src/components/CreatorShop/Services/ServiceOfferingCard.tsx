@@ -167,7 +167,6 @@ export function ServiceOfferingCard({
   const price = (
     <div className="flex w-full items-end justify-between gap-2">
       <div className="flex items-center rounded-full bg-black/60 backdrop-blur-sm">
-        {/* A service priced by its request form costs at least its cheapest answers. */}
         {!!offering.requestForm && (
           <Text size="xs" c="white" pl={10}>
             from

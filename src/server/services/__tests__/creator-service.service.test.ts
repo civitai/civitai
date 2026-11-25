@@ -1000,7 +1000,7 @@ describe('a request form', () => {
   const save = (input: object, licenseEditor = true) =>
     upsertServiceOffering({
       sellerId: SELLER,
-      input: { ...fields, id: 5, ...input },
+      input: { ...fields, id: 5, publish: false, ...input },
       licenseEditor,
     });
 

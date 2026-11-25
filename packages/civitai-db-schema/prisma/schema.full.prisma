@@ -11769,7 +11769,7 @@ model ServiceOffering {
   /// Questions whose answers add to the price and days; null for a single-price service.
   requestForm        Json?
   requestFormVersion Int                   @default(0)
-  /// The cheapest total valid answers give; null without a form.
+  /// The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
   fromPrice          Int?
   /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
   /// only in the transaction that publishes or hides a review; the deals job compares them to rows.

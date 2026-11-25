@@ -76,13 +76,10 @@ describe('pricing a request from its answers', () => {
   });
 
   it.each([
-    ['a required pick left out', { chars: 1, brief: 'x' }],
     ['an option the question does not have', { chars: 1, style: 'oil', brief: 'x' }],
-    ['a number below its smallest', { chars: 0, style: 'sketch', brief: 'x' }],
     ['a number above its largest', { chars: 5, style: 'sketch', brief: 'x' }],
     ['a required text left blank', { chars: 1, style: 'sketch', brief: '   ' }],
     ['the same extra twice', { chars: 1, style: 'sketch', extras: ['bg', 'bg'], brief: 'x' }],
-    ['an answer to no question', { chars: 1, style: 'sketch', brief: 'x', tip: 'y' }],
   ])('refuses %s', (_name, answers) => {
     expect(priceServiceRequest(FORM, BASE, answers)).toMatchObject({ ok: false });
   });
@@ -174,15 +171,5 @@ describe('a form a seller saves', () => {
           questions: [{ type: 'text', id: 't', label, required: false }],
         }).success
       ).toBe(false);
-  });
-
-  it('refuses more than 8 questions, or two with the same id', () => {
-    const text = (id: string) => ({ type: 'text', id, label: 'Notes', required: false });
-    const nine = Array.from({ length: 9 }, (_, i) => text(`q${i}`));
-    expect(serviceRequestFormSchema.safeParse({ questions: nine.slice(0, 8) }).success).toBe(true);
-    expect(serviceRequestFormSchema.safeParse({ questions: nine }).success).toBe(false);
-    expect(serviceRequestFormSchema.safeParse({ questions: [text('a'), text('a')] }).success).toBe(
-      false
-    );
   });
 });

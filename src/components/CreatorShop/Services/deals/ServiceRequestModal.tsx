@@ -104,7 +104,6 @@ export function ServiceRequestModal({
   );
   const [answers, setAnswers] = useState(() => (form ? initialServiceFormAnswers(form) : {}));
   const priced = form ? priceServiceRequest(form, offering, answers) : null;
-  // The terms this request is sent on: what the answers give, or the service's own.
   const terms = priced?.ok
     ? { ...offering, price: priced.price, deliveryDays: priced.deliveryDays }
     : offering;
