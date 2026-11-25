@@ -7196,6 +7196,9 @@ export interface ServiceOffering {
   removedById: number | null;
   sellerAffirmation: JsonValue | null;
   allowReviewWork: boolean;
+  requestForm: JsonValue | null;
+  requestFormVersion: number;
+  fromPrice: number | null;
   happyCount: number;
   reviewCount: number;
   happySortKey: number;
@@ -7241,6 +7244,9 @@ export interface ServiceDeal {
   settledAt: Date | null;
   chatId: number | null;
   requestText: string;
+  formVersion: number | null;
+  formAnswers: JsonValue | null;
+  priceBreakdown: JsonValue | null;
   requestedAt: Date;
   acceptedAt: Date | null;
   dueAt: Date | null;

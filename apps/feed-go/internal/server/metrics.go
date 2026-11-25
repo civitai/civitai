@@ -45,13 +45,19 @@ type Metrics struct {
 	ServeParity *prometheus.CounterVec
 
 	// ShadowViewer counts the body comparison results of the endpoints whose answer reports a viewer
-	// class (model-associated: modelfeed.ViewerClasses), so a serve gate can require samples per class
-	// (endpoint, viewer, result: ShadowResults' values). Seeded for each class's match result.
+	// class (model-associated: modelfeed.ViewerClasses; the tRPC feeds: FeedViewerClasses), so a serve
+	// gate can require samples per class (endpoint, viewer, result: ShadowResults' values). Seeded for
+	// each class's match result.
 	ShadowViewer *prometheus.CounterVec
 
 	// ShadowResponse counts the header comparison of each compared sample, beside the body's
 	// ShadowResults (endpoint, result: match|mismatch|uncompared).
 	ShadowResponse *prometheus.CounterVec
+
+	// ShadowResponseViewer is ShadowResponse's match and mismatch per viewer class, for the tRPC feeds
+	// (FeedViewerEndpoints; endpoint, viewer: FeedViewerClasses, result). Seeded for every class and
+	// result.
+	ShadowResponseViewer *prometheus.CounterVec
 
 	// Per-phase cost of a shadow sample (DESIGN.md §10). Phases: decode (read + parse the posted
 	// sample, Node's envelope included), compute (the answer serving would produce), compare
@@ -114,6 +120,10 @@ type Metrics struct {
 	// (feed_go_search_rejected_total: why = open | busy; v1models.MeiliClient.OnReject). Each is a
 	// `v1-models-query` fallback too, which alone would not tell it from the switch being off.
 	SearchRejected *prometheus.CounterVec
+	// FeedUnavailable counts the image.getInfinite 503s written here for a failed feed-service call
+	// (outcome feed_unavailable), by why the call failed (feed_go_feed_unavailable_total: endpoint,
+	// reason, detail; feedUnavailableCause). Not seeded: the series appear with the first failure.
+	FeedUnavailable *prometheus.CounterVec
 }
 
 // MetricsHandler is the /metrics handler over g. With openMetrics (on with tracing) it answers a scrape
@@ -152,7 +162,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_requests_total",
-			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error|region_blocked).",
+			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error|region_blocked|feed_unavailable).",
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		Fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_total",
@@ -171,6 +181,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_serve_parity_total",
 			Help: "Serve-side parity replays (a served answer re-asked of the Node app after the response), by outcome: compared, dropped_queue, skipped_bulkhead, skipped_credential, skipped_closing, upstream_error, upstream_status, timeout, bad_body.",
 		}, []string{EndpointLabel, "outcome"}),
+		ShadowResponseViewer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_response_viewer_total",
+			Help: "feed_go_shadow_response_total's match and mismatch by the sample's viewer class (anon, crawler, banned, user, moderator), for the tRPC feed endpoints (Node shadow samples only).",
+		}, []string{EndpointLabel, "viewer", "result"}),
 		ShadowDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_dropped_total",
 			Help: "Shadow requests dropped because the comparison queue was full.",
@@ -261,6 +275,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_session_cookie_slot_total",
 			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
 		}, []string{"slot"}),
+		FeedUnavailable: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_feed_unavailable_total",
+			Help: "image.getInfinite 503s written here for a failed feed-service call (outcome feed_unavailable), by the fallback they replace: reason feed-unavailable (the call failed; detail is the error's class: deadline, timeout, conn_refused, conn_reset, dns, net_*, eof, json, other, ...) or feed-status (the feed answered a 5xx; detail is the status). A value outside those sets is other.",
+		}, []string{EndpointLabel, "reason", "detail"}),
 		FallbackProxyErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_proxy_errors_total",
 			Help: "Fallback requests the proxy answered 502 because the Node app failed before a response started, by reason (upstream: unreachable or connection broken; canceled: the client left first). A failure mid-body aborts the response (http.ErrAbortHandler) and is not counted.",
@@ -342,12 +360,20 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, v := range modelfeed.ViewerClasses {
 		m.ShadowViewer.WithLabelValues(EndpointAssociated, v, "match")
 	}
-	reg.MustRegister(m.ShadowViewer)
+	for _, e := range FeedViewerEndpoints {
+		for _, v := range FeedViewerClasses {
+			m.ShadowViewer.WithLabelValues(e, v, "match")
+			for _, r := range []string{"match", "mismatch"} {
+				m.ShadowResponseViewer.WithLabelValues(e, v, r)
+			}
+		}
+	}
+	reg.MustRegister(m.ShadowViewer, m.ShadowResponseViewer)
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,
-		m.SessionCookieSlot, m.DevalueWrites)
+		m.SessionCookieSlot, m.DevalueWrites, m.FeedUnavailable)
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
 	}
@@ -363,8 +389,10 @@ var ShadowResultValues = []string{"match", "match_empty", "match_cached", "field
 
 // RequestOutcomes are the `outcome` values of feed_go_requests_total. region_blocked
 // (OutcomeRegionBlocked) is the app's 451 written here for a blocked region: neither a served answer
-// nor a fallback, so the served-traffic and fallback-rate figures keep their meaning.
-var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error", OutcomeRegionBlocked}
+// nor a fallback, so the served-traffic and fallback-rate figures keep their meaning. feed_unavailable
+// (OutcomeFeedUnavailable) is, the same way, the app's 503 written here on image.getInfinite for a
+// failed feed-service call.
+var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error", OutcomeRegionBlocked, OutcomeFeedUnavailable}
 
 // computeFallbackReasons are the fallback reasons every compute can end in, whatever its endpoint
 // (Server.within: a panic, a gone client, the budget), so feed_go_fallback_total is seeded with them
@@ -471,6 +499,8 @@ func outcomeReachable(endpoint, mode, outcome string) bool {
 		return emptyReachable(endpoint, mode)
 	case OutcomeRegionBlocked:
 		return mode == "serve"
+	case OutcomeFeedUnavailable:
+		return mode == "serve" && endpoint == EndpointInfinite
 	}
 	return true
 }

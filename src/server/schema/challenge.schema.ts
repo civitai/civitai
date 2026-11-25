@@ -171,6 +171,16 @@ export const challengeMetadataSchema = z.object({
   // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
   // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.
   migratedAt: z.string().optional(),
+  // The daily's plan (daily-plan.ts), written at creation and by the reschedule route; compared by
+  // planIsCurrent (daily-reschedule.ts) to skip rows already on their date's plan.
+  dailyPlan: z
+    .object({
+      setKey: z.string(),
+      source: z.enum(['schedule', 'rotation']),
+      judgeName: z.string(),
+      occasion: z.string().optional(),
+    })
+    .optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),

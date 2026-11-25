@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as EvidenceService from '~/server/services/generator-evidence/generator-evidence.service';
 import type * as CsamService from '~/server/services/csam.service';
 import type * as UnconfirmedOpen from '~/server/services/csam-unconfirmed-open';
+import { CSAM_FILING_MAX_IMAGES } from '~/server/schema/csam.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** Who may preserve, approve and send CSAM evidence, and read the reports. Ids are invented. */
@@ -175,5 +176,15 @@ describe('CSAM report reads and clearing an unconfirmed open', () => {
     expect(clearUnconfirmedOpens).toHaveBeenCalledWith(
       expect.objectContaining({ ...clear(), moderatorId: 5 })
     );
+  });
+});
+
+describe('filing a report', () => {
+  it('refuses a filing that lists more images than one transaction may block', async () => {
+    const moderator = caller({ id: 990000005, isModerator: true }, true);
+    const imageIds = Array.from({ length: CSAM_FILING_MAX_IMAGES + 1 }, (_, i) => 990000200 + i);
+    expect(
+      await codeOf(moderator.createReport({ userId: 990000101, imageIds, type: 'Image' }))
+    ).toBe('BAD_REQUEST');
   });
 });

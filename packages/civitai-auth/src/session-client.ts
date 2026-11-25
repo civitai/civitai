@@ -4,6 +4,7 @@ import { hubFetch } from './hub';
 import { getCacheRedis, sessionCacheKey } from './redis';
 import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
 import type { SessionUser, SessionClaims } from './types';
+import { refusesMemorializedSession } from './memorialized';
 
 // SESSION CLIENT — the consumer-side interface to the auth hub's session-user data (thin-session model;
 // docs/thin-session-token-design.md, "LOCKED ARCHITECTURE"). One zero-config builder for every session op a
@@ -143,7 +144,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
 
     // 1. Shared-cache read — fail-open: a cache blip falls through to the hub fetch rather than throwing.
     const cached = await readCachedUser(userId);
-    if (cached) return { user: cached };
+    if (cached) return refuseMemorialized({ user: cached }, claims);
 
     // 2. Single-flight the miss → hub identity fetch. The fetch target is the token's issuer, but ONLY after
     // it's validated against a CONFIGURED trusted hub origin (AUTH_JWT_ISSUER / the AUTH_JWKS_URI origin) — see
@@ -151,7 +152,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     // that doesn't pin `issuer` in its verifier (jose only checks `iss` when issuer is set) wouldn't catch a
     // mismatched issuer. Mismatch / unconfigured → `invalid` (fail closed), no fetch.
     const existing = inflight.get(userId);
-    if (existing) return existing;
+    if (existing) return refuseMemorialized(await existing, claims);
     // VALIDATE the token's issuer against the configured trusted origin(s) — unchanged. This is the anti-spoof
     // guard: the bearer only leaves for an origin the operator configured, never one an attacker's `iss` names.
     const baseUrl = trustedHubBase(claims.iss);
@@ -178,7 +179,12 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
       }
     })().finally(() => inflight.delete(userId));
     inflight.set(userId, p);
-    return p;
+    return refuseMemorialized(await p, claims);
+  }
+
+  // Applied per caller, after the single-flight: callers sharing one fetch may differ in impersonation.
+  function refuseMemorialized(res: SessionResolution, claims: SessionClaims): SessionResolution {
+    return res.user && refusesMemorializedSession(res.user, claims) ? INVALID : res;
   }
 
   async function getSessionUser(token: string): Promise<SessionUser | null> {

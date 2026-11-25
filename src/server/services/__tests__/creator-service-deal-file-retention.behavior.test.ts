@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { childSafetyCaseTablesSql } from '~/server/services/__tests__/child-safety-case-tables';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -109,6 +110,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(childSafetyCaseTablesSql);
   await holder.db.exec(`
     ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "blockedFor" text;
     ALTER TABLE "CsamReport" ADD COLUMN images jsonb NOT NULL DEFAULT '[]';`);

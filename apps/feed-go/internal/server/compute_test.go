@@ -181,12 +181,27 @@ func TestComputeCapAuthAndTTL(t *testing.T) {
 		{"banned", "red.example", cookie(43), computeInput,
 			"levels=1&excludePoi=1&sort=newest&limit=20", false},
 	}
+	// The viewer class each answer is counted under in the per-class shadow series (viewer_class.go).
+	wantClass := map[string]string{
+		"signed out on an NSFW host":             "anon",
+		"signed out, no level asked":             "anon",
+		"signed in on an NSFW host":              "user",
+		"signed in on an SFW host":               "user",
+		"signed in on an unknown host":           "user",
+		"signed in, region restricted":           "user",
+		"signed in, region restricted by x-isuk": "user",
+		"moderator, region restricted":           "moderator",
+		"banned":                                 "banned",
+	}
 	for _, c := range cases {
 		f.feed.queries = nil
 		out, err := f.s.compute(context.Background(), computeRequest(c.host, c.input, c.headers))
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
 			continue
+		}
+		if want, ok := wantClass[c.name]; !ok || out.viewerClass != want {
+			t.Errorf("%s: viewer class %q, want %q (listed: %v)", c.name, out.viewerClass, want, ok)
 		}
 		if len(f.feed.queries) != 1 || f.feed.queries[0] != c.wantQuery {
 			t.Errorf("%s: feed queries %q, want [%q]", c.name, f.feed.queries, c.wantQuery)

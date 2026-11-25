@@ -11766,6 +11766,11 @@ model ServiceOffering {
   sellerAffirmation Json?
   /// The seller lets buyers attach delivered work to their review. Off until the seller opts in.
   allowReviewWork   Boolean               @default(false)
+  /// Questions whose answers add to the price and days; null for a single-price service.
+  requestForm        Json?
+  requestFormVersion Int                   @default(0)
+  /// The least a buyer pays: the price, or the form's cheapest total. Null only on rows saved before request forms.
+  fromPrice          Int?
   /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
   /// only in the transaction that publishes or hides a review; the deals job compares them to rows.
   happyCount        Int                   @default(0)
@@ -11837,6 +11842,9 @@ model ServiceDeal {
   settledAt                 DateTime?
   chatId                    Int?
   requestText               String
+  formVersion               Int?
+  formAnswers               Json?
+  priceBreakdown            Json?
   requestedAt               DateTime                @default(now())
   acceptedAt                DateTime?
   dueAt                     DateTime?

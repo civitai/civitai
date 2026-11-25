@@ -11,11 +11,15 @@ import {
   setFeedGoTransportEnabled,
   setFeedGoTransportInfiniteEnabled,
   setFeedGoTransportModelGetAllEnabled,
+  setFeedGoTransportSignedOutEnabled,
+  setFeedGoTransportSignedOutInfiniteEnabled,
+  setFeedGoTransportSignedOutModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 import {
   SHADOW_COMPARE_PROCEDURES,
   resetShadowCompareSession,
   setClientShadowCompareEnabled,
+  setClientShadowCompareSignedOutEnabled,
 } from '~/utils/trpc-shadow-compare';
 
 /**
@@ -43,6 +47,8 @@ type Reply = {
   gate?: Promise<void>;
   /** The Go path's `x-feed-go-served`: `go` unless set; `null` sends none. */
   servedBy?: string | null;
+  /** The edge cache's verdict header (`cf-cache-status`) on this leg; none unless set. */
+  cache?: string;
 };
 type Sent = {
   leg: Leg;
@@ -87,6 +93,14 @@ const ERROR_500_BODY = JSON.stringify({
   },
 });
 
+/** The signed-out cohort's three transport flags and its shadow flag, together. */
+function signedOutShadow(enabled: boolean) {
+  setFeedGoTransportSignedOutEnabled(enabled);
+  setFeedGoTransportSignedOutModelGetAllEnabled(enabled);
+  setFeedGoTransportSignedOutInfiniteEnabled(enabled);
+  setClientShadowCompareSignedOutEnabled(enabled);
+}
+
 const gate = () => {
   let open: () => void = () => undefined;
   const promise = new Promise<void>((resolve) => (open = resolve));
@@ -106,6 +120,7 @@ beforeEach(() => {
   setFeedGoTransportModelGetAllEnabled(false);
   setFeedGoTransportInfiniteEnabled(false);
   setClientShadowCompareEnabled(false);
+  signedOutShadow(false);
   resetShadowCompareSession();
   vi.useFakeTimers({ toFake: ['performance'] });
   fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -132,6 +147,7 @@ beforeEach(() => {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (leg === 'go' && reply.servedBy !== null)
       headers['x-feed-go-served'] = reply.servedBy ?? 'go';
+    if (reply.cache) headers['cf-cache-status'] = reply.cache;
     return new Response(reply.body, { status: reply.status, headers });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -143,6 +159,7 @@ afterEach(() => {
   setFeedGoTransportModelGetAllEnabled(false);
   setFeedGoTransportInfiniteEnabled(false);
   setClientShadowCompareEnabled(false);
+  signedOutShadow(false);
   resetShadowCompareSession();
   delete (globalThis as { window?: unknown }).window;
   vi.useRealTimers();
@@ -885,5 +902,81 @@ describe('a pluggable candidate', () => {
     await settleAll();
     expect(goRequests()).toHaveLength(1);
     await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+  });
+});
+
+/**
+ * The signed-out cohort: a browser rendered as signed out shadows only under its own flags
+ * (`clientShadowCompareSignedOut` with that procedure's signed-out transport flag), and its beacon
+ * says so (`viewer: 'signed_out'`) and carries both legs' edge-cache verdicts, since a signed-out
+ * answer can be a stored copy on either path.
+ */
+describe('signed out', () => {
+  it('shadows under the signed-out flags, beaconing viewer and both cache verdicts', async () => {
+    browser(false);
+    signedOutShadow(true);
+    replies.node = { status: 200, body: CONTROL_BODY, cache: 'HIT' };
+    replies.go = { status: 200, body: CONTROL_BODY, cache: 'MISS' };
+    const outcome = await callQuery(INFINITE, INFINITE_INPUT);
+    expect(outcome.data).toEqual(CONTROL_DATA);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect(sent.map((s) => s.leg).sort()).toEqual(['go', 'node']);
+    expect(shadowPushes()[0][1].context).toEqual({
+      procedure: 'image.getInfinite',
+      candidate: 'go-transport',
+      verdict: 'match',
+      control_status: '200',
+      candidate_status: '200',
+      candidate_served_by: 'go',
+      viewer: 'signed_out',
+      control_cache: 'hit',
+      candidate_cache: 'miss',
+    });
+  });
+
+  it('an unknown cache verdict is beaconed as other, an absent one not at all', async () => {
+    browser(false);
+    signedOutShadow(true);
+    replies.node = { status: 200, body: CONTROL_BODY, cache: 'SOMETHING-NEW' };
+    await callQuery(MODELS, MODELS_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    const { context } = shadowPushes()[0][1];
+    expect(context.control_cache).toBe('other');
+    expect('candidate_cache' in context).toBe(false);
+    expect(context.viewer).toBe('signed_out');
+  });
+
+  it('the signed-in shadow and transport flags do not shadow a signed-out browser', async () => {
+    browser(false);
+    allTransport(true);
+    setClientShadowCompareEnabled(true);
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await settleAll();
+    expect(shadowPushes()).toHaveLength(0);
+    expect(sent.map((s) => s.leg)).toEqual(['node']);
+  });
+
+  it('the signed-out flags do not shadow a signed-in browser, whose beacon stays as it was', async () => {
+    browser(true);
+    signedOutShadow(true);
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await settleAll();
+    expect(shadowPushes()).toHaveLength(0);
+    expect(sent.map((s) => s.leg)).toEqual(['node']);
+
+    // Positive control: the signed-in flags do shadow it, with no `viewer` on the beacon.
+    shadowOn();
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+    expect('viewer' in shadowPushes()[0][1].context).toBe(false);
+  });
+
+  it('the signed-out transport flag alone (shadow flag off) sends the Go leg only', async () => {
+    browser(false);
+    setFeedGoTransportSignedOutInfiniteEnabled(true);
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await settleAll();
+    expect(shadowPushes()).toHaveLength(0);
+    expect(sent.map((s) => s.leg)).toEqual(['go']);
   });
 });

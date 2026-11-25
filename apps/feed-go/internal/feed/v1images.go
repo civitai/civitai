@@ -881,9 +881,10 @@ func SkipValue(metadata json.RawMessage) *float64 {
 	return &frame
 }
 
-// resolveImageModelIDs is resolveImageModelIds for a model, a version and a post: the named model, the
-// version's model and the post's version's model. ok is false when the named version or post cannot be
-// found (Node: null — withheld, and held at nothing).
+// resolveImageModelIDs is resolveImageModelIds for a model, a version and posts: the named model, the
+// version's model and each listed post's version's model (postId and postIds). ok is false when the named
+// version or the postId cannot be found (Node: null — withheld, and held at nothing); a postIds entry the
+// cache lacks is skipped.
 func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int, postIDs []int) ([]int, bool, error) {
 	var listed []int
 	if postID != 0 || len(postIDs) > 0 {

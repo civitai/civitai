@@ -1,9 +1,6 @@
-import {
-  filterAuthorPendingHolds,
-  type CsamHoldImage,
-  type CsamHoldRow,
-} from './csam-holds.queries';
+import { filterAuthorPendingHolds, type CsamHoldRow } from './csam-holds.queries';
 import type { CsamReportChoice } from '$lib/csam-holds/report-choice';
+import type { AppealCoverImage } from './minor-hash.service';
 import { callModEndpoint } from './user-actions.service';
 
 export {
@@ -23,7 +20,7 @@ export {
 } from './csam-holds.queries';
 
 export type CsamHoldItem = CsamHoldRow & {
-  coverImages: CsamHoldImage[];
+  coverImages: AppealCoverImage[];
   imageTotal: number;
   /** When the content was last scanned clean on text other than the held one; null while nothing says it changed. */
   cleanRescanAt: Date | null;

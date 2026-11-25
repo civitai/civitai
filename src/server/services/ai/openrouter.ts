@@ -1,5 +1,6 @@
 import { OpenRouter } from '@openrouter/sdk';
 import type {
+  ChatGenerationParamsProvider,
   ChatMessageToolCall,
   Message,
   SystemMessage,
@@ -56,6 +57,8 @@ export type SimpleMessage = {
   content: string | ContentItem[];
 };
 
+export type OpenRouterProvider = ChatGenerationParamsProvider;
+
 type GetJsonCompletionInput = {
   model?: AIModel;
   messages: SimpleMessage[];
@@ -64,6 +67,8 @@ type GetJsonCompletionInput = {
   retries?: number;
   // Per request. The client has no timeout of its own, so a hung provider call never returns.
   timeoutMs?: number;
+  /** Merged over the default `{ allowFallbacks: true }`, e.g. to pin a provider. */
+  provider?: OpenRouterProvider;
 };
 
 /**
@@ -208,7 +213,7 @@ type CustomOpenRouter = OpenRouter & {
   // every existing `getJsonCompletion<T>()` caller depends on.
   getJsonCompletionWithUsage: <T>(
     params: GetJsonCompletionInput
-  ) => Promise<{ content: T; usage: TokenUsage }>;
+  ) => Promise<{ content: T; usage: TokenUsage; generationId?: string }>;
   // Free-TEXT sibling of getJsonCompletion — a single non-streaming completion
   // that returns the assistant's plain text (NOT parsed as JSON). For grounded
   // Q&A / chat turns where the reply is prose citing evidence, not a JSON object.
@@ -248,7 +253,8 @@ function createOpenRouterClient() {
     maxTokens = 2048,
     retries = 0,
     timeoutMs,
-  }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage }> => {
+    provider,
+  }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage; generationId?: string }> => {
     const sdkMessages = messages.map(toSDKMessage);
 
     const response = await client.chat.send(
@@ -260,6 +266,7 @@ function createOpenRouterClient() {
         responseFormat: { type: 'json_object' },
         provider: {
           allowFallbacks: true,
+          ...provider,
         },
       },
       timeoutMs ? { timeoutMs } : undefined
@@ -276,21 +283,22 @@ function createOpenRouterClient() {
           maxTokens,
           retries: retries - 1,
           timeoutMs,
+          provider,
         });
-        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
+        return { ...retried, usage: sumUsage(usage, retried.usage) };
       }
       throw new Error(APP_ERROR_MESSAGES.no_content);
     }
 
     try {
       // Try to parse as JSON directly
-      return { content: JSON.parse(content) as T, usage };
+      return { content: JSON.parse(content) as T, usage, generationId: response.id };
     } catch {
       // Try to extract JSON from markdown code block
       const jsonBlockMatch = content.match(/```json\n(.*?)\n```/s)?.[1];
       if (jsonBlockMatch) {
         try {
-          return { content: JSON.parse(jsonBlockMatch) as T, usage };
+          return { content: JSON.parse(jsonBlockMatch) as T, usage, generationId: response.id };
         } catch {
           // Fall through to retry/error
         }
@@ -304,8 +312,9 @@ function createOpenRouterClient() {
           maxTokens,
           retries: retries - 1,
           timeoutMs,
+          provider,
         });
-        return { content: retried.content, usage: sumUsage(usage, retried.usage) };
+        return { ...retried, usage: sumUsage(usage, retried.usage) };
       }
       // Never the content: a model can be led to repeat the prompts it was sent.
       console.error('Failed to parse JSON from completion', {

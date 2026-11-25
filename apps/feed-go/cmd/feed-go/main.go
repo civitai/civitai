@@ -272,6 +272,21 @@ func personalHotLeadReader(cfg *config.Config) (server.UserFlagReader, error) {
 	return flipt.NewUserFlag(fc, server.PersonalHotLeadFlag), nil
 }
 
+// userHubsReader reads server.UserHubsFlag per viewer from FLIPT_URL for image.getInfinite's `hubId`
+// (nil without it, or with FEED_GO_INFINITE_SERVE_INPUT_HUB_ID off: every `hubId` request falls back).
+// Answers are cached per viewer (flipt.UserFlag); a read is bounded as the personal hot lead's is.
+func userHubsReader(cfg *config.Config) (server.UserFlagReader, error) {
+	if cfg.FliptURL == "" || !cfg.InfiniteServeInputHubID {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment,
+		Timeout: personalHotLeadTimeout})
+	if err != nil {
+		return nil, err
+	}
+	return flipt.NewUserFlag(fc, server.UserHubsFlag), nil
+}
+
 // opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
 // on and a written-back cache whose lookup reads the primary (hydrate.PrimaryCaches). A replica-only
 // allowlist (e.g. metrics,tag-ids) never opens it.
@@ -479,12 +494,12 @@ func run(log *slog.Logger) error {
 		Blocked: blocked,
 		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
-		// The input shapes and fallback reasons ported behind their own switch, all default off.
 		Ports: feed.InfinitePorts{
 			PublishedOnly:       cfg.InfiniteServeInputPublishedOnly,
 			PostIDs:             cfg.InfiniteServeInputPostIDs,
 			SortRandom:          cfg.InfiniteServeSortRandom,
 			GallerySettingsMiss: cfg.InfiniteServeGallerySettingsMiss,
+			HubID:               cfg.InfiniteServeInputHubID,
 		},
 		// A collection's Random seed: the system redis key, read-only.
 		RandomSeed: &feed.RandomSeed{Sys: sys},
@@ -573,12 +588,18 @@ func run(log *slog.Logger) error {
 		log.Error("flag not read; every page it could lead falls back", "flag", server.PersonalHotLeadFlag, "err", err)
 	}
 	log.Info("model.getAll personal hot lead", "flag", server.PersonalHotLeadFlag, "flag_read", personalHotLead != nil)
+	// nil (no FLIPT_URL, a bad one, or the hubId port off): every `hubId` request falls back.
+	userHubs, err := userHubsReader(cfg)
+	if err != nil {
+		log.Error("flag not read; every hubId request falls back", "flag", server.UserHubsFlag, "err", err)
+	}
 	srv := &server.Server{
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		PersonalHotLead:  personalHotLead,
+		UserHubs:         userHubs,
 		// FLIPT_DEPLOYMENT_ID, the targeting property Node's buildFliptContext adds.
 		FliptDeploymentID: cfg.FliptDeploymentID,
 		ServeInfinite:     cfg.ServeInfinite,
@@ -593,6 +614,10 @@ func run(log *slog.Logger) error {
 		Metrics:             metrics,
 		Log:                 log,
 		ShadowQueue:         make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+
+		// FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE: the app's 503 for a failed feed call written here.
+		AnswerInfiniteFeedUnavailable: cfg.InfiniteAnswerFeedUnavailable,
+
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
@@ -663,7 +688,9 @@ func run(log *slog.Logger) error {
 		"FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", cfg.InfiniteServeInputPublishedOnly,
 		"FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", cfg.InfiniteServeInputPostIDs,
 		"FEED_GO_INFINITE_SERVE_SORT_RANDOM", cfg.InfiniteServeSortRandom,
-		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss)
+		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss,
+		"FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", cfg.InfiniteAnswerFeedUnavailable,
+		"FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", cfg.InfiniteServeInputHubID, "user_hubs_flag_read", userHubs != nil)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,

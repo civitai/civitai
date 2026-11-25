@@ -33,6 +33,7 @@ import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
 import { isRefusedModerationAccount } from './moderation-account';
+import { refuseAccountSession } from './account-refusal';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
@@ -149,6 +150,10 @@ export async function mintSession(
     lineage.impersonatedBy = opts.impersonatedBy;
     lineage.impExp = now + IMPERSONATION_MAX_AGE_MS;
   }
+  // Decided on the lineage being minted: a switch or sign-in from an impersonation clears it, so it is refused.
+  await refuseAccountSession(user.id, opts.impersonatedBy ? 'impersonate' : 'mint', {
+    impersonation: lineage.impersonatedBy != null,
+  });
   const token = await getSigner().mintSessionToken(
     { signedAt: now, sub: String(user.id), ...lineage },
     { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
@@ -165,6 +170,7 @@ export async function reissueSession(
   jti: string
 ): Promise<string> {
   requireLiveSession(claims);
+  await refuseAccountSession(userId, 'reissue', { impersonation: claims.impersonatedBy != null });
   const now = Date.now();
   const lineage = familyClaims(claims, { now });
   const token = await getSigner().mintSessionToken(
@@ -278,6 +284,8 @@ export async function establishSession(
   // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
   // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
   refuseModerationAccount(user, 'login');
+  // Before the cross-domain hand-off below, which mints nothing.
+  await refuseAccountSession(user.id, 'login');
   const prior = await resolvePriorSession(cookies);
   const priorUserId = prior ? Number(prior.sub) : undefined;
   // A prior session the store could not confirm may be revoked: this sign-in stands on its own credentials and

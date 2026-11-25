@@ -72,7 +72,8 @@ var configHeaders = func() []Header {
 
 // ConfigHeaders is configheaders.json's list: the headers next.config.mjs headers() gives every route
 // this service answers (the REST routes and the tRPC procedures alike), which the router sets before
-// the route runs, so they are also on the 451 a blocked region gets (server.writeRegionBlocked).
+// the route runs, so they are also on the 451 a blocked region gets (server.writeRegionBlocked) and on
+// the 503 image.getInfinite answers a failed feed call with (server.writeFeedUnavailable).
 func ConfigHeaders() []Header { return slices.Clone(configHeaders) }
 
 // HeaderInput is what the two routes' headers depend on.

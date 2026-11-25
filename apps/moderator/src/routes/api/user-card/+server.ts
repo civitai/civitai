@@ -13,7 +13,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   if (!q || q.length > 100) error(400, 'Bad q.');
 
   const userId = await resolveUserId(q);
-  const card = userId ? await getUserCard(userId) : null;
+  const card = userId ? await getUserCard(userId, locals.user) : null;
   if (!card) error(404, 'No such user.');
   return json(card);
 };

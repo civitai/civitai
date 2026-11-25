@@ -7,6 +7,7 @@ import { Kysely } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
 
 /**
  * The probe's submit path against real tables: the main database's "Image" (cut to the columns the
@@ -77,17 +78,13 @@ const PROBE_DDL = executableSchemaSql(
   readFileSync(join(HERE, '../../../../scan-probe/schema.sql'), 'utf8')
 );
 
-// "Image" cut to what the eligibility read and the relabel exclusion touch, plus the report tables
-// that exclusion reads.
-const MAIN_DDL = `
-CREATE TABLE "Image" (
-  id int PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL, type text NOT NULL DEFAULT 'image',
-  "needsReview" text, "blockedFor" text
-);
-CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
+// The tables the eligibility read and the relabel exclusion touch: the shared withhold rule's, plus
+// the report tables that exclusion reads.
+const MAIN_DDL = `${INQUISITOR_IMAGE_SCHEMA}
+ALTER TABLE "CsamReport" ALTER COLUMN images SET DEFAULT '[]';
+CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL, status text, details jsonb, "userId" int);
 CREATE TABLE "ImageReport" ("reportId" int NOT NULL, "imageId" int NOT NULL);
 CREATE TABLE "UserReport" ("reportId" int NOT NULL, "userId" int NOT NULL);
-CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
 `;
 
 let mainPg: PGlite;
@@ -257,6 +254,20 @@ describe('runProbe: images it refuses, with no reason given', () => {
       ok: true,
       refused: [990100015],
     });
+  });
+
+  // What the moderator views withhold without the CSAM grant is refused to every moderator, as a
+  // missing image is: no run and no labels.
+  it('refuses an image whose copy on its url, under another owner, is blocked for CSAM', async () => {
+    await mainPg.exec(
+      `INSERT INTO "Image" (id, "userId", url, "blockedFor") VALUES (990100021, 77, 'clean-key-2', 'CSAM')`
+    );
+    h.nextIds = ['0-wf-1'];
+    expect(await runProbe(MODERATOR, [990100014, 990100015])).toMatchObject({
+      ok: true,
+      refused: [990100015],
+    });
+    expect((await rows()).map((r) => r.image_id)).toEqual([990100014]);
   });
 
   it('control: submits an image whose owner holds nothing while another owner is held', async () => {

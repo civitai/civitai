@@ -82,6 +82,15 @@ type InfiniteInput struct {
 	// otherwise a non-empty list falls back as `input-postIds`). Non-empty, it routes to Postgres,
 	// filters the page to those posts (ImagesQuery.PostIDs) and adds their models to the gallery gates.
 	PostIDs []int
+	// HubID is `hubId` (z.number().optional(); read only with InfinitePorts.HubID, otherwise a present
+	// value falls back as `input-hubId`): an int4 integer, 0 = none (Node's falsy checks). Non-zero, the
+	// request is always the feed path (`useIndex = !!input.hubId || …`), filtered by the hub's resolved
+	// sources (hub.go).
+	HubID int
+	// HubExcludedSources is `hubExcludedSources` (read only with InfinitePorts.HubID): the sources the
+	// viewer switched off for the session, a subtraction from what HubID resolves to. Entries whose
+	// targetId is past int4 are dropped: no source row can carry one, so they subtract nothing.
+	HubExcludedSources []HubSourceRef
 }
 
 // InfinitePorts are image.getInfinite's input shapes and fallback reasons ported behind their own
@@ -99,6 +108,10 @@ type InfinitePorts struct {
 	// key absent from the cache (`gallery-settings-miss`) on the hold gates is answered from the
 	// model's row (InfiniteDeps.GalleryHolds), as Node's rebuild decides the hold.
 	GallerySettingsMiss bool
+	// HubID is FEED_GO_INFINITE_SERVE_INPUT_HUB_ID: compute a request with `hubId` (and read
+	// `hubExcludedSources`), a user-composed hub (hub.go). Off, either key present is the
+	// `input-hubId` / `input-hubExcludedSources` fallback.
+	HubID bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
@@ -203,6 +216,9 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 	if ports.PostIDs {
 		unsupported = withoutKey(unsupported, "postIds")
 	}
+	if ports.HubID {
+		unsupported = withoutKey(withoutKey(unsupported, "hubId"), "hubExcludedSources")
+	}
 	base, err := parseInput(parsed, unsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
@@ -294,6 +310,11 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 			return nil, err
 		}
 	}
+	if ports.HubID {
+		if err := in.parseHub(m); err != nil {
+			return nil, err
+		}
+	}
 	// A collection's Random sort beside a `postId`: getAllImages orders it by the seeded sort key (its
 	// Random branch replaces the post scope's `i."index"`, then appends `, i."id"`) and builds the
 	// `seed:sortKey:id` cursor, where this service's post scope (ImagesQuery.IndexOrder, a `postId`
@@ -303,6 +324,62 @@ func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, e
 		return nil, fallback.New("collection-random-post-id")
 	}
 	return in, nil
+}
+
+// parseHub reads `hubId` and `hubExcludedSources` (InfinitePorts.HubID), then the schema's
+// superRefine: a truthy `hubId` beside an input requiresImageDbPath routes to Postgres is the
+// schema's BAD_REQUEST (input-invalid), read on the input as sent (before the handler withdraws
+// `publishedOnly`).
+//
+// `hubId` is z.number().optional(): not a number (null included) is the BAD_REQUEST; a number that is
+// not an int4 integer falls back (`input-hubId`, detail not-int4): Prisma refuses it in the hub read
+// (a 500 this service does not reproduce). `hubExcludedSources` is
+// z.array(hubSourceExclusionSchema).max(50).optional(): not a list (null included), more than 50
+// entries, or an entry that is not an object with a UserHubSourceType `type` and a positive integer
+// `targetId` is the BAD_REQUEST; other keys of an entry are stripped. Without a hub it is validated and
+// read by nothing.
+func (in *InfiniteInput) parseHub(m map[string]any) error {
+	if v, ok := m["hubId"]; ok {
+		f, err := number(v)
+		if err != nil {
+			return fallback.NewfSafe("input-invalid", "hubId", "hubId: %T", v)
+		}
+		if f != math.Trunc(f) || f < math.MinInt32 || f > math.MaxInt32 {
+			return fallback.NewfSafe("input-hubId", "not-int4", "hubId: %v", v)
+		}
+		in.HubID = int(f)
+	}
+	if v, ok := m["hubExcludedSources"]; ok {
+		list, isList := v.([]any)
+		if !isList || len(list) > maxHubExcludedSources {
+			return fallback.NewfSafe("input-invalid", "hubExcludedSources", "hubExcludedSources: %T", v)
+		}
+		for _, e := range list {
+			entry, isObj := e.(map[string]any)
+			if !isObj {
+				return fallback.NewfSafe("input-invalid", "hubExcludedSources", "hubExcludedSources entry: %T", e)
+			}
+			typ, isStr := entry["type"].(string)
+			f, err := number(entry["targetId"])
+			if !isStr || !hubSourceTypes[typ] || err != nil || f != math.Trunc(f) || f <= 0 {
+				return fallback.NewfSafe("input-invalid", "hubExcludedSources", "hubExcludedSources entry: %v", e)
+			}
+			if f <= math.MaxInt32 {
+				in.HubExcludedSources = append(in.HubExcludedSources, HubSourceRef{Type: typ, TargetID: int(f)})
+			}
+		}
+	}
+	if in.HubID != 0 && in.rawDBPath() {
+		return fallback.NewfSafe("input-invalid", "hubId", "hubId beside a Postgres-path input")
+	}
+	return nil
+}
+
+// rawDBPath is requiresImageDbPath on the input as sent, for the inputs ParseInfiniteWith reads (the
+// schema's superRefine): dbPath, plus `requiringMeta` beside a `userId`. `hidden` and `imageId` fall
+// back before this is read.
+func (in *InfiniteInput) rawDBPath() bool {
+	return in.dbPath() || (in.RequiringMeta && in.UserID != 0)
 }
 
 // withoutKey is list without key (a copy).
@@ -782,6 +859,18 @@ type InfiniteDeps struct {
 	// GalleryHolds computes a gallery-settings miss's hold (Ports.GallerySettingsMiss); nil = not
 	// configured (the miss falls back).
 	GalleryHolds GalleryHoldSource
+	// Hubs reads the hub tables (Ports.HubID); nil = Gallery's replica.
+	Hubs HubReader
+}
+
+// hubDeps are the hub resolution's reads: Hubs (or the gallery store), the version→model cache and
+// the hold gallery the gallery gates read.
+func (d *InfiniteDeps) hubDeps() hubDeps {
+	var hubs HubReader = d.Gallery
+	if d.Hubs != nil {
+		hubs = d.Hubs
+	}
+	return hubDeps{hubs: hubs, models: d.Sources, holds: d.holdGallery()}
 }
 
 // holdGallery is the gallery the hold gates read (heldLevels, heldByPost): the store, computing an
@@ -851,7 +940,9 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	} else {
 		in = in.withPublishedOnlyScoped(0)
 	}
-	useIndex := d.Config.ImageIndexFeed && !in.dbPath()
+	// A hub is only expressible on the feed path, so it pins it whatever the flag says (parseHub has
+	// refused a hub beside a Postgres-path input).
+	useIndex := in.HubID != 0 || (d.Config.ImageIndexFeed && !in.dbPath())
 	if useIndex && d.Feed == nil {
 		return nil, fallback.New("index-feed-unconfigured")
 	}
@@ -952,6 +1043,17 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		}
 	}
 
+	// `hubId`: the hub's sources and the level the feed is asked at (resolveHubForFeed, read beside the
+	// follow list and the board in Node). hubLevel is only the feed query's: the hydrate keeps the
+	// request's own level (feedHydrateQuery hydrates `input`, not the hub-capped search input).
+	var hub *feedsvc.Hub
+	hubLevel := level
+	if in.HubID != 0 {
+		if hub, hubLevel, err = hubForFeed(ctx, d.hubDeps(), in.HubID, viewer, in.HubExcludedSources, level); err != nil {
+			return nil, err
+		}
+	}
+
 	q := ImagesQuery{
 		Limit:          in.Limit,
 		Cursor:         in.Cursor,
@@ -1002,7 +1104,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		q.FollowedUserIDs = follows
 	}
 	if useIndex {
-		return infiniteFromFeed(ctx, d, in, q, viewer, now, followedOn, follows, board)
+		return infiniteFromFeed(ctx, d, in, q, viewer, now, followedOn, follows, board, hub, hubLevel)
 	}
 	return infiniteFromDB(ctx, d, in, q, viewer, now)
 }
@@ -1010,11 +1112,12 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 // infiniteFromFeed is getAllImagesIndex with the feed service available: the feed picks and orders
 // the page, Postgres supplies the rows (feedHydrateQuery), and the answer is
 // `{ items, nextCursor, source: 'feed' }`. followedOn is `followed` with a signed-in viewer, follows
-// their follow list, board the new-creators board (with `newCreators`).
+// their follow list, board the new-creators board (with `newCreators`), hub the resolved hub (with
+// `hubId`; nil there is `hubSources: null`) and hubLevel the level the feed is asked at.
 func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time,
-	followedOn bool, follows []int, board []int) (*InfiniteAnswer, error) {
+	followedOn bool, follows []int, board []int, hub *feedsvc.Hub, hubLevel int) (*InfiniteAnswer, error) {
 	fq := feedsvc.Query{
-		BrowsingLevel:         q.BrowsingLevel,
+		BrowsingLevel:         hubLevel,
 		ExcludedTagIDs:        q.ExcludedTagIDs,
 		ExcludedUserIDs:       in.ExcludedUserIDs,
 		ModelID:               in.ModelID,
@@ -1045,6 +1148,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		FollowedSent:          in.Followed,
 		NewCreators:           in.NewCreators,
 		NewCreatorUserIDs:     board,
+		Hub:                   hub,
 	}
 	if in.CursorText != "" {
 		fq.CursorText = in.CursorText
@@ -1060,9 +1164,10 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 			{Key: "items", Val: items}, {Key: "nextCursor", Val: cursor}, {Key: "source", Val: "feed"},
 		}, Trivial: trivial}
 	}
-	if (followedOn && len(follows) == 0) || (in.NewCreators && len(board) == 0) {
-		// serveFromFeed, before it maps the input: a follow list with no creators, or an unpopulated
-		// new-creators board, is an empty feed, whatever else the request says (its cursor included).
+	if (followedOn && len(follows) == 0) || (in.NewCreators && len(board) == 0) || (in.HubID != 0 && hub == nil) {
+		// serveFromFeed, before it maps the input: a follow list with no creators, an unpopulated
+		// new-creators board, or a hub that resolved to nothing for this viewer, is an empty feed,
+		// whatever else the request says (its cursor included).
 		return page([]any{}, "", true), nil
 	}
 	query, refusal := feedsvc.Map(fq)
@@ -1077,10 +1182,21 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Wrap("feed-unavailable", err)
+		// Node's `timeout` / `error`: its 503, or a last-good page (UnavailableError).
+		return nil, nodeUnavailable(fallback.Wrap("feed-unavailable", err), viewer, query)
 	}
 	if ans.Status != 200 {
-		return nil, fallback.Safef("feed-status", "%d", ans.Status)
+		status := fallback.Safef("feed-status", "%d", ans.Status)
+		if ans.Status >= 500 && ans.Status <= 599 {
+			// Node's `status:5xx`: as a failed call. Any other status is Node's empty page.
+			return nil, nodeUnavailable(status, viewer, query)
+		}
+		return nil, status
+	}
+	if hub != nil && !feedsvc.HubRoutes[ans.Route] {
+		// serveFromFeed's `hub:route`: a feed build without the any-of sources answered the open feed.
+		// answerWithoutFeed serves it as an empty page.
+		return page([]any{}, "", true), nil
 	}
 	next := ""
 	if ans.NextCursor != "" {

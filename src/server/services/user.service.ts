@@ -154,7 +154,11 @@ import {
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
-import { deleteImages } from '~/server/services/image.service';
+import {
+  afterCsamImageBlock,
+  CSAM_IMAGE_BLOCK,
+  deleteImages,
+} from '~/server/services/image.service';
 import {
   refreshHasReceivedReviews,
   refreshOwnedStickerCache,
@@ -1874,22 +1878,12 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
 
 /** `softDeleteUser`'s media block: every image of the user, as CSAM. */
 export async function blockUserImagesAsCsam(userId: number) {
-  await dbWrite.image.updateMany({
-    where: { userId },
-    data: {
-      ingestion: 'Blocked',
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: BlockedReason.CSAM,
-    },
-  });
-  // A CSAM block outranks an account-deletion grace block. If this account had already
-  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
-  // later restore would un-block CSAM-blocked content.
-  //
+  await dbWrite.image.updateMany({ where: { userId }, data: CSAM_IMAGE_BLOCK });
   // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
-  // user owns, and the clear's scope is the block's.
+  // user owns, and the clear and the after-block steps take the block's scope. The clear is part of
+  // the block and throws: a grace breadcrumb left on would let an account restore un-block it.
   await clearAccountDeletionImageMarkers({ userId });
-  await evictHomeBlocksForImages({ userId });
+  await afterCsamImageBlock({ userId });
 }
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */

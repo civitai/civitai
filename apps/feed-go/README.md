@@ -35,7 +35,11 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 
 A request from a blocked region (`REGION_BLOCK_CONFIG`) is handed to the Node app, which answers its
 451, unless `FEED_GO_ANSWER_REGION_BLOCKED=true` (default off): then every public route writes that
-same 451 here (outcome `region_blocked`; DESIGN.md §6.2).
+same 451 here (outcome `region_blocked`; DESIGN.md §6.2). Likewise an `image.getInfinite` request
+whose feed-service call failed is handed back (`feed-unavailable` / `feed-status`), unless
+`FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE=true` (default off): then the route writes the app's own 503
+here for the requests the app answers with it whatever `feed-service-degrade` says, a signed-in viewer
+or a paged query (outcome `feed_unavailable`; DESIGN.md §14.11).
 
 Every answer on the public routes carries `X-Feed-Go-Served`: `go` when this service computed it
 (or answered the error itself), `node` when it was proxied to the Node app, including the proxy's own 502. The browser's shadow compare (`src/utils/faro/shadowCompare.ts`) reads it, so a proxied answer,
@@ -158,7 +162,9 @@ default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). 
 reading the tier under the app's own `TIER_METADATA_KEY`. `image.getInfinite`'s
 `publishedOnly` input is computed only behind `FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY` (default
 off: the `input-publishedOnly` fallback; DESIGN.md §14.2.1), and its `postIds` input only behind `FEED_GO_INFINITE_SERVE_INPUT_POST_IDS`
-(default off: the `input-postIds` fallback; DESIGN.md §14.2.2). The `feed_endpoint`
+(default off: the `input-postIds` fallback; DESIGN.md §14.2.2), and its `hubId` input (a
+user-composed hub, read with the `user-hubs` flag per viewer from `FLIPT_URL`) only behind
+`FEED_GO_INFINITE_SERVE_INPUT_HUB_ID` (default off: the `input-hubId` fallback; DESIGN.md §14.2.3). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 

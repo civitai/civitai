@@ -5,7 +5,9 @@ import { fileURLToPath } from 'url';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
  * The send and archive writes against the append-only trigger: a read-failure count merges into
@@ -75,6 +77,7 @@ import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
 import { CSAM_SEND_BLOCKED_AFTER_HOURS } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { createCsamReport } from '~/server/services/csam.service';
+import * as imageService from '~/server/services/image.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
 
@@ -183,6 +186,13 @@ beforeAll(async () => {
       "details" JSONB NOT NULL DEFAULT '{}',
       "images" JSONB NOT NULL DEFAULT '[]',
       "type" "CsamReportType" NOT NULL DEFAULT 'Image'
+    );
+    CREATE TABLE "Image" (
+      "id" INTEGER PRIMARY KEY,
+      "ingestion" TEXT,
+      "nsfwLevel" INTEGER,
+      "blockedFor" TEXT,
+      "metadata" JSONB
     );
     CREATE TABLE "ModActivity" (
       "id" SERIAL PRIMARY KEY,
@@ -513,5 +523,140 @@ describe('the send claim under the append-only trigger', () => {
     const sent = await readRow(id);
     expect(sent.reportSentAt).not.toBeNull();
     expect(sent.details.images?.map((image) => image.id)).toEqual([501, 502]);
+  });
+});
+
+describe('the block a filing makes in its own transaction', () => {
+  type ImageBlock = {
+    where: { id: { in: number[] } };
+    data: { ingestion: string; nsfwLevel: number; blockedFor: string };
+  };
+  /** Runs the next transaction on PGlite; returns the image ids each block inside it listed. */
+  const nextTransactionOnPglite = ({ insertFails = false, markerClearFails = false } = {}) => {
+    const blocks: number[][] = [];
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (
+      fn: (tx: unknown) => Promise<unknown>
+    ) =>
+      db.pg.transaction((t) =>
+        fn({
+          image: {
+            updateMany: async ({ where, data }: ImageBlock) => {
+              blocks.push(where.id.in);
+              const result = await t.query(
+                `UPDATE "Image" SET ingestion = $1, "nsfwLevel" = $2, "blockedFor" = $3 WHERE id = ANY($4)`,
+                [data.ingestion, data.nsfwLevel, data.blockedFor, where.id.in]
+              );
+              return { count: result.affectedRows ?? 0 };
+            },
+          },
+          $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+            if (markerClearFails) throw new Error('marker clear failed');
+            const statement = Prisma.sql(strings, ...values);
+            return (await t.query(statement.text, statement.values)).affectedRows ?? 0;
+          },
+          csamReport: {
+            findMany: async () => [],
+            create: async ({ data }: { data: Record<string, unknown> }) => {
+              if (insertFails) throw new Error('report insert failed');
+              const { rows } = await t.query(
+                `INSERT INTO "CsamReport" ("userId", "reportedById", "details", "images", "type")
+                 VALUES ($1, $2, $3::jsonb, $4::jsonb, $5) RETURNING *`,
+                [
+                  data.userId,
+                  data.reportedById,
+                  JSON.stringify(data.details ?? {}),
+                  JSON.stringify(data.images),
+                  data.type,
+                ]
+              );
+              return rows[0];
+            },
+          },
+        })
+      )) as never);
+    return blocks;
+  };
+  // As an account's self-deletion with the grace option leaves it.
+  const insertImage = (id: number) =>
+    db.pg.query(
+      `INSERT INTO "Image" (id, ingestion, metadata) VALUES ($1, 'Scanned', jsonb_build_object($2::text, 'Scanned'))`,
+      [id, PRIOR_INGESTION_KEY]
+    );
+  const imageRow = async (id: number) =>
+    (
+      await db.pg.query(
+        `SELECT ingestion, "blockedFor", metadata ? $2 AS breadcrumb FROM "Image" WHERE id = $1`,
+        [id, PRIOR_INGESTION_KEY]
+      )
+    ).rows[0];
+  const reportsOn = async (userId: number) =>
+    (await db.pg.query(`SELECT id FROM "CsamReport" WHERE "userId" = $1`, [userId])).rows.length;
+  const fileListing = (userId: number, imageId: number) =>
+    createCsamReport({
+      userId,
+      reportedById: 10,
+      type: 'Image',
+      imageIds: [imageId],
+      writeBlocklist: false,
+      blockListedImages: true,
+    });
+
+  beforeEach(() => dbMock.dbWrite.image.updateMany.mockReset());
+
+  it.each([
+    ['an account, listing an image another account owns', 990000302, 990000311],
+    ['no account (an internal filing)', -1, 990000312],
+  ] as const)(
+    'blocks the listed image as CSAM when it files for %s',
+    async (_, userId, imageId) => {
+      await insertImage(imageId);
+      const blocks = nextTransactionOnPglite();
+      const sharedBlock = vi.spyOn(imageService, 'blockImagesAsCsamInTransaction');
+
+      await fileListing(userId, imageId);
+
+      // Through the one CSAM block every filing path runs.
+      expect(sharedBlock).toHaveBeenCalledWith([imageId], expect.anything());
+      expect(blocks).toEqual([[imageId]]);
+      // The grace breadcrumb goes with the block, or an account restore would un-block it.
+      expect(await imageRow(imageId)).toEqual({
+        ingestion: 'Blocked',
+        blockedFor: 'CSAM',
+        breadcrumb: false,
+      });
+      // A block outside the transaction would commit on its own and survive a failed insert.
+      expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
+    }
+  );
+
+  it('blocks the listed image and then rolls the block back when the report insert fails', async () => {
+    const imageId = 990000301;
+    await insertImage(imageId);
+    const blocks = nextTransactionOnPglite({ insertFails: true });
+
+    await expect(fileListing(990000302, imageId)).rejects.toThrow('report insert failed');
+
+    expect(blocks).toEqual([[imageId]]);
+    expect(await imageRow(imageId)).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      breadcrumb: true,
+    });
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('files and blocks nothing when clearing the grace breadcrumb fails', async () => {
+    const imageId = 990000321;
+    await insertImage(imageId);
+    nextTransactionOnPglite({ markerClearFails: true });
+
+    await expect(fileListing(990000322, imageId)).rejects.toThrow('marker clear failed');
+
+    expect(await imageRow(imageId)).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      breadcrumb: true,
+    });
+    expect(await reportsOn(990000322)).toBe(0);
   });
 });

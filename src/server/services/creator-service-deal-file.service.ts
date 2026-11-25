@@ -1,8 +1,11 @@
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldItemImageSql } from '@civitai/shared/held-media';
+import { childSafetyImageCase } from '@civitai/db-queries/child-safety-case';
+import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   CopyObjectCommand,
   GetObjectCommand,
@@ -49,6 +52,7 @@ import {
   SERVICE_FINAL_MAX_FILES,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
   SERVICE_PREVIEW_GIVE_UP_MS,
+  SERVICE_FINAL_OVER_LEVEL_REASON,
   SERVICE_PREVIEW_OVER_LEVEL_REASON,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
@@ -533,9 +537,6 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
         AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
-    await tx.$executeRaw`
-      UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL
-      WHERE "fileId" = ${fileId}::int AND "scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
     // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below must depend
     // on the file alone, never on what keeps it.
     const [file] = await tx.$queryRaw<
@@ -547,8 +548,11 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     return { file, copies };
   });
 
-  await deleteImages(removed.copies.map(({ imageId }) => imageId));
   const { file } = removed;
+  await clearDeletedCopies(
+    await deleteImages(removed.copies.map(({ imageId }) => imageId)),
+    file.id
+  );
   // An upload never completed still sits at the uploader's key, which they can write to: the
   // server keeps its own copy instead.
   if (isUploaderKey(file.s3Key)) await keepServerCopy(await getBucket(), file.id, file.s3Key);
@@ -565,13 +569,27 @@ type FileObjects = {
   imageId: number | null;
 };
 
+/** Deletes scan copies one by one; returns the ids that went. A copy kept for its case stays. */
 async function deleteImages(imageIds: number[]) {
-  if (!imageIds.length) return;
+  const gone: number[] = [];
+  if (!imageIds.length) return gone;
   const service = await import('~/server/services/image.service');
-  for (const id of imageIds)
-    await service
+  for (const id of imageIds) {
+    const deleted = await service
       .deleteImages([id], { updatePosts: false, actor: { system: 'creator-service-deal-file' } })
       .catch(() => null);
+    if (deleted?.some((row) => row.id === id)) gone.push(id);
+  }
+  return gone;
+}
+
+/** Entries stop pointing at copies that are gone: deleted now, or by an earlier run. */
+export function clearDeletedCopies(imageIds: number[], fileId: number) {
+  return dbWrite.$executeRaw`
+    UPDATE "ServiceDealFileEntry" e SET "imageId" = NULL, "scanKey" = NULL
+    WHERE e."imageId" IS NOT NULL AND e."fileId" = ${fileId}::int
+      AND (e."imageId" IN (${Prisma.join(imageIds.length ? imageIds : [-1])})
+        OR NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId"))`;
 }
 
 /** Deletes every stored version of one object; false (and logged) when any may remain. */
@@ -667,13 +685,41 @@ async function deleteFileObjects(
 }
 
 /**
- * Whether a file must be kept when it is removed, judged from the row each time: a scan of it has not
- * passed (an image in it, its own scan copy, or a processing step still running). `f` names the
- * file row.
+ * An image entry refused only for a rating above its deal's level, whose image nothing has flagged
+ * since: a rating mismatch, not a verdict on the content. It does not keep a removed file, and its
+ * copy is deleted by the purge, with the file. `e` names the entry row.
+ */
+// Keeps evidence, so it counts more than csamHeld, which only refuses serving: poi and ingestion too.
+export const entryOnlyOverLevel = (e: Prisma.Sql) => Prisma.sql`(
+  ${e}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+  AND ${e}."failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
+  AND (
+    -- An image row that is gone, or cannot be read, keeps it: only one seen unflagged lets it go.
+    (${e}."imageId" IS NOT NULL
+      AND EXISTS (SELECT 1 FROM "Image" oi WHERE oi."id" = ${e}."imageId"
+        AND oi."ingestion" = 'Scanned'::"ImageIngestionStatus" AND oi."needsReview" IS NULL
+        AND NOT oi."poi" AND NOT oi."minor" AND oi."blockedFor" IS NULL
+        AND ((oi."id")::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})) IS NOT TRUE
+        AND ${toPrismaSql(childSafetyImageCase('oi'))} IS NOT TRUE))
+    -- Or the purge already deleted its copy, so a run that stops part-way does not strand the file.
+    OR (${e}."imageId" IS NULL
+      AND EXISTS (SELECT 1 FROM "ServiceDealFilePurge" p WHERE p."fileId" = ${e}."fileId"))
+  )
+)`;
+
+/** An image entry whose copy is still the moderators' evidence. `e` names the entry row. */
+const entryKept = (e: Prisma.Sql) => Prisma.sql`(
+  ${e}."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus" AND NOT ${entryOnlyOverLevel(e)}
+)`;
+
+/**
+ * Whether a file must be kept when it is removed, judged from the row each time: an image in it is
+ * unchecked or refused for anything but its rating, its own scan copy has not passed, or a
+ * processing step still runs. `f` names the file row.
  */
 const mustKeep = (f: Prisma.Sql) => Prisma.sql`(
   EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-    WHERE e."fileId" = ${f}."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
+    WHERE e."fileId" = ${f}."id" AND ${entryKept(Prisma.sql`e`)})
   OR (${f}."imageId" IS NOT NULL AND ${f}."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
   OR (${f}."processingAt" IS NOT NULL AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus")
 )`;
@@ -685,10 +731,11 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * A removed file whose scans finished clean (or that can never be judged), with its scan copies
- * gone. Deal holds are not checked here; `purgeable` adds them. A
- * removed file whose scan failed, or is still to come, stays for the moderators. `f` names the
- * file row.
+ * A removed file whose scans finished clean, or that can never be judged, or that failed only for a
+ * rating above its deal's level. Its scan copies are gone, except those of such over-level images,
+ * which the purge deletes with the file. Deal holds are not checked here; `purgeable` adds them. A
+ * file whose scan failed for any other reason, or is still to come, stays for the moderators. `f`
+ * names the file row.
  */
 const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
@@ -703,13 +750,25 @@ const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
       AND ${f}."kind" <> 'Preview'::"ServiceDealFileKind"
       AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
       AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-        WHERE e."fileId" = ${f}."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"))
+        WHERE e."fileId" = ${f}."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+          AND NOT ${entryOnlyOverLevel(Prisma.sql`e`)}))
+    -- Failed only for a rating above the deal's level: every other image passed, and the malware scan did not fail.
+    OR (${f}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+      AND ${f}."kind" <> 'Preview'::"ServiceDealFileKind"
+      AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
+      AND EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = ${f}."id" AND ${entryOnlyOverLevel(Prisma.sql`e`)})
+      AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = ${f}."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
+          AND NOT ${entryOnlyOverLevel(Prisma.sql`e`)}))
     OR (${f}."kind" = 'Preview'::"ServiceDealFileKind"
       AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"))
   AND NOT ${mustKeep(f)}
-  -- Scan copies of its images go first (deleteEntryScanCopies).
+  -- Scan copies of its images go first (deleteEntryScanCopies); one refused only for its rating
+  -- goes in the purge, behind the same holds as the file.
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-    WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL)
+    WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL
+      AND NOT ${entryOnlyOverLevel(Prisma.sql`e`)})
 )`;
 
 const purgeable = (f: Prisma.Sql) => Prisma.sql`(${purgeableState(f)} AND NOT ${dealHeld(f)})`;
@@ -756,6 +815,19 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
       ).length > 0;
     const deleted = await deleteFileObjects(file, stillDeletable);
     if (!deleted) continue;
+    // A copy of an image refused only for its rating goes with its file. One that stays (kept for
+    // its case) keeps the row, for the next run to judge again.
+    const copies = await dbWrite.$queryRaw<{ imageId: number }[]>`
+      SELECT e."imageId" FROM "ServiceDealFileEntry" e
+      WHERE e."fileId" = ${file.id}::int AND e."imageId" IS NOT NULL
+        AND ${entryOnlyOverLevel(Prisma.sql`e`)}`;
+    if (copies.length) {
+      if (!(await stillDeletable())) continue;
+      const ids = copies.map(({ imageId }) => imageId);
+      const gone = await deleteImages(ids);
+      await clearDeletedCopies(gone, file.id);
+      if (gone.length !== ids.length) continue;
+    }
     const done = await dbWrite.$transaction(async (tx) => {
       await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
       const gone = await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
@@ -922,6 +994,8 @@ type ListedFile = {
   previewUrl: string | null;
   /** A ready preview this domain may not show; `previewUrl` is null. */
   previewOffDomain?: boolean;
+  /** A Final the viewer may have but this domain may not serve; `canDownload` is false. */
+  downloadOffDomain?: boolean;
   canDownload: boolean;
   /** Moderators only: when the uploader removed a file that was kept. */
   removedAt?: Date;
@@ -942,7 +1016,8 @@ type FileRow = {
   watermarkedKey: string | null;
   removedAt: Date | null;
   nsfwLevel: number | null;
-};
+  s3Key: string;
+} & FinalLevelFacts;
 
 /**
  * A Final's own scan verdicts let the buyer have it. Checked at the gate as well as by
@@ -1005,7 +1080,7 @@ export async function listServiceDealFiles({
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
       f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey",
-      f."removedAt", f."nsfwLevel"
+      f."removedAt", f."nsfwLevel", f."s3Key", ${finalLevelColumns}
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -1028,7 +1103,10 @@ export async function listServiceDealFiles({
           failReason: row.failReason,
           scanStatus: row.scanStatus,
           previewUrl: null,
-          canDownload: canReviewCsam,
+          canDownload:
+            canReviewCsam &&
+            !isUploaderKey(row.s3Key) &&
+            finalLevelGate(row, servableLevels, false) === 'served',
           removedAt: row.removedAt,
         },
       ];
@@ -1053,7 +1131,10 @@ export async function listServiceDealFiles({
           failReason: owner ? row.failReason : null,
           scanStatus: row.scanStatus,
           previewUrl: null,
-          canDownload: row.status === 'Ready' && (owner || cleared),
+          canDownload:
+            row.status === 'Ready' &&
+            (owner || cleared) &&
+            finalLevelGate(row, servableLevels, false, isBuyer) === 'served',
         },
       ];
     }
@@ -1063,12 +1144,14 @@ export async function listServiceDealFiles({
     // A buyer sees a preview only once it is scanned, marked and published: never the original.
     if (buyerOnly && row.kind === 'Preview' && row.status !== 'Ready') return [];
 
-    const downloadable =
+    const allowed =
       row.kind === 'Final' &&
       row.status === 'Ready' &&
       (privileged ||
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
-    const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
+    const levelGate = allowed ? finalLevelGate(row, servableLevels, false, isSeller) : 'refused';
+    const downloadable = levelGate === 'served';
+    const lockedFinal = buyerOnly && row.kind === 'Final' && !allowed;
     const offDomain =
       row.kind === 'Preview' && !!row.nsfwLevel && !Flags.intersects(row.nsfwLevel, servableLevels);
     const key = offDomain ? null : row.watermarkedKey;
@@ -1095,6 +1178,7 @@ export async function listServiceDealFiles({
               })
             : null,
         ...(offDomain && row.status === 'Ready' ? { previewOffDomain: true } : {}),
+        ...(levelGate === 'offDomain' ? { downloadOffDomain: true } : {}),
         canDownload: downloadable,
       },
     ];
@@ -1119,6 +1203,63 @@ export type ServiceDealFileDownload = {
   /** A removed file is signed only once its access is recorded. */
   removed: boolean;
 };
+
+/** The columns `finalLevelGate` reads, over the file row `f`. */
+const finalLevelColumns = Prisma.sql`f."scannedEtag",
+      (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+        -- Refuses serving; entryOnlyOverLevel, which keeps evidence, also counts poi and ingestion.
+        WHERE e."fileId" = f."id" AND (${Prisma.raw(heldItemImageSql('i'))} OR i.minor IS TRUE
+          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
+          OR ${toPrismaSql(childSafetyImageCase('i'))} IS TRUE)) AS "csamHeld",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+        WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone"`;
+
+type FinalLevelFacts = {
+  scannedEtag: string | null;
+  /** The highest rating among the file's scanned images; null for a file with none. */
+  contentLevel: number | null;
+  csamHeld: boolean;
+  /** An image in it is blocked, for any reason. */
+  imageBlocked: boolean;
+  ratedImageGone: boolean;
+};
+
+/**
+ * Whether a Final's rating lets this domain serve it: a video, or a file whose images were rated (an
+ * image, or a zip of them), goes only where that rating may be shown. The list and the download
+ * share this gate; only the download passes `disputeReview`. `ownOriginal` is the uploader taking
+ * back their own original, never the delivery copy. 'offDomain': rated, but outside this domain's
+ * levels.
+ */
+function finalLevelGate(
+  row: { kind: ServiceDealFileKind; fileName: string } & FinalLevelFacts,
+  servableLevels: number,
+  disputeReview: boolean,
+  /** The uploader taking back their own original, never the delivery copy. */
+  ownOriginal = false
+): 'served' | 'offDomain' | 'refused' {
+  // A file of any kind held for CSAM or a minor goes only through the CSAM path, never this route,
+  // rated or not. Its uploader still gets their own original back, unless an image in it is blocked.
+  if (row.csamHeld && !(ownOriginal && !row.imageBlocked)) return 'refused';
+  if (row.kind !== 'Final') return 'served';
+  const video = isFinalVideoName(row.fileName);
+  if (!video && row.contentLevel === null) return 'served';
+  // A video never stamped (refused, or not scanned yet) goes only to dispute review.
+  if (video && !row.scannedEtag && !disputeReview) return 'refused';
+  const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
+  // Dispute review sees it whatever its rating, Blocked included (no domain's levels hold it), but
+  // only while its scan image still exists to show it is not held.
+  if (!levelInDomain && !(disputeReview && !row.ratedImageGone))
+    // A rating no domain shows (Blocked) is refused, so no other domain is offered for it.
+    return row.contentLevel && Flags.intersects(row.contentLevel, allBrowsingLevelsFlag)
+      ? 'offDomain'
+      : 'refused';
+  return 'served';
+}
 
 /**
  * The object a user may download, or null (the route answers 404 for null, so a file id reveals
@@ -1153,7 +1294,7 @@ export async function resolveServiceDealFileDownload({
   moderatorFetch?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
-    {
+    ({
       dealId: number;
       s3Key: string;
       deliveryKey: string | null;
@@ -1169,23 +1310,12 @@ export async function resolveServiceDealFileDownload({
       revisionsUsed: number;
       completedAt: Date | null;
       removedAt: Date | null;
-      scannedEtag: string | null;
       scannedVersionId: string | null;
-      contentLevel: number | null;
-      csamHeld: boolean;
-      ratedImageGone: boolean;
-    }[]
+    } & FinalLevelFacts)[]
   >`
     SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
-      f."malwareScanStatus", f."status", f."removedAt", f."scannedEtag", f."scannedVersionId",
-      (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
-      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
-        WHERE e."fileId" = f."id" AND (i."needsReview" IS NOT DISTINCT FROM 'csam'
-          OR i."blockedFor" IS NOT DISTINCT FROM 'CSAM' OR i.minor IS TRUE
-          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))) AS "csamHeld",
-      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-        WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
+      f."malwareScanStatus", f."status", f."removedAt", f."scannedVersionId",
+      ${finalLevelColumns},
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -1233,19 +1363,14 @@ export async function resolveServiceDealFileDownload({
   const role: ServiceDealAccessRole =
     row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
   const bucket = await getBucket();
-  if (row.kind === 'Final' && isFinalVideoName(row.fileName)) {
-    // A video is served only as the version its scan copy was made from, and only where its rating
-    // may be shown. One never stamped (refused, or not scanned yet) goes only to dispute review.
-    const disputeReview = isModerator && !!moderatorFetch;
-    // Held for CSAM or a minor, it goes only through the CSAM path, never this route.
-    if (row.csamHeld) return null;
-    const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
-    // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold,
-    // but only while the scan image that shows it is not held is still there to say so.
-    const levelShown = levelInDomain || (disputeReview && !row.ratedImageGone);
-    if (!levelShown || (!row.scannedEtag && !disputeReview)) return null;
-    if (row.scannedEtag && !(await stillScannedVersion(bucket, key, row))) return null;
-  }
+  const ownOriginal = userId === uploaderId && key === row.s3Key;
+  if (
+    finalLevelGate(row, servableLevels, isModerator && !!moderatorFetch, ownOriginal) !== 'served'
+  )
+    return null;
+  // A video is served only as the version its scan copy was made from.
+  if (row.kind === 'Final' && row.scannedEtag && isFinalVideoName(row.fileName))
+    if (!(await stillScannedVersion(bucket, key, row))) return null;
   return {
     bucket,
     key,

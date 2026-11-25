@@ -752,6 +752,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // Without the request, region cannot reach a cacheable render's flags.
     req: botCache ? undefined : request,
   });
+  // The signed-out per-visitor rollouts (`~/server/services/signed-out-rollout`). Same rule as the
+  // region: a cacheable render gets no request, so its flags never vary per visitor.
+  if (typeof window === 'undefined') {
+    const { applySignedOutRolloutFlags } = await import('~/server/services/signed-out-rollout');
+    applySignedOutRolloutFlags(flags, { user: session?.user, req: botCache ? undefined : request });
+  }
 
   const domain = getRequestDomainColor(request);
 

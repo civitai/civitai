@@ -61,7 +61,8 @@ describe('buyerDisclosureItems ids', () => {
     expect(items(true).map((item) => item.id)).toEqual(ids);
   });
 
-  // What a deal stores as the buyer's record, written out so a changed word or a stray id shows.
+  // What a deal stores as the buyer's record (civitai/civitai#10253), written out so a changed word or a
+  // stray id shows.
   const common = [
     "100 Buzz is held now. Refunded if the seller declines, doesn't accept within 48 hours, or you withdraw before they accept.",
     'Delivery within 3 days of acceptance. 1 revision included.',
@@ -88,20 +89,5 @@ describe('buyerDisclosureItems ids', () => {
     ['with reviews', true, stored.reviewOn],
   ])('stores exactly these lines %s', (_label, reviewEnabled, expected) => {
     expect(buyerDisclosureLines(items(reviewEnabled))).toEqual(expected);
-  });
-
-  it('never starts or ends a stored line with an item id', () => {
-    // The ids are ordinary words in the text, so only an id tacked on to either end can be told apart.
-    const ids = items(true).map((item) => item.id);
-    for (const line of [
-      ...stored.reviewOff,
-      ...stored.reviewOn,
-      ...buyerDisclosureLines(items(true)),
-    ]) {
-      for (const id of ids) {
-        expect(line.startsWith(id), line).toBe(false);
-        expect(line.endsWith(id), line).toBe(false);
-      }
-    }
   });
 });

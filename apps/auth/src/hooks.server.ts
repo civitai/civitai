@@ -1,6 +1,7 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import {
   legacyCookieReadEnabled,
+  refusesMemorializedSession,
   rollSlot,
   sessionCookieMode,
   sessionCookieNameForSlot,
@@ -147,7 +148,8 @@ const handleRequest: Handle = async ({ event, resolve }) => {
     const claims = await verifier.verifyToken(token).catch(() => null);
     const userId = Number(claims?.sub);
     if (claims && Number.isFinite(userId) && (internal || (await acceptHubSession(claims)))) {
-      event.locals.user = (await getOrProduceSessionUser(userId).catch(() => null)) ?? undefined;
+      const user = await getOrProduceSessionUser(userId).catch(() => null);
+      event.locals.user = user && !refusesMemorializedSession(user, claims) ? user : undefined;
       event.locals.session = claims;
       event.locals.tokenId = claims.jti;
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.

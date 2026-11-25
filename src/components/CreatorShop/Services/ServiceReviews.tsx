@@ -11,6 +11,7 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportServiceReviewButton } from '~/components/CreatorShop/Services/ReportServiceReviewButton';
 import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
@@ -172,24 +173,31 @@ function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }
   );
 }
 
-function ReviewImages({ images }: { images: Omit<ReviewImage, 'reviewId'>[] }) {
+export function ReviewImages({ images }: { images: Omit<ReviewImage, 'reviewId'>[] }) {
   const layout = reviewImageLayout(images.length);
+  const linkLabel = (index: number) => `Open review image ${index + 1} of ${images.length}`;
   if (layout === 'single')
     return (
       <div className="max-w-[360px]">
-        {images.map((image) => (
-          <ReviewThumb key={image.id} image={image} className="aspect-[4/3]" />
+        {images.map((image, index) => (
+          <ReviewThumb
+            key={image.id}
+            image={image}
+            className="aspect-[4/3]"
+            linkLabel={linkLabel(index)}
+          />
         ))}
       </div>
     );
   if (layout === 'row')
     return (
       <div className="flex max-w-md gap-2">
-        {images.map((image) => (
+        {images.map((image, index) => (
           <ReviewThumb
             key={image.id}
             image={image}
             fit="contain"
+            linkLabel={linkLabel(index)}
             style={reviewRowTileStyle(image)}
             className="min-w-0"
           />
@@ -198,8 +206,13 @@ function ReviewImages({ images }: { images: Omit<ReviewImage, 'reviewId'>[] }) {
     );
   return (
     <div className="grid max-w-md grid-cols-4 gap-2">
-      {images.map((image) => (
-        <ReviewThumb key={image.id} image={image} className="aspect-square" />
+      {images.map((image, index) => (
+        <ReviewThumb
+          key={image.id}
+          image={image}
+          className="aspect-square"
+          linkLabel={linkLabel(index)}
+        />
       ))}
     </div>
   );
@@ -210,39 +223,54 @@ function ReviewThumb({
   className = 'aspect-square',
   style,
   fit = 'cover',
+  linkLabel,
 }: {
   image: Omit<ReviewImage, 'reviewId'>;
   className?: string;
   style?: CSSProperties;
   fit?: 'cover' | 'contain';
+  /** Links the tile, named this, to the image's own page, which decides whether this viewer may see it. */
+  linkLabel?: string;
 }) {
   const media = {
     ...image,
     type: image.type as MediaType,
     metadata: image.metadata as MixedObject,
   };
+  const tileClass = `relative overflow-hidden rounded-md bg-gray-2 dark:bg-dark-5 ${className}`;
+  const content = (
+    <ImageGuard2 image={media} explain={false}>
+      {(safe) =>
+        safe ? (
+          <EdgeMedia2
+            src={media.url}
+            name={media.name ?? media.id.toString()}
+            alt=""
+            type={media.type}
+            metadata={media.metadata}
+            width={300}
+            className={fit === 'contain' ? 'size-full object-contain' : 'size-full object-cover'}
+          />
+        ) : (
+          <MediaHash {...media} />
+        )
+      }
+    </ImageGuard2>
+  );
+  if (linkLabel)
+    return (
+      <NextLink
+        href={`/images/${image.id}`}
+        aria-label={linkLabel}
+        className={`block ${tileClass}`}
+        style={style}
+      >
+        {content}
+      </NextLink>
+    );
   return (
-    <div
-      className={`relative overflow-hidden rounded-md bg-gray-2 dark:bg-dark-5 ${className}`}
-      style={style}
-    >
-      <ImageGuard2 image={media} explain={false}>
-        {(safe) =>
-          safe ? (
-            <EdgeMedia2
-              src={media.url}
-              name={media.name ?? media.id.toString()}
-              alt=""
-              type={media.type}
-              metadata={media.metadata}
-              width={300}
-              className={fit === 'contain' ? 'size-full object-contain' : 'size-full object-cover'}
-            />
-          ) : (
-            <MediaHash {...media} />
-          )
-        }
-      </ImageGuard2>
+    <div className={tileClass} style={style}>
+      {content}
     </div>
   );
 }

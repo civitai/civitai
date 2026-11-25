@@ -273,7 +273,10 @@ import {
   queueComicsForPanelImages,
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
-import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
+import {
+  clearAccountDeletionImageMarkers,
+  type MarkerClearClient,
+} from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { invalidateImageVisibilityCaches } from '~/server/services/image-visibility-invalidation.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
@@ -1550,6 +1553,123 @@ export function logNoticeUnderReview(images: { id: number; userId: number }[]) {
     logToAxiom({ type: 'warning', name: 'image-notice-under-review', imageId: id, userId });
 }
 
+/** The columns a CSAM block writes on an "Image" row. */
+export const CSAM_IMAGE_BLOCK = {
+  ingestion: 'Blocked',
+  nsfwLevel: NsfwLevel.Blocked,
+  blockedFor: BlockedReason.CSAM,
+} as const;
+
+/** A caller's transaction, as the CSAM block runs on it: its write of the block, and raw SQL. */
+export type CsamBlockTransaction = MarkerClearClient & {
+  /** Writes `CSAM_IMAGE_BLOCK` on exactly `ids`. */
+  writeBlock(ids: number[]): Promise<unknown>;
+};
+
+/**
+ * The CSAM block of listed images, on the caller's transaction: every filing path runs this one.
+ * The account-deletion markers go with the block, since a grace breadcrumb left on would let an
+ * account restore un-block it; a failure of either rolls the caller's transaction back.
+ */
+export async function blockImagesAsCsamInTransaction(ids: number[], tx: CsamBlockTransaction) {
+  if (!ids.length) return;
+  await tx.writeBlock(ids);
+  await clearAccountDeletionImageMarkers({ ids }, tx);
+}
+
+type BlockStepRunner = (step: string, fn: () => Promise<unknown>) => Promise<unknown>;
+
+/**
+ * What an image block runs besides its row write, the one list every block path uses. `alongside`
+ * may run while the write is in flight; `after` follows it, and queues the documents even when
+ * `beforeDocuments` (the moderator block's blocklist write) throws.
+ */
+function imageBlockSteps(ids: number[], run: BlockStepRunner = (_step, fn) => fn()) {
+  return {
+    alongside: () =>
+      Promise.all([
+        run('search', () =>
+          queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete })
+        ),
+        run('existence', () => invalidateManyImageExistence(ids)),
+        // A block bypasses `processImageScanWorkflow`, so the parent comic project is queued here;
+        // without it the comic stays indexed in its pre-block state.
+        run('comics', () => queueComicsForPanelImages(ids)),
+      ]),
+    after: async ({
+      postIds,
+      markersCleared = false,
+      beforeDocuments,
+    }: {
+      postIds: number[];
+      /** The caller cleared the account-deletion markers of every one of `ids`, with the block. */
+      markersCleared?: boolean;
+      beforeDocuments?: () => Promise<void>;
+    }) => {
+      // A block outranks an account-deletion grace block: left on, a later account restore would
+      // read the grace breadcrumbs and un-block it. After the write, not alongside it: both UPDATE
+      // the same rows by id, and two concurrent row-lock acquisitions over one id set can deadlock.
+      if (!markersCleared) await run('markers', () => clearAccountDeletionImageMarkers({ ids }));
+      // After the write commits, so a concurrent reader can't refill with the pre-block state.
+      if (postIds.length) await run('posts', () => bustCachesForPosts(postIds));
+      try {
+        await beforeDocuments?.();
+      } finally {
+        await run('documents', () => queueDocumentsForBlockedImages(ids));
+      }
+    },
+  };
+}
+
+/**
+ * Runs the block steps after a CSAM block commits, plus the home-block eviction a moderator block's
+ * write does itself. The caller clears the account-deletion markers with the block, where a failure
+ * is the block's. Never throws: the block stands, so a failed step is logged.
+ */
+export async function afterCsamImageBlock(target: { imageIds: number[] } | { userId: number }) {
+  const run: BlockStepRunner = async (step, fn) => {
+    try {
+      return await fn();
+    } catch (error) {
+      logToAxiom({
+        name: 'csam-image-block',
+        type: 'error',
+        message: `after-block step failed: ${step}`,
+        error: (error as Error)?.message,
+        payload: { important: true },
+      });
+    }
+  };
+  let imageIds: number[];
+  if ('userId' in target) {
+    await run('home-blocks', () => evictHomeBlocksForImages({ userId: target.userId }));
+    const owned = (await run('owned-ids', () =>
+      // primary: the ids of the block that just committed.
+      dbWrite.image.findMany({ where: { userId: target.userId }, select: { id: true } })
+    )) as { id: number }[] | undefined;
+    imageIds = owned?.map((image) => image.id) ?? [];
+  } else {
+    imageIds = target.imageIds;
+    if (!imageIds.length) return;
+    await run('home-blocks', () => evictHomeBlocksForImages({ imageIds }));
+  }
+  for (const ids of chunk(imageIds, 1000)) {
+    const steps = imageBlockSteps(ids, run);
+    await steps.alongside();
+    const posts = (await run('post-ids', () =>
+      // primary: the post ids of rows the block just wrote.
+      dbWrite.image.findMany({
+        where: { id: { in: ids }, postId: { not: null } },
+        select: { postId: true },
+      })
+    )) as { postId: number | null }[] | undefined;
+    await steps.after({
+      postIds: uniq((posts ?? []).map((p) => p.postId).filter(isDefined)),
+      markersCleared: true,
+    });
+  }
+}
+
 export async function handleBlockImages({
   ids: imageIds,
   userId,
@@ -1572,7 +1692,7 @@ export async function handleBlockImages({
   await Limiter({ batchSize: 100, limit: 10 }).process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
-    const invalidateExistence = invalidateManyImageExistence(ids);
+    const steps = imageBlockSteps(ids);
 
     let held = new Set<number>();
     let underReview = new Set<number>();
@@ -1589,56 +1709,39 @@ export async function handleBlockImages({
         })
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
-
-      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
-      invalidateExistence,
-      // Same reason as `handleUnblockImages` — moderator block bypasses
-      // `processImageScanWorkflow`, so we queue the parent comic project
-      // here directly. Without this the comic stays indexed under its
-      // pre-block (visible) state.
-      queueComicsForPanelImages(ids),
+      steps.alongside(),
     ]);
-    // A moderator block outranks an account-deletion grace block: left on, a later account restore
-    // would read the grace breadcrumbs and un-block what was just moderated. See
-    // `clearAccountDeletionImageMarkers`.
-    //
-    // Sequenced AFTER the batch above rather than joining it: both statements UPDATE the same rows
-    // by id, and two concurrent row-lock acquisitions over one id set are how you buy a deadlock
-    // for nothing. Nothing here depends on the order, so it costs a round trip and no risk.
-    await clearAccountDeletionImageMarkers({ ids });
-    // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
-    if (postIds.length) await bustCachesForPosts(postIds);
-    // The requeue runs even when the blocklist write throws: the block has landed.
-    try {
-      if (include?.includes('phash-block')) {
-        logCsamBlocklistNoHash(
-          ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
-          'block'
-        );
-        await bulkAddBlockedImages({
-          data: images
-            .map(({ id, blockedFor }) => {
-              const pHash = pHashes.get(id);
-              if (!pHash) return null;
-              return {
-                hash: pHash,
-                // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-                reason: removedForCsam.has(id)
-                  ? BlockImageReason.CSAM
-                  : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
-              };
-            })
-            .filter(isDefined),
-          context: {
-            step: 'block',
-            imageIds: images.map(({ id }) => id),
-            actorUserId: moderatorId,
-          },
-        });
-      }
-    } finally {
-      await queueDocumentsForBlockedImages(ids);
-    }
+    await steps.after({
+      postIds,
+      beforeDocuments: async () => {
+        if (include?.includes('phash-block')) {
+          logCsamBlocklistNoHash(
+            ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+            'block'
+          );
+          await bulkAddBlockedImages({
+            data: images
+              .map(({ id, blockedFor }) => {
+                const pHash = pHashes.get(id);
+                if (!pHash) return null;
+                return {
+                  hash: pHash,
+                  // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+                  reason: removedForCsam.has(id)
+                    ? BlockImageReason.CSAM
+                    : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
+                };
+              })
+              .filter(isDefined),
+            context: {
+              step: 'block',
+              imageIds: images.map(({ id }) => id),
+              actorUserId: moderatorId,
+            },
+          });
+        }
+      },
+    });
     if (include?.includes('user-notification')) {
       const notified = images.filter(
         (img) => !held.has(img.id) && !isFeedbackCaptureOwner(img.userId)

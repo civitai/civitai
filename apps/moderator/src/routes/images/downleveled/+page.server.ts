@@ -5,7 +5,7 @@ import { parseQuery } from '$lib/server/query';
 import { getDownleveledImages } from '$lib/server/downleveled-review.service';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { isRatingLevel } from '$lib/nsfw-levels';
-import { withheldRefusal } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRow, withheldRows } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.string().optional().catch(undefined),
@@ -13,14 +13,15 @@ const querySchema = z.object({
   originalLevel: z.coerce.number().int().positive().optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { cursor, limit, originalLevel } = parseQuery(url, querySchema);
-  const data = await getDownleveledImages({ cursor, limit, originalLevel });
+  const { items, nextCursor } = await getDownleveledImages({ cursor, limit, originalLevel });
   return {
     limit,
     originalLevel: originalLevel ?? null,
     wide: true,
-    ...data,
+    items: await withheldRows(items, locals.user, 'downleveled', (i) => i.id, withheldRow),
+    nextCursor,
   };
 };
 

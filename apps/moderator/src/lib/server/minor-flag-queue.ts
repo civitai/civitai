@@ -2,6 +2,7 @@ import { fail, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, RequestEvent } from '@sveltejs/kit';
 import { parseForm, parseQuery } from '$lib/server/query';
+import { withheldCoverImages } from '$lib/server/retracted-media';
 import {
   checkedResolutionReason,
   resolutionReasonFields,
@@ -177,7 +178,11 @@ async function needsReviewCounts(
 }
 
 /** Needs review lists only the kinds of lead the viewer may rule; `sources` tells the page which. */
-export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
+export async function loadNeedsReviewQueue(
+  url: URL,
+  grants: PermissionSet,
+  user: App.Locals['user'] | undefined
+) {
   const { limit, page, q, offset, search } = parsePaging(url);
   const needsReviewFilters: NeedsReviewFilters = parseQuery(url, needsReviewFilterSchema);
   const sources = needsReviewSources(grants);
@@ -199,16 +204,23 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
     sources,
     total,
     chipCounts,
-    restrictedVerdicts,
+    restrictedVerdicts: (
+      await withheldCoverImages(
+        restrictedVerdicts.map((v) => ({ ...v, coverImages: [] })),
+        user,
+        'model-flag-restricted-verdicts'
+      )
+    ).map(({ coverImages: _, ...v }) => v),
     restrictedVerdictTotal,
     ...queue,
+    items: await withheldCoverImages(queue.items, user, 'model-flag-needs-review'),
     fullBleed: true,
   };
 }
 
 export type NeedsReviewQueueData = Awaited<ReturnType<typeof loadNeedsReviewQueue>>;
 
-export async function loadAppealQueue(url: URL) {
+export async function loadAppealQueue(url: URL, user: App.Locals['user'] | undefined) {
   const { limit, page, q, offset, search } = parsePaging(url);
   const appealFilters: AppealFilters = parseQuery(url, appealFilterSchema);
 
@@ -222,12 +234,13 @@ export async function loadAppealQueue(url: URL) {
   ]);
 
   const facets = groups ? appealFacets(groups, appealFilters) : null;
-  return { limit, page, offset, q, appealFilters, facets, ...queue, fullBleed: true };
+  const items = await withheldCoverImages(queue.items, user, 'model-flag-appeals');
+  return { limit, page, offset, q, appealFilters, facets, ...queue, items, fullBleed: true };
 }
 
 export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;
 
-export async function loadFlaggedQueue(url: URL) {
+export async function loadFlaggedQueue(url: URL, user: App.Locals['user'] | undefined) {
   const { limit, page, q, offset, search } = parsePaging(url);
   const flaggedFilters: FlaggedFilters = parseQuery(url, flaggedFilterSchema);
   const [queue, chipCounts] = await Promise.all([
@@ -249,6 +262,7 @@ export async function loadFlaggedQueue(url: URL) {
     total,
     chipCounts: chipCounts ?? {},
     ...queue,
+    items: await withheldCoverImages(queue.items, user, 'model-flag-flagged'),
     fullBleed: true,
   };
 }

@@ -8,6 +8,9 @@ import {
   setFeedGoTransportEnabled,
   setFeedGoTransportInfiniteEnabled,
   setFeedGoTransportModelGetAllEnabled,
+  setFeedGoTransportSignedOutEnabled,
+  setFeedGoTransportSignedOutInfiniteEnabled,
+  setFeedGoTransportSignedOutModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 
 /**
@@ -29,12 +32,24 @@ const MODELS_INPUT = { sort: 'Newest', limit: 20, browsingLevel: 1 };
 const IMAGES = 'image.getInfinite';
 const IMAGES_INPUT = { limit: 50, browsingLevel: 1, period: 'Week' };
 
+const allTransport = (enabled: boolean) => {
+  setFeedGoTransportEnabled(enabled);
+  setFeedGoTransportModelGetAllEnabled(enabled);
+  setFeedGoTransportInfiniteEnabled(enabled);
+};
+const allSignedOutTransport = (enabled: boolean) => {
+  setFeedGoTransportSignedOutEnabled(enabled);
+  setFeedGoTransportSignedOutModelGetAllEnabled(enabled);
+  setFeedGoTransportSignedOutInfiniteEnabled(enabled);
+};
+
 beforeEach(() => {
   sent = [];
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
   setFeedGoTransportInfiniteEnabled(false);
+  allSignedOutTransport(false);
   delete (globalThis as { window?: unknown }).window;
   vi.stubGlobal(
     'fetch',
@@ -53,6 +68,7 @@ afterEach(() => {
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
   setFeedGoTransportInfiniteEnabled(false);
+  allSignedOutTransport(false);
   delete (globalThis as { window?: unknown }).window;
   vi.unstubAllGlobals();
 });
@@ -450,5 +466,102 @@ describe('feedGoTransportInfinite', () => {
     expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
     expect(sent[0].url).not.toContain('/api/trpc-go');
     expect(sent[1].url).toContain('/api/trpc-go/model.getAll?'); // positive control
+  });
+});
+
+/**
+ * The signed-out cohort (`feedGoTransportSignedOut`, `feedGoTransportSignedOutModelGetAll`,
+ * `feedGoTransportSignedOutInfinite`): a browser rendered as signed out (`window.isAuthed === false`)
+ * reads ONLY these, a signed-in one ONLY the signed-in flags, and a browser whose session is not
+ * known yet (`window.isAuthed` unset) neither. Literal paths.
+ */
+describe('the signed-out Go-transport flags', () => {
+  const signOut = () => {
+    (globalThis as { window?: unknown }).window = { isAuthed: false };
+  };
+
+  it('ON, signed out: each procedure goes to its /api/trpc-go path as a GET, with no authed key', async () => {
+    signOut();
+    allSignedOutTransport(true);
+    await callQuery(FEED, FEED_INPUT);
+    await callQuery(MODELS, MODELS_INPUT);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(3);
+    expect(sent[0].url).toContain('/api/trpc-go/image.getImagesAsPostsInfinite?');
+    expect(sent[1].url).toContain('/api/trpc-go/model.getAll?');
+    expect(sent[2].url).toContain('/api/trpc-go/image.getInfinite?');
+    for (const s of sent) {
+      expect(s.method).toBe('GET');
+      expect(s.url).not.toContain('batch=1');
+      // The signed-out input is the one the old path's edge-cache entry is keyed on: no `authed`.
+      expect(decodeURIComponent(s.url)).not.toContain('authed');
+    }
+  });
+
+  it('each signed-out flag moves only its own procedure', async () => {
+    signOut();
+    setFeedGoTransportSignedOutModelGetAllEnabled(true);
+    await callQuery(FEED, FEED_INPUT);
+    await callQuery(MODELS, MODELS_INPUT);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(3);
+    expect(sent[0].url).toContain('/api/trpc/image.getImagesAsPostsInfinite?');
+    expect(sent[1].url).toContain('/api/trpc-go/model.getAll?'); // positive control
+    expect(sent[2].url).toContain('/api/trpc/image.getInfinite?');
+  });
+
+  it('the signed-in flags ON do not move a signed-out browser', async () => {
+    signOut();
+    allTransport(true);
+    await callQuery(FEED, FEED_INPUT);
+    await callQuery(MODELS, MODELS_INPUT);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(3);
+    for (const s of sent) expect(s.url).not.toContain('/api/trpc-go');
+  });
+
+  it('the signed-out flags ON do not move a signed-in browser', async () => {
+    signIn();
+    allSignedOutTransport(true);
+    await callQuery(FEED, FEED_INPUT);
+    await callQuery(MODELS, MODELS_INPUT);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(3);
+    for (const s of sent) expect(s.url).not.toContain('/api/trpc-go');
+  });
+
+  it('ON, session not known yet (window.isAuthed unset): stays on /api/trpc', async () => {
+    (globalThis as { window?: unknown }).window = {};
+    allSignedOutTransport(true);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+  });
+
+  it('ON, signed out: other procedures are unaffected', async () => {
+    signOut();
+    allSignedOutTransport(true);
+    await callQuery(ORDINARY, ORDINARY_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain(`/api/trpc/${ORDINARY}?`);
+  });
+
+  it('ON, signed out: an input too large for a GET stays on /api/trpc as POST', async () => {
+    signOut();
+    allSignedOutTransport(true);
+    await callQuery(IMAGES, {
+      ...IMAGES_INPUT,
+      excludedTagIds: Array.from({ length: 800 }, (_, i) => i),
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].method).toBe('POST');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
   });
 });

@@ -21,7 +21,7 @@ describe('hold wiring', () => {
     expect(buttons).toHaveLength(1);
     expect(source.match(/serviceHoldButtonProps\(/g) ?? []).toHaveLength(1);
     const [button = ''] = buttons;
-    expect(squash(button)).toContain('{...serviceHoldButtonProps(offering.price)}');
+    expect(squash(button)).toContain('{...serviceHoldButtonProps(terms.price)}');
   });
 
   it('no attribute on that button sets what the spread supplies, before or after it', () => {

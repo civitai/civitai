@@ -99,6 +99,15 @@ export function signReviewAccessToken(params: SignReviewAccessTokenParams): stri
   return `${payloadB64}.${sigB64}`;
 }
 
+/**
+ * The review host URL with its ENTRY token appended as `mr=`, after any query the URL already
+ * has. The token is a credential: never log the result.
+ */
+export function withReviewEntryToken(url: string, token: string): string {
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}mr=${encodeURIComponent(token)}`;
+}
+
 export type VerifyReviewAccessTokenResult = {
   ok: boolean;
   modUserId?: number;

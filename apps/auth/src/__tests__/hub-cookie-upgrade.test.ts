@@ -14,6 +14,7 @@ const h = vi.hoisted(() => {
     sys: undefined as unknown as SysRedisFake,
     tokens: new Map<string, Record<string, unknown>>(),
     users: new Map<number, Record<string, unknown>>(),
+    userRows: [] as Record<string, unknown>[],
     firstParty: true,
   };
 });
@@ -53,7 +54,10 @@ vi.mock('$lib/server/axiom', () => ({
   logAxiomError: vi.fn(),
   logToAxiom: vi.fn(async () => undefined),
 }));
-vi.mock('$lib/server/db/db', () => ({ db: {} }));
+// The "User" rows the account checks at each mint read; none, for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../test/kysely-fake')).createKyselyFake({ User: h.userRows }),
+}));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: async (id: number) => h.users.get(id) ?? { id },
 }));
@@ -198,6 +202,7 @@ beforeEach(() => {
   h.sys.reset();
   h.tokens.clear();
   h.users.clear();
+  h.userRows.length = 0;
   h.firstParty = true;
   setMode('shared');
 });
@@ -218,6 +223,8 @@ const refusedAccounts = [
   ['banned', () => h.users.set(100, { id: 100, bannedAt: new Date() })],
   ['deleted', () => h.users.set(100, { id: 100, deletedAt: new Date() })],
   ['the moderation account', () => (process.env.CIVITAI_MODERATION_USER_ID = '100')],
+  // Its cached user predates the memorialization; only its row says so.
+  ['memorialized', () => h.userRows.push({ id: 100, flags: 4 })],
 ] as const;
 
 describe('/authorize copying the hub session into the host-only slot', () => {

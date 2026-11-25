@@ -223,6 +223,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
   CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
+  // Daily challenge plan (daily-plan.ts). Both default-off: off/unknown/unreachable gives the fixed
+  // rubric and default judge. SCHEDULE enables calendar entries; ROTATION picks a rubric set by
+  // date for any day without an applied entry.
+  DAILY_CHALLENGE_SCHEDULE = 'daily-challenge-schedule',
+  DAILY_CHALLENGE_RUBRIC_ROTATION = 'daily-challenge-rubric-rotation',
   // Streams the two large evidence archives straight to object storage instead of staging them
   // on the container's local scratch volume first. DEFAULT-OFF — `isFlipt` returns false for an
   // unknown flag or an unreachable Flipt, which leaves the long-standing disk-staging path in
@@ -337,6 +342,19 @@ export enum FLIPT_FEATURE_FLAGS {
   // APP_DATA_SHADOW_URL SET. A missing key makes `evaluateBoolean` throw, bypass the eval cache and
   // log an error on every call, and with the URL set every eligible App Storage list reads it.
   APP_DATA_REGISTRY_SHADOW = 'app-data-registry-shadow',
+  // The App Storage writes cutover: while on for an app, the page-run block token mint answers
+  // with `appData: { url, slug }`, which the run host forwards in BLOCK_INIT, and the app's SDK
+  // then sends its own collections and `info()` to the app-data service instead of the site.
+  // EVALUATED PER APP like the shadow flag above: entityId = the app block id (`apb_…`), context
+  // `{ blockId }`. Also needs APP_DATA_SERVICE_PUBLIC_URL; unset, the flag is never read. See
+  // `src/server/services/apps/app-data-writes-routing.ts` (which spells the key as
+  // APP_DATA_WRITES_VIA_SERVICE_FLAG; a test pins the two equal).
+  //
+  // DEFAULT-OFF and SILENT: read with `getFliptBoolean` (after any local override), so a missing
+  // key, an evaluation error or an unreachable Flipt all read as off WITHOUT an error log. It is
+  // read on every page-run mint, and a log line per mint would be a storm. Create the key
+  // (enabled: false) anyway: a missing key also skips the eval cache.
+  APP_DATA_WRITES_VIA_SERVICE = 'app-data-writes-via-service',
   // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
   // depends on, Node's superjson envelope) to feed-go's
   // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,
@@ -557,6 +575,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by
   // app-step-positions.ts.
   APP_BLOCK_STEP_POSITIONS = 'app-block-step-positions',
+  // Variant: `shadow` | `enforce`; any other answer, a missing flag or an error included, is off.
+  // The App Block review boot check; read by review-boot-check.service.ts.
+  APP_BLOCKS_REVIEW_BOOT_CHECK = 'app-blocks-review-boot-check',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:

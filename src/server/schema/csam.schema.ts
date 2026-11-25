@@ -49,10 +49,13 @@ export const csamContextSourcesSchema = z.object({
   commentIds: z.number().int().positive().array().max(500),
 });
 
+/** A filing blocks every image it lists in one transaction, so the list is bounded. */
+export const CSAM_FILING_MAX_IMAGES = 500;
+
 export type CreateCsamReportSchema = z.infer<typeof createCsamReportSchema>;
 export const createCsamReportSchema = z.object({
   userId: z.number(),
-  imageIds: z.number().array().optional(),
+  imageIds: z.number().array().max(CSAM_FILING_MAX_IMAGES).optional(),
   details: csamReportDetails.optional(),
   type: z.enum(CsamReportType),
   /** A sent image report on the same user that this one supplements. */

@@ -1142,3 +1142,18 @@ describe('rating review images', () => {
     });
   });
 });
+
+describe('the review rows', () => {
+  it("never send the owner's legacy profile image", async () => {
+    await db.exec(`UPDATE "User" SET image = 'legacy-key'`);
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 4,
+      textNsfw: true,
+      status: 'Active',
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+    const item = (await listPending()).find((i) => i.id === id);
+    expect(item?.user).toEqual({ id: owner, username: 'owner' });
+  });
+});
