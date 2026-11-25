@@ -63,14 +63,18 @@ export async function getOpenHelpRequests(): Promise<HelpRequest[]> {
  * sent. Retool passed the id array through the browser, so a stale page could act on a different set
  * than the request describes.
  */
-export async function getHelpRequestImages(requestId: number): Promise<HelpImage[]> {
+/** The image ids a help request names, as stored; none of them checked against the main database. */
+export async function getHelpRequestImageIds(requestId: number): Promise<number[]> {
   const row = await getModeratorDb()
     .selectFrom('ModerationImageHelp')
     .select('imageIds')
     .where('id', '=', requestId)
     .executeTakeFirst();
+  return parseImageIds(row?.imageIds);
+}
 
-  const ids = parseImageIds(row?.imageIds);
+export async function getHelpRequestImages(requestId: number): Promise<HelpImage[]> {
+  const ids = await getHelpRequestImageIds(requestId);
   if (!ids.length) return [];
 
   return dbRead

@@ -6,6 +6,7 @@ import { parseForm, parseQuery } from '$lib/server/query';
 import {
   HELP_TYPES,
   createHelpRequest,
+  getHelpRequestImageIds,
   getHelpRequestImages,
   getOpenHelpRequests,
   resolveHelpRequest,
@@ -53,10 +54,9 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
-    const images = await getHelpRequestImages(input.requestId);
     const withheld = await withheldRefusal(
       locals.user,
-      images.map((i) => i.id)
+      await getHelpRequestImageIds(input.requestId)
     );
     if (withheld) return fail(403, { error: withheld });
 

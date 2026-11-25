@@ -55,7 +55,7 @@
   }
 
   let userQuery = $state('');
-  let userResults = $state<{ id: number; username: string | null; image: string | null }[]>([]);
+  let userResults = $state<{ id: number; username: string | null }[]>([]);
   let searchedFor = $state('');
   let searchFailed = $state(false);
   let timer: ReturnType<typeof setTimeout>;

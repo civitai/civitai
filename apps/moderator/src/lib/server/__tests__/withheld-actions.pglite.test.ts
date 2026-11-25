@@ -21,7 +21,7 @@ const { dbHandle, calls } = vi.hoisted(() => ({
     callModEndpoint: vi.fn(async (..._args: unknown[]) => ({ ok: true as const, body: {} })),
     moderateImageTags: vi.fn(async (_input: unknown) => ({ tagIds: [] })),
     resolveHelpRequest: vi.fn(async (_input: unknown) => ({ ok: true })),
-    getHelpRequestImages: vi.fn(async (_id: number) => [] as { id: number }[]),
+    getHelpRequestImageIds: vi.fn(async (_id: number) => [] as number[]),
   },
 }));
 
@@ -47,7 +47,17 @@ vi.mock('../image-tags.service', async (importOriginal) => ({
 vi.mock('../image-help.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../image-help.service')>()),
   resolveHelpRequest: calls.resolveHelpRequest,
-  getHelpRequestImages: calls.getHelpRequestImages,
+  getHelpRequestImageIds: calls.getHelpRequestImageIds,
+}));
+// The restriction rows are this file's input; their own read is pinned elsewhere.
+const { restrictionRows } = vi.hoisted(() => ({ restrictionRows: { current: [] as unknown[] } }));
+vi.mock('../user-restriction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../user-restriction.service')>()),
+  getGenerationRestrictions: vi.fn(async () => ({
+    items: restrictionRows.current,
+    totalCount: restrictionRows.current.length,
+  })),
+  getRestrictionFacets: vi.fn(async () => undefined),
 }));
 vi.mock('../mod-activity', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../mod-activity')>()),
@@ -66,7 +76,7 @@ const { rescanStuckImages } = await import('../ingestion.service');
 const { withheldUrls } = await import('../retracted-media');
 const { withheldProfileMedia } = await import('../user-lookup.service');
 const { getTrainingModelsFeed } = await import('../training-moderation.service');
-const { triggerInputsFor } = await import('../restriction-queue');
+const { triggerInputsFor, restrictionTriageLoad } = await import('../restriction-queue');
 
 // A routine block reason, kept by the other row on its url, which is in the CSAM queue.
 const WITHHELD = 501;
@@ -135,7 +145,7 @@ describe('the single-image actions', () => {
       'an image-help resolve',
       helpPage.actions.resolve as Action,
       (id) => {
-        calls.getHelpRequestImages.mockResolvedValueOnce([{ id }]);
+        calls.getHelpRequestImageIds.mockResolvedValueOnce([id]);
         return { requestId: '1' };
       },
       () => calls.resolveHelpRequest,
@@ -327,5 +337,19 @@ describe("a generator restriction trigger's inputs", () => {
 
   it('are sent whole to a grant holder', async () => {
     expect(await shown(WITH_GRANT)).toMatchObject(row.triggers[0]);
+  });
+
+  it('are filtered on the queue page a moderator loads', async () => {
+    restrictionRows.current = [{ id: 1, type: 'Prompt', userId: 7, ...row }];
+    const load = (viewer: object) =>
+      restrictionTriageLoad(
+        new URL('https://mod.test/audit/generator-restrictions'),
+        { types: ['Prompt'], fallback: 'Prompt' } as never,
+        viewer as never
+      );
+    const [trigger] = (await load(WITHOUT_GRANT)).items[0].triggers;
+    expect(trigger).toMatchObject({ inputImages: ['control-key', 'https://elsewhere.test/a.png'] });
+    expect(trigger.inputVideo).toBeUndefined();
+    expect((await load(WITH_GRANT)).items[0].triggers[0]).toMatchObject(row.triggers[0]);
   });
 });
