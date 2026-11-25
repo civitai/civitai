@@ -334,16 +334,27 @@ export function matchesVerdictFilter(img: Img, filter: DatasetFilter): boolean |
   return undefined;
 }
 
-/** `images` with each verdict set on the images it names, or undefined when none changes. */
-export function withVerdicts(images: Img[], verdicts: Record<string, boolean>): Img[] | undefined {
+/** Set each verdict on the image it names, in place: the Data step's label passes hold these same
+ *  objects, so a copy would orphan their results. Whether any image changed. */
+export function setVerdicts(images: Img[], verdicts: Record<string, boolean> | undefined): boolean {
   let changed = false;
-  const next = images.map((img) => {
-    const verdict = img.blobId !== undefined ? verdicts[img.blobId] : undefined;
-    if (typeof verdict !== 'boolean' || verdict === img.v2Mature) return img;
+  for (const img of images) {
+    const verdict = img.blobId !== undefined ? verdicts?.[img.blobId] : undefined;
+    if (typeof verdict !== 'boolean' || verdict === img.v2Mature) continue;
+    img.v2Mature = verdict;
     changed = true;
-    return { ...img, v2Mature: verdict };
-  });
-  return changed ? next : undefined;
+  }
+  return changed;
+}
+
+/** Apply a v2 rating answer: set its verdicts on `images` in place, and return Review's count unless
+ *  the answer says Review should keep its own (null). */
+export function applyRatingAnswer(
+  images: Img[],
+  answer: { matureCount: number | null; verdicts?: Record<string, boolean> }
+): number | undefined {
+  setVerdicts(images, answer.verdicts);
+  return answer.matureCount ?? undefined;
 }
 
 /** The rating filters to offer: each rating among the trainable images, plus the selected one at 0

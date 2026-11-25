@@ -68,7 +68,8 @@ vi.mock('./redis', () => {
 });
 const flagVariant = vi.hoisted(() => vi.fn(async () => flag.variant));
 vi.mock('./flipt', () => ({ flagVariant }));
-vi.mock('./axiom', () => ({ logToAxiom: async () => undefined, safeError: (e: unknown) => e }));
+const axiomLog = vi.hoisted(() => vi.fn(async (_data: { message?: string }) => undefined));
+vi.mock('./axiom', () => ({ logToAxiom: axiomLog, safeError: (e: unknown) => e }));
 vi.mock('./orchestrator', () => ({ orchestratorClient: () => ({}) }));
 // Hand-listed: the package's dist can't be loaded through importOriginal (see train-core.test.ts).
 vi.mock('@civitai/orchestration-client', () => ({
@@ -400,6 +401,9 @@ describe('starting a job', () => {
   });
 
   it('a flood of calls during a job yields one rerun, with the latest images, and no more', async () => {
+    const jobsDone = () =>
+      axiomLog.mock.calls.filter(([d]) => d.message === 'dataset rating job').length;
+    axiomLog.mockClear();
     const release = heldScans();
     warmDatasetRating('t', 10, 1, ['a.png'], 'c');
     await vi.waitFor(() => expect(scannedKeys()).toEqual(['a.png']));
@@ -410,15 +414,15 @@ describe('starting a job', () => {
     // A call during the rerun is not kept: the next look asks again.
     warmDatasetRating('t', 10, 1, ['e.png'], 'c');
     release('d.png');
-    await vi.waitFor(() =>
-      expect(store.get('rating:radio-alpha:m1:d.png')).toEqual({ mature: false })
-    );
-    await new Promise((r) => setTimeout(r, 20));
-    expect(scannedKeys()).toEqual(['a.png', 'd.png']);
-    // Once the rerun is over, a new look starts a job again.
-    warmDatasetRating('t', 10, 1, ['e.png'], 'c');
-    await vi.waitFor(() => expect(scannedKeys()).toEqual(['a.png', 'd.png', 'e.png']));
-    release('e.png');
+    await vi.waitFor(() => expect(jobsDone()).toBe(2));
+    // The rerun's log is written before it ends: one macrotask lets its finally run.
+    await new Promise((r) => setTimeout(r, 0));
+    // Once the rerun is over, a new look starts a job again, and nothing ran e.png in between.
+    warmDatasetRating('t', 10, 1, ['f.png'], 'c');
+    await vi.waitFor(() => expect(scannedKeys()).toContain('f.png'));
+    expect(scannedKeys()).toEqual(['a.png', 'd.png', 'f.png']);
+    release('f.png');
+    await vi.waitFor(() => expect(jobsDone()).toBe(3));
   });
 
   it('a later view after a call that reached the rater and failed sends nothing again', async () => {

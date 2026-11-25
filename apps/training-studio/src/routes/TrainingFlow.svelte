@@ -23,7 +23,7 @@
     isLabeled,
     isImgMature,
     isTrainable,
-    withVerdicts,
+    applyRatingAnswer,
     expandedCount,
     repeatsOf,
     selectionTakesRepeats,
@@ -318,9 +318,10 @@
         const res = await be.datasetRating!(ids);
         if (stopped || !res.enabled) return;
         ratingV2 = true;
-        const next = withVerdicts(untrack(() => images), res.verdicts);
-        if (next) images = next;
-        if (res.matureCount !== null) ratedMature = { key, count: res.matureCount };
+        // The letter chips go away under the v2 rating: a letter filter left on would hide images.
+        if (untrack(() => dataFilter).startsWith('rating:')) dataFilter = 'all';
+        const count = applyRatingAnswer(untrack(() => images), res);
+        if (count !== undefined) ratedMature = { key, count };
         if (res.unrated > 0 && poll < RATING_POLLS)
           timer = setTimeout(() => void ask(poll + 1), RATING_POLL_MS);
       } catch {
