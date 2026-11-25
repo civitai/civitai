@@ -173,8 +173,14 @@ async function listed(user?: { id: number; isModerator?: boolean }) {
   ).catch(() => undefined); // only the statement matters
   expect(capturedQueries).toHaveLength(1);
   const { text, values } = capturedQueries[0];
-  const clause = text.replace(/\s+/g, ' ').match(LIST_TAKEN_DOWN)?.[0];
-  if (!clause) return [1, 2]; // no clause: every row is listed
+  const sql = text.replace(/\s+/g, ' ');
+  const clause = sql.match(LIST_TAKEN_DOWN)?.[0];
+  expect(clause, 'the list carries the taken-down clause').toBeDefined();
+  if (!clause) return [];
+  // ANDed into the WHERE, not an arm of some OR.
+  const at = sql.indexOf(clause);
+  expect(sql.slice(0, at)).toMatch(/(WHERE|AND) $/);
+  expect(sql.slice(at + clause.length)).toMatch(/^ AND /);
   const args: unknown[] = [];
   const local = clause.replace(/\$(\d+)/g, (_m, n) => {
     args.push(values[Number(n) - 1]);
