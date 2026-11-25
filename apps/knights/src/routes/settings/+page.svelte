@@ -119,16 +119,16 @@
       <div class="row">
         <div class="text">
           <p class="label"><span id="restart-label">Restart career</span></p>
+          {#if data.career.swornIn}
+            <p class="meta">Sworn in on {formatDate(data.career.swornIn)}</p>
+          {/if}
           <p class="description" id="restart-description">
-            {#if data.career.swornIn}Sworn in on {formatDate(data.career.swornIn)}.{/if} Starting over
-            returns you to Acolyte and cannot be undone. It costs your unconverted and pending gold, your
-            streak, and your older judgments, which are forfeited. Your shields and the gold you already
-            spent or converted are kept.
+            Start over as a new Acolyte. This cannot be undone.
           </p>
         </div>
         <button
           type="button"
-          class="restart"
+          class="btn danger"
           aria-describedby="restart-description"
           onclick={() => (restarting = true)}
         >
@@ -153,19 +153,17 @@
     padding-top: 1rem;
   }
 
-  .restart {
-    display: inline-flex;
+  .row .btn {
     flex: none;
-    align-items: center;
-    gap: 8px;
-    min-height: 40px;
-    border-color: var(--io-crimson);
-    background: transparent;
-    color: var(--io-crimson-text);
+  }
+  .meta {
+    margin: 0;
+    color: var(--io-parchment-muted);
+    font: 500 0.8125rem/1.4 var(--io-font-ui);
   }
 
   @media (max-width: 40rem) {
-    .row:has(.restart) {
+    .row:has(.btn) {
       flex-direction: column;
       align-items: flex-start;
     }
