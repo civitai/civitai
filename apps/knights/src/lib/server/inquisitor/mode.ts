@@ -1,8 +1,11 @@
 import { skillChecks } from '../skill-check/runtime';
 
-/** The one definition of "plays as the Inquisitor": call this rather than re-deriving it, or `/play`, the header and `/home` drift apart. */
-export async function isInquisitor(
-  user: { isModerator?: boolean } | null | undefined
-): Promise<boolean> {
-  return user?.isModerator === true && (await skillChecks()).enabled;
+type Viewer = { isModerator?: boolean } | null | undefined;
+
+/** Moderators are the Inquisitors, whether or not the in-game queue is on. */
+export const isInquisitor = (user: Viewer): boolean => user?.isModerator === true;
+
+/** The in-game queue is live for this viewer. `/play`, the header and `/home` all switch on this, so they cannot drift apart. */
+export async function inquisitorQueueOpen(user: Viewer): Promise<boolean> {
+  return isInquisitor(user) && (await skillChecks()).enabled;
 }

@@ -12,7 +12,7 @@ import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
 import { getStanding } from '$lib/server/standing';
-import { isInquisitor } from '$lib/server/inquisitor/mode';
+import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import type { LayoutServerLoad } from './$types';
 
 // The header's recap dot: a recap exists and has not been seen today, on the home card or in the header dialog (either one
@@ -74,7 +74,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
         .where('userId', '=', locals.user.id)
         .executeTakeFirst()
     : undefined;
-  const inquisitor = await isInquisitor(locals.user);
+  const inquisitor = await inquisitorQueueOpen(locals.user);
   return {
     civitaiUrl,
     // Keys the player's own sound setting in the browser; never shown.

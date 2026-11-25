@@ -3,7 +3,7 @@ import { findRecap, getDailyStatus } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
 import { moderatorStats } from '$lib/server/inquisitor/context';
-import { isInquisitor } from '$lib/server/inquisitor/mode';
+import { inquisitorQueueOpen } from '$lib/server/inquisitor/mode';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { railFor } from '$lib/server/rail-runtime';
@@ -23,7 +23,7 @@ const optional = <T>(what: string, read: () => Promise<T>): Promise<T | null> =>
     });
 
 export const load: PageServerLoad = async ({ locals }) => {
-  if (await isInquisitor(locals.user)) {
+  if (await inquisitorQueueOpen(locals.user)) {
     return {
       username: locals.user.username ?? null,
       player: null,
