@@ -189,7 +189,11 @@ export const STAGE_BUCKET_ROW_BUDGET = STAGE_BUCKET_FIRST_ROUND * 31;
  */
 export const STAGE_UNSYNCED_ROWS = FEED.bucketWindowSize * BUCKET_LEVELS.length * 2;
 
-/** The longest read that probes `notHiddenCreator` per row; longer reads run faster as a parallel anti-join. */
+/**
+ * The longest read that probes `notHiddenCreator` per row; longer reads run faster as a parallel anti-join. With the
+ * production defaults every read takes the per-row probe (the largest bucket round is 160 rows, the unsynced read 100);
+ * the anti-join applies only to larger `scanRowBudget` values that tests pass.
+ */
 export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_UNSYNCED_ROWS * 4;
 
 /** The most priorities one stage's reads cover (producers enqueue at 1 to 3), which bounds a pick at this many sets of reads. */

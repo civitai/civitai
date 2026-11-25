@@ -8,6 +8,8 @@
 --   1. this file (instant: a nullable column without a default rewrites nothing);
 --   2. 20271129120100_knights_level_bucket_idx (CREATE INDEX CONCURRENTLY, its own file);
 --   3. 20271129120200_knights_level_bucket_backfill, repeated until it updates 0 rows.
+-- Run `SET lock_timeout = '3s';` in the same session before the ALTER TABLE, and retry if it times out: the ADD COLUMN
+-- takes a brief exclusive lock, and waiting behind a long read would queue the live feed behind it.
 -- The knights_app role already holds UPDATE on the table, which covers the new column: no grant is needed.
 
 ALTER TABLE "KnightsQueueItem" ADD COLUMN IF NOT EXISTS "levelBucket" SMALLINT;

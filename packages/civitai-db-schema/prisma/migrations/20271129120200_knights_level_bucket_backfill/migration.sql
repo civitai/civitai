@@ -5,7 +5,8 @@
 --
 -- Apply MANUALLY and REPEAT the statement until it reports UPDATE 0: each run sets at most 5000 rows, so no run holds
 -- row locks on the queue long enough to stall votes. Rows another transaction holds are skipped and picked up by a later
--- run. Re-runnable at any time: only rows still NULL are selected.
+-- run. Re-runnable at any time: only rows still NULL are selected. Each run scans the open items from the lowest id
+-- upward past the rows earlier runs set, so later runs are slower, but each still finishes.
 --
 -- The CASE is `bucketLevelSql` (apps/knights/src/lib/server/queue/queue.service.ts) with the level flags spelled out;
 -- change them together.

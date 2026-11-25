@@ -2620,6 +2620,19 @@ describe('syncLevelBuckets', () => {
     expect(await syncLevelBuckets(db)).toEqual({ synced: 0 });
   });
 
+  it('moves an item into a bucket once its image gets a level, and out of one once it loses it', async () => {
+    await image(10, 0);
+    await image(11, 4);
+    const rated = await item(10);
+    const unrated = await item(11);
+    expect([await stored(rated), await stored(unrated)]).toEqual([0, 4]);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel" = 8 WHERE id = 10`);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 11`);
+
+    expect(await syncLevelBuckets(db)).toEqual({ synced: 2 });
+    expect([await stored(rated), await stored(unrated)]).toEqual([8, 0]);
+  });
+
   it('sets at most `limit` items per call, oldest id first', async () => {
     const ids: number[] = [];
     for (const id of [10, 11, 12]) {
