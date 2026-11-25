@@ -6,6 +6,7 @@ import {
   getModel3DPostBlock,
   model3DPostImages,
   rateModel3DByV2,
+  ratedSet,
   MODEL3D_PREVIEW_PENDING,
   MODEL3D_RATING_V2_GLOBAL_LIMIT,
   PREVIEW_EXPIRY_SECONDS,
@@ -45,6 +46,8 @@ function deps(verdicts: (boolean | null)[], overrides: Partial<Model3dRatingV2De
       rate,
       remembered: async () => false,
       remember: async () => undefined,
+      rememberedClear: async () => null,
+      rememberClear: async () => undefined,
       pendingPreview: async () => null,
       setPendingPreview: async () => undefined,
       claimPreview: async () => true,
@@ -408,32 +411,105 @@ describe('3D post gate with a four-angle render', () => {
     expect(rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual(rendered.slice(0, 1));
   });
 
-  it("spends the user's own limit once per result, when the render is asked for", async () => {
+  it("every rating of a render claims the limits; asking for the render claims none of the user's", async () => {
     const claim = vi.fn<Model3dRatingV2Deps['claim']>(async () => true);
     const first = deps([false], {
       claim,
       submitPreview: async () => ({ workflowId: 'pv-1', state: { status: 'running' } }),
     });
     expect(await post(first.deps)).toBe(MODEL3D_PREVIEW_PENDING);
-    const later = deps([false], {
+    expect(claim).not.toHaveBeenCalled();
+    const later = deps([false, false, false, false, false], {
       claim,
       pendingPreview: async () => ({ workflowId: 'pv-1', at: 1_000_000 }),
       readPreview: async () => ({ status: 'done', urls: rendered.slice(0, 4) }),
     });
     expect(await post(later.deps)).toBeUndefined();
     expect(claim).toHaveBeenCalledTimes(1);
+    expect(later.rate).toHaveBeenCalledTimes(1);
   });
 
-  it("the user's own limit refusing blocks the post and asks for no render", async () => {
-    const submitPreview = vi.fn<Model3dRatingV2Deps['submitPreview']>();
-    const { deps: d } = deps([], {
+  it('a clear verdict on the same images is kept, so repeat passes call the rater once', async () => {
+    let kept: string | null = null;
+    const claim = vi.fn<Model3dRatingV2Deps['claim']>(async () => true);
+    const { rate, deps: d } = deps([false, false, false, false, false], {
+      claim,
+      rememberedClear: async () => kept,
+      rememberClear: async (_u, _w, rated) => {
+        kept = rated;
+      },
+      pendingPreview: async () => ({ workflowId: 'pv-1', at: 1_000_000 }),
+      readPreview: async () => ({ status: 'done', urls: rendered.slice(0, 4) }),
+    });
+    for (let i = 0; i < 3; i++) expect(await post(d)).toBeUndefined();
+    expect(rate).toHaveBeenCalledTimes(1);
+    expect(claim).toHaveBeenCalledTimes(1);
+  });
+
+  it('a clear verdict is not kept when an image had none, nor reused for other images', async () => {
+    const rememberClear = vi.fn<Model3dRatingV2Deps['rememberClear']>(async () => undefined);
+    const partial = deps([false, null], {
+      rememberClear,
+      submitPreview: async () => ({ workflowId: 'pv-1', state: { status: 'done', urls: [] } }),
+    });
+    await getModel3DPostBlock(
+      {
+        primaryModel: glb,
+        effectiveNsfwLevel: 'pg' as never,
+        allowMatureContent: false,
+        user,
+        req,
+        previewUrls: [hosted(0), hosted(1)],
+        workflowId: 'wf-1',
+      },
+      partial.deps
+    );
+    expect(rememberClear).not.toHaveBeenCalled();
+    const other = deps([true], { rememberedClear: async () => ratedSet([hosted(9)]) });
+    expect(await post(other.deps)).toMatch(/rated mature/);
+  });
+
+  it('the cover is rated with the render angles: a mature cover over clear angles is mature', async () => {
+    const cover = hosted(0);
+    const { rate, deps: d } = deps([false, false, false, false, true], {
+      submitPreview: async () => ({
+        workflowId: 'pv-1',
+        state: { status: 'done', urls: rendered.slice(0, 4) },
+      }),
+    });
+    expect(
+      await getModel3DPostBlock(
+        {
+          primaryModel: mesh,
+          effectiveNsfwLevel: 'pg' as never,
+          allowMatureContent: false,
+          user,
+          req,
+          previewUrls: [cover],
+          coverUrl: cover,
+          workflowId: 'wf-1',
+        },
+        d
+      )
+    ).toMatch(/rated mature/);
+    expect(rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual([
+      ...rendered.slice(0, 4),
+      cover,
+    ]);
+  });
+
+  it("the user's own limit refusing blocks the post when the render is rated", async () => {
+    const { rate, deps: d } = deps([false], {
       claim: async () => {
         throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'slow down' });
       },
-      submitPreview,
+      submitPreview: async () => ({
+        workflowId: 'pv-1',
+        state: { status: 'done', urls: rendered.slice(0, 4) },
+      }),
     });
     await expect(post(d)).rejects.toThrow('slow down');
-    expect(submitPreview).not.toHaveBeenCalled();
+    expect(rate).not.toHaveBeenCalled();
   });
 
   // None of the render back is the system-side gap: the renders the result already has decide, as
