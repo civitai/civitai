@@ -188,7 +188,8 @@ export async function createAppAccessToken(
     mintOrigin?: MintOrigin;
   } = {}
 ): Promise<{ accessToken: string; expiresAt: Date }> {
-  // Only these two: a banned, deleted or absent owner (the system clients' -1) still mints here as before.
+  // Refuses only the moderation account and memorialized accounts; a banned, deleted or absent owner
+  // (the system clients' -1) still mints.
   await refuseAccountToken(userId, 'app-token');
   await assertScopeAllowedForAccount(userId, scope);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);

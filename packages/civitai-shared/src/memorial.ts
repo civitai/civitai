@@ -1,4 +1,4 @@
-/** The `User.flags` bit a confirmed memorialization sets (the main app's `UserFlag.Memorialized`). */
+/** The `User.flags` bit a confirmed memorialization sets; the main app's `UserFlag.Memorialized` is this. */
 export const MEMORIALIZED_USER_FLAG = 4;
 
 export function isMemorializedFlags(flags: number | null | undefined): boolean {

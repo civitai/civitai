@@ -2,6 +2,7 @@ import * as z from 'zod';
 import {
   MEMORIAL_BASES,
   MEMORIAL_TRIBUTES_MAX,
+  isMemorializedFlags,
   memorialOf,
   type MemorialBasis,
   type MemorialState,
@@ -15,7 +16,6 @@ import {
   EVENT_POINTS_EXCLUDED_FROM_META_KEY,
   UserFlag,
 } from '~/shared/constants/user-flags.constants';
-import { Flags } from '~/shared/utils/flags';
 
 export const memorialBases = MEMORIAL_BASES;
 
@@ -63,8 +63,7 @@ export class MemorializedAccountError extends Error {
   }
 }
 
-export const isMemorialized = (flags: number | null | undefined) =>
-  Flags.hasFlag(flags ?? 0, UserFlag.Memorialized);
+export const isMemorialized = isMemorializedFlags;
 
 /** The only part of the memorial a profile receives: the tributes, once a second moderator has confirmed. */
 export function publicMemorial(meta: unknown): { tributes: MemorialTribute[] } | null {

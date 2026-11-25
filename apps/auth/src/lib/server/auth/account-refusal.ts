@@ -20,7 +20,7 @@ export class MemorializedAccountError extends Error {
  * Why `userId` may not be given a new session or token, or null. Read from the user's row on every call,
  * never from the caller's user object or the session cache, so a memorialization or its reversal counts at
  * once. `impersonation`: the session being minted is a moderator's impersonation, which a memorialized
- * account still allows. An unknown user is not refused here. Throws when the read fails.
+ * account still allows. An unknown user is never refused as memorialized. Throws when the read fails.
  */
 export async function refusedAccountReason(
   userId: number,

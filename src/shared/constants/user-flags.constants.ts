@@ -1,3 +1,5 @@
+import { MEMORIALIZED_USER_FLAG } from '@civitai/shared/memorial';
+
 /**
  * User Flags — Bitwise opt-out / behavior flags stored on `User.flags`.
  *
@@ -17,7 +19,7 @@ export const UserFlag = {
   ExcludeFromEventPoints: 1 << 1, // 2
 
   /** Moderator-set, after a second moderator confirms: the account holder has died. See memorial.service. */
-  Memorialized: 1 << 2, // 4
+  Memorialized: MEMORIALIZED_USER_FLAG, // 1 << 2, shared with the auth hub
 } as const;
 
 /** The `User.meta` key holding the ExcludeFromEventPoints start day; read by eventPointsExcludedFromSql. */
