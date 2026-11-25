@@ -184,6 +184,12 @@ beforeAll(async () => {
       "images" JSONB NOT NULL DEFAULT '[]',
       "type" "CsamReportType" NOT NULL DEFAULT 'Image'
     );
+    CREATE TABLE "Image" (
+      "id" INTEGER PRIMARY KEY,
+      "ingestion" TEXT,
+      "nsfwLevel" INTEGER,
+      "blockedFor" TEXT
+    );
     CREATE TABLE "ModActivity" (
       "id" SERIAL PRIMARY KEY,
       "userId" INTEGER,
@@ -513,5 +519,60 @@ describe('the send claim under the append-only trigger', () => {
     const sent = await readRow(id);
     expect(sent.reportSentAt).not.toBeNull();
     expect(sent.details.images?.map((image) => image.id)).toEqual([501, 502]);
+  });
+});
+
+describe('a filing whose report insert fails', () => {
+  type ImageBlock = {
+    where: { id: { in: number[] } };
+    data: { ingestion: string; nsfwLevel: number; blockedFor: string };
+  };
+  const blockOn =
+    (client: Pick<PGlite, 'query'>) =>
+    async ({ where, data }: ImageBlock) => {
+      const result = await client.query(
+        `UPDATE "Image" SET ingestion = $1, "nsfwLevel" = $2, "blockedFor" = $3 WHERE id = ANY($4)`,
+        [data.ingestion, data.nsfwLevel, data.blockedFor, where.id.in]
+      );
+      return { count: result.affectedRows ?? 0 };
+    };
+
+  it('rolls back the block of the images it lists', async () => {
+    const imageId = 990000301;
+    await db.pg.query(`INSERT INTO "Image" (id, ingestion) VALUES ($1, 'Scanned')`, [imageId]);
+    dbMock.dbWrite.image.updateMany.mockReset();
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (
+      fn: (tx: unknown) => Promise<unknown>
+    ) =>
+      db.pg.transaction((t) =>
+        fn({
+          image: { updateMany: blockOn(t) },
+          csamReport: {
+            findMany: async () => [],
+            create: async () => {
+              throw new Error('report insert failed');
+            },
+          },
+        })
+      )) as never);
+
+    await expect(
+      createCsamReport({
+        userId: 990000302,
+        reportedById: 10,
+        type: 'Image',
+        imageIds: [imageId],
+        writeBlocklist: false,
+        blockListedImages: true,
+      })
+    ).rejects.toThrow('report insert failed');
+
+    const { rows } = await db.pg.query(
+      `SELECT ingestion, "blockedFor" FROM "Image" WHERE id = $1`,
+      [imageId]
+    );
+    expect(rows).toEqual([{ ingestion: 'Scanned', blockedFor: null }]);
+    // A block outside the transaction would commit on its own and survive the failed insert.
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
   });
 });

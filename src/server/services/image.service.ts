@@ -1572,6 +1572,7 @@ export async function afterCsamImageBlock(target: { imageIds: number[] } | { use
         type: 'error',
         message: `after-block step failed: ${step}`,
         error: (error as Error)?.message,
+        payload: { important: true },
       });
     }
   };
