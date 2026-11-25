@@ -6501,6 +6501,7 @@ export const updateEntityImages = async ({
   if (linkIds.length > 0) {
     const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } });
     if (owned !== new Set(linkIds).size) throw throwAuthorizationError();
+    await assertNotDealFileImages(linkIds, 'used here');
   }
 
   // Counted before any write: links the form was not shown count too.
