@@ -31,7 +31,7 @@ export async function getReportedServiceReviews(
     .selectFrom('ServiceDealReviewReport as rr')
     .innerJoin('ServiceDealReview as r', 'r.id', 'rr.serviceDealReviewId')
     .innerJoin('Report as rep', 'rep.id', 'rr.reportId')
-    .innerJoin('User as buyer', 'buyer.id', 'r.buyerId')
+    .leftJoin('User as buyer', 'buyer.id', 'r.buyerId')
     .select([
       'rr.reportId',
       'r.id as reviewId',
@@ -42,7 +42,7 @@ export async function getReportedServiceReviews(
       sql<string | null>`rep.details -> 'serviceDealReview' ->> 'comment'`.as('reportedComment'),
       sql<string | null>`rep.details -> 'serviceDealReview' ->> 'sellerReply'`.as('reportedReply'),
       // As the offering page lists it: a banned or deleted buyer's review stays published, unlisted.
-      sql<boolean>`r."publishedAt" IS NOT NULL
+      sql<boolean>`r."publishedAt" IS NOT NULL AND buyer."id" IS NOT NULL
         AND buyer."bannedAt" IS NULL AND buyer."deletedAt" IS NULL`.as('shown'),
       sql<boolean>`r."hiddenAt" IS NOT NULL`.as('hidden'),
       heldText('ServiceDealReview').as('commentHeld'),

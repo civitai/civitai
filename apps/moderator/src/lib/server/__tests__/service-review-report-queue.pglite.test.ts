@@ -182,4 +182,11 @@ describe('getReportedServiceReviews', () => {
     await db.exec(`UPDATE "User" SET "bannedAt" = null, "deletedAt" = now() WHERE id = ${BUYER}`);
     expect(await shown()).toBe(false);
   });
+
+  it('still lists a reported review whose buyer row is missing, not shown', async () => {
+    await db.exec(`DELETE FROM "User" WHERE id = ${BUYER}`);
+    expect(
+      (await getReportedServiceReviews([REVIEW_REPORT], GRANTED)).get(REVIEW_REPORT)
+    ).toMatchObject({ reviewId: REVIEW, shown: false });
+  });
 });
