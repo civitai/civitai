@@ -1876,6 +1876,22 @@ describe('a file holding a held image', () => {
       expect(await sees(dealId, fileId, MODERATOR, true)).toEqual(REFUSED);
     });
 
+    it('held only on suspicion is refused to its seller as the delivery copy', async () => {
+      const { fileId } = await heldFinal('minor = true');
+      await q(`UPDATE "ServiceDealFile" SET "deliveryKey" = 'k/delivered' WHERE id = $1`, [fileId]);
+      const asSeller = (delivered: boolean) =>
+        files.resolveServiceDealFileDownload({
+          fileId,
+          userId: SELLER,
+          isModerator: true,
+          canReviewCsam: true,
+          delivered,
+          servableLevels: 31,
+        });
+      expect(await asSeller(false)).not.toBeNull();
+      expect(await asSeller(true)).toBeNull();
+    });
+
     it('with a blocked image is refused to its seller too', async () => {
       const { dealId, fileId } = await heldFinal(`minor = true, "blockedFor" = 'CSAM'`);
       expect(await sees(dealId, fileId, SELLER)).toEqual(REFUSED);

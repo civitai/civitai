@@ -1715,6 +1715,16 @@ describe('copies of scanned images', () => {
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
   });
 
+  it('lets an entry go when its copy is already gone, though the delete reports none', async () => {
+    const { fileId } = await settled();
+    images.deleteImages.mockImplementation(async (ids: number[]) => {
+      await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
+      return [];
+    });
+    expect(await unpack.deleteEntryScanCopies()).toBe(1);
+    expect((await entries(fileId))[0]).toMatchObject({ imageId: null, scanKey: null });
+  });
+
   it('keeps the copy of an image still being scanned, however old and whatever becomes of its file', async () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
@@ -2195,6 +2205,15 @@ describe('a Final rated outside the domain', () => {
       });
     }
   );
+
+  it('rated where no domain may show it, is refused with no other domain offered', async () => {
+    const { dealId, fileId } = await completedRatedFinal('result.zip');
+    expect(await listed(dealId, fileId, 3)).toMatchObject({ downloadOffDomain: true });
+    await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = 32`);
+    expect(await download(fileId, 31)).toBeNull();
+    expect(await listed(dealId, fileId, 31)).toMatchObject({ canDownload: false });
+    expect((await listed(dealId, fileId, 31))?.downloadOffDomain).toBeUndefined();
+  });
 
   it('a file with no rated image is served on any domain', async () => {
     const { dealId, fileId } = await completedRatedFinal('result.zip');

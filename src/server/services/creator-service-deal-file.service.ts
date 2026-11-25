@@ -5,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   CopyObjectCommand,
   GetObjectCommand,
@@ -750,7 +751,7 @@ const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
       AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = ${f}."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
           AND NOT ${entryOnlyOverLevel(Prisma.sql`e`)}))
-    -- Failed only for a rating above the deal's level: every other image passed, and no malware.
+    -- Failed only for a rating above the deal's level: every other image passed, and the malware scan did not fail.
     OR (${f}."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
       AND ${f}."kind" <> 'Preview'::"ServiceDealFileKind"
       AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus"
@@ -1226,8 +1227,9 @@ type FinalLevelFacts = {
 
 /**
  * Whether a Final's rating lets this domain serve it: a video, or a file whose images were rated (an
- * image, or a zip of them), goes only where that rating may be shown. The site's list and download
- * read the same answer. `offDomain` is rated and refused here only for this domain's levels.
+ * image, or a zip of them), goes only where that rating may be shown. The list and the download
+ * share this gate; only the download passes `disputeReview` and checks that the owner is taking the
+ * original, not the delivery copy. 'offDomain': rated, but outside this domain's levels.
  */
 function finalLevelGate(
   row: { kind: ServiceDealFileKind; fileName: string } & FinalLevelFacts,
@@ -1248,7 +1250,10 @@ function finalLevelGate(
   // Dispute review sees it whatever its rating, Blocked included (no domain's levels hold it), but
   // only while its scan image still exists to show it is not held.
   if (!levelInDomain && !(disputeReview && !row.ratedImageGone))
-    return row.contentLevel ? 'offDomain' : 'refused';
+    // A rating no domain shows (Blocked) is refused, so no other domain is offered for it.
+    return row.contentLevel && Flags.intersects(row.contentLevel, allBrowsingLevelsFlag)
+      ? 'offDomain'
+      : 'refused';
   return 'served';
 }
 
