@@ -28,7 +28,8 @@ const GRANT = { userId: 42, conversationId: 'c-1', idempotencyKey: 'k-1' };
 /**
  * What a Restart preview's own calls before its tunnel's start may add to its two waits: listing
  * and opening the app's sandbox, polling it while it starts, the dev server's status, manifest
- * reads and its last probe. The old 2-minute pre-start allowance, less the two waits.
+ * reads and its last probe, and the two checks before an install (is it installed, does another
+ * install run). The old 2-minute pre-start allowance, less the two waits.
  */
 const SETUP_CALLS_ALLOWANCE_MS = 40_000;
 
@@ -41,6 +42,7 @@ function runnerConstant(name: string): number {
   const source = [
     'apps/assistant-runner/src/app-assistant/preview-restart.ts',
     'apps/assistant-runner/src/app-assistant/preview.ts',
+    'apps/assistant-runner/src/app-assistant/npm-install.ts',
     'apps/assistant-runner/src/app-assistant/dev-tunnel.ts',
     'apps/assistant-runner/src/app-assistant/sandbox.ts',
     'apps/assistant-runner/src/minter.ts',
@@ -96,7 +98,7 @@ describe('the runner’s credentials, as the runner reads them', () => {
     expect(payload.exp! - payload.iat!).toBe(300);
   });
 
-  it('signs a preview grant: use preview, seven minutes whatever the env says, never subagents', async () => {
+  it('signs a preview grant: use preview, nine minutes whatever the env says, never subagents', async () => {
     setEnv({ ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 600 });
     const { token } = await signRunGrant({ ...GRANT, use: 'preview', subagents: true });
     const { payload } = await jwtVerify(token, keys.publicKey, {
@@ -105,18 +107,20 @@ describe('the runner’s credentials, as the runner reads them', () => {
     });
     expect(payload).toMatchObject({ sub: '42', cid: 'c-1', key: 'k-1', use: 'preview' });
     expect(payload).not.toHaveProperty('subagents');
-    expect(payload.exp! - payload.iat!).toBe(420);
+    expect(payload.exp! - payload.iat!).toBe(540);
   });
 
   it('a preview grant is still good at the end of the slowest Restart preview the runner makes', async () => {
     // Every call of a Restart preview is made with this grant: the steps before the tunnel's
-    // start (waiting for an app the page just started, then maybe its dev server, plus the
-    // sandbox and service calls around them), then the runner's `TUNNEL_START_BUDGET_MS`. The
+    // start (waiting for an app the page just started, then maybe installing its dependencies and
+    // starting its dev server, plus the sandbox and service calls around them, among them the
+    // install's two checks), then the runner's `TUNNEL_START_BUDGET_MS`. The
     // waits and the budget are read from the runner's own source, so raising any of them on that
     // side, or shortening the grant on this one, goes red here. The grant's own life is what is
     // compared: the verify's clock tolerance is for clocks, not part of the budget.
     const setup =
       runnerConstant('RESTART_WAIT_MS') +
+      runnerConstant('NPM_INSTALL_CALL_TIMEOUT_MS') +
       runnerConstant('DEV_SERVER_WAIT_MS') +
       SETUP_CALLS_ALLOWANCE_MS;
     const budget = runnerConstant('TUNNEL_START_BUDGET_MS');
