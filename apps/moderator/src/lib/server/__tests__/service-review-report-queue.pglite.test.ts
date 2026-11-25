@@ -37,6 +37,7 @@ const { getReportedServiceReviews } = await import('../service-review-reports.se
 const GRANTED = { id: 1, roles: ['moderator:admin'] } as never;
 const SELLER = 990000010;
 const REPORTER = 990000099;
+const BUYER = 990000020;
 const OFFERING = 990000005;
 const OTHER_OFFERING = 990000006;
 const REVIEW = 990000071;
@@ -45,7 +46,10 @@ const REVIEW_REPORT = 990000200;
 const OTHER_REPORT = 990000400;
 
 const SCHEMA = `
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT, "email" TEXT);
+CREATE TABLE "User" (
+  "id" INTEGER PRIMARY KEY, "username" TEXT, "email" TEXT,
+  "bannedAt" TIMESTAMP(3), "deletedAt" TIMESTAMP(3)
+);
 CREATE TABLE "Report" (
   "id" INTEGER PRIMARY KEY,
   "reason" TEXT NOT NULL,
@@ -68,8 +72,8 @@ ${REPORT_ENTITIES.filter((e) => e.reportTable !== 'ServiceDealReviewReport')
 CREATE TABLE "ServiceOffering" ("id" INTEGER PRIMARY KEY, "sellerId" INTEGER NOT NULL);
 CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
 CREATE TABLE "ServiceDealReview" (
-  "id" INTEGER PRIMARY KEY, "dealId" INTEGER NOT NULL, "verdict" TEXT NOT NULL,
-  "comment" TEXT, "sellerReply" TEXT, "publishedAt" TIMESTAMP(3), "hiddenAt" TIMESTAMP(3)
+  "id" INTEGER PRIMARY KEY, "dealId" INTEGER NOT NULL, "buyerId" INTEGER NOT NULL,
+  "verdict" TEXT NOT NULL, "comment" TEXT, "sellerReply" TEXT, "publishedAt" TIMESTAMP(3), "hiddenAt" TIMESTAMP(3)
 );
 CREATE TABLE "ServiceDealReviewImage" ("reviewId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL);
 CREATE TABLE "TextScanHold" (
@@ -79,10 +83,11 @@ CREATE TABLE "TextScanHold" (
 CREATE TABLE "ServiceDealReviewReport" (
   "reportId" INTEGER PRIMARY KEY, "serviceDealReviewId" INTEGER NOT NULL, "serviceOfferingId" INTEGER NOT NULL
 );
-INSERT INTO "User" VALUES (${REPORTER}, 'reporter', null), (${SELLER}, 'seller', null);
+INSERT INTO "User" ("id", "username") VALUES
+  (${REPORTER}, 'reporter'), (${SELLER}, 'seller'), (${BUYER}, 'buyer');
 INSERT INTO "ServiceOffering" VALUES (${OFFERING}, ${SELLER}), (${OTHER_OFFERING}, ${SELLER});
 INSERT INTO "ServiceDealReview" VALUES
-  (${REVIEW}, 990000031, 'Unhappy', 'Comment now', 'Reply now', now(), null);
+  (${REVIEW}, 990000031, ${BUYER}, 'Unhappy', 'Comment now', 'Reply now', now(), null);
 INSERT INTO "Image" VALUES (990000001, 'key-b'), (990000002, 'key-a');
 INSERT INTO "ServiceDealReviewImage" VALUES (${REVIEW}, 990000002), (${REVIEW}, 990000001);
 INSERT INTO "Report" ("id", "reason", "userId", "details") VALUES
@@ -167,5 +172,21 @@ describe('getReportedServiceReviews', () => {
       commentHeld: false,
       replyHeld: true,
     });
+  });
+
+  it('marks a published review not shown once its buyer is banned or deleted', async () => {
+    const shown = async () =>
+      (await getReportedServiceReviews([REVIEW_REPORT], GRANTED)).get(REVIEW_REPORT)?.shown;
+    await db.exec(`UPDATE "User" SET "bannedAt" = now() WHERE id = ${BUYER}`);
+    expect(await shown()).toBe(false);
+    await db.exec(`UPDATE "User" SET "bannedAt" = null, "deletedAt" = now() WHERE id = ${BUYER}`);
+    expect(await shown()).toBe(false);
+  });
+
+  it('still lists a reported review whose buyer row is missing, not shown', async () => {
+    await db.exec(`DELETE FROM "User" WHERE id = ${BUYER}`);
+    expect(
+      (await getReportedServiceReviews([REVIEW_REPORT], GRANTED)).get(REVIEW_REPORT)
+    ).toMatchObject({ reviewId: REVIEW, shown: false });
   });
 });

@@ -52,7 +52,7 @@ ALTER TABLE "Model" ADD COLUMN name TEXT, ADD COLUMN type TEXT, ADD COLUMN statu
   ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(), ADD COLUMN "userId" INTEGER;
 ALTER TABLE "ModelVersion" ADD COLUMN index INTEGER;
 CREATE TABLE "ServiceDealReview" (
-  id INTEGER PRIMARY KEY, "dealId" INTEGER, verdict TEXT, comment TEXT, "sellerReply" TEXT,
+  id INTEGER PRIMARY KEY, "dealId" INTEGER, "buyerId" INTEGER, verdict TEXT, comment TEXT, "sellerReply" TEXT,
   "publishedAt" TIMESTAMP(3), "hiddenAt" TIMESTAMP(3)
 );
 CREATE TABLE "ServiceDealReviewReport" ("reportId" INTEGER, "serviceDealReviewId" INTEGER);
@@ -259,7 +259,7 @@ describe('/reports/serviceOffering review images', () => {
   const reviews = async (viewer: never) => {
     await db.exec(`
       INSERT INTO "Report" (id, reason, status) VALUES (30, 'TOSViolation', 'Pending');
-      INSERT INTO "ServiceDealReview" (id, "dealId", verdict) VALUES (40, 1, 'Positive');
+      INSERT INTO "ServiceDealReview" (id, "dealId", "buyerId", verdict) VALUES (40, 1, ${OWNER}, 'Positive');
       INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId") VALUES (30, 40);
       INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES (40, ${WITHHELD}), (40, ${CONTROL});`);
     const { getReportedServiceReviews } = await import('../service-review-reports.service');

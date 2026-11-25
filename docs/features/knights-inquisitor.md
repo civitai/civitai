@@ -11,6 +11,11 @@ The whole feature sits behind the `inquisitorQueue` game setting (Config page "I
 `KNIGHTS_INQUISITOR_QUEUE`), off by default. Off, no review opens (neither on write-back nor in the tick's sweep), moderators
 get the player game on `/play`, the review actions answer 404, and the mod-confirmed pool is served to nobody.
 
+On, a moderator plays as the Inquisitor (`inquisitorQueueOpen`, `lib/server/inquisitor/mode.ts`): `/play` serves reviews, and their
+own career is set aside. The header shows an "Inquisitor" pill and the Inquisitor emblem on the avatar in place of the gold,
+rank and recap controls, the primary nav drops Shop, and `/home` shows the Inquisitor's numbers (reviews waiting, votes in
+the last 7 days, agreement, from `moderatorStats`) and how a review closes, in place of rank, XP, streak, gold and fervor.
+
 ## Entry
 
 Every rating item the players settle opens one review once its level is written to the image (`markApplied`), whether it

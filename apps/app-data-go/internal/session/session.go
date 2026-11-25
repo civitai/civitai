@@ -450,8 +450,10 @@ func (m *Manager) ReadAt(ctx context.Context, token, schema string, minSeq int64
 // View is ReadAt, answering the stream's latest `meta` and head beside its records.
 func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) (Snapshot, error) {
 	k := key{token: sha256.Sum256([]byte(token)), schema: schema}
+	// The viewer's address (exchange.ClientIP) goes with a stream this read opens, to its exchange.
+	ip := exchange.ClientIP(ctx)
 	for retried := false; ; retried = true {
-		s, err := m.session(k, token) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+		s, err := m.session(k, token, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -474,7 +476,7 @@ func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) 
 	}
 }
 
-func (m *Manager) session(k key, token string) (*session, error) {
+func (m *Manager) session(k key, token, ip string) (*session, error) {
 	now := m.opts.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -493,7 +495,7 @@ func (m *Manager) session(k key, token string) (*session, error) {
 	if err := m.room(k); err != nil {
 		return nil, err
 	}
-	return m.open(k, token, now, nil), nil //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+	return m.open(k, token, now, nil, ip), nil //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 }
 
 // room checks the caps for opening k and, when they admit it, takes its share of the Budget: open
@@ -529,7 +531,7 @@ func (m *Manager) floor(ctx context.Context, s *session, token string, minSeq in
 	}
 	m.reopened[s.k] = now
 	m.mu.Unlock()
-	fresh, err := m.reopen(s, token) //nolint:contextcheck // as session: the reopened stream runs on the manager's own context
+	fresh, err := m.reopen(s, token, exchange.ClientIP(ctx)) //nolint:contextcheck // as session: the reopened stream runs on the manager's own context
 	if err == nil {
 		ents, err = m.read(ctx, fresh, token)
 	}
@@ -581,7 +583,7 @@ func (m *Manager) met(s *session, token string, floor int64) bool {
 
 // reopen closes old and opens its key again, carrying its overlays: each was committed before the new
 // snapshot is read, so the snapshot drops it as it shows it.
-func (m *Manager) reopen(old *session, token string) (*session, error) {
+func (m *Manager) reopen(old *session, token, ip string) (*session, error) {
 	old.mu.Lock()
 	carried := maps.Clone(old.overlays)
 	old.mu.Unlock()
@@ -598,7 +600,7 @@ func (m *Manager) reopen(old *session, token string) (*session, error) {
 	if err := m.room(old.k); err != nil {
 		return nil, err
 	}
-	return m.open(old.k, token, m.opts.Now(), carried), nil
+	return m.open(old.k, token, m.opts.Now(), carried, ip), nil
 }
 
 // Ack applies one acknowledged write of token to its open stream of schema. With none open there is
@@ -685,11 +687,12 @@ func (s *session) dropOverlay(k string) {
 	}
 }
 
-// open starts a session's stream, holding carried overlays. m.mu is held.
-func (m *Manager) open(k key, token string, now time.Time, carried map[string]overlay) *session {
+// open starts a session's stream, holding carried overlays; ip is the address of the viewer whose
+// read opened it (exchange.ClientIP), carried to its exchange. m.mu is held.
+func (m *Manager) open(k key, token string, now time.Time, carried map[string]overlay, ip string) *session {
 	delete(m.cooling, k)
 	delete(m.coolCause, k)
-	ctx, cancel := context.WithCancel(m.base)
+	ctx, cancel := context.WithCancel(exchange.WithClientIP(m.base, ip))
 	s := &session{
 		k: k, opened: now, lastRead: now, cancel: cancel,
 		live: make(chan struct{}), done: make(chan struct{}), records: map[string]registry.Entity{},

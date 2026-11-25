@@ -31,6 +31,7 @@ import {
   type BlockOutputView,
 } from './block-output-mint';
 import { hasRecasedTwin, isRepeatStepType } from './workflow-graph';
+import { APP_BLOCK_TAG_PREFIX } from '~/shared/utils/app-block-tags';
 import { safeQuoteReason } from './pass-through-quote-failure';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
@@ -1107,7 +1108,7 @@ function readBlockPublishedModel(workflow: Workflow): BlockPublishedModel | unde
  * from the VERIFIED block token, never client input.
  */
 export function appBlockTag(appId: string): string {
-  return `app-block:${appId}`;
+  return `${APP_BLOCK_TAG_PREFIX}${appId}`;
 }
 
 /**
@@ -1117,7 +1118,7 @@ export function appBlockTag(appId: string): string {
  * this, so they cannot desync.
  */
 export function appBlockInstanceTag(blockInstanceId: string): string {
-  return `app-block:instance:${blockInstanceId}`;
+  return `${APP_BLOCK_TAG_PREFIX}instance:${blockInstanceId}`;
 }
 
 /**

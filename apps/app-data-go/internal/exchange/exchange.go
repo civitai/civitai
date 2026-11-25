@@ -104,11 +104,15 @@ func RefusalCode(err error) string {
 	return "other"
 }
 
-// RateLimitedError is the hub answering 429: this client's exchange budget is spent (the hub's
-// `token-exchange` limit, one budget per client for user and block exchanges alike). Not a refusal:
-// the subject may be fine. RetryAfter is how long the Exchanger holds every exchange back.
+// RateLimitedError is the hub answering 429. Not a refusal: the subject may be fine. Usually this
+// client's exchange budget is spent (the hub's `token-exchange` limit, one budget per client for user
+// and block exchanges alike, charged only for subjects the hub found), and RetryAfter is how long the
+// Exchanger holds every exchange back. When the hub names its per-viewer limit on subjects it could not
+// find (HubMissLimit), Scoped is set and nothing else is held back: that limit is keyed by this client
+// and the viewer's address, so another viewer's exchange is not refused by it.
 type RateLimitedError struct {
 	RetryAfter time.Duration
+	Scoped     bool
 }
 
 func (e *RateLimitedError) Error() string {
@@ -118,11 +122,16 @@ func (e *RateLimitedError) Error() string {
 // After a 429 the Exchanger waits the hub's Retry-After (or the body's rateLimit.retryAfterSeconds
 // or retry_after, whichever is longest) before it calls the hub again. An answer naming none is held
 // minRateLimitHold; one naming more than maxRateLimitHold is held that long, so a broken header cannot
-// stop the exchange for good.
+// stop the exchange for long: the hub's budget window is one minute.
 const (
 	minRateLimitHold = time.Second
-	maxRateLimitHold = 15 * time.Minute
+	maxRateLimitHold = 2 * time.Minute
 )
+
+// HubMissLimit is the `rateLimit.id` of the hub's 429 for too many subjects it could not find from one
+// client and viewer address (apps/auth oauth/rate-limit.ts `token-exchange-miss`). It never holds the
+// Exchanger (RateLimitedError.Scoped).
+const HubMissLimit = "oauth.token-exchange-miss"
 
 // Exchanger calls the hub. Use it through a pointer: it holds the rate-limit hold.
 type Exchanger struct {
@@ -189,6 +198,11 @@ func (e *Exchanger) exchange(ctx context.Context, subject, subjectType string) (
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	// The viewer's address as the edge named it (ClientIPHeader), so the hub keys its limit on subjects
+	// it cannot find by viewer, not by this service. Only an address this service read from the edge.
+	if ip := ClientIP(ctx); ip != "" {
+		req.Header.Set("X-Forwarded-For", ip)
+	}
 	// RFC 6749 §2.3.1: the id and secret are form-encoded before Basic encoding.
 	req.SetBasicAuth(url.QueryEscape(e.ClientID), url.QueryEscape(e.ClientSecret))
 	hc := NoRedirects(e.HTTP)
@@ -209,6 +223,7 @@ func (e *Exchanger) exchange(ctx context.Context, subject, subjectType string) (
 		RetryAfter  float64 `json:"retry_after"`
 		RateLimit   struct {
 			RetryAfterSeconds float64 `json:"retryAfterSeconds"`
+			ID                string  `json:"id"`
 		} `json:"rateLimit"`
 	}
 	_ = json.Unmarshal(raw, &body)
@@ -217,6 +232,10 @@ func (e *Exchanger) exchange(ctx context.Context, subject, subjectType string) (
 		// Measured from the answer, so the hold is never shorter than the wait the hub named.
 		answered := now()
 		wait := rateLimitWait(res.Header.Get("Retry-After"), answered, body.RateLimit.RetryAfterSeconds, body.RetryAfter)
+		if body.RateLimit.ID == HubMissLimit {
+			// One viewer's made-up subjects: that viewer's answer, never every viewer's.
+			return Token{}, &RateLimitedError{RetryAfter: wait, Scoped: true}
+		}
 		e.hold(answered.Add(wait))
 		return Token{}, &RateLimitedError{RetryAfter: wait}
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnauthorized:

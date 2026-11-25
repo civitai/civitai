@@ -58,11 +58,13 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 
 vi.mock('~/utils/trpc', () => {
   const inert = { invalidate: mocks.invalidate };
-  const utils = { blocks: { getAgentReview: inert } };
+  const utils = { blocks: { getAgentReview: inert, listAgentReviews: inert } };
   return {
     trpc: {
       useUtils: () => utils,
       blocks: {
+        listAgentReviews: { useQuery: () => ({ data: [] }) },
+        getAgentReviewModels: { useQuery: () => ({ data: { available: true, models: [] } }) },
         getAgentReview: {
           useQuery: () => ({
             data: mocks.agentReport,
@@ -206,6 +208,8 @@ describe('AgentReviewChat — send', () => {
       expect.objectContaining({
         publishRequestId: 'onsite-req-1',
         messages: [{ role: 'user', content: 'why did you flag scope X?' }],
+        // Grounded on the run on screen, not whichever run is latest when the server answers.
+        reportId: COMPLETE_REPORT.id,
       })
     );
     // Both the user message and the agent reply render.
