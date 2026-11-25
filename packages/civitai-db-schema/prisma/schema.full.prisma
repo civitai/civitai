@@ -12088,8 +12088,11 @@ model ServiceDealFileEntry {
   scanStatus ServiceDealFileScanStatus @default(Pending)
   failReason String?
   createdAt  DateTime                  @default(now())
+  /// Set just before our own delete of the scan copy, so a retry can tell that delete from another.
+  copyDeleteStartedAt DateTime?
 
   @@unique([fileId, entryIndex])
+  @@index([imageId])
 }
 
 /// One row per movement of Buzz for a deal, modelled on `PlacementTransaction`. A composite FK

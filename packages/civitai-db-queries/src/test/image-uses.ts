@@ -1,4 +1,4 @@
-import { IMAGE_USES } from '../content-deletion.db';
+import { IMAGE_USES, IMAGE_USES_WITHOUT_RELATION } from '../content-deletion.db';
 
 /**
  * DDL for a test database that runs `queueImageDeletes` or the child-safety case: every table they
@@ -40,10 +40,12 @@ export const imageUseTablesSql = [
   `CREATE TABLE IF NOT EXISTS "ItemDefinition" (id serial PRIMARY KEY)`,
   `ALTER TABLE "ItemDefinition" ADD COLUMN IF NOT EXISTS "imageUrl" text`,
   `CREATE TABLE IF NOT EXISTS "ImageCdnShopTakedown" (url text PRIMARY KEY)`,
-  ...Object.values(IMAGE_USES).flatMap(([table, column]) => [
-    `CREATE TABLE IF NOT EXISTS "${table}" ()`,
-    `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" int`,
-  ]),
+  ...[...Object.values(IMAGE_USES), ...Object.values(IMAGE_USES_WITHOUT_RELATION)].flatMap(
+    ([table, column]) => [
+      `CREATE TABLE IF NOT EXISTS "${table}" ()`,
+      `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" int`,
+    ]
+  ),
   `ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "reviewId" int`,
   `CREATE TABLE IF NOT EXISTS "ServiceDealReviewReport" ("reportId" int NOT NULL)`,
   `ALTER TABLE "ServiceDealReviewReport" ADD COLUMN IF NOT EXISTS "serviceDealReviewId" int`,
