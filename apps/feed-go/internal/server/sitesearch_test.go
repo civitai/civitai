@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/sitesearch"
@@ -26,38 +26,47 @@ import (
 
 // fakeRate is an in-memory RateCounter: counts and expiries per key.
 type fakeRate struct {
-	mu      sync.Mutex
-	counts  map[string]int64
-	expires map[string]time.Duration
-	failGet bool
+	mu       sync.Mutex
+	counts   map[string]int64
+	expires  map[string]time.Duration
+	failIncr bool
 }
 
 func newFakeRate() *fakeRate {
 	return &fakeRate{counts: map[string]int64{}, expires: map[string]time.Duration{}}
 }
 
-func (f *fakeRate) Get(ctx context.Context, key string) *redis.StringCmd {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cmd := redis.NewStringCmd(ctx, "get", key)
-	switch n, ok := f.counts[key]; {
-	case f.failGet:
-		cmd.SetErr(errors.New("down"))
-	case !ok:
-		cmd.SetErr(redis.Nil)
-	default:
-		cmd.SetVal(strconv.FormatInt(n, 10))
-	}
-	return cmd
-}
-
 func (f *fakeRate) Incr(ctx context.Context, key string) *redis.IntCmd {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.counts[key]++
 	cmd := redis.NewIntCmd(ctx, "incr", key)
+	if f.failIncr {
+		cmd.SetErr(errors.New("down"))
+		return cmd
+	}
+	f.counts[key]++
 	cmd.SetVal(f.counts[key])
 	return cmd
+}
+
+func (f *fakeRate) Decr(ctx context.Context, key string) *redis.IntCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.counts[key]--
+	cmd := redis.NewIntCmd(ctx, "decr", key)
+	cmd.SetVal(f.counts[key])
+	return cmd
+}
+
+// charged is the sum over every window: what this route has counted and not refunded.
+func (f *fakeRate) charged() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var n int64
+	for _, c := range f.counts {
+		n += c
+	}
+	return n
 }
 
 func (f *fakeRate) TTL(ctx context.Context, key string) *redis.DurationCmd {
@@ -205,8 +214,9 @@ func TestServeSearchOnAnswers(t *testing.T) {
 	}
 }
 
-// A signed-in viewer is counted in the user's bucket; a window already at its ceiling is handed back
-// (Node answers the 429 and counts it), without a backend call.
+// A signed-in viewer is counted in the user's bucket; a request past the ceiling is handed back (Node
+// answers the 429 and counts it) without a backend call, and its charge refunded. The count is INCR
+// first, as Node's: each request reads its own count, so concurrent requests cannot all pass.
 func TestServeSearchRateLimit(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s, up, rate, node := searchServer(t, reg, true)
@@ -229,17 +239,18 @@ func TestServeSearchRateLimit(t *testing.T) {
 		t.Fatalf("spent window: code %d node %d backend %d", w.Code, node.calls, len(up.calls))
 	}
 	if fallbackCount(t, reg, "search-rate-limited") != 1 || rate.count("site-search:rate-limit:ip:192.0.2.7") != searchRateIPMax {
-		t.Fatal("a handed-back request was counted here (Node counts it)")
+		t.Fatalf("a handed-back request left a charge: window %d, want %d (Node counts it)", rate.count("site-search:rate-limit:ip:192.0.2.7"), searchRateIPMax)
 	}
 
 	// One under the ceiling is answered; a store that cannot be read fails open.
 	rate.counts["site-search:rate-limit:ip:192.0.2.7"] = searchRateIPMax - 1
+	// The last slot is answered (INCR reads exactly the ceiling).
 	w = httptest.NewRecorder()
 	PublicMux(s).ServeHTTP(w, searchRequest(searchToolsPath, searchToolsBody, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("one under the ceiling: %d", w.Code)
 	}
-	rate.failGet = true
+	rate.failIncr = true
 	w = httptest.NewRecorder()
 	PublicMux(s).ServeHTTP(w, searchRequest(searchToolsPath, searchToolsBody, nil))
 	if w.Code != http.StatusOK {
@@ -311,8 +322,8 @@ func TestServeSearchFallbacks(t *testing.T) {
 		if got := fallbackCount(t, reg, c.reason); got != 1 {
 			t.Errorf("%s: %s = %v, want 1", c.name, c.reason, got)
 		}
-		if len(up.calls) != 0 || len(rate.counts) != 0 {
-			t.Errorf("%s: backend %d windows %d, want none", c.name, len(up.calls), len(rate.counts))
+		if len(up.calls) != 0 || rate.charged() != 0 {
+			t.Errorf("%s: backend %d, charged %d, want none (a charge taken is refunded)", c.name, len(up.calls), rate.charged())
 		}
 	}
 }
@@ -327,10 +338,10 @@ func TestSearchShadowComputesTextOnTheSFWSite(t *testing.T) {
 	r := httptest.NewRequestWithContext(ctx, http.MethodPost, searchToolsPath, strings.NewReader(`{"q":"cat"}`))
 	r.Host = "green.example.test"
 	r.Header.Set("Content-Type", "application/json")
-	if _, err := s.searchCompute(false)(ctx, r); err != nil {
+	if _, err := s.searchCompute(false)(context.Background(), r); err != nil {
 		t.Fatalf("shadow, SFW site, text: %v, want computed", err)
 	}
-	if _, err := s.searchCompute(true)(ctx, r); fallback.Reason(err) != "search-profanity" {
+	if _, err := s.searchCompute(true)(context.Background(), r); fallback.Reason(err) != "search-profanity" {
 		t.Fatalf("serving, SFW site, text: %v, want search-profanity", err)
 	}
 }
@@ -504,8 +515,47 @@ func TestSiteSearchConfig(t *testing.T) {
 func TestSearchComputeUnconfigured(t *testing.T) {
 	s := &Server{Resolver: &auth.Resolver{}, Hosts: siteSearchGoldenHosts}
 	r := searchRequest(searchToolsPath, searchToolsBody, nil)
-	ctx := withSearchBody(r.Context(), []byte(searchToolsBody))
-	if _, err := s.searchCompute(true)(ctx, r.WithContext(ctx)); fallback.Reason(err) != "search-unconfigured" {
+	r = r.WithContext(withSearchBody(r.Context(), []byte(searchToolsBody)))
+	if _, err := s.searchCompute(true)(context.Background(), r); fallback.Reason(err) != "search-unconfigured" {
 		t.Fatalf("serving without a backend: %v", err)
+	}
+}
+
+// A restricted region holds a signed-in viewer on the mature site to the SFW levels (canViewNsfw is
+// off there for a non-moderator), so the call carries the SFW clause and images above it are dropped;
+// a moderator skips the region rule. Read from REGION_RESTRICTION_CONFIG's rules, not the block list.
+func TestSearchRegionRestrictionCapsTheViewer(t *testing.T) {
+	const hits = `{"hits":[{"id":1,"images":[{"id":2,"nsfwLevel":1},{"id":3,"nsfwLevel":8}]}]}`
+	for _, c := range []struct {
+		name, country string
+		moderator     bool
+		capped        bool
+	}{
+		{"restricted", "GB", false, true},
+		{"not restricted", "US", false, false},
+		{"restricted moderator", "GB", true, false},
+	} {
+		s := &Server{Resolver: &auth.Resolver{}, Hosts: siteSearchGoldenHosts,
+			RegionRules: []browsing.RegionRule{{Region: "GB", Effective: time.Unix(0, 0)}}}
+		up := &recordingUpstream{res: &sitesearch.Response{Status: 200, Body: []byte(hits)}}
+		user, err := auth.SessionUserFrom(7, map[string]any{"id": int64(7), "isModerator": c.moderator, "browsingLevel": int64(31), "showNsfw": true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rctx := context.WithValue(withSearchBody(context.Background(), []byte(`{"q":"x"}`)), searchRecordedKey{}, sitesearch.Upstream(up))
+		r := httptest.NewRequestWithContext(rctx, http.MethodPost, "/api/search/indexes/models_v9/search", strings.NewReader(`{"q":"x"}`))
+		r.Host = "red.example.test"
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("cf-ipcountry", c.country)
+		comp, err := s.searchCompute(false)(auth.WithResolved(context.Background(), user, nil), r)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		call := string(up.calls[0].Body)
+		hasCap := strings.Contains(call, `"nsfwLevel=1 OR nsfwLevel=2"`)
+		keptMature := strings.Contains(string(comp.payload), `"nsfwLevel":8`)
+		if hasCap != c.capped || keptMature == c.capped {
+			t.Errorf("%s: SFW clause %v, mature image kept %v; want capped=%v\ncall %s", c.name, hasCap, keptMature, c.capped, call)
+		}
 	}
 }

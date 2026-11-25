@@ -3527,7 +3527,7 @@ the CPU goes in Node, and it is the reason for the port.
 | Host | the colours, the domain cap, region restriction | public route only: **any non-empty `q` on the SFW site** (`search-profanity`: the profanity check is not ported; a shadow sample is computed, Node samples only after its own check passed) |
 | Indexes | the seven searchable ones | a retired or unknown index (`search-index`) |
 | Answer | a 200 reshaped exactly as `shapeHits` does, per index | a non-200 (`search-upstream-status`; Node answers it), no answer (`search-upstream-unavailable`), invalid JSON, invalid UTF-8, a hit that is not an object on an index that reshapes, a duplicate key, a rating or id that is not a plain number (`search-upstream-shape`: each a case where JavaScript's coercion is not reproduced) |
-| Public route only | the rate limit, read before and counted after an answer (18.6) | a window at its ceiling (`search-rate-limited`: Node answers the 429 and counts it), a signed-out caller without a usable `cf-connecting-ip` (`search-rate-limit-ip`: Node keys it by another derivation), an `etag` query (`search-etag`: the wrapper may add `X-Expires`); a blocked region is ALWAYS handed back (`region-blocked`), whatever `FEED_GO_ANSWER_REGION_BLOCKED` says, because Node's 451 here carries the wrapper's headers |
+| Public route only | the rate limit, counted first and refunded on a hand-back (18.6) | a window at its ceiling (`search-rate-limited`: Node answers the 429 and counts it), a signed-out caller without a usable `cf-connecting-ip` (`search-rate-limit-ip`: Node keys it by another derivation), an `etag` query (`search-etag`: the wrapper may add `X-Expires`); a blocked region is ALWAYS handed back (`region-blocked`), whatever `FEED_GO_ANSWER_REGION_BLOCKED` says, because Node's 451 here carries the wrapper's headers |
 
 **Security-relevant parity risks, and what holds each.** The answer is per viewer; a wrong viewer or
 a wrong clause leaks hidden, private or mature results.
@@ -3610,12 +3610,14 @@ request is the `search-off` fallback: nothing read or computed, no serve slot, p
 1 MiB, and replayed whole to a fallback), a blocked region is handed back, then a serve slot and the
 request budget (§6.1), then the compute with the public-route checks of 18.3.
 
-**The rate limit.** Node counts a request when it arrives; a request handed to Node is counted there.
-So this route reads the window first (`GET`; at the ceiling it hands the request back) and counts it
-(`INCR`, the 60 s expiry set on the first or re-asserted when lost, as `checkFixedWindowWith`) only once
-it has written an answer. Each request is counted once, by whichever side answers it. Two answers
-racing past the last slot can both be served; Node's `INCR`-first check refuses the second. The keys are
-Node's (`CACHE_KEY_NAMESPACE` prefix included); a store error fails open, as in Node.
+**The rate limit.** Node counts a request when it arrives (`INCR`, then compares); a request handed to
+Node is counted there. So this route counts it the same way, `INCR` first (the 60 s expiry set on the
+first or re-asserted when lost, as `checkFixedWindowWith`), so concurrent requests each read their own
+count and cannot all pass the last slot; and a request it then hands back for any reason (the ceiling
+included: Node answers the 429) has that charge refunded (`DECR`) before the proxy, so Node's own count
+is the only one. Each request is counted once, by whichever side answers it. The keys are Node's
+(`CACHE_KEY_NAMESPACE` prefix included); a store error fails open, as in Node, and then nothing is
+charged or refunded.
 
 **The answer**: the reshaped body with next.config's `X-Frame-Options`, the wrapper's `Vary` and CORS
 headers, `Cache-Control: private, no-store`, Next's JSON `Content-Type`, and `X-Feed-Go-Served: go`.

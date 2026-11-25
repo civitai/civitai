@@ -126,14 +126,17 @@ func runSiteSearchFixture(t *testing.T, fx siteSearchFixture, serving bool) (*co
 		up.res = &sitesearch.Response{Status: fx.Upstream.Status, Body: []byte(fx.Upstream.Body)}
 	}
 	s := &Server{Resolver: &auth.Resolver{}, Hosts: siteSearchGoldenHosts}
+	// As in production, the body and the recorded answer ride on the request's context and the
+	// computation gets a context of its own (here: only the resolved viewer, which stands in for the
+	// session cookie).
 	ctx := auth.WithResolved(context.Background(), goldenSessionUser(t, fx.Viewer), nil)
-	ctx = withSearchBody(ctx, []byte(fx.Request.Body))
+	rctx := withSearchBody(context.Background(), []byte(fx.Request.Body))
 	if serving {
 		s.Search = &SearchDeps{Upstream: up, Rate: newFakeRate()}
 	} else {
-		ctx = context.WithValue(ctx, searchRecordedKey{}, sitesearch.Upstream(up))
+		rctx = context.WithValue(rctx, searchRecordedKey{}, sitesearch.Upstream(up))
 	}
-	r := httptest.NewRequestWithContext(ctx, http.MethodPost, fx.Request.Path, strings.NewReader(fx.Request.Body))
+	r := httptest.NewRequestWithContext(rctx, http.MethodPost, fx.Request.Path, strings.NewReader(fx.Request.Body))
 	r.Host = fx.Request.Host
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Cf-Connecting-Ip", "192.0.2.7")
@@ -207,12 +210,12 @@ func TestSiteSearchGoldenServedBody(t *testing.T) {
 		up := &recordingUpstream{res: &sitesearch.Response{Status: fx.Upstream.Status, Body: []byte(fx.Upstream.Body)}}
 		s := &Server{Resolver: &auth.Resolver{}, Hosts: siteSearchGoldenHosts,
 			Search: &SearchDeps{Upstream: up, Rate: newFakeRate()}}
-		ctx := withSearchBody(context.Background(), []byte(fx.Request.Body))
-		r := httptest.NewRequestWithContext(ctx, http.MethodPost, fx.Request.Path, strings.NewReader(fx.Request.Body))
+		rctx := withSearchBody(context.Background(), []byte(fx.Request.Body))
+		r := httptest.NewRequestWithContext(rctx, http.MethodPost, fx.Request.Path, strings.NewReader(fx.Request.Body))
 		r.Host = fx.Request.Host
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Cf-Connecting-Ip", "192.0.2.7")
-		c, err := s.searchCompute(true)(ctx, r)
+		c, err := s.searchCompute(true)(context.Background(), r)
 		if err != nil {
 			t.Fatal(err)
 		}

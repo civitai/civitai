@@ -58,8 +58,8 @@ var SearchComparedHeaders = slices.DeleteFunc(slices.Clone(shadow.RESTComparedHe
 
 // RateCounter is the part of the cache client the public route's rate limit uses.
 type RateCounter interface {
-	Get(ctx context.Context, key string) *redis.StringCmd
 	Incr(ctx context.Context, key string) *redis.IntCmd
+	Decr(ctx context.Context, key string) *redis.IntCmd
 	TTL(ctx context.Context, key string) *redis.DurationCmd
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 }
@@ -235,7 +235,10 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		if err := searchJSONBody(r); err != nil {
 			return nil, err
 		}
-		body, _ := ctx.Value(searchBodyKey{}).([]byte)
+		// The body and a sample's recorded answer ride on the REQUEST's context: ctx is the computation's
+		// own (computeWithin derives it from its caller's context, which is not the request's in the
+		// shadow).
+		body, _ := r.Context().Value(searchBodyKey{}).([]byte)
 		req, err := sitesearch.ParseBody(route, index, body)
 		if err != nil {
 			return nil, err
@@ -276,7 +279,7 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		viewer := sitesearch.ViewerOf(sess)
 
 		// A shadow sample's recorded response (sitesearch.Recorded), else the backend when serving.
-		up, recorded := ctx.Value(searchRecordedKey{}).(sitesearch.Upstream)
+		up, recorded := r.Context().Value(searchRecordedKey{}).(sitesearch.Upstream)
 		switch {
 		case recorded:
 		case serving && s.Search != nil && s.Search.Upstream != nil:
@@ -286,23 +289,21 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 		default:
 			return nil, fallback.New("search-unconfigured")
 		}
-		rateKey := ""
 		if serving {
 			key, max, err := s.searchRateKey(r, user)
 			if err != nil {
 				return nil, err
 			}
-			if s.searchRateSpent(ctx, key, max) {
-				// Node answers its 429 and counts the request.
+			if s.chargeSearch(ctx, r, key) > int64(max) {
+				// Node answers its 429 and counts the request (the charge is refunded first).
 				return nil, fallback.New("search-rate-limited")
 			}
-			rateKey = key
 		}
 		ans, err := sitesearch.Compute(ctx, up, req, viewer)
 		if err != nil {
 			return nil, err
 		}
-		c := &computed{payload: ans.Body, searchRateKey: rateKey}
+		c := &computed{payload: ans.Body}
 		if !serving {
 			c.payload = searchShadowDocument(ans)
 		}
@@ -355,34 +356,46 @@ func edgeClientIP(h http.Header) (string, bool) {
 	return v, true
 }
 
-// searchRateSpent reports whether the window is already at its ceiling, without counting this request:
-// it is counted only once answered here (countSearch), since a request handed to Node is counted
-// there. A failed read fails open, as checkFixedWindow does.
-func (s *Server) searchRateSpent(ctx context.Context, key string, max int) bool {
-	n, err := s.Search.Rate.Get(ctx, key).Int64()
-	if err != nil {
-		return false
-	}
-	return n >= int64(max)
+// searchCharge is the rate-limit window a public request was counted in (chargeSearch), so a request
+// handed to Node afterwards is refunded (refundSearch): Node counts it again when it arrives, and each
+// request must be counted once, by whichever side answers it.
+type searchCharge struct{ key string }
+
+type searchChargeKey struct{}
+
+func withSearchCharge(ctx context.Context, charge *searchCharge) context.Context {
+	return context.WithValue(ctx, searchChargeKey{}, charge)
 }
 
-// countSearch is checkFixedWindowWith's write for an answered request: INCR, and the window's expiry
-// set on the first request or re-asserted when it was lost. Errors are ignored (fail open).
-func (s *Server) countSearch(ctx context.Context, key string) {
-	if key == "" || s.Search == nil || s.Search.Rate == nil {
-		return
-	}
+// chargeSearch is checkFixedWindowWith's write, done first as Node does it so concurrent requests each
+// read their own count: INCR, and the window's expiry set on the first request or re-asserted when
+// lost. It returns the count, 0 when the store failed (fail open, as checkFixedWindow does: then
+// nothing is charged and nothing is refunded).
+func (s *Server) chargeSearch(ctx context.Context, r *http.Request, key string) int64 {
 	count, err := s.Search.Rate.Incr(ctx, key).Result()
 	if err != nil {
-		return
+		return 0
+	}
+	if charge, ok := r.Context().Value(searchChargeKey{}).(*searchCharge); ok {
+		charge.key = key
 	}
 	if count == 1 {
 		s.Search.Rate.Expire(ctx, key, searchRateWindow)
-		return
-	}
-	if ttl, err := s.Search.Rate.TTL(ctx, key).Result(); err == nil && ttl < 0 {
+	} else if ttl, err := s.Search.Rate.TTL(ctx, key).Result(); err == nil && ttl < 0 {
 		s.Search.Rate.Expire(ctx, key, searchRateWindow)
 	}
+	return count
+}
+
+// refundSearch takes back a charge for a request this route did not answer. It runs whatever state the
+// request's context is in (a gone client included), bounded by its own timeout; an error is ignored.
+func (s *Server) refundSearch(ctx context.Context, charge *searchCharge) {
+	if charge.key == "" || s.Search == nil || s.Search.Rate == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	s.Search.Rate.Decr(ctx, charge.key)
 }
 
 // ServeSearchHTTP is the public `POST /api/search/*` route. With ServeSearch off every request is the
@@ -425,8 +438,9 @@ func (s *Server) serveSearchLabelled(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(ctx)
 	}
 	var (
-		c   *computed
-		err error
+		c      *computed
+		err    error
+		charge = &searchCharge{}
 	)
 	if !s.ServeSearch {
 		err = errSearchOff
@@ -439,12 +453,15 @@ func (s *Server) serveSearchLabelled(w http.ResponseWriter, r *http.Request) {
 		if browsing.IsRegionRestricted(s.RegionBlockRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now()) {
 			err = errRegionBlocked
 		} else {
+			r = r.WithContext(withSearchCharge(r.Context(), charge)) //nolint:contextcheck // derived from the request's own context (which carries the span when tracing is on)
 			c, err = s.computeServe(r, EndpointSearch, s.searchCompute(true))
 		}
 	}
+	if err != nil {
+		// Not answered here: Node counts it (or nobody reads it).
+		s.refundSearch(ctx, charge)
+	}
 	if err == nil {
-		// Counted once answered here; a fallback is counted by Node.
-		s.countSearch(ctx, c.searchRateKey)
 		writeSearch(w, c)
 		c.release()
 		setOutcome(span, "served")

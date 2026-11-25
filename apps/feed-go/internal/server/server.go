@@ -343,9 +343,6 @@ type computed struct {
 	// headers are a REST answer's response headers (v1models.ResponseHeaders): what the public route
 	// writes and what the shadow compares. nil for the tRPC answers and for /api/v1/images.
 	headers []v1models.Header
-	// searchRateKey is the rate-limit window a served site-search answer is counted in (sitesearch.go);
-	// "" for every other answer.
-	searchRateKey string
 }
 
 // compute answers a request, or returns a fallback/other error.
