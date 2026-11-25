@@ -1,5 +1,5 @@
 import { constants } from '~/server/common/constants';
-import { crc32 } from 'zlib';
+import { crc32, deflateSync } from 'zlib';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -793,6 +793,125 @@ describe('judging a file by what it is', () => {
     expect(await entries(fileId)).toEqual([]);
   });
 
+  const JUNK = Buffer.from('a'.repeat(1024));
+  /** A PDF as a writer makes one: a binary comment, then JPEG, deflated and plain streams. */
+  const pdf = ({ start = '%PDF-1.7\n', end = 'trailer\n<< /Root 1 0 R >>\n%%EOF\n' } = {}) =>
+    Buffer.concat([
+      Buffer.from(start, 'latin1'),
+      Buffer.from(
+        '%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Subtype /Image /Filter /DCTDecode >>\nstream\n',
+        'latin1'
+      ),
+      JPEG_BYTES(),
+      Buffer.from('\nendstream\nendobj\n2 0 obj\n<< /Filter /FlateDecode >>\nstream\n'),
+      deflateSync(Buffer.from('BT /F1 12 Tf (hello) Tj ET '.repeat(80))),
+      Buffer.from('\nendstream\nendobj\n3 0 obj\nstream\n'),
+      Buffer.from('BT /F1 12 Tf 72 712 Td (a line of the brief) Tj ET\n'.repeat(50)),
+      Buffer.from('endstream\nendobj\n'),
+      Buffer.from(end, 'latin1'),
+    ]);
+  const pdfThen = (media: Buffer) =>
+    Buffer.concat([Buffer.from('%PDF-1.7\n'), media, Buffer.from('\n%%EOF\n')]);
+  it.each([
+    [
+      'a PNG behind 1 KB of text, called notes.txt',
+      'notes.txt',
+      Buffer.concat([JUNK, PNG_BYTES()]),
+    ],
+    ['a zip behind 1 KB of text, called notes.txt', 'notes.txt', Buffer.concat([JUNK, PK])],
+    ['a NUL byte in a .json', 'data.json', Buffer.from('{"a": 1}\u0000')],
+    [
+      'bytes that are not UTF-8, called notes.md',
+      'notes.md',
+      Buffer.from([0x68, 0x69, 0xc3, 0x28]),
+    ],
+    ['a .pdf that does not start with its header', 'brief.pdf', Buffer.concat([JUNK, PNG_BYTES()])],
+    ['a .pdf whose header line is followed by a zip', 'brief.pdf', pdfThen(PK)],
+    ['a .pdf whose header line is followed by a PNG', 'brief.pdf', pdfThen(PNG_BYTES())],
+    [
+      'a .pdf whose header runs straight into a PNG',
+      'brief.pdf',
+      Buffer.concat([Buffer.from('%PDF-'), PNG_BYTES(), Buffer.from('\n%%EOF\n')]),
+    ],
+    ['a .pdf with no %%EOF', 'brief.pdf', pdf({ end: 'trailer\n' })],
+    ['a .pdf with more than padding after its %%EOF', 'brief.pdf', pdf({ end: '%%EOF\nzz' })],
+    [
+      'a .pdf whose %%EOF is more than 1 KB from its end',
+      'brief.pdf',
+      Buffer.concat([pdf(), JUNK, Buffer.from('more')]),
+    ],
+  ])('refuses %s, which would be delivered unscanned', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await fileRow(fileId)).failReason).toMatch(/doesn't look like a \.\w+ document/);
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it.each([
+    ['a PNG behind 1 KB of text', Buffer.concat([JUNK, PNG_BYTES()])],
+    ['a NUL byte', Buffer.from('fine\u0000')],
+  ])('refuses a zip whose notes.txt holds %s', async (_n, data) => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'docs/notes.txt', data },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: "A document in the archive isn't what its name says.",
+    });
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it('refuses a zip whose brief.pdf is not a PDF', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'brief.pdf', data: pdfThen(PNG_BYTES()) },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: "A document in the archive isn't what its name says.",
+    });
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it('unpacks a zip whose documents are what their names say', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'docs/notes.txt', data: Buffer.from('Résumé — notes ✓\n'.repeat(100)) },
+      // Inflated 16 KB at a time, so the ✓ arrives split across two chunks.
+      { name: 'docs/long.txt', data: Buffer.from(`${'a'.repeat(16383)}✓`) },
+      { name: 'brief.pdf', data: pdf() },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect((await entries(fileId)).map((e) => e.path)).toEqual(['a.png']);
+  });
+
+  it.each([
+    ['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))],
+    ['a .pdf with a JPEG and a deflated stream in its body', 'brief.pdf', pdf()],
+    [
+      'a .pdf padded with NULs after its %%EOF',
+      'brief.pdf',
+      pdf({ start: '%PDF-1.4\r\n', end: '%%EOF\r\n\u0000\u0000\u0000' }),
+    ],
+  ])('delivers %s', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
+  });
+
   it('leaves plain documents without entries, and takes a model file that is a zip', async () => {
     const dealId = await accepted();
     const doc = await final(dealId, 'brief.txt', Buffer.from('just some words in a text file'));
@@ -1147,9 +1266,13 @@ describe('video by any other name', () => {
     bytes[188] = 0x47;
     return bytes;
   };
-  /** Three packets of a transport stream: one short of what is taken as one. */
-  const threeSyncs = () =>
-    Buffer.concat([tsStream(188).subarray(0, 3 * 188), Buffer.alloc(600, 0x11)]);
+  /** Three packets of a transport stream: one short of what is taken as one. No NUL byte, so a
+   * .txt holding it is still text. */
+  const threeSyncs = () => {
+    const bytes = Buffer.alloc(3 * 188 + 600, 0x11);
+    for (const at of [0, 188, 376]) bytes[at] = 0x47;
+    return bytes;
+  };
   /** Sync bytes every `gap` bytes, a spacing no transport stream uses. */
   const spacedSyncs = (gap: number) => {
     const bytes = Buffer.alloc(1200, 0x11);
