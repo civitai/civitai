@@ -24,6 +24,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { constants } from '~/server/common/constants';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type {
   CreateEntityAppealInput,
@@ -219,6 +220,7 @@ export const findReportToFoldInto = ({
   reason,
   details,
   pendingOnly,
+  filedBySystem,
   tx,
 }: {
   reportType: ReportEntity;
@@ -227,6 +229,8 @@ export const findReportToFoldInto = ({
   details?: MixedObject;
   /** Fold only into a report still waiting for a moderator. */
   pendingOnly?: boolean;
+  /** Fold only into a report the system filed (true) or one a person filed (false). */
+  filedBySystem?: boolean;
   tx?: Prisma.TransactionClient;
 }) => {
   const db = tx ?? dbWrite;
@@ -254,6 +258,9 @@ export const findReportToFoldInto = ({
       reason,
       [reportType]: { [entityIdField]: entityReportId },
       ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
+      ...(filedBySystem === undefined
+        ? {}
+        : { userId: filedBySystem ? constants.system.user.id : { not: constants.system.user.id } }),
       ...(narrowing.length ? { AND: narrowing } : {}),
     },
     orderBy: { id: 'desc' },
@@ -268,6 +275,7 @@ const validateReportCreation = async ({
   details,
   pendingOnly,
   whilePending,
+  filedBySystem,
   tx,
 }: {
   userId: number;
@@ -278,6 +286,7 @@ const validateReportCreation = async ({
   pendingOnly?: boolean;
   /** Fold only if the report is still Pending when written, else return null so a new one is filed. */
   whilePending?: boolean;
+  filedBySystem?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -287,6 +296,7 @@ const validateReportCreation = async ({
     reason,
     details,
     pendingOnly,
+    filedBySystem,
     tx,
   });
 
@@ -591,6 +601,11 @@ export const createReport = async ({
             reportsFeaturePageComment ||
             foldIntoPendingOnly,
           whilePending: reportsFeaturePageComment,
+          // The scan's report on a Feature Pages comment is what a moderator's dismissal lifts its
+          // hide by, and a person's report holds that lift: neither is folded into the other.
+          filedBySystem: reportsFeaturePageComment
+            ? userId === constants.system.user.id
+            : undefined,
           tx: callerTx,
         })
       : null;

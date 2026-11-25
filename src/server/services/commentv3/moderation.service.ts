@@ -217,6 +217,7 @@ export async function hideFlaggedFpComment(
      WHERE c.id = $1`,
     [commentId]
   );
+  // A rescan of the text a moderator lifted the hide of changes nothing here; its TextScanHold stays.
   if (rows[0]?.entityType !== 'featurePage' || rows[0].lifted) return false;
 
   const createReport =

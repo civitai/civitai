@@ -1039,6 +1039,91 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
   });
 
   describe("a moderator's lift of the scan's hide", () => {
+    /** The scan's hide through hideFlaggedFpComment, its report filed by createReport. */
+    const scanHide = (id: number) =>
+      hideFlaggedFpComment(id, {
+        db: {
+          $queryRawUnsafe: txOf(c0).$queryRawUnsafe,
+          $transaction: async (fn: (tx: never) => Promise<unknown>) => {
+            await c2.query('BEGIN');
+            try {
+              const value = await fn(txOf(c2) as never);
+              await c2.query('COMMIT');
+              return value;
+            } catch (e) {
+              await c2.query('ROLLBACK');
+              throw e;
+            }
+          },
+        } as never,
+        createReport: async (input) =>
+          prisma.$transaction((tx) =>
+            createReport({ ...(input as Parameters<typeof createReport>[0]), tx })
+          ),
+      });
+    /** A person's report on it, as the report path files one. */
+    const personReport = (id: number) =>
+      prisma.$transaction((tx) =>
+        createReport({
+          userId: 3,
+          isModerator: false,
+          id,
+          type: ReportEntity.CommentV3,
+          reason: ReportReason.AdminAttention,
+          details: { reason: 'Other', comment: 'please look' },
+          tx,
+        } as Parameters<typeof createReport>[0])
+      );
+    const reportsOn = async (id: number) =>
+      (
+        await c0.query(
+          `SELECT r.id, r."userId", r.status, r."alsoReportedBy" FROM "Report" r
+           JOIN "CommentV3Report" cr ON cr."reportId" = r.id WHERE cr."commentId" = $1 ORDER BY r.id`,
+          [id]
+        )
+      ).rows as { id: number; userId: number; status: string; alsoReportedBy: number[] }[];
+    const unaction = (reportId: number) =>
+      unactionReportLiftingScanHide(kysely, { reportId, actorId: 1, systemUserId: -1 });
+    const modActivity = () =>
+      c0.query(
+        `CREATE TABLE IF NOT EXISTS "ModActivity"(id serial PRIMARY KEY, "userId" int,
+           activity text NOT NULL, "entityType" text, "entityId" int)`
+      );
+
+    it("a person's report filed before the scan's: kept apart, it holds the lift until it is ruled", async () => {
+      currentId = await seed();
+      await modActivity();
+      await personReport(currentId);
+      await scanHide(currentId);
+      const [person, scan] = await reportsOn(currentId);
+      expect(person).toMatchObject({ userId: 3, alsoReportedBy: [] });
+      expect(scan).toMatchObject({ userId: -1, status: 'Pending' });
+      expect(
+        (
+          await c0.query(
+            `SELECT "scanHideReportId" FROM "FeaturePageCommentMirror" WHERE "commentId" = $1`,
+            [currentId]
+          )
+        ).rows[0]
+      ).toEqual({ scanHideReportId: scan.id });
+      expect(await unaction(scan.id)).toMatchObject({ changed: false, held: 'reported' });
+      await c0.query(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [person.id]);
+      expect((await unaction(scan.id)).lifted).toMatchObject({ commentId: currentId });
+      expect((await state(currentId)).hidden).toBe(false);
+    });
+
+    it("a person's report filed after the scan's: kept apart, the dismissal is held", async () => {
+      currentId = await seed();
+      await modActivity();
+      await scanHide(currentId);
+      await personReport(currentId);
+      const [scan, person] = await reportsOn(currentId);
+      expect(scan).toMatchObject({ userId: -1, alsoReportedBy: [] });
+      expect(person).toMatchObject({ userId: 3 });
+      expect(await unaction(scan.id)).toMatchObject({ changed: false, held: 'reported' });
+      expect((await state(currentId)).hidden).toBe(true);
+    });
+
     it('waits on a csam hold decision in flight, then sees the hold and lifts nothing', async () => {
       currentId = await seed();
       await c0.query(

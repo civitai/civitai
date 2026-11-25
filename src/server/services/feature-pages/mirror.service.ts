@@ -946,6 +946,11 @@ async function sendModeratorLift(commentId: number, item: PlatformCommentItem) {
       })
     )
       return 'held' as const;
+    // Read again just before the send: the page may be minutes old. By source the platform says only
+    // whether it is hidden, not by whom, so a moderator hide made since the page was read is not
+    // told apart from ours here; anything but hidden sends nothing.
+    const held = await readBySource(commentId);
+    if (held.kind !== 'held' || held.state !== 'hidden') return 'skipped' as const;
     const r = await send(PLATFORM_MOD_VERDICT_PATH, {
       target: { sourceId: commentId },
       verdict: 'visible',

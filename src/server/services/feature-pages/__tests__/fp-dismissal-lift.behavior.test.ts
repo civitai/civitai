@@ -264,6 +264,23 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(deciding(id)).toMatchObject({ source: 'moderator', verdict: 'hidden' });
   });
 
+  it('5b. what the platform holds is read again just before the send: not hidden there any more, nothing is sent', async () => {
+    const { id, reportId } = await hiddenByScan();
+    await dismiss(reportId);
+    await runMirror(mirror);
+    const page = (await import('~/server/services/feature-pages/__tests__/fp-harness')).platform;
+    const ours = (await mirrorRow(id)).modHideSentAt as Date;
+    // The page still shows our hide; since then a moderator there has shown it.
+    page.readback = (items: unknown[]) =>
+      (items as { urn: string; verdict: unknown }[]).map((i) => ({
+        ...i,
+        verdict: { source: 'moderator', verdict: 'hidden', at: ours.toISOString() },
+      }));
+    verdictAt('mod', id, 'visible', new Date(Date.now() + 1_000));
+    expect(await reconcile()).toMatchObject({ moderatorLifts: 0 });
+    expect(modVisibleBySource()).toHaveLength(0);
+  });
+
   it("5. never lifts a platform moderator's hide made after this mirror's", async () => {
     const { id, reportId } = await hiddenByScan();
     verdictAt('mod', id, 'hidden', new Date(Date.now() + 1_000));
