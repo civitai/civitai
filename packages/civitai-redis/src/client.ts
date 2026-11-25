@@ -3238,8 +3238,8 @@ const REDIS_KEYS_UNPREFIXED = {
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
-    // A 3D result the v2 rater called mature before posting, key :<workflowId>, so a later attempt that
-    // gets no v2 answer keeps the gate.
+    // Workflows the v2 rater rated mature (key :<workflowId>); a later post attempt keeps the gate
+    // without re-rating.
     MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
   },
   TRAINING: {

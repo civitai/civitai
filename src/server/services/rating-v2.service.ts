@@ -4,8 +4,6 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { isCivitaiMediaUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { toOrchestratorError } from '~/server/services/training.service';
 
-// On the system token: a scan submitted with the user's own token is charged to them.
-
 /** The rater the scanner runs when an imageScanning step names it in `rater-model`. */
 export const RATER_V2 = 'radio-alpha';
 const IMAGE_PATH = /\.(png|jpe?g|webp|gif|bmp)$/i;
@@ -60,6 +58,7 @@ export async function rateImagesV2({
         input: { image: item.mediaUrl, 'rater-model': RATER_V2 },
       } as unknown as WorkflowStepTemplate)
   );
+  // On the system token: a scan submitted with the user's own token is charged to them.
   const { data, error } = await submitWorkflow({
     client: internalOrchestratorClient,
     query: { wait: waitSeconds },

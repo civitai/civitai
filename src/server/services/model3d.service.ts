@@ -357,11 +357,8 @@ export const ensureModel3DFromWorkflow = async ({
       polyGenStep.output.thumbnail
     );
 
-    // Same gate the generator UI applies: the mesh blob is never rated by the
-    // orchestrator, so the effective rating comes from the preview renders /
-    // auto-thumbnail. A mature result generated without mature-content billing
-    // must be unlocked (yellow Buzz → allowMatureContent) before it can be
-    // materialized into a postable draft.
+    // The mesh blob is never rated by the orchestrator, so the effective rating
+    // comes from the preview renders / auto-thumbnail.
     const effectiveNsfwLevel = maxNsfwLevel([
       primaryModel.nsfwLevel,
       polyGenStep.output.thumbnail?.nsfwLevel,
