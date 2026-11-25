@@ -15580,7 +15580,12 @@ async function outputUnlockDeps(opts: {
         domain: resolveBlockMaturity(claims).isGreen ? 'green' : 'red',
       }),
     assertUnlockReleasesOutput: async () =>
-      orchestration.assertUnlockReleasesOutput({ token: await token(), workflowId }),
+      // A comic panel's workflow unlocks only from the comic editor, which holds the panel's claim.
+      orchestration.assertUnlockReleasesOutput({
+        token: await token(),
+        workflowId,
+        outsideComicEditor: true,
+      }),
     liftRestriction: async () =>
       workflows.liftWorkflowMatureRestriction({
         token: await token(),

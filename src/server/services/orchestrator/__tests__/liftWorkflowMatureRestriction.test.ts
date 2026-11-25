@@ -7,7 +7,7 @@ import { TRPCError } from '@trpc/server';
  * each must come back as its own outcome rather than as a throw:
  *   - 403 → `insufficient-funds` (the orchestrator could not take the yellow charge);
  *   - no response at all (the client resolves `response: undefined` when the fetch throws, our
- *     timeout firing included) → `no-response`, the write possibly still in flight.
+ *     timeout firing included), or a 5xx → `no-response`, the write possibly landed or in flight.
  * Any other failure throws as `throwOrchestratorFailure` maps it.
  */
 
@@ -84,15 +84,22 @@ describe('liftWorkflowMatureRestriction', () => {
     expect((error as TRPCError).message).toBe('not unlockable');
   });
 
-  it('a 5xx throws SERVICE_UNAVAILABLE', async () => {
+  // Decision: a 5xx is an unknown outcome, as in the comics unlock. Throwing it
+  // released the block's lock while the charge may have landed; keep this a reported outcome.
+  it.each([500, 502, 503])(
+    '🔴 a %i is no-response, not a throw: the write may have landed',
+    async (status) => {
+      vi.mocked(clientUpdateWorkflow).mockResolvedValue(
+        reply({ ok: false, status }, { detail: 'upstream' })
+      );
+      expect(await lift()).toStrictEqual({ outcome: 'no-response' });
+    }
+  );
+
+  it('a 404 still throws', async () => {
     vi.mocked(clientUpdateWorkflow).mockResolvedValue(
-      reply({ ok: false, status: 503 }, { detail: 'down' })
+      reply({ ok: false, status: 404 }, { detail: 'not found' })
     );
-    const error = await lift().then(
-      () => null,
-      (e: unknown) => e
-    );
-    expect(error).toBeInstanceOf(TRPCError);
-    expect((error as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    await expect(lift()).rejects.toBeInstanceOf(TRPCError);
   });
 });

@@ -405,4 +405,15 @@ describe('blocks.unlockOutput — the seam', () => {
     expect(orchestratorWrites()).toBe(1);
     expect(store.get(consentKey())).toBe('400');
   });
+
+  // Decision: a comic panel's workflow unlocks only from the comic editor, which holds the panel's
+  // claim (the refusal itself is pinned in updateWorkflow.unlock-cap.test.ts). Keep the flag here.
+  it("🔴 the unlock check runs as outside the comic editor, so a comic panel's workflow is refused", async () => {
+    await unlock();
+    expect(h.assertUnlockReleasesOutput).toHaveBeenCalledWith({
+      token: 'orch-token',
+      workflowId: WF,
+      outsideComicEditor: true,
+    });
+  });
 });
