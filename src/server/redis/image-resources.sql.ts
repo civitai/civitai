@@ -26,5 +26,6 @@ export function imageResourcesQuery(imageIds: number[]) {
     JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
     JOIN "Model" m ON mv."modelId" = m.id
     WHERE ir."imageId" IN (${Prisma.join(imageIds)})
+    ORDER BY ir."imageId", ir."modelVersionId"
   `;
 }

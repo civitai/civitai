@@ -80,16 +80,19 @@ func (s *Sources) imageResourcesComputed() bool {
 		s.Compute.ImageResourcesFromReplica()
 }
 
-// sqlImageResources is imageResourcesCache's lookupFn query (src/server/redis/caches.ts), its joins,
-// columns and filter unchanged (the IN list as `= ANY`, the enum and text columns as text), so the
-// replica plans it as Node's lookup is planned and returns each image's rows in the same order: the
-// query has no ORDER BY, and the order is the cached order (`modelVersionIds`, and the first
-// Checkpoint's `baseModel`).
+// sqlImageResources is imageResourcesCache's lookup query (imageResourcesQuery in
+// src/server/redis/image-resources.sql.ts), its joins, columns, filter and ORDER BY unchanged (the IN
+// list as `= ANY`, the enum and text columns as text). The row order is the cached order
+// (`modelVersionIds`, and the first Checkpoint's `baseModel`), and only the ORDER BY makes it agree
+// with Node's: without one, the two plans (`= ANY` here, an IN list there, on different databases)
+// returned the same rows in different orders. The ORDER BY is the table's primary key, a total order.
+// src/server/redis/__tests__/image-resources.sql.behavior.test.ts pins the two ORDER BYs equal.
 const sqlImageResources = `SELECT ir."imageId", ir."modelVersionId", ir.strength, ir.detected, m.id AS "modelId", m.name AS "modelName", m.type::text AS "modelType", mv.name AS "versionName", mv."baseModel"::text AS "baseModel", m.poi, m.minor
 FROM "ImageResourceNew" ir
 JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
 JOIN "Model" m ON mv."modelId" = m.id
-WHERE ir."imageId" = ANY($1::int[])`
+WHERE ir."imageId" = ANY($1::int[])
+ORDER BY ir."imageId", ir."modelVersionId"`
 
 // computeImageResources answers the image-resources misses miss into out as imageResourcesCache's
 // lookupFn answers them on a plain fetch (an image with no row is absent, as its notFound marker
@@ -140,7 +143,7 @@ func (s *Sources) computeImageResources(ctx context.Context, miss []int, writabl
 }
 
 // lookupImageResources runs sqlImageResources over ids on the replica: per image with a row, its
-// resources in row order.
+// resources in row order (by model version, the query's ORDER BY).
 func (s *Sources) lookupImageResources(ctx context.Context, ids []int) (map[int][]ImageResource, error) {
 	rows, err := s.Replica.Query(ctx, sqlImageResources, ids)
 	if err != nil {

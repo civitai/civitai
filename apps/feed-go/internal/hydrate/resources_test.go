@@ -49,7 +49,8 @@ func (rr *resourceRows) queries() [][]int {
 
 // resourcesMissFixture is v1Fixture with images 11 and 14 missing from the image-resources cache
 // (12 a notFound marker, 13 an empty list stay hits). On the replica image 14 has a LORA row before
-// its Checkpoint row (the row order is the cached order), and image 11 has none.
+// its Checkpoint row (the query orders by model version, and the row order is the cached order), and
+// image 11 has none.
 func resourcesMissFixture(t *testing.T) (*pageFixture, *resourceRows) {
 	t.Helper()
 	f := v1Fixture(t)
@@ -57,8 +58,8 @@ func resourcesMissFixture(t *testing.T) (*pageFixture, *resourceRows) {
 	f.del(KeyImageResources, 14)
 	rr := &resourceRows{rows: map[int][][]any{
 		14: {
-			{14, 905, 0.8, true, 77, "a lora", "LORA", "v1", "SDXL 1.0", false, false},
-			{14, 903, 1.0, false, 78, "a checkpoint", "Checkpoint", "v2", "Pony", false, false},
+			{14, 903, 0.8, true, 77, "a lora", "LORA", "v1", "SDXL 1.0", false, false},
+			{14, 905, 1.0, false, 78, "a checkpoint", "Checkpoint", "v2", "Pony", false, false},
 		},
 	}}
 	return f, rr
@@ -90,7 +91,7 @@ func TestImageResourcesMissComputedFromTheReplica(t *testing.T) {
 	}
 	want := map[int][]ImageResource{
 		13: {},
-		14: {{ModelVersionID: 905, Detected: true, ModelType: "LORA", BaseModel: "SDXL 1.0"}, {ModelVersionID: 903, ModelType: "Checkpoint", BaseModel: "Pony"}},
+		14: {{ModelVersionID: 903, Detected: true, ModelType: "LORA", BaseModel: "SDXL 1.0"}, {ModelVersionID: 905, ModelType: "Checkpoint", BaseModel: "Pony"}},
 	}
 	if !reflect.DeepEqual(got.Resources, want) {
 		t.Fatalf("resources = %#v, want %#v", got.Resources, want)
@@ -241,7 +242,12 @@ func TestImageResourcesMissUnderAProbe(t *testing.T) {
 	}
 }
 
-// The query is the Node lookupFn's: its three tables, joins and columns, filtered on the image ids.
+// The query is the Node lookup's: its three tables, joins and columns, filtered on the image ids, and
+// ordered by image then model version as Node's imageResourcesQuery orders it. Without the ORDER BY the
+// two sides' plans returned an image's rows in different orders, so a miss computed here came out in
+// another order than Node's (`modelVersionIds` permuted, and for an image with two Checkpoints another
+// `baseModel`); src/server/redis/__tests__/image-resources.sql.behavior.test.ts pins Node's ORDER BY
+// to this one.
 func TestImageResourcesQueryIsTheNodeLookup(t *testing.T) {
 	for _, frag := range []string{
 		`FROM "ImageResourceNew" ir`,
@@ -254,7 +260,8 @@ func TestImageResourcesQueryIsTheNodeLookup(t *testing.T) {
 			t.Errorf("sqlImageResources lacks %q", frag)
 		}
 	}
-	if strings.Contains(sqlImageResources, "ORDER BY") {
-		t.Error("sqlImageResources orders its rows; the Node lookup does not (its row order is the cached order)")
+	const orderBy = "\nORDER BY ir.\"imageId\", ir.\"modelVersionId\""
+	if !strings.HasSuffix(sqlImageResources, orderBy) || strings.Count(sqlImageResources, "ORDER BY") != 1 {
+		t.Errorf("sqlImageResources must end with %q, its one ORDER BY", orderBy)
 	}
 }
