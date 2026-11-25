@@ -840,7 +840,75 @@ fx(
   });
 }
 
-// Fallbacks before any read.
+// 16. A text `query`: the search index answers the page's ids (`world.search.hits`, in its order),
+// then the statement reads those ids. The answer keeps the search's order, leaves out a hit the
+// statement did not return and a row the search did not name, and pages by the search's offset.
+{
+  const w = baseWorld();
+  // Statement order (by the sort) is 5951, 5952, 5953; the search's is 5952, 5999 (no row), 5951,
+  // then the lookahead 5953.
+  w.search = { hits: [5952, 5999, 5951, 5953] };
+  addModel(w, modelRow(5951, { cursorId: '9|9|5951' }), [version(6951)], {
+    files: { 6951: [file(7951, 6951)] },
+  });
+  addModel(w, modelRow(5952, { cursorId: '8|8|5952' }), [version(6952)], {
+    files: { 6952: [file(7952, 6952)] },
+    images: { 6952: [image(8952, 6952)] },
+  });
+  addModel(w, modelRow(5953, { cursorId: '7|7|5953' }), [version(6953)], {
+    files: { 6953: [file(7953, 6953)] },
+  });
+  fx('list-query-search-order', list('query=golden%20cat&limit=3'), w);
+}
+{
+  // Every option the search takes: the offset (the cursor), a named sort, the types, the base
+  // models and the level `nsfw` opens; no lookahead hit, so no cursor.
+  const w = baseWorld();
+  w.search = { hits: [5961] };
+  addModel(w, modelRow(5961, { cursorId: '1|1|5961' }), [version(6961)], {
+    files: { 6961: [file(7961, 6961)] },
+  });
+  fx(
+    'list-query-search-options',
+    list(
+      'query=golden&cursor=4&limit=2&sort=Newest&types=LORA&types=Checkpoint&baseModels=SDXL%201.0&nsfw=true'
+    ),
+    w
+  );
+}
+{
+  // No hit is no result, whatever the statement would return.
+  const w = baseWorld();
+  w.search = { hits: [] };
+  fx('list-query-search-no-hits', list('query=zzzq&limit=5'), w);
+}
+{
+  // A blocked tag empties the page after the search: the search's cursor is kept.
+  const w = baseWorld();
+  w.search = { hits: [5971, 5972] };
+  w.tagIdsByName = { 'Blocked Thing': 14 };
+  w.blockedTags = [{ id: 14, name: 'Blocked Thing' }];
+  addModel(w, modelRow(5971, { cursorId: '1|1|5971' }), [version(6971)], {
+    files: { 6971: [file(7971, 6971)] },
+  });
+  fx('list-query-search-tag-blocked', list('query=golden&tag=blocked%20THING&limit=1'), w);
+}
+{
+  const w = baseWorld();
+  w.search = { hits: [5951] };
+  fx('fallback-list-query-page', list('query=golden&page=2'), w, {
+    expect: { fallback: 'v1-models-query' },
+  });
+}
+{
+  const w = baseWorld();
+  w.search = { hits: [5951] };
+  fx('fallback-list-query-cursor', list('query=golden&cursor=1.5'), w, {
+    expect: { fallback: 'v1-models-query' },
+  });
+}
+
+// Fallbacks before any read. A text query with no search backend (no `world.search`) falls back.
 fx('fallback-list-query-blank', list('query=%20&limit=5'), baseWorld(), {
   expect: { fallback: 'v1-models-query' },
 });

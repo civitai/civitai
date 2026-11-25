@@ -40,9 +40,16 @@ func followsRecord(n int) []byte {
 // options) with the single-pass reader ("reader") and with the generic decoder it replaced
 // ("oracle"), so one run carries the before and the after of the same work.
 func BenchmarkUnpackVsOracle(b *testing.B) {
+	// Each distinct value once: many fixtures carry the same synthetic records (a creator's profile
+	// picture, a tag), so without this a PR adding fixtures raises allocs/op here by the copies it
+	// adds, with no decoder change (the allocs gate then reads the corpus as a regression).
 	byCache := map[string][][]byte{}
+	seen := map[string]bool{}
 	for _, p := range allGoldenPacked(b) {
-		byCache[p.cache] = append(byCache[p.cache], p.b)
+		if k := p.cache + "\x00" + string(p.b); !seen[k] {
+			seen[k] = true
+			byCache[p.cache] = append(byCache[p.cache], p.b)
+		}
 	}
 	byCache[KeyUserFollows] = [][]byte{followsRecord(2000)}
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)

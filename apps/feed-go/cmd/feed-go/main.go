@@ -524,6 +524,21 @@ func run(log *slog.Logger) error {
 	if err := mc.Validate(cfg.BearerAuth); err != nil {
 		return err
 	}
+	// The list's text search reads the search index the Node app reads (SEARCH_HOST): answered in the
+	// shadow whenever it is configured, served only with FEED_GO_V1_MODELS_SERVE_QUERY.
+	var search v1models.ModelSearcher
+	if mc.SearchHost != "" {
+		mcl, err := v1models.NewMeiliClient(mc.SearchHost, mc.SearchAPIKey, mc.SearchTimeout)
+		if err != nil {
+			return err
+		}
+		// The Node app's circuit settings; a rejected call (circuit open, concurrency cap) is handed
+		// back as `v1-models-query` and counted here.
+		mcl.SetCircuit(mc.CircuitTripThreshold, mc.CircuitWindow, mc.CircuitCooldown)
+		mcl.OnReject = func(why string) { metrics.SearchRejected.WithLabelValues(why).Inc() }
+		search = mcl
+	}
+	log.Info("GET /api/v1/models text search", "configured", search != nil, "serve", mc.ServeQuery)
 	v1Models := &server.V1ModelsDeps{
 		Deps: &v1models.Deps{
 			DB:      pool,
@@ -532,7 +547,9 @@ func run(log *slog.Logger) error {
 			Gallery: deps.Gallery,
 			Addons:  deps.Addons.Addons,
 			Blocked: blocked,
+			Search:  search,
 			Config: v1models.Config{
+				ServeQuery:           mc.ServeQuery,
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
 				CoverageNext:         cfg.CoverageNext,
