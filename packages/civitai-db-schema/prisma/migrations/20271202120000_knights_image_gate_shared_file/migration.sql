@@ -46,23 +46,7 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
   WHERE listed.id IS NOT NULL) and NOT EXISTS (
     SELECT 1 FROM "Image" sf_i
     WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND (COALESCE((
-    sf_i."needsReview" = 'csam'
-    OR sf_i."blockedFor" = 'CSAM'
-    OR (sf_i."userId" <> -1
-      AND sf_i."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
-      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = sf_i."userId")
-      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many.
-      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
-      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' = (sf_i."userId")::text
-          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      )
-    ))
-  ), false) OR (sf_i.id)::text IN (SELECT listed.id FROM (
+      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
@@ -96,23 +80,7 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
   WHERE listed.id IS NOT NULL) and NOT EXISTS (
     SELECT 1 FROM "Image" sf_i
     WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND (COALESCE((
-    sf_i."needsReview" = 'csam'
-    OR sf_i."blockedFor" = 'CSAM'
-    OR (sf_i."userId" <> -1
-      AND sf_i."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
-      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = sf_i."userId")
-      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many.
-      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
-      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' = (sf_i."userId")::text
-          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      )
-    ))
-  ), false) OR (sf_i.id)::text IN (SELECT listed.id FROM (
+      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
@@ -146,23 +114,7 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
   WHERE listed.id IS NOT NULL) and NOT EXISTS (
     SELECT 1 FROM "Image" sf_i
     WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND (COALESCE((
-    sf_i."needsReview" = 'csam'
-    OR sf_i."blockedFor" = 'CSAM'
-    OR (sf_i."userId" <> -1
-      AND sf_i."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
-      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = sf_i."userId")
-      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many.
-      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
-      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' = (sf_i."userId")::text
-          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      )
-    ))
-  ), false) OR (sf_i.id)::text IN (SELECT listed.id FROM (
+      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
@@ -266,23 +218,7 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
   WHERE listed.id IS NOT NULL) and NOT EXISTS (
     SELECT 1 FROM "Image" sf_i
     WHERE sf_i.url = img.url AND sf_i.id <> img.id
-      AND (COALESCE((
-    sf_i."needsReview" = 'csam'
-    OR sf_i."blockedFor" = 'CSAM'
-    OR (sf_i."userId" <> -1
-      AND sf_i."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
-      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = sf_i."userId")
-      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many.
-      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
-      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' = (sf_i."userId")::text
-          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      )
-    ))
-  ), false) OR (sf_i.id)::text IN (SELECT listed.id FROM (
+      AND ((sf_i."needsReview" = 'csam' OR sf_i."blockedFor" = 'CSAM') OR (sf_i.id)::text IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(

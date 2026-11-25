@@ -362,20 +362,6 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
       (id) => pg.query(`UPDATE "Image" SET "blockedFor"='CSAM' WHERE id=$1`, [id]),
     ],
     [
-      'owned by a user a CsamReport names',
-      async (id) => {
-        await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES (45)`);
-        await pg.query(`UPDATE "Image" SET "userId"=45 WHERE id=$1`, [id]);
-      },
-    ],
-    [
-      "owned by a CsamReport's secondary user",
-      async (id) => {
-        await pg.query(`INSERT INTO "CsamReport" ("details") VALUES ('{"secondaryUserId":46}')`);
-        await pg.query(`UPDATE "Image" SET "userId"=46 WHERE id=$1`, [id]);
-      },
-    ],
-    [
       'listed on a CsamReport',
       (id) =>
         pg.query(
@@ -401,6 +387,16 @@ describe('"KnightsImageGate" on a file another image row shares', () => {
     const answers = await fromView([2, 3]);
     expect(answers.get(2)?.servable).toBe(true);
     expect(answers.get(3)?.servable).toBe(true);
+  });
+
+  it('keeps serving an image whose file a row by a reported owner shares: only item-level states carry over', async () => {
+    await seedSharedFile(async (id) => {
+      await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES (45)`);
+      await pg.query(`UPDATE "Image" SET "userId"=45 WHERE id=$1`, [id]);
+    });
+    const answers = await fromView([2, 3]);
+    expect(answers.get(3)?.servable).toBe(false);
+    expect(answers.get(2)?.servable).toBe(true);
   });
 
   it('answers differently without the shared-file leg (the cases above can fail)', async () => {

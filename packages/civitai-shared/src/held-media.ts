@@ -60,9 +60,9 @@ export function heldImageSql(image: string): string {
 }
 
 /**
- * Whether another "Image" row on the same stored url as the row aliased `image` is held
- * (`heldImageSql`) or listed on any CsamReport: the same file must not be served through a second
- * row. Never NULL.
+ * Whether another "Image" row on the same stored url as the row aliased `image` is itself in the
+ * CSAM queue, blocked as CSAM (`heldItemImageSql`) or listed on any CsamReport: the same file must
+ * not be served through a second row. Item-level only, never the owner's. Never NULL.
  */
 export function sharedFileHeldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image === 'sf_i')
@@ -70,7 +70,7 @@ export function sharedFileHeldImageSql(image: string): string {
   return `EXISTS (
     SELECT 1 FROM "Image" sf_i
     WHERE sf_i.url = ${image}.url AND sf_i.id <> ${image}.id
-      AND (${heldImageKnownSql('sf_i')} OR (sf_i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
+      AND (${heldItemImageSql('sf_i')} OR (sf_i.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}))
   )`;
 }
 
