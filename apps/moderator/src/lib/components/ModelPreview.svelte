@@ -58,7 +58,6 @@
   let trainingVersion = $state<{ id: number; title: string } | null>(null);
   let trainingOpen = $state(false);
 
-  // A withheld image has no key, so it is not in the large view.
   const viewable = (p: ModelPreview) => p.images.filter((i) => !i.restricted);
   const lightboxItems = (p: ModelPreview): LightboxItem[] =>
     viewable(p).map((i) => ({

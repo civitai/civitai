@@ -7,6 +7,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import ComFaceCard from '$lib/components/ComFaceCard.svelte';
+  import CoverThumb from '$lib/components/triage/CoverThumb.svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import type { LightboxItem } from '$lib/lightbox';
@@ -53,11 +54,12 @@
   const resolver = $derived(
     row.resolver ? (row.resolver.username ?? `User #${row.resolver.id}`) : null
   );
+  const viewable = $derived(row.preview.images.filter((img) => !img.restricted));
   const lightboxItems = $derived<LightboxItem[]>(
-    row.preview.images.map((img, i) => ({
+    viewable.map((img, i) => ({
       id: img.url,
       type: img.type === 'video' ? 'video' : 'image',
-      caption: `${img.type === 'video' ? 'Video' : 'Image'} ${i + 1} of ${row.preview.images.length} · ${getBrowsingLevelLabel(img.nsfwLevel)}`,
+      caption: `${img.type === 'video' ? 'Video' : 'Image'} ${i + 1} of ${viewable.length} · ${getBrowsingLevelLabel(img.nsfwLevel)}`,
     }))
   );
   let openIndex = $state<number | null>(null);
@@ -181,22 +183,26 @@
                   nsfw ? 'border-amber-500' : 'border-dark-4'
                 )}
               >
-                <a
-                  href={getEdgeUrl(img.url, { type: media, original: true })}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="Open {media} {i + 1} of {row.preview.images.length}"
-                  class="block size-full"
-                  onclick={(e) => openInLightbox(e, i)}
-                >
-                  <EdgeMedia
-                    src={img.url}
-                    type={img.type}
-                    anim={img.type === 'video' ? false : undefined}
-                    width={450}
-                    class="size-full object-cover object-top"
-                  />
-                </a>
+                {#if img.restricted}
+                  <CoverThumb image={img} />
+                {:else}
+                  <a
+                    href={getEdgeUrl(img.url, { type: media, original: true })}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Open {media} {i + 1} of {row.preview.images.length}"
+                    class="block size-full"
+                    onclick={(e) => openInLightbox(e, viewable.indexOf(img))}
+                  >
+                    <EdgeMedia
+                      src={img.url}
+                      type={img.type}
+                      anim={img.type === 'video' ? false : undefined}
+                      width={450}
+                      class="size-full object-cover object-top"
+                    />
+                  </a>
+                {/if}
                 <span
                   class={cn(
                     'pointer-events-none absolute bottom-2 left-2 rounded px-1.5 py-px text-[10px] font-semibold',

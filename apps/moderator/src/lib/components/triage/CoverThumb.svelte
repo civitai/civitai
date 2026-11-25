@@ -4,7 +4,6 @@
   import { WITHHELD_REFUSED } from '$lib/held-media';
   import type { AppealCoverImage } from '$lib/server/minor-hash.service';
 
-  // A cover the CDN refuses falls back to storage; a withheld one shows no media.
   let { image }: { image: AppealCoverImage } = $props();
 </script>
 

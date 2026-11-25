@@ -83,7 +83,10 @@ async function fileReview(row: Seed = {}) {
   return r.id;
 }
 
-const load = (query = '') => queue.ratingDisputeTriageLoad(new URL(`http://x/ratings${query}`));
+const WITH_GRANT = { id: 3, roles: ['moderator:admin'] } as never;
+const WITHOUT_GRANT = { id: 2, roles: [] } as never;
+const load = (query = '', user = WITH_GRANT) =>
+  queue.ratingDisputeTriageLoad(new URL(`http://x/ratings${query}`), user);
 const ids = (data: { items: { id: number }[] }) => data.items.map((i) => i.id);
 
 async function seedImage(row: {
@@ -700,5 +703,40 @@ describe('resolveRatingDisputeAction', () => {
     resolve.mockClear();
     expect(await run({ reviewId: 'x', appliedLevel: '2' })).toMatchObject({ status: 400 });
     expect(resolve).not.toHaveBeenCalled();
+  });
+});
+
+describe('ratingDisputeTriageLoad withheld images', () => {
+  // The moderator-view rule's tables, which the rating-review schema does not carry.
+  beforeEach(() =>
+    db.exec(`
+      ALTER TABLE "Image" ADD COLUMN "blockedFor" TEXT, ADD COLUMN "pHash" BIGINT,
+        ADD COLUMN "userId" INTEGER;
+      CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "userId" INTEGER, "csamReview" BOOLEAN NOT NULL DEFAULT true);
+      CREATE TABLE "BlockedImage" (hash BIGINT, reason TEXT);
+      CREATE TABLE "ScanLabelItem" (id INTEGER PRIMARY KEY, "imageId" INTEGER, "voidReason" TEXT);
+      CREATE TABLE "ScanLabelFlag" ("itemId" INTEGER, snapshot JSONB);
+      CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, reason TEXT);
+      CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB, images JSONB, "reportSentAt" TIMESTAMP);
+    `)
+  );
+
+  it('sends a withheld preview image and cover with no key to a moderator without the grant, and the rest as they are', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: alice });
+    const held = await seedImage({ url: 'held-key', postId, index: 1 });
+    await seedImage({ url: 'open-key', postId, index: 2 });
+    await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = $1`, [held]);
+    const reviewId = await fileReview({ entityType: 'Post', entityId: postId });
+
+    const item = (await load('', WITHOUT_GRANT)).items.find((i) => i.id === reviewId)!;
+    expect(item.preview.images).toEqual([
+      { id: held, url: '', type: 'image', nsfwLevel: 1, restricted: true },
+      expect.objectContaining({ url: 'open-key' }),
+    ]);
+    expect(item.entity).toMatchObject({ coverUrl: null });
+
+    const granted = (await load()).items.find((i) => i.id === reviewId)!;
+    expect(granted.preview.images.map((i) => i.url)).toEqual(['held-key', 'open-key']);
+    expect(granted.entity).toMatchObject({ coverUrl: 'held-key' });
   });
 });

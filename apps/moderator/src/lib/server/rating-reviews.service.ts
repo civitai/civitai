@@ -104,6 +104,8 @@ export type RatingReviewImage = {
   url: string;
   type: MediaType;
   nsfwLevel: number;
+  /** Withheld from this moderator (`withheldCoverImages`): `url` is empty. */
+  restricted?: true;
 };
 
 const IMAGE_FIELDS = ['i.id', 'i.url', 'i.type', 'i.nsfwLevel'] as const;

@@ -7,6 +7,7 @@ import { NsfwLevel } from '@civitai/shared';
 import { textScanRaisedMinLevel } from '@civitai/shared/rated-entity-sql';
 import { RATING_REVIEW_ENTITY_TYPES } from '@civitai/shared/rating-review';
 import { dbRead } from './db';
+import { withheldCoverImages } from './retracted-media';
 import { escapeLike } from './like';
 import { int4Id, parseQueryKeys } from './query';
 import { resolveRatingReviewAction } from './rating-review-actions';
@@ -16,6 +17,7 @@ import {
   hydrateRatingReviews,
   ratingReviewImagesKey,
   ratingReviewRowQuery,
+  type RatingReviewImage,
   type RatingReviewImages,
   type RatingReviewRow,
   type ScannedText,
@@ -188,7 +190,10 @@ async function ownerDisputeOrdinals(reviewIds: number[]): Promise<Map<number, nu
   return new Map(rows.map((r) => [r.id, r.n]));
 }
 
-async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
+async function decorate(
+  rows: RatingReviewRow[],
+  user: App.Locals['user'] | undefined
+): Promise<RatingDisputeRow[]> {
   const [owners, previews, texts] = await Promise.all([
     ownerDisputeOrdinals(rows.map((r) => r.id)),
     getRatingReviewImagesBatch(rows),
@@ -197,17 +202,31 @@ async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
       return new Map<string, never>();
     }),
   ]);
-  return rows.map((r) => {
-    const preview = previews.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? {
-      total: 0,
-      images: [],
+  const found = rows.map(
+    (r) => previews.get(ratingReviewImagesKey(r.entityType, r.entityId)) ?? { total: 0, images: [] }
+  );
+  const shown = await withheldCoverImages(
+    found.map((p) => ({ coverImages: p.images })),
+    user,
+    'rating-disputes'
+  );
+  return rows.map((r, i) => {
+    const preview: RatingReviewImages = {
+      total: found[i].total,
+      images: shown[i].coverImages.map((img) =>
+        img.restricted ? { ...img, type: 'image' } : img
+      ) as RatingReviewImage[],
     };
     const cover = preview.images[0];
     return {
       ...r,
       entity:
         r.entity && r.entityType !== 'Article'
-          ? { ...r.entity, coverUrl: cover?.url ?? null, coverType: cover?.type ?? null }
+          ? {
+              ...r.entity,
+              coverUrl: cover && !cover.restricted ? cover.url : null,
+              coverType: cover?.type ?? null,
+            }
           : r.entity,
       ownerDisputeCount: owners.get(r.id) ?? 0,
       preview,
@@ -217,7 +236,7 @@ async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
 }
 
 /** The whole page ships at once because selection is client state, so each row carries its own preview and owner-dispute number. */
-export async function ratingDisputeTriageLoad(url: URL) {
+export async function ratingDisputeTriageLoad(url: URL, user: App.Locals['user'] | undefined) {
   const parsed = parseQueryKeys(url, querySchema);
   const { tab, status, ask, scan, q, page, selected, owner } = parsed;
   const kind = tab === 'other' ? parsed.kind : undefined;
@@ -259,7 +278,7 @@ export async function ratingDisputeTriageLoad(url: URL) {
     if (!pinnedRows.length) selectedMissing = selected;
   }
 
-  const decorated = await decorate([...pageRows, ...pinnedRows]);
+  const decorated = await decorate([...pageRows, ...pinnedRows], user);
   const items = decorated.slice(0, pageRows.length);
   const pinned: RatingDisputeRow | null = decorated[pageRows.length] ?? null;
 
