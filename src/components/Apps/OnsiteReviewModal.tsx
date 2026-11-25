@@ -165,7 +165,8 @@ export type ReviewedRequestCommon = {
   /** Icon / cover the listing this approve publishes lacks; non-empty ⇒ the server refuses Approve. */
   approveFloorMissing?: FloorAsset[];
   /** The review boot check's result + mode (pending list + single read); null = no check
-   *  recorded. `bootCheckFailed(previewBootCheck)` ⇒ the server refuses Approve. */
+   *  recorded. Approve is refused on the app's boot-check hold or on a recorded enforced failure
+   *  (`bootCheckOverrideMissing`); one written override reason passes both. */
   previewBootCheck?: ReviewBootCheckSummary | null;
   /** Under a current `enforce` flag, a pending request with no enforced pass ("not run"). */
   previewBootCheckUnverified?: boolean;

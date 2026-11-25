@@ -180,10 +180,8 @@ function shapeRow(
     approvalNotes: row.approvalNotes,
     // Approved rows: null | 'building' | 'deploying' | 'live' | 'failed'. A PENDING row carries its
     // review preview instead: 'preview-building' | 'preview-deploying' | 'preview-live' |
-    // 'preview-failed', with `deployDetail` the preview's JSON detail. On 'preview-failed' its
-    // `error` is the reason (a failed review boot check reads "Boot check: the app loaded but
-    // never sent BLOCK_READY within 10s. First error: …"), and `bootCheck` holds the check's
-    // result when one ran.
+    // 'preview-failed', with `deployDetail` the preview's JSON detail: on 'preview-failed' its
+    // `error` is the reason, and `bootCheck` is present when a review boot check ran.
     deployState: row.deployState,
     deployDetail: row.deployDetail,
     deployUpdatedAt: row.deployUpdatedAt ? row.deployUpdatedAt.toISOString() : null,

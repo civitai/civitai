@@ -1,9 +1,15 @@
 import { clampReviewSandbox, intersectSandbox } from '~/components/AppBlocks/sandbox';
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
-import { recordReviewBootCheck } from '~/server/prom/app-block-boot-check.metrics';
+import {
+  recordReviewBootCheck,
+  type BOOT_CHECK_UNAVAILABLE_REASONS,
+} from '~/server/prom/app-block-boot-check.metrics';
 import { SHARED_REVIEW_PROBE_MOD_USER_ID } from '~/server/services/blocks/apps-pipeline.service';
-import { signReviewAccessToken } from '~/server/services/blocks/review-session';
+import {
+  signReviewAccessToken,
+  withReviewEntryToken,
+} from '~/server/services/blocks/review-session';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import {
@@ -17,15 +23,10 @@ import {
 } from '~/shared/utils/review-boot-check';
 
 /**
- * App Block review BOOT CHECK — the server half. See `~/shared/utils/review-boot-check` for what
- * the check is for and what each rollout mode does.
+ * App Block review BOOT CHECK, the server half. What the check is for, the rollout modes and the
+ * boot-check hold: `~/shared/utils/review-boot-check`.
  *
- * The review-build watcher calls `evaluateReviewBootCheck` after the preview's HTTP probe passed
- * and before it writes `preview-live`. The row stays `preview-deploying` while the check runs.
- *
- * The checker is a separate service (`APP_BLOCK_BOOT_CHECK_URL`). It loads the preview URL in a
- * browser the way a host does, with the same block id, instance id and sandbox, and reports
- * whether the app sent `BLOCK_READY` within the host's window. Its contract:
+ * The checker's contract (`APP_BLOCK_BOOT_CHECK_URL`):
  *
  *   POST <base>/v1/boot-check  { url, blockId, blockInstanceId, sandbox, timeoutMs }
  *   200 { result: 'passed' | 'failed', ms, messagesSeen[], consoleErrors[],
@@ -33,14 +34,9 @@ import {
  *
  * `nonJsModuleResponses` is a COUNT (scripts the browser refused for a non-JavaScript type).
  *
- * Anything else (a non-200, an unreadable body, a network error, the 35 s client cap, no URL
- * configured) is `unavailable`: FAIL-OPEN, so a checker outage never blocks a submission. A 4xx
- * means this client and the checker disagree about the contract: still `unavailable`, but logged
- * at error level and counted under `reason="contract"`.
- *
- * Under `enforce`, a `failed` check also places the boot-check REVIEW HOLD on the app and a
- * `passed` one clears it (`syncBootCheckHold`). The hold, not the preview's detail, is what
- * refuses Approve, so tearing the preview down or rebuilding it cannot get around it.
+ * Anything else is `unavailable` (fail-open). A 4xx means this client and the checker disagree
+ * about the contract: still `unavailable`, but logged at error level, not retried, and counted
+ * under `reason="contract"`.
  */
 
 /**
@@ -64,14 +60,7 @@ export async function readReviewBootCheckMode(): Promise<ReviewBootCheckMode> {
 }
 
 /** Why a check is `unavailable`: the metric's `reason` label (`none` for passed / failed). */
-export type BootCheckUnavailableReason =
-  | 'unconfigured'
-  | 'network'
-  | 'server'
-  | 'contract'
-  | 'body'
-  | 'no-target'
-  | 'crash';
+export type BootCheckUnavailableReason = (typeof BOOT_CHECK_UNAVAILABLE_REASONS)[number];
 
 /** One attempt's outcome, before it is reduced to the stored record. */
 export type BootCheckAttempt = {
@@ -293,9 +282,9 @@ export async function runReviewBootCheck(
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   const attempt = async () => {
-    // Minted per attempt: the token lives 120 s and is bound to this one host.
-    const sep = previewUrl.includes('?') ? '&' : '?';
-    const url = `${previewUrl}${sep}mr=${encodeURIComponent(mintToken(host))}`;
+    // Minted per attempt (bound to this one host): a retry after the pause must not reuse an
+    // expiring token.
+    const url = withReviewEntryToken(previewUrl, mintToken(host));
     return callBootChecker(
       {
         url,

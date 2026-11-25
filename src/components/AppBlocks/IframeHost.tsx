@@ -185,8 +185,6 @@ interface IframeHostProps {
   onConsentGranted?: () => void;
 }
 
-// BLOCK_READY_TIMEOUT_MS: imported from ~/shared/constants/block-ready.constants (one window
-// for every host and the review boot check).
 // If the token never arrives within this window, surface a token_error so the
 // user isn't stuck behind an indefinite skeleton.
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;

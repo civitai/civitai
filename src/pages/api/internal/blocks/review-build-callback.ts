@@ -638,12 +638,9 @@ async function settlePublishedReview(
   const reachable = host
     ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
     : true;
-  // The BOOT CHECK (flag `app-blocks-review-boot-check`): answering over HTTP proves the files are
-  // served, not that the app starts. With the flag on, load the preview the way a host does and
-  // require BLOCK_READY within the host's window. The row stays `preview-deploying` meanwhile.
-  // `null` = the flag is off: the writes below are exactly what they were before the check.
-  // Only an ENFORCED `failed` fails the preview; shadow and `unavailable` go live with the result
-  // recorded (see review-boot-check.service).
+  // Ordering: the boot check runs only once the probe passed, and before the preview-state write
+  // (`null` = the flag is off, and the writes are unchanged). The hold is synced only after that
+  // guarded write matched the row, so only the build that owns the active preview moves it.
   const boot = reachable
     ? await evaluateReviewBootCheck({
         publishRequestId: args.publishRequestId,
@@ -652,10 +649,6 @@ async function settlePublishedReview(
         url: args.baseDetail.url,
       })
     : null;
-  // Under enforce, a failure places the app's boot-check review hold and a pass clears it — but
-  // ONLY when this watcher's guarded state write below matched the row (it still owns the
-  // active preview), so a superseded watcher can never move the hold a newer build set. The
-  // written `preview-failed` detail itself refuses Approve in the meantime. Never throws.
   const syncHold = async (marked: number) => {
     if (boot && marked > 0)
       await syncBootCheckHold(args.publishRequestId, boot, { expectedSha: args.sha });

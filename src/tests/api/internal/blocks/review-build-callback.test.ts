@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
 import type * as BuildAttemptsService from '~/server/services/blocks/build-attempts.service';
+import type * as FliptClient from '~/server/flipt/client';
 import client from 'prom-client';
 import { APP_BLOCK_BUILDS_METRIC } from '~/server/prom/app-block-build.metrics';
 
@@ -84,7 +85,8 @@ vi.mock('~/env/server', () => ({
     },
   }),
 }));
-vi.mock('~/server/flipt/client', () => ({
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(async (flag: string) =>
     flag === 'app-blocks-pipeline-enabled'
       ? mockFlag.enabled
@@ -95,7 +97,6 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptVariant: vi.fn(async (flag: string) =>
     flag === 'app-blocks-review-boot-check' ? mockFlag.bootCheck : null
   ),
-  FLIPT_FEATURE_FLAGS: { APP_BLOCKS_REVIEW_BOOT_CHECK: 'app-blocks-review-boot-check' },
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: { appBlockPublishRequest: { findUnique: mockFindUnique } },
@@ -1440,7 +1441,8 @@ describe('settlePublishedReview: the review boot check', () => {
     await run();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(writtenStates()).toEqual(['preview-live']);
-    expect(writtenDetail('preview-live')).toBe(baseDetail);
+    expect(writtenDetail('preview-live')).toEqual(baseDetail);
+    expect('bootCheck' in (writtenDetail('preview-live') as object)).toBe(false);
   });
 
   it('host never answered: no boot check runs (the existing unreachable failure stands)', async () => {

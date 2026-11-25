@@ -176,9 +176,10 @@ export function ReviewActionBar({
   // reason shown, rather than offered and refused.
   const floorMissing = request.approveFloorMissing ?? [];
   const floorBlocked = floorMissing.length > 0;
-  // The review boot check's NOTICES only. A failed enforced check is refused through the
-  // boot-check review hold it placed, which the holds panel shows and which Approve already needs
-  // an override reason for (`holdBlocked`); the notice says why. Unavailable / not run never block.
+  // The review boot check. Approve is refused on the app's boot-check hold (`holdBlocked`, shown
+  // in the holds panel) or on a recorded enforced failure (`bootOverrideMissing` below, the
+  // server's predicate); one written override reason passes both. Unavailable / not run only
+  // add a notice.
   const bootFailed = bootCheckFailed(request.previewBootCheck);
   const bootUnavailable = !bootFailed && bootCheckUnavailable(request.previewBootCheck);
   const bootNotRun = !bootFailed && !bootUnavailable && request.previewBootCheckUnverified === true;
@@ -189,7 +190,6 @@ export function ReviewActionBar({
   const openHolds = useOpenPublishRequestHolds(mode === 'pending' ? request.slug : null);
   const [holdOverrideReason, setHoldOverrideReason] = useState('');
   const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
-  // Every reason Approve (all three buttons) is disabled, in one place.
   // The recorded enforced failure: the SAME predicate the server refuses on, and the same
   // override reason that passes the holds passes it (never a hard block).
   const bootOverrideMissing = bootCheckOverrideMissing(

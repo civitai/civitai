@@ -10,7 +10,7 @@ import { HOLD_REASON_MIN } from '~/shared/constants/publish-request-holds.consta
  * the way a host does and records whether `BLOCK_READY` arrived within the host's own window
  * (`BLOCK_READY_TIMEOUT_MS`), on the preview's detail as `bootCheck`.
  *
- * The rollout flag decides what a result does (`REVIEW_BOOT_CHECK_FLAG`, a variant flag):
+ * The rollout flag decides what a result does (`FLIPT_FEATURE_FLAGS.APP_BLOCKS_REVIEW_BOOT_CHECK`, a variant flag):
  *   - `off` (or absent): no check runs, nothing is recorded.
  *   - `shadow`: the result is recorded with `mode: 'shadow'` and changes nothing.
  *   - `enforce`: `failed` fails the preview and places the boot-check REVIEW HOLD on the app
@@ -25,9 +25,6 @@ import { HOLD_REASON_MIN } from '~/shared/constants/publish-request-holds.consta
  * Neither is a hard block: the override reason is the escape hatch when the checker is wrong.
  * The predicates read the RECORDED mode, so a shadow result never refuses or shows as a failure.
  */
-
-/** The Flipt variant flag: `shadow` | `enforce`; any other answer, a missing flag included, is off. */
-export const REVIEW_BOOT_CHECK_FLAG = 'app-blocks-review-boot-check';
 
 export type ReviewBootCheckMode = 'off' | 'shadow' | 'enforce';
 /** The modes a recorded result can carry (an `off` check records nothing). */
