@@ -325,6 +325,7 @@ const textKey = (row: FpMirrorFactsRow, body: Record<string, unknown>) =>
 const retractAt = (row: FpMirrorFactsRow) =>
   (row.goneAt ?? row.contentAt ?? row.createdAt ?? new Date(0)).toISOString();
 
+// A deleted author needs no check here: fpCommentState makes the comment 'erased' first.
 const authorInStanding = (row: FpMirrorFactsRow) => !row.bannedAt && !row.muted;
 
 /** The platform refuses an all-digit or empty authorName. */

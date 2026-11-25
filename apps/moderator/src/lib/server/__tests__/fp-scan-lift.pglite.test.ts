@@ -8,7 +8,8 @@ import { SYSTEM_USER_ID } from '../users.service';
 
 /**
  * A moderator's ruling on the scan's report on a Feature Pages comment, through the queue's own
- * service: only the per-report status action, set Unactioned, lifts the scan's hide.
+ * service: only the per-report status action, set Unactioned, lifts the scan's hide
+ * (civitai/civitai#10409).
  */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));

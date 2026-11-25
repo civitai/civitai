@@ -33,6 +33,8 @@ import {
 } from '~/server/services/commentv3/write.service';
 import { COMMENT_V3_MIGRATIONS, SETUP } from '~/server/services/feature-pages/__tests__/fp-harness';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { scamSubject, scamTextFromHtml } from '~/server/services/text-scan/profiles/scam-text';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
 /**
  * Feature Pages comment writers racing on real Postgres: two connections, each in its own
@@ -1039,9 +1041,23 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
   });
 
   describe("a moderator's lift of the scan's hide", () => {
+    /** textScanTextHash of the comment's text now, as the CommentV3 scan profile builds it. */
+    const textHashOf = async (id: number) => {
+      const { rows } = await c0.query<{ userId: number; content: string }>(
+        `SELECT "userId", content FROM "CommentV3" WHERE id = $1`,
+        [id]
+      );
+      return textScanTextHash(
+        scamSubject(rows[0].userId, [
+          { heading: 'Comment', text: scamTextFromHtml(rows[0].content) },
+        ])
+      );
+    };
     /** The scan's hide through hideFlaggedFpComment, its report filed by createReport. */
-    const scanHide = (id: number) =>
+    const scanHide = async (id: number) =>
       hideFlaggedFpComment(id, {
+        textHash: await textHashOf(id),
+        currentTextHash: textHashOf,
         db: {
           $queryRawUnsafe: txOf(c0).$queryRawUnsafe,
           $transaction: async (fn: (tx: never) => Promise<unknown>) => {

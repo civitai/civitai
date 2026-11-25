@@ -37,7 +37,6 @@ export const reportStatusActions = ({ rulingsOnly = false } = {}) => ({
       ip: getClientAddress(),
       liftScanHide: true,
     });
-    // A held lift leaves the report open, so its row stays on screen with the reason.
     if (!result.ok && 'held' in result) return fail(409, { error: result.error });
     // `gone` rather than a bare message: the page reloads the queue on it, so the row the moderator
     // is looking at leaves the screen instead of sitting there accepting further clicks.

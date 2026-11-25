@@ -549,6 +549,78 @@ describe("a moderator's dismissal of the scan's report", () => {
     await heldOpen(id, reportId, 'version');
   });
 
+  /** The author's edit, committed: new text, the next version. */
+  const edit = async (id: number) => {
+    await q(`UPDATE "CommentV3" SET content = '<p>edited after the scan</p>' WHERE id = $1`, [id]);
+    await q(`UPDATE "FeaturePageCommentMirror" SET version = version + 1 WHERE "commentId" = $1`, [
+      id,
+    ]);
+  };
+  /** The scan of the first text hides it, with an edit landing where `at` says. */
+  const hideRacingAnEdit = async (at: 'hash' | 'lock') => {
+    const id = (await seedFpComment(mirror, 'the text the scan judged')).comment.sourceId;
+    await flagScan(id);
+    const textHash = await judgedText(id);
+    let reportId = 0;
+    await moderation.hideFlaggedFpComment(id, {
+      textHash,
+      // Hashed for real, then the edit commits before the version is read again.
+      currentTextHash: async () => {
+        const hash = await judgedText(id);
+        if (at === 'hash') await edit(id);
+        return hash;
+      },
+      // After the scan's text is judged, before the hide takes the comment's lock.
+      createReport: (async () => {
+        if (at === 'lock') await edit(id);
+        const [report] = await q<{ id: number }>(
+          `INSERT INTO "Report"(status, reason, "userId", details)
+           VALUES ('Pending', 'AdminAttention', $1, '{"comment":"auto-hidden by scan"}') RETURNING id`,
+          [SYSTEM]
+        );
+        await q(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+          id,
+          report.id,
+        ]);
+        reportId = report.id;
+        return report;
+      }) as never,
+    });
+    return { id, reportId };
+  };
+  const neverBindsTheEdit = async ({ id, reportId }: { id: number; reportId: number }) => {
+    expect(await mirrorRow(id)).toMatchObject({ version: 2, scanHiddenVersion: null });
+    await heldOpen(id, reportId, 'version');
+    // The edited text's own flagged scan still hides it, bound to its version.
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
+    await flagScan(id);
+    await rescanHides(id, await judgedText(id));
+    expect(await mirrorRow(id)).toMatchObject({ scanHiddenVersion: 2, liftGrantedVersion: null });
+    expect((await commentOf(id)).hidden).toBe(true);
+  };
+
+  it('7f. an edit committed while the scan text is read: the hide binds no version', async () => {
+    await neverBindsTheEdit(await hideRacingAnEdit('hash'));
+  });
+
+  it('7g. an edit committed after the text is judged, before the lock: the hide binds no version', async () => {
+    await neverBindsTheEdit(await hideRacingAnEdit('lock'));
+  });
+
+  it("7h. a lift of the current version never skips a flagged scan of another version's text", async () => {
+    const { id, reportId } = await hiddenByScan();
+    const older = await judgedText(id);
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
+    await edit(id);
+    await flagScan(id);
+    const second = await rescanHides(id, await judgedText(id));
+    expect(await dismiss(second)).toEqual({ commentId: id, version: 2 });
+    // A verdict on the first text, arriving after the lift of the second.
+    await rescanHides(id, older);
+    expect((await commentOf(id)).hidden).toBe(true);
+    expect(await mirrorRow(id)).toMatchObject({ liftGrantedVersion: 2, scanHiddenVersion: null });
+  });
+
   it('7b. a lift of one version never shows a newer version the scan has not cleared', async () => {
     const { id, reportId } = await hiddenByScan();
     await dismiss(reportId);
