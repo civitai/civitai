@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { queryClient } from '~/utils/trpc';
 import { installTrpcWire, renderWithTrpcWire } from '../../../../../test/trpcWireHarness';
 
 // A buyer short on Buzz who buys more from the hold button must land back on the popup with
@@ -68,7 +69,11 @@ describe('ServiceRequestModal hold button', () => {
 
     // The purchase itself runs in Stripe or Paddle; what returns to the app is this callback.
     (buyBuzz?.props as { onPurchaseSuccess?: () => void }).onPurchaseSuccess?.();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // A purchase refreshes the balance. That refetch starts after the callback, so by the time its
+    // answer has landed a request the callback sent has reached the wire.
+    const balanceReads = calls.callsTo('buzz.getBuzzAccount').length;
+    await queryClient.refetchQueries({ queryKey: [['buzz', 'getBuzzAccount']] });
+    expect(calls.callsTo('buzz.getBuzzAccount').length).toBe(balanceReads + 1);
 
     expect(calls.callsTo('creatorServiceDeal.request')).toHaveLength(0);
   });
