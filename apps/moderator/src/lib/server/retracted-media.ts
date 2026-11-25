@@ -297,13 +297,22 @@ export async function withheldUrls(
   const given = [...new Set(urls.filter((u): u is string => !!u))];
   const keys = [...new Set(given.flatMap(keysOf))];
   if (!keys.length) return new Set();
+  // A failed read withholds every url, as `listWithheldIds` does for ids.
   const rows = await dbRead
     .selectFrom('Image')
     .select(['id', 'url'])
     .where('url', 'in', keys)
     .limit(URL_MATCH_CAP + 1)
-    .execute();
-  if (rows.length > URL_MATCH_CAP) return new Set(given);
+    .execute()
+    .catch((e) => {
+      void logToAxiom({
+        name: 'withheld-url-read-failed',
+        type: 'error',
+        payload: { list, count: keys.length, error: e instanceof Error ? e.name : typeof e },
+      });
+      return null;
+    });
+  if (!rows || rows.length > URL_MATCH_CAP) return new Set(given);
   const withheld = await listWithheldIds(
     rows.map((r) => r.id),
     { csamReview: holdsCsamReview(user) },

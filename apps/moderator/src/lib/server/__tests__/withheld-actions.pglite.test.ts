@@ -66,6 +66,7 @@ vi.mock('../mod-activity', async (importOriginal) => ({
 vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
 }));
+vi.mock('../axiom', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
@@ -240,6 +241,12 @@ describe('a url naming an image', () => {
     expect(await withheldUrls(urls, WITHOUT_GRANT as never, 'test')).toEqual(
       new Set(['shared-key', CDN(WITHHELD_UUID)])
     );
+  });
+
+  it('withholds every url, rather than failing the page, when the read fails', async () => {
+    await db.exec(`ALTER TABLE "Image" RENAME TO "ImageUnreadable"`);
+    const urls = ['control-key', 'https://elsewhere.test/a.png'];
+    expect(await withheldUrls(urls, WITH_GRANT as never, 'test')).toEqual(new Set(urls));
   });
 
   it('is not withheld from a grant holder', async () => {

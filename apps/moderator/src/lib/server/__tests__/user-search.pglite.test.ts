@@ -45,8 +45,9 @@ const names = async (query: string) => (await searchUsers({ query })).map((u) =>
 describe('the grant page user picker', () => {
   it("never sends an account's legacy profile image", async () => {
     await db.exec(`UPDATE "User" SET image = 'legacy-key'`);
-    for (const user of await searchUsers({ query: 'SynthMiner' }))
-      expect(user).not.toHaveProperty('image');
+    const users = await searchUsers({ query: 'SynthMiner' });
+    expect(users.length).toBeGreaterThan(0);
+    for (const user of users) expect(user).not.toHaveProperty('image');
   });
 
   it('finds a pasted name that carries a zero-width space or a leading @', async () => {

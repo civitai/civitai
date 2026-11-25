@@ -58,11 +58,6 @@ export async function getOpenHelpRequests(): Promise<HelpRequest[]> {
   }));
 }
 
-/**
- * The images behind ONE request, resolved from the stored row rather than from anything the client
- * sent. Retool passed the id array through the browser, so a stale page could act on a different set
- * than the request describes.
- */
 /** The image ids a help request names, as stored; none of them checked against the main database. */
 export async function getHelpRequestImageIds(requestId: number): Promise<number[]> {
   const row = await getModeratorDb()
@@ -73,6 +68,11 @@ export async function getHelpRequestImageIds(requestId: number): Promise<number[
   return parseImageIds(row?.imageIds);
 }
 
+/**
+ * The images behind ONE request, resolved from the stored row rather than from anything the client
+ * sent. Retool passed the id array through the browser, so a stale page could act on a different set
+ * than the request describes.
+ */
 export async function getHelpRequestImages(requestId: number): Promise<HelpImage[]> {
   const ids = await getHelpRequestImageIds(requestId);
   if (!ids.length) return [];
