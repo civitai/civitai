@@ -85,8 +85,9 @@ const procedures = {
     semanticCollectionSearchRouter.createCaller(ctx()).search,
   'semanticStorylineSearch.search': () => semanticStorylineSearchRouter.createCaller(ctx()).search,
   'semanticModel3DSearch.search': () => semanticModel3DSearchRouter.createCaller(ctx()).search,
-  // The challenges feed falls back to these when its semantic search fails (a refusal included),
-  // so they must refuse the same text, or the fallback would serve it.
+  // challenge.getInfinite is the fallback when the challenges feed's semantic search fails (a
+  // refusal included), so it must refuse the same text. getCompletedWithWinners is a text search
+  // of its own.
   'challenge.getInfinite': () => challengeRouter.createCaller(ctx()).getInfinite,
   'challenge.getCompletedWithWinners': () =>
     challengeRouter.createCaller(ctx()).getCompletedWithWinners,
