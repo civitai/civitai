@@ -83,9 +83,13 @@ describe('orderFeed', () => {
   });
 
   it('draws priority 1 below FEED.priorityOneShare, another priority above it', () => {
-    const window = [candidate(1, { priority: 1 }), candidate(2, { priority: 3 })];
-    expect(order(window, { random: always, limit: 2 })).toEqual([1, 2]);
-    expect(order(window, { random: never, limit: 2 })).toEqual([2, 1]);
+    // Priority 1 is the newest, so neither the starvation path nor age order can put it first; 0.5 skips starvation.
+    const window = [
+      candidate(1, { priority: 3, createdAt: 1 }),
+      candidate(2, { priority: 1, createdAt: 9 }),
+    ];
+    expect(order(window, { random: () => 0.5, limit: 2 })).toEqual([2, 1]);
+    expect(order(window, { random: never, limit: 2 })).toEqual([1, 2]);
   });
 
   it('gives priority 1 about FEED.priorityOneShare of the picks while every priority has supply', () => {
@@ -111,11 +115,15 @@ describe('orderFeed', () => {
     }
   });
 
-  it('serves the other priorities alone once priority 1 runs out', () => {
-    const window = [candidate(1, { priority: 1 }), ...[2, 3, 4].map((id) => candidate(id))];
-    const served = order(window, { random: always, limit: 4 });
-    expect(served[0]).toBe(1);
-    expect([...served].sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
+  it('serves the other priorities once priority 1 runs out', () => {
+    // Priority 1 is the newest and drawn first (0.5); the priority-2 items follow only after it.
+    const window = [
+      ...[1, 2, 3].map((id) => candidate(id, { createdAt: id })),
+      candidate(4, { priority: 1, createdAt: 9 }),
+    ];
+    const served = order(window, { random: () => 0.5, limit: 4 });
+    expect(served[0]).toBe(4);
+    expect(served.slice(1).sort((a, b) => a - b)).toEqual([1, 2, 3]);
   });
 
   it('serves the escalated tier ahead of normal priority', () => {

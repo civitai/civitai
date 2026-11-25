@@ -92,6 +92,10 @@ const byAge = (a: FeedCandidate, b: FeedCandidate) => a.createdAt - b.createdAt 
 /** Buckets in a fixed order (null last), so the draw does not depend on row order. */
 const BUCKET_ORDER: (LevelBucket | null)[] = [...BUCKETS.map(([, bucket]) => bucket), null];
 
+/** `options[floor(draw * length)]`, clamped at both ends. */
+const nth = <T>(options: T[], draw: number): T =>
+  options[Math.max(0, Math.min(options.length - 1, Math.floor(draw * options.length)))];
+
 /**
  * The priority the next pick serves from, among the normal-tier candidates: priority 1 `FEED.priorityOneShare` of the time
  * while it has candidates, the other priorities splitting the rest equally. With one priority left it is that one, and no
@@ -104,12 +108,9 @@ function drawPriority(left: FeedCandidate[], random: () => number): number | nul
   if (priorities.length <= 1) return priorities[0] ?? null;
   const others = priorities.filter((p) => p !== 1);
   const draw = random();
-  if (others.length === priorities.length) {
-    return others[Math.min(others.length - 1, Math.floor(draw * others.length))];
-  }
+  if (others.length === priorities.length) return nth(others, draw);
   if (draw < FEED.priorityOneShare) return 1;
-  const rest = (draw - FEED.priorityOneShare) / (1 - FEED.priorityOneShare);
-  return others[Math.min(others.length - 1, Math.floor(rest * others.length))];
+  return nth(others, (draw - FEED.priorityOneShare) / (1 - FEED.priorityOneShare));
 }
 
 /**
@@ -139,13 +140,12 @@ export function orderFeed<T extends FeedCandidate>(
     const open = BUCKET_ORDER.filter((b) => ofPriority.some((c) => c.bucket === b));
     const fresh = open.filter((b) => !recent.includes(b));
     const choices = fresh.length > 0 ? fresh : open;
-    const bucket =
-      choices[Math.min(choices.length - 1, Math.floor(input.random() * choices.length))];
+    const bucket = nth(choices, input.random());
     const pool = ofPriority.filter((c) => c.bucket === bucket);
 
     let pick: T;
     if (input.random() < FEED.starvationShare) {
-      // The oldest of the bucket at any priority, so no item waits forever behind the priority draw.
+      // The oldest of the bucket at any priority, so no item in the window waits forever behind the priority draw.
       pick = left.filter((c) => c.bucket === bucket).sort(byAge)[0];
     } else {
       const lead = pool[0];
