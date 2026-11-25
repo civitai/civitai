@@ -139,6 +139,29 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
     if (refused) await expect(result).rejects.toThrow(RESTRICTED_COVER_IMAGE_MESSAGE);
     else await expect(result).resolves.toBeUndefined();
   });
+
+  it("in production, refuses a deal file's scan copy, which no cover may use", async () => {
+    dbWriteMock.image.findUnique.mockResolvedValue({
+      nsfwLevel: 1,
+      modelRestricted: false,
+    } as never);
+    dbWriteMock.$queryRaw.mockResolvedValueOnce([{}] as never);
+    await expect(productionCoverImageDeps.assertNotRestricted(42)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('runs the same check on a reused row that is not the current cover', async () => {
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),
+      assertNotRestricted: refuse(),
+    });
+    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).rejects.toThrow();
+    expect(deps.assertNotRestricted).toHaveBeenCalledWith(1234);
+    await expect(
+      resolveCoverImageId({ coverImage, userId: 7, currentCoverId: 1234 }, deps)
+    ).resolves.toBe(1234);
+  });
 });
 
 describe('resolveCoverImageId — no id (a raw upload key)', () => {

@@ -396,12 +396,24 @@ describe('an image a deal file entry points at', () => {
     expect(await imageRow(imageOf(PLAIN))).toBeDefined();
   });
 
-  it.each([
+  it.each<[string, Parameters<typeof deleteImages>[1]['actor']]>([
     ['a moderator', { id: MODERATOR, isModerator: true }],
-    ['the system', { system: 'creator-service-deal-unpack' }],
+    ["the deal pipeline's own cleanup", { system: 'creator-service-deal-unpack' }],
+    ["an account deletion's drain", { system: ACCOUNT_DELETION_DRAIN }],
   ])('is deleted by %s', async (_, actor) => {
     await deleteImages([imageOf(PLAIN)], { actor });
     expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+
+  it('is left by any other system delete, which deletes the rest of its batch', async () => {
+    const other = 3001;
+    await holder.db.query(`INSERT INTO "Image" (id, "userId", url) VALUES ($1, $2, 'key-other')`, [
+      other,
+      PLAIN,
+    ]);
+    await deleteImages([imageOf(PLAIN), other], { actor: { system: 'some-other-job' } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+    expect(await imageRow(other)).toBeUndefined();
   });
 
   it('control: the owner still deletes an image no entry points at', async () => {
@@ -1159,6 +1171,20 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
       expect(await imageRow(ORPHAN)).toBeUndefined();
       expect(await cleanup()).toBeUndefined();
+    });
+
+    it('stays, with its entry pointing at it, when a deal file entry points at it', async () => {
+      await holder.db.exec(`
+        UPDATE "Report" SET status = 'Actioned' WHERE id = 1;
+        INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES (${ORPHAN});
+      `);
+      await runJob();
+
+      expect(await imageRow(ORPHAN)).toBeDefined();
+      expect(
+        (await holder.db.query(`SELECT 1 FROM "ServiceDealFileEntry" WHERE "imageId" = ${ORPHAN}`))
+          .rows
+      ).toHaveLength(1);
     });
 
     it('stays, and its cleanup goes, when something uses it again', async () => {

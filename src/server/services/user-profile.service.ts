@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import type { EventViewer } from '~/server/events/event-access';
 import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
 import { kyselyWrite } from '~/server/db/kyselyDb';
@@ -328,6 +329,7 @@ export const assertShowcaseItemsOwned = async ({
   const imageIds = idsOf('Image');
   const modelIds = idsOf('Model');
   const articleIds = idsOf('Article');
+  await assertNotDealFileImages(imageIds, 'used here');
 
   // Moderators included: a taken-down model is shown to no visitor, so it never joins a showcase.
   if (

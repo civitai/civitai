@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import type { ImageReferenceInput, ImageSchema } from '~/server/schema/image.schema';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { createImage } from '~/server/services/image.service';
 import {
   assertClientImageUrlsUsable,
@@ -127,7 +128,8 @@ export type CoverImageDeps = {
    * no-op measurable.
    */
   logExistenceUnknown: (args: { userId: number }) => void;
-  /** Throws {@link RESTRICTED_COVER_IMAGE_MESSAGE} for an image restricted by its base model. */
+  /** Throws {@link RESTRICTED_COVER_IMAGE_MESSAGE} for an image restricted by its base model, and
+   *  refuses a deal file's scan copy. */
   assertNotRestricted: (id: number) => Promise<void>;
 };
 
@@ -144,6 +146,7 @@ async function assertNotRestricted(id: number) {
     select: { nsfwLevel: true, modelRestricted: true },
   });
   if (image && isRestrictedImage(image)) throw restrictedCoverError();
+  await assertNotDealFileImages([id], 'used here');
 }
 
 /** Reused rows must belong to the caller — see `findReusableImageId` below for why. */
@@ -286,7 +289,10 @@ export async function resolveCoverImageId(
 
   const reusable = await deps.findReusableImageId({ url: image.url, userId, currentCoverId });
   if (reusable) {
-    if (reusable.restricted && reusable.id !== currentCoverId) throw restrictedCoverError();
+    if (reusable.id !== currentCoverId) {
+      if (reusable.restricted) throw restrictedCoverError();
+      await deps.assertNotRestricted(reusable.id);
+    }
     return reusable.id;
   }
 

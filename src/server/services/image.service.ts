@@ -383,7 +383,8 @@ import {
   imagesPendingDeletion as readImagesPendingDeletion,
   releaseModeratorPendingDeletes,
 } from '@civitai/db-queries/pending-deletes';
-import type { RawBuilder } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { kyselyRead } from '~/server/db/kyselyDb';
@@ -1045,19 +1046,21 @@ const withDeleteTransaction = <T>(
     : run(kyselyOver(dbWrite));
 
 /**
- * A deal file's scan copy is what its file is checked against, so only a moderator or the system
- * deletes one. Refuses the whole delete, so the caller is told rather than handed a partial one.
+ * The system deletes that may remove a deal file's scan copy, besides a moderator's: the deal
+ * pipeline's own, image ingestion's, and an account deletion's drain (`ACCOUNT_DELETION_DRAIN`),
+ * whose deal holds on its own. Any other actor, an unknown system one included, leaves such an image.
  */
-async function assertNoDealFileImages(ids: number[]) {
-  if (!ids.length) return;
-  const [pointed] = await dbWrite.$queryRaw<unknown[]>`
-    SELECT 1 FROM "ServiceDealFileEntry" WHERE "imageId" = ANY(${ids}::int[]) LIMIT 1`;
-  if (pointed)
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'This image is part of a delivery file and cannot be deleted.',
-    });
-}
+const DEAL_FILE_IMAGE_DELETERS = new Set([
+  'creator-service-deal-unpack',
+  'creator-service-deal-file',
+  'creator-service-deal-review',
+  'image-ingestion',
+  'remove-deleted-user-images',
+]);
+
+/** In the DELETE's own WHERE, so an entry written after a check still keeps its image. */
+const notDealFileImage = sql<boolean>`NOT EXISTS (
+  SELECT 1 FROM "ServiceDealFileEntry" sde WHERE sde."imageId" = "Image"."id")`;
 
 /** `deleteImages`, with the images it left for their child-safety case. */
 export async function deleteImagesWithOutcome(
@@ -1079,7 +1082,10 @@ export async function deleteImagesWithOutcome(
     }
 ): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
-  if (deletedById !== undefined && !moderatorDelete) await assertNoDealFileImages(uniq(ids));
+  const keepsDealFileImages =
+    !moderatorDelete && !('system' in actor && DEAL_FILE_IMAGE_DELETERS.has(actor.system));
+  if (keepsDealFileImages && deletedById !== undefined)
+    await assertNotDealFileImages(uniq(ids), 'deleted');
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
@@ -1096,8 +1102,13 @@ export async function deleteImagesWithOutcome(
         : imagesWithOpenReports(ids).catch(() => new Set(ids)),
     ]);
 
-    const callerWhere =
+    const asked =
       !onlyWhere || 'toOperationNode' in onlyWhere ? onlyWhere : fromPrismaSql<boolean>(onlyWhere);
+    const callerWhere = !keepsDealFileImages
+      ? asked
+      : asked
+      ? sql<boolean>`(${asked}) AND ${notDealFileImage}`
+      : notDealFileImage;
     const {
       deleted: rows,
       kept: caseKept,

@@ -190,6 +190,21 @@ describe('assertShowcaseItemsOwned', () => {
     ).resolves.toBeUndefined();
   });
 
+  it.each([false, true])(
+    "refuses a deal file's scan copy, the caller a moderator: %s",
+    async (isModerator) => {
+      db.$queryRaw.mockResolvedValueOnce([{}] as never);
+      await expect(
+        assertShowcaseItemsOwned({
+          userId: OWNER_ID,
+          isModerator,
+          showcaseItems: [{ entityType: 'Image', entityId: OWN_IMAGE }],
+          currentShowcaseItems: [],
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    }
+  );
+
   it('lets a moderator through without a lookup', async () => {
     await expect(
       assertShowcaseItemsOwned({
