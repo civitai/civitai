@@ -85,7 +85,7 @@
 {#if mode === 'failed'}
   <div class="p-4 text-center text-xs text-dark-2">{fallback?.reason}</div>
 {:else if mode === 'retracted' && mediaType === 'video'}
-  <!-- Controls, as it does not autoplay here; none on a blurred tile. -->
+  <!-- Controls, as it does not autoplay here. -->
   <video
     src={retractedMediaUrl(item.id)}
     class={className}

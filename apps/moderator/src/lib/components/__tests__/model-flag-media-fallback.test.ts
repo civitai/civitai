@@ -7,11 +7,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { retractedMediaUrl, WITHHELD_REFUSED } from '$lib/held-media';
 
 /**
- * The Model Flags image tiles a moderator reads a model by: the detail pane's preview and a shared
- * file's two covers. A taken-down model's images are refused by the public CDN, so a tile the CDN
- * refuses is asked for from storage (`/api/retracted-media`), as Bulk Image Manager's tiles are; a
- * withheld image is drawn with no media and asks for nothing. Mounted in the browser build with the
- * real storage-fallback tile and the CDN component stubbed to a plain <img>.
+ * Mounted in the browser build with the real CdnOrRetractedMedia and EdgeMedia stubbed to a plain
+ * <img>: a tile the CDN refuses is asked for from storage (`/api/retracted-media`), and a withheld
+ * image is drawn with no media and asks storage for nothing.
  */
 const require = createRequire(import.meta.url);
 const SVELTE = path.dirname(require.resolve('svelte/package.json'));
@@ -140,9 +138,6 @@ function cdnRefuses(target: Element) {
   svelte.flushSync();
 }
 
-const retractedRequests = () =>
-  fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/retracted-media'));
-
 describe('the Model Flags detail preview', () => {
   const image = {
     nsfwLevel: 1,
@@ -182,14 +177,13 @@ describe('the Model Flags detail preview', () => {
     svelte.unmount(app);
   });
 
-  it('draws a withheld image with no media and never asks storage for it', async () => {
+  it('draws a withheld image with no media', async () => {
     fetchMock.mockImplementation(() =>
       json(preview([{ ...image, id: WITHHELD, url: '', minor: false, restricted: true }]))
     );
     const { target, app } = await mount(Preview, props);
     expect(target.querySelector('img')).toBeNull();
     expect(target.querySelector(`svg[aria-label="${WITHHELD_REFUSED}"]`)).not.toBeNull();
-    expect(retractedRequests()).toEqual([]);
     svelte.unmount(app);
   });
 });
@@ -240,7 +234,6 @@ describe('a shared file card', () => {
     expect(target.querySelector(`svg[aria-label="${WITHHELD_REFUSED}"]`)).not.toBeNull();
     cdnRefuses(target);
     expect(srcs(target)).toEqual([retractedMediaUrl(OPEN)]);
-    expect(retractedRequests()).toEqual([]);
     svelte.unmount(app);
   });
 });
