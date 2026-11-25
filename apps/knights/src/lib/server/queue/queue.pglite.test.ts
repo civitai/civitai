@@ -6,7 +6,7 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { countOpenServableKnightItems, readWithoutJit } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { engage, lockImage } from '../../../test/seed';
+import { engage, hideTagGroups, lockImage, tagImage } from '../../../test/seed';
 import {
   EXCLUSION_TABLES,
   exclusionCases,
@@ -198,7 +198,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayerDay" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayer","TagsOnImageDetails","KnightsPlayerDay" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -3032,6 +3032,53 @@ describe('a player and their own image', () => {
     expect(await vote(1, mine, '4')).toEqual({ status: 'rejected', reason: 'own-image' });
     expect(await verdicts(mine)).toEqual([]);
     expect(await vote(2, mine, '4')).toMatchObject({ status: 'recorded' });
+  });
+});
+
+describe('a preset tag group the player hides in Knights settings', () => {
+  async function taggedItems() {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    await image(11);
+    return { anime: await item(10), other: await item(11) };
+  }
+
+  it('serves an image carrying a tag of the group to other players only, refuses the vote and gives no late credit', async () => {
+    const { anime, other } = await taggedItems();
+    await tagImage(pg, 10, 413);
+    await hideTagGroups(pg, 1, ['anime']);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
+    expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([anime, other].sort());
+    expect(await vote(1, anime, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect(await verdicts(anime)).toEqual([]);
+
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
+      anime,
+      NOW,
+    ]);
+    expect(await creditLateJudgment(db, { userId: 1, itemId: anime, answer: '4', now: NOW })).toBe(
+      false
+    );
+  });
+
+  it('does not hide an image whose tag of the group is disabled, nor one tagged only with another group', async () => {
+    const { anime, other } = await taggedItems();
+    await tagImage(pg, 10, 413, true);
+    await tagImage(pg, 11, 1282);
+    await hideTagGroups(pg, 1, ['anime']);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([anime, other].sort());
+    expect(await vote(1, anime, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('changes nothing for a player who hides no group', async () => {
+    const { anime, other } = await taggedItems();
+    await tagImage(pg, 10, 4);
+    await hideTagGroups(pg, 1, []);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([anime, other].sort());
   });
 });
 

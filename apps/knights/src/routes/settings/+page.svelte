@@ -1,22 +1,28 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
   import Icon from '$lib/Icon.svelte';
+  import SettingSwitch from './SettingSwitch.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
-  let saving = $state(false);
-  // The switch flips at the click; the saved value replaces it once the page reloads, or it flips back on a failure.
-  let pending = $state<boolean | null>(null);
-  // The value the last save stored; the switch shows it without reloading the page.
-  let savedOn = $state<boolean | null>(null);
-  let saved = $state<boolean | null>(null);
-  let error = $state<string | null>(null);
+  type Status = { kind: 'saved'; text: string } | { kind: 'error'; text: string } | null;
+  let questionsStatus = $state<Status>(null);
+  let groupsStatus = $state<Status>(null);
 </script>
 
 <svelte:head>
   <title>Settings · Knights of New Order</title>
 </svelte:head>
+
+{#snippet status(current: Status)}
+  <p class="status" role="status">
+    {#if current?.kind === 'error'}
+      <span class="error">{current.text}</span>
+    {:else if current}
+      <Icon name="check" size={13} />{current.text}
+    {/if}
+  </p>
+{/snippet}
 
 <div class="settings">
   <header>
@@ -50,65 +56,65 @@
           {/if}
         </div>
         {#if data.questions.available}
-          {@const on = pending ?? savedOn ?? data.questions.on}
-          <form
-            method="POST"
+          <SettingSwitch
             action="?/questions"
-            use:enhance={({ formData, cancel }) => {
-              if (saving) return cancel();
-              pending = formData.get('questions') === 'on';
-              saving = true;
-              error = null;
-              saved = null;
-              return async ({ result, update }) => {
-                try {
-                  if (result.type === 'success') {
-                    saved = result.data?.questions === true;
-                    savedOn = saved;
-                  } else if (result.type === 'failure') {
-                    error = String(result.data?.message ?? 'Your choice was not saved. Try again.');
-                  } else if (result.type === 'error') {
-                    error = 'Your choice was not saved. Check your connection and try again.';
-                  } else {
-                    await update();
-                  }
-                } catch {
-                  error = 'Your choice was not saved. Try again.';
-                } finally {
-                  saving = false;
-                  pending = null;
-                }
-              };
-            }}
-          >
-            <input type="hidden" name="questions" value={on ? 'off' : 'on'} />
-            <button
-              type="submit"
-              class="switch"
-              role="switch"
-              aria-checked={on}
-              aria-labelledby="questions-label"
-              aria-describedby="questions-description"
-              aria-disabled={saving}
-            >
-              <span class="knob"></span>
-            </button>
-          </form>
+            field="questions"
+            on={data.questions.on}
+            labelledby="questions-label"
+            describedby="questions-description"
+            onsaved={(on) =>
+              (questionsStatus = {
+                kind: 'saved',
+                text: `Saved. Questions are ${on ? 'on' : 'off'} from your next image.`,
+              })}
+            onerror={(text) => (questionsStatus = { kind: 'error', text })}
+          />
         {/if}
       </div>
     </div>
-    <p class="status" role="status">
-      {#if error}
-        <span class="error">{error}</span>
-      {:else if saved !== null}
-        <Icon name="check" size={13} />Saved. Questions are {saved ? 'on' : 'off'} from your next image.
-      {/if}
-    </p>
+    {@render status(questionsStatus)}
   </section>
+
+  {#if data.tagGroups.available}
+    <section aria-labelledby="groups-title">
+      <h2 id="groups-title">Hide content</h2>
+      <p class="description" id="groups-description">
+        Images tagged with a group you hide are not served to you. Your hidden tags on Civitai don't
+        apply here.
+      </p>
+      <div class="rows">
+        {#each data.tagGroups.groups as group (group.key)}
+          <div class="row">
+            <div class="text">
+              <p class="label"><span id="group-{group.key}-label">Hide {group.label.toLowerCase()}</span></p>
+            </div>
+            <SettingSwitch
+              action="?/tagGroup"
+              field="hidden"
+              fields={{ key: group.key }}
+              on={group.hidden}
+              labelledby="group-{group.key}-label"
+              describedby="groups-description"
+              onsaved={(hidden) =>
+                (groupsStatus = {
+                  kind: 'saved',
+                  text: `Saved. ${group.label} images are ${hidden ? 'hidden' : 'shown'} from your next image.`,
+                })}
+              onerror={(text) => (groupsStatus = { kind: 'error', text })}
+            />
+          </div>
+        {/each}
+      </div>
+      {@render status(groupsStatus)}
+    </section>
+  {/if}
 </div>
 
 <style>
   .settings {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
     max-width: 45rem;
     margin: 0 auto;
     padding-top: 1rem;
@@ -132,6 +138,10 @@
     border: 1px solid color-mix(in srgb, var(--io-gold-muted) 55%, transparent);
     border-radius: 8px;
     background: var(--io-surface);
+  }
+
+  .row + .row {
+    border-top: 1px solid color-mix(in srgb, var(--io-gold-muted) 30%, transparent);
   }
 
   .row {
@@ -187,58 +197,6 @@
   .note :global(svg) {
     flex: none;
     color: var(--io-gold-muted);
-  }
-
-  .switch {
-    display: flex;
-    flex: none;
-    align-items: center;
-    width: 2.75rem;
-    min-width: 0;
-    height: 1.5rem;
-    min-height: 0;
-    padding: 2px;
-    border: 1px solid color-mix(in srgb, var(--io-gold-muted) 55%, transparent);
-    border-radius: 999px;
-    background: var(--io-matte);
-    cursor: pointer;
-  }
-
-  .switch[aria-checked='true'] {
-    justify-content: flex-end;
-    border-color: var(--io-gold);
-    background: var(--io-gold);
-  }
-
-  .switch:hover:not([aria-disabled='true']) {
-    border-color: var(--io-gold);
-    background: var(--io-matte);
-  }
-
-  .switch[aria-checked='true']:hover:not([aria-disabled='true']) {
-    border-color: var(--io-parchment);
-    background: var(--io-gold);
-  }
-
-  .switch[aria-disabled='true'] {
-    cursor: progress;
-    opacity: 0.6;
-  }
-
-  .switch:focus-visible {
-    outline: 2px solid var(--io-gold);
-    outline-offset: 2px;
-  }
-
-  .knob {
-    width: 1.125rem;
-    height: 1.125rem;
-    border-radius: 50%;
-    background: var(--io-parchment-muted);
-  }
-
-  .switch[aria-checked='true'] .knob {
-    background: var(--io-bg);
   }
 
   .status {

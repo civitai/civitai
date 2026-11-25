@@ -4,6 +4,8 @@ const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const playerPrefs = vi.hoisted(() => vi.fn());
 const setYesNoQuestions = vi.hoisted(() => vi.fn());
+const hiddenTagGroups = vi.hoisted(() => vi.fn());
+const setTagGroupHidden = vi.hoisted(() => vi.fn());
 const yesNo = vi.hoisted(() => ({ playerDefault: false }));
 const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY }));
@@ -12,7 +14,12 @@ vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
 }));
-vi.mock('$lib/server/player-prefs', () => ({ playerPrefs, setYesNoQuestions }));
+vi.mock('$lib/server/player-prefs', () => ({
+  playerPrefs,
+  setYesNoQuestions,
+  hiddenTagGroups,
+  setTagGroupHidden,
+}));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ ...yesNo }) }));
 
 const { load, actions } = await import('./+page.server');
@@ -40,6 +47,10 @@ beforeEach(() => {
   playerPrefs.mockResolvedValue({ yesNo: true });
   setYesNoQuestions.mockReset();
   setYesNoQuestions.mockResolvedValue(undefined);
+  hiddenTagGroups.mockReset();
+  hiddenTagGroups.mockResolvedValue([]);
+  setTagGroupHidden.mockReset();
+  setTagGroupHidden.mockResolvedValue(undefined);
   yesNo.playerDefault = false;
 });
 
@@ -59,7 +70,24 @@ describe('settings load', () => {
 
   it('offers no switch to an Acolyte, whose practice questions are part of training', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 3 });
-    expect(await run()).toMatchObject({ questions: { available: false } });
+    expect(await run()).toMatchObject({
+      questions: { available: false },
+      tagGroups: { available: false },
+    });
+  });
+
+  it("lists every preset group with the player's choice", async () => {
+    hiddenTagGroups.mockResolvedValue(['gore']);
+    expect((await run()).tagGroups).toEqual({
+      available: true,
+      groups: [
+        { key: 'anime', label: 'Anime', hidden: false },
+        { key: 'furry', label: 'Furry', hidden: false },
+        { key: 'gore', label: 'Gore', hidden: true },
+        { key: 'political', label: 'Political', hidden: false },
+      ],
+    });
+    expect(hiddenTagGroups).toHaveBeenCalledWith(PRIMARY, 7);
   });
 });
 
@@ -94,5 +122,42 @@ describe('the questions action', () => {
     getPlayerStatus.mockResolvedValue(null);
     await expect(post({ questions: 'off' })).rejects.toMatchObject({ status: 303 });
     expect(setYesNoQuestions).not.toHaveBeenCalled();
+  });
+});
+
+const postGroup = (fields: Record<string, string>) => {
+  const body = new FormData();
+  for (const [key, value] of Object.entries(fields)) body.set(key, value);
+  return actions.tagGroup({
+    locals: { user: { id: 7 } },
+    request: new Request('http://knights.test/settings?/tagGroup', { method: 'POST', body }),
+  } as never) as Promise<any>;
+};
+
+describe('the tag group action', () => {
+  it.each([
+    ['on', true],
+    ['off', false],
+  ])('stores hidden=%s for the group', async (value, hidden) => {
+    expect(await postGroup({ key: 'furry', hidden: value })).toEqual({
+      tagGroup: 'furry',
+      hidden,
+    });
+    expect(setTagGroupHidden).toHaveBeenCalledWith(PRIMARY, 7, 'furry', hidden, NOW);
+  });
+
+  it('refuses a group that is not a preset one, or a value but on or off, storing nothing', async () => {
+    expect(await postGroup({ key: 'sexual', hidden: 'on' })).toMatchObject({ status: 400 });
+    expect(await postGroup({ key: 'anime', hidden: 'maybe' })).toMatchObject({ status: 400 });
+    expect(setTagGroupHidden).not.toHaveBeenCalled();
+  });
+
+  it('refuses a muted player and an Acolyte, storing nothing', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    expect(await postGroup({ key: 'anime', hidden: 'on' })).toMatchObject({ status: 403 });
+    getStanding.mockResolvedValue({ banned: false, muted: false });
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 3 });
+    expect(await postGroup({ key: 'anime', hidden: 'on' })).toMatchObject({ status: 403 });
+    expect(setTagGroupHidden).not.toHaveBeenCalled();
   });
 });

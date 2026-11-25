@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../test/pglite-kysely';
 import { seedPlayer } from '../../test/seed';
-import { playerPrefs, setYesNoQuestions } from './player-prefs';
+import { hiddenTagGroups, playerPrefs, setTagGroupHidden, setYesNoQuestions } from './player-prefs';
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -69,5 +69,32 @@ describe('the yes/no questions switch', () => {
       },
     } as unknown as Kysely<DB>;
     expect(await playerPrefs(broken, 1, true)).toEqual({ yesNo: false });
+  });
+});
+
+describe('the hidden tag groups', () => {
+  it('starts with none, with or without a KnightsPlayer row', async () => {
+    expect(await hiddenTagGroups(db, 1)).toEqual([]);
+    await pg.exec(
+      `INSERT INTO "KnightsPlayer" ("playerId", "shieldWeek") VALUES (1, '2026-12-14')`
+    );
+    expect(await hiddenTagGroups(db, 1)).toEqual([]);
+  });
+
+  it('hides and shows a group, once each however often it is sent, and leaves the other groups alone', async () => {
+    await setTagGroupHidden(db, 1, 'anime', true, NOW);
+    await setTagGroupHidden(db, 1, 'gore', true, NOW);
+    await setTagGroupHidden(db, 1, 'anime', true, NOW);
+    expect(await hiddenTagGroups(db, 1)).toEqual(['anime', 'gore']);
+
+    await setTagGroupHidden(db, 1, 'anime', false, NOW);
+    await setTagGroupHidden(db, 1, 'anime', false, NOW);
+    expect(await hiddenTagGroups(db, 1)).toEqual(['gore']);
+  });
+
+  it('keeps the yes/no switch as it was', async () => {
+    await setYesNoQuestions(db, 1, false, NOW);
+    await setTagGroupHidden(db, 1, 'furry', true, NOW);
+    expect(await stored()).toEqual({ yesNoQuestions: false });
   });
 });

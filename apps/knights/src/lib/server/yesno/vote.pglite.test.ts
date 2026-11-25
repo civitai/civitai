@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { DB } from '@civitai/db-schema/kysely';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { engage, seedImage, seedPlayer } from '../../../test/seed';
+import { engage, hideTagGroups, seedImage, seedPlayer, tagImage } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { ledgerOf, settleAndMirror, settleFinalItems } from '../progression/progression';
 import { ensureVotePartitions, lockPlayerVoting } from '../queue/queue.service';
@@ -80,7 +80,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   mirror.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post","UserEngagement" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post","UserEngagement","KnightsPlayer","TagsOnImageDetails" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
 });
 
@@ -491,6 +491,22 @@ describe('escalation', () => {
       reason: 'no-consensus',
       minRank: 'Knight',
     });
+  });
+});
+
+describe('a yes/no question on an image in a tag group the player hides', () => {
+  it('is offered to other players only, and the answer is refused', async () => {
+    const ids = await seed([row('a')]);
+    await knights(2);
+    await tagImage(pg, 10, 2470);
+    await hideTagGroups(pg, 1, ['political']);
+    const offer = (userId: number) =>
+      pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
+
+    expect(await offer(1)).toBeNull();
+    expect((await offer(2))?.itemId).toBe(ids.a);
+    expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect(await votes(ids.a)).toEqual([]);
   });
 });
 
