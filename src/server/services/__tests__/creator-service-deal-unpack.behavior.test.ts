@@ -819,6 +819,35 @@ describe('judging a file by what it is', () => {
   });
 
   it.each([
+    ['a PNG behind 1 KB of text', Buffer.concat([JUNK, PNG_BYTES()])],
+    ['a NUL byte', Buffer.from('fine\u0000')],
+  ])('refuses a zip whose notes.txt holds %s', async (_n, data) => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'docs/notes.txt', data },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: "A document in the archive isn't what its name says.",
+    });
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it('unpacks a zip whose text entries are text', async () => {
+    const dealId = await accepted();
+    const fileId = await zipFinal(dealId, [
+      { name: 'a.png', data: IMAGE_A },
+      { name: 'docs/notes.txt', data: Buffer.from('Résumé — notes ✓\n'.repeat(100)) },
+      { name: 'brief.pdf', data: Buffer.from('%PDF-1.7\n\xff') },
+    ]);
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect((await entries(fileId)).map((e) => e.path)).toEqual(['a.png']);
+  });
+
+  it.each([
     ['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))],
     ['a .pdf with its header', 'brief.pdf', Buffer.from('%PDF-1.7\n...binary body\xff')],
   ])('delivers %s', async (_n, name, content) => {

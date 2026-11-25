@@ -25,6 +25,7 @@ import { buildEntryScanCopy, PreviewRejectedError } from '~/server/utils/service
 import {
   openZip,
   readEntry,
+  openEntryStream,
   s3ZipSource,
   id3TagLength,
   listZipPaths,
@@ -239,6 +240,11 @@ async function validateZip({ zipfile, entries }: OpenedZip, shouldStop: () => bo
     if (shouldStop()) return null;
     const read = await readEntry(zipfile, entry, budget, () => false);
     if (read.kind === 'image') images.push(entry);
+    // A second read, on a budget of its own, so the archive's total is not counted twice.
+    else if (
+      !(await isTheDocumentItsNamed(entry.path, () => openEntryStream(zipfile, entry, { used: 0 })))
+    )
+      throw new ZipRejectedError("A document in the archive isn't what its name says.");
   }
   return images;
 }
@@ -410,25 +416,31 @@ const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'yaml', 'yml', 'csv']);
 const PDF_START = Buffer.from('%PDF-');
 
 /**
- * A document Final has no content scan, so it must be what its name says, all of it: a text file is
- * valid UTF-8 with no NUL byte anywhere, and a PDF starts with its header. Anything else would be
- * delivered unscanned, so it is refused.
+ * A document has no content scan, so a Final or a zip entry named as one must be what its name says,
+ * all of it: a text file is valid UTF-8 with no NUL byte anywhere, and a PDF starts with its header.
+ * Anything else would be delivered unscanned, so it is refused. `open` streams the bytes, the first
+ * `bytes` of them when that is all the check needs.
  */
-async function isTheDocumentItsNamed(file: ClaimedFinal) {
-  const extension = fileExtension(file.fileName);
+async function isTheDocumentItsNamed(
+  name: string,
+  open: (bytes?: number) => AsyncIterable<Buffer> | Promise<AsyncIterable<Buffer>>
+) {
+  const extension = fileExtension(name);
   const text = TEXT_EXTENSIONS.has(extension);
   if (!text && extension !== 'pdf') return true;
-  const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
   if (!text) {
     const chunks: Buffer[] = [];
-    for await (const chunk of source.readRange(0, PDF_START.length)) chunks.push(chunk as Buffer);
-    return Buffer.concat(chunks).equals(PDF_START);
+    for await (const chunk of await open(PDF_START.length)) {
+      chunks.push(chunk);
+      if (Buffer.concat(chunks).length >= PDF_START.length) break;
+    }
+    return Buffer.concat(chunks).subarray(0, PDF_START.length).equals(PDF_START);
   }
   const decoder = new TextDecoder('utf-8', { fatal: true });
   try {
-    for await (const chunk of source.readRange(0, file.size)) {
-      if ((chunk as Buffer).includes(0)) return false;
-      decoder.decode(chunk as Buffer, { stream: true });
+    for await (const chunk of await open()) {
+      if (chunk.includes(0)) return false;
+      decoder.decode(chunk, { stream: true });
     }
     decoder.decode();
   } catch (error) {
@@ -436,6 +448,12 @@ async function isTheDocumentItsNamed(file: ClaimedFinal) {
     throw error;
   }
   return true;
+}
+
+/** The whole Final, or its first `bytes`. */
+async function finalBytes(file: ClaimedFinal) {
+  const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
+  return (bytes?: number) => source.readRange(0, Math.min(bytes ?? file.size, file.size));
 }
 
 /** A Final that is itself an image has a single entry: the file. */
@@ -571,7 +589,7 @@ export async function unpackFinals({
       await unpackImage(file);
     } else if (await isImageByContent(file)) {
       await unpackImage(file);
-    } else if (!(await isTheDocumentItsNamed(file))) {
+    } else if (!(await isTheDocumentItsNamed(file.fileName, await finalBytes(file)))) {
       throw notItsFormat('document', extension);
     }
     await markUnpacked(file.id, extension !== 'zip');
