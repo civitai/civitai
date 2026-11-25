@@ -212,6 +212,11 @@ export type GenerationContext = {
   acknowledgedSoftBlock?: boolean;
   /** Stored as `metadata.remixRun`; user-writable afterwards, like the rest of the metadata. */
   remixRun?: Record<string, unknown>;
+  /**
+   * Sent as the create body's `arguments.remixSnapshot`, which the orchestrator sets only at create.
+   * Server callers only: no client input reaches it.
+   */
+  remixSnapshot?: string;
 };
 
 /** Options for submitting a generation */
@@ -1927,6 +1932,7 @@ export async function generateFromGraph({
   acceptBoostRequired,
   inputGate,
   remixRun,
+  remixSnapshot,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, userId, inputGate);
@@ -2174,6 +2180,7 @@ export async function generateFromGraph({
       tips,
       experimental,
       metadata,
+      ...(remixSnapshot ? { arguments: { remixSnapshot } } : {}),
       callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
       ...outputRestrictions(capOutput, allowMatureContent),
       // @ts-ignore - BuzzSpendType is properly supported

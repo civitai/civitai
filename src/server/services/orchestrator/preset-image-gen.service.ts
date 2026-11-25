@@ -315,6 +315,7 @@ export async function submitPresetImageGen(
     externalId?: string;
     sourceProvenance?: string[];
     remixRun?: Record<string, unknown>;
+    remixSnapshot?: string;
   }
 ) {
   const {
@@ -330,6 +331,7 @@ export async function submitPresetImageGen(
     externalId,
     sourceProvenance,
     remixRun,
+    remixSnapshot,
   } = args;
   const input = graphInputOf(args, false);
 
@@ -365,6 +367,7 @@ export async function submitPresetImageGen(
     externalId,
     sourceProvenance,
     remixRun,
+    remixSnapshot,
     inputGate: 'checked-by-caller',
   });
 }

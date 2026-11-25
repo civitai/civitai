@@ -113,8 +113,17 @@ import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 
 const CHECKPOINT_ID = getWorkflowCapability('Qwen', 'txt2img')?.defaultModelId as number;
 
-function submit({ tier, isModerator }: { tier: string; isModerator: boolean }) {
+function submit({
+  tier,
+  isModerator,
+  remixSnapshot,
+}: {
+  tier: string;
+  isModerator: boolean;
+  remixSnapshot?: string;
+}) {
   return generateFromGraph({
+    remixSnapshot,
     input: {
       workflow: 'txt2img',
       ecosystem: 'Qwen',
@@ -168,5 +177,24 @@ describe('generateFromGraph — the reply reads coverage for the submitting user
       'Some of your resources are not available for generation'
     );
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('generateFromGraph — remixSnapshot', () => {
+  const createBody = () => {
+    const call = submitWorkflow.mock.calls.find(
+      ([args]) => !(args as { query?: { whatif?: boolean } }).query?.whatif
+    );
+    return (call?.[0] as { body: Record<string, unknown> }).body;
+  };
+
+  it('a server caller’s value is sent as the create body’s arguments.remixSnapshot', async () => {
+    await submit({ tier: 'bronze', isModerator: false, remixSnapshot: 'rrs1.demo' });
+    expect(createBody().arguments).toEqual({ remixSnapshot: 'rrs1.demo' });
+  });
+
+  it('without one, the create body carries no arguments', async () => {
+    await submit({ tier: 'bronze', isModerator: false });
+    expect(createBody()).not.toHaveProperty('arguments');
   });
 });
