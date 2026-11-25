@@ -66,7 +66,7 @@ describe('postgres-query target guard', () => {
 });
 
 // Async spawn: PGlite answers on this process's event loop, which spawnSync would block.
-const explainOnPglite = async (flag: string, sql: string) => {
+const runOnPglite = async (...args: string[]) => {
   const db = await PGlite.create();
   const server = new PGLiteSocketServer({ db, host: '127.0.0.1', port: 0 });
   await server.start();
@@ -77,7 +77,7 @@ const explainOnPglite = async (flag: string, sql: string) => {
   );
 
   const started = Date.now();
-  const child = spawn(process.execPath, [join(skillDir, 'query.mjs'), '--dev', flag, sql], {
+  const child = spawn(process.execPath, [join(skillDir, 'query.mjs'), '--dev', ...args], {
     env: envWithoutDatabases(),
   });
   let stdout = '';
@@ -91,7 +91,7 @@ const explainOnPglite = async (flag: string, sql: string) => {
 
 describe('postgres-query --explain', () => {
   it('shows the plan without running the query', async () => {
-    const { status, stdout, elapsed } = await explainOnPglite('--explain', 'SELECT pg_sleep(10)');
+    const { status, stdout, elapsed } = await runOnPglite('--explain', 'SELECT pg_sleep(10)');
 
     expect(status).toBe(0);
     expect(stdout).toContain('Result');
@@ -100,9 +100,20 @@ describe('postgres-query --explain', () => {
   }, 30_000);
 
   it('--explain-analyze runs the query and reports actual timings', async () => {
-    const { status, stdout } = await explainOnPglite('--explain-analyze', 'SELECT pg_sleep(0)');
+    const { status, stdout } = await runOnPglite('--explain-analyze', 'SELECT pg_sleep(0)');
 
     expect(status).toBe(0);
     expect(stdout).toContain('actual time');
+  }, 30_000);
+});
+
+// PGlite ignores the statement_timeout startup option, as a transaction pooler may, so only the
+// SET LOCAL inside the read transaction can set it here.
+describe('postgres-query --timeout', () => {
+  it('sets statement_timeout inside the read transaction', async () => {
+    const { status, stdout } = await runOnPglite('--timeout', '7', 'SHOW statement_timeout');
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("statement_timeout: '7s'");
   }, 30_000);
 });
