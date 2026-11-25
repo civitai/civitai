@@ -14,16 +14,35 @@ const trimSlash = (value: string): string => (value.endsWith('/') ? value.slice(
 export const civitaiLinkUrl = (): string =>
   trimSlash(env.CIVITAI_LINK_URL || 'https://civitai.red');
 
-/** Base for server-to-server calls to the main app — `/api/mod/*`, the Meilisearch callback, the
- *  new-order finalize — and the redirect target for authenticated non-moderators.
+/** The main app's public origin: the redirect target for authenticated non-moderators, and the base
+ *  for public links that must land on `.com`. Server calls to the main app use `civitaiInternalUrl`.
  *
- *  `.com`, NOT `.red`: this is an API base, and the session cookie these calls relay is issued for
- *  `.civitai.com`. Links a moderator follows are the other decision — see `civitaiLinkUrl`.
+ *  `.com`, NOT `.red`. Links a moderator follows are the other decision — see `civitaiLinkUrl`.
  *
  *  Defaulted here rather than at each call site: the fallback was written out six times, and two of
  *  those copies did not strip a trailing slash, so a value ending in `/` built `//api/...` from some
  *  callers and not others. */
 export const civitaiAppUrl = (): string => trimSlash(env.CIVITAI_APP_URL || 'https://civitai.com');
+
+/** Base for this server's calls to the main app's `/api/mod`, `/api/admin` and `/api/internal` routes:
+ *  its in-cluster address. Outside production it falls back to `civitaiAppUrl()`. Production throws
+ *  instead of falling back. */
+export const civitaiInternalUrl = (): string => {
+  if (env.CIVITAI_INTERNAL_URL) return trimSlash(env.CIVITAI_INTERNAL_URL);
+  if (env.NODE_ENV === 'production')
+    throw new Error('CIVITAI_INTERNAL_URL is not set, so calls to the main app are disabled.');
+  return civitaiAppUrl();
+};
+
+/** `civitaiInternalUrl`, or null (logged) where that throws, for callers that report a failure instead. */
+export const tryCivitaiInternalUrl = (): string | null => {
+  try {
+    return civitaiInternalUrl();
+  } catch (e) {
+    console.error('[civitai-url]', (e as Error).message);
+    return null;
+  }
+};
 
 /** The main app's WEBHOOK receiver. A different host from `civitaiAppUrl` — that is the web app, this
  *  is the ingress the orchestrator's training callbacks go to — so it cannot share that base. Here

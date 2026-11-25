@@ -19,7 +19,7 @@ import { dbRead } from '$lib/server/db';
  * per-actor rate limit and audit row. A token-guarded route was tried and reverted: a service identity
  * disables exactly those controls, on what is CSAM-adjacent evidence.
  *
- * ⚠️ Like every other `/api/mod/*` call from this app, it therefore needs `CIVITAI_APP_URL` to name a
+ * ⚠️ Like every other `/api/mod/*` call from this app, it therefore needs `civitaiInternalUrl()` to name a
  * host that trusts this app's auth hub. In local development that means running the main app locally
  * and pointing at it; against a remote host the relayed session is not accepted and the resolve fails.
  */
