@@ -84,8 +84,8 @@ func (s *Sources) imageResourcesComputed() bool {
 // src/server/redis/image-resources.sql.ts), its joins, columns, filter and ORDER BY unchanged (the IN
 // list as `= ANY`, the enum and text columns as text). The row order is the cached order
 // (`modelVersionIds`, and the first Checkpoint's `baseModel`), and only the ORDER BY makes it agree
-// with Node's: without one, the two plans (`= ANY` here, an IN list there, on different databases)
-// returned the same rows in different orders. The ORDER BY is the table's primary key, a total order.
+// with Node's: without one, the two plans (`= ANY` here, an IN list there) returned the same rows in
+// different orders. The ORDER BY is the table's primary key, a total order.
 // src/server/redis/__tests__/image-resources.sql.behavior.test.ts pins the two ORDER BYs equal.
 const sqlImageResources = `SELECT ir."imageId", ir."modelVersionId", ir.strength, ir.detected, m.id AS "modelId", m.name AS "modelName", m.type::text AS "modelType", mv.name AS "versionName", mv."baseModel"::text AS "baseModel", m.poi, m.minor
 FROM "ImageResourceNew" ir

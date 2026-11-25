@@ -3,9 +3,8 @@ import { Prisma } from '@prisma/client';
 /**
  * imageResourcesCache's lookup: each image's resources with their version and model, ordered by
  * image then model version (the table's primary key), so every miss computes the same order.
- * Without the ORDER BY the order was whatever the plan returned, and it differed between databases
- * and plans: the cached order decides `modelVersionIds`, and the first Checkpoint decides an image's
- * `baseModel`. feed-go's copy (apps/feed-go/internal/hydrate/resources.go, sqlImageResources) orders
+ * Without the ORDER BY the order was whatever the plan returned, and it differed between plans: the
+ * cached order decides `modelVersionIds`, and the first Checkpoint decides an image's `baseModel`. feed-go's copy (apps/feed-go/internal/hydrate/resources.go, sqlImageResources) orders
  * the same way; src/server/redis/__tests__/image-resources.sql.behavior.test.ts pins the two.
  */
 export function imageResourcesQuery(imageIds: number[]) {
