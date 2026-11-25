@@ -111,7 +111,7 @@ describe("the scan's report on a Feature Pages comment", () => {
       userId: MOD,
       liftScanHide: true,
     });
-    expect(result).toEqual({ ok: true, changed: true });
+    expect(result).toEqual({ ok: true, changed: true, lifted: true });
     expect(await comment()).toEqual({ hidden: false, liftGrantedBy: MOD });
 
     const { items } = await getReports({
@@ -151,7 +151,7 @@ describe("the scan's report on a Feature Pages comment", () => {
         userId: MOD,
         liftScanHide: true,
       })
-    ).toEqual({ ok: true, changed: false });
+    ).toEqual({ ok: true, changed: false, lifted: false });
     expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
   });
 
@@ -194,7 +194,7 @@ describe("the scan's report on a Feature Pages comment", () => {
     expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
   });
 
-  it('a banned author: the report closes and the comment stays hidden', async () => {
+  it('a banned author: refused with why, and the report stays open', async () => {
     await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [AUTHOR]);
     expect(
       await setReportStatus({
@@ -203,10 +203,10 @@ describe("the scan's report on a Feature Pages comment", () => {
         userId: MOD,
         liftScanHide: true,
       })
-    ).toEqual({ ok: true, changed: true });
+    ).toEqual({ ok: false, error: expect.stringContaining('banned or muted') });
     expect(
       (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
-    ).toEqual({ status: 'Unactioned' });
+    ).toEqual({ status: 'Pending' });
     expect(await comment()).toEqual({ hidden: true, liftGrantedBy: null });
   });
 

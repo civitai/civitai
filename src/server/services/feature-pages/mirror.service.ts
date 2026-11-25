@@ -928,18 +928,39 @@ const takeLift = (commentId: number, by?: number) =>
   );
 
 /**
+ * The key just before `key` in the platform's key order, so the page after it starts at `key`. A
+ * comment key is 32 lowercase hex (HMAC-SHA256 of its sourceId, truncated): one less, at the same
+ * width, has no key between it and `key`. Any other shape falls back to `key` short of its last
+ * character, which another key can sort between, and then the read names that one and confirms nothing.
+ */
+export function keyBefore(key: string) {
+  if (!/^[0-9a-f]+$/.test(key) || /^0+$/.test(key)) return key.slice(0, -1);
+  const digits = key.split('');
+  let i = digits.length - 1;
+  while (digits[i] === '0') digits[i--] = 'f';
+  digits[i] = (parseInt(digits[i], 16) - 1).toString(16);
+  return digits.join('');
+}
+
+/** The comments page that holds exactly the comment `urn`. */
+export function singleCommentQuery(urn: string) {
+  return new URLSearchParams({
+    app: PLATFORM_FEATURE_PAGES_APP,
+    limit: '1',
+    cursor: keyBefore(urn.slice(urn.lastIndexOf('/') + 1)),
+  });
+}
+
+/**
  * Why the platform's deciding verdict for this row is not confirmed as the moderator hide sent from
- * here, or null when it is. Read alone: the comments page after the cursor just before its key.
+ * here, or null when it is. A one-item page from keyBefore(its key) is exactly this comment.
  */
 async function unconfirmedLift(row: FpMirrorFactsRow) {
   if (!row.urn || !row.modHideSentAt) return 'no hide sent';
-  const key = row.urn.slice(row.urn.lastIndexOf('/') + 1);
-  const query = new URLSearchParams({
-    app: PLATFORM_FEATURE_PAGES_APP,
-    limit: '1',
-    cursor: key.slice(0, -1),
+  const reply = await callSigner(PLATFORM_COMMENTS_READ_PATH, {
+    method: 'GET',
+    query: singleCommentQuery(row.urn),
   });
-  const reply = await callSigner(PLATFORM_COMMENTS_READ_PATH, { method: 'GET', query });
   const page = commentsPageSchema.safeParse(reply.body);
   if (reply.status !== 200 || !page.success) return `read failed: ${reply.status}`;
   const [item] = page.data.items;

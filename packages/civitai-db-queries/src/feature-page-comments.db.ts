@@ -562,8 +562,7 @@ export const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
  * A moderator sets one report Unactioned. When it is the report the scan filed with its current hide
  * and it moves from open to Unactioned here, it also lifts that hide, in the same transaction.
  * `changed`: the status moved; `lifted`: the comment shown again, or null. `held`: that report is
- * left open, unchanged, because the lift has to wait: someone else's report on the comment is open,
- * or a push holds the row.
+ * left open, unchanged, because the lift cannot be made now, and why.
  */
 export async function unactionReportLiftingScanHide(
   db: Kysely<DB>,
@@ -599,15 +598,36 @@ export async function unactionReportLiftingScanHide(
     if (!prior || prior.status === 'Unactioned') return { changed: false, lifted: null };
     const opened = prior.status === 'Pending' || prior.status === 'Processing';
     if (commentId !== undefined && opened && actorId !== systemUserId) {
-      const [wait] = await rows<{ reported: boolean; pushing: boolean }>(
+      // The scan's own report on the scan's current hide: a lift it cannot make now leaves it open
+      // and says why, so the hide is never left with nobody told.
+      const [wait] = await rows<{
+        reported: boolean;
+        pushing: boolean;
+        author: boolean;
+        held: boolean;
+        version: boolean;
+      }>(
         trx,
         `SELECT ${openPersonReport('m."commentId"', '$2')} AS reported,
-           COALESCE(m."leaseUntil" > now(), false) AS pushing
-         FROM "FeaturePageCommentMirror" m WHERE m."commentId" = $1 AND m."scanHideReportId" = $3`,
-        [commentId, systemUserId, reportId]
+           COALESCE(m."leaseUntil" > now(), false) AS pushing,
+           (u.id IS NULL OR u."deletedAt" IS NOT NULL OR u."bannedAt" IS NOT NULL OR u.muted) AS author,
+           ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
+           m."scanHiddenVersion" IS DISTINCT FROM m.version AS version
+         FROM "FeaturePageCommentMirror" m
+         JOIN "CommentV3" c ON c.id = m."commentId"
+         JOIN "Report" r ON r.id = m."scanHideReportId"
+         LEFT JOIN "User" u ON u.id = c."userId"
+         WHERE m."commentId" = $1 AND m."scanHideReportId" = $3
+           AND r."userId" = $2 AND r.reason = 'AdminAttention' AND r.details->>'comment' = $4
+           AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
+           AND c."hiddenAt" = m."scanHiddenAt" AND m."goneCause" IS NULL
+           AND m."removeWantedAt" IS NULL`,
+        [commentId, systemUserId, reportId, FP_AUTO_HIDE_REPORT_COMMENT]
       );
-      if (wait?.reported) return { changed: false, lifted: null, held: 'reported' as const };
-      if (wait?.pushing) return { changed: false, lifted: null, held: 'pushing' as const };
+      const held = (['reported', 'pushing', 'author', 'held', 'version'] as const).find(
+        (why) => wait?.[why]
+      );
+      if (held) return { changed: false, lifted: null, held };
     }
     await rows(
       trx,
@@ -617,9 +637,8 @@ export async function unactionReportLiftingScanHide(
     );
     if (commentId === undefined || !opened || actorId === systemUserId)
       return { changed: true, lifted: null };
-    // Only the report the scan filed with this hide, for the text it hid. Never while a push holds
-    // the row (one in flight may send the scan's hide again after the lift, and the platform keeps
-    // it) or someone else's report is open: both are checked above, and again here.
+    // A push may send the scan's hide again after the lift, and the platform keeps it, so the lease
+    // and person-report conditions repeat the checks above.
     const [lifted] = await rows<{ commentId: number; version: number }>(
       trx,
       `WITH ok AS (

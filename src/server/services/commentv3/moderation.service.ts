@@ -217,7 +217,6 @@ export async function hideFlaggedFpComment(
      WHERE c.id = $1`,
     [commentId]
   );
-  // Its TextScanHold stays.
   if (rows[0]?.entityType !== 'featurePage' || rows[0].lifted) return false;
 
   const createReport =

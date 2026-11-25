@@ -535,6 +535,15 @@ async function perReportType<V>(
   return rows.map((row) => [reportCountKey(row.type as ReportEntity), row.value]);
 }
 
+/** Why the scan's report was left open: the comment it hid cannot be shown again yet. */
+const SCAN_LIFT_HELD = {
+  reported: 'Someone else has also reported this comment. Rule on that report first.',
+  pushing: 'This comment is being sent to the platform. Try again in a minute.',
+  author: "The comment's author is banned or muted, so it stays hidden.",
+  held: 'This comment is held for a child-safety check, so it stays hidden.',
+  version: 'The comment changed since the scan hid it, so it stays hidden.',
+} as const;
+
 export async function setReportStatus({
   id,
   status,
@@ -571,22 +580,16 @@ export async function setReportStatus({
   if (!exists) return { ok: false as const, error: 'That report no longer exists. Reload.' };
 
   if (liftScanHide && status === ReportStatus.Unactioned) {
-    const { changed, held } = await unactionReportLiftingScanHide(dbWrite, {
+    const { changed, lifted, held } = await unactionReportLiftingScanHide(dbWrite, {
       reportId: id,
       actorId: userId,
       systemUserId: SYSTEM_USER_ID,
     });
     if (held)
-      return {
-        ok: false as const,
-        error:
-          held === 'reported'
-            ? 'Someone else has also reported this comment. Rule on that report first; this one is still open.'
-            : 'This comment is being sent to the platform. Try again in a minute.',
-      };
+      return { ok: false as const, error: `${SCAN_LIFT_HELD[held]} This report is still open.` };
     await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
     await syncResolvedMarker(id, status);
-    return { ok: true as const, changed };
+    return { ok: true as const, changed, lifted: !!lifted };
   }
 
   const updated = await dbWrite

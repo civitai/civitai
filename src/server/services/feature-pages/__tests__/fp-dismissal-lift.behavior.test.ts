@@ -194,15 +194,22 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect([decided(tos.id), decided(other.id)]).toEqual(['hidden', 'hidden']);
   });
 
+  /** The report is left open, why is returned, and the comment stays hidden. */
+  const heldOpen = async (id: number, reportId: number, why: string) => {
+    expect(await unaction(reportId)).toEqual({ changed: false, lifted: null, held: why });
+    expect(await statusOf(reportId)).toBe('Pending');
+    expect((await commentOf(id)).hidden).toBe(true);
+  };
+
   it('3. lifts nothing for a banned or muted author, at the dismissal or at the push', async () => {
     const banned = await hiddenByScan('banned author');
     await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [AUTHOR]);
-    expect(await dismiss(banned.reportId)).toBeNull();
+    await heldOpen(banned.id, banned.reportId, 'author');
     await q(`UPDATE "User" SET "bannedAt" = NULL WHERE id = $1`, [AUTHOR]);
 
     const muted = await hiddenByScan('muted author');
     await q(`UPDATE "User" SET muted = true WHERE id = $1`, [AUTHOR]);
-    expect(await dismiss(muted.reportId)).toBeNull();
+    await heldOpen(muted.id, muted.reportId, 'author');
     await q(`UPDATE "User" SET muted = false WHERE id = $1`, [AUTHOR]);
 
     // Granted and pushed, then muted before the reconcile: nothing is sent.
@@ -213,6 +220,21 @@ describe("a moderator's dismissal of the scan's report", () => {
     expect(await reconcile()).toMatchObject({ moderatorLifts: 0, moderatorHidden: 1 });
     expect(modVisibleBySource()).toHaveLength(0);
     expect(decided(later.id)).toBe('hidden');
+  });
+
+  it('3b. held in the csam queue, or its text changed since the scan hid it: the report is left open', async () => {
+    const held = await hiddenByScan('held for a check');
+    await q(
+      `INSERT INTO "TextScanHold"("entityType", "entityId", label, status) VALUES ('CommentV3', $1, 'csam', 'Pending')`,
+      [held.id]
+    );
+    await heldOpen(held.id, held.reportId, 'held');
+
+    const changed = await hiddenByScan('changed since');
+    await q(`UPDATE "FeaturePageCommentMirror" SET version = version + 1 WHERE "commentId" = $1`, [
+      changed.id,
+    ]);
+    await heldOpen(changed.id, changed.reportId, 'version');
   });
 
   it("4. lifts nothing for the system user, a replayed or re-ruled report, a person's report, or the main app's bulk path", async () => {
