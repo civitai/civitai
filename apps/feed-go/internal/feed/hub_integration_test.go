@@ -9,8 +9,9 @@ package feed
 // Ids in this file live in 2_108_000..2_108_999.
 
 import (
+	"fmt"
 	"reflect"
-	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -106,15 +107,17 @@ func hubString(h *HubRow) string {
 	if h == nil {
 		return "nil"
 	}
-	s := "{level " + strconv.Itoa(h.ForcedBrowsingLevel) + ":"
+	var b strings.Builder
+	fmt.Fprintf(&b, "{level %d:", h.ForcedBrowsingLevel)
 	for _, src := range h.Sources {
-		s += " " + src.Type + ":" + strconv.Itoa(src.TargetID)
+		fmt.Fprintf(&b, " %s:%d", src.Type, src.TargetID)
 		if src.Exclude {
-			s += "(exclude)"
+			b.WriteString("(exclude)")
 		}
 		if src.GroupKey != nil {
-			s += "(group " + strconv.Itoa(*src.GroupKey) + ")"
+			fmt.Fprintf(&b, "(group %d)", *src.GroupKey)
 		}
 	}
-	return s + "}"
+	b.WriteString("}")
+	return b.String()
 }
