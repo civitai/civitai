@@ -266,6 +266,10 @@ const row = async (id: number) =>
     )
   ).rows[0];
 
+/** The scan outcome an unlock recorded on model `id`. */
+const scanOf = async (id: number) =>
+  ((await row(id)).meta.nsfwLockBackfill as { scan?: unknown } | undefined)?.scan;
+
 const ALL_ELIGIBLE = [ELIGIBLE, ELIGIBLE_RULED_BEFORE, ELIGIBLE_SYSTEM_RULED, ELIGIBLE_TRANSFERRED];
 
 describe('model nsfw lock backfill: scan locks', () => {
@@ -624,7 +628,7 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(effects.bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
       expect(effects.bustPublicModelResponseCache).toHaveBeenCalledWith(result.changed);
       for (const id of ALL_ELIGIBLE)
-        expect((await row(id)).meta.nsfwLockBackfill.scan).toMatchObject({ status: 'submitted' });
+        expect(await scanOf(id)).toMatchObject({ status: 'submitted' });
     });
 
     it('locks again, in the same call, a changed id whose scan was not submitted', async () => {
@@ -645,11 +649,11 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(after.lockedProperties).toEqual(before.lockedProperties);
       expect(after.nsfw).toBe(before.nsfw);
       expect(after.meta.systemNsfwLock).toEqual(profanityMarker);
-      expect(after.meta.nsfwLockBackfill.scan).toMatchObject({
+      expect(await scanOf(ELIGIBLE)).toMatchObject({
         status: 'failed-relocked',
         reason: 'threw',
       });
-      expect((await row(ELIGIBLE_TRANSFERRED)).meta.nsfwLockBackfill.scan).toMatchObject({
+      expect(await scanOf(ELIGIBLE_TRANSFERRED)).toMatchObject({
         status: 'failed-relocked',
         reason: 'not-active/shadow',
       });
