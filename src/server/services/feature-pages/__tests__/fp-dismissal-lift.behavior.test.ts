@@ -442,6 +442,37 @@ describe("a moderator's dismissal of the scan's report", () => {
     await heldOpen(id, stale, 'version');
   });
 
+  it('7e. a scan whose text check fails still hides, bound to no version, and fails for the retry', async () => {
+    const id = (await seedFpComment(mirror, 'checked text')).comment.sourceId;
+    await flagScan(id);
+    let reportId = 0;
+    const hiding = moderation.hideFlaggedFpComment(id, {
+      textHash: 'h',
+      scanHashes: async () => {
+        throw new Error('config read failed');
+      },
+      createReport: (async () => {
+        const [report] = await q<{ id: number }>(
+          `INSERT INTO "Report"(status, reason, "userId", details)
+           VALUES ('Pending', 'AdminAttention', $1, '{"comment":"auto-hidden by scan"}') RETURNING id`,
+          [SYSTEM]
+        );
+        await q(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+          id,
+          report.id,
+        ]);
+        reportId = report.id;
+        return report;
+      }) as never,
+    });
+    await expect(hiding).rejects.toThrow('config read failed');
+    expect(await mirrorRow(id)).toMatchObject({
+      scanHiddenVersion: null,
+      scanHideReportId: reportId,
+    });
+    await heldOpen(id, reportId, 'version');
+  });
+
   it('7b. a lift of one version never shows a newer version the scan has not cleared', async () => {
     const { id, reportId } = await hiddenByScan();
     await dismiss(reportId);

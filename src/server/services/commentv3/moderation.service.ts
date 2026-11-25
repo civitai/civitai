@@ -206,6 +206,7 @@ export async function hideFlaggedFpComment(
     db?: Pick<typeof dbWrite, '$queryRawUnsafe' | '$transaction'>;
     /** The text the scan judged, by its scan hash. */
     textHash?: string;
+    scanHashes?: typeof currentScanContentHashes;
   } = {}
 ) {
   const client = deps.db ?? dbWrite;
@@ -244,10 +245,16 @@ export async function hideFlaggedFpComment(
     failure = e;
   }
   // Whether the scan judged the comment's current text: only then is the hide bound to its version.
-  const judgedCurrent =
-    deps.textHash === undefined
-      ? undefined
-      : (await currentScanContentHashes('CommentV3', [commentId])).get(commentId) === deps.textHash;
+  // Unknown (the read failed) hides it bound to no version, then throws for the retry to bind.
+  let judgedCurrent: boolean | undefined;
+  if (deps.textHash !== undefined)
+    try {
+      const hashes = await (deps.scanHashes ?? currentScanContentHashes)('CommentV3', [commentId]);
+      judgedCurrent = hashes.get(commentId) === deps.textHash;
+    } catch (e) {
+      judgedCurrent = false;
+      failure ??= e;
+    }
   const hid = await client.$transaction((tx) =>
     hideAsScan(prismaRunner(tx), commentId, reportId, judgedCurrent)
   );
