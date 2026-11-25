@@ -31,7 +31,7 @@ import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review'
 import type { MediaType } from '$lib/media/edge-url';
 import type { ComFace } from '$lib/com-face';
 
-export type RatingReviewUser = { id: number; username: string | null; image: string | null };
+export type RatingReviewUser = { id: number; username: string | null };
 
 export type RatingReviewEntitySummary = {
   id: number;
@@ -672,10 +672,8 @@ export function ratingReviewRowQuery() {
       'rr.modComment',
       'owner.id as ownerId',
       'owner.username as ownerUsername',
-      'owner.image as ownerImage',
       'resolver.id as resolverId',
       'resolver.username as resolverUsername',
-      'resolver.image as resolverImage',
     ]);
 }
 
@@ -718,11 +716,8 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
       appliedLevel: r.appliedLevel,
       userComment: r.userComment,
       modComment: r.modComment,
-      user: { id: r.ownerId, username: r.ownerUsername, image: r.ownerImage },
-      resolver:
-        r.resolverId != null
-          ? { id: r.resolverId, username: r.resolverUsername, image: r.resolverImage }
-          : null,
+      user: { id: r.ownerId, username: r.ownerUsername },
+      resolver: r.resolverId != null ? { id: r.resolverId, username: r.resolverUsername } : null,
       entity: s
         ? {
             id: s.id,

@@ -15,6 +15,7 @@ import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-ac
 import { parseRestrictionRuling, rulingReason } from '$lib/server/restriction-ruling';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { planRemixSources, triggerOrigin } from '$lib/restrictions/origin';
+import { withheldUrls } from '$lib/server/retracted-media';
 import {
   getGenerationRestrictions,
   getRemixSources,
@@ -56,6 +57,46 @@ function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, 
     username: !isUserId && parsed.q ? parsed.q : undefined,
     userId: isUserId ? asId : undefined,
   };
+}
+
+type WithTriggers = { triggers: RestrictionRow['triggers'] };
+
+/**
+ * What of each trigger's inputs `user` is shown. A remix's input images can be its source's own file,
+ * so they are shown only beside a source read and cleared for this moderator: not one withheld,
+ * missing, past the lookup cap, or unread. Any other trigger's inputs are shown unless the url names
+ * an image withheld from this moderator.
+ */
+export async function triggerInputsFor(
+  rows: readonly WithTriggers[],
+  sources: Record<number, RemixSource>,
+  user: App.Locals['user'] | undefined
+) {
+  const withheld = await withheldUrls(
+    rows.flatMap((row) =>
+      row.triggers.flatMap((t) =>
+        triggerOrigin(t).imageId ? [] : [...(t.inputImages ?? []), t.inputVideo]
+      )
+    ),
+    user,
+    'restriction-inputs'
+  );
+  return <R extends WithTriggers>(row: R): R => ({
+    ...row,
+    triggers: row.triggers.map((trigger) => {
+      const id = triggerOrigin(trigger).imageId;
+      if (id)
+        return sources[id] && !sources[id].restricted
+          ? trigger
+          : { ...trigger, inputImages: undefined, inputVideo: undefined };
+      return {
+        ...trigger,
+        inputImages: trigger.inputImages?.filter((url) => !withheld.has(url)),
+        inputVideo:
+          trigger.inputVideo && withheld.has(trigger.inputVideo) ? undefined : trigger.inputVideo,
+      };
+    }),
+  });
 }
 
 /**
@@ -113,17 +154,7 @@ export async function restrictionTriageLoad(
   } catch {
     sourcesFailed = true;
   }
-  // A remix's input images can be its source's own file, so they are shown only beside a source
-  // read and cleared for this moderator: not one withheld, missing, past the lookup cap, or unread.
-  const shownInputs = <R extends { triggers: RestrictionRow['triggers'] }>(row: R): R => ({
-    ...row,
-    triggers: row.triggers.map((trigger) => {
-      const id = triggerOrigin(trigger).imageId;
-      return id && !(sources[id] && !sources[id].restricted)
-        ? { ...trigger, inputImages: undefined, inputVideo: undefined }
-        : trigger;
-    }),
-  });
+  const shownInputs = await triggerInputsFor(pinned ? [...items, pinned] : items, sources, user);
 
   return {
     items: items.map(shownInputs),

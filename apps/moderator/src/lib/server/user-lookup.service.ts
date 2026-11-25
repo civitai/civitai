@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { holdsCsamReview } from './held-media';
-import { blankCover, listWithheldIds } from './retracted-media';
+import { blankCover, listWithheldIds, withheldUrls } from './retracted-media';
 import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
@@ -307,26 +307,17 @@ export async function withheldProfileMedia(
   profile: UserProfileText | null,
   viewer: App.Locals['user'] | undefined
 ) {
-  // The legacy `User.image` can hold the same key as an Image row; a url no Image row carries is
-  // nothing the rule could withhold, so it shows as it is.
-  const legacyIds = identity?.image
-    ? (
-        await dbRead
-          .selectFrom('Image')
-          .select('id')
-          .where('url', '=', identity.image)
-          .limit(100)
-          .execute()
-      ).map((r) => r.id)
-    : [];
   const ids = [
     identity?.profilePictureId,
     profile?.coverImage?.id,
     profile?.sfwCoverImage?.id,
-    ...legacyIds,
   ].filter((id): id is number => id != null);
-  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(viewer) }, 'user-card');
-  const legacyWithheld = legacyIds.some((id) => withheld.has(id));
+  const [withheld, withheldLegacy] = await Promise.all([
+    listWithheldIds(ids, { csamReview: holdsCsamReview(viewer) }, 'user-card'),
+    // The legacy `User.image` can hold the same key as an Image row.
+    withheldUrls([identity?.image], viewer, 'user-card'),
+  ]);
+  const legacyWithheld = !!identity?.image && withheldLegacy.has(identity.image);
   const media = (m: ProfileMedia | null): ProfileMedia | null =>
     m?.id != null && withheld.has(m.id)
       ? { ...blankCover({ id: m.id, nsfwLevel: m.nsfwLevel }), type: null }

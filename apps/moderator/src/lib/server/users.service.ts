@@ -35,7 +35,7 @@ export const isInstantVerify = (
     ? new Date(verifiedAt).getTime() - new Date(createdAt).getTime() < INSTANT_VERIFY_SECONDS * 1000
     : null;
 
-export type UserSearchResult = { id: number; username: string | null; image: string | null };
+export type UserSearchResult = { id: number; username: string | null };
 
 export type UserSummary = {
   username: string | null;
@@ -98,14 +98,14 @@ export async function searchUsers({
     isInt4Id(id)
       ? dbRead
           .selectFrom('User')
-          .select(['id', 'username', 'image'])
+          .select(['id', 'username'])
           .where('id', '=', id)
           .where('deletedAt', 'is', null)
           .executeTakeFirst()
       : undefined,
     dbRead
       .selectFrom('User')
-      .select(['id', 'username', 'image'])
+      .select(['id', 'username'])
       .where('username', 'like', `${escapeLike(q)}%`)
       .where('deletedAt', 'is', null)
       .where('id', '!=', SYSTEM_USER_ID)

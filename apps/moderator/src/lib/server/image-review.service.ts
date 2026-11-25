@@ -48,7 +48,6 @@ export type ImageReviewItem = {
   createdAt: Date;
   userId: number;
   username: string | null;
-  userImage: string | null;
   postId: number | null;
   postTitle: string | null;
   entityType: string | null;
@@ -141,7 +140,6 @@ export async function getImageReviewQueue({
       'i.createdAt',
       'i.userId',
       'u.username',
-      'u.image as userImage',
       'i.postId',
       'p.title as postTitle',
       'ic.entityType',

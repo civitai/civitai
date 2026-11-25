@@ -55,8 +55,12 @@ export const actions: Actions = {
     const imageIds =
       form.get('all') === 'true' ? undefined : parseIdList(String(form.get('imageIds') ?? ''));
 
-    const result = await rescanStuckImages({ imageIds, userId: locals.user.id });
+    const result = await rescanStuckImages({
+      imageIds,
+      userId: locals.user.id,
+      viewer: locals.user,
+    });
     if (!result.ok) return fail(400, { error: result.error });
-    return { success: true, count: result.count };
+    return { success: true, count: result.count, skipped: result.skipped };
   },
 };
