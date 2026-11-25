@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import {
   articleReadableWhere,
+  articleReadSelect,
   canReadArticle,
   canViewArticle,
   type ArticleReader,
@@ -202,40 +203,53 @@ describe('setAssociatedResources and articles the editor cannot list', () => {
   });
 });
 
-describe('canReadArticle matches the article-by-id query filter', () => {
-  // getArticleById's filter before it moved to articleReadableWhere. A drift in either fails here.
-  const previousWhere = (v: ArticleReader): Prisma.ArticleWhereInput => ({
-    OR: !v?.isModerator
-      ? [
-          { publishedAt: { not: null }, status: 'Published', ingestion: 'Scanned' },
-          { userId: v?.id },
-        ]
-      : undefined,
-  });
+describe('the article read rule for each viewer', () => {
+  const { live, draft, private: priv, unsearchable, earlyAccess } = ARTICLES;
+  const ALL = Object.values(ARTICLES).map((a) => a.id);
+  // Live rows only: the query half admits a Private one, and canViewArticle then drops it.
+  const READABLE: Record<string, { where: number[]; read: number[] }> = {
+    anon: {
+      where: [live.id, priv.id, unsearchable.id, earlyAccess.id],
+      read: [live.id, unsearchable.id, earlyAccess.id],
+    },
+    stranger: {
+      where: [live.id, priv.id, unsearchable.id, earlyAccess.id],
+      read: [live.id, unsearchable.id, earlyAccess.id],
+    },
+    owner: { where: ALL, read: ALL },
+    moderator: { where: ALL, read: ALL },
+  };
 
-  it.each(Object.entries(VIEWERS))('for %s', async (_, viewer) => {
-    const ids = async (where: Prisma.ArticleWhereInput) =>
-      (
-        await h.prisma.article.findMany({ where, select: { id: true }, orderBy: { id: 'asc' } })
-      ).map((x) => x.id);
-    expect(await ids(articleReadableWhere(viewer))).toEqual(await ids(previousWhere(viewer)));
+  const ids = async (where: Prisma.ArticleWhereInput) =>
+    (await h.prisma.article.findMany({ where, select: { id: true }, orderBy: { id: 'asc' } })).map(
+      (x) => x.id
+    );
+
+  it.each(Object.entries(VIEWERS))('for %s', async (name, viewer) => {
+    expect(await ids(articleReadableWhere(viewer))).toEqual(READABLE[name].where);
 
     const rows = await h.prisma.article.findMany({
       orderBy: { id: 'asc' },
-      select: {
-        id: true,
-        userId: true,
-        publishedAt: true,
-        status: true,
-        ingestion: true,
-        availability: true,
-      },
+      select: { id: true, ...articleReadSelect },
     });
-    const inWhere = new Set(await ids(articleReadableWhere(viewer)));
-    for (const row of rows)
-      expect([row.id, canReadArticle(row, viewer)]).toEqual([
-        row.id,
-        inWhere.has(row.id) && canViewArticle(row, viewer),
-      ]);
+    expect(rows.filter((r) => canReadArticle(r, viewer)).map((r) => r.id)).toEqual(
+      READABLE[name].read
+    );
+    expect(rows.filter((r) => canViewArticle(r, viewer)).map((r) => r.id)).toEqual(
+      name === 'anon' || name === 'stranger' ? ALL.filter((id) => id !== priv.id) : ALL
+    );
+  });
+
+  // getArticleById's filter before this change put `{ userId: undefined }` in the OR for a
+  // signed-out viewer. Prisma drops an undefined field from that branch rather than matching
+  // every row, so a signed-out viewer never got a draft from it.
+  it('the previous signed-out filter shape does not return a draft', async () => {
+    const previous = (userId: number | undefined): Prisma.ArticleWhereInput => ({
+      id: draft.id,
+      OR: [{ publishedAt: { not: null }, status: 'Published', ingestion: 'Scanned' }, { userId }],
+    });
+    expect(await ids(previous(OWNER))).toEqual([draft.id]);
+    expect(await ids(previous(undefined))).toEqual([]);
+    expect(await ids({ id: draft.id, ...articleReadableWhere(undefined) })).toEqual([]);
   });
 });
