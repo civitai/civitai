@@ -361,7 +361,7 @@ async function readHead(file: ClaimedFinal) {
 }
 
 /** Counted by claimed type, so false refusals show up after release. */
-const notItsFormat = (kind: 'model' | 'audio', extension: string) => {
+const notItsFormat = (kind: 'model' | 'audio' | 'document', extension: string) => {
   logUnpack('final is not its claimed format', { payload: { kind, extension } }, 'warning').catch(
     () => null
   );
@@ -404,6 +404,38 @@ async function isImageByContent(file: ClaimedFinal) {
       'This image format cannot be delivered. Use PNG, JPEG, WebP or GIF.'
     );
   return kind === 'image';
+}
+
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'json', 'yaml', 'yml', 'csv']);
+const PDF_START = Buffer.from('%PDF-');
+
+/**
+ * A document Final has no content scan, so it must be what its name says, all of it: a text file is
+ * valid UTF-8 with no NUL byte anywhere, and a PDF starts with its header. Anything else would be
+ * delivered unscanned, so it is refused.
+ */
+async function isTheDocumentItsNamed(file: ClaimedFinal) {
+  const extension = fileExtension(file.fileName);
+  const text = TEXT_EXTENSIONS.has(extension);
+  if (!text && extension !== 'pdf') return true;
+  const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
+  if (!text) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of source.readRange(0, PDF_START.length)) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks).equals(PDF_START);
+  }
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  try {
+    for await (const chunk of source.readRange(0, file.size)) {
+      if ((chunk as Buffer).includes(0)) return false;
+      decoder.decode(chunk as Buffer, { stream: true });
+    }
+    decoder.decode();
+  } catch (error) {
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
+  return true;
 }
 
 /** A Final that is itself an image has a single entry: the file. */
@@ -539,6 +571,8 @@ export async function unpackFinals({
       await unpackImage(file);
     } else if (await isImageByContent(file)) {
       await unpackImage(file);
+    } else if (!(await isTheDocumentItsNamed(file))) {
+      throw notItsFormat('document', extension);
     }
     await markUnpacked(file.id, extension !== 'zip');
     // A hand-off that fails is logged; `settleMalwareScans` submits it again.

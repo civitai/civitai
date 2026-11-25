@@ -793,6 +793,43 @@ describe('judging a file by what it is', () => {
     expect(await entries(fileId)).toEqual([]);
   });
 
+  const JUNK = Buffer.from('a'.repeat(1024));
+  it.each([
+    [
+      'a PNG behind 1 KB of text, called notes.txt',
+      'notes.txt',
+      Buffer.concat([JUNK, PNG_BYTES()]),
+    ],
+    ['a zip behind 1 KB of text, called notes.txt', 'notes.txt', Buffer.concat([JUNK, PK])],
+    ['a NUL byte in a .json', 'data.json', Buffer.from('{"a": 1}\u0000')],
+    [
+      'bytes that are not UTF-8, called notes.md',
+      'notes.md',
+      Buffer.from([0x68, 0x69, 0xc3, 0x28]),
+    ],
+    ['a .pdf that does not start with its header', 'brief.pdf', Buffer.concat([JUNK, PNG_BYTES()])],
+  ])('refuses %s, which would be delivered unscanned', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await fileRow(fileId)).failReason).toMatch(/doesn't look like a \.\w+ document/);
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it.each([
+    ['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))],
+    ['a .pdf with its header', 'brief.pdf', Buffer.from('%PDF-1.7\n...binary body\xff')],
+  ])('delivers %s', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
+  });
+
   it('leaves plain documents without entries, and takes a model file that is a zip', async () => {
     const dealId = await accepted();
     const doc = await final(dealId, 'brief.txt', Buffer.from('just some words in a text file'));
@@ -1147,9 +1184,13 @@ describe('video by any other name', () => {
     bytes[188] = 0x47;
     return bytes;
   };
-  /** Three packets of a transport stream: one short of what is taken as one. */
-  const threeSyncs = () =>
-    Buffer.concat([tsStream(188).subarray(0, 3 * 188), Buffer.alloc(600, 0x11)]);
+  /** Three packets of a transport stream: one short of what is taken as one. No NUL byte, so a
+   * .txt holding it is still text. */
+  const threeSyncs = () => {
+    const bytes = Buffer.alloc(3 * 188 + 600, 0x11);
+    for (const at of [0, 188, 376]) bytes[at] = 0x47;
+    return bytes;
+  };
   /** Sync bytes every `gap` bytes, a spacing no transport stream uses. */
   const spacedSyncs = (gap: number) => {
     const bytes = Buffer.alloc(1200, 0x11);
