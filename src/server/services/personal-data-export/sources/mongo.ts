@@ -125,7 +125,7 @@ export const WORKFLOW_SHAPE: Shape = {
   StartedAt: 'leaf',
   CompletedAt: 'leaf',
   DeletedAt: 'leaf',
-  Tags: 'leaf',
+  // No Tags: callers set them freely and they can name internal pipelines.
   NSFWLevel: 'leaf',
   AllowMatureContent: 'leaf',
   Currencies: 'leaf',

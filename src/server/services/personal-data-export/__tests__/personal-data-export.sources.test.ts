@@ -6,6 +6,7 @@ import {
   MONGO_DOC_CAP,
   MONGO_MAX_TIME_MS,
   exportWorkflows,
+  isSystemWorkflow,
   reduceWorkflow,
   workflowRange,
   type WorkflowCollection,
@@ -312,7 +313,7 @@ describe('exportWorkflows', () => {
     expect(out.Steps[0].Input).toEqual({ Prompt: 'a cat', NegativePrompt: 'blurry', Seed: 5 });
     expect(out.Metadata.params).toEqual({ _v: { prompt: 'meta cat', seed: 1 } });
     expect(out.Steps[0].Output.Images).toEqual([{ _id: 'ok', Url: 'https://blob/ok', Width: 512 }]);
-    expect(out).toMatchObject({ _id: '777-1', Status: 3, Tags: ['gen'] });
+    expect(out).toMatchObject({ _id: '777-1', Status: 3 });
     expect(out.CreatedAt).toBe('2026-11-06T00:00:00.000Z');
   });
 
@@ -326,6 +327,13 @@ describe('exportWorkflows', () => {
     const text = JSON.stringify(out);
     for (const s of ['Scores', 'TriggeredLabels', 'ScanContract', 'https://blob/bad', '00-abc'])
       expect(text, s).not.toContain(s);
+  });
+
+  it('writes no workflow tags, so a pipeline-naming tag on a kept generation stays out', () => {
+    const out = reduceWorkflow({ ...storedDoc(), Tags: ['gen', 'textScan', 'moderation-x'] });
+    expect(out).not.toHaveProperty('Tags');
+    const text = JSON.stringify(out);
+    for (const s of ['textScan', 'moderation-x']) expect(text, s).not.toContain(s);
   });
 
   it('drops an unknown key the orchestrator adds later, at the top and inside a step', () => {
@@ -371,6 +379,14 @@ describe('exportWorkflows', () => {
     expect(text).not.toContain('777-2');
     expect(text).not.toContain('777-3');
     expect(text).not.toContain('SYSTEM-TEXT');
+  });
+
+  it('skips a workflow with no purpose whose later step is named as a scan', () => {
+    const doc = storedDoc();
+    doc.Metadata = { params: doc.Metadata.params } as typeof doc.Metadata;
+    doc.Steps.push({ ...doc.Steps[0], _t: 'textToImage', Name: 'promptScan' });
+    expect(isSystemWorkflow(doc)).toBe(true);
+    expect(isSystemWorkflow(storedDoc())).toBe(false);
   });
 
   it("inside the user's settings, still drops credential and check-shaped keys", () => {
