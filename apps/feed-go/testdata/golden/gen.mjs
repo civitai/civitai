@@ -3527,7 +3527,7 @@ const INFINITE = [
   // `postIds` (FEED_GO_INFINITE_SERVE_INPUT_POST_IDS): several posts' media, always the Postgres path.
   {
     name: 'post-ids-signed-out',
-    description: '`postIds` signed out: requiresImageDbPath, the Postgres page of those posts’ images only (`i."postId" IN (…)`), Newest (i."id" DESC), the look-ahead row’s id as the cursor; no feed call; edge-cacheable.',
+    description: '`postIds` signed out: requiresImageDbPath, the Postgres page of those posts’ images only (`i."postId" = ANY(…)`), Newest (i."id" DESC), the look-ahead row’s id as the cursor; no feed call; edge-cacheable.',
     goConfig: { servePostIds: true },
     viewer: null,
     host: HOST.green,
