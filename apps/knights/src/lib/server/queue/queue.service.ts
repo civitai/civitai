@@ -13,12 +13,8 @@ import {
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
-import {
-  ESCALATED_FROM_LEVEL_META_KEY,
-  postShownToKnights,
-  servableImage,
-  servableImageContent,
-} from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, postShownToKnights } from '@civitai/db/knights';
+import { servableImage, servableImageContent } from '../image-gate';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
@@ -181,6 +177,12 @@ export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.leng
 export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
 
 /**
+ * The most rows one stage's scan reads per pick (five doubling rounds from `STAGE_SCAN_FIRST_ROUND`), so a bucket that cannot fill
+ * never drives a stage-sized read; past the budget the window keeps what the scan found.
+ */
+export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;
+
+/**
  * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
  * nothing is escalated), then the first `FEED.bucketWindowSize` items of each level bucket in the stage's normal order
  * (priority, age, id), so a crowded bucket cannot push the others out of the window. The caller buckets the escalated
@@ -188,17 +190,18 @@ export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
  * player has already judged for the question, at any stage or in any earlier item.
  *
  * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
- * is full or the stage runs out. Most open items can be unservable (a draft or scheduled post, a deleted image), and
- * only the Image and Post rows tell, so a read per bucket would walk the whole stage once per bucket. A bucket that
- * cannot fill makes the scan read every candidate of the stage, so the rounds read only what bucketing and the cursor
- * need, and one more read fetches the served columns of the kept items alone.
+ * is full, the stage runs out or `rowBudget` rows are read. Most open items can be unservable (a draft or scheduled
+ * post, a deleted image), and only the Image and Post rows tell, so a read per bucket would walk the whole stage once
+ * per bucket. A bucket that cannot fill keeps the scan going to the budget, so the rounds read only what bucketing and
+ * the cursor need, and one more read fetches the served columns of the kept items alone.
  */
 async function stageWindow(
   db: Executor,
   userId: number,
   stage: Rank,
   exclude: number[],
-  escalatedSince: Date
+  escalatedSince: Date,
+  rowBudget = STAGE_SCAN_ROW_BUDGET
 ) {
   const eligible = (perRow = true) =>
     servableItems(db)
@@ -249,9 +252,10 @@ async function stageWindow(
   const taken = new Map<LevelBucket | null, number>();
   let filled = 0;
   let after: StageScanCursor | null = null;
-  for (let size = STAGE_SCAN_FIRST_ROUND; ; size *= 2) {
+  for (let size = STAGE_SCAN_FIRST_ROUND, read = 0; read < rowBudget; size *= 2) {
     const cursor: StageScanCursor | null = after;
-    const rows = await eligible(size <= STAGE_SCAN_PER_ROW_PROBE_MAX)
+    const limit = Math.min(size, rowBudget - read);
+    const rows = await eligible(limit <= STAGE_SCAN_PER_ROW_PROBE_MAX)
       .select([
         'i.id',
         'i.priority',
@@ -272,8 +276,9 @@ async function stageWindow(
       .orderBy('i.priority', 'asc')
       .orderBy('i.createdAt', 'asc')
       .orderBy('i.id', 'asc')
-      .limit(size)
+      .limit(limit)
       .execute();
+    read += rows.length;
     for (const row of rows) {
       const bucket = itemBucket(row.prediction, row.imageLevel);
       const count = taken.get(bucket) ?? 0;
@@ -282,7 +287,7 @@ async function stageWindow(
       if (count + 1 === FEED.bucketWindowSize) filled++;
       kept.push(row.id);
     }
-    if (rows.length < size || filled === BUCKET_LEVELS.length) break;
+    if (rows.length < limit || filled === BUCKET_LEVELS.length) break;
     // Annotated so the cursor's type does not depend on the rows its own round read.
     const last: { id: number; priority: number; createdAtKey: string } = rows[rows.length - 1];
     after = { priority: last.priority, createdAt: last.createdAtKey, id: last.id };
@@ -318,7 +323,14 @@ export async function getFeed(
     exclude = [],
     now = new Date(),
     random = Math.random,
-  }: { limit?: number; exclude?: number[]; now?: Date; random?: () => number } = {}
+    scanRowBudget = STAGE_SCAN_ROW_BUDGET,
+  }: {
+    limit?: number;
+    exclude?: number[];
+    now?: Date;
+    random?: () => number;
+    scanRowBudget?: number;
+  } = {}
 ): Promise<Feed | null> {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -335,7 +347,9 @@ export async function getFeed(
   for (const stage of [...stages].reverse()) {
     if (items.length >= limit) break;
     const rows = lowestTierPerItem(
-      await readWithoutJit(db, (trx) => stageWindow(trx, userId, stage, exclude, escalatedSince))
+      await readWithoutJit(db, (trx) =>
+        stageWindow(trx, userId, stage, exclude, escalatedSince, scanRowBudget)
+      )
     ).sort(
       (a, b) =>
         a.tier - b.tier || a.priority - b.priority || +a.createdAt - +b.createdAt || a.id - b.id
@@ -1476,7 +1490,6 @@ export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: D
   });
 }
 
-const pad = (n: number) => String(n).padStart(2, '0');
 const monthStart = (year: number, month: number) => {
   const d = new Date(Date.UTC(year, month, 1));
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
@@ -1491,20 +1504,8 @@ export async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Mont
   `.execute(db);
   if (existing.rows[0]?.found) return;
 
-  const from = monthStart(year, month - 1);
-  const to = monthStart(year, month);
-  await db.transaction().execute(async (trx) => {
-    // Two voters can find the same month missing; without the lock the loser fails on a duplicate relation.
-    await sql`SELECT pg_advisory_xact_lock(hashtext('KnightsVote partitions'))`.execute(trx);
-    await sql
-      .raw(
-        `CREATE TABLE IF NOT EXISTS "${name}" PARTITION OF "KnightsVote" ` +
-          `FOR VALUES FROM ('${from.year}-${pad(from.month)}-01') TO ('${to.year}-${pad(
-            to.month
-          )}-01')`
-      )
-      .execute(trx);
-  });
+  // Only the table's owner may add a partition: the owner's function does, for a month near now, under the partition lock.
+  await sql`SELECT public.knights_ensure_vote_partition(${year}::int, ${month}::int)`.execute(db);
 }
 
 export async function ensureVotePartitions(

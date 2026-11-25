@@ -1,10 +1,9 @@
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { NsfwLevel } from '~/server/common/enums';
-import { heldUserSql } from '@civitai/shared/held-media';
 import {
   semanticCoverImageCleanText,
-  semanticImageHeldText,
-} from '~/server/services/semantic-held-content.sql';
+  semanticImageCsamFlaggedText,
+} from '~/server/services/semantic-image-flags.sql';
 import { STORYLINE_MINOR_CEILING } from '~/shared/utils/storyline';
 
 /**
@@ -64,9 +63,8 @@ export const storylineSemanticEligibleText = ({
   AND ${semanticCoverImageCleanText(`${st}."coverImageId"`)}
   AND ${storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" IS NOT NULL`)}
   AND ${rp}.availability = 'Public'
-  AND NOT ${heldUserSql(`${st}."userId"`)} AND NOT ${heldUserSql(`${rp}."userId"`)}
   AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = ${rp}.id
-    AND ${semanticImageHeldText('ri')})
+    AND ${semanticImageCsamFlaggedText('ri')})
   AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = ${rp}.id
     AND (rt."csamHeld" OR ${postTextPendingCsamHoldText('rt')})))`;
 

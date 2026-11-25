@@ -1,5 +1,6 @@
-import { error, json } from '@sveltejs/kit';
+import { error, isHttpError, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { logToAxiom } from '$lib/server/axiom';
 import { requireToken } from '$lib/server/token';
 import { submitTrainingBatch, type TrainingRunInput } from '$lib/server/train';
 import {
@@ -14,6 +15,26 @@ import { datasetRatingFor } from '$lib/server/dataset-rating';
 import { isKohyaAllowed } from '$lib/server/flipt';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 
+export const POST: RequestHandler = async (event) => {
+  try {
+    return await submit(event);
+  } catch (err) {
+    // A refusal's reason otherwise reaches only the browser.
+    if (isHttpError(err) && err.status >= 400 && err.status < 500) {
+      const body = err.body as { message: string; code?: string };
+      void logToAxiom({
+        name: 'training-studio-train-refused',
+        type: 'warning',
+        userId: event.locals.user?.id,
+        status: err.status,
+        message: body.message,
+        code: body.code,
+      });
+    }
+    throw err;
+  }
+};
+
 // Submit the real training workflow(s) — one per run — and return their ids. This spends Buzz, so it's
 // the single write in the whole flow. HTTP mapping over core.submitTrainingBatch: a batch refused by us or
 // by the orchestrator (a non-transient 4xx) is a 400 carrying the reason, since a retry would be refused
@@ -21,7 +42,7 @@ import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processi
 // clears on its own, so the client offers a retry; a batch where nothing landed otherwise is a 502 (safe
 // to retry whole); a partial batch returns the landed ids and the failure's reason with 200, so the
 // client navigates to them instead of re-submitting — and re-charging — them.
-export const POST: RequestHandler = async ({ locals, request }) => {
+async function submit({ locals, request }: Parameters<RequestHandler>[0]) {
   const token = await requireToken(
     locals,
     'Training is unavailable right now — no orchestrator token.'
@@ -69,4 +90,4 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   }
 
   return json({ ...batch, requested: runs?.length ?? 0 });
-};
+}

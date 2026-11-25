@@ -2,8 +2,8 @@ import { createHash } from 'crypto';
 import type { Pool } from 'pg';
 import { eligibleSql, IMAGE_ROW_COLUMNS, type ImageRow } from '../eligibility';
 import { videoLimitSkip } from '../embedder';
-import { heldImageSql } from '../held';
 import { vectorSyncMetrics } from '../metrics';
+import { csamFlaggedImageSql } from '../image-flags';
 import { getPayloads, type ImagePayload } from '../source';
 
 /** The videos of "Image", unaliased for the walks. */
@@ -20,8 +20,8 @@ export type VideoPayload = ImagePayload & {
 };
 
 /**
- * The image rules (eligibility.ts) plus the held-media rule the other content indexes apply. Clips
- * past the worker's limits get no document, so they are never sent and never retried.
+ * The image rules (eligibility.ts). Clips past the worker's limits get no document, so they are
+ * never sent and never retried.
  */
 export async function getVideoDocs(
   pg: Pick<Pool, 'query'>,
@@ -31,7 +31,7 @@ export async function getVideoDocs(
   const { rows } = await pg.query<ImageRow>(
     `SELECT ${IMAGE_ROW_COLUMNS} FROM "Image" i
      WHERE i.id = ANY($1::int[]) AND i.type = 'video' AND ${eligibleSql('i')}
-       AND NOT ${heldImageSql('i')}`,
+       AND NOT ${csamFlaggedImageSql('i')}`,
     [ids]
   );
   const supported = rows.filter((row) => {

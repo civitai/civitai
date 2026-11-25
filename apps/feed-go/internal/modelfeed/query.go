@@ -46,9 +46,12 @@ type PageQuery struct {
 	EarlyAccess           bool
 	PaidAccess            bool
 	HidePaid              bool
-	OnSale                bool
-	ExcludedUserIDs       []int
-	FileFormats           []string
+	// HidePrivate is getModelsRaw's hidePrivateModels (Serve): under HidePaid, the free version that
+	// keeps a gated model must then also be Public.
+	HidePrivate     bool
+	OnSale          bool
+	ExcludedUserIDs []int
+	FileFormats     []string
 	// CollectionID is the collection filter (0 = none), applied only once the viewer may read the
 	// collection (servePage); CollectionTagID narrows it to one collection tag (0 = none).
 	CollectionID    int
@@ -94,6 +97,27 @@ func (b *builder) viewer(id int) string {
 const paidAccessLiveSQL = `pa."entityType" = 'ModelVersion'
       AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
       AND mv.status = 'Published'::"ModelStatus"`
+
+// freePublishedVersionExistsSQL is freePublishedVersionExistsSql over `m.id` (paid-access-sql.ts): the
+// model has a Published version with no live gate; publicOnly also requires that version be Public.
+func freePublishedVersionExistsSQL(publicOnly bool) string {
+	public := ""
+	if publicOnly {
+		public = `
+        AND fv.availability = 'Public'::"Availability"`
+	}
+	return `EXISTS (
+      SELECT 1 FROM "ModelVersion" fv
+      WHERE fv."modelId" = m.id
+        AND fv.status = 'Published'::"ModelStatus"` + public + `
+        AND NOT EXISTS (
+          SELECT 1 FROM "PaidAccess" pa
+          JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+          WHERE ` + paidAccessLiveSQL + `
+            AND mv.id = fv.id
+        )
+    )`
+}
 
 // orderBy is getModelsRaw's ORDER BY for a sort, over the alias that carries the per-base-model
 // columns.
@@ -446,12 +470,13 @@ func (q *PageQuery) Build() (SQL, error) {
       )`)
 	}
 	if q.HidePaid {
-		and = append(and, `NOT EXISTS (
+		// The OR arm (freePublishedVersionExistsSql) keeps a gated model that has a free version to show.
+		and = append(and, `(NOT EXISTS (
         SELECT 1 FROM "PaidAccess" pa
         JOIN "ModelVersion" mv ON mv.id = pa."entityId"
         WHERE `+paidAccessLiveSQL+`
           AND mv."modelId" = m.id
-      )`)
+      ) OR `+freePublishedVersionExistsSQL(q.HidePrivate)+`)`)
 	}
 	if q.OnSale {
 		and = append(and, `EXISTS (

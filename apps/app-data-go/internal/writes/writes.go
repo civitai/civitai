@@ -8,6 +8,11 @@
 //	DELETE /v1/apps/{slug}/collections/{collection}/records/{key}       delete  [?ifVersion=N]
 //	PATCH  /v1/apps/{slug}/collections/{collection}/records/{key}       one of {$inc}, {$mark}, {$unmark}
 //	GET    /v1/apps/{slug}/info                                         the viewer's usage and limits
+//	PUT    /v1/apps/{slug}/collections/{collection}/records/@me[/{parent}]   put the viewer's own document
+//	DELETE /v1/apps/{slug}/collections/{collection}/records/@me[/{parent}]   delete it  [?ifVersion=N]
+//
+// The `@me` routes are a viewer-keyed collection's (docs/app-storage-generic-core.md, "Viewer-keyed
+// documents"): the key is derived by the site from the verified viewer, never named here.
 //
 // Each goes to `<site>/api/internal/blocks/storage[/<collection>[/<key>]]?from=<slug>[&ifVersion=N][&major=N]`.
 // Registered only with APP_DATA_WRITES on: off, every one of these paths is the mux's own 404.
@@ -72,6 +77,10 @@ const (
 var (
 	// keyRE is a document key's grammar (the store's, doc-store.types.ts).
 	keyRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+	// parentRE is a viewer-keyed parent: the key grammar without `:`, at most 96 characters
+	// (doc-store-viewer-keyed.ts); dotsRE one of only dots, which the store refuses as a key.
+	parentRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,96}$`)
+	dotsRE   = regexp.MustCompile(`^\.+$`)
 	// ifVersionRE is a non-negative integer of at most 15 digits (below 2^53, so the site's number
 	// parse is exact).
 	ifVersionRE = regexp.MustCompile(`^[0-9]{1,15}$`)
@@ -123,6 +132,7 @@ type route struct {
 	method string // sent to the site, whatever the inbound method's spelling
 	op     string // the metric op; a PATCH's is set from its operator
 	key    bool   // the path names a record key
+	mine   bool   // the path is the viewer's own document, `@me[/{parent}]`
 	coll   bool   // the path names a collection
 	body   bool   // a JSON object body is required (POST, PUT, PATCH); otherwise none is allowed
 	params map[string]bool
@@ -133,6 +143,8 @@ var (
 	putRoute    = route{method: http.MethodPut, op: "put", coll: true, key: true, body: true, params: map[string]bool{"major": true}}
 	deleteRoute = route{method: http.MethodDelete, op: "delete", coll: true, key: true, params: map[string]bool{"major": true, "ifVersion": true}}
 	patchRoute  = route{method: http.MethodPatch, op: "patch", coll: true, key: true, body: true, params: map[string]bool{"major": true}}
+	putMine     = route{method: http.MethodPut, op: "put", coll: true, mine: true, body: true, params: map[string]bool{"major": true}}
+	deleteMine  = route{method: http.MethodDelete, op: "delete", coll: true, mine: true, params: map[string]bool{"major": true, "ifVersion": true}}
 	infoRoute   = route{method: http.MethodGet, op: "info", params: map[string]bool{}}
 )
 
@@ -145,6 +157,12 @@ func (f *Forwarder) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+records+"/{key}", f.serve(deleteRoute))
 	mux.HandleFunc("PATCH "+records+"/{key}", f.serve(patchRoute))
 	mux.HandleFunc("OPTIONS "+records+"/{key}", Preflight)
+	for _, mine := range []string{records + "/@me", records + "/@me/{parent}"} {
+		mux.HandleFunc("PUT "+mine, f.serve(putMine))
+		mux.HandleFunc("DELETE "+mine, f.serve(deleteMine))
+	}
+	// `@me` alone is the {key} path's preflight; `@me/{parent}` has its own.
+	mux.HandleFunc("OPTIONS "+records+"/@me/{parent}", Preflight)
 	mux.HandleFunc("GET /v1/apps/{slug}/info", f.serve(infoRoute))
 	mux.HandleFunc("OPTIONS /v1/apps/{slug}/info", Preflight)
 }
@@ -200,7 +218,9 @@ type outbound struct {
 	// What an acknowledgement is applied to: the bearer token, and the path's app, collection, key
 	// and schema major (the one named, else 1, as a read's).
 	token, slug, collection, key string
-	major                        int
+	// mine is an `@me` route's: its key is the one the site answers, never the path's.
+	mine  bool
+	major int
 }
 
 func (f *Forwarder) serve(rt route) http.HandlerFunc {
@@ -222,8 +242,9 @@ func (f *Forwarder) serve(rt route) http.HandlerFunc {
 // prepare runs every check made here, in order: the path, the query, the region headers, the body,
 // the token, and whether this process still takes writes. Nothing is sent before all pass.
 func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
-	ob := outbound{op: rt.op, method: rt.method, major: 1}
+	ob := outbound{op: rt.op, method: rt.method, major: 1, mine: rt.mine}
 	slug, collection, key := r.PathValue("slug"), r.PathValue("collection"), r.PathValue("key")
+	parent := r.PathValue("parent")
 	ob.slug, ob.collection, ob.key = slug, collection, key
 	switch {
 	case !urn.ValidSlug(slug):
@@ -232,6 +253,10 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 		return ob, refused(http.StatusBadRequest, "invalid_request", "invalid collection name")
 	case rt.key && !keyRE.MatchString(key):
 		return ob, refused(http.StatusBadRequest, "invalid_request", "invalid record key")
+	case rt.mine && parent != "" && (!parentRE.MatchString(parent) || dotsRE.MatchString(parent)):
+		ref := refused(http.StatusBadRequest, "invalid_request", "invalid parent")
+		ref.details = map[string]any{"reason": "invalid_parent"}
+		return ob, ref
 	}
 
 	// The query sent is built here, never the client's: `from`, then `ifVersion`, then `major`.
@@ -279,6 +304,13 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 	}
 	if rt.key {
 		ob.path += "/" + key
+	}
+	if rt.mine {
+		// The grammar checked above needs no escaping.
+		ob.path += "/@me"
+		if parent != "" {
+			ob.path += "/" + parent
+		}
 	}
 
 	body, ref := readBody(r)
@@ -527,30 +559,42 @@ func (f *Forwarder) ack(ob outbound, raw []byte) {
 // stream. Neither is an ack.
 func ackOf(ob outbound, raw []byte) (session.Ack, bool) {
 	var b struct {
-		Key      string          `json:"key"`
-		Data     json.RawMessage `json:"data"`
-		Seq      int64           `json:"seq"`
-		RecordID string          `json:"recordId"`
-		Deleted  bool            `json:"deleted"`
+		Key       string          `json:"key"`
+		Data      json.RawMessage `json:"data"`
+		Seq       int64           `json:"seq"`
+		RecordID  string          `json:"recordId"`
+		Deleted   bool            `json:"deleted"`
+		Version   int64           `json:"version"`
+		CreatedAt string          `json:"createdAt"`
+		UpdatedAt string          `json:"updatedAt"`
 	}
 	if json.Unmarshal(raw, &b) != nil || b.Seq <= 0 {
 		return session.Ack{}, false
 	}
 	switch ob.op {
 	case "delete":
-		return session.Ack{Key: ob.key, Seq: b.Seq, Deleted: true}, b.Deleted
+		k := ob.key
+		if ob.mine {
+			// The derived key, which only the site's answer names; an answer without it is no ack.
+			k = b.Key
+			if !keyRE.MatchString(k) {
+				return session.Ack{}, false
+			}
+		}
+		return session.Ack{Key: k, Seq: b.Seq, Deleted: true}, b.Deleted
 	case "create", "put":
 	default:
 		return session.Ack{}, false
 	}
 	data := bytes.TrimSpace(b.Data)
-	// A put answers the key it was sent; a create, the key the store minted.
-	if !keyRE.MatchString(b.Key) || (ob.op == "put" && b.Key != ob.key) || len(data) == 0 || string(data) == "null" {
+	// A put answers the key it was sent (an `@me` put, the key the site derived); a create, the key
+	// the store minted.
+	if !keyRE.MatchString(b.Key) || (ob.op == "put" && !ob.mine && b.Key != ob.key) || len(data) == 0 || string(data) == "null" {
 		return session.Ack{}, false
 	}
 	// No recordId (a row the column's default predates) is a record with no URN: shown by key.
 	u, _ := urn.Document(ob.slug, ob.collection, b.RecordID)
-	return session.Ack{Key: b.Key, Seq: b.Seq, URN: u, Body: data}, true
+	return session.Ack{Key: b.Key, Seq: b.Seq, URN: u, Body: data, Version: b.Version, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt}, true
 }
 
 // siteRefusedTheForward reports whether the site's answer is its refusal of the forward itself: a 401

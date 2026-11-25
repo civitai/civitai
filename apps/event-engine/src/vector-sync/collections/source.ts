@@ -1,5 +1,4 @@
 import type { Pool } from 'pg';
-import { heldUserSql } from '../held';
 import { normalizeTitle, nsfwLevels } from '../models/document';
 import { collectionDocument } from './document';
 
@@ -17,7 +16,7 @@ const BLOCKED = 32;
  */
 export const COLLECTION_ELIGIBLE_SQL = `c.read = 'Public' AND c.availability NOT IN ('Unsearchable', 'Private')
   AND c."userId" <> -1 AND c."nsfwLevel" <> 0 AND (c."nsfwLevel" & ${BLOCKED}) = 0
-  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT ${heldUserSql('c."userId"')}
+  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
   AND EXISTS (SELECT 1 FROM "CollectionItem" ci
     WHERE ci."collectionId" = c.id AND ci.status = 'ACCEPTED')`;
 

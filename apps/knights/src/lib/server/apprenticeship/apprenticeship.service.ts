@@ -4,12 +4,8 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { getLevelProgression } from '../progression/levels';
 import { grantAcolyteLevelGold } from './level-gold';
 import type { DB } from '@civitai/db-schema/kysely';
-import {
-  readWithoutJit,
-  REFERENCE_POOL,
-  REFERENCE_SOURCE,
-  servableImage,
-} from '@civitai/db/knights';
+import { readWithoutJit, REFERENCE_POOL, REFERENCE_SOURCE } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import { utc } from '@civitai/db/kysely';
 import { metrics } from '../metrics';
 import { grantRankBadges } from '../progression/badges';

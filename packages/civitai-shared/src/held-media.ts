@@ -22,16 +22,15 @@ export function heldUserSql(column: string): string {
   const user = sqlRef(column);
   return `(
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(${user} IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (${user})::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
     )`;
 }
 
@@ -68,9 +67,12 @@ export function heldImageKnownSql(image: string): string {
 /**
  * Whether the "Image" row aliased `image` is marked as CSAM by a hash block, a scan flag, a
  * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs. With
- * `scanFlag: false` a scan flag alone does not count.
+ * `scanFlag: false` a scan flag alone does not count; with `hold: false` a hold alone does not.
  */
-export function csamSignalImageSql(image: string, { scanFlag = true } = {}): string {
+export function csamSignalImageSql(
+  image: string,
+  { scanFlag = true, hold = true }: { scanFlag?: boolean; hold?: boolean } = {}
+): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
   const flagged = scanFlag
@@ -86,7 +88,7 @@ export function csamSignalImageSql(image: string, { scanFlag = true } = {}): str
     OR EXISTS (
       SELECT 1 FROM "ScanLabelItem" si
       WHERE si."imageId" = ${id} AND (
-        si."voidReason" = 'csam-hold'${flagged}
+        ${hold ? `si."voidReason" = 'csam-hold'` : 'false'}${flagged}
         OR EXISTS (
           SELECT 1 FROM "ScanLabelVote" sv WHERE sv."itemId" = si.id AND sv.reason = 'csam-realistic'
         )

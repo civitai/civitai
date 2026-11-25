@@ -1,4 +1,3 @@
-import { heldUserSql } from '@civitai/shared/held-media';
 import { NsfwLevel } from '~/server/common/enums';
 
 /**
@@ -9,9 +8,7 @@ import { NsfwLevel } from '~/server/common/enums';
  */
 export const collectionSemanticEligibleText = ({ c = 'c', u = 'u' } = {}) =>
   `(${c}.read = 'Public' AND ${c}.availability NOT IN ('Unsearchable', 'Private')
-  AND ${c}."userId" <> -1 AND ${c}."nsfwLevel" <> 0 AND (${c}."nsfwLevel" & ${
-    NsfwLevel.Blocked
-  }) = 0
-  AND ${u}."bannedAt" IS NULL AND ${u}."deletedAt" IS NULL AND NOT ${heldUserSql(`${c}."userId"`)}
+  AND ${c}."userId" <> -1 AND ${c}."nsfwLevel" <> 0 AND (${c}."nsfwLevel" & ${NsfwLevel.Blocked}) = 0
+  AND ${u}."bannedAt" IS NULL AND ${u}."deletedAt" IS NULL
   AND EXISTS (SELECT 1 FROM "CollectionItem" ci
     WHERE ci."collectionId" = ${c}.id AND ci.status = 'ACCEPTED'))`;

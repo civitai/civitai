@@ -384,6 +384,27 @@ const COLLECTION_ITEMS = [
   { id: 95201, collectionId: 9103, imageId: 8201, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
   { id: 95202, collectionId: 9103, imageId: 8202, status: 'ACCEPTED', addedById: 1001, note: '{"score":{"theme":7,"wittiness":5}}', tagId: null },
 ];
+// A collection item's Random sort key under a seed: `abs(mod(hashtext(concat(ci.id::text, '<seed>')),
+// 1000000000))` in the `ct` CTE. hashtext is Postgres' own (hash_any), which this mirror does not
+// reimplement: these are the values a real Postgres 16 computed for each item id and seed, and
+// TestIntegrationCollectionRandomSortKeys (internal/feed) pins them against the CI Postgres. A fixture
+// whose request sorts a collection by Random carries them as its items' `sortKeys`.
+const COLLECTION_SORT_KEYS = {
+  494867: { 95001: 995023918, 95002: 296414999, 95003: 281741135, 95004: 588720858, 95005: 431780544, 95006: 522077658, 95101: 502631944, 95102: 717036926, 95103: 749353720, 95201: 325348675, 95202: 959163105 },
+  494868: { 95001: 8992366, 95002: 337483310, 95003: 309553120, 95004: 409789263, 95005: 878391610, 95006: 697502928, 95101: 372575269, 95102: 332677071, 95103: 364410394, 95201: 163855030, 95202: 213911762 },
+};
+/** getCollectionRandomSeed (collection.service.ts): the stored seed (`Number(cached)`); a missing key
+ *  is computed and written there, which no served fixture reaches (feed-go falls back on it). */
+function getCollectionRandomSeed() {
+  if (T.randomSeed === undefined) throw new Error('mirror: a Random collection page without a stored seed');
+  T.randomSeedRead = true;
+  return Number(T.randomSeed);
+}
+function sortKeyOf(itemId, seed) {
+  const k = COLLECTION_SORT_KEYS[seed]?.[itemId];
+  if (k === undefined) throw new Error(`mirror: no Postgres sort key for item ${itemId} under seed ${seed}`);
+  return k;
+}
 
 // Image.meta (jsonb), the generation parameters imageMetaCache serves (withMeta). Each differs; the
 // first holds an integer-like key ("10", listed first in JS, after "a" in jsonb's order), a fraction,
@@ -1123,6 +1144,21 @@ function imageSql(q) {
           (ci.status === 'ACCEPTED' || (userId && ci.status !== 'REJECTED' && ci.addedById === userId))
       )
     : undefined;
+  // A collection's Random order (getAllImagesUncaptured): the cursor's `seed:sortKey:id` (three parts
+  // of String(cursor); anything else is no cursor at all), the cursor's seed when truthy, else the
+  // stored one (the prefetch), each item's seeded sort key, the CTE's strict cursor clause.
+  if (q.sort === 'Random' && !q.collectionId) throw new NodeError(400, 'Random sort requires a collectionId');
+  const random = q.sort === 'Random' && !!q.collectionId;
+  let randomSeed;
+  let randomCursor;
+  if (random) {
+    if (q.cursor) {
+      const parts = String(q.cursor).split(':');
+      if (parts.length === 3) randomCursor = { seed: Number(parts[0]), sortKey: Number(parts[1]), id: Number(parts[2]) };
+    }
+    randomSeed = randomCursor?.seed || getCollectionRandomSeed();
+    T.randomSeedsUsed.add(String(randomSeed));
+  }
   // getAllImagesUncaptured's prefetch of the new-creators board (`newCreators`): `i."userId" IN
   // (board)`, or `1 = 0` for an empty one.
   const board = q.newCreators ? getNewCreatorUserIds(q.domain) : undefined;
@@ -1147,6 +1183,8 @@ function imageSql(q) {
     const p = POSTS[i.postId];
     if (without !== 'ids' && q.ids?.length && !q.ids.includes(i.id)) return false;
     if (q.types?.length && !q.types.includes(i.type)) return false;
+    // `(p."publishedAt" < now())`: the owner's scheduled carve-out needs `scheduled` (and no
+    // `publishedOnly`), which no fixture sends, so `publishedOnly` changes nothing here.
     if (!(p.publishedAt < NOW)) return false;
     if (!isModerator) {
       if (!((i.availability !== 'Private' && i.ingestion !== 'Blocked') || p.userId === userId)) return false;
@@ -1193,7 +1231,9 @@ function imageSql(q) {
     rows = rows.flatMap((i) =>
       collectionItems
         .filter((ci) => ci.imageId === i.id)
-        .map((ci) => ({ ...i, collectionItemId: ci.id, collectionItemNote: ci.note, collectionItemStatus: ci.status, collectionItemAddedById: ci.addedById }))
+        .map((ci) => ({ ...i, collectionItemId: ci.id, collectionItemNote: ci.note, collectionItemStatus: ci.status, collectionItemAddedById: ci.addedById, ...(random ? { sortKey: sortKeyOf(ci.id, String(randomSeed)) } : {}) }))
+        // The CTE's own cursor clause (`"sortKey" < k OR ("sortKey" = k AND "imageId" < id)`, strict).
+        .filter((r) => !randomCursor || r.sortKey < randomCursor.sortKey || (r.sortKey === randomCursor.sortKey && r.id < randomCursor.id))
     );
   // As for `tools` below: every row the query would match without its techniques (or tags) clause.
   for (const key of ['techniques', 'tags']) {
@@ -1240,14 +1280,16 @@ function imageSql(q) {
     if (byItem) return b.collectionItemId - a.collectionItemId;
     return asc ? a.id - b.id : b.id - a.id;
   };
-  if (prioritized && !iifOrder) rows.sort((a, b) => a.postId * 100 + (a.index ?? 0) - (b.postId * 100 + (b.index ?? 0)) || a.id - b.id);
+  if (random) rows.sort((a, b) => b.sortKey - a.sortKey || b.id - a.id); // ct."sortKey" DESC, i."id" DESC
+  else if (prioritized && !iifOrder) rows.sort((a, b) => a.postId * 100 + (a.index ?? 0) - (b.postId * 100 + (b.index ?? 0)) || a.id - b.id);
   else if (iifOrder) {
     // IIF(i."userId" IN (-1), i.index, 1000), then the sort's own order (no fixture row has a NULL index).
     const iif = (r) => (r.userId === -1 ? r.index : 1000);
     rows.sort((a, b) => iif(a) - iif(b) || baseOrder(a, b));
   } else rows.sort(baseOrder);
-  if (q.cursor) {
-    // getCursor: a single-field sort's cursor is one integer (parseCursor's parseInt).
+  if (q.cursor && !random) {
+    // getCursor: a single-field sort's cursor is one integer (parseCursor's parseInt). Random reads
+    // its own cursor in the CTE above and never calls getCursor.
     const c = typeof q.cursor === 'string' ? parseInt(q.cursor, 10) : q.cursor;
     if (Number.isNaN(c)) throw new NodeError(400, 'cursor');
     rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= c : byItem ? r.collectionItemId <= c : asc ? r.id >= c : r.id <= c));
@@ -1255,9 +1297,10 @@ function imageSql(q) {
   for (const r of rows) T.posts.add(r.postId);
   void viaVersion;
   const skip = q.skip ?? 0; // OFFSET
-  return rows.slice(skip, skip + q.limit + 1).map(({ collectionItemId, ...r }) => ({
+  return rows.slice(skip, skip + q.limit + 1).map(({ collectionItemId, sortKey, ...r }) => ({
     ...structuredClone(r),
-    cursorId: byIndex ? r.index : byItem ? collectionItemId : r.id,
+    // Random: `concat(<seed>::text, ':', ct."sortKey"::text, ':', i."id"::text)`.
+    cursorId: random ? `${randomSeed}:${sortKey}:${r.id}` : byIndex ? r.index : byItem ? collectionItemId : r.id,
   }));
 }
 
@@ -1530,14 +1573,17 @@ const getReactionTotals = (post) => {
 };
 
 /** getHeldGalleryLevel / isModelGalleryWithheld over resolveImageModelIds (model.service.ts). */
-function resolveImageModelIds({ modelId, modelVersionId, postId }) {
+function resolveImageModelIds({ modelId, modelVersionId, postId, postIds = [] }) {
   const required = new Set();
   if (modelVersionId) required.add(modelVersionId);
   const listed = new Set();
-  if (postId) {
-    const posts = cacheFetch(K.postVersion, [postId]);
-    if (!posts[postId]) return null;
-    if (posts[postId].modelVersionId) listed.add(posts[postId].modelVersionId);
+  // `postId || postIds?.length`: every listed post's version; only a missing `postId` is null.
+  if (postId || postIds?.length) {
+    const ids = new Set(postIds);
+    if (postId) ids.add(postId);
+    const posts = cacheFetch(K.postVersion, [...ids]);
+    if (postId && !posts[postId]) return null;
+    for (const id of ids) if (posts[id]?.modelVersionId) listed.add(posts[id].modelVersionId);
   }
   const versionIds = new Set([...listed, ...required]);
   const modelIds = new Set();
@@ -1550,9 +1596,34 @@ function resolveImageModelIds({ modelId, modelVersionId, postId }) {
   for (const m of modelIds) T.models.add(m);
   return modelIds;
 }
+/** getGallerySettingsByModelId's rebuild of an absent key (model.service.ts), for what the hold
+ *  reads: `getModel` (getDbWithoutLag('model', id): no lag flag in any fixture, so the replica's row),
+ *  null for no row; `sfwHeld = minor || sfwOnly`; and, when the model has settings or is held,
+ *  getGalleryHiddenPreferences' `level` (`settings.level ?? allBrowsingLevelsFlag`, over the stored
+ *  settings with `level: heldGalleryLevel(stored.level, model)` for a held model). Node then SETs the
+ *  key for a week; feed-go does not (the entry's creatorHiddenUserIds is a primary read), so the write
+ *  is not recorded. The hidden tags, users and images and the pinned posts are not modelled: no reader
+ *  of a rebuilt entry here reads them. */
+function rebuildGallerySettingsHold(modelId) {
+  const model = MODELS[modelId];
+  if (!model) return null;
+  const sfwHeld = model.minor || model.sfwOnly;
+  const stored = model.galleryLevel === null ? {} : { level: model.galleryLevel };
+  if (model.galleryLevel === null && !sfwHeld) return null;
+  if (!sfwHeld) return { level: stored.level ?? allBrowsingLevelsFlag, sfwHeld };
+  // heldGalleryLevel: Flags.intersection(stored ?? 0, limit) || limit (browsingLevel.constants.ts),
+  // limit = modelBrowsingLevelLimit (minorContentBrowsingLevelsFlag = sfwBrowsingLevelsFlag here).
+  const limit = model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  return { level: intersection(stored.level ?? 0, limit) || limit, sfwHeld };
+}
 function gallerySettingsOf(modelId) {
-  T.raw.set(`model:gallery-settings:${modelId}`, JSON.stringify(GALLERY_SETTINGS[modelId]));
+  const key = `model:gallery-settings:${modelId}`;
   T.models.add(modelId);
+  if (T.cold.has(key)) {
+    T.coldRead.add(key);
+    return rebuildGallerySettingsHold(modelId);
+  }
+  T.raw.set(key, JSON.stringify(GALLERY_SETTINGS[modelId]));
   const cached = GALLERY_SETTINGS[modelId];
   if ('none' in cached) return null;
   if (cached.sfwHeld === undefined) throw new Error('rebuild not modelled');
@@ -1797,11 +1868,13 @@ const isViewerScopedInfiniteFeed = (input) =>
 /** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
 const requiresImageDbPath = (input) =>
   !!input.postId ||
+  !!input.postIds?.length ||
   !!input.collectionId ||
   !!input.reactions?.length ||
   !!input.ids?.length ||
   (!!input.modelId && !input.modelVersionId) ||
-  (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+  (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
+  (!!input.publishedOnly && !!input.userId);
 
 /** The handler's withoutHeldFromViewer over getHeldLevelsByPost (withOwners): an image on a held
  *  model's post only at a level intersecting the hold, or to the model's owner (a session); a
@@ -1842,7 +1915,12 @@ function withoutHeldFromViewer(user, images) {
 function infiniteHandler({ input, ctx }) {
   const { user, features } = ctx;
   const { hatSort: _s, hatTeams: _t, hatTurfMine: _m, hideTurfHats: _h, hideWornHats: _w, ...unhatted } = input;
-  let scopedInput = unhatted;
+  // `publishedOnly` beside a `userId` that is not the caller's own is withdrawn (the own-content
+  // submit pickers only ever send their own id): it neither pins the DB path nor reaches the mapper.
+  let scopedInput =
+    unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
+      ? { ...unhatted, publishedOnly: undefined }
+      : unhatted;
   const useIndex = features.imageIndexFeed && !requiresImageDbPath(scopedInput);
   const moderatorView = !!user?.isModerator;
   const heldLevel = moderatorView ? undefined : getHeldGalleryLevel(scopedInput);
@@ -3048,7 +3126,268 @@ const INFINITE = [
     host: HOST.green,
     input: { collectionId: 88, browsingLevel: 1, limit: 10 },
   },
+  // `publishedOnly` (FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY): the own-content submit pickers.
+  {
+    name: 'published-only-own-picker',
+    description: '`publishedOnly` beside the viewer’s own `userId` (the submit pickers): requiresImageDbPath, so the Postgres page of the creator’s images, Newest (i."id" DESC), the look-ahead row’s id as the cursor; no feed call.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'published-only-own-picker-cursor',
+    description: 'The next page of the own picker: the numeric cursor is an image id, inclusive.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', cursor: 8004, browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'published-only-foreign-creator',
+    description: '`publishedOnly` beside another creator’s `userId`: the handler withdraws the flag, so the creator’s feed on the index (userIds=1001) as without it.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'published-only-signed-out',
+    description: '`publishedOnly` with a `userId` signed out: no caller id to match, so withdrawn; the creator’s feed, edge-cacheable.',
+    goConfig: { servePublishedOnly: true },
+    viewer: null,
+    host: HOST.green,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 1, limit: 5 },
+    replies: {
+      'levels=1&excludedTags=9901&userIds=1001&excludePoi=1&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'published-only-without-creator',
+    description: '`publishedOnly` without a `userId`: no DB routing, and the mapper refuses the flag (flag:publishedOnly), an empty page; no feed call.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
+  },
+  {
+    name: 'published-only-own-username',
+    description: '`publishedOnly` beside the viewer’s own `username` and no `userId`: only `userId` is compared, so the flag stays and does not route to Postgres; the name resolves, then the mapper’s empty page.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { username: 'artist_one', publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 5 },
+  },
+  {
+    name: 'published-only-false',
+    description: '`publishedOnly: false` beside the viewer’s own `userId`: no routing, the creator’s own feed on the index.',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: false, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+      },
+    },
+  // `postIds` (FEED_GO_INFINITE_SERVE_INPUT_POST_IDS): several posts' media, always the Postgres path.
+  {
+    name: 'post-ids-signed-out',
+    description: '`postIds` signed out: requiresImageDbPath, the Postgres page of those posts’ images only (`i."postId" IN (…)`), Newest (i."id" DESC), the look-ahead row’s id as the cursor; no feed call; edge-cacheable.',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7101, 7201], sort: 'Newest', browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'post-ids-cursor',
+    description: 'The next page of the same posts: the numeric cursor is an image id, inclusive.',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7101, 7201], sort: 'Newest', cursor: 8103, browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'post-ids-signed-in-oldest',
+    description: '`postIds` signed in at every level, Oldest (i."id" ASC): another creator’s posts, the viewer’s addon exclusions applied.',
+    goConfig: { servePostIds: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { postIds: [7002, 7004, 7009], sort: 'Oldest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'post-ids-beside-post-id',
+    description: '`postIds` beside a `postId`: both clauses, and the post scope’s order (i."index", i."id").',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postId: 7101, postIds: [7101, 7201], browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'post-ids-held-model',
+    description: '`postIds` naming a post on an SFW-only model (7301 on 5002, held at 3): the gallery gate folds every listed post’s model into the hold, so the page is served at 31 & 3 (8302 at 4 dropped).',
+    goConfig: { servePostIds: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { postIds: [7301, 7101], sort: 'Newest', browsingLevel: 31, limit: 10 },
+    alsoCached: [8302],
+  },
+  {
+    name: 'post-ids-taken-down-stranger',
+    description: '`postIds` naming a post on a taken-down model (7401 on 5003) read by someone else: the gallery is withheld, the handler’s empty page.',
+    goConfig: { servePostIds: true },
+    viewer: 1003,
+    host: HOST.blue,
+    input: { postIds: [7401, 7101], sort: 'Newest', browsingLevel: 31, limit: 10 },
+    // The rows only: their per-image caches would be read by no Node answer (the harness's cold-metrics
+    // runs require a held metric hash to be read).
+    alsoPosts: [7401, 7101],
+  },
+  {
+    name: 'post-ids-taken-down-owner',
+    description: 'The same posts read by the taken-down model’s owner (1001): not withheld, the posts’ images.',
+    goConfig: { servePostIds: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { postIds: [7401, 7101], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'post-ids-empty-list',
+    description: '`postIds: []`: no filter and no routing (`?.length`), the global feed.',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [], sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  // A collection's Random sort (FEED_GO_INFINITE_SERVE_SORT_RANDOM on): the stored hourly seed, each
+  // item's seeded hash as its sort key, the `seed:sortKey:id` cursor.
+  {
+    name: 'collection-random-first-page',
+    description: 'Random on a public collection (9101) signed out: the stored seed (494868) hashes each ACCEPTED item; the highest sort key first; the look-ahead row’s seed:sortKey:id as the cursor.',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { collectionId: 9101, sort: 'Random', browsingLevel: 1, limit: 1 },
+  },
+  {
+    name: 'collection-random-cursor',
+    description: 'The next Random page from the first page’s cursor: strictly below its sort key (the CTE’s `<`), so the look-ahead row itself (8007) is not on it, as in Node; the end, no cursor.',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { collectionId: 9101, sort: 'Random', cursor: '494868:337483310:8007', browsingLevel: 1, limit: 1 },
+  },
+  {
+    name: 'collection-random-cursor-seed-wins',
+    description: 'A Random cursor from the previous hour (seed 494867) signed in as 1003: the cursor’s seed, not the stored one, orders the items (1003’s own 8006 in review included) and is the next cursor’s.',
+    viewer: 1003,
+    host: HOST.blue,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { collectionId: 9101, sort: 'Random', cursor: '494867:588720858:8003', browsingLevel: 31, limit: 1 },
+  },
+  {
+    name: 'collection-random-numeric-cursor',
+    description: 'A numeric cursor with Random: String(cursor) is not seed:sortKey:id, so Node reads no cursor at all: the first page under the stored seed.',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { collectionId: 9101, sort: 'Random', cursor: 95002, browsingLevel: 1, limit: 1 },
+  },
+  {
+    name: 'collection-random-cursor-zero-seed',
+    description: 'A Random cursor whose seed is 0 (falsy): the stored seed orders the page, the cursor’s sort key and id still page it.',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { collectionId: 9101, sort: 'Random', cursor: '0:400000000:9999', browsingLevel: 1, limit: 1 },
+  },
+  // A model's gallery-settings key absent (getShowcaseHeldLevels' miss: getGallerySettingsByModelId
+  // rebuilds it from the model row), answered with FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS on.
+  {
+    name: 'cold-gallery-settings-version-held',
+    description: 'version-held-signed-in with model 5002’s gallery-settings key absent: the rebuild reads the row (SFW-only, stored level 3), held at heldGalleryLevel(3) = PG|PG-13, so the same page. Node also writes the key back; feed-go does not.',
+    viewer: 1003,
+    host: HOST.blue,
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5002'],
+    input: { modelVersionId: 6101, sort: 'Most Reactions', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2&excludedTags=9901&versionIds=6101&excludePoi=1&viewerId=1003&sort=reactions&limit=5': { body: { items: [8301] } },
+    },
+  },
+  {
+    name: 'cold-gallery-settings-ids-held-stranger',
+    description: 'ids-held-stranger with model 5002’s gallery-settings key absent: getHeldLevelsByPost’s hold is rebuilt from the row (SFW-only: PG|PG-13), so 8302 (R) is still left out.',
+    viewer: 1003,
+    host: HOST.blue,
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5002'],
+    input: { ids: [8302, 8301, 8001, 8999], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'cold-gallery-settings-model-unheld',
+    description: 'model-only-db-path with model 5001’s gallery-settings key absent: the rebuild finds it neither minor nor SFW-only, so no hold.',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveGallerySettingsMiss: true },
+    cold: ['model:gallery-settings:5001'],
+    input: { modelId: 5001, sort: 'Newest', browsingLevel: 1, limit: 3 },
+    replies: {},
+  },
   // Fallbacks.
+  {
+    name: 'fallback-published-only-off',
+    description: 'The own picker with FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY off: the shape falls back, as before the port.',
+    fallback: 'input-publishedOnly',
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: true, sort: 'Newest', browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'fallback-published-only-null',
+    description: '`publishedOnly: null`: z.boolean().optional() refuses a null, Node’s BAD_REQUEST, which it answers itself.',
+    fallback: 'input-invalid',
+    goConfig: { servePublishedOnly: true },
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, publishedOnly: null, sort: 'Newest', browsingLevel: 31, limit: 2 },
+  },
+  {
+    name: 'fallback-post-ids-off',
+    description: '`postIds` with FEED_GO_INFINITE_SERVE_INPUT_POST_IDS off: the shape falls back, as before the port.',
+    fallback: 'input-postIds',
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7001, 7003], sort: 'Newest', browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'fallback-post-ids-not-int4',
+    description: 'A `postIds` entry that is not an int4 integer: Node binds it against the integer column, which Postgres refuses; not answered here.',
+    fallback: 'input-postIds',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: [7001, 1.5], browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'fallback-post-ids-null',
+    description: '`postIds: null`: z.number().array().optional() refuses a null, Node’s BAD_REQUEST, which it answers itself.',
+    fallback: 'input-invalid',
+    goConfig: { servePostIds: true },
+    viewer: null,
+    host: HOST.green,
+    input: { postIds: null, browsingLevel: 1, limit: 2 },
+  },
   {
     name: 'fallback-followed-not-a-boolean',
     description: '`followed: "true"`: z.boolean() is not coerced, so the schema’s BAD_REQUEST, which Node answers itself.',
@@ -3123,11 +3462,61 @@ const INFINITE = [
   },
   {
     name: 'fallback-collection-random',
-    description: 'A collection’s Random sort (the hourly seed, the seed:sortKey:id cursor): not ported.',
+    description: 'A collection’s Random sort with FEED_GO_INFINITE_SERVE_SORT_RANDOM off: the input-sort fallback, as before the port.',
     fallback: 'input-sort',
     viewer: null,
     host: HOST.green,
+    randomSeed: '494868',
     input: { collectionId: 9101, sort: 'Random', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-random-without-collection',
+    description: 'Random without a collectionId, the port on: Node’s BAD_REQUEST (Random sort requires a collectionId), which it answers itself.',
+    fallback: 'input-sort',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { sort: 'Random', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-random-seed-miss',
+    description: 'Random with no stored seed: Node computes the hour’s seed and writes it to the system redis, which this service does not write.',
+    fallback: 'collection-random-seed-miss',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    input: { collectionId: 9101, sort: 'Random', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-random-seed-stale',
+    description: 'A stored seed that is not digits: Node binds Number() of it (NaN here), which this service does not reproduce.',
+    fallback: 'collection-random-seed-stale',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: 'not-a-seed',
+    input: { collectionId: 9101, sort: 'Random', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-random-cursor',
+    description: 'A seed:sortKey:id cursor whose sort key is not digits: Node inlines NaN into the SQL (its own error), not reproduced here.',
+    fallback: 'collection-random-cursor',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { collectionId: 9101, sort: 'Random', cursor: '494868:x:8007', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-random-post-id',
+    description: 'Random beside a postId: getAllImages’ Random branch replaces the post scope’s i."index" order and builds a seed:sortKey:id cursor, which the post scope here would not; left to Node.',
+    fallback: 'collection-random-post-id',
+    viewer: null,
+    host: HOST.green,
+    goConfig: { serveSortRandom: true },
+    randomSeed: '494868',
+    input: { collectionId: 9101, postId: 7101, sort: 'Random', browsingLevel: 1, limit: 1 },
   },
   {
     name: 'fallback-collection-tag-without-collection',
@@ -3467,7 +3856,10 @@ function dbTables({ tags = false, meta = false } = {}) {
   }
   // A collection request: every item's image of the collections it reads, whatever its status or
   // tag, so a row the status, tag or permission check alone decides on is in the tables.
-  const collectionItems = COLLECTION_ITEMS.filter((ci) => T.collectionIds.has(ci.collectionId));
+  // A Random page's items carry their Postgres sort key under each seed it hashed with.
+  const collectionItems = COLLECTION_ITEMS.filter((ci) => T.collectionIds.has(ci.collectionId)).map((ci) =>
+    T.randomSeedsUsed?.size ? { ...ci, sortKeys: Object.fromEntries([...T.randomSeedsUsed].map((seed) => [seed, sortKeyOf(ci.id, seed)])) } : ci
+  );
   for (const ci of collectionItems) T.posts.add(IMAGES[ci.imageId].postId);
   const postIds = [...T.posts].sort((a, b) => a - b);
   const images = Object.values(IMAGES)
@@ -3569,6 +3961,10 @@ function newTrace(name, spec) {
   T.addons = spec.addons ?? ADDONS;
   T.usernames = new Set();
   T.metaRead = false;
+  // The stored collection Random seed (`collection:random-seed` on the system redis; absent: no key),
+  // and the seeds a Random page hashed its items with.
+  T.randomSeed = spec.randomSeed;
+  T.randomSeedsUsed = new Set();
 }
 
 /** `spec.alsoCached`: images whose per-image cache entries (tag ids, frame, metric hash) the fixture
@@ -3697,6 +4093,9 @@ function emitInfinite() {
       const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
       alsoCached(spec);
+      // `spec.alsoPosts`: posts whose rows the tables hold although Node's answer reads none of them (a
+      // withheld gallery), so a feed-go that skipped the gate would answer them.
+      for (const id of spec.alsoPosts ?? []) T.posts.add(id);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
       writeDevalueBody('infinite', spec.name, value);
     }
@@ -3715,7 +4114,10 @@ function emitInfinite() {
       },
       feed: T.feed,
       redis: redisEntries(spec.dropKeys),
-      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
+      sysRedis: {
+        'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) },
+        ...(spec.randomSeed !== undefined ? { 'collection:random-seed': { raw: spec.randomSeed } } : {}),
+      },
       db: {
         ...dbTables({ tags: true }),
         usernames: [...T.usernames],

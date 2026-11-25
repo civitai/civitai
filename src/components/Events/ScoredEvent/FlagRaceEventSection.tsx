@@ -15,6 +15,7 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 
 /**
  * The home row's Flag Race on the event page, signed in or not, while a flag day runs. Under it, each
@@ -32,6 +33,11 @@ export function FlagRaceEventSection({
 }) {
   const features = useFeatureFlags();
   const row = useFlagRow(features.flagRace ? event : undefined);
+  // Unbatched, so the edge caches it: every viewer gets the same answer.
+  const { data: media } = trpc.hatTurf.getEventMedia.useQuery(
+    { event },
+    { enabled: !!row, staleTime: 5 * 60_000, trpc: { context: { skipBatch: true } } }
+  );
   const ids = useMemo(() => row?.summary.flags.map((f) => f.imageId) ?? [], [row]);
   const { images, flatData, revealable, isLoading } = useQueryImages(
     {
@@ -58,7 +64,12 @@ export function FlagRaceEventSection({
   return (
     <div className={flagClasses.wrap} data-testid="flag-race-event-section">
       <section className={clsx(partyClasses.party, flagClasses.row)}>
-        <FlagRacePanel event={event} summary={row.summary} />
+        <FlagRacePanel
+          event={event}
+          summary={row.summary}
+          video={media?.flagRace?.video}
+          duration={media?.flagRace?.duration}
+        />
         <div className={flagClasses.flags}>
           {isLoading ? (
             ids.map((id) => (

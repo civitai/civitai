@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +38,9 @@ type Sources interface {
 	ModelPage(ctx context.Context, req hydrate.ModelPageRequest) (*hydrate.ModelPage, error)
 	VersionImages(ctx context.Context, versionIDs []int) (map[int][]superjson.Object, error)
 	CreatorMemberships(ctx context.Context, userIDs []int) (map[int]bool, error)
+	// CreatorMembershipsComputed is CreatorMemberships with its misses computed
+	// (hydrate.Sources.CreatorMembershipsComputed), read only with Config.ServeMembershipMiss.
+	CreatorMembershipsComputed(ctx context.Context, userIDs []int) (map[int]bool, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
 	// FollowedUserIDs is the ids the user follows, read from the replica (hydrate.Sources).
 	FollowedUserIDs(ctx context.Context, userID int) ([]int, error)
@@ -67,6 +71,14 @@ type Config struct {
 	VisibleDecorationEvents map[string]bool
 	// Ports are the input shapes served behind their own switch (ParseWith), all off by default.
 	Ports Ports
+	// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): compute an
+	// owner's user-cosmetics miss (hydrate.ModelPageRequest.ComputeUserCosmetics) instead of the
+	// `user-cosmetics-miss` fallback.
+	ServeUserCosmeticsMiss bool
+	// ServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (default off): compute an owner's
+	// creator-membership miss (Sources.CreatorMembershipsComputed) instead of the `membership-miss`
+	// fallback.
+	ServeMembershipMiss bool
 }
 
 // Deps are model.getAll's collaborators.
@@ -264,6 +276,8 @@ type feedItem struct {
 
 type paidGate struct {
 	deadline *time.Time
+	// versionIDs are the model's versions behind a live gate (getModelPaidAccessGates' versionIds).
+	versionIDs []int
 }
 
 // rawInput is getModelsRaw's view of the input after enforceBlockedBrowsingTagsForModels.
@@ -337,6 +351,10 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 			return &page{items: []any{}}, nil
 		}
 	}
+	// `!ids && !username && !user && !followed && !collectionId`: `ids` present at all, `[]` included,
+	// and `followed` signed out too. The page query reads it under Hide Paid (PageQuery.HidePrivate),
+	// the per-row transform for the versions it lists.
+	hidePrivateModels := !in.HasIDs && in.Username == "" && in.User == "" && !in.Followed && in.CollectionID == 0
 	q := PageQuery{
 		Take: scope.take, Cursor: cursor, Sort: in.Sort, BrowsingLevel: level, ViewerID: viewerID,
 		IsModerator: isMod, Archived: in.Archived, DisablePoi: raw.disablePoi, DisableMinor: raw.disableMinor,
@@ -345,7 +363,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		CheckpointType: in.CheckpointType, AllowCommercialUse: in.AllowCommercialUse,
 		AllowDerivatives: in.AllowDerivatives, AllowDifferentLicense: in.AllowDifferentLicense,
 		AllowNoCredit: in.AllowNoCredit, EarlyAccess: in.EarlyAccess, PaidAccess: in.PaidAccess,
-		HidePaid: in.HidePaid, OnSale: in.OnSale, ExcludedUserIDs: in.ExcludedUserIDs, FileFormats: in.FileFormats,
+		HidePaid: in.HidePaid, HidePrivate: hidePrivateModels, OnSale: in.OnSale, ExcludedUserIDs: in.ExcludedUserIDs, FileFormats: in.FileFormats,
 		CollectionID: in.CollectionID, CollectionTagID: in.CollectionTagID,
 		OnlyModelIDs: scope.only, ExcludeModelIDs: scope.exclude,
 		IDs: in.IDs, Followed: followed, FollowedUserIDs: follows,
@@ -386,6 +404,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		phase.SetInt(tracing.AttrItems, len(modelIDs))
 		hy, err = d.Sources.ModelPage(pctx, hydrate.ModelPageRequest{
 			OwnerIDs: ownerIDs, ModelIDs: modelIDs, VisibleEvents: d.Config.VisibleDecorationEvents,
+			ComputeUserCosmetics: d.Config.ServeUserCosmeticsMiss,
 		})
 		return
 	}))
@@ -401,9 +420,6 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		rows = rows[:len(rows)-1]
 	}
 	showSfwFace := level != 0 && level&table.Levels.NSFW == 0
-	// `!ids && !username && !user && !followed && !collectionId`: `ids` present at all, `[]` included,
-	// and `followed` signed out too.
-	hidePrivateModels := !in.HasIDs && in.Username == "" && in.User == "" && !in.Followed && in.CollectionID == 0
 	// The build phase: the per-row transform and finishItems (whose version-image and membership
 	// reads are their own child spans).
 	bctx, phase := tracing.StartPhase(ctx, tracing.PhaseBuild)
@@ -474,10 +490,11 @@ func subtractMonths(t time.Time, n int) time.Time {
 	return time.Date(first.Year(), first.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
 }
 
-// paidAccessGates is getModelPaidAccessGates: per model with a live gate, its latest deadline.
+// paidAccessGates is getModelPaidAccessGates: per model with a live gate, its latest deadline and
+// its gated version ids (the ones Hide Paid drops, buildFeedItem).
 func paidAccessGates(ctx context.Context, db Querier, modelIDs []int) (map[int]*paidGate, error) {
 	rows, err := db.Query(ctx, `
-    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+    SELECT mv."modelId", MAX(pa."endsAt") AS deadline, array_agg(pa."entityId") AS "versionIds"
     FROM "PaidAccess" pa
     JOIN "ModelVersion" mv ON mv.id = pa."entityId"
     WHERE `+paidAccessLiveSQL+`
@@ -492,10 +509,11 @@ func paidAccessGates(ctx context.Context, db Querier, modelIDs []int) (map[int]*
 	for rows.Next() {
 		var id int
 		var deadline *time.Time
-		if err := rows.Scan(&id, &deadline); err != nil {
+		var versionIDs []int
+		if err := rows.Scan(&id, &deadline, &versionIDs); err != nil {
 			return nil, err
 		}
-		out[id] = &paidGate{deadline: deadline}
+		out[id] = &paidGate{deadline: deadline, versionIDs: versionIDs}
 	}
 	return out, rows.Err()
 }
@@ -527,6 +545,14 @@ func buildFeedItem(r *modelRow, in *Input, raw rawInput, hy *hydrate.ModelPage, 
 		if hidePrivate {
 			if a, _ := recField(v, "availability").(string); a != "Public" {
 				continue
+			}
+		}
+		if in.HidePaid {
+			if g := gates[r.ID]; g != nil {
+				id, _ := hydrate.Int(recField(v, "id"))
+				if slices.Contains(g.versionIDs, id) {
+					continue
+				}
 			}
 		}
 		versions = append(versions, v)
@@ -579,7 +605,10 @@ func buildFeedItem(r *modelRow, in *Input, raw rawInput, hy *hydrate.ModelPage, 
 	if e, ok := hy.Decorations[r.ID]; ok {
 		it.decoration = e
 	}
-	it.gate = gates[r.ID]
+	if !in.HidePaid {
+		// Under Hide Paid the card shows only free versions, so the model-level chip would contradict it.
+		it.gate = gates[r.ID]
+	}
 	it.privacy = parseMetaPrivacy(r.Meta)
 	return it
 }
@@ -757,7 +786,11 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 	}
 	memberships := map[int]bool{}
 	if len(candidates) > 0 {
-		if memberships, err = d.Sources.CreatorMemberships(ctx, candidates); err != nil {
+		read := d.Sources.CreatorMemberships
+		if d.Config.ServeMembershipMiss {
+			read = d.Sources.CreatorMembershipsComputed
+		}
+		if memberships, err = read(ctx, candidates); err != nil {
 			return nil, err
 		}
 	}

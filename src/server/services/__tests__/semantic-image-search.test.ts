@@ -117,7 +117,7 @@ import { searchSemanticImages } from '~/server/services/semantic-image-search.se
 /** A session's views (`credentialViews`); the narrow-key cases pass their own after it. */
 const SESSION_VIEWS = { asModerator: true, asOwner: true };
 import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
-import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
+import { semanticImageCsamFlaggedText } from '~/server/services/semantic-image-flags.sql';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
 
@@ -315,12 +315,12 @@ describe('a stale index cannot surface a hidden image', () => {
   });
 });
 
-describe('the shared held-media rule', () => {
-  const HELD_IMAGE = 202;
-  const HELD_OWNER_IMAGE = 204;
-  const HELD = new Set([HELD_IMAGE, HELD_OWNER_IMAGE]);
+describe('the CSAM-flag rule', () => {
+  const FLAGGED_IMAGE = 202;
+  const FLAGGED_IMAGE_2 = 204;
+  const FLAGGED = new Set([FLAGGED_IMAGE, FLAGGED_IMAGE_2]);
 
-  /** Postgres answering the held query: the held ids among those it was asked about. */
+  /** Postgres answering the flag query: the flagged ids among those it was asked about. */
   function heldQuery() {
     const asked: { ids: number[]; rule: string; statement: string }[] = [];
     dbMock.dbRead.$queryRaw.mockImplementation((async (
@@ -331,16 +331,16 @@ describe('the shared held-media rule', () => {
       // The statement as Postgres would get it, with the rule spliced in and the ids as $1.
       const statement = strings[0] + '$1' + strings[1] + rule.sql + strings[2];
       asked.push({ ids, rule: rule.sql, statement: statement.replace(/\s+/g, ' ') });
-      return ids.filter((id) => HELD.has(id)).map((id) => ({ id }));
+      return ids.filter((id) => FLAGGED.has(id)).map((id) => ({ id }));
     }) as never);
     return asked;
   }
 
-  it('drops held images from the results, for every viewer, moderators included', async () => {
+  it('drops CSAM-flagged images from the results, for every viewer, moderators included', async () => {
     for (const user of [VIEWER, { id: 501, isModerator: true } as SessionUser]) {
       const asked = heldQuery();
-      h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE, 203, HELD_OWNER_IMAGE]));
-      const { source } = rankedSource([201, HELD_IMAGE, 203, HELD_OWNER_IMAGE]);
+      h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE, 203, FLAGGED_IMAGE_2]));
+      const { source } = rankedSource([201, FLAGGED_IMAGE, 203, FLAGGED_IMAGE_2]);
 
       const { items } = await searchSemanticImages({
         ...SESSION_VIEWS,
@@ -350,14 +350,14 @@ describe('the shared held-media rule', () => {
       });
 
       expect(items.map((x) => x.id)).toEqual([201, 203]);
-      expect(asked.at(-1)?.rule).toBe(semanticImageHeldText('i'));
+      expect(asked.at(-1)?.rule).toBe(semanticImageCsamFlaggedText('i'));
     }
   });
 
   it('asks about the hydrated ids, with the rule on the same "Image" alias', async () => {
     const asked = heldQuery();
-    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE]));
-    const { source } = rankedSource([201, HELD_IMAGE]);
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE]));
+    const { source } = rankedSource([201, FLAGGED_IMAGE]);
 
     await searchSemanticImages({
       ...SESSION_VIEWS,
@@ -368,17 +368,17 @@ describe('the shared held-media rule', () => {
 
     const { ids, statement } = asked.at(-1)!;
     // The last call is the page's hydration; the anchor's came first.
-    expect([...ids].sort()).toEqual([201, HELD_IMAGE]);
+    expect([...ids].sort()).toEqual([201, FLAGGED_IMAGE]);
     expect(statement).toMatch(
       /^ ?SELECT i\.id FROM "Image" i WHERE i\.id = ANY\(\$1::int\[\]\) AND /
     );
-    expect(statement.endsWith(semanticImageHeldText('i').replace(/\s+/g, ' '))).toBe(true);
+    expect(statement.endsWith(semanticImageCsamFlaggedText('i').replace(/\s+/g, ' '))).toBe(true);
   });
 
-  it('fills the page from further candidates when held images are dropped', async () => {
+  it('fills the page from further candidates when flagged images are dropped', async () => {
     heldQuery();
-    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE, HELD_OWNER_IMAGE, 205, 206]));
-    const { source } = rankedSource([HELD_IMAGE, 201, HELD_OWNER_IMAGE, 205, 206]);
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE, FLAGGED_IMAGE_2, 205, 206]));
+    const { source } = rankedSource([FLAGGED_IMAGE, 201, FLAGGED_IMAGE_2, 205, 206]);
 
     const { items } = await searchSemanticImages({
       ...SESSION_VIEWS,
@@ -390,7 +390,7 @@ describe('the shared held-media rule', () => {
     expect(items.map((x) => x.id)).toEqual([201, 205, 206]);
   });
 
-  it('fails the search, rather than serving unfiltered results, when the held query fails', async () => {
+  it('fails the search, rather than serving unfiltered results, when the flag query fails', async () => {
     dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('replica down') as never);
     h.fakeGetAllImages = visibleOnly(new Set([201]));
     const { source } = rankedSource([201]);
@@ -405,16 +405,16 @@ describe('the shared held-media rule', () => {
     ).rejects.toThrow('replica down');
   });
 
-  it('answers "more like this" from a held image as not found', async () => {
+  it('answers "more like this" from a flagged image as not found', async () => {
     heldQuery();
-    // Visible to the feed path, so only the held rule can refuse it.
-    h.fakeGetAllImages = visibleOnly(new Set([201, HELD_IMAGE]));
+    // Visible to the feed path, so only the flag rule can refuse it.
+    h.fakeGetAllImages = visibleOnly(new Set([201, FLAGGED_IMAGE]));
     const { source, calls } = rankedSource([201]);
 
     await expect(
       searchSemanticImages({
         ...SESSION_VIEWS,
-        input: input({ imageId: HELD_IMAGE }),
+        input: input({ imageId: FLAGGED_IMAGE }),
         user: VIEWER,
         candidateSource: source,
       })
@@ -1652,7 +1652,7 @@ describe('the video index', () => {
     expect(calls[0].filter.anyOf?.type).toBeUndefined();
   });
 
-  it('a held clip is not served', async () => {
+  it('a CSAM-flagged clip is not served', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([201, 202, 203]));
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 202 }]);
     const { source } = rankedSource([201, 202, 203]);

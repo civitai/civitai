@@ -55,6 +55,9 @@ type Config struct {
 	RedHosts []string
 	// FetchConcurrency bounds the parallel reads (0 = DefaultFetchConcurrency).
 	FetchConcurrency int
+	// ServeQuery is FEED_GO_V1_MODELS_SERVE_QUERY (default off): a public list request with a text
+	// `query` is answered here (with Deps.Search) instead of falling back (`v1-models-query`).
+	ServeQuery bool
 }
 
 // Deps are what the port reads.
@@ -67,8 +70,11 @@ type Deps struct {
 	Addons func(context.Context) []browsing.Addon
 	// Blocked is the blocked browsing tag list (the list's `tag` filter); nil: a `tag` falls back.
 	Blocked *feed.BlockedTags
-	Config  Config
-	Now     func() time.Time
+	// Search is the models search index the Node app's text search reads (SEARCH_HOST); nil: a text
+	// `query` falls back (`v1-models-query`).
+	Search ModelSearcher
+	Config Config
+	Now    func() time.Time
 }
 
 func (d *Deps) now() time.Time {

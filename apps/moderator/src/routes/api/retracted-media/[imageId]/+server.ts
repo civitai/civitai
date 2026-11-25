@@ -6,9 +6,11 @@ import { streamStoredMedia } from '$lib/server/held-media-stream';
 import { retractedMediaRetryAfter } from '$lib/server/retracted-media-rate';
 import {
   getModeratorMedia,
+  moderatorMediaUnavailable,
   recordRetractedView,
   retractedMediaEnabled,
 } from '$lib/server/retracted-media';
+import { RETRACTED_UNAVAILABLE } from '$lib/held-media';
 
 const MAX_INT = 2_147_483_647;
 
@@ -48,10 +50,15 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   const media = await getModeratorMedia(imageId, { csamReview }).catch(() => {
     error(503, 'Could not check this image; retry.');
   });
-  if (!media) error(404, 'Not available here.');
+  const probe = url.searchParams.get('probe') === '1';
+  if (!media) {
+    // Only a probe is told the file is gone; an image withheld from this moderator reads as before.
+    if (probe && (await moderatorMediaUnavailable(imageId).catch(() => false)))
+      error(404, RETRACTED_UNAVAILABLE);
+    error(404, 'Not available here.');
+  }
   // Eligibility alone, so a tile whose load failed can say why; nothing is served or audited.
-  if (url.searchParams.get('probe') === '1')
-    return new Response(null, { status: 204, headers: NO_STORE });
+  if (probe) return new Response(null, { status: 204, headers: NO_STORE });
 
   if (media.kind === 'held')
     return streamStoredMedia({

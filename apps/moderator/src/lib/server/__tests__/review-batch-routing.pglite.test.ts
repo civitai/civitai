@@ -1,9 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
+import {
+  CSAM_RESTRICTION_CASES,
+  csamCaseCleanupSql,
+} from '../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 /**
  * Which images a review batch may show on the general tier (`imageRoutesHeld`, shared with the main
@@ -192,5 +196,25 @@ describe('review batch routing', () => {
   it('an image that is gone, or an index past the batch, gives nothing to serve', async () => {
     expect(await getBatchMedia(batchOf(999), 0)).toBeNull();
     expect(await getBatchMedia(batchOf(21), 1)).toBeNull();
+  });
+});
+
+// civitai/civitai#10377 narrowed the moderator view's rule; the review batch keeps
+// `csamRestrictedSql`, so the shared cases run against it here with that rule's answers.
+describe('review batch routing, by rows sharing its url, its post text and its articles', () => {
+  const target = { id: 990900000, url: 'key-990900000' };
+  beforeAll(async () => {
+    await db.exec(
+      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor") VALUES (${target.id}, '${target.url}', 990910000, 'Blocked', 'moderated')`
+    );
+  });
+  afterEach(async () => {
+    await db.exec(csamCaseCleanupSql(target));
+  });
+
+  it.each(CSAM_RESTRICTION_CASES)('$label', async (c) => {
+    await db.exec(c.mark(target));
+    const expected = !!c.held || (c.csamRestricted ?? c.restricts);
+    expect({ held: await routesHeld(target.id) }).toEqual({ held: expected });
   });
 });

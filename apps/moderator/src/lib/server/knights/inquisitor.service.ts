@@ -23,7 +23,6 @@ import { logToAxiom } from '../axiom';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
 import { listWithheldIds, readRetractedMedia } from '../retracted-media';
-import { readScannerCsamVerdicts } from '../review-batch';
 import {
   consensusBlockReason,
   isKnightsBlockReason,
@@ -207,7 +206,7 @@ export async function getInquisitorQueue(
 
 /**
  * Which of these images `/api/retracted-media` serves at all (`eligible`) and which it serves to
- * this viewer (`viewable`), read by that route's own reader with one scanner read for the page. A
+ * this viewer (`viewable`), read by that route's own reader. A
  * read that fails leaves both empty, so every blocked image is drawn as restricted.
  */
 async function retractedMediaFor(
@@ -215,11 +214,7 @@ async function retractedMediaFor(
   { csamReview }: { csamReview: boolean }
 ): Promise<{ eligible: Set<number>; viewable: Set<number> }> {
   try {
-    const { eligible, viewable } = await readRetractedMedia(imageIds, {
-      csamReview,
-      orHeld: true,
-      readVerdicts: (rows) => readScannerCsamVerdicts(rows.map((row) => row.id)),
-    });
+    const { eligible, viewable } = await readRetractedMedia(imageIds, { csamReview, orHeld: true });
     return { eligible, viewable: new Set(viewable.keys()) };
   } catch (e) {
     // Every blocked row is restricted rather than the whole queue failing to load.

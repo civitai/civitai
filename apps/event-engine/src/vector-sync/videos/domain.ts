@@ -1,4 +1,4 @@
-import { config, domainEmbedEnabled } from '@/config';
+import { config } from '@/config';
 import { videoEmbedUrl } from '../embedder';
 import type { Domain, DomainRef } from '../domain/sync';
 import { videoVectorStore } from './collection';
@@ -37,16 +37,8 @@ export const videoDomain: Domain<VideoPayload> = {
   getDocs: getVideoDocs,
   topics: VIDEO_TOPICS,
   refFromEvent: videoRefFromEvent,
-  // A block, review or scan change touches only the Image row.
+  // No refresh walk: removals arrive as changes to the Image row.
   cdcTables: ['public.Image', 'public.TagsOnImageNew', 'public.ImageResourceNew'],
-  // Held media and owner holds change no Image row; the walk deletes those points.
-  refresh: {
-    everyMs: config.vectorSync.videoRefreshMinutes * 60_000,
-    batch: 500,
-    startupDelayMs: 10 * 60_000,
-    // With embedding off, a row with no point cannot gain one, so only the points need a walk.
-    pointsOnly: config.vectorSync.videoRefreshPointsOnly && !domainEmbedEnabled('video'),
-  },
   embedInput: (id, payload) => ({ id: String(id), videoUrl: videoEmbedUrl(payload.url) }),
   rejected: redisRejectedMemo,
   store: videoVectorStore,

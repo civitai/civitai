@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // transport is built and nothing leaves the process.
 type Sent = { subject: string; to: unknown; html: string; text?: string };
 const sent = vi.hoisted(() => [] as Sent[]);
-vi.mock('@civitai/email/src/client', () => ({
+vi.mock('@civitai/email/src/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   sendEmail: async (input: Sent) => {
     sent.push(input);
   },

@@ -87,6 +87,8 @@ type fakeSources struct {
 	// follows is FollowedUserIDs' answer per viewer; followRq the viewers it was asked for.
 	follows  map[int][]int
 	followRq []int
+	// computedRq are CreatorMembershipsComputed's calls.
+	computedRq [][]int
 }
 
 func (f *fakeSources) OfficialModels(_ context.Context) ([]hydrate.OfficialModel, error) {
@@ -128,6 +130,12 @@ func (f *fakeSources) CreatorMemberships(_ context.Context, ids []int) (map[int]
 	return out, nil
 }
 
+// CreatorMembershipsComputed answers as CreatorMemberships; computedRq records its calls.
+func (f *fakeSources) CreatorMembershipsComputed(ctx context.Context, ids []int) (map[int]bool, error) {
+	f.computedRq = append(f.computedRq, ids)
+	return f.CreatorMemberships(ctx, ids)
+}
+
 func (f *fakeSources) UserIDByUsername(_ context.Context, name string) (int, bool, error) {
 	id, ok := f.users[name]
 	return id, ok, nil
@@ -163,7 +171,9 @@ type env struct {
 	queries []string
 	args    [][]any
 	gates   map[int]*time.Time
-	covers  [][]any
+	// gatedVersions is the gate read's versionIds column: per gated model, its gated version ids.
+	gatedVersions map[int][]int
+	covers        [][]any
 	// community are the community-cover guard's rows (modelId, imageId); communityArgs each read's
 	// arguments.
 	community     [][]any
@@ -205,10 +215,14 @@ func newEnv(pages ...[]testRow) *env {
 					if d != nil {
 						v = *d
 					}
-					rows = append(rows, []any{id, v})
+					var versions any
+					if vs, ok := e.gatedVersions[id]; ok {
+						versions = vs
+					}
+					rows = append(rows, []any{id, v, versions})
 				}
 			}
-			return testkit.NewRows([]string{"modelId", "deadline"}, rows...), nil
+			return testkit.NewRows([]string{"modelId", "deadline", "versionIds"}, rows...), nil
 		}},
 		{Match: `FROM "Image" i`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, e.covers...), nil
@@ -966,6 +980,120 @@ func TestServeHidePaidCoverSameVersionOnly(t *testing.T) {
 	imgs := field(t, items(t, a)[0], "images").([]any)
 	if id, _ := imgs[0].(superjson.Object).Get("id"); len(imgs) != 1 || id != int64(100) {
 		t.Fatalf("hide paid: images %v, want the shown version's own", imgs)
+	}
+}
+
+// Under Hide Paid a gated model keeps only its free versions (#9385): a model with a paid and a free
+// version shows the free one, its base models are the free versions' own, and the paid chip and
+// deadline are off; a model whose every version is paid is left out; a free model is unchanged. Without
+// Hide Paid the same page shows the paid version with the chip on. Either way the gates are one read.
+func TestServeHidePaidShowsFreeVersion(t *testing.T) {
+	deadline := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	setup := func() *env {
+		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "x"}, {id: 2, owner: 9, cursor: "y"}, {id: 3, owner: 9, cursor: "z"}})
+		// 1: a paid version (newest) and a free one; 2: one paid version only; 3: one free version only.
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil), version(11, "SDXL 1.0", nil)}}
+		e.sources.page.Data[2] = hydrate.ModelData{Versions: []superjson.Object{version(20, "Flux.1 D", nil)}}
+		e.sources.page.Data[3] = hydrate.ModelData{Versions: []superjson.Object{version(30, "Illustrious", nil)}}
+		for _, v := range []int{10, 11, 20, 30} {
+			e.sources.images[v] = []superjson.Object{image(v*10, 9, 1, nil)}
+		}
+		e.gates[1], e.gates[2] = &deadline, nil
+		e.gatedVersions = map[int][]int{1: {10}, 2: {20}}
+		return e
+	}
+	gateReads := func(e *env) (n int) {
+		for _, c := range e.db.Calls {
+			if strings.Contains(c, `GROUP BY mv."modelId"`) {
+				n++
+			}
+		}
+		return
+	}
+	type card struct {
+		id, version int64
+		baseModels  []any
+		paid        bool
+		deadline    any
+	}
+	cards := func(a *Answer) []card {
+		list := items(t, a)
+		out := make([]card, 0, len(list))
+		for _, it := range list {
+			out = append(out, card{
+				id: field(t, it, "id").(int64), version: field(t, it, "version.id").(int64),
+				baseModels: field(t, it, "baseModels").([]any), paid: field(t, it, "hasActivePaidAccess").(bool),
+				deadline: field(t, it, "earlyAccessDeadline"),
+			})
+		}
+		return out
+	}
+
+	in := baseInput()
+	in.Limit, in.HidePaid = 10, true
+	e := setup()
+	a, err := serve(t, e, in, nil)
+	if err != nil {
+		t.Fatalf("hide paid: %v (%q)", err, fallback.Reason(err))
+	}
+	want := []card{
+		{id: 1, version: 11, baseModels: []any{"SDXL 1.0"}, paid: false, deadline: nil},
+		{id: 3, version: 30, baseModels: []any{"Illustrious"}, paid: false, deadline: nil},
+	}
+	if got := cards(a); !reflect.DeepEqual(got, want) {
+		t.Fatalf("hide paid: cards\n got  %+v\n want %+v", got, want)
+	}
+	if n := gateReads(e); n != 1 {
+		t.Fatalf("hide paid: %d gate reads, want 1", n)
+	}
+
+	// Control: the same world without Hide Paid.
+	in.HidePaid = false
+	e = setup()
+	if a, err = serve(t, e, in, nil); err != nil {
+		t.Fatalf("hide paid off: %v (%q)", err, fallback.Reason(err))
+	}
+	want = []card{
+		{id: 1, version: 10, baseModels: []any{"Pony", "SDXL 1.0"}, paid: true, deadline: deadline},
+		{id: 2, version: 20, baseModels: []any{"Flux.1 D"}, paid: true, deadline: nil},
+		{id: 3, version: 30, baseModels: []any{"Illustrious"}, paid: false, deadline: nil},
+	}
+	if got := cards(a); !reflect.DeepEqual(got, want) {
+		t.Fatalf("hide paid off: cards\n got  %+v\n want %+v", got, want)
+	}
+	if n := gateReads(e); n != 1 {
+		t.Fatalf("hide paid off: %d gate reads, want 1", n)
+	}
+}
+
+// Under Hide Paid the page query's free version must be Public exactly when getModelsRaw hides
+// private models: on the browse page it is, on a creator's page (username) it is not. servePage
+// hands its hidePrivateModels to the query (PageQuery.HidePrivate).
+func TestServeHidePaidPageQueryHidePrivate(t *testing.T) {
+	const public = `fv.availability = 'Public'::"Availability"`
+	for _, c := range []struct {
+		name     string
+		username string
+		want     bool
+	}{
+		{"browse page", "", true},
+		{"a creator's page", "artist_nine", false},
+	} {
+		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "x"}})
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+		e.sources.users["artist_nine"] = 9
+		in := baseInput()
+		in.HidePaid, in.Username = true, c.username
+		if _, err := serve(t, e, in, nil); err != nil {
+			t.Fatalf("%s: %v (%q)", c.name, err, fallback.Reason(err))
+		}
+		if len(e.queries) != 1 || !strings.Contains(e.queries[0], `FROM "ModelVersion" fv`) {
+			t.Fatalf("%s: page queries %d, want 1 with the free-version arm", c.name, len(e.queries))
+		}
+		if got := strings.Contains(e.queries[0], public); got != c.want {
+			t.Errorf("%s: free version must be Public = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 

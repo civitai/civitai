@@ -482,7 +482,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
       type,
       time
     FROM userActivities
-    WHERE (targetUserId = ${userId} OR (userId = ${userId} AND targetUserId != ${userId}))
+    WHERE targetUserId = ${userId} AND userId IN (0, ${userId})
       AND (type = 'Registration' OR type = 'Login')
   `);
 

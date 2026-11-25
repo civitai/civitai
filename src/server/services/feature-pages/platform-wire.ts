@@ -9,6 +9,7 @@ export const PLATFORM_AUTHOR_ERASE_PATH = '/internal/author/erase';
 export const PLATFORM_COMMENTS_READ_PATH = '/internal/comments';
 export const PLATFORM_COMMENT_BY_SOURCE_PATH = '/internal/comments/by-source';
 export const PLATFORM_HANDLE_PATH = '/internal/handle';
+export const PLATFORM_SUBJECT_PATH = '/internal/subject';
 export const PLATFORM_FEATURE_PAGES_APP = 'feature-pages';
 export const PLATFORM_COMMENTS_PAGE_LIMIT = 500;
 
@@ -52,6 +53,8 @@ export const commentBySourceSchema = z.object({
   digest: z.string().min(1),
   state: z.enum(['visible', 'hidden', 'withheld', 'retracted', 'removed', 'erased']),
 });
+
+export const subjectLookupSchema = z.object({ urn: z.string(), known: z.literal(true) });
 
 export const viewerHandleSchema = z.object({ author: z.string().regex(/^h1:[0-9a-f]{64}$/) });
 

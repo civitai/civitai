@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -72,6 +73,32 @@ type InfiniteInput struct {
 	// request's board color (getNewCreatorUserIds), and the addons resolved under the `newCreators`
 	// scope.
 	NewCreators bool
+	// PublishedOnly is `publishedOnly: true` (read only with InfinitePorts.PublishedOnly; otherwise a
+	// truthy value falls back as `input-publishedOnly`). The handler withdraws it unless `userId` is
+	// the viewer's own (ServeInfinite); kept, it routes the request to Postgres beside a `userId`
+	// (requiresImageDbPath) and is the feed mapper's empty page without one (`flag:publishedOnly`).
+	PublishedOnly bool
+	// PostIDs is `postIds` (z.number().array()), as sent (read only with InfinitePorts.PostIDs;
+	// otherwise a non-empty list falls back as `input-postIds`). Non-empty, it routes to Postgres,
+	// filters the page to those posts (ImagesQuery.PostIDs) and adds their models to the gallery gates.
+	PostIDs []int
+}
+
+// InfinitePorts are image.getInfinite's input shapes and fallback reasons ported behind their own
+// serve switch, each off by default: off, the request falls back exactly as before the port.
+type InfinitePorts struct {
+	// PublishedOnly is FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY: compute a request with
+	// `publishedOnly`.
+	PublishedOnly bool
+	// PostIDs is FEED_GO_INFINITE_SERVE_INPUT_POST_IDS: compute a request with `postIds`.
+	PostIDs bool
+	// SortRandom is FEED_GO_INFINITE_SERVE_SORT_RANDOM: compute a collection's `sort: 'Random'`
+	// (random.go). Off, it is the `input-sort` fallback.
+	SortRandom bool
+	// GallerySettingsMiss is FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS: a model gallery-settings
+	// key absent from the cache (`gallery-settings-miss`) on the hold gates is answered from the
+	// model's row (InfiniteDeps.GalleryHolds), as Node's rebuild decides the hold.
+	GallerySettingsMiss bool
 }
 
 // maxInputIDs is the `ids` schema's `.max(200)`: a longer list is Node's BAD_REQUEST.
@@ -139,28 +166,50 @@ var infiniteAbsentKeys = func() map[string]bool {
 // ignored alone.
 var hatKeys = []string{"hatSort", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats"}
 
-// ParseInfinite validates image.getInfinite's decoded input. A shape outside the supported subset is
-// a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST).
+// ParseInfinite is ParseInfiniteWith with every port's switch off.
 func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
+	return ParseInfiniteWith(m, InfinitePorts{})
+}
+
+// ParseInfiniteWith validates image.getInfinite's decoded input. A shape outside the supported subset
+// is a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST). A
+// shape in ports is read rather than refused only when its switch is on.
+func ParseInfiniteWith(m map[string]any, ports InfinitePorts) (*InfiniteInput, error) {
 	for _, k := range hatKeys {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	// Recently Added orders on the collection's items: answered beside a collectionId only (without
-	// one, Node's BAD_REQUEST: the input-sort fallback parseInput raises for it).
-	recentlyAdded := m["sort"] == SortRecentlyAdded && !isEmpty(m["collectionId"])
+	// Recently Added and Random order on the collection's items: answered beside a collectionId only
+	// (without one, Node's BAD_REQUEST: the input-sort fallback parseInput raises for it). Random only
+	// with its port on.
+	collectionSort := ""
+	if !isEmpty(m["collectionId"]) {
+		switch {
+		case m["sort"] == SortRecentlyAdded:
+			collectionSort = SortRecentlyAdded
+		case m["sort"] == SortRandom && ports.SortRandom:
+			collectionSort = SortRandom
+		}
+	}
 	parsed := withoutUnreadIncludes(m)
-	if recentlyAdded {
+	if collectionSort != "" {
 		parsed = without(parsed, "sort")
 	}
-	base, err := parseInput(parsed, infiniteUnsupported, infiniteAbsentKeys, true)
+	unsupported := infiniteUnsupported
+	if ports.PublishedOnly {
+		unsupported = withoutKey(unsupported, "publishedOnly")
+	}
+	if ports.PostIDs {
+		unsupported = withoutKey(unsupported, "postIds")
+	}
+	base, err := parseInput(parsed, unsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
 	}
 	in := &InfiniteInput{Input: *base}
-	if recentlyAdded {
-		in.Sort = SortRecentlyAdded
+	if collectionSort != "" {
+		in.Sort = collectionSort
 	}
 	if v, ok := m["userId"]; ok && v != nil {
 		n, err := intIn(v, 0, math.MaxInt32)
@@ -229,7 +278,42 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		}
 		in.NewCreators = b
 	}
+	if v, ok := m["publishedOnly"]; ok && ports.PublishedOnly {
+		b, isBool := v.(bool) // z.boolean().optional(): a null or anything else is Node's BAD_REQUEST
+		if !isBool {
+			return nil, fallback.NewfSafe("input-invalid", "publishedOnly", "publishedOnly: %T", v)
+		}
+		in.PublishedOnly = b
+	}
+	if v, ok := m["postIds"]; ok && ports.PostIDs {
+		// `.optional()`, not `.nullish()`: a null is the schema's BAD_REQUEST.
+		if v == nil {
+			return nil, fallback.NewfSafe("input-invalid", "postIds", "postIds: null")
+		}
+		if in.PostIDs, err = int4IDs(v, "postIds"); err != nil {
+			return nil, err
+		}
+	}
+	// A collection's Random sort beside a `postId`: getAllImages orders it by the seeded sort key (its
+	// Random branch replaces the post scope's `i."index"`, then appends `, i."id"`) and builds the
+	// `seed:sortKey:id` cursor, where this service's post scope (ImagesQuery.IndexOrder, a `postId`
+	// without a `modelId`) would order by the index and page on it. Every Random request with a
+	// `postId` is left to Node, decided by the input alone.
+	if in.Sort == SortRandom && in.PostID != 0 {
+		return nil, fallback.New("collection-random-post-id")
+	}
 	return in, nil
+}
+
+// withoutKey is list without key (a copy).
+func withoutKey(list []string, key string) []string {
+	out := make([]string, 0, len(list))
+	for _, k := range list {
+		if k != key {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // inputIDs reads `ids` (z.array(z.number()).max(200).optional()), kept as sent. A present value that
@@ -412,13 +496,31 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
-// dbPath is requiresImageDbPath for the supported inputs: a post's media, a collection, reactions,
-// ids, a model without a version (the feed has no model dimension), or prioritizedUserIds with a
-// model or version scope. Every other shape it lists falls back in parsing.
+// dbPath is requiresImageDbPath for the supported inputs: a post's media, several posts' media
+// (`postIds`), a collection, reactions, ids, a model without a version (the feed has no model
+// dimension), prioritizedUserIds with a model or version scope, or `publishedOnly` beside a
+// `userId` (the own-content submit pickers; read on the input after the handler's withdrawal,
+// withPublishedOnlyScoped). Every other shape it lists falls
+// back in parsing.
 func (in *InfiniteInput) dbPath() bool {
-	return in.PostID != 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
+	return in.PostID != 0 || len(in.PostIDs) > 0 || in.CollectionID != 0 || len(in.Reactions) > 0 || len(in.IDs) > 0 ||
 		(in.ModelID != 0 && in.ModelVersionID == 0) ||
-		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0))
+		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0)) ||
+		(in.PublishedOnly && in.UserID != 0)
+}
+
+// withPublishedOnlyScoped is getInfiniteImagesHandler's `scopedInput`: `publishedOnly` beside a
+// `userId` that is not the viewer's own (`unhatted.userId !== user?.id`; signed out or banned, no
+// viewer, so any `userId`) is withdrawn, so it neither routes the request to Postgres nor reaches the
+// feed mapper. Only `userId` is compared: a `username` scope keeps the flag. in itself when nothing
+// is withdrawn, else a copy.
+func (in *InfiniteInput) withPublishedOnlyScoped(viewerID int) *InfiniteInput {
+	if !in.PublishedOnly || in.UserID == 0 || in.UserID == viewerID {
+		return in
+	}
+	cp := *in
+	cp.PublishedOnly = false
+	return &cp
 }
 
 // addonScope is the scope the addons resolve under: `newCreators` for the board (both
@@ -671,6 +773,24 @@ type InfiniteDeps struct {
 	// NewCreators reads the "new & upcoming" boards (`newCreators`); nil = not configured (a request
 	// with `newCreators: true` falls back).
 	NewCreators *NewCreatorBoards
+	// Ports are the input shapes (ParseInfiniteWith) and fallback reasons served behind their own
+	// switch, all off by default.
+	Ports InfinitePorts
+	// RandomSeed reads a collection's Random seed (InfinitePorts.SortRandom); nil = not configured (a
+	// Random request that needs the stored seed falls back).
+	RandomSeed *RandomSeed
+	// GalleryHolds computes a gallery-settings miss's hold (Ports.GallerySettingsMiss); nil = not
+	// configured (the miss falls back).
+	GalleryHolds GalleryHoldSource
+}
+
+// holdGallery is the gallery the hold gates read (heldLevels, heldByPost): the store, computing an
+// absent gallery-settings key's hold when Ports.GallerySettingsMiss is on and GalleryHolds is set.
+func (d *InfiniteDeps) holdGallery() V1Gallery {
+	if d.Ports.GallerySettingsMiss && d.GalleryHolds != nil {
+		return holdComputingGallery{GalleryStore: d.Gallery, holds: d.GalleryHolds}
+	}
+	return d.Gallery
 }
 
 // InfiniteRequest is one call.
@@ -726,6 +846,11 @@ func infiniteFilters(in *InfiniteInput, addons []browsing.Addon, level int, view
 // value) for the supported subset.
 func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*InfiniteAnswer, error) {
 	in := req.Input
+	if req.Viewer != nil {
+		in = in.withPublishedOnlyScoped(req.Viewer.ID)
+	} else {
+		in = in.withPublishedOnlyScoped(0)
+	}
 	useIndex := d.Config.ImageIndexFeed && !in.dbPath()
 	if useIndex && d.Feed == nil {
 		return nil, fallback.New("index-feed-unconfigured")
@@ -744,8 +869,8 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 
 	// The gallery gates (moderators are exempt from both): a taken-down model's images only to its
 	// owner, a minor or SFW-only model's only at its held level.
-	if !viewer.IsModerator && (in.ModelID != 0 || in.ModelVersionID != 0 || in.PostID != 0) {
-		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID)
+	if !viewer.IsModerator && (in.ModelID != 0 || in.ModelVersionID != 0 || in.PostID != 0 || len(in.PostIDs) > 0) {
+		modelIDs, ok, err := resolveImageModelIDs(ctx, d.Sources, in.ModelID, in.ModelVersionID, in.PostID, in.PostIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -759,7 +884,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		if withheld {
 			return infiniteEmpty(), nil
 		}
-		levels, err := heldLevels(ctx, d.Gallery, modelIDs, "held-level-unset")
+		levels, err := heldLevels(ctx, d.holdGallery(), modelIDs, "held-level-unset")
 		if err != nil {
 			return nil, err
 		}
@@ -848,6 +973,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
 		PostID:         in.PostID,
+		PostIDs:        in.PostIDs,
 		TargetUserID:   userID,
 		TagIDs:         tags,
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,
@@ -910,6 +1036,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		RequiringMeta:         in.RequiringMeta,
 		HasPrioritizedUserIDs: in.prioritized(),
 		Pending:               in.Pending,
+		PublishedOnly:         in.PublishedOnly,
 		Techniques:            in.Techniques,
 		Tools:                 in.Tools,
 		BaseModels:            in.BaseModels,
@@ -998,7 +1125,14 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 // infiniteFromDB is getAllImages for one page (no overscan, no grouping), stamped
 // `{ nextCursor, items, source: 'db' }` by the handler.
 func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time) (*InfiniteAnswer, error) {
-	if !in.NumericCursor() {
+	var random *RandomCursor
+	if in.Sort == SortRandom {
+		// getAllImages' Random branch reads its own `seed:sortKey:id` cursor and never calls getCursor.
+		var err error
+		if random, err = parseRandomCursor(&in.Input); err != nil {
+			return nil, err
+		}
+	} else if !in.NumericCursor() {
 		// getCursor reads a single-field sort's cursor as one integer; anything else is a 400.
 		return nil, fallback.Newf("input-cursor", "%q", in.CursorText)
 	}
@@ -1059,6 +1193,23 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			}, Trivial: true}, nil
 		}
 	}
+	if in.Sort == SortRandom {
+		// The cursor's seed when it is truthy, else the stored one (getCollectionRandomSeed), read
+		// only once the collection is readable: an unreadable one is the empty page above, which Node
+		// answers whatever the seed.
+		q.Cursor = 0
+		if random != nil {
+			q.RandomSeed = random.Seed
+			q.RandomCursor = random
+		}
+		if q.RandomSeed == 0 {
+			seed, err := d.RandomSeed.Seed(ctx)
+			if err != nil {
+				return nil, err
+			}
+			q.RandomSeed = seed
+		}
+	}
 	if in.prioritizedSystemUser() {
 		// getAllImages' hasSystemPosts: with its own post on the version the system user's images are
 		// answered like any prioritized creator's; without one, every creator's images on the version,
@@ -1107,7 +1258,7 @@ func withoutHeldFromViewer(ctx context.Context, d *InfiniteDeps, images []Image,
 	if len(postIDs) == 0 {
 		return images, nil
 	}
-	holds, err := heldByPost(ctx, d.Sources, d.Gallery, postIDs, "held-level-unset")
+	holds, err := heldByPost(ctx, d.Sources, d.holdGallery(), postIDs, "held-level-unset")
 	if err != nil || len(holds) == 0 {
 		return images, err
 	}
@@ -1146,9 +1297,14 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 	if len(rows) > q.Limit {
 		look := rows[len(rows)-1]
 		rows = rows[:len(rows)-1]
-		if look.CursorNull {
+		switch {
+		case q.Sort == SortRandom && q.CollectionID != 0:
+			// The Random page's `concat(seed::text, ':', ct."sortKey"::text, ':', i."id"::text)`: the
+			// query selects the sort key, and the string is built from the seed it bound.
+			next = strconv.FormatInt(q.RandomSeed, 10) + ":" + strconv.Itoa(look.CursorID) + ":" + strconv.Itoa(look.ID)
+		case look.CursorNull:
 			next = nil
-		} else {
+		default:
 			next = int64(look.CursorID)
 		}
 	}

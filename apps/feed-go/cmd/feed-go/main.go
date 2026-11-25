@@ -76,7 +76,7 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 		return nil
 	}
 	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
-		TagGate: feed.ImageTagGate(blocked, addons)}
+		TagGate: feed.ImageTagGate(blocked, addons), TierMetadataKey: cfg.TierMetadataKey}
 	if cfg.CacheWriteBack.NeedsPrimary() {
 		c.Primary = primary
 	}
@@ -479,6 +479,18 @@ func run(log *slog.Logger) error {
 		Blocked: blocked,
 		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
 		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
+		// The input shapes and fallback reasons ported behind their own switch, all default off.
+		Ports: feed.InfinitePorts{
+			PublishedOnly:       cfg.InfiniteServeInputPublishedOnly,
+			PostIDs:             cfg.InfiniteServeInputPostIDs,
+			SortRandom:          cfg.InfiniteServeSortRandom,
+			GallerySettingsMiss: cfg.InfiniteServeGallerySettingsMiss,
+		},
+		// A collection's Random seed: the system redis key, read-only.
+		RandomSeed: &feed.RandomSeed{Sys: sys},
+		// A gallery-settings miss's hold, from the replica (lag-aware; FEED_GO_COMPUTE_MISSES off: nil
+		// Compute, so it falls back).
+		GalleryHolds: sources,
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -494,7 +506,9 @@ func run(log *slog.Logger) error {
 			CoverageNext:            cfg.CoverageNext,
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
-			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed},
+			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed, HidePaid: cfg.GetAllServeHidePaid},
+			ServeUserCosmeticsMiss:  cfg.GetAllServeUserCosmeticsMiss,
+			ServeMembershipMiss:     cfg.GetAllServeMembershipMiss,
 		},
 	}
 	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
@@ -510,6 +524,21 @@ func run(log *slog.Logger) error {
 	if err := mc.Validate(cfg.BearerAuth); err != nil {
 		return err
 	}
+	// The list's text search reads the search index the Node app reads (SEARCH_HOST): answered in the
+	// shadow whenever it is configured, served only with FEED_GO_V1_MODELS_SERVE_QUERY.
+	var search v1models.ModelSearcher
+	if mc.SearchHost != "" {
+		mcl, err := v1models.NewMeiliClient(mc.SearchHost, mc.SearchAPIKey, mc.SearchTimeout)
+		if err != nil {
+			return err
+		}
+		// The Node app's circuit settings; a rejected call (circuit open, concurrency cap) is handed
+		// back as `v1-models-query` and counted here.
+		mcl.SetCircuit(mc.CircuitTripThreshold, mc.CircuitWindow, mc.CircuitCooldown)
+		mcl.OnReject = func(why string) { metrics.SearchRejected.WithLabelValues(why).Inc() }
+		search = mcl
+	}
+	log.Info("GET /api/v1/models text search", "configured", search != nil, "serve", mc.ServeQuery)
 	v1Models := &server.V1ModelsDeps{
 		Deps: &v1models.Deps{
 			DB:      pool,
@@ -518,7 +547,9 @@ func run(log *slog.Logger) error {
 			Gallery: deps.Gallery,
 			Addons:  deps.Addons.Addons,
 			Blocked: blocked,
+			Search:  search,
 			Config: v1models.Config{
+				ServeQuery:           mc.ServeQuery,
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
 				CoverageNext:         cfg.CoverageNext,
@@ -586,7 +617,12 @@ func run(log *slog.Logger) error {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
+		// The serve-side parity replays (FEED_GO_SERVE_PARITY_SAMPLE_RATE, default 0 = off) go to the
+		// same Node app through the same proxy code, but their own instance: a replay's failure is
+		// counted as its outcome (feed_go_serve_parity_total), never as a fallback proxy error.
+		srv.Parity = newServeParity(cfg.ServeParityRate, target, prop)
 	}
+	log.Info("serve-side parity", "FEED_GO_SERVE_PARITY_SAMPLE_RATE", cfg.ServeParityRate, "on", srv.Parity != nil)
 	// The public /api/v1/models and /api/v1/images routes hand their fallbacks to the Node app that
 	// serves /api/v1, a different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the
 	// routes are not mounted).
@@ -615,8 +651,15 @@ func run(log *slog.Logger) error {
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
-		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed)
-	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
+		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed,
+		"FEED_GO_GETALL_SERVE_HIDE_PAID", cfg.GetAllServeHidePaid,
+		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss,
+		"FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", cfg.GetAllServeMembershipMiss)
+	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite,
+		"FEED_GO_INFINITE_SERVE_INPUT_PUBLISHED_ONLY", cfg.InfiniteServeInputPublishedOnly,
+		"FEED_GO_INFINITE_SERVE_INPUT_POST_IDS", cfg.InfiniteServeInputPostIDs,
+		"FEED_GO_INFINITE_SERVE_SORT_RANDOM", cfg.InfiniteServeSortRandom,
+		"FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS", cfg.InfiniteServeGallerySettingsMiss)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,

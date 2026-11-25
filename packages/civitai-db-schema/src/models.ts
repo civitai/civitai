@@ -2211,6 +2211,7 @@ export interface AppAccessRequest {
   reviewedAt: Date | null;
   reviewedById: number | null;
   reviewedBy?: User | null;
+  reviewSource: string | null;
 }
 
 export interface ApiKey {

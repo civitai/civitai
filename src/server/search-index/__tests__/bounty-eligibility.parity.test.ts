@@ -61,8 +61,8 @@ const spec: ParitySpec = {
     bounty(9, 'blockedWithOthers', { nsfwLevel: '33' }),
     bounty(10, 'bannedOwner', { userId: '2' }),
     bounty(11, 'deletedOwner', { userId: '3' }),
-    bounty(12, 'ownerReported', { userId: '4' }),
-    bounty(13, 'ownerSecondaryReported', { userId: '5' }),
+    bounty(12, 'eligible:ownerReported', { userId: '4' }),
+    bounty(13, 'eligible:ownerSecondaryReported', { userId: '5' }),
     bounty(15, 'eligible:earlyAccess', { availability: `'EarlyAccess'` }),
     bounty(16, 'eligible:mature', { nsfwLevel: '28' }),
   ],
@@ -77,8 +77,6 @@ const spec: ParitySpec = {
     'blockedWithOthers',
     'bannedOwner',
     'deletedOwner',
-    'ownerReported',
-    'ownerSecondaryReported',
   ],
   site: async (prisma) =>
     (

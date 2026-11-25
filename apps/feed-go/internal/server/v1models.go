@@ -193,7 +193,7 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 	sqlHash, rules := s.trainingDataVouch(r)
 	ans, err := v1models.ServeList(ctx, s.V1Models.Deps, s.V1Models.Users, v1models.ListRequest{
 		Query: r.URL.RawQuery, Path: r.URL.Path, Host: host, RegionRestricted: s.regionRestricted(r),
-		TrainingDataSQL: sqlHash, Rules: rules,
+		TrainingDataSQL: sqlHash, Rules: rules, Serving: !sampledRequest(r),
 	})
 	if err != nil {
 		return nil, err
