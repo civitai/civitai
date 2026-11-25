@@ -66,6 +66,7 @@ type Svelte = {
 let svelte: Svelte;
 let Preview: unknown;
 let SharedFile: unknown;
+let AppealImages: unknown;
 
 beforeAll(async () => {
   emit('Edge', `<script>let { src } = $props();</script><img alt="" {src} />`);
@@ -96,10 +97,14 @@ beforeAll(async () => {
       TriageCard: 'Stub',
     }
   );
+  emit('AppealImages', read('components/minor-flags/AppealImages.svelte'), {
+    CdnOrRetractedMedia: 'Cdn',
+  });
   const load = async (name: string) =>
     (await import(/* @vite-ignore */ pathToFileURL(path.join(work, `${name}.js`)).href)).default;
   Preview = await load('Preview');
   SharedFile = await load('SharedFile');
+  AppealImages = await load('AppealImages');
   svelte = await import(/* @vite-ignore */ clientEntry('svelte'));
 });
 
@@ -238,4 +243,25 @@ describe('a shared file card', () => {
     expect(retractedRequests()).toEqual([]);
     svelte.unmount(app);
   });
+});
+
+// The tile is blurred on pages that hide an image until it is asked for; its storage copy must not
+// play or save unblurred either.
+describe('an appeal image grid', () => {
+  const video = { id: OPEN, url: `key-${OPEN}`, nsfwLevel: 1, type: 'video' };
+
+  it.each([
+    [true, false],
+    [false, true],
+  ])(
+    'blurred %s: the storage copy of a refused video has controls %s',
+    async (blurred, controls) => {
+      const { target, app } = await mount(AppealImages, { images: [video], blurred });
+      cdnRefuses(target);
+      const fallback = target.querySelector('video');
+      expect(fallback?.getAttribute('src')).toBe(retractedMediaUrl(OPEN));
+      expect(fallback?.hasAttribute('controls')).toBe(controls);
+      svelte.unmount(app);
+    }
+  );
 });

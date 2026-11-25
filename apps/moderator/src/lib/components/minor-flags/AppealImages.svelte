@@ -44,6 +44,7 @@
           width={450}
           anim={false}
           hoverPlay={!blurred}
+          controls={!blurred}
           class={blurred
             ? 'size-full scale-110 object-cover object-top blur-xl'
             : 'size-full object-cover object-top'}

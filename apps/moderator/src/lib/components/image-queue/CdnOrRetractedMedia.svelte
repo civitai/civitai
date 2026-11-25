@@ -19,6 +19,7 @@
     unprocessed = false,
     anim,
     hoverPlay,
+    controls = true,
   }: {
     item: { id: number; url: string; type?: MediaType | null; name?: string | null };
     width?: number;
@@ -29,6 +30,8 @@
     /** Passed to `EdgeMedia` for the CDN copy. */
     anim?: boolean;
     hoverPlay?: boolean;
+    /** False for a tile drawn blurred: its storage copy must not play or save unblurred. */
+    controls?: boolean;
   } = $props();
 
   const mediaType = $derived(
@@ -82,13 +85,13 @@
 {#if mode === 'failed'}
   <div class="p-4 text-center text-xs text-dark-2">{fallback?.reason}</div>
 {:else if mode === 'retracted' && mediaType === 'video'}
-  <!-- Controls, as it does not autoplay here. -->
+  <!-- Controls, as it does not autoplay here; none on a blurred tile. -->
   <video
     src={retractedMediaUrl(item.id)}
     class={className}
     muted
     playsinline
-    controls
+    {controls}
     preload="metadata"
     onerror={onRetractedError}
   ></video>
