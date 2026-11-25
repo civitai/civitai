@@ -25,6 +25,7 @@ import {
   hubLimits,
   hubSourceKey,
   hubSourceScopeSchema,
+  type SourceModelState,
   hubTagGroupKey,
 } from '~/server/schema/user-hub.schema';
 import {
@@ -324,42 +325,49 @@ export async function getUserHubById({ id, userId, isModerator }: { id: number }
   });
   if (!hub) throw throwNotFoundError('Hub not found');
   const detail = toHubDetail(hub, userId);
-  // The owner is told which Model and ModelVersion sources are of a deleted model, which serve
-  // nothing, so they can tell which to remove. Only that: the source's own label is what is shown.
-  const deleted = detail.isOwner ? await getDeletedSourceKeys(detail.sources) : new Set<string>();
+  // Only the owner, who edits the sources, is told which no longer serve.
+  const states = detail.isOwner
+    ? await getSourceModelStates(detail.sources, hub.userId)
+    : new Map<string, SourceModelState>();
   return {
     ...detail,
     sources: detail.sources.map((source) => ({
       ...source,
-      deleted: deleted.has(hubSourceKey(source)),
+      modelState: states.get(hubSourceKey(source)),
     })),
   };
 }
 
-async function getDeletedSourceKeys(sources: { type: UserHubSourceType; targetId: number }[]) {
+/** Of a hub's Model and ModelVersion sources, those whose model is no longer published. */
+async function getSourceModelStates(
+  sources: { type: UserHubSourceType; targetId: number }[],
+  hubOwnerId: number
+) {
+  const states = new Map<string, SourceModelState>();
   const ids = (type: UserHubSourceType) =>
     sources.filter((source) => source.type === type).map((source) => source.targetId);
   const modelIds = ids(UserHubSourceType.Model);
-  const versionIds = ids(UserHubSourceType.ModelVersion);
   // Loaded on demand: the model service imports the image service, which imports this one.
-  const { getDeletedModelVersionIds } = await import('~/server/services/model.service');
-  const [deletedModels, deletedVersionIds] = await Promise.all([
-    modelIds.length
-      ? dbRead.model.findMany({
-          where: { id: { in: modelIds }, status: ModelStatus.Deleted },
-          select: { id: true },
-        })
-      : [],
-    getDeletedModelVersionIds(versionIds),
-  ]);
-  return new Set([
-    ...deletedModels.map((model) =>
-      hubSourceKey({ type: UserHubSourceType.Model, targetId: model.id })
-    ),
-    ...[...deletedVersionIds].map((targetId) =>
-      hubSourceKey({ type: UserHubSourceType.ModelVersion, targetId })
-    ),
-  ]);
+  const { getModelIdsOfVersions } = await import('~/server/services/model.service');
+  const modelOfVersion = await getModelIdsOfVersions(ids(UserHubSourceType.ModelVersion));
+  const allModelIds = [...new Set([...modelIds, ...modelOfVersion.values()])];
+  if (!allModelIds.length) return states;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: allModelIds }, status: { not: ModelStatus.Published } },
+    select: { id: true, userId: true, status: true },
+  });
+  const stateOf = new Map<number, SourceModelState>();
+  for (const model of models) {
+    if (model.userId !== hubOwnerId) stateOf.set(model.id, 'unavailable');
+    else if (model.status === ModelStatus.Deleted) stateOf.set(model.id, 'deleted');
+  }
+  const set = (type: UserHubSourceType, targetId: number, modelId: number) => {
+    const state = stateOf.get(modelId);
+    if (state) states.set(hubSourceKey({ type, targetId }), state);
+  };
+  for (const id of modelIds) set(UserHubSourceType.Model, id, id);
+  for (const [id, modelId] of modelOfVersion) set(UserHubSourceType.ModelVersion, id, modelId);
+  return states;
 }
 
 /**

@@ -15,18 +15,21 @@ const {
   heldLevelMock,
   withheldVersionsMock,
   deletedVersionsMock,
+  modelsOfVersionsMock,
 } = vi.hoisted(() => ({
   permissionsMock: vi.fn(),
   replacedTagIdsMock: vi.fn(),
   heldLevelMock: vi.fn(),
   withheldVersionsMock: vi.fn(),
   deletedVersionsMock: vi.fn(),
+  modelsOfVersionsMock: vi.fn(),
 }));
 
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: heldLevelMock,
   getWithheldVersionIds: withheldVersionsMock,
   getDeletedModelVersionIds: deletedVersionsMock,
+  getModelIdsOfVersions: modelsOfVersionsMock,
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -109,6 +112,7 @@ beforeEach(() => {
   heldLevelMock.mockResolvedValue(undefined);
   withheldVersionsMock.mockResolvedValue(new Set());
   deletedVersionsMock.mockResolvedValue(new Set());
+  modelsOfVersionsMock.mockResolvedValue(new Map());
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
@@ -2226,34 +2230,60 @@ describe('getUserHubById', () => {
     expect(hub.isOwner).toBe(false);
   });
 
-  // #317: the owner could not tell which source was their deleted model.
-  it('marks a deleted model source for the owner, and tells no one else', async () => {
-    const sources = [
-      { type: UserHubSourceType.Model, targetId: 20, enabled: true, exclude: false },
-      { type: UserHubSourceType.Model, targetId: 21, enabled: true, exclude: false },
-      { type: UserHubSourceType.ModelVersion, targetId: 41, enabled: true, exclude: false },
-      { type: UserHubSourceType.ModelVersion, targetId: 42, enabled: true, exclude: false },
+  // #317: the owner could not tell which source no longer served.
+  describe('sources whose model is no longer published', () => {
+    // Hub owner 5. Model 20 and 23 are theirs; 21 and 22 are another user's.
+    const models = [
+      { id: 20, userId: 5, status: ModelStatus.Deleted },
+      { id: 21, userId: 8, status: ModelStatus.Deleted },
+      { id: 22, userId: 8, status: ModelStatus.UnpublishedViolation },
+      { id: 23, userId: 5, status: ModelStatus.Unpublished },
+      { id: 24, userId: 8, status: ModelStatus.Published },
     ];
-    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources });
-    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 20 }] as never);
-    deletedVersionsMock.mockResolvedValue(new Set([42]));
+    beforeEach(() => {
+      findFirstHub.mockResolvedValue({
+        id: 1,
+        userId: 5,
+        metadata: {},
+        sources: [20, 21, 22, 23, 24]
+          .map((targetId) => ({ type: UserHubSourceType.Model, targetId }))
+          .concat([{ type: UserHubSourceType.ModelVersion, targetId: 41 }])
+          .map((source) => ({ ...source, enabled: true, exclude: false })),
+      });
+      modelsOfVersionsMock.mockResolvedValue(new Map([[41, 22]]));
+      // Answers the status filter the query sends, so a query without it returns every model.
+      dbMock.dbRead.model.findMany.mockImplementation((async ({
+        where,
+      }: {
+        where: { id: { in: number[] }; status?: { not: ModelStatus } };
+      }) =>
+        models.filter(
+          (m) => where.id.in.includes(m.id) && (!where.status || m.status !== where.status.not)
+        )) as never);
+    });
 
-    const owner = await getUserHubById({ id: 1, userId: 5 });
-    expect(owner.sources.map((s) => [s.targetId, s.deleted])).toEqual([
-      [20, true],
-      [21, false],
-      [41, false],
-      [42, true],
-    ]);
-    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [20, 21] }, status: ModelStatus.Deleted } })
-    );
-    expect(deletedVersionsMock).toHaveBeenCalledWith([41, 42]);
+    it("labels another user's deleted and unpublished models the same, and only the owner's own as deleted", async () => {
+      const owner = await getUserHubById({ id: 1, userId: 5 });
+      const state = Object.fromEntries(owner.sources.map((s) => [s.targetId, s.modelState]));
 
-    vi.clearAllMocks();
-    const stranger = await getUserHubById({ id: 1, userId: 999 });
-    expect(stranger.sources.some((s) => s.deleted)).toBe(false);
-    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+      // The label must not tell the owner whether someone else deleted a model or had it unpublished.
+      expect(state[21]).toBe(state[22]);
+      expect(state).toEqual({
+        20: 'deleted',
+        21: 'unavailable',
+        22: 'unavailable',
+        23: undefined,
+        24: undefined,
+        41: 'unavailable',
+      });
+    });
+
+    it('tells no one but the owner, and reads nothing for them', async () => {
+      const stranger = await getUserHubById({ id: 1, userId: 999 });
+
+      expect(stranger.sources.some((s) => s.modelState)).toBe(false);
+      expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+    });
   });
 });
 

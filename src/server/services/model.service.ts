@@ -6679,6 +6679,28 @@ export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?
 }
 
 /**
+ * The model of each named version. `modelOf` maps versions whose model the caller already has; the
+ * rest are looked up. A version not found is absent.
+ */
+export async function getModelIdsOfVersions(
+  modelVersionIds: number[],
+  modelOf: ReadonlyMap<number, number> = new Map()
+) {
+  const models = new Map<number, number>();
+  const unknown: number[] = [];
+  for (const id of uniq(modelVersionIds)) {
+    const modelId = modelOf.get(id);
+    if (modelId === undefined) unknown.push(id);
+    else models.set(id, modelId);
+  }
+  if (unknown.length) {
+    const versions = await versionModelCache().fetch(unknown);
+    for (const version of Object.values(versions)) models.set(version.id, version.modelId);
+  }
+  return models;
+}
+
+/**
  * Of the named versions, those whose model is deleted. `modelOf` maps versions whose model the caller
  * already has; the rest are looked up. A version not found is not returned.
  */
@@ -6688,13 +6710,8 @@ export async function getDeletedModelVersionIds(
 ) {
   const deleted = new Set<number>();
   if (!modelVersionIds.length) return deleted;
-  const models = new Map(modelOf);
-  const unknown = uniq(modelVersionIds.filter((id) => !models.has(id)));
-  if (unknown.length) {
-    const versions = await versionModelCache().fetch(unknown);
-    for (const version of Object.values(versions)) models.set(version.id, version.modelId);
-  }
-  const modelIds = uniq(modelVersionIds.flatMap((id) => models.get(id) ?? []));
+  const models = await getModelIdsOfVersions(modelVersionIds, modelOf);
+  const modelIds = uniq([...models.values()]);
   if (!modelIds.length) return deleted;
   const deletedModels = await dbRead.model.findMany({
     where: { id: { in: modelIds }, status: ModelStatus.Deleted },

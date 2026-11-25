@@ -12,7 +12,8 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { excludeGroupRule } from '~/components/Hubs/hub.utils';
+import { excludeGroupRule, sourceModelStateLabel } from '~/components/Hubs/hub.utils';
+import type { SourceModelState } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 export type HubSourceCardProps = {
@@ -23,8 +24,8 @@ export type HubSourceCardProps = {
     enabled: boolean;
     exclude?: boolean;
     index: number;
-    /** Of a deleted model: it serves nothing. Set for the owner only. */
-    deleted?: boolean;
+    /** Why a Model or ModelVersion source serves nothing. Sent to the hub owner only. */
+    modelState?: SourceModelState;
   };
   /**
    * The rest of this tag AND-group, beyond `source`. Empty or absent for every other
@@ -110,7 +111,11 @@ export function HubSourceCard({
             c={on ? color : 'dimmed'}
             className="tracking-wide"
           >
-            {[label, source.exclude && 'kept out', source.deleted && 'deleted']
+            {[
+              label,
+              source.exclude && 'kept out',
+              source.modelState && sourceModelStateLabel[source.modelState].toLowerCase(),
+            ]
               .filter(Boolean)
               .join(' · ')}
           </Text>

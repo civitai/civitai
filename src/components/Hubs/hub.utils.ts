@@ -1,5 +1,6 @@
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import { hubLimits, hubSourceKey, hubTagGroupKey } from '~/server/schema/user-hub.schema';
+import type { SourceModelState } from '~/server/schema/user-hub.schema';
 import { Availability, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { Flags } from '~/shared/utils/flags';
@@ -78,6 +79,11 @@ export const kindColor: Record<string, string> = {
 };
 
 /** What a source is called in front of a person: "Creator", not `User`. */
+export const sourceModelStateLabel: Record<SourceModelState, string> = {
+  deleted: 'Deleted',
+  unavailable: 'No longer available',
+};
+
 export function hubSourceKindLabel(type: string) {
   return sourceKindLabels[type] ?? 'Source';
 }
@@ -123,6 +129,7 @@ export function toEditorSources(
     exclude: boolean;
     index: number;
     groupKey: number | null;
+    modelState?: SourceModelState;
   }[]
 ): HubSourceValue[] {
   return sources.map(({ id: _id, ...source }) => source);
