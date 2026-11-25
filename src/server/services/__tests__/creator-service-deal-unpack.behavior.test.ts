@@ -2323,6 +2323,73 @@ describe('a Final rated outside the domain', () => {
     expect(listedFile).toMatchObject({ canDownload: true });
   });
 
+  describe('once an image in it is gone', () => {
+    /** What the seller, the buyer and the moderator dispute tool are offered of the file, and get. */
+    const everyoneSees = async (dealId: number, fileId: number) => {
+      const callers = {
+        seller: { userId: SELLER, isModerator: false, servableLevels: 31 },
+        buyer: { userId: BUYER, isModerator: false, servableLevels: 31 },
+        disputeTool: {
+          userId: 99,
+          isModerator: true,
+          moderatorFetch: true,
+          servableLevels: allBrowsingLevelsFlag,
+        },
+      };
+      const seen: Record<string, { listed?: boolean; downloaded: boolean }> = {};
+      for (const [name, caller] of Object.entries(callers)) {
+        const listed = (await files.listServiceDealFiles({ dealId, ...caller })).find(
+          (row) => row.id === fileId
+        );
+        const download = await files.resolveServiceDealFileDownload({ fileId, ...caller });
+        seen[name] = { listed: listed?.canDownload, downloaded: download !== null };
+      }
+      return seen;
+    };
+    const refused = { listed: false, downloaded: false };
+    const served = { listed: true, downloaded: true };
+
+    it('refuses everyone a file whose image was blocked as CSAM and then deleted', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`UPDATE "Image" SET "blockedFor" = 'CSAM'`);
+      await q(`DELETE FROM "Image"`);
+      expect(await everyoneSees(dealId, fileId)).toEqual({
+        seller: refused,
+        buyer: refused,
+        disputeTool: refused,
+      });
+    });
+
+    it('serves a file whose passed image copy was let go', async () => {
+      const { dealId, fileId } = await completedRatedFinal('result.zip');
+      await q(`DELETE FROM "Image"`);
+      await q(`UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL`);
+      expect(await everyoneSees(dealId, fileId)).toEqual({
+        seller: served,
+        buyer: served,
+        disputeTool: served,
+      });
+    });
+
+    it.each([
+      ['refuses', 'An image in this file was rejected when it was checked.', false],
+      ['still serves', SERVICE_FINAL_OVER_LEVEL_REASON, true],
+    ])(
+      '%s the seller a file whose image entry failed with: %s',
+      async (_n, failReason, sellerServed) => {
+        const { dealId, fileId } = await completedRatedFinal('result.zip');
+        await q(`DELETE FROM "Image"`);
+        await q(
+          `UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanStatus" = 'Failed', "failReason" = $1`,
+          [failReason]
+        );
+        expect((await everyoneSees(dealId, fileId)).seller).toEqual(
+          sellerServed ? served : refused
+        );
+      }
+    );
+  });
+
   it('is not refused because its owner is named on a CSAM report, only for its own flag', async () => {
     const { dealId, fileId } = await completedRatedFinal('result.zip');
     await q(`UPDATE "Image" SET "userId" = $1`, [SELLER]);

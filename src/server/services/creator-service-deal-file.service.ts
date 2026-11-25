@@ -1221,7 +1221,13 @@ const finalLevelColumns = Prisma.sql`f."scannedEtag",
         WHERE e."fileId" = f."id" AND i."blockedFor" IS NOT NULL) AS "imageBlocked",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone"`;
+          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = f."id" AND e."imageId" IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "imageGone",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = f."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
+          AND e."failReason" IS DISTINCT FROM ${SERVICE_FINAL_OVER_LEVEL_REASON}) AS "entryRefused"`;
 
 type FinalLevelFacts = {
   scannedEtag: string | null;
@@ -1231,6 +1237,10 @@ type FinalLevelFacts = {
   /** An image in it is blocked, for any reason. */
   imageBlocked: boolean;
   ratedImageGone: boolean;
+  /** An entry still points at an image that is gone, so nothing shows the image was not held. */
+  imageGone: boolean;
+  /** An entry failed its scan for a reason other than its rating. */
+  entryRefused: boolean;
 };
 
 /**
@@ -1249,6 +1259,8 @@ function finalLevelGate(
   // A file of any kind held for CSAM or a minor goes only through the CSAM path, never this route,
   // rated or not. Its uploader still gets their own original back, unless an image in it is blocked.
   if (row.csamHeld && !(ownOriginal && !row.imageBlocked)) return 'refused';
+  // Fails closed: the entry's verdict outlives its image, and a gone image may have been held.
+  if (row.imageGone || (ownOriginal && row.entryRefused)) return 'refused';
   if (row.kind !== 'Final') return 'served';
   const video = isFinalVideoName(row.fileName);
   if (!video && row.contentLevel === null) return 'served';
