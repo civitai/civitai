@@ -61,8 +61,9 @@ export default function ProfileHiddenTabsModal({
     <Modal {...dialog} title="Profile tabs">
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          Hidden tabs are taken out of your profile&apos;s navigation for visitors. They are not
-          private: anyone with the link can still open them. Overview and Shop always show.
+          Hidden tabs are taken out of your profile&apos;s navigation, for you as well as visitors.
+          They are not private: anyone with the link can still open them. Overview and Shop always
+          show.
         </Text>
         <Stack gap="xs">
           {tabs.map((tab) => (

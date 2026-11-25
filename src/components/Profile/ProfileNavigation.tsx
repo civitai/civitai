@@ -186,7 +186,8 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     | undefined;
   const tabs = applyHiddenProfileTabs(opts, {
     hiddenTabs: privacySettings?.hiddenTabs,
-    viewerSeesAll: isProfileOwner || isModerator,
+    // The owner sees their tabs as visitors do, and unhides them from the gear.
+    viewerSeesAll: !!isModerator,
     enabled: !!features.profileRedesign,
   });
 
