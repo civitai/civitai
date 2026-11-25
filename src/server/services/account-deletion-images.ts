@@ -48,6 +48,10 @@ export const MAX_RESTORE_BATCHES = 5000;
  * nothing but `JobQueue` — no owner and no `deletedAt` predicate — so until these rows are gone
  * a restored account is still counting down to losing every image row and S3 object.
  *
+ * Only for images that still carry the grace breadcrumb: a block written during the grace period
+ * strips it and outlives the restore, so its purge row stays. The restore clears the breadcrumbs
+ * only after this runs (`restore-user-images`, queued once `deletedAt` is cleared).
+ *
  * Returns a `PrismaPromise` so the caller can land it in the same transaction as the
  * `deletedAt` clear: a gap between the two is a window where a crash leaves the purge armed on
  * an account that is once again live.
@@ -57,7 +61,10 @@ export function disarmAccountDeletionImagePurge(userId: number) {
     DELETE FROM "JobQueue"
     WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
       AND "entityType" = ${EntityType.Image}::"EntityType"
-      AND "entityId" IN (SELECT i.id FROM "Image" i WHERE i."userId" = ${userId})
+      AND "entityId" IN (
+        SELECT i.id FROM "Image" i
+        WHERE i."userId" = ${userId} AND (i."metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
+      )
   `;
 }
 
