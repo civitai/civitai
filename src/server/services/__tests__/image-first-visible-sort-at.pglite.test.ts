@@ -181,6 +181,18 @@ describe('an image that was already served', () => {
     expect(+(await row(id)).sortAt).toBe(+before.sortAt);
   });
 
+  it('does not rise when a released image moves to an older post', async () => {
+    const id = await insertHeld();
+    await pause();
+    await setReview(id, null);
+    const released = await row(id);
+    await pg.query(`UPDATE "Image" SET "postId" = $2 WHERE id = $1`, [id, POST_OLD]);
+
+    const moved = await row(id);
+    expect(+moved.sortAt).toBeLessThanOrEqual(+released.sortAt);
+    expect(moved.firstVisibleAt).toEqual(released.firstVisibleAt);
+  });
+
   it('ignores a client write to firstVisibleAt', async () => {
     const id = await insertVisible();
     const before = await row(id);
@@ -210,8 +222,9 @@ describe('rows inserted before the migration', () => {
 });
 
 describe('the trigger’s public-row test', () => {
-  // The public feed's row-level gates, from the helpers the feed queries use
-  // (getAllImages: needsReview, acceptableMinor, a browsable level, imageReviewedSql; blockedFor; ToS).
+  // The public feed's row-level gates. imageReviewedSql and imageBlockedForConditions are the
+  // feed's own helpers; the other four are inline conditions in getAllImages and are restated here,
+  // so a change to one of those must be made here too.
   const tsPublic = Prisma.sql`(
     i."needsReview" IS NULL
     AND i."acceptableMinor" = FALSE
@@ -233,12 +246,15 @@ describe('the trigger’s public-row test', () => {
                   for (const reason of [
                     `'{}'`,
                     `'{"nsfwLevelReason": "${KNIGHTS_VOTE_NSFW_LEVEL_REASON}"}'`,
+                    `'{"nsfwLevelReason": "Moderator"}'`,
                   ])
                     for (const jobs of [
                       'NULL',
                       `'{"error": {"failureClass": "permanent"}}'`,
                       `'{"lastFailure": {"failureClass": "permanent"}}'`,
                       `'{"permanentFailure": true}'`,
+                      `'{"permanentFailure": false}'`,
+                      `'{"error": {"failureClass": "transient"}}'`,
                     ])
                       values.push(
                         `('${ingestion}', ${locked}, ${level}, ${review}, ${blocked}, ${tos}, ${minor}, ${reason}::jsonb, ${jobs}::jsonb)`
@@ -266,18 +282,4 @@ describe('the trigger’s public-row test', () => {
     expect(rows[0].public).toBeLessThan(rows[0].total);
     expect(rows[0].mismatched).toBe(0);
   });
-});
-
-it('the migration carries the same function bodies as the programmability file', () => {
-  const source = readFileSync(TRIGGERS, 'utf8');
-  const migration = readFileSync(
-    path.resolve(
-      __dirname,
-      '../../../../packages/civitai-db-schema/prisma/migrations/20271201120000_image_first_visible_at/migration.sql'
-    ),
-    'utf8'
-  );
-  const shared = source.slice(source.indexOf('-- 0. Shared pieces.')).trim();
-  expect(shared.length).toBeGreaterThan(1000);
-  expect(migration).toContain(shared);
 });

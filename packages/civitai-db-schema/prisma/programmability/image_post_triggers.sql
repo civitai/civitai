@@ -2,6 +2,8 @@
 --   sortAt = GREATEST(post.publishedAt, image.scannedAt, image.createdAt,
 --                     image.firstVisibleAt while within 7 days of post.publishedAt)
 -- firstVisibleAt is when the row first passed the public feed gates (image_row_public).
+-- set_image_sort_at writes NEW."firstVisibleAt": apply migration 20271201120000_image_first_visible_at
+-- (which adds the column) before this file, or every Image write fails.
 -- An image held from upload and released later sorts at its release, once; one that was
 -- already served keeps its place through any later hide and unhide.
 -- GREATEST ignores NULLs, so a draft / unpublished / postless image (no
@@ -95,16 +97,21 @@ SELECT COALESCE(
 )
 $$;
 ---
--- The highest Image id when firstVisibleAt was introduced. Rows at or below it predate the
--- column, so whether they were ever served is unknown: they never get a firstVisibleAt and
--- keep the old sort. Created once per database, at apply time; re-running keeps the value.
+-- The last Image id handed out when firstVisibleAt was introduced. Rows at or below it predate
+-- the column, so whether they were ever served is unknown: they never get a firstVisibleAt and
+-- keep the old sort. Read from the id sequence (no lock on "Image"; counts ids of inserts still
+-- in flight). Created once per database, at apply time; re-running keeps the value.
 DO
 $$
+DECLARE
+  last_id bigint;
 BEGIN
   IF to_regprocedure('image_first_visible_min_id()') IS NULL THEN
+    EXECUTE format('SELECT last_value FROM %s', pg_get_serial_sequence('"Image"', 'id'))
+      INTO last_id;
     EXECUTE format(
-      'CREATE FUNCTION image_first_visible_min_id() RETURNS int LANGUAGE sql IMMUTABLE AS %L',
-      'SELECT ' || (SELECT COALESCE(max(id), 0) FROM "Image")
+      'CREATE FUNCTION image_first_visible_min_id() RETURNS bigint LANGUAGE sql IMMUTABLE AS %L',
+      'SELECT ' || last_id
     );
   END IF;
 END

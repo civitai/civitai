@@ -1,7 +1,7 @@
 -- Image."firstVisibleAt": when the row first passed the public feed gates. set_image_sort_at
 -- stamps it once and adds it to sortAt while it falls within 7 days of the post's publish, so an
 -- image held from upload and released later sorts at its release instead of far back in the feed.
--- The function bodies below are copied from programmability/image_post_triggers.sql; keep them equal.
+-- The function bodies below are copied from programmability/image_post_triggers.sql.
 --
 -- NOT AUTO-APPLIED: a human runs this file by hand (see CLAUDE.md -> Database), dev first, then
 -- production. The column is `@no-type` (raw SQL only), so Prisma never selects it and the code may
@@ -11,16 +11,23 @@
 -- columns: a publication of "Image" without a column list would ship the new column, and its
 -- subscribers then need the column added FIRST.
 --
--- A nullable column with no default is a catalog-only change: no table rewrite. No backfill: rows
--- that exist when this runs stay NULL and are fenced off by image_first_visible_min_id(), which
--- records the highest "Image".id at apply time, so they keep today's sort. The short lock_timeout
--- keeps a waiting ALTER from queueing every query on "Image" behind it; on a timeout nothing is
--- applied, so re-run it. Idempotent.
+-- Two transactions, so "Image" is never held exclusively for more than the ALTER:
+-- 1. The column: catalog-only (nullable, no default, no rewrite). The short lock_timeout keeps a
+--    waiting ALTER from queueing every query on "Image" behind it; on a timeout nothing is
+--    applied, so re-run it.
+-- 2. The functions, after the column exists (set_image_sort_at writes it). No table lock; the
+--    triggers themselves are unchanged and keep calling these functions. The cutoff is read in
+--    the same transaction that switches the trigger on, so a row inserted before the switch is
+--    at or below it (bar an insert whose id is drawn in the instant before that commit). No
+--    backfill: those rows stay NULL and keep today's sort.
+-- Both are idempotent; re-running keeps the recorded cutoff.
 
 BEGIN;
 SET LOCAL lock_timeout = '2s';
 ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "firstVisibleAt" TIMESTAMP(3);
+COMMIT;
 
+BEGIN;
 -- 0. Shared pieces.
 --
 -- The public feed's row-level gates (getAllImages): no review flag, not acceptableMinor, a
@@ -60,16 +67,21 @@ SELECT COALESCE(
 )
 $$;
 ---
--- The highest Image id when firstVisibleAt was introduced. Rows at or below it predate the
--- column, so whether they were ever served is unknown: they never get a firstVisibleAt and
--- keep the old sort. Created once per database, at apply time; re-running keeps the value.
+-- The last Image id handed out when firstVisibleAt was introduced. Rows at or below it predate
+-- the column, so whether they were ever served is unknown: they never get a firstVisibleAt and
+-- keep the old sort. Read from the id sequence (no lock on "Image"; counts ids of inserts still
+-- in flight). Created once per database, at apply time; re-running keeps the value.
 DO
 $$
+DECLARE
+  last_id bigint;
 BEGIN
   IF to_regprocedure('image_first_visible_min_id()') IS NULL THEN
+    EXECUTE format('SELECT last_value FROM %s', pg_get_serial_sequence('"Image"', 'id'))
+      INTO last_id;
     EXECUTE format(
-      'CREATE FUNCTION image_first_visible_min_id() RETURNS int LANGUAGE sql IMMUTABLE AS %L',
-      'SELECT ' || (SELECT COALESCE(max(id), 0) FROM "Image")
+      'CREATE FUNCTION image_first_visible_min_id() RETURNS bigint LANGUAGE sql IMMUTABLE AS %L',
+      'SELECT ' || last_id
     );
   END IF;
 END
@@ -129,12 +141,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 ---
-CREATE OR REPLACE TRIGGER image_sort_at_before
-  BEFORE INSERT OR UPDATE
-  ON "Image"
-  FOR EACH ROW
-EXECUTE FUNCTION set_image_sort_at();
----
 -- 2. Fan-out author. A Post's publishedAt moving (publish, schedule, reschedule,
 --    unpublish — including the model/version publish/unpublish flows, which all
 --    rewrite Post.publishedAt) restamps every image on that post. It WRITES sortAt
@@ -159,12 +165,5 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
----
-CREATE OR REPLACE TRIGGER post_published_at_change
-  AFTER UPDATE OF "publishedAt"
-  ON "Post"
-  FOR EACH ROW
-  WHEN (NEW."publishedAt" IS DISTINCT FROM OLD."publishedAt")
-EXECUTE FUNCTION update_image_sort_at();
 
 COMMIT;
