@@ -17,6 +17,7 @@ vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { APP_BLOCK_SOURCE_SCANNED_ROWS: 'app-block-source-scanned-rows' },
   isFlipt: async (...a: unknown[]) => h.isFlipt(...a),
   isFliptSync: (...a: unknown[]) => h.isFlipt(...a),
+  readFliptBoolean: async (...a: unknown[]) => h.isFlipt(...a),
   ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/services/blocks/block-bridge-auth.service', () => ({

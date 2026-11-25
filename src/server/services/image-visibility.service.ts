@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { imageBlockedForConditions } from '~/server/common/image-visibility';
+import { notReportListedSql } from '~/server/services/report-listed-visibility';
 
 export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
@@ -64,14 +65,21 @@ export const countableImageSql = () =>
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
  * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
  * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
- * the owner's alone.
+ * the owner's alone. Images listed on a CsamReport are the uploader's (`ownerSeesReportListed`) and
+ * `seesReportListed` viewers' alone, moderators included.
  */
 export function entityImageVisibilityConditions({
   userId,
   isModerator,
+  seesReportListed,
+  ownerSeesReportListed = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /** The held-media viewer (`seesReportListed(ctx)`); false for a read with no viewer. */
+  seesReportListed: boolean;
+  /** The request carries the owner's view (a session or a full-access key). */
+  ownerSeesReportListed?: boolean;
 }): Prisma.Sql[] {
   const AND: Prisma.Sql[] = [];
   if (!isModerator) {
@@ -99,10 +107,11 @@ export function entityImageVisibilityConditions({
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
   AND.push(imageNotRestrictedSql({ viewerId: userId }));
   AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  if (!seesReportListed) AND.push(notReportListedSql(ownerSeesReportListed ? userId : undefined));
   return AND;
 }
 
-export { notReportListedSql } from '~/server/services/report-listed-visibility';
+export { notReportListedSql };
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on

@@ -85,7 +85,9 @@ function database(
       return id === IMAGE && userId === OWNER ? [{ id: IMAGE }] : [];
     }
     if (q.text.includes('count(*)'))
-      return Object.entries(counts).map(([reaction, n]) => ({ reaction, n }));
+      return q.text.includes('GROUP BY')
+        ? Object.entries(counts).map(([reaction, n]) => ({ reaction, n }))
+        : [{ n: counts[q.params[1] as string] ?? 0 }];
     if (isFollowProbe(q)) {
       const [target, ids] = q.params as [number, number[]];
       return target === OWNER

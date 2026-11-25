@@ -743,21 +743,30 @@ describe('a cover at the Blocked level with no block recorded', () => {
 
 describe("a bounty's image listed on a report", () => {
   // Bounty 3101's images: 3111 listed (as an object entry) and owned by OWNER, 3112 unlisted.
-  // Entry 3102's only image 3113 is listed too; entries are out of this rule's scope.
+  // Entry 3102's images: 3113 listed (as a string entry) and owned by OWNER, 3114 unlisted.
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "Bounty" VALUES (3101, ${OWNER}, 'Public');
       INSERT INTO "BountyEntry" VALUES (3102, 3101, 50);
-      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113);
+      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113), (3114);
       INSERT INTO "ImageConnection" VALUES
-        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'), (3113, 3102, 'BountyEntry');
+        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'),
+        (3113, 3102, 'BountyEntry'), (3114, 3102, 'BountyEntry');
       INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3111}, "3113"]');
     `);
   });
 
-  const coverFor = async (viewer: Viewer, seesReportListed?: boolean) => {
+  const coverFor = async (
+    viewer: Viewer,
+    seesReportListed?: boolean,
+    entity: { entityType: 'Bounty' | 'BountyEntry'; entityId: number } = {
+      entityType: 'Bounty',
+      entityId: 3101,
+    }
+  ) => {
     const covers = await getEntityCoverImage({
-      entities: [{ entityType: 'Bounty', entityId: 3101 }],
+      // BountyEntry is outside the request schema's entity types; the query serves it all the same.
+      entities: [entity] as Parameters<typeof getEntityCoverImage>[0]['entities'],
       viewer,
       seesReportListed,
     });
@@ -780,7 +789,58 @@ describe("a bounty's image listed on a report", () => {
     expect(await coverFor(viewers.moderator, true)).toBe(3111);
   });
 
-  it("still serves an entry's listed image", async () => {
-    expect(await coverOf('BountyEntry', 3102, viewers.anonymous)).toBe(3113);
+  // Entries follow their bounty's rule (#10483), so an entry's listed image is passed over too.
+  const entry = { entityType: 'BountyEntry', entityId: 3102 } as const;
+
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    "passes over an entry's listed image for the %s",
+    async (who) => {
+      expect(await coverFor(viewers[who], undefined, entry)).toBe(3114);
+    }
+  );
+
+  it("keeps an entry's listed image for its uploader", async () => {
+    expect(await coverFor(viewers.owner, undefined, entry)).toBe(3113);
+  });
+
+  it("keeps an entry's listed image for a viewer who sees report-listed images", async () => {
+    expect(await coverFor(viewers.moderator, true, entry)).toBe(3113);
+  });
+});
+
+describe("an article's cover listed on a report", () => {
+  // Article 3201's cover 3211 is listed and owned by OWNER; 3212, a content image, is not.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id) VALUES (3211), (3212);
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3201, 3211, 'Published', now());
+      INSERT INTO "ImageConnection" VALUES (3212, 3201, 'Article');
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3211}]');
+    `);
+  });
+
+  const articleCover = async (viewer: Viewer, seesReportListed?: boolean) => {
+    const covers = await getEntityCoverImage({
+      entities: [{ entityType: 'Article', entityId: 3201 }],
+      viewer,
+      seesReportListed,
+    });
+    return covers[0]?.id ?? null;
+  };
+
+  // Articles follow the bounty rule (#10485): the next image stands in for the listed cover.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'is passed over for the %s',
+    async (who) => {
+      expect(await articleCover(viewers[who])).toBe(3212);
+    }
+  );
+
+  it('is kept for its uploader', async () => {
+    expect(await articleCover(viewers.owner)).toBe(3211);
+  });
+
+  it('is kept for a viewer who sees report-listed images', async () => {
+    expect(await articleCover(viewers.moderator, true)).toBe(3211);
   });
 });

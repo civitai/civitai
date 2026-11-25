@@ -360,9 +360,10 @@ export async function setCommentFlags(
     params
   );
   const fp = rows[0]?.fp ?? [];
+  // A hide through here replaces the scan's, so the scan's record of its hide no longer applies.
   if (fp.length)
     await db.query(
-      `UPDATE "FeaturePageCommentMirror" SET ${FP_RESTRICT_SET}
+      `UPDATE "FeaturePageCommentMirror" SET ${FP_RESTRICT_SET}, "scanHiddenAt" = NULL
        WHERE "commentId" = ANY(string_to_array($1, ',')::int[])`,
       [fp.join(',')]
     );

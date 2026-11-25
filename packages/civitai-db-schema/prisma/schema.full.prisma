@@ -5673,6 +5673,19 @@ model FeaturePageCommentMirror {
   // Since when a restriction (hide, removal, retraction) is owed to the platform: lease priority and
   // the alert clock.
   restrictedAt      DateTime? @db.Timestamptz(6)
+  // The scan's own hide: CommentV3.hiddenAt as the scan set it, the text version it judged and the
+  // report it filed. Any other hide clears scanHiddenAt, so they no longer match the current hide.
+  scanHiddenAt      DateTime? @db.Timestamptz(6)
+  scanHiddenVersion Int?
+  scanHideReportId  Int? // partial index FeaturePageCommentMirror_scanHideReportId_idx (migration only)
+  // The `at` of the last moderator hide sent, and what it was sent for: the scan's hide, a
+  // moderator's here, or one the platform already held (foreign: never lifted from here).
+  modHideSentAt     DateTime? @db.Timestamptz(6)
+  modHideOrigin     String? // scan | moderator | foreign (DB CHECK)
+  // A moderator's lift of a hide: when (taken under the comment's lock), by whom, for which version.
+  liftGrantedAt      DateTime? @db.Timestamptz(6)
+  liftGrantedBy      Int?
+  liftGrantedVersion Int?
   nextPushAt     DateTime? @db.Timestamptz(6)
   leaseUntil     DateTime? @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)

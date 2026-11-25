@@ -117,8 +117,26 @@ type Config struct {
 
 	// SharedReads is on with Writes and the registry path together: shared collections and signed-out
 	// viewers are read from the adapter's level and per-viewer streams (package shared), the level
-	// streams under this service's own service token (the relay client, client credentials).
+	// streams under this service's own service token (Service, client credentials).
 	SharedReads bool
+	// Service is this service's own service client, the level streams' token is minted as
+	// (APP_DATA_SERVICE_CLIENT_ID; the secret from APP_DATA_SERVICE_CLIENT_SECRET_FILE, or
+	// APP_DATA_SERVICE_CLIENT_SECRET, never both), at the relay's token endpoint for the relay's
+	// resource. It is a client of its own: the hub mints a service token only for a client whose
+	// grants are exactly the service grant, and refuses a client that is both a relay and a service,
+	// so the relay client can never mint it. Nil when unset: shared reads are then refused
+	// `service_client_unconfigured` (with a start warning while SharedReads is on), never read under
+	// the relay client. Needs the registry path.
+	Service *ServiceClient
+
+	// ForwardRegion copies the edge's region headers (cf-ipcountry, cf-region-code, x-isuk) from a
+	// viewer's request onto the private and per-viewer subscriptions opened for that viewer, so the
+	// adapter judges the viewer's region rather than this relay's, which has none and is held to SFW
+	// (APP_DATA_FORWARD_REGION: `true`/`1` on, unset/`false`/`0` off; default off). Turn it on only
+	// while this service is reachable through the edge alone, which sets those headers and strips any
+	// a client sent (WRITES-DESIGN.md, "Region", precondition). Level streams never carry a region:
+	// they are read as a service, which no region holds. Needs the registry path.
+	ForwardRegion bool
 
 	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off
 	// (comma-separated, so Config stays comparable); Warnings reports them.
@@ -142,12 +160,29 @@ const (
 	TerminationGrace = 30 * time.Second
 )
 
-// Warnings are settings that were read but do nothing; the start logs each and goes on.
+// Warnings are settings that were read but do nothing, or a feature on without what it needs; the
+// start logs each and goes on.
 func (c *Config) Warnings() []string {
-	if c.ignoredWrites == "" {
-		return nil
+	var w []string
+	if c.ignoredWrites != "" {
+		w = append(w, c.ignoredWrites+" set with APP_DATA_WRITES off: ignored")
 	}
-	return []string{c.ignoredWrites + " set with APP_DATA_WRITES off: ignored"}
+	switch {
+	case c.SharedReads && c.Service == nil:
+		w = append(w, NoServiceClientWarning)
+	case !c.SharedReads && c.Service != nil:
+		w = append(w, "APP_DATA_SERVICE_CLIENT_ID set without shared reads (APP_DATA_WRITES and APP_DATA_REGISTRY_URL): ignored")
+	}
+	return w
+}
+
+// NoServiceClientWarning is the start warning for shared reads with no service client.
+const NoServiceClientWarning = "shared reads are on without a service client (APP_DATA_SERVICE_CLIENT_ID): " +
+	"every shared and signed-out read is refused service_client_unconfigured"
+
+// ServiceClient is the hub client the level streams' service token is minted as (token.Config).
+type ServiceClient struct {
+	ClientID, ClientSecret string
 }
 
 // minSigningKeyBytes is the shortest signing key accepted: 256 bits, the HMAC-SHA256 block's half.
@@ -199,6 +234,29 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("the relay client is set without APP_DATA_REGISTRY_URL; set both or neither")
 	}
 	c.Relay = relay
+	service, err := serviceFromEnv(getenv, readFile)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case service != nil && relay == nil:
+		return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID needs the registry path (APP_DATA_REGISTRY_URL and the relay client): the service token is minted at its token endpoint")
+	case service != nil && service.ClientID == relay.ClientID:
+		// The hub refuses a client that is both a relay and a service; this is the case the separate
+		// client exists to end.
+		return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID must be a service client of its own, not the relay client APP_DATA_CLIENT_ID")
+	}
+	c.Service = service
+	switch v := getenv("APP_DATA_FORWARD_REGION"); v {
+	case "", "false", "0":
+	case "true", "1":
+		if c.RegistryURL == "" {
+			return nil, errors.New("APP_DATA_FORWARD_REGION needs the registry path (APP_DATA_REGISTRY_URL and the relay client)")
+		}
+		c.ForwardRegion = true
+	default:
+		return nil, errors.New("APP_DATA_FORWARD_REGION must be true, 1, false or 0")
+	}
 	switch v := getenv("APP_DATA_BLOCK_EXCHANGE"); v {
 	case "", "false", "0":
 	case "true", "1":
@@ -401,6 +459,34 @@ func relayFromEnv(getenv func(string) string, readFile func(string) ([]byte, err
 		return nil, errors.New("APP_DATA_EXCHANGE_RESOURCE must be the adapter's https resource identifier")
 	}
 	return r, nil
+}
+
+// serviceFromEnv reads the service client: nil when every setting is unset; an error when only some
+// are.
+func serviceFromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) (*ServiceClient, error) {
+	id := getenv("APP_DATA_SERVICE_CLIENT_ID")
+	secret, secretFile := getenv("APP_DATA_SERVICE_CLIENT_SECRET"), getenv("APP_DATA_SERVICE_CLIENT_SECRET_FILE")
+	if id == "" {
+		if secret != "" || secretFile != "" {
+			return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID is required with APP_DATA_SERVICE_CLIENT_SECRET or APP_DATA_SERVICE_CLIENT_SECRET_FILE")
+		}
+		return nil, nil
+	}
+	switch {
+	case secret != "" && secretFile != "":
+		return nil, errors.New("set APP_DATA_SERVICE_CLIENT_SECRET or APP_DATA_SERVICE_CLIENT_SECRET_FILE, not both")
+	case secretFile != "":
+		raw, err := readFile(secretFile)
+		if err != nil {
+			// The path is configuration, not a secret; the file's content never appears.
+			return nil, errors.New("APP_DATA_SERVICE_CLIENT_SECRET_FILE could not be read")
+		}
+		secret = strings.TrimRight(string(raw), "\r\n")
+	}
+	if secret == "" {
+		return nil, errors.New("APP_DATA_SERVICE_CLIENT_ID needs a secret: APP_DATA_SERVICE_CLIENT_SECRET_FILE or APP_DATA_SERVICE_CLIENT_SECRET")
+	}
+	return &ServiceClient{ClientID: id, ClientSecret: secret}, nil
 }
 
 func secureURL(raw string) bool {
