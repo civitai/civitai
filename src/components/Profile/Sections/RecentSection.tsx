@@ -65,9 +65,10 @@ export const RecentSection = ({ user }: ProfileSectionProps) => {
           <ProfileSectionPreview columnCount={3} />
         ) : (
           <ProfileSection title="Most recent" icon={<IconClock />}>
-            <div className="flex flex-wrap gap-4">
+            {/* Image and article share a top and bottom edge; their buttons share the row under them. */}
+            <div className="grid grid-cols-1 gap-x-4 gap-y-2 @md:grid-cols-[2fr_1fr]">
               {image && (
-                <div className="flex min-w-0 flex-[2_1_300px] flex-col gap-2">
+                <div className="min-w-0 @md:col-start-1 @md:row-start-1">
                   <ImagesProvider images={[image]}>
                     <ImageCard
                       data={image}
@@ -77,22 +78,38 @@ export const RecentSection = ({ user }: ProfileSectionProps) => {
                       mediaWidth={1080}
                     />
                   </ImagesProvider>
-                  {isOwner && <OwnerImageActions image={image} />}
+                </div>
+              )}
+              {image && isOwner && (
+                <div className="@md:col-start-1 @md:row-start-2">
+                  <OwnerImageActions image={image} />
                 </div>
               )}
               {article && (
-                <div className="flex min-w-0 flex-[1_1_230px] flex-col gap-2">
-                  <Text size="xs" fw={700} tt="uppercase" c="dimmed" className="tracking-wider">
+                <div className="relative min-w-0 @md:col-start-2 @md:row-start-1">
+                  {/* Twice as wide a column beside a 2.2:1 tile: 1.1:1 keeps the two the same height. */}
+                  <ArticleCard
+                    data={article}
+                    aspectRatio={image ? RECENT_TILE_RATIO / 2 : 'landscape'}
+                  />
+                  <Text
+                    size="10px"
+                    fw={700}
+                    tt="uppercase"
+                    className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded bg-black/70 px-2 py-0.5 tracking-wider text-white"
+                  >
                     Latest article
                   </Text>
-                  <ArticleCard data={article} aspectRatio="landscape" />
+                </div>
+              )}
+              {article && (
+                <div className="@md:col-start-2 @md:row-start-2">
                   <Button
                     component={NextLink}
                     href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`}
                     variant="subtle"
                     size="compact-sm"
                     rightSection={<IconArrowRight size={14} />}
-                    className="self-start"
                   >
                     All articles
                   </Button>

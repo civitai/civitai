@@ -43,23 +43,33 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
   const cardInk = profileCardInk(cardColor, cardOpacity, scheme);
   // The bar is the same colour, nearly opaque, so it can need the other ink.
   const barInk = profileCardInk(cardColor, 93, scheme);
-  if (!background && !card) return null;
+  const sidebarColor = data.pageTheme?.sidebar?.color ?? null;
+  // The sidebar's gradient starts at its colour and darkens, so read its ink at the top.
+  const sidebarInk = profileCardInk(sidebarColor, 100, scheme);
+  if (!background && !card && !sidebarColor) return null;
 
   const rules = [
     card &&
       `:root{--profile-card-bg:${card}}[data-profile-card]{background-color:${card}!important}`,
     cardInk && `:root{${inkVars(cardInk)}}[data-profile-card]{${mantineInk}}`,
-    // Light-variant buttons (Tip) are a tint of their own colour, which washes out on a light card.
+    sidebarColor &&
+      sidebarInk &&
+      `[data-profile-sidebar]{background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.45)),${sidebarColor}!important;${inkVars(
+        sidebarInk
+      )}${mantineInk}}`,
+    // Light-variant buttons (Tip) are a tint of their own colour, which washes out on a light surface.
     cardInk === 'dark' &&
       '[data-profile-card] .mantine-Button-root[data-variant="light"]{background-color:rgba(26,27,30,.85)}',
+    sidebarInk === 'dark' &&
+      '[data-profile-sidebar] .mantine-Button-root[data-variant="light"]{background-color:rgba(26,27,30,.85)}',
     bar &&
       barInk &&
-      `[data-subnav]{background-color:${bar}!important;backdrop-filter:blur(8px);${inkVars(
+      `[data-subnav],[data-profile-bar]{background-color:${bar}!important;backdrop-filter:blur(8px);${inkVars(
         barInk
       )}${mantineInk}}`,
-    // Wider gutters so the background frames the content, and panels frost what they cover.
+    // Wider gutters so the background frames the content; panels frost it lightly, so it still shows.
     background &&
-      '[data-profile-content]{padding-left:24px;padding-right:24px}:root{--profile-card-blur:blur(14px) saturate(1.15)}',
+      '[data-profile-content]{padding-left:24px;padding-right:24px}:root{--profile-card-blur:blur(4px)}',
   ].filter(Boolean);
 
   return (

@@ -56,3 +56,14 @@ export function profileCardInk(
   // Contrast with black is (l + .05) / .05, with white 1.05 / (l + .05); equal at l ≈ .179.
   return (l + 0.05) / 0.05 > 1.05 / (l + 0.05) ? 'dark' : 'light';
 }
+
+/** A colour scaled towards black, for suggesting a sidebar colour from a bright image. */
+export function darkenHex(hex: string, amount: number) {
+  return `#${[1, 3, 5]
+    .map((start) =>
+      Math.round(parseInt(hex.slice(start, start + 2), 16) * (1 - amount))
+        .toString(16)
+        .padStart(2, '0')
+    )
+    .join('')}`;
+}

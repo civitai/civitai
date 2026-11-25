@@ -72,6 +72,12 @@ describe('assertPageCustomizationAllowed', () => {
     await expect(save({ backgroundImage: { url: 'new.jpg' } })).rejects.toThrow(/for members/);
   });
 
+  it('treats the sidebar colour as members-only too', async () => {
+    await expect(save({ pageTheme: { sidebar: { color: '#1b2a4a' } } })).rejects.toThrow(
+      /for members/
+    );
+  });
+
   it('treats the light-mode colour and opacity as members-only too', async () => {
     await expect(save({ pageTheme: { light: { color: '#f3ead7', opacity: 90 } } })).rejects.toThrow(
       /for members/

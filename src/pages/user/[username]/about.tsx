@@ -77,22 +77,43 @@ function UserAboutPage() {
   const hasPinned = ((profile.showcaseItems ?? []) as ShowcaseItemSchema[]).length > 0;
   const hasContent = !!bio || !!about || hasPinned || !!location || links.length > 0;
 
+  // The design's right-hand column: labelled facts beside the About text.
+  const label = (text: string) => (
+    <Text size="xs" fw={700} tt="uppercase" c="dimmed" className="tracking-wider">
+      {text}
+    </Text>
+  );
   const details = (
-    <Stack gap="xs">
+    <Stack gap="md" className="min-w-0 flex-[1_1_200px]">
       {location && (
-        <Group gap="sm" wrap="nowrap">
-          <IconMapPin size={16} className="shrink-0" />
-          <Text c="dimmed" size="sm">
-            {location}
-          </Text>
-        </Group>
+        <div>
+          {label('Location')}
+          <Group gap={6} wrap="nowrap">
+            <IconMapPin size={16} className="shrink-0" />
+            <Text size="sm">{location}</Text>
+          </Group>
+        </div>
       )}
-      <Group gap="sm" wrap="nowrap">
-        <IconCalendar size={16} className="shrink-0" />
-        <Text c="dimmed" size="sm">
-          Joined {formatDate(user.createdAt)}
-        </Text>
-      </Group>
+      <div>
+        {label('Joined')}
+        <Group gap={6} wrap="nowrap">
+          <IconCalendar size={16} className="shrink-0" />
+          <Text size="sm">{formatDate(user.createdAt)}</Text>
+        </Group>
+      </div>
+      {links.length > 0 && (
+        <Stack gap={6}>
+          {label('Links')}
+          {links.map((link, index) => (
+            <Group key={index} gap="sm" wrap="nowrap">
+              <DomainIcon domain={link.domain} size={20} />
+              <Anchor href={link.url} target="_blank" rel="nofollow noreferrer" size="sm" truncate>
+                {hostLabel(link.url)}
+              </Anchor>
+            </Group>
+          ))}
+        </Stack>
+      )}
     </Stack>
   );
 
@@ -102,55 +123,40 @@ function UserAboutPage() {
       <div className={sectionClasses.panelCell}>
         <div className={sectionClasses.profileSection}>
           <ProfileSection title="About" icon={<IconId />}>
-            <Stack gap="md">
-              {bio && <Text style={{ wordWrap: 'break-word', whiteSpace: 'pre-line' }}>{bio}</Text>}
-              {about ? (
-                <RenderHtml html={about} />
-              ) : (
-                isOwner &&
-                !muted && (
-                  <Stack gap="xs" align="flex-start">
-                    <Text c="dimmed" size="sm">
-                      Tell visitors more about yourself: add an About text in the profile
-                      customizer.
-                    </Text>
-                    <Button
-                      size="compact-sm"
-                      variant="light"
-                      leftSection={<IconPencilMinus size={14} />}
-                      onClick={() => openUserProfileEditModal()}
-                    >
-                      Customize profile
-                    </Button>
-                  </Stack>
-                )
-              )}
-              {!hasContent && !isOwner && (
-                <Text c="dimmed">
-                  {user.username} hasn&apos;t shared anything about themselves yet.
-                </Text>
-              )}
-              {details}
-              {links.length > 0 && (
-                <Stack gap="xs">
-                  <Title order={4}>Links</Title>
-                  {links.map((link, index) => (
-                    <Group key={index} gap="sm" wrap="nowrap">
-                      <DomainIcon domain={link.domain} size={20} />
-                      <Anchor
-                        href={link.url}
-                        target="_blank"
-                        rel="nofollow noreferrer"
-                        size="sm"
-                        truncate
+            <div className="flex flex-wrap gap-6">
+              <Stack gap="md" className="min-w-0 flex-[2_1_320px]">
+                {bio && (
+                  <Text style={{ wordWrap: 'break-word', whiteSpace: 'pre-line' }}>{bio}</Text>
+                )}
+                {about ? (
+                  <RenderHtml html={about} />
+                ) : (
+                  isOwner &&
+                  !muted && (
+                    <Stack gap="xs" align="flex-start">
+                      <Text c="dimmed" size="sm">
+                        Tell visitors more about yourself: add an About text in the profile
+                        customizer.
+                      </Text>
+                      <Button
+                        size="compact-sm"
+                        variant="light"
+                        leftSection={<IconPencilMinus size={14} />}
+                        onClick={() => openUserProfileEditModal()}
                       >
-                        {hostLabel(link.url)}
-                      </Anchor>
-                    </Group>
-                  ))}
-                </Stack>
-              )}
-            </Stack>
+                        Customize profile
+                      </Button>
+                    </Stack>
+                  )
+                )}
+                {!hasContent && !isOwner && (
+                  <Text c="dimmed">
+                    {user.username} hasn&apos;t shared anything about themselves yet.
+                  </Text>
+                )}
+              </Stack>
+              {details}
+            </div>
           </ProfileSection>
         </div>
       </div>

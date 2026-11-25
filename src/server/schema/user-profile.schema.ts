@@ -155,13 +155,21 @@ const profileThemeColorSchema = z
     opacity: z.number().int().min(60).max(100).optional(),
   })
   .refine((theme) => theme.color != null || theme.opacity != null, 'Pick a colour or an opacity');
-/** A member's card colours, per theme. Light mode falls back to dark when it has none. */
+/**
+ * A member's card colours, per theme (light mode falls back to dark when it has none), and the
+ * sidebar's own colour, which the cards' colour never touches.
+ */
 export const profilePageThemeSchema = z.object({
   dark: profileThemeColorSchema.optional(),
   light: profileThemeColorSchema.optional(),
+  sidebar: z
+    .object({
+      color: z.string().regex(/^#[0-9a-f]{6}$/i),
+    })
+    .optional(),
 });
 export type ProfilePageTheme = z.infer<typeof profilePageThemeSchema>;
-export type ProfileThemeMode = keyof ProfilePageTheme;
+export type ProfileThemeMode = 'dark' | 'light';
 const profileAboutAllowedTags = [
   'p',
   'br',

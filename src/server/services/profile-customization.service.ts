@@ -71,11 +71,13 @@ export async function assertPageCustomizationAllowed({
   ) => !!image && image.id !== storedId;
   // A theme colour counts as set only where it differs from what is stored for that theme.
   const storedTheme = parsePageTheme(stored?.pageTheme);
-  const setsTheme = (['dark', 'light'] as const).some((mode) => {
-    const next = pageTheme?.[mode];
-    const prev = storedTheme?.[mode];
-    return !!next && (next.color !== prev?.color || next.opacity !== prev?.opacity);
-  });
+  const setsTheme =
+    (['dark', 'light'] as const).some((mode) => {
+      const next = pageTheme?.[mode];
+      const prev = storedTheme?.[mode];
+      return !!next && (next.color !== prev?.color || next.opacity !== prev?.opacity);
+    }) ||
+    (!!pageTheme?.sidebar && pageTheme.sidebar.color !== storedTheme?.sidebar?.color);
 
   const raises =
     setsImage(backgroundImage, stored?.backgroundImageId) ||
@@ -152,10 +154,7 @@ export async function getProfileCustomization({
   const pageTheme = parsePageTheme(profile.pageTheme);
 
   const isSet =
-    profile.backgroundImageId != null ||
-    profile.sfwBackgroundImageId != null ||
-    !!pageTheme?.dark ||
-    !!pageTheme?.light;
+    profile.backgroundImageId != null || profile.sfwBackgroundImageId != null || !!pageTheme;
   if (!isSet) return empty;
 
   const canEdit = sameUser || !!isModerator;
@@ -237,5 +236,6 @@ export async function imagesHiddenFromModerator(userId: number) {
 /** A stored theme, or null when it is missing or not the shape the schema allows. */
 function parsePageTheme(value: unknown): ProfilePageTheme | null {
   const parsed = profilePageThemeSchema.safeParse(value);
-  return parsed.success && (parsed.data.dark || parsed.data.light) ? parsed.data : null;
+  const { dark, light, sidebar } = parsed.success ? parsed.data : {};
+  return parsed.success && (dark || light || sidebar) ? parsed.data : null;
 }

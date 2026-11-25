@@ -86,6 +86,11 @@ describe('the page theme', () => {
     expect(parse({ light: { opacity: 70 } })).toBe(true);
   });
 
+  it('takes a sidebar colour on its own', () => {
+    expect(parse({ sidebar: { color: '#1b2a4a' } })).toBe(true);
+    expect(parse({ sidebar: {} })).toBe(false);
+  });
+
   it('refuses a theme with neither, an opacity out of range, or a colour that is not hex', () => {
     expect(parse({ dark: {} })).toBe(false);
     expect(parse({ dark: { opacity: 50 } })).toBe(false);

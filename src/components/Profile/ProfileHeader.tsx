@@ -8,6 +8,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
 import { CreatorAnnouncementsEntry } from '~/components/Announcements/CreatorAnnouncementsEntry';
 import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
+import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { shouldShowProfileMessage } from '~/components/Profile/profile.utils';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -187,6 +188,15 @@ export function ProfileHeader({ username }: { username: string }) {
   return (
     <Stack>
       {renderCoverImage()}
+      {features.profileRedesign && (
+        <>
+          {/* The site's sub-navigation has nothing left in it on a redesigned profile. */}
+          <style>{'[data-subnav]:empty{display:none}'}</style>
+          <div data-profile-bar className="rounded-xl bg-gray-1 p-1 dark:bg-dark-6">
+            <ProfileNavigation username={username} placement="header" />
+          </div>
+        </>
+      )}
       {renderAnnouncements()}
     </Stack>
   );

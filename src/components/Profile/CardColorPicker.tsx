@@ -66,7 +66,7 @@ export function CardColorPicker({
   const setTheme = (next: ProfilePageTheme[Mode] | undefined) => {
     const theme = { ...value, [mode]: next };
     if (!theme[mode]) delete theme[mode];
-    onChange(theme.dark || theme.light ? theme : null);
+    onChange(theme.dark || theme.light || theme.sidebar ? theme : null);
   };
 
   const suggestions = [
@@ -94,7 +94,7 @@ export function CardColorPicker({
   return (
     <Input.Wrapper
       label="Card colour"
-      description="Tints your profile's panels, sidebar and tabs. Text switches to stay readable."
+      description="Tints your profile's panels and tab bar. Text switches to stay readable."
     >
       <Stack gap="sm" mt={6}>
         <SegmentedControl

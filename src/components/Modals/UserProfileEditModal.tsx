@@ -37,8 +37,10 @@ import {
 import { useFormContext } from 'react-hook-form';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { CardColorPicker } from '~/components/Profile/CardColorPicker';
+import { SidebarColorPicker } from '~/components/Profile/SidebarColorPicker';
 import { CREATOR_STUDIO_URL } from '~/shared/constants/creator-studio.constants';
 import { profileAboutMaxLength } from '~/server/schema/user-profile.schema';
+import type { ProfilePageTheme } from '~/server/schema/user-profile.schema';
 import type {
   ProfileSectionSchema,
   PrivacySettingsSchema,
@@ -659,19 +661,6 @@ export default function UserProfileEditModal() {
                   data={cardDecorations}
                 />
               )}
-              {featureFlags.profileRedesign && (
-                <InputCosmeticSelect
-                  name="sidebarBackground"
-                  label="Profile Sidebar Background"
-                  description="Shown behind the top of your profile sidebar. Select it again to remove it"
-                  shopUrl={`/shop?cosmeticTypes=${CosmeticType.SidebarBackground}`}
-                  nothingFound={
-                    <Text size="xs">You don&rsquo;t have any sidebar backgrounds yet</Text>
-                  }
-                  data={sidebarBackgrounds}
-                  onShopClick={handleClose}
-                />
-              )}
             </>
           )}
 
@@ -913,7 +902,7 @@ export default function UserProfileEditModal() {
           name="sfwBackgroundImage"
           label="Page background (civitai.com)"
           description="Leave empty to use the page background above. Only a safe-for-work image shows on civitai.com."
-          aspectRatio={16 / 9}
+          aspectRatio={previewRatio(form.getValues('sfwBackgroundImage'))}
           previewWidth={constants.profile.coverImageWidth}
         />
       )}
@@ -1006,6 +995,21 @@ export default function UserProfileEditModal() {
     </>
   );
 
+  const sidebarGroup = (
+    <>
+      <InputCosmeticSelect
+        name="sidebarBackground"
+        label="Sidebar background"
+        description="Shown behind your profile picture, fading into the sidebar below. Select it again to remove it"
+        shopUrl={`/shop?cosmeticTypes=${CosmeticType.SidebarBackground}`}
+        nothingFound={<Text size="xs">You don&rsquo;t have any sidebar backgrounds yet</Text>}
+        data={sidebarBackgrounds}
+        onShopClick={handleClose}
+      />
+      <SidebarColorField />
+    </>
+  );
+
   const customizerPanels: ProfileCustomizerPanel[] = [
     {
       value: 'profile',
@@ -1019,7 +1023,6 @@ export default function UserProfileEditModal() {
         'profileBackground',
         'profileDecoration',
         'profilePicture',
-        'sidebarBackground',
       ],
       content: profileGroup,
     },
@@ -1035,6 +1038,16 @@ export default function UserProfileEditModal() {
       fields: ['bio', 'coverImage', 'location', 'message', 'about', 'backgroundImage', 'pageTheme'],
       content: profilePageGroup,
     },
+    ...(redesign
+      ? [
+          {
+            value: 'sidebar',
+            label: 'Sidebar',
+            fields: ['sidebarBackground'],
+            content: sidebarGroup,
+          },
+        ]
+      : []),
     {
       value: 'com',
       label: 'Civitai.com',
@@ -1210,7 +1223,7 @@ function PageCustomizationFields() {
         name="backgroundImage"
         label="Page background"
         description="Shown behind your profile. A new upload appears once it has been scanned."
-        aspectRatio={16 / 9}
+        aspectRatio={previewRatio(background)}
         previewWidth={constants.profile.coverImageWidth}
       />
       <CardColorPicker
@@ -1220,5 +1233,33 @@ function PageCustomizationFields() {
         onChange={(next) => form.setValue('pageTheme', next, { shouldDirty: true })}
       />
     </Stack>
+  );
+}
+
+/** The preview's height over width: the picture's own shape, or 16:9 until a new upload's size is known. */
+function previewRatio(image: unknown) {
+  const { width, height } = (image ?? {}) as { width?: number | null; height?: number | null };
+  return width && height ? height / width : 9 / 16;
+}
+
+/** The sidebar's own colour, members only; it lives in pageTheme beside the card colours. */
+function SidebarColorField() {
+  const currentUser = useCurrentUser();
+  const form = useFormContext<FormDataSchema>();
+  const [cover, background, pageTheme] = form.watch(['coverImage', 'backgroundImage', 'pageTheme']);
+  if (!currentUser?.isPaidMember) return null;
+  return (
+    <SidebarColorPicker
+      value={pageTheme?.sidebar?.color ?? null}
+      cover={cover as { hash?: string | null } | null}
+      background={background as { hash?: string | null } | null}
+      onChange={(color) => {
+        const { sidebar: _sidebar, ...rest } = pageTheme ?? {};
+        const next: ProfilePageTheme = color ? { ...rest, sidebar: { color } } : rest;
+        form.setValue('pageTheme', next.dark || next.light || next.sidebar ? next : null, {
+          shouldDirty: true,
+        });
+      }}
+    />
   );
 }

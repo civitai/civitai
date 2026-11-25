@@ -171,5 +171,6 @@ function ArticleStats({ data }: { data: ArticleGetAllRecord }) {
 
 type Props = {
   data: ArticleGetAllRecord;
-  aspectRatio?: 'landscape' | 'portrait' | 'square';
+  /** Named shape, or a width/height number, as AspectRatioImageCard takes. */
+  aspectRatio?: 'landscape' | 'portrait' | 'square' | number;
 };

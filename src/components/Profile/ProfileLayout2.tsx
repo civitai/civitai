@@ -191,8 +191,10 @@ export function ProfileLayout2({
         left={
           blockedByThem || deferredShell ? null : (
             <div
-              data-profile-card
-              className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6 [&:has([data-profile-redesign])]:overscroll-none"
+              data-profile-sidebar
+              // Redesign, dark theme: the design's dark sidebar, fading darker downwards. A member's
+              // sidebar colour replaces the base (ProfilePageCustomization).
+              className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6 [&:has([data-profile-redesign])]:overscroll-none dark:[&:has([data-profile-redesign])]:[background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.45)),rgb(28_29_32)]"
             >
               <ProfileSidebar username={username} />
             </div>
