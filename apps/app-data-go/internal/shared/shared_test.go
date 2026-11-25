@@ -124,7 +124,7 @@ type rig struct {
 func newRig() *rig {
 	c := &clock{t: time.Unix(1_800_000_000, 0)}
 	g := &rig{levels: newViews(), viewers: newViews(), c: c}
-	g.r = &Reader{Levels: g.levels, Viewers: g.viewers, Now: c.now,
+	g.r = &Reader{Levels: g.levels, Viewers: g.viewers, Now: c.now, KnownTTL: time.Hour, ProbesPerApp: 2,
 		Overlays: &Overlays{TTL: 90 * time.Second, Max: 4, Now: c.now}}
 	return g
 }

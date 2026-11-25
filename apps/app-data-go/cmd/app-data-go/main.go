@@ -50,6 +50,9 @@ const (
 	// maxSharedOverlays bounds the acknowledged shared writes held in all.
 	levelMaxAge       = time.Hour
 	maxSharedOverlays = 10_000
+	// signedOutProbesPerApp bounds the signed-out reads of a collection major not yet known to
+	// resolve that run at once per app (package shared, SIGNED-OUT).
+	signedOutProbesPerApp = 2
 	// serviceTokenScope is the one scope the level streams' service token asks for: the adapter's
 	// service tokens must grant AppsRead (auth.jwt.ts).
 	serviceTokenScope = "AppsRead"
@@ -80,6 +83,7 @@ func run(log *slog.Logger) error {
 	// The private streams' manager, and with the shared reads on the level and per-viewer streams'.
 	var mgr, levels, viewers *session.Manager
 	var overlays *shared.Overlays
+	var sharedReader *shared.Reader
 	var m *metrics.Metrics
 	stats := func() (int, int, int, int) {
 		var sum session.Stats
@@ -125,12 +129,16 @@ func run(log *slog.Logger) error {
 				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
 		}
 		srv.Exchangeable = router.Accepts
+		// One budget over every stream this process opens, private, level and per-viewer
+		// (config.DefaultCacheBudgetBytes).
+		budget := session.NewBudget(cfg.MaxSubscriptions, cfg.CacheBudgetBytes)
 		mgr = session.New(session.ClientSubscriber{Client: &registry.Client{
 			BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
 		}}, session.Options{
 			MaxStreams: cfg.MaxStreams, MaxPerToken: cfg.MaxStreamsPerToken,
 			IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
-			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
+			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes, MaxOverlayBytes: cfg.MaxOverlayBytes,
+			Budget: budget, Reserve: cfg.PrivateReserve(),
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
 			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
@@ -146,38 +154,30 @@ func run(log *slog.Logger) error {
 			sub := session.ClientSubscriber{Client: &registry.Client{
 				BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
 			}}
-			closed := func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() }
-			// The level streams: one per (schema, level), shared by every viewer, under this service's own
-			// token (client credentials, the relay client), whatever subject a read names.
+			// The level streams run under this service's own token (client credentials, the relay
+			// client), whatever subject a read names; one the registry refuses is re-minted.
 			svc := token.New(token.Config{URL: cfg.Relay.TokenURL, ClientID: cfg.Relay.ClientID,
 				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource, Scope: serviceTokenScope}, &http.Client{Timeout: exchangeTimeout})
-			levels = session.New(sub, session.Options{
-				MaxStreams: cfg.LevelMaxStreams, MaxPerToken: 1,
-				IdleTTL: cfg.IdleTTL, MaxAge: max(levelMaxAge, cfg.IdleTTL),
-				MaxRecords: cfg.LevelMaxRecords, MaxBytes: cfg.LevelMaxBytes,
-				Cooldown: streamCooldown, NotPrivateCooldown: streamCooldown,
-				Exchange: func(ctx context.Context, _ string) (exchange.Token, error) {
-					// A stream closes expiryMargin before the token's expiry, so it never outlives it.
-					tok, expires, err := svc.TokenExpiring(ctx)
-					return exchange.Token{Access: tok, Expires: expires}, err
-				},
-				ExpiryMargin: expiryMargin, Opened: m.StreamsOpened.Inc, Closed: closed,
-				OverlayTTL: overlayTTL(cfg), ReopenEvery: cfg.AdapterPoll,
-				Accept: shared.AcceptLevel, SubscribeMeta: shared.LevelMeta,
+			var reader *shared.Reader
+			reader, levels, viewers = shared.NewReader(shared.Build{
+				Sub: sub, Budget: budget,
+				Level:          shared.Bounds{MaxStreams: cfg.LevelMaxStreams, MaxRecords: cfg.LevelMaxRecords, MaxBytes: cfg.LevelMaxBytes},
+				Viewer:         shared.Bounds{MaxStreams: cfg.ViewerMaxStreams, MaxRecords: cfg.ViewerMaxRecords, MaxBytes: cfg.ViewerMaxBytes},
+				ServiceToken:   svc.TokenExpiring,
+				ServiceRefused: svc.Invalidate,
+				ViewerExchange: router.Exchange,
+				LevelMaxAge:    levelMaxAge,
+				IdleTTL:        cfg.IdleTTL, MaxAge: cfg.MaxAge, Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
+				ExpiryMargin: expiryMargin, Recheck: tokenRecheck, OverlayTTL: overlayTTL(cfg), ReopenEvery: cfg.AdapterPoll,
+				MaxStreamsPerToken: cfg.MaxStreamsPerToken,
+				Opened:             m.StreamsOpened.Inc,
+				Closed:             func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
+				MaxOverlays:        maxSharedOverlays, MaxOverlayBytes: config.MaxSharedOverlayBytes,
+				ProbesPerApp: signedOutProbesPerApp,
 			})
-			// The per-viewer streams: as the private ones, under each viewer's exchanged token.
-			viewers = session.New(sub, session.Options{
-				MaxStreams: cfg.MaxStreams, MaxPerToken: cfg.MaxStreamsPerToken,
-				IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
-				MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
-				Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
-				Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
-				Opened: m.StreamsOpened.Inc, Closed: closed,
-				OverlayTTL: overlayTTL(cfg), ReopenEvery: cfg.AdapterPoll,
-				Accept: shared.AcceptViewer,
-			})
-			overlays = &shared.Overlays{TTL: overlayTTL(cfg), Max: maxSharedOverlays}
-			srv.Shared = &shared.Reader{Levels: levels, Viewers: viewers, Overlays: overlays}
+			overlays = reader.Overlays
+			srv.Shared = reader
+			sharedReader = reader
 			srv.Anonymous = verifier.CheckAnonymous
 		}
 		go func() {
@@ -211,12 +211,7 @@ func run(log *slog.Logger) error {
 			fwd.Acked = mgr.Ack
 		}
 		if overlays != nil {
-			// A write is acknowledged to the token's private stream and to its shared overlays alike: this
-			// service does not know a collection's visibility, and each applies only where it reads.
-			fwd.Acked = func(token, schema string, a session.Ack) {
-				mgr.Ack(token, schema, a)
-				overlays.Ack(token, schema, a)
-			}
+			fwd.Acked = shared.AckBoth(mgr, sharedReader)
 		}
 		srv.Writes = fwd
 	}
@@ -231,7 +226,8 @@ func run(log *slog.Logger) error {
 		IdleTimeout:       100 * time.Second,
 	}
 	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "", "block_exchange", cfg.BlockExchange,
-		"writes", cfg.Writes, "max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken)
+		"writes", cfg.Writes, "max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken,
+		"max_subscriptions", cfg.MaxSubscriptions, "cache_budget_bytes", cfg.CacheBudgetBytes)
 
 	served := make(chan error, 1)
 	go func() { served <- httpSrv.ListenAndServe() }()

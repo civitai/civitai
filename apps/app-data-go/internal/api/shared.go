@@ -166,6 +166,11 @@ func (s *Server) sharedError(w http.ResponseWriter, start time.Time, err error, 
 		s.sharedRefusal(w, start, "too_large", anon)
 	case errors.Is(err, session.ErrFloorNotMet):
 		s.sharedRefusal(w, start, "floor_not_met", anon)
+	case errors.Is(err, shared.ErrServiceToken):
+		// This service's own token, refused on a level stream: never the viewer's 401.
+		s.sharedRefusal(w, start, "service_token_refused", anon)
+	case errors.Is(err, shared.ErrSignedOutBusy):
+		s.sharedRefusal(w, start, "capacity", anon)
 	default:
 		var ended *session.EndedError
 		if errors.As(err, &ended) && ended.Reason == "not_resolved" {

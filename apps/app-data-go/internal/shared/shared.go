@@ -29,6 +29,18 @@
 // while every level stream it reads names the token's app block as the slug's approved production
 // block (`meta.block`). No per-viewer stream, no authorship, no overlays: it cannot write.
 //
+// A signed-out read opens no stream for a collection major this replica has not KNOWN to resolve
+// (Known) until one probe has: a single level stream, the first its read needs, and the rest only
+// once that one reached `Live`. A level stream reaches `Live` only when the adapter resolved its
+// schema (an approved app, a collection its manifest declares shared, a minted major; level-feed.ts
+// `advance` ends it `not_resolved` otherwise), so a made-up collection or major costs one stream,
+// which the adapter ends at once. At most ProbesPerApp probes run at once per slug; a read past that
+// is ErrSignedOutBusy. The check is the adapter's: this service holds no catalog.
+//
+// THE SERVICE TOKEN. A level stream refused `invalid_token` is this service's own token refused, never
+// the viewer's: the read is ErrServiceToken (a 503, not a 401), and the level manager re-mints the
+// token (session.Options.InvalidToken).
+//
 // READ-YOUR-WRITES. Each write the store acknowledged for a token (Ack) is an overlay over that
 // token's union, by key, at the write's seq: a record, or a delete marker. An overlay is applied only
 // above the union's own seq for its key, and dropped once every stream the read used names a head at
@@ -85,6 +97,10 @@ var (
 	ErrOutsideWindow = errors.New("shared: the answer lies outside a level stream's window")
 	// ErrSignInRequired: a signed-out viewer asked for what only a signed-in one has.
 	ErrSignInRequired = errors.New("shared: sign in required")
+	// ErrServiceToken: the registry refused this service's own token on a level stream.
+	ErrServiceToken = errors.New("shared: the registry refused the service token")
+	// ErrSignedOutBusy: the slug already has ProbesPerApp signed-out probes running.
+	ErrSignedOutBusy = errors.New("shared: too many signed-out reads of unknown collections at once")
 )
 
 // The level-stream subscription subject: `level:<bit|none>|<schema>`. It keys the level manager's
@@ -195,11 +211,18 @@ type Reader struct {
 	Viewers Views
 	// Overlays holds the acknowledged writes; nil is none (the writes off).
 	Overlays *Overlays
+	// KnownTTL is how long a schema whose level stream reached Live stays Known: at least a level
+	// stream's own MaxAge, so a schema is Known while any of its level streams is open.
+	KnownTTL time.Duration
+	// ProbesPerApp bounds the signed-out probes running at once per slug (see SIGNED-OUT).
+	ProbesPerApp int
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 
-	mu  sync.Mutex
-	off map[string]time.Time // schemas known in levels-off mode, until
+	mu     sync.Mutex
+	off    map[string]time.Time // schemas known in levels-off mode, until
+	known  map[string]time.Time // schemas a level stream of resolved, until
+	probes map[string]int       // signed-out probes running, per slug
 }
 
 func (r *Reader) now() time.Time {
@@ -242,7 +265,11 @@ func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, ma
 			r.setOff(schema, false)
 		}
 	}
-	views, err = r.levels(ctx, schema, mask)
+	probeSlug := ""
+	if v.Anonymous != nil {
+		probeSlug = slug
+	}
+	views, err = r.levels(ctx, schema, mask, probeSlug)
 	if err != nil {
 		return Board{}, err
 	}
@@ -324,8 +351,38 @@ func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, ma
 }
 
 // levels reads the level streams of schema for mask, in the schema's mode, switching mode once when
-// a stream's end says it is the other.
-func (r *Reader) levels(ctx context.Context, schema string, mask int64) ([]session.Snapshot, error) {
+// a stream's end says it is the other. probeSlug, set for a signed-out read, reads a schema not Known
+// by one probe first (SIGNED-OUT).
+func (r *Reader) levels(ctx context.Context, schema string, mask int64, probeSlug string) ([]session.Snapshot, error) {
+	views, err := r.levelsOnce(ctx, schema, mask, probeSlug)
+	if errors.Is(err, session.ErrInvalidToken) {
+		// The level streams' token is this service's (THE SERVICE TOKEN); never the viewer's 401.
+		return nil, ErrServiceToken
+	}
+	if err == nil {
+		r.markKnown(schema)
+	}
+	return views, err
+}
+
+func (r *Reader) levelsOnce(ctx context.Context, schema string, mask int64, probeSlug string) ([]session.Snapshot, error) {
+	if probeSlug != "" && !r.Known(schema) {
+		release, ok := r.probe(probeSlug)
+		if !ok {
+			return nil, ErrSignedOutBusy
+		}
+		_, err := r.readModes(ctx, schema, mask, true)
+		release()
+		if err != nil {
+			return nil, err
+		}
+		r.markKnown(schema)
+	}
+	return r.readModes(ctx, schema, mask, false)
+}
+
+// readModes is the mode-switching read of levels; first reads only the first subject (a probe).
+func (r *Reader) readModes(ctx context.Context, schema string, mask int64, first bool) ([]session.Snapshot, error) {
 	for switched := false; ; switched = true {
 		off := r.isOff(schema)
 		var subjects []string
@@ -337,6 +394,9 @@ func (r *Reader) levels(ctx context.Context, schema string, mask int64) ([]sessi
 					subjects = append(subjects, LevelSubject(schema, strconv.FormatInt(b, 10)))
 				}
 			}
+		}
+		if first && len(subjects) > 1 {
+			subjects = subjects[:1]
 		}
 		views, err := r.readAll(ctx, schema, subjects)
 		var ended *session.EndedError
@@ -368,6 +428,51 @@ func (r *Reader) readAll(ctx context.Context, schema string, subjects []string) 
 		}
 	}
 	return views, nil
+}
+
+// Known reports whether a level stream of schema reached Live within KnownTTL: the adapter resolved
+// it as a shared collection major.
+func (r *Reader) Known(schema string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	until, ok := r.known[schema]
+	return ok && r.now().Before(until)
+}
+
+func (r *Reader) markKnown(schema string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.known == nil {
+		r.known = map[string]time.Time{}
+	}
+	now := r.now()
+	for k, until := range r.known {
+		if !now.Before(until) {
+			delete(r.known, k)
+		}
+	}
+	r.known[schema] = now.Add(r.KnownTTL)
+}
+
+// probe takes one of slug's signed-out probes, and the func that gives it back; false when slug has
+// ProbesPerApp running.
+func (r *Reader) probe(slug string) (func(), bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.probes == nil {
+		r.probes = map[string]int{}
+	}
+	if r.probes[slug] >= r.ProbesPerApp {
+		return nil, false
+	}
+	r.probes[slug]++
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.probes[slug]--; r.probes[slug] <= 0 {
+			delete(r.probes, slug)
+		}
+	}, true
 }
 
 func (r *Reader) isOff(schema string) bool {
@@ -444,18 +549,25 @@ func readLevelMeta(raw json.RawMessage) levelMeta {
 }
 
 // Overlays holds each token's acknowledged writes to shared collections, by (token, schema) and key.
-// Bounded: past Max overlays in all, a write is not overlaid (its streams show it at their next poll).
+// Bounded: past Max overlays or MaxBytes of them in all, a write is not overlaid (its streams show it
+// at their next poll).
 type Overlays struct {
 	// TTL is how long an overlay lives: one adapter poll plus 30 s.
 	TTL time.Duration
-	// Max bounds the overlays held in all.
-	Max int
+	// Max bounds the overlays held in all, and MaxBytes their size (ackSize; zero: no byte bound).
+	Max, MaxBytes int
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 
 	mu    sync.Mutex
 	n     int
+	bytes int
 	byKey map[overlayKey]map[string]overlay
+}
+
+// ackSize is what one overlay counts against Overlays.MaxBytes.
+func ackSize(a session.Ack) int {
+	return len(a.Key) + len(a.URN) + len(a.Body) + len(a.CreatedAt) + len(a.UpdatedAt)
 }
 
 type overlayKey struct {
@@ -496,6 +608,14 @@ func (o *Overlays) Ack(token, schema string, a session.Ack) {
 	if !had && o.n >= o.Max {
 		return
 	}
+	n := o.bytes + ackSize(a)
+	if had {
+		n -= ackSize(prev.ack)
+	}
+	if o.MaxBytes > 0 && n > o.MaxBytes {
+		return
+	}
+	o.bytes = n
 	if held == nil {
 		if o.byKey == nil {
 			o.byKey = map[overlayKey]map[string]overlay{}
@@ -516,6 +636,7 @@ func (o *Overlays) sweepLocked(now time.Time) {
 			if !now.Before(ov.until) {
 				delete(held, key)
 				o.n--
+				o.bytes -= ackSize(ov.ack)
 			}
 		}
 		if len(held) == 0 {
@@ -545,6 +666,7 @@ func (o *Overlays) apply(token, schema string, byKey map[string]Doc, head int64,
 		if !now.Before(ov.until) || (headKnown && ov.ack.Seq <= head) || (hasBase && base.Seq >= ov.ack.Seq) {
 			delete(held, key)
 			o.n--
+			o.bytes -= ackSize(ov.ack)
 			continue
 		}
 		top = max(top, ov.ack.Seq)

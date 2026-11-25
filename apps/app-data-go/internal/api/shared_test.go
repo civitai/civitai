@@ -282,6 +282,9 @@ func TestEverySharedRefusalHasItsAnswer(t *testing.T) {
 		{session.ErrInvalidToken, 401, "invalid_token"},
 		{session.ErrNotLive, 503, "not_live"},
 		{session.ErrTooLarge, 503, "too_large"},
+		// 🔴 The level streams' own token refused is this service's fault, never the viewer's 401.
+		{shared.ErrServiceToken, 503, "service_token_refused"},
+		{shared.ErrSignedOutBusy, 503, "capacity"},
 	}
 	for _, c := range cases {
 		f.err = c.err

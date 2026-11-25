@@ -337,7 +337,9 @@ Tests prove it with pairwise-distinct fixtures (`TestRecordsNeverCrossFromOneTok
 | `LIVE_WAIT_MS`           | 1500    | how long a read waits for a new stream's `Live`                      |
 | `REQUEST_DEADLINE_MS`    | 4000    | one read, REST included                                              |
 | `MAX_RECORDS_PER_STREAM` | 1000    | a stream whose cache outgrows this is closed; reads go to REST       |
-| `MAX_BYTES_PER_STREAM`   | 2 MiB   | likewise, by approximate size; caches hold at most streams × this    |
+| `MAX_BYTES_PER_STREAM`   | 2 MiB   | likewise, by approximate size                                        |
+| `MAX_SUBSCRIPTIONS`      | 100     | streams of every kind (private, level, per-viewer) open together     |
+| `CACHE_BUDGET_BYTES`     | 224 MiB | bytes every open stream reserves together (its own byte bound each)  |
 | `REST_MAX_INFLIGHT`      | 64      | concurrent REST reads; over it a read answers 503 with `Retry-After` |
 
 A read that would open a stream over either cap opens nothing and reads REST (`capacity`,

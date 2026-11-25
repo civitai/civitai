@@ -42,9 +42,9 @@
 // it. A grant the user revokes reaches the stream as a `Delete` of each record it covered (the auth
 // extension's origin rule 4), so the cache drops them as soon as the adapter's next poll sends them.
 //
-// CAPS. At most MaxStreams streams in the process and MaxPerToken per token. A read that would open
-// a stream over either cap is refused with ErrCapacity or ErrTokenCapacity and opens nothing; the
-// caller reads REST. A stream whose cache outgrows MaxRecords or MaxBytes is closed (ErrTooLarge).
+// CAPS. At most MaxStreams streams in this manager and MaxPerToken per token, and, with a Budget,
+// what the process's managers hold together. A read that would open a stream over any of them is
+// refused with ErrCapacity or ErrTokenCapacity and opens nothing; the caller reads REST. A stream whose cache outgrows MaxRecords or MaxBytes is closed (ErrTooLarge).
 // A key whose stream failed is not reopened for Cooldown, so a broken registry is not asked again on
 // every read.
 //
@@ -304,6 +304,58 @@ type Options struct {
 	// SubscribeMeta, when set, is the request `meta` of the subscription a read for subject opens
 	// (nil: none). A non-nil meta needs a Subscriber that is a MetaSubscriber.
 	SubscribeMeta func(subject string) json.RawMessage
+	// MaxOverlayBytes bounds one stream's overlays by size (see Ack); zero is MaxBytes.
+	MaxOverlayBytes int
+	// Budget, when set, is shared with the process's other managers: every stream opened here takes
+	// one of its streams and Reserve of its bytes until it closes. A read that finds it spent is
+	// ErrCapacity, as one over MaxStreams is.
+	Budget *Budget
+	// Reserve is what one stream takes from Budget's bytes: the most its cache can hold (MaxBytes,
+	// plus MaxOverlayBytes where acks are applied). main sets it.
+	Reserve int
+	// InvalidToken, when set, is called each time the registry refuses the token a stream was
+	// opened with (ErrInvalidToken): the level manager's token is this service's own, re-minted then.
+	InvalidToken func()
+}
+
+// Budget caps what several managers hold together: the streams (one adapter subscription each) and
+// the bytes their caches may reach, each stream counted at its manager's Reserve. Safe for
+// concurrent use.
+type Budget struct {
+	maxStreams, maxBytes int
+
+	mu             sync.Mutex
+	streams, bytes int
+}
+
+// NewBudget is a budget of maxStreams streams and maxBytes bytes.
+func NewBudget(maxStreams, maxBytes int) *Budget {
+	return &Budget{maxStreams: maxStreams, maxBytes: maxBytes}
+}
+
+// take reserves one stream of n bytes; false when either would pass its bound.
+func (b *Budget) take(n int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.streams >= b.maxStreams || b.bytes+n > b.maxBytes {
+		return false
+	}
+	b.streams, b.bytes = b.streams+1, b.bytes+n
+	return true
+}
+
+// give returns one stream of n bytes.
+func (b *Budget) give(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.streams, b.bytes = b.streams-1, b.bytes-n
+}
+
+// InUse is the streams and bytes reserved now.
+func (b *Budget) InUse() (streams, bytes int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.streams, b.bytes
 }
 
 type tokenID [sha256.Size]byte
@@ -444,13 +496,16 @@ func (m *Manager) session(k key, token string) (*session, error) {
 	return m.open(k, token, now, nil), nil //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 }
 
-// room checks the caps for opening k. m.mu is held.
+// room checks the caps for opening k and, when they admit it, takes its share of the Budget: open
+// must follow a nil answer (end gives the share back). m.mu is held.
 func (m *Manager) room(k key) error {
 	switch {
 	case len(m.sessions) >= m.opts.MaxStreams:
 		return ErrCapacity
 	case m.perToken[k.token] >= m.opts.MaxPerToken:
 		return ErrTokenCapacity
+	case m.opts.Budget != nil && !m.opts.Budget.take(m.opts.Reserve):
+		return ErrCapacity
 	}
 	return nil
 }
@@ -558,7 +613,11 @@ func (m *Manager) Ack(token, schema string, a Ack) {
 	if s == nil {
 		return
 	}
-	if kind, ok := s.ack(a, m.opts.Now().Add(m.opts.OverlayTTL), m.opts.MaxRecords, m.opts.MaxBytes); ok && m.opts.Overlaid != nil {
+	maxOverlay := m.opts.MaxOverlayBytes
+	if maxOverlay <= 0 {
+		maxOverlay = m.opts.MaxBytes
+	}
+	if kind, ok := s.ack(a, m.opts.Now().Add(m.opts.OverlayTTL), m.opts.MaxRecords, maxOverlay); ok && m.opts.Overlaid != nil {
 		m.opts.Overlaid(kind)
 	}
 }
@@ -968,6 +1027,12 @@ func (m *Manager) end(s *session, reason string, err error) {
 		if m.perToken[s.k.token]--; m.perToken[s.k.token] <= 0 {
 			delete(m.perToken, s.k.token)
 		}
+		if m.opts.Budget != nil {
+			m.opts.Budget.give(m.opts.Reserve)
+		}
+	}
+	if errors.Is(err, ErrInvalidToken) && m.opts.InvalidToken != nil {
+		m.opts.InvalidToken()
 	}
 	switch reason {
 	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown, CloseCursorExpired, CloseFloorReopen:
@@ -1083,7 +1148,7 @@ func (m *Manager) Stats() Stats {
 		if s.isLive {
 			st.Live++
 		}
-		// Overlays are bounded apart from the records, so a stream may hold up to twice either bound.
+		// Overlays are bounded apart from the records (MaxOverlayBytes), so a stream may hold both.
 		st.Records += len(s.records) + len(s.overlays)
 		st.Bytes += s.bytes + s.overlayBytes
 		s.mu.Unlock()
