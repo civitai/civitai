@@ -130,8 +130,9 @@ describe('which videos get a point', () => {
     }
   }, 60_000);
 
-  // Holds hide nothing: only a delete or block removes content.
-  test('held media and held owners keep their point', async () => {
+  // Holds hide nothing: only a delete or block removes content. A clip listed on a report is
+  // flagged itself, so it goes.
+  test('a reported owner keeps the clip; a clip listed on a report gets no point', async () => {
     const pg = await pglite(`
       ${video(1)} ${video(2)} ${video(3)}
       UPDATE "Image" SET "userId" = 8 WHERE id = 2;
@@ -139,7 +140,7 @@ describe('which videos get a point', () => {
     `);
     try {
       expect([...(await getVideoDocs(pg as unknown as Pg, [1, 2, 3])).keys()].sort()).toEqual([
-        1, 2, 3,
+        1, 2,
       ]);
     } finally {
       await pg.close();

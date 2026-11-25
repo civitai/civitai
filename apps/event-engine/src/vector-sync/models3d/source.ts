@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { normalizeTitle, nsfwLevels } from '../models/document';
+import { csamFlaggedImageSql } from '../image-flags';
 import { model3dDocument } from './document';
 
 /** NsfwLevel.Blocked: a level that blocks on its own, whatever the ingestion state says. */
@@ -16,7 +17,8 @@ export const MODEL3D_ELIGIBLE_SQL = `(m.status = 'Published' AND m."deletedAt" I
   AND EXISTS (SELECT 1 FROM "Image" ti WHERE ti.id = m."thumbnailImageId"
     AND ti.ingestion = 'Scanned' AND ti."needsReview" IS NULL AND NOT ti."tosViolation"
     AND ti."blockedFor" IS NULL AND ti."nsfwLevel" NOT IN (0, ${BLOCKED})
-    AND ti."userId" = m."userId" AND NOT ti.minor AND NOT ti.poi))`;
+    AND ti."userId" = m."userId" AND NOT ti.minor AND NOT ti.poi
+    AND NOT ${csamFlaggedImageSql('ti')}))`;
 
 /** The thumbnail `ti`'s level, the site's `model3dThumbnailLevelText`, pinned by the parity test. */
 export const MODEL3D_THUMBNAIL_LEVEL_SQL = 'ti."nsfwLevel"';

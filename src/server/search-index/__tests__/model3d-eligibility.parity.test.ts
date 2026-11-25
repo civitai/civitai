@@ -123,8 +123,8 @@ const spec: ParitySpec = {
       thumbnail: `5, 'Scanned', NULL, false, NULL`,
     }),
     model(19, 'thumbnailBlockedCsam', { thumbnail: `1, 'Scanned', NULL, false, 'CSAM'` }),
-    model(21, 'eligible:thumbnailListed', {}),
-    model(22, 'eligible:thumbnailListedAsText', {}),
+    model(21, 'thumbnailListed', {}),
+    model(22, 'thumbnailListedAsText', {}),
     // Every other value on each boundary, so a rule that widens or narrows one is caught.
     model(24, 'status:Unpublished', { status: `'Unpublished'` }),
     model(25, 'availability:Private', { availability: `'Private'` }),
@@ -140,6 +140,8 @@ const spec: ParitySpec = {
     model(37, 'thumbnailPoi', { thumbnailFlags: 'false, true' }),
   ],
   clauses: [
+    'thumbnailListedAsText',
+    'thumbnailListed',
     'status',
     'deletedAt',
     'nsfwLevel',

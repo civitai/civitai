@@ -148,6 +148,7 @@ describe('3D model removal', () => {
     ['thumbnail taken down', `UPDATE "Image" SET "tosViolation" = true WHERE id = 10`],
     ['thumbnail blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 10`],
     ['thumbnail rated Blocked', `UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 10`],
+    ['thumbnail listed on a report', `INSERT INTO "CsamReport" (images) VALUES ('["10"]')`],
   ];
   test.each(leaves)(
     'a model %s loses its point on the next sync',
@@ -195,8 +196,7 @@ describe('3D model removal', () => {
     const pg = await pglite();
     try {
       await pg.exec(eligibleModel(1) + eligibleModel(2, 8));
-      await pg.exec(`INSERT INTO "CsamReport" ("userId") VALUES (7);
-        INSERT INTO "CsamReport" (images) VALUES ('[{"id": 20}]')`);
+      await pg.exec(`INSERT INTO "CsamReport" ("userId") VALUES (7)`);
       const { points, sent, deps } = fakes(pg);
       await syncIds(getModel3DDocs, [1, 2], deps);
       expect([...points.keys()].sort()).toEqual([1, 2]);

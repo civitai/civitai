@@ -177,12 +177,12 @@ const spec: ParitySpec = {
     storyline(18, 'eligible:ownerSecondaryReported', { owner: '5', postAuthor: '1' }),
     // Chapter 1 by a reported author, with an image whose owner is clean: holds hide nothing.
     storyline(20, 'eligible:postAuthorHeld', { postAuthor: '4' }),
-    storyline(21, 'eligible:imageListed', {}),
+    storyline(21, 'imageListed', {}),
     storyline(22, 'imageCsamReview', { image: `1, 'csam', NULL` }),
     storyline(23, 'imageBlockedCsam', { image: `1, NULL, 'CSAM'` }),
     storyline(24, 'eligible:imageOwnerHeld', { image: `4, NULL, NULL` }),
     storyline(25, 'eligible:noImage', { image: false }),
-    storyline(26, 'eligible:imageListedAsText', {}),
+    storyline(26, 'imageListedAsText', {}),
     storyline(27, 'eligible:imageOwnerSecondaryReported', { image: `5, NULL, NULL` }),
     // An owner's verification block is theirs to lift, so it does not count their report against it.
     storyline(29, 'eligible:aiNotVerifiedImage', { image: `4, NULL, 'AiNotVerified'` }),
@@ -209,6 +209,8 @@ const spec: ParitySpec = {
     cover(46, 'eligible:coverHeld', `"userId" = 4`),
   ],
   clauses: [
+    'imageListedAsText',
+    'imageListed',
     'tosViolation',
     'bannedOwner',
     'deletedOwner',

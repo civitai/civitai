@@ -164,7 +164,7 @@ const spec: ParitySpec = {
     comic(34, 'coverRated', false, { cover: `'Scanned', NULL, false, 1, NULL, false, false, 0` }),
     comic(35, 'eligible:coverHeld', true, { cover: `'Scanned', NULL, false, 4` }),
     withSql(
-      comic(36, 'eligible:coverListed', true, { cover: `'Scanned', NULL, false` }),
+      comic(36, 'coverListed', false, { cover: `'Scanned', NULL, false` }),
       `INSERT INTO "CsamReport" (images) VALUES ('[369]')`
     ),
     // Chapter 1 clean; a Ready panel in a second Public chapter has a reported owner: holds hide nothing.
@@ -190,6 +190,7 @@ const spec: ParitySpec = {
     ),
   ],
   clauses: [
+    'coverListed',
     'status',
     'tosViolation',
     'systemUser',

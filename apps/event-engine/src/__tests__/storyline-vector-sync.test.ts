@@ -162,6 +162,7 @@ describe('storyline removal', () => {
     ['chapter 1 post blocked', `UPDATE "Post" SET "nsfwLevel" = 32 WHERE id = 10`],
     ['chapter 1 image in CSAM review', `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 100`],
     ['chapter 1 image blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 100`],
+    ['chapter 1 image listed on a report', `INSERT INTO "CsamReport" (images) VALUES ('[100]')`],
     ['chapter 1 text item held', `INSERT INTO "PostText" ("postId", "csamHeld") VALUES (10, true)`],
     [
       'chapter 1 text item pending a hold',
@@ -178,8 +179,7 @@ describe('storyline removal', () => {
       await pg.exec(`${SCHEMA}
       INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'other', NULL, NULL);
       ${eligibleStoryline(1)} ${eligibleStoryline(2, 8)}
-      INSERT INTO "CsamReport" ("userId") VALUES (7);
-      INSERT INTO "CsamReport" (images) VALUES ('[100]');`);
+      INSERT INTO "CsamReport" ("userId") VALUES (7);`);
       const { points, deps } = fakes(pg);
       await syncIds(getStorylineDocs, [1, 2], deps);
       expect([...points.keys()].sort()).toEqual([1, 2]);

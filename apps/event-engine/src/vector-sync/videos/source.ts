@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { eligibleSql, IMAGE_ROW_COLUMNS, type ImageRow } from '../eligibility';
 import { videoLimitSkip } from '../embedder';
 import { vectorSyncMetrics } from '../metrics';
+import { csamFlaggedImageSql } from '../image-flags';
 import { getPayloads, type ImagePayload } from '../source';
 
 /** The videos of "Image", unaliased for the walks. */
@@ -29,7 +30,8 @@ export async function getVideoDocs(
   if (!ids.length) return new Map();
   const { rows } = await pg.query<ImageRow>(
     `SELECT ${IMAGE_ROW_COLUMNS} FROM "Image" i
-     WHERE i.id = ANY($1::int[]) AND i.type = 'video' AND ${eligibleSql('i')}`,
+     WHERE i.id = ANY($1::int[]) AND i.type = 'video' AND ${eligibleSql('i')}
+       AND NOT ${csamFlaggedImageSql('i')}`,
     [ids]
   );
   const supported = rows.filter((row) => {
