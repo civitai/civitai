@@ -19,7 +19,7 @@ const { dbHandle, notify, metricRows, metricQueries } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   notify: vi.fn(async () => undefined),
   metricRows: { current: [] as { metricType: string; value: string }[] },
-  metricQueries: [] as string[],
+  metricQueries: [] as unknown[],
 }));
 vi.mock('../db', () => ({
   get dbRead() {
@@ -35,10 +35,9 @@ vi.mock('../db', () => ({
 // main app's cache-bust endpoints the rating writer calls after commit.
 vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({
-    query: async () => ({ json: async () => [] }),
-    $query: async (query: string) => {
-      metricQueries.push(query);
-      return metricRows.current;
+    query: async ({ query_params }: { query_params?: unknown }) => {
+      metricQueries.push(query_params);
+      return { json: async () => metricRows.current };
     },
   }),
 }));
@@ -426,6 +425,8 @@ describe('the Disputes tab by status and owner', () => {
     ).toEqual([EARLIER, DISPUTE, SCANNING_DISPUTE]);
     expect((await load(WITH_GRANT, `owner=${OTHER}`)).disputes.items).toEqual([]);
     const all = (await disputes(WITHOUT_GRANT, { status: 'all' })).items;
+    expect(all.find((r) => r.id === 15)).toMatchObject({ status: 'Resolved' });
+    expect(all.find((r) => r.id === WITHHELD_DISPUTE)).toMatchObject({ status: 'Pending' });
     for (const id of [15, WITHHELD_DISPUTE])
       expect(all.find((r) => r.id === id)).toMatchObject({
         withheld: true,
@@ -437,19 +438,30 @@ describe('the Disputes tab by status and owner', () => {
 });
 
 describe("the open dispute's details", () => {
-  const get = async (imageId: number, tab = 'disputes', user = WITH_GRANT) => {
+  const get = async (
+    imageId: number,
+    tab = 'disputes',
+    user = WITH_GRANT,
+    grants: Record<string, boolean> = GRANTS
+  ) => {
     const res = await details.GET({
       params: { imageId: String(imageId) },
       url: new URL(`https://mod.example/audio-review/details/${imageId}?tab=${tab}`),
-      locals: { user },
+      locals: { user, grants },
     } as never);
     return { status: res.status, body: await res.json() };
   };
 
-  it("tallies the owner's song disputes", async () => {
+  it("tallies the owner's song disputes, none on a song withheld from this moderator", async () => {
     expect((await get(SONG)).body.owner.disputes).toEqual({
       total: 4,
       pending: 3,
+      approved: 0,
+      rejected: 1,
+    });
+    expect((await get(SONG, 'disputes', WITHOUT_GRANT)).body.owner.disputes).toEqual({
+      total: 3,
+      pending: 2,
       approved: 0,
       rejected: 1,
     });
@@ -495,8 +507,7 @@ describe("the open dispute's details", () => {
       { metricType: 'commentCount', value: '6' },
     ];
     expect((await get(SONG)).body.activity).toEqual({ plays: 742, likes: 40, comments: 6 });
-    expect(metricQueries).toHaveLength(1);
-    expect(metricQueries[0]).toContain(`entityId = ${SONG}`);
+    expect(metricQueries).toEqual([{ songId: SONG }]);
   });
 
   it('names the lyrics scan by its verdict, and none for a song without lyrics', async () => {
@@ -506,6 +517,16 @@ describe("the open dispute's details", () => {
       INSERT INTO "EntityModeration" ("entityType", "entityId", status, blocked) VALUES ('TrackLyrics', ${SONG}, 'Succeeded', false);
     `);
     expect((await get(SONG)).body.checks).toMatchObject({ lyrics: 'passed' });
+  });
+
+  it('shows a CSAM lyrics hold as held only to a moderator who can open CSAM holds', async () => {
+    await db.exec(`
+      INSERT INTO "TrackLyrics" ("imageId", text, lines, source) VALUES (${SONG}, 'words', '[]', 'user');
+      INSERT INTO "TextScanHold" (id, "entityType", "entityId", label, status) VALUES (1, 'TrackLyrics', ${SONG}, 'csam', 'Pending');
+    `);
+    const holds = { ...GRANTS, 'csam.report.file': true };
+    expect((await get(SONG, 'disputes', WITH_GRANT, holds)).body.checks.lyrics).toBe('held');
+    expect((await get(SONG)).body.checks.lyrics).toBe('pending');
   });
 
   it('reads the tallies and rating on the Disputes tab only, and nothing for a withheld song', async () => {

@@ -221,9 +221,11 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   there at the time asked for. Then the cover
   with its rating and scan state, the automated checks as states only (passed, held, blocked, not
   finished, failed), the generation details the song stored (model, seed, prompt, music description,
-  lyrics source) and the owner (account age, removed songs, active strikes, other reported songs).
+  lyrics source) and the owner (account age, removed songs, active strikes, other reported songs;
+  the owner's counts leave out songs withheld from the moderator, as the lists do).
   The checks are "Audio scan" (the song's own verdict), "Lyrics scan" (a song with lyrics: held
-  while a CSAM text hold is Pending, else the lyrics' text moderation verdict) and "Cover scan". The
+  while a CSAM text hold is Pending, shown as not finished to a moderator who cannot open CSAM
+  holds, else the lyrics' text moderation verdict) and "Cover scan". The
   Song card's Activity row has the song's all-time plays, Like reactions and comments, from the
   image metrics the site counts (ClickHouse, read for the open song only; left out when unread).
 - **Decisions** (`image.moderate`, as on Image reports): 1 Dismiss reports closes the song's shown
@@ -287,7 +289,8 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   "Rating disputes" below), one row per dispute: the level the owner saw and the level they ask
   for, "Repeat ×n" from the second dispute on the same song, and the owner with whether they
   commented. Status Pending (the default, and the tab's badge), Resolved or All: a resolved row shows
-  Approved or Rejected and its ruling read-only, and takes no key. Chips for All, Asks lower and Asks
+  Approved or Rejected and its ruling read-only, and takes no key (a resolved dispute on a withheld
+  song reads only "Resolved"). Chips for All, Asks lower and Asks
   higher; sort by oldest or newest; search by title, owner, the song's id or the dispute's;
   `owner=<userId>` lists one owner's disputes (never one on a withheld song). The open dispute has
   "by <owner> · disputed <age> ago · <nth> dispute" under its title, an "Owner's disputes" link

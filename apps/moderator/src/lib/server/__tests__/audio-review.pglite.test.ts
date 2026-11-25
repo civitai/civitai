@@ -361,7 +361,7 @@ describe('the open song details', () => {
     const res = await details.GET({
       params: { imageId: String(imageId) },
       url: new URL(`https://mod.example/audio-review/details/${imageId}`),
-      locals: { user },
+      locals: { user, grants: {} },
     } as never);
     return { status: res.status, body: await res.json() };
   };
@@ -382,6 +382,10 @@ describe('the open song details', () => {
       cover: { id: 620, url: 'cover-key', nsfwLevel: 2, shown: true },
     });
     expect((await get(WITH_GRANT, PICTURE)).status).toBe(404);
+  });
+
+  it("counts none of the owner's other reported songs withheld from this moderator", async () => {
+    expect((await get(WITHOUT_GRANT, SONG)).body.owner.otherReported).toBe(2);
   });
 
   it('sends a cover the public player would not show, or one withheld, without its file', async () => {
@@ -490,7 +494,7 @@ describe('Remove cover on a reported song (S2)', () => {
     const res = await details.GET({
       params: { imageId: String(SONG) },
       url: new URL(`https://mod.example/audio-review/details/${SONG}`),
-      locals: { user: WITH_GRANT },
+      locals: { user: WITH_GRANT, grants: {} },
     } as never);
     expect((await res.json()).cover).toMatchObject({ id: 620, url: null, shown: false });
   });

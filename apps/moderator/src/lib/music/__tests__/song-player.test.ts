@@ -347,7 +347,13 @@ describe('the next reported time after the playhead', () => {
   });
 
   it('skips the marker the playhead was just sent to', () => {
-    expect(nextReportTime(marks, 84.1)).toBe(171);
+    expect(nextReportTime(marks, 84)).toBe(171);
+    expect(nextReportTime(marks, 84.02)).toBe(171);
+  });
+
+  it('finds a report a fraction of a second ahead', () => {
+    const close = seekMarkers([{ timeSec: 11.2, label: 'Spam' }], 200);
+    expect(nextReportTime(close, 10.9)).toBe(11.2);
   });
 
   it('is null past the last one, so the button disables', () => {

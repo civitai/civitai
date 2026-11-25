@@ -2,7 +2,7 @@ import { error, isHttpError, json, type RequestHandler } from '@sveltejs/kit';
 import { z } from 'zod';
 import { AUDIO_TABS, DEFAULT_AUDIO_TAB } from '$lib/audio-review';
 import { RETRACTED_REFUSED } from '$lib/held-media';
-import { getSongDetails } from '$lib/server/audio-review.service';
+import { canOpenCsamHolds, getSongDetails } from '$lib/server/audio-review.service';
 import { int4Id } from '$lib/server/query';
 import { withheldImageIds } from '$lib/server/retracted-media';
 
@@ -22,7 +22,7 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
     });
     if (withheld.length) error(404, RETRACTED_REFUSED);
     const tab = z.enum(AUDIO_TABS).catch(DEFAULT_AUDIO_TAB).parse(url.searchParams.get('tab'));
-    const details = await getSongDetails(id.data, locals.user, tab);
+    const details = await getSongDetails(id.data, locals.user, tab, canOpenCsamHolds(locals));
     if (!details) error(404, 'Not a song.');
     return json(details, { headers: NO_STORE });
   } catch (e) {

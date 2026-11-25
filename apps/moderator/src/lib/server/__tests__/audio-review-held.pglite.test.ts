@@ -287,7 +287,7 @@ describe("an owner's held songs", () => {
       const res = await details.GET({
         params: { imageId: String(COVER_SONG) },
         url: new URL(`https://mod.example/audio-review/details/${COVER_SONG}?tab=${tab}`),
-        locals: { user },
+        locals: { user, grants: {} },
       } as never);
       return (await res.json()).owner;
     };

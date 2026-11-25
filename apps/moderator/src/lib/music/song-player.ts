@@ -250,12 +250,13 @@ export function markerLabels(markers: readonly SeekMarker[], barWidthPx: number)
   });
 }
 
+// Past the playhead by more than this: a jump lands the playhead on its marker, a hair either side.
+const NEXT_REPORT_EPSILON_SEC = 0.05;
+
 /** The first reported time after the playhead, past the one it was just sent to; null after the
  *  last, which disables "Next report". */
 export function nextReportTime(markers: readonly SeekMarker[], currentSec: number): number | null {
-  return (
-    markers.find((m) => isSeek(m.timeSec, currentSec) && m.timeSec > currentSec)?.timeSec ?? null
-  );
+  return markers.find((m) => m.timeSec > currentSec + NEXT_REPORT_EPSILON_SEC)?.timeSec ?? null;
 }
 
 /** A section heading of the lyrics (`[Chorus]`): shown, never played from or reported on. */

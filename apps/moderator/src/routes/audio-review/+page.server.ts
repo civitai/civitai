@@ -15,10 +15,11 @@ import {
   REPORTED_FILTERS,
   REPORTED_SORTS,
 } from '$lib/audio-review';
-import { canAccess, denied } from '$lib/server/access';
+import { denied } from '$lib/server/access';
 import { songTabCounts } from '$lib/server/audio-review-count';
 import {
   boundSongReports,
+  canOpenCsamHolds,
   flaggedCoverOf,
   getHeldSongs,
   getReportedSongRows,
@@ -48,9 +49,6 @@ import { isSong } from '$lib/server/songs';
 import { keyed, parseViolation, refuseWithheld } from './actions';
 
 const ACT = 'image.moderate';
-// A lyrics hold is decided in CSAM holds, whose page refuses to load without this grant.
-const CSAM_HOLDS = '/csam/text-holds';
-const CSAM_HOLDS_GRANT = 'csam.report.file';
 
 // Read key by key: `parseQuery` walks every param, which reruns the load on the selection.
 const querySchema = z.object({
@@ -86,7 +84,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
         filters: { sort: heldSort, kind: parsed.held, owner: parsed.owner ?? null },
       },
       counts: { ...counts, held: held.facets.all },
-      canOpenHolds: canAccess(user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT],
+      canOpenHolds: canOpenCsamHolds(locals),
       ...shared,
     };
   }

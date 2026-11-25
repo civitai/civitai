@@ -38,6 +38,7 @@ import {
   pendingSongReports,
   songAppealImages,
 } from './audio-review-count';
+import { canAccess } from './access';
 import { logAxiomError } from './axiom';
 import { getClickhouse } from './clickhouse';
 import { dbRead } from './db';
@@ -321,7 +322,9 @@ async function songModelName(meta: Record<string, unknown> | null): Promise<stri
 export async function getSongDetails(
   imageId: number,
   user: App.Locals['user'] | undefined,
-  tab: AudioTab = DEFAULT_AUDIO_TAB
+  tab: AudioTab = DEFAULT_AUDIO_TAB,
+  /** Whether this moderator may open CSAM holds: only then is a lyrics hold named as one. */
+  canOpenHolds = false
 ): Promise<SongDetails | null> {
   const song = await dbRead
     .selectFrom('Image as s')
@@ -385,13 +388,20 @@ export async function getSongDetails(
   ]);
   const [otherReported, otherHeld, lyrics, ownerDisputes, rating, activity] = await Promise.all([
     pendingSongReports()
-      .select(sql<number>`count(DISTINCT i.id)::int`.as('n'))
+      .select('i.id')
+      .distinct()
       .where('i.userId', '=', song.userId)
       .where('i.id', '<>', imageId)
-      .executeTakeFirst(),
+      .execute()
+      .then((rows) =>
+        visibleIds(
+          rows.map((r) => r.id),
+          user
+        )
+      ),
     tab === 'held' ? otherHeldOf(song.userId, imageId, user) : null,
-    song.lyricsId != null ? lyricsCheck(imageId) : null,
-    tab === 'disputes' ? songDisputeTally(song.userId) : null,
+    song.lyricsId != null ? lyricsCheck(imageId, canOpenHolds) : null,
+    tab === 'disputes' ? songDisputeTally(song.userId, user) : null,
     tab === 'disputes'
       ? songRatingSource(imageId, { locked: song.nsfwLevelLocked, scannedAt: song.scannedAt })
       : null,
@@ -448,7 +458,7 @@ export async function getSongDetails(
           createdAt: owner.createdAt ?? null,
           removedSongs: Number(owner.removedSongs ?? 0),
           strikes: strikes.count,
-          otherReported: otherReported?.n ?? 0,
+          otherReported: otherReported.length,
           otherHeld,
           disputes: ownerDisputes,
         }
@@ -458,9 +468,25 @@ export async function getSongDetails(
   };
 }
 
-/** The lyrics scan's state: held while a CSAM text hold is Pending, else the text moderation's
- *  verdict (`EntityModeration`, as the main app's song decision reads it). */
-async function lyricsCheck(songId: number): Promise<CheckState> {
+// A lyrics hold is decided in CSAM holds, whose page refuses to load without this grant.
+const CSAM_HOLDS = '/csam/text-holds';
+const CSAM_HOLDS_GRANT = 'csam.report.file';
+
+/** Whether this moderator can open CSAM holds: its page and the grant its load demands. */
+export const canOpenCsamHolds = (locals: Pick<App.Locals, 'user' | 'grants'>) =>
+  canAccess(locals.user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT];
+
+/** Which of `ids` are not withheld from `user`: an owner's counts leave those out, as the lists do. */
+async function visibleIds(ids: number[], user: App.Locals['user'] | undefined) {
+  if (!ids.length) return [];
+  const withheld = new Set(await withheldImageIds(user, ids));
+  return ids.filter((id) => !withheld.has(id));
+}
+
+/** The lyrics scan's state: held while a CSAM text hold is Pending (pending to a moderator who
+ *  cannot open CSAM holds), else the text moderation's verdict (`EntityModeration`, as the main
+ *  app's song decision reads it). */
+async function lyricsCheck(songId: number, canOpenHolds: boolean): Promise<CheckState> {
   const [hold, moderation] = await Promise.all([
     dbRead
       .selectFrom('TextScanHold')
@@ -477,22 +503,25 @@ async function lyricsCheck(songId: number): Promise<CheckState> {
       .where('entityId', '=', songId)
       .executeTakeFirst(),
   ]);
-  if (hold) return 'held';
+  if (hold) return canOpenHolds ? 'held' : 'pending';
   if (!moderation || moderation.status === 'Pending') return 'pending';
   if (moderation.status !== 'Succeeded') return 'failed';
   return moderation.blocked ? 'blocked' : 'passed';
 }
 
-/** An owner's rating disputes on songs, by outcome. */
-async function songDisputeTally(ownerId: number) {
-  const rows = await dbRead
+/** An owner's rating disputes on songs, by outcome, leaving out songs withheld from `user`. */
+async function songDisputeTally(ownerId: number, user: App.Locals['user'] | undefined) {
+  const all = await dbRead
     .selectFrom('RatingReview')
-    .select(['status', sql<number>`count(*)::int`.as('n')])
+    .select(['entityId', 'status', sql<number>`count(*)::int`.as('n')])
     .where('entityType', '=', SONG_ENTITY_TYPE)
     .where('userId', '=', ownerId)
-    .groupBy('status')
+    .groupBy(['entityId', 'status'])
     .execute();
-  const of = (status: string) => rows.find((r) => String(r.status) === status)?.n ?? 0;
+  const visible = new Set(await visibleIds([...new Set(all.map((r) => r.entityId))], user));
+  const rows = all.filter((r) => visible.has(r.entityId));
+  const of = (status: string) =>
+    rows.filter((r) => String(r.status) === status).reduce((n, r) => n + r.n, 0);
   return {
     total: rows.reduce((n, r) => n + r.n, 0),
     pending: of(ReportStatus.Pending),
@@ -562,13 +591,18 @@ async function songRatingSource(
  *  ClickHouse cannot answer, so the card leaves the row out rather than show zeros. */
 async function songActivity(songId: number): Promise<SongDetails['activity']> {
   try {
-    const rows = await getClickhouse().$query<{ metricType: string; value: string | number }>(`
-      SELECT metricType, sum(total) AS value
-      FROM entityMetricDailyAgg_v2
-      WHERE entityType = 'Image' AND entityId = ${songId}
-        AND metricType IN ('Play', 'Like', 'commentCount')
-      GROUP BY metricType
-    `);
+    const response = await getClickhouse().query({
+      query: `
+        SELECT metricType, sum(total) AS value
+        FROM entityMetricDailyAgg_v2
+        WHERE entityType = 'Image' AND entityId = {songId:Int32}
+          AND metricType IN ('Play', 'Like', 'commentCount')
+        GROUP BY metricType
+      `,
+      query_params: { songId },
+      format: 'JSONEachRow',
+    });
+    const rows = await response.json<{ metricType: string; value: string | number }>();
     const of = (type: string) => Number(rows.find((r) => r.metricType === type)?.value ?? 0);
     return { plays: of('Play'), likes: of('Like'), comments: of('commentCount') };
   } catch (error) {
@@ -1109,6 +1143,7 @@ export async function getSongDisputes({
     if (withheld.has(d.songId))
       return {
         ...base,
+        status: d.status === ReportStatus.Pending ? ReportStatus.Pending : 'Resolved',
         asks: null,
         state: null,
         disputes: null,
