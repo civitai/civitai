@@ -287,8 +287,7 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   there: the flagged cover of a song under a lyrics hold. The CSAM queue keeps songs and covers.
 - **Image reports** lists images and videos only, and its badge leaves songs out. The image Appeals
   queue (`/images/appeals`) and its badge leave out the Pending appeals of songs and their own covers,
-  which Audio review's Appeals tab decides, so an appeal is decided in one place; the Audio review
-  badge counts reported songs and these appeals. A song or cover still flagged for appeal with no
+  which Audio review's Appeals tab decides, so an appeal is decided in one place. A song or cover still flagged for appeal with no
   Pending appeal stays in the image Appeals queue, whose decision clears the flag. On a help-desk
   ticket a song or cover appeal is listed as "Song or cover" under the Audio review page grant, with
   a link to it there instead of a ruling.
@@ -300,8 +299,7 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
 The song card (`SongCard.svelte`) also renders in the image review queues, Image lookup and
 Removed-appeals, marked "Song": its cover, a play/pause button, a seek bar with the time, a volume
 control, the title, and the lyrics in a scrollable panel. A lyric line with a time plays the song from
-there; a line without one is text. Image and video cards are unchanged. The review queues no longer
-list songs or their own covers (Audio review's Held tab decides them), except as above.
+there; a line without one is text. Image and video cards are unchanged.
 
 - **Playback** (`$lib/music/song-player.ts`): nothing plays until the moderator clicks, one song plays
   at a time across the page, and each song starts at the last volume chosen (kept in this browser's
@@ -329,9 +327,8 @@ list songs or their own covers (Audio review's Held tab decides them), except as
   the song's reports and "Remove cover" leaves them open. Each removal records its own
   violation type, notifies the owner ("Your song "<title>" has been removed …", "The cover of your
   song "<title>" has been removed …", both linking to the song: `songNoticeSubject`, and the
-  `tos-violation` template's `song` / `song cover` wording), and is appealed on its own: the owner's
-  removed-images list and the image appeal flow are per image row, and Audio review's Appeals tab
-  decides each.
+  `tos-violation` template's `song` / `song cover` wording), and is appealed on its own, per image
+  row (Appeals tab).
 - **A cover in an image queue** carries "Cover of song <title>", linking to the song in Image lookup.
   Song and cover are linked only through the song's own cover (`songsOwnCoverText`), read by
   `getSongLinks` (`song-links.service.ts`) for every queue card. A link to a song or cover withheld
@@ -361,10 +358,9 @@ retry ceilings, under the failure class the cron itself resolves, `effectiveScan
 cannot be disputed, each with its own message. A dispute closed with nothing applied does not stop
 the owner filing again once a rescan has reviewed the song.
 
-Moderators decide song disputes on the moderator app's Audio review page (its Disputes tab), not in
-`/ratings`, whose tabs, deep links and sidebar badge leave songs out, nor from a ticket's rating
-disputes: the resolver refuses a song dispute from any caller but that tab, and refuses anything
-else from it. A ruling goes through the moderator rating writer
+Moderators decide song disputes on Audio review's Disputes tab only (`/ratings`, its badge and
+tickets leave songs out; see "Moderating songs"): the resolver refuses a song dispute from any other
+caller, and refuses anything else from that tab. A ruling goes through the moderator rating writer
 (`writeImageNsfwLevel`, on the ruling's own transaction, with each of its cache, activity and search
 steps run after commit, a failing one not skipping the rest): it sets and locks the song's level, and since a locked level counts as the
 song's review, it is refused, with nothing written, while the song's scans are running or due a retry,
