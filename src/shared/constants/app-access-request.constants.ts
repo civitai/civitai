@@ -17,8 +17,7 @@ export type AppAccessRequestDecision = (typeof APP_ACCESS_REQUEST_DECISIONS)[num
 /**
  * How old an account must be, in days, before `app-access-auto-approve` may approve its request on
  * submit. A younger account still gets a request, PENDING, for a moderator to decide: the age check
- * routes it to the queue, it never declines it. App access hands out a hosted sandbox, so a new
- * account waits for a person.
+ * routes it to the queue, it never declines it.
  */
 export const APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS = 7;
 

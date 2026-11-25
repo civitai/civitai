@@ -69,7 +69,6 @@ export async function mintDevTunnelOauthToken(opts: {
       update: { allowedScopes: scope },
       select: { id: true },
     });
-    // Re-opens only a client a ban disabled; staff-disabled ones stay disabled.
     await reopenBanDisabledClient(clientId);
   }
 

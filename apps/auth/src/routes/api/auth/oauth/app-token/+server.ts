@@ -44,8 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
   if (!Number.isInteger(userId) || userId <= 0 || !clientId) {
     return bad('invalid_request', 'userId and clientId are required');
   }
-  // An App Assistant client acts only for the user its id names: its consent row is keyed on that
-  // user too, but the client must not be usable for anyone else even if a consent for it exists.
+  // An App Assistant client mints only for the user its id names, whatever consents exist.
   if (!isAppAssistantClientAllowedFor(clientId, userId)) {
     return bad('invalid_client', 'Unknown client');
   }

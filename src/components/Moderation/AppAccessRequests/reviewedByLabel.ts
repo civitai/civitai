@@ -7,7 +7,6 @@ import type {
  * Who decided a row, as the moderator queue shows it. `system` decides two things: an approval on
  * submit (`app-access-auto-approve`) and a decline when the system account bans someone. So the
  * label keys on the status as well as the source: a system decline must never read as an approval.
- * A deleted moderator account reads "a moderator".
  */
 export function reviewedByLabel(item: {
   status: AppAccessRequestStatus;

@@ -221,9 +221,8 @@ export async function enableAppAssistant(userId: number): Promise<void> {
   const clientId = appAssistantClientId(userId);
   const scope = appAssistantTokenScope('chat');
 
-  // The client's canonical shape, restored on every call: a row edited before the OAuth-apps router
-  // refused App Assistant edits (a rename, redirect URIs, wider scopes) is put back. `accessMode` is
-  // not part of it: see below.
+  // The whole shape on every call, so a hand-edited row is put back. `accessMode` is deliberately
+  // absent: only a ban's re-open changes it.
   const shape = {
     secret: null,
     name: 'App Assistant',
@@ -241,7 +240,6 @@ export async function enableAppAssistant(userId: number): Promise<void> {
     select: { id: true },
   });
 
-  // Re-opens only a client a ban disabled; staff-disabled ones stay disabled.
   await reopenBanDisabledClient(clientId);
 
   const existing = await dbWrite.oauthConsent.findUnique({

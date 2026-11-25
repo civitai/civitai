@@ -15,10 +15,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 /**
  * One OAuth client per user rather than one shared row: an `OauthClient` belongs to the user in its
  * `userId`, who may delete it through the OAuth-apps settings (which turns App Assistant off), so a
- * shared row would be one user's to break for everyone. The owner cannot EDIT it: the OAuth-apps
- * router refuses every change to an App Assistant client, and the hub's `app-token` mint refuses one
- * named for another user. The id rule lives in `@civitai/auth/app-assistant-client`, shared with the
- * hub.
+ * shared row would be one user's to break for everyone. The id rule lives in
+ * `@civitai/auth/app-assistant-client`, shared with the hub.
  */
 export { APP_ASSISTANT_CLIENT_PREFIX } from '@civitai/auth/app-assistant-client';
 export { appAssistantClientId };

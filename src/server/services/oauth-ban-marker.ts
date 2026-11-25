@@ -5,13 +5,11 @@ import { redis } from '~/server/redis/client';
 
 /**
  * Which disabled OAuth clients a BAN disabled. `accessMode: 'disabled'` alone cannot say: staff
- * also disable clients (the hub's access page), and a re-enable must never undo that. So the ban
- * leg marks each self-only client once it has disabled it, storing the mode it had; the re-enable
- * paths (`enableAppAssistant`, the dev-tunnel mint, both behind their own gates) restore that mode
- * only while the mark exists; and a staff mode change on the hub's access page deletes the mark.
+ * also disable clients, and a re-enable must never undo that. So the ban marks each self-only
+ * client it disabled, with the mode it had, and only a marked client is ever re-opened.
  *
- * The mark lives on the cache Redis with a year's TTL. Losing it, or failing to read it, fails
- * closed: the client stays disabled until staff re-open it.
+ * The mark lives on the cache Redis. A lost mark, or one that cannot be read (read as "no mark"),
+ * fails closed: the client stays disabled until staff re-open it.
  */
 const BAN_DISABLED_TTL_SECONDS = 365 * 24 * 60 * 60;
 

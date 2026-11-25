@@ -97,7 +97,8 @@ describe('oauthClient.rotateSecret for a download-link minter', () => {
 
 // INVARIANT GUARD, not regression coverage: a real App Assistant client is public, and
 // `rotateSecret` only finds confidential clients, so it already answered NOT_FOUND before the App
-// Assistant guard. This fixture's lookup returns a confidential row to reach the guard.
+// Assistant guard. This fixture's lookup returns a confidential row to reach the guard. Kept, with
+// the guard, as defence in depth.
 describe('oauthClient.rotateSecret on an App Assistant client', () => {
   it('invariant: refuses it and writes nothing', async () => {
     await expect(caller().rotateSecret({ id: 'appassist-7' })).rejects.toMatchObject({

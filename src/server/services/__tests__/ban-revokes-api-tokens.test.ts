@@ -184,7 +184,8 @@ describe('a ban disables OAuth apps and app access', () => {
     const [declines] = appAccessDeclines();
     expect(declines).toBeDefined();
     const values = (declines[0] as { values: unknown[] }).values;
-    expect(values).toEqual(expect.arrayContaining([MODERATOR, USER]));
+    // Positional binds: reviewedById (the moderator), reviewSource, then the declined user.
+    expect(values).toEqual([MODERATOR, 'moderator', USER]);
   });
 
   it('🔴 an unban reaches neither: nothing is re-enabled or re-granted', async () => {
