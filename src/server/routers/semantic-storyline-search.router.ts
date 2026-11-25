@@ -4,6 +4,7 @@ import { semanticStorylineSearchSchema } from '~/server/schema/semantic-storylin
 import { searchSemanticStorylines } from '~/server/services/semantic-storyline-search.service';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 
 export const semanticStorylineSearchRouter = router({
   search: publicProcedure
@@ -18,6 +19,7 @@ export const semanticStorylineSearchRouter = router({
       ])
     )
     .input(semanticStorylineSearchSchema)
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const result = await searchSemanticStorylines({
