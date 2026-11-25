@@ -281,6 +281,8 @@ export const pullData = async (
         collectionOwnerId: Prisma.sql`t."userId"`,
       }),
     })}
+      -- A song cover falls through to the item covers: the index is read by everyone.
+      AND ${songsHiddenSql({ music: false })!}
   ), metrics as MATERIALIZED (
     SELECT
       cm."collectionId",

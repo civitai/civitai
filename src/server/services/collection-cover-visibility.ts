@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { canSeeSongs, songsHiddenSql } from '~/server/services/song-visibility-sql';
+import type { SessionUser } from '~/types/session';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   imageNotRestrictedSql,
@@ -325,6 +327,14 @@ export async function getModelWithheldImageIds(
 
 type CoverViewer = { id?: number; isModerator?: boolean } | undefined | null;
 
+/** No song as a cover unless the viewer may see songs (`canSeeSongs`), or it is their own. */
+const coverSongsSql = (viewer: CoverViewer) =>
+  songsHiddenSql({
+    // The flag reads only the fields this session-shaped viewer carries.
+    music: canSeeSongs((viewer ?? undefined) as SessionUser | undefined),
+    ownerId: viewer?.id,
+  }) ?? Prisma.sql`TRUE`;
+
 type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId: number };
 
 type CoverDb = Pick<typeof dbRead, '$queryRaw'>;
@@ -356,7 +366,7 @@ export async function getServableCoverCollectionIds(
           collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
         }),
         heldExempt: modelOwnerSql,
-      })}) AND ${withinHeldGallerySql(modelOwnerSql)}`;
+      })}) AND ${withinHeldGallerySql(modelOwnerSql)} AND ${coverSongsSql(viewer)}`;
   const rows = await db.$queryRaw<{ collectionId: number }[]>`
     SELECT v."collectionId"
     FROM unnest(

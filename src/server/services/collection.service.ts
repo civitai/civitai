@@ -1733,6 +1733,10 @@ export const upsertCollection = async ({
 
     const newCoverUrl = !imageId && image && image.id == null ? image.url : undefined;
     if (newCoverUrl) await assertClientKeysIssuedToCaller({ urls: [newCoverUrl], userId });
+    // A new cover that is a song needs the music flag; a cover kept as it was is not re-judged.
+    const nextCoverId = imageId ?? image?.id;
+    if (nextCoverId != null && nextCoverId !== currentCollection.image?.id)
+      await assertCanSaveSongs([nextCoverId], canUseMusic, isModerator);
 
     const updated = await dbWrite.$transaction(async (tx) => {
       // Decided in the transaction: a cover row deleted after this read fails the `connect`
@@ -2150,6 +2154,7 @@ export const updateCollectionCoverImage = async ({
     id: imageId,
     userId,
     isModerator,
+    music: !!canUseMusic || !!isModerator,
     confirmBlockOnPrimary: true,
   });
 

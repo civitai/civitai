@@ -310,6 +310,28 @@ describe('songs and playlists', () => {
   });
 
   describe('without the music flag', () => {
+    it('refuses a song as the new cover of an edited collection, and keeps an existing one', async () => {
+      arrange('Image');
+      mockDbRead.image.findFirst.mockResolvedValue({ id: SONG } as never);
+      const edit = (imageId: number, current: number | null) => {
+        mockDbWrite.collection.findUnique.mockResolvedValue({
+          ...collectionRow('Image'),
+          image: current ? { id: current } : null,
+        } as never);
+        return upsertCollection({
+          input: { id: COLLECTION_ID, name: 'Renamed', read: 'Public', imageId, userId: OWNER_ID },
+        } as never);
+      };
+      await expect(edit(SONG, null)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: SONGS_UNAVAILABLE_MESSAGE,
+      });
+      expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+      // The kept cover is not re-judged: whatever the edit does next, it is not refused for the song.
+      const kept = await edit(SONG, SONG).catch((error: Error) => error);
+      expect((kept as Error | undefined)?.message).not.toBe(SONGS_UNAVAILABLE_MESSAGE);
+    });
+
     it('refuses bulk-adding a song to an image or untyped collection', async () => {
       for (const type of ['Image', null]) {
         arrange(type as never);
