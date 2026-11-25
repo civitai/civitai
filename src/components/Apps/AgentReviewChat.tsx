@@ -1,4 +1,15 @@
-import { Alert, Box, Button, Card, Group, Loader, ScrollArea, Stack, Text, Textarea } from '@mantine/core';
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  Group,
+  Loader,
+  ScrollArea,
+  Stack,
+  Text,
+  Textarea,
+} from '@mantine/core';
 import { useState } from 'react';
 import { IconMessageQuestion, IconSend, IconAlertTriangle } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -40,7 +51,14 @@ type ChatMessage = { role: 'user' | 'assistant'; content: string };
  */
 export const MAX_CHAT_HISTORY_SENT = 18;
 
-export function AgentReviewChat({ publishRequestId }: { publishRequestId: string }) {
+export function AgentReviewChat({
+  publishRequestId,
+  reportId,
+}: {
+  publishRequestId: string;
+  /** The run on screen; the server grounds the answer on it. Omitted ⇒ the latest run. */
+  reportId?: string;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +79,7 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
     // .max(20) cap no matter how long the chat runs (see MAX_CHAT_HISTORY_SENT).
     const sentMessages = nextMessages.slice(-MAX_CHAT_HISTORY_SENT);
     chatMut.mutate(
-      { publishRequestId, messages: sentMessages },
+      { publishRequestId, messages: sentMessages, reportId },
       {
         onSuccess: (data) => {
           setMessages((prev) => [
@@ -87,9 +105,8 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
           </Text>
         </Group>
         <Text size="xs" c="dimmed">
-          Ask the agent follow-up questions about its review (e.g. why a scope was
-          flagged, or to show a call site). Answers are advisory — you retain the
-          approve / reject decision.
+          Ask the agent follow-up questions about its review (e.g. why a scope was flagged, or to
+          show a call site). Answers are advisory — you retain the approve / reject decision.
         </Text>
 
         {messages.length > 0 && (
@@ -133,10 +150,7 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
                       {isUser ? (
                         // User-typed message — plain inert TEXT (no markdown),
                         // matching the existing convention.
-                        <Text
-                          size="sm"
-                          style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                        >
+                        <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                           {m.content}
                         </Text>
                       ) : (
@@ -158,9 +172,7 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
                             overflowWrap: 'anywhere',
                           }}
                         >
-                          <CustomMarkdown disallowedElements={['img']}>
-                            {m.content}
-                          </CustomMarkdown>
+                          <CustomMarkdown disallowedElements={['img']}>{m.content}</CustomMarkdown>
                         </div>
                       )}
                     </Box>

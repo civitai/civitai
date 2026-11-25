@@ -109,6 +109,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             getReviewStatus: inert,
             listActivePreviews: inert,
             getAgentReview: inert,
+            listAgentReviews: inert,
           },
         }),
       }

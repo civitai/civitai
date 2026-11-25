@@ -212,6 +212,61 @@ describe('hasUsableAgentReportSection — the gate on showing a failed report at
   });
 });
 
+describe('sectionErrorMessage — upstream errors and `detail`', () => {
+  /** The shape the review agent writes when the provider refuses the call (contract). */
+  const UPSTREAM = {
+    error: 'upstream-error',
+    detail: 'xiaomi/mimo-v2.5 is no longer available on OpenRouter',
+    attempts: 3,
+  };
+
+  test('`upstream-error` says the PROVIDER failed and no analysis ran, then the provider text', () => {
+    const msg = sectionErrorMessage(UPSTREAM);
+    expect(msg).toBe(
+      'The model provider returned an error, so no analysis ran. Re-running on the same model ' +
+        'will usually fail the same way until the provider recovers; re-run with a different ' +
+        'model instead.' +
+        '\n\nDetail: xiaomi/mimo-v2.5 is no longer available on OpenRouter'
+    );
+  });
+
+  test('a `detail` is shown for ANY code — a known one and one this build has never seen', () => {
+    expect(sectionErrorMessage({ error: 'non-json-response', detail: 'empty reply x3' })).toBe(
+      `${AGENT_SECTION_ERROR_MESSAGES['non-json-response']}\n\nDetail: empty reply x3`
+    );
+    expect(sectionErrorMessage({ error: 'gateway-timeout', detail: 'after 90s' })).toBe(
+      'gateway-timeout\n\nDetail: after 90s'
+    );
+  });
+
+  test('no detail, a blank detail, or a non-string detail adds nothing', () => {
+    const plain = AGENT_SECTION_ERROR_MESSAGES['upstream-error'];
+    expect(sectionErrorMessage({ error: 'upstream-error' })).toBe(plain);
+    expect(sectionErrorMessage({ error: 'upstream-error', detail: '   ' })).toBe(plain);
+    expect(sectionErrorMessage({ error: 'upstream-error', detail: { html: '<b>' } })).toBe(plain);
+  });
+
+  test('a detail is bounded like the error itself', () => {
+    const msg = sectionErrorMessage({ error: 'upstream-error', detail: 'x'.repeat(5000) });
+    expect(msg!.endsWith(`Detail: ${'x'.repeat(500)}`)).toBe(true);
+  });
+
+  test('a RESULT slot with a `detail` field is still a result, not a failure', () => {
+    expect(sectionErrorMessage({ findings: [], detail: 'not an error' })).toBeNull();
+  });
+
+  test('🔴 `non-json-response` no longer promises that a re-run usually clears it', () => {
+    // Every review on a retired model was recorded as non-json-response (three EMPTY replies),
+    // and the old copy told moderators a re-run "usually clears it" — so they re-ran a model
+    // that could not answer. Pinned whole: the copy is the product here.
+    expect(sectionErrorMessage({ error: 'non-json-response' })).toBe(
+      'No structured result could be read from the analysis: the model replied in prose, or ' +
+        'returned nothing at all. A prose reply is often a one-off; an empty one usually means ' +
+        'the model itself is failing, so if this repeats, re-run with a different model.'
+    );
+  });
+});
+
 describe('sectionErrorMessage', () => {
   test('`non-json-response` becomes a sentence a moderator can act on', () => {
     const msg = sectionErrorMessage({ error: 'non-json-response' });
@@ -221,9 +276,9 @@ describe('sectionErrorMessage', () => {
   });
 
   test('🔴 `truncated-response` is DISTINCT from `non-json-response`, not a shared generic line', () => {
-    // They call for different actions: prose-instead-of-JSON usually clears on a re-run,
-    // a cut-off reply is a size problem that will usually recur. A single message for both
-    // would tell a mod to retry something that cannot succeed.
+    // They call for different actions: an unreadable reply may be a one-off (or the model
+    // failing), a cut-off reply is a size problem that will usually recur. A single message for
+    // both would tell a mod to retry something that cannot succeed.
     const truncated = sectionErrorMessage({ error: 'truncated-response' });
     const nonJson = sectionErrorMessage({ error: 'non-json-response' });
     expect(truncated).toBe(AGENT_SECTION_ERROR_MESSAGES['truncated-response']);
