@@ -437,6 +437,12 @@ export interface BlockInitPayload {
    */
   storageMode?: 'local-preview';
   /**
+   * The App Storage writes cutover: the app-data service's https base URL and the app's blockId,
+   * when the token mint moved this app's document store there (`blockInitAppData`). Read by
+   * `@civitai/sdk`'s `initialize()`. Optional and ADDED, like `storageMode`; absent everywhere else.
+   */
+  appData?: { url: string; slug: string };
+  /**
    * Bridge capabilities this host handles, e.g. `workflowMedia:v1`. An SDK sends
    * a capability's message only when it is listed: a host bundle loaded before
    * the capability shipped never receives a request it would leave hanging.

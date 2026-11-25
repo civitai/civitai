@@ -337,6 +337,19 @@ export enum FLIPT_FEATURE_FLAGS {
   // APP_DATA_SHADOW_URL SET. A missing key makes `evaluateBoolean` throw, bypass the eval cache and
   // log an error on every call, and with the URL set every eligible App Storage list reads it.
   APP_DATA_REGISTRY_SHADOW = 'app-data-registry-shadow',
+  // The App Storage writes cutover: while on for an app, the page-run block token mint answers
+  // with `appData: { url, slug }`, which the run host forwards in BLOCK_INIT, and the app's SDK
+  // then sends its own collections and `info()` to the app-data service instead of the site.
+  // EVALUATED PER APP like the shadow flag above: entityId = the app block id (`apb_…`), context
+  // `{ blockId }`. Also needs APP_DATA_SERVICE_PUBLIC_URL; unset, the flag is never read. See
+  // `src/server/services/apps/app-data-writes-routing.ts` (which spells the key as
+  // APP_DATA_WRITES_VIA_SERVICE_FLAG; a test pins the two equal).
+  //
+  // DEFAULT-OFF and SILENT: read with `getFliptBoolean` (after any local override), so a missing
+  // key, an evaluation error or an unreachable Flipt all read as off WITHOUT an error log. It is
+  // read on every page-run mint, and a log line per mint would be a storm. Create the key
+  // (enabled: false) anyway: a missing key also skips the eval cache.
+  APP_DATA_WRITES_VIA_SERVICE = 'app-data-writes-via-service',
   // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
   // depends on, Node's superjson envelope) to feed-go's
   // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,
