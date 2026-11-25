@@ -19,6 +19,7 @@ import {
   closeModeratorRuledItems,
   closeUnservableItems,
   escalateExpired,
+  syncLevelBuckets,
   type MovedItem,
 } from '$lib/server/queue/queue.service';
 import { settleFinalItems } from '$lib/server/progression/progression';
@@ -66,6 +67,8 @@ export const POST: RequestHandler = async ({ request }) => {
   const unservable = await settle('unservable sweep', () =>
     closeUnservableItems(db, { now: new Date(), moved: collect })
   );
+  // After the sweep, so the items it closes are not written. The feed reads each level bucket through this column.
+  const levelBuckets = await settle('level bucket sync', () => syncLevelBuckets(db));
   const reviews = await settle('inquisitor review sweep', async () =>
     (await queueDeps.inquisitorQueue?.())
       ? {
@@ -151,6 +154,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !writeBacks.ok ||
     !moderatorRuled.ok ||
     !unservable.ok ||
+    !levelBuckets.ok ||
     !reviews.ok ||
     !progression.ok ||
     !hidden.ok ||
@@ -192,6 +196,7 @@ export const POST: RequestHandler = async ({ request }) => {
     publishesAfterExpiry: unservable.value.publishesAfterExpiry,
     unpublishedDrafts: unservable.value.unpublishedDrafts,
     imageUnservable: unservable.value.imageUnservable,
+    levelBucketsSynced: levelBuckets.value.synced,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,

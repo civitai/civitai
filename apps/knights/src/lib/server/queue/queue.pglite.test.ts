@@ -32,6 +32,7 @@ import {
   servableItems,
   STAGE_SCAN_FIRST_ROUND,
   STAGE_SCAN_MAX_PRIORITIES,
+  syncLevelBuckets,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
 import { creditLateJudgment } from './vote-record';
@@ -149,11 +150,21 @@ async function sameAgeStage(levels: number[], firstImage = 100_000, priorities?:
      FROM ${rows} ORDER BY n RETURNING id`,
     [...params, Q, priority]
   );
+  // As the tick would, so the feed finds them through their stored bucket.
+  await syncLevelBuckets(db, { limit: levels.length });
   return items.rows.map((r) => r.id).sort((a, b) => a - b);
 }
 
+/** Stores `level` as the items' bucket, as if their images were re-rated since the tick last set it. */
+async function storeBucket(ids: number[], level: number) {
+  await pg.query(`UPDATE "KnightsQueueItem" SET "levelBucket" = $2 WHERE id = ANY($1::int[])`, [
+    ids,
+    level,
+  ]);
+}
+
 /**
- * `db`, recording the ids each read returns: `rounds` for the stage-scan rounds (the rows carrying a `createdAtKey`),
+ * `db`, recording the ids each read returns: `rounds` for the bucket read rounds (the rows carrying a `createdAtKey`),
  * `fullReads` for the reads of served columns (rows carrying an `imageKey`). A read that returns no rows is not seen.
  * `onRound` runs after each round's rows come back and before the next round starts.
  */
@@ -2494,6 +2505,90 @@ describe('closeUnservableItems', () => {
       unpublishedDrafts: 1,
       imageUnservable: 0,
     });
+  });
+});
+
+describe('syncLevelBuckets', () => {
+  const stored = async (id: number) =>
+    (
+      await pg.query<{ levelBucket: number | null }>(
+        `SELECT "levelBucket" FROM "KnightsQueueItem" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0].levelBucket;
+  const setStored = (id: number, value: number | null) =>
+    pg.query(`UPDATE "KnightsQueueItem" SET "levelBucket" = $2 WHERE id = $1`, [id, value]);
+
+  it('fills unset and re-rated values of open rating items and leaves correct ones and every other item alone', async () => {
+    for (const [id, level] of [
+      [10, 8],
+      [11, 4],
+      [12, 1],
+      [13, 16],
+      [14, 2],
+      [15, 8],
+      [16, 8],
+      [17, 3],
+    ] as const)
+      await image(id, level);
+    const unset = await item(10);
+    const rerated = await item(11);
+    const correct = await item(12);
+    const predicted = await item(13);
+    const closed = await item(14);
+    const yesNo = await item(15, { question: 'knights.test.bool' });
+    const hidden = await item(16, { hidden: true });
+    const noBucket = await item(17);
+    await setStored(unset, null);
+    await setStored(rerated, 16);
+    await setStored(correct, 1);
+    await setStored(predicted, null);
+    await pg.query(`UPDATE "KnightsQueueItem" SET prediction = '{"value":"2"}' WHERE id = $1`, [
+      predicted,
+    ]);
+    await setStored(noBucket, null);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET status = 'Closed', "levelBucket" = NULL WHERE id = $1`,
+      [closed]
+    );
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET audience = 'players', prompt = 'Hat?', "levelBucket" = NULL WHERE id = $1`,
+      [yesNo]
+    );
+    await setStored(hidden, null);
+    const updatedAt = (await itemRow(correct)).updatedAt;
+
+    expect(await syncLevelBuckets(db)).toEqual({ synced: 4 });
+
+    expect(await stored(unset)).toBe(8);
+    expect(await stored(rerated)).toBe(4);
+    expect(await stored(correct)).toBe(1);
+    expect(await stored(predicted)).toBe(2);
+    expect(await stored(noBucket)).toBe(0);
+    expect(await stored(closed)).toBeNull();
+    expect(await stored(yesNo)).toBeNull();
+    expect(await stored(hidden)).toBeNull();
+    expect((await itemRow(correct)).updatedAt).toEqual(updatedAt);
+    // Nothing is left to set, so the next tick writes nothing.
+    expect(await syncLevelBuckets(db)).toEqual({ synced: 0 });
+  });
+
+  it('sets at most `limit` items per call, oldest id first', async () => {
+    const ids: number[] = [];
+    for (const id of [10, 11, 12]) {
+      await image(id, 4);
+      ids.push(await item(id));
+      await setStored(ids[ids.length - 1], null);
+    }
+
+    expect(await syncLevelBuckets(db, { limit: 2 })).toEqual({ synced: 2 });
+    expect([await stored(ids[0]), await stored(ids[1]), await stored(ids[2])]).toEqual([
+      4,
+      4,
+      null,
+    ]);
+    expect(await syncLevelBuckets(db, { limit: 2 })).toEqual({ synced: 1 });
+    expect(await stored(ids[2])).toBe(4);
   });
 });
 

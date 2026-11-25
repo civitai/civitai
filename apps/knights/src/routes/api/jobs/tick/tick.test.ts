@@ -4,6 +4,7 @@ const escalateExpired = vi.hoisted(() => vi.fn());
 const applyPendingResolutions = vi.hoisted(() => vi.fn());
 const closeModeratorRuledItems = vi.hoisted(() => vi.fn());
 const closeUnservableItems = vi.hoisted(() => vi.fn());
+const syncLevelBuckets = vi.hoisted(() => vi.fn());
 const settleFinalItems = vi.hoisted(() => vi.fn());
 const expireSmites = vi.hoisted(() => vi.fn());
 const settleHiddenChecks = vi.hoisted(() => vi.fn());
@@ -62,6 +63,7 @@ vi.mock('$lib/server/queue/queue.service', () => ({
   applyPendingResolutions,
   closeModeratorRuledItems,
   closeUnservableItems,
+  syncLevelBuckets,
 }));
 const tickItemFailures = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/metrics', () => ({ metrics: { tickItemFailures } }));
@@ -85,6 +87,8 @@ beforeEach(() => {
     unpublishedDrafts: 0,
     imageUnservable: 0,
   });
+  syncLevelBuckets.mockReset();
+  syncLevelBuckets.mockResolvedValue({ synced: 0 });
   settleFinalItems.mockReset();
   settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
   settleHiddenChecks.mockReset();
@@ -147,6 +151,7 @@ describe('POST /api/jobs/tick', () => {
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
       imageUnservable: 0,
+      levelBucketsSynced: 0,
       settledVotes: 0,
       hiddenChecksGraded: 0,
       yesNoClosed: 0,
@@ -304,6 +309,31 @@ describe('POST /api/jobs/tick', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', name: 'knights-conversion-retries-skipped' })
     );
+  });
+
+  it('sets the level buckets of open items after the unservable sweep, and reports how many', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    syncLevelBuckets.mockResolvedValue({ synced: 42 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ levelBucketsSynced: 42 });
+    // Items the sweep closes are no longer open, so they are not worth a write.
+    expect(closeUnservableItems.mock.invocationCallOrder[0]).toBeLessThan(
+      syncLevelBuckets.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('answers 500 when setting the level buckets fails, after running the other steps', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    syncLevelBuckets.mockRejectedValue(new Error('db down'));
+
+    expect((await run()).status).toBe(500);
+    expect(settleFinalItems).toHaveBeenCalled();
+    expect(runLabelPass).toHaveBeenCalled();
   });
 
   it('answers 500 when the label pass fails', async () => {

@@ -4052,6 +4052,11 @@ export type KnightsQueueItem = {
   escalationReason: string | null;
   prediction: unknown | null;
   /**
+   * Rating items: the level flag of the item's feed bucket (`bucketLevelSql`: 1, 2, 4, 8 or 16), 0 for none, null until
+   * the Knights tick (`syncLevelBuckets`) first sets it. The tick also corrects it when the image is re-rated.
+   */
+  levelBucket: number | null;
+  /**
    * Yes/no items only (question kind `bool`): the producer's id for the question, unique across items.
    */
   externalId: string | null;

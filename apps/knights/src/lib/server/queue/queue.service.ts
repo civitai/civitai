@@ -432,6 +432,10 @@ export type NewItem = {
   expiresAt?: Date | null;
 };
 
+/**
+ * Inserts one item. The producers (the main app's scan sampling, the yes/no import, moderator tools) insert their own rows
+ * and leave `levelBucket` to the tick; this sets it at once, as the tick would.
+ */
 export async function enqueueItem(db: Executor, input: NewItem, now: Date): Promise<number> {
   const question = await db
     .selectFrom('KnightsQuestion')
@@ -459,6 +463,7 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
     })
     .returning('id')
     .executeTakeFirstOrThrow();
+  await syncLevelBuckets(db, { itemIds: [row.id] });
   return row.id;
 }
 
@@ -1488,6 +1493,45 @@ export async function closeUnservableItems(
   for (let i = 0; i < result.imageUnservable; i++) metrics.escalation(IMAGE_UNSERVABLE_REASON);
   moved?.(closedOpen);
   return result;
+}
+
+/**
+ * The most items one tick's `syncLevelBuckets` sets: one tick catches up with a normal hour of new items, and a backlog
+ * (a large import, a mass re-rate) is spread over several ticks instead of making one long.
+ */
+export const LEVEL_BUCKET_SYNC_LIMIT = 5000;
+
+/**
+ * Keeps `levelBucket` equal to `bucketLevelSql` on open rating items (hidden checks and yes/no items are never served by
+ * the feed's bucket reads, so they are left NULL): sets it where it is still NULL (no producer writes it) and corrects it
+ * where the image was re-rated since. At most `limit` items per call, oldest id first; rows another transaction holds
+ * are skipped for the next tick. `updatedAt` is left alone: the column is derived, not a change to the item. `itemIds`
+ * narrows the call to those items (`enqueueItem` sets its own row at once).
+ */
+export async function syncLevelBuckets(
+  db: Executor,
+  { limit = LEVEL_BUCKET_SYNC_LIMIT, itemIds }: { limit?: number; itemIds?: number[] } = {}
+): Promise<{ synced: number }> {
+  const due = db
+    .selectFrom('KnightsQueueItem as i')
+    .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .select(['i.id', bucketLevelSql.as('bucket')])
+    .$if(itemIds !== undefined, (qb) => qb.where('i.id', 'in', itemIds as number[]))
+    .where('i.status', '=', 'Open')
+    .where('i.audience', 'is', null)
+    .where('i.isHiddenCheck', '=', false)
+    .where((eb) => eb('i.levelBucket', 'is distinct from', bucketLevelSql))
+    .orderBy('i.id', 'asc')
+    .limit(limit)
+    .forUpdate('i')
+    .skipLocked();
+  const result = await db
+    .updateTable('KnightsQueueItem as u')
+    .from(due.as('due'))
+    .set((eb) => ({ levelBucket: eb.ref('due.bucket') }))
+    .whereRef('u.id', '=', 'due.id')
+    .executeTakeFirst();
+  return { synced: Number(result.numUpdatedRows) };
 }
 
 /** Closes items with no outcome: no label and nothing written back. Pending votes become `inconclusive`; settling them is the caller's. */
