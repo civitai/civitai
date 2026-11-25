@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { holdsCsamReview } from './held-media';
-import { listWithheldIds } from './retracted-media';
+import { blankCover, listWithheldIds } from './retracted-media';
 import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
@@ -315,7 +315,7 @@ export async function withheldProfileMedia(
   const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(viewer) }, 'user-card');
   const media = (m: ProfileMedia | null): ProfileMedia | null =>
     m?.id != null && withheld.has(m.id)
-      ? { id: m.id, url: '', type: null, nsfwLevel: m.nsfwLevel, restricted: true }
+      ? { ...blankCover({ id: m.id, nsfwLevel: m.nsfwLevel }), type: null }
       : m;
   return {
     identity:
@@ -335,10 +335,25 @@ export async function withheldProfileMedia(
   };
 }
 
+/** The card with its avatar withheld from `viewer` sent without its key. */
 export async function getUserCard(
   userId: number,
   viewer: App.Locals['user'] | undefined
 ): Promise<UserCard | null> {
+  const card = await readUserCard(userId);
+  if (!card) return null;
+  return { ...card, identity: (await withheldProfileMedia(card.identity, null, viewer)).identity! };
+}
+
+/** `getUserCard` and the profile with one withheld read over the avatar and both covers. */
+async function readCardAndProfile(userId: number, viewer: App.Locals['user'] | undefined) {
+  const [card, profile] = await Promise.all([readUserCard(userId), readProfile(userId)]);
+  if (!card) return { card: null, profile: null };
+  const shown = await withheldProfileMedia(card.identity, profile, viewer);
+  return { card: { ...card, identity: shown.identity! }, profile: shown.profile };
+}
+
+async function readUserCard(userId: number): Promise<UserCard | null> {
   const [identity, subscription, curator, strikeCountAllTime, modContact, strikes] =
     await Promise.all([
       getIdentity(userId),
@@ -351,10 +366,9 @@ export async function getUserCard(
       getModeratorContact(userId).catch(() => ({ chats: null, lastAt: null, chatIds: [] })),
       getActiveStrikes(userId),
     ]);
-  const shown = await withheldProfileMedia(identity, null, viewer);
-  return shown.identity
+  return identity
     ? {
-        identity: shown.identity,
+        identity,
         subscription,
         curator,
         strikeCountAllTime: strikeCountAllTime.get(userId) ?? 0,
@@ -368,10 +382,9 @@ export async function getUserLookup(
   userId: number,
   viewer: App.Locals['user'] | undefined
 ): Promise<UserLookupResult | null> {
-  const [card, profile, scores, counts, stats, reportsFiled, reportedContent, ranks] =
+  const [{ card, profile }, scores, counts, stats, reportsFiled, reportedContent, ranks] =
     await Promise.all([
-      getUserCard(userId, viewer),
-      getProfile(userId, viewer),
+      readCardAndProfile(userId, viewer),
       getScores(userId),
       getCounts(userId),
       getStats(userId),
@@ -400,9 +413,8 @@ export async function getReportedAccountDetails(
   userId: number,
   viewer: App.Locals['user'] | undefined
 ): Promise<ReportedAccountDetails | null> {
-  const [card, profile, counts] = await Promise.all([
-    getUserCard(userId, viewer),
-    getProfile(userId, viewer),
+  const [{ card, profile }, counts] = await Promise.all([
+    readCardAndProfile(userId, viewer),
     getCounts(userId),
   ]);
   return card ? { card, profile, counts } : null;
@@ -581,12 +593,8 @@ export async function getIdentity(userId: number): Promise<UserIdentity | null> 
 // Retool's UserBio, including both cover images. Checking a cover or an avatar for ToS content was an
 // in-tool action there; linking out to the profile instead means the moderator has to load the very
 // page they may be about to act on, in a normal browsing session.
-async function getProfile(
-  userId: number,
-  viewer: App.Locals['user'] | undefined
-): Promise<UserProfileText | null> {
-  const profile = (await getProfiles([userId])).get(userId) ?? null;
-  return (await withheldProfileMedia(null, profile, viewer)).profile;
+async function readProfile(userId: number): Promise<UserProfileText | null> {
+  return (await getProfiles([userId])).get(userId) ?? null;
 }
 
 /** `getProfile` for many accounts in one read (the CSAM holds queue shows a page of them). */

@@ -10,7 +10,7 @@ import {
 } from '$lib/server/user-lookup.service';
 import type { HoldContext, HoldParent, HoldProfile } from './hold-context';
 import { holdsCsamReview } from '$lib/server/held-media';
-import { listWithheldIds } from '$lib/server/retracted-media';
+import { blankCover, listWithheldIds } from '$lib/server/retracted-media';
 
 type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId'>;
 
@@ -249,11 +249,7 @@ export async function withheldHoldMedia<
     'csam-text-holds'
   );
   const shown = (images: AppealCoverImage[]): AppealCoverImage[] =>
-    images.map((image) =>
-      withheld.has(image.id)
-        ? { id: image.id, url: '', nsfwLevel: image.nsfwLevel, restricted: true }
-        : image
-    );
+    images.map((image) => (withheld.has(image.id) ? blankCover(image) : image));
   return holds.map((hold) => ({
     ...hold,
     coverImages: shown(hold.coverImages),

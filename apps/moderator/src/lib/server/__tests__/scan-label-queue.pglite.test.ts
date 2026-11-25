@@ -858,6 +858,20 @@ describe('an item whose image is withheld from the claimer', () => {
     expect((await claimNext(WITHOUT_GRANT, {}, NOW))!.itemId).toBe(open);
   });
 
+  // The claim filters in its candidate query, so a run of withheld items at the head is walked in
+  // one statement rather than one attempt each.
+  it('walks past a run of withheld items at the head of the queue', async () => {
+    for (const id of [11, 12, 13, 14, 15]) {
+      await seedItem(id, { votes: 2 });
+      await pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES ($1, $2, 'CSAM')`, [
+        100 + id,
+        `key-${id}`,
+      ]);
+    }
+    const open = await seedItem(2);
+    expect((await claimNext(WITHOUT_GRANT, {}, NOW))!.itemId).toBe(open);
+  });
+
   it('is claimed by a moderator with the grant', async () => {
     const withheld = await seedWithheld();
     expect((await claimNext(granted(1), {}, NOW))!.itemId).toBe(withheld);

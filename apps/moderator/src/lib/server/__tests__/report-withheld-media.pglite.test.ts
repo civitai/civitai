@@ -165,6 +165,24 @@ describe('/reports/user images tab', () => {
   });
 });
 
+describe('/reports/user images tab match count', () => {
+  it('stops counting at the cap and says so', async () => {
+    const { getSuspectImages, EMPTY_SUSPECT_FILTERS, MATCH_COUNT_CAP } = await import(
+      '../report-triage.service'
+    );
+    await db.exec(`INSERT INTO "Image" (id, url, "userId")
+      SELECT 10000 + n, 'bulk-' || n, ${OWNER} FROM generate_series(1, ${MATCH_COUNT_CAP + 1}) n`);
+    const result = await getSuspectImages(OWNER, EMPTY_SUSPECT_FILTERS, { viewer: WITH_GRANT });
+    expect(result).toMatchObject({ matched: MATCH_COUNT_CAP, matchedCapped: true });
+  });
+
+  it('counts exactly below the cap', async () => {
+    const { getSuspectImages, EMPTY_SUSPECT_FILTERS } = await import('../report-triage.service');
+    const result = await getSuspectImages(OWNER, EMPTY_SUSPECT_FILTERS, { viewer: WITH_GRANT });
+    expect(result).toMatchObject({ matched: 2, matchedCapped: false });
+  });
+});
+
 describe('profile avatar and covers', () => {
   const media = (id: number, url: string) => ({ id, url, type: 'image', nsfwLevel: 1 });
   const shown = async (viewer: never) => {

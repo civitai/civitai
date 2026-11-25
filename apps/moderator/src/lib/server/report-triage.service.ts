@@ -90,6 +90,9 @@ export const EMPTY_SUSPECT_FILTERS: SuspectImageFilters = {
   negativePrompt: '',
 };
 
+/** The most matches the Images tab counts. */
+export const MATCH_COUNT_CAP = 5000;
+
 export async function getSuspectImages(
   userId: number,
   filters: SuspectImageFilters = EMPTY_SUSPECT_FILTERS,
@@ -105,6 +108,8 @@ export async function getSuspectImages(
   total: number;
   blocked: number;
   matched: number;
+  /** `matched` stopped at `MATCH_COUNT_CAP`: there are at least that many. */
+  matchedCapped: boolean;
 }> {
   const base = dbRead.selectFrom('Image').where('userId', '=', userId);
   // A prompt filter never matches an image withheld from the viewer, or paging it would read the
@@ -179,7 +184,16 @@ export async function getSuspectImages(
         eb.fn.count<string>(sql`case when "ingestion" = 'Blocked' then 1 end`).as('blocked'),
       ])
       .executeTakeFirst(),
-    filtered.select((eb) => eb.fn.countAll<string>().as('matched')).executeTakeFirst(),
+    // Capped: a prompt filter reads every image of the account, and the withheld check doubles it.
+    dbRead
+      .selectFrom(
+        filtered
+          .select(sql`1`.as('one'))
+          .limit(MATCH_COUNT_CAP + 1)
+          .as('m')
+      )
+      .select((eb) => eb.fn.countAll<string>().as('matched'))
+      .executeTakeFirst(),
   ]);
 
   return {
@@ -194,6 +208,7 @@ export async function getSuspectImages(
     perPage: limit,
     total: Number(counts?.total ?? 0),
     blocked: Number(counts?.blocked ?? 0),
-    matched: Number(matchedRow?.matched ?? 0),
+    matched: Math.min(Number(matchedRow?.matched ?? 0), MATCH_COUNT_CAP),
+    matchedCapped: Number(matchedRow?.matched ?? 0) > MATCH_COUNT_CAP,
   };
 }

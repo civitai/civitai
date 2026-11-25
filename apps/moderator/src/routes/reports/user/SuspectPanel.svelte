@@ -296,7 +296,7 @@
       <p class="text-sm text-dark-2">
         <span class="font-semibold text-white">{num(suspect.total)} images</span>
         {#if suspect.blocked > 0}· {num(suspect.blocked)} already blocked{/if}
-        {#if filtersActive}· {num(suspect.matched)} match the filters{/if}
+        {#if filtersActive}· {num(suspect.matched)}{suspect.matchedCapped ? '+' : ''} match the filters{/if}
       </p>
       <Button
         size="sm"
