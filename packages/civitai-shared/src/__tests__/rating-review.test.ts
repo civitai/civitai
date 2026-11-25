@@ -13,6 +13,7 @@ import {
   ratingReviewOwnerLevels,
   effectiveScanFailureClass,
   songNeverReviewable,
+  songScanStateOf,
   textScanNsfwReason,
   textScanResultTextHash,
 } from '../rating-review';
@@ -155,6 +156,46 @@ describe('songNeverReviewable', () => {
     expect(state('Error', 8)).toBe(false);
     expect(state('Error', 29, 'transient')).toBe(false);
     expect(state('Rescan', 8)).toBe(false);
+  });
+});
+
+describe('songScanStateOf', () => {
+  it("reads the current error's class and reason over the last failure's", () => {
+    expect(
+      songScanStateOf('Error', {
+        retryCount: 3,
+        error: { failureClass: 'transient', reason: 'timeout' },
+        lastFailure: { failureClass: 'permanent', reason: 'unsupported' },
+      })
+    ).toEqual({
+      ingestion: 'Error',
+      retryCount: 3,
+      failureClass: 'transient',
+      failureReason: 'timeout',
+    });
+  });
+
+  it("falls back to the last failure's once the error is cleared for a resubmission", () => {
+    expect(
+      songScanStateOf('Pending', {
+        retryCount: 1,
+        lastFailure: { failureClass: 'permanent', reason: 'unsupported' },
+      })
+    ).toEqual({
+      ingestion: 'Pending',
+      retryCount: 1,
+      failureClass: 'permanent',
+      failureReason: 'unsupported',
+    });
+  });
+
+  it('reads nothing from missing or malformed scan jobs', () => {
+    const none = { retryCount: null, failureClass: null, failureReason: null };
+    expect(songScanStateOf('Scanned', null)).toEqual({ ingestion: 'Scanned', ...none });
+    expect(songScanStateOf('Error', { retryCount: '3', error: { failureClass: 7 } })).toEqual({
+      ingestion: 'Error',
+      ...none,
+    });
   });
 });
 

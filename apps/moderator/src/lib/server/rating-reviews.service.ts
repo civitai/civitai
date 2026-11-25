@@ -16,6 +16,7 @@ import {
   ratingReviewLevelLabel,
   ratingReviewModeratorLevels,
   songNeverReviewable,
+  songScanStateOf,
   SYSTEM_NSFW_LOCK_META_KEY,
   textScanNsfwReason,
   textScanResultTextHash,
@@ -1096,30 +1097,16 @@ export async function resolveRatingReview(input: {
     let song: SongScanState | undefined;
     let liveLevel: number | undefined;
     if (entityType === 'Song') {
-      // The cron's own reads of the retry count and failure class (src/server/jobs/image-ingestion.ts).
       const found = await trx
         .selectFrom('Image')
-        .select([
-          'ingestion',
-          'nsfwLevel',
-          sql<number | null>`("scanJobs"->>'retryCount')::int`.as('retryCount'),
-          sql<
-            string | null
-          >`COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')->>'failureClass'`.as(
-            'failureClass'
-          ),
-          sql<
-            string | null
-          >`COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')->>'reason'`.as(
-            'failureReason'
-          ),
-        ])
+        .select(['ingestion', 'nsfwLevel', 'scanJobs'])
         .where('id', '=', entityId)
         .where('type', '=', 'audio')
         // Locked so another rating cannot land between the keep check below and the write.
         .forUpdate()
         .executeTakeFirst();
-      song = found && !songNeverReviewable(found) ? found : undefined;
+      const state = found && songScanStateOf(found.ingestion, found.scanJobs);
+      song = state && !songNeverReviewable(state) ? state : undefined;
       exists = !!song;
       liveLevel = song ? found?.nsfwLevel : undefined;
     } else if (entityType === 'Challenge') {
