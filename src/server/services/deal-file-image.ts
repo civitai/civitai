@@ -9,12 +9,23 @@ import { kyselyOver } from '~/server/db/prisma-kysely';
  * its file is checked against, never user content, so a user neither attaches one anywhere nor
  * deletes it. `act` names what was refused.
  */
-export async function assertNotDealFileImages(ids: number[], act: 'deleted' | 'used here') {
+export async function assertNotDealFileImages(
+  ids: number[],
+  act: 'deleted' | 'used here',
+  /** Only these owners' images: a caller who may not see the rest learns nothing about them. */
+  { ownerId }: { ownerId?: number } = {}
+) {
   if (!ids.length) return;
   // primary: a copy recorded moments ago must already refuse.
   const { rows } = await sql<{ dealFileImage: boolean }>`
     SELECT true AS "dealFileImage" FROM unnest(${ids}::int[]) AS t(id)
-    WHERE ${dealFileImageSql(sql.ref('t.id'))} LIMIT 1
+    WHERE ${dealFileImageSql(sql.ref('t.id'))}
+      ${
+        ownerId === undefined
+          ? sql``
+          : sql`AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = t.id AND i."userId" = ${ownerId})`
+      }
+    LIMIT 1
   `.execute(kyselyOver(dbWrite));
   if (rows?.some((row) => row.dealFileImage === true))
     throw new TRPCError({

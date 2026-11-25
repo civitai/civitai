@@ -193,7 +193,10 @@ describe('assertShowcaseItemsOwned', () => {
   it.each([false, true])(
     "refuses a deal file's scan copy, the caller a moderator: %s",
     async (isModerator) => {
-      db.$queryRaw.mockResolvedValueOnce([{ dealFileImage: true }] as never);
+      db.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
+        [...strings].join('').includes('ServiceDealFile')
+          ? [{ dealFileImage: true }]
+          : []) as never);
       await expect(
         assertShowcaseItemsOwned({
           userId: OWNER_ID,

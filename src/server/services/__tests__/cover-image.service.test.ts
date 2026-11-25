@@ -145,7 +145,8 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
       nsfwLevel: 1,
       modelRestricted: false,
     } as never);
-    dbWriteMock.$queryRaw.mockResolvedValueOnce([{ dealFileImage: true }] as never);
+    dbWriteMock.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
+      [...strings].join('').includes('ServiceDealFile') ? [{ dealFileImage: true }] : []) as never);
     await expect(productionCoverImageDeps.assertUsableAsCover(42)).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });

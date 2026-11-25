@@ -99,13 +99,17 @@ describe('updateCollectionCoverImage authorization', () => {
       [...strings].join('').includes('ServiceDealFile')
         ? Promise.resolve([{ dealFileImage: true }])
         : prior?.(strings, ...v) ?? Promise.resolve([])) as never);
-
-    await expect(
-      updateCollectionCoverImage({
-        input: { id: COLLECTION_ID, imageId: IMAGE_ID, userId: OWNER_ID },
-      })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    try {
+      await expect(
+        updateCollectionCoverImage({
+          input: { id: COLLECTION_ID, imageId: IMAGE_ID, userId: OWNER_ID },
+        })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    } finally {
+      if (prior) mockDbWrite.$queryRaw.mockImplementation(prior);
+      else mockDbWrite.$queryRaw.mockReset();
+    }
   });
 
   it('refuses an image whose owner has blocked the manager, even before the cache knows', async () => {

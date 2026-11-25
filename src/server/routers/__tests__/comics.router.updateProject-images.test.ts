@@ -105,7 +105,10 @@ describe.each(['coverImageId', 'heroImageId'] as const)(
     });
 
     it("refuses the caller's own image when it is a deal file's scan copy", async () => {
-      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ dealFileImage: true }] as never);
+      dbMock.dbWrite.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) =>
+        [...strings].join('').includes('ServiceDealFile')
+          ? [{ dealFileImage: true }]
+          : []) as never);
       await expect(update({ [column]: OWN_IMAGE })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(dbMock.dbWrite.comicProject.update).not.toHaveBeenCalled();
     });

@@ -405,6 +405,11 @@ describe('an image a deal file entry points at', () => {
     expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
   });
 
+  it("answers a stranger's delete as it answers any other image of someone else's", async () => {
+    await deleteImages([imageOf(PLAIN)], { actor: { id: 4242, isModerator: false } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
   it('is left by any other system delete, which deletes the rest of its batch', async () => {
     const other = 3001;
     await holder.db.query(`INSERT INTO "Image" (id, "userId", url) VALUES ($1, $2, 'key-other')`, [

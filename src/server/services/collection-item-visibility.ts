@@ -61,8 +61,9 @@ export async function assertCollectionItemsVisibleToViewer({
   const wanted = [...new Set(ids)];
   if (wanted.length === 0) return;
   if (itemKey === 'imageId') {
-    await assertNotDealFileImages(wanted, 'used here');
-    return assertImagesVisibleToViewer({ ids: wanted, userId, isModerator });
+    // After the visibility check, so a refusal never says what an image the viewer can't see is.
+    await assertImagesVisibleToViewer({ ids: wanted, userId, isModerator });
+    return assertNotDealFileImages(wanted, 'used here');
   }
 
   const { from, alias, visible } = itemTable(itemKey);

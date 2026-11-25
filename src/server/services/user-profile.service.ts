@@ -329,7 +329,6 @@ export const assertShowcaseItemsOwned = async ({
   const imageIds = idsOf('Image');
   const modelIds = idsOf('Model');
   const articleIds = idsOf('Article');
-  await assertNotDealFileImages(imageIds, 'used here');
 
   // Moderators included: a taken-down model is shown to no visitor, so it never joins a showcase.
   if (
@@ -341,7 +340,7 @@ export const assertShowcaseItemsOwned = async ({
   )
     throw throwBadRequestError('A taken-down model cannot be showcased');
 
-  if (isModerator) return;
+  if (isModerator) return assertNotDealFileImages(imageIds, 'used here');
 
   // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
   const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
@@ -365,6 +364,7 @@ export const assertShowcaseItemsOwned = async ({
     ownedArticles.length !== articleIds.length
   )
     throw throwAuthorizationError('You can only add your own content to your showcase');
+  await assertNotDealFileImages(imageIds, 'used here');
 };
 
 const toShowcaseItems = (sections: ShowcaseSectionSchema[]): ShowcaseItemSchema[] =>

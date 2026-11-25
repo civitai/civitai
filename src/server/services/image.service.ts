@@ -1055,6 +1055,7 @@ const DEAL_FILE_IMAGE_DELETERS = new Set([
   'creator-service-deal-unpack',
   'creator-service-deal-file',
   'creator-service-deal-review',
+  // ACCOUNT_DELETION_DRAIN, spelled out: its module imports this one. A test pins the two together.
   'remove-deleted-user-images',
 ]);
 
@@ -1084,7 +1085,10 @@ export async function deleteImagesWithOutcome(
   const keepsDealFileImages =
     !moderatorDelete && !('system' in actor && DEAL_FILE_IMAGE_DELETERS.has(actor.system));
   if (keepsDealFileImages && deletedById !== undefined)
-    await assertNotDealFileImages(uniq(ids), 'deleted');
+    await assertNotDealFileImages(uniq(ids), 'deleted', {
+      // A non-moderator deletes only their own rows, so only those may answer "delivery file".
+      ownerId: 'isModerator' in actor && actor.isModerator ? undefined : deletedById,
+    });
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
