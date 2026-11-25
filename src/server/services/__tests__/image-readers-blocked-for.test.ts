@@ -63,6 +63,7 @@ const READERS: Array<[string, (viewer: Viewer) => Promise<unknown>]> = [
         type: 'Bounty',
         userId: userFor(viewer)?.id,
         isModerator: viewer === 'moderator',
+        seesReportListed: false,
       }),
   ],
 ];

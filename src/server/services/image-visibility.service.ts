@@ -65,14 +65,22 @@ export const countableImageSql = () =>
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
  * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
  * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
- * the owner's alone.
+ * the owner's alone. Images listed on a CsamReport, as the bounty search index excludes them, are
+ * the uploader's (`ownerSeesReportListed`) and `seesReportListed` viewers' alone, moderators
+ * included: required, so no caller serves them by leaving it out.
  */
 export function entityImageVisibilityConditions({
   userId,
   isModerator,
+  seesReportListed,
+  ownerSeesReportListed = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /** The held-media viewer (`seesReportListed(ctx)`); false for a read with no viewer. */
+  seesReportListed: boolean;
+  /** The request carries the owner's view (a session or a full-access key). */
+  ownerSeesReportListed?: boolean;
 }): Prisma.Sql[] {
   const AND: Prisma.Sql[] = [];
   if (!isModerator) {
@@ -100,13 +108,11 @@ export function entityImageVisibilityConditions({
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
   AND.push(imageNotRestrictedSql({ viewerId: userId }));
   AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  if (!seesReportListed) AND.push(notReportListedSql(ownerSeesReportListed ? userId : undefined));
   return AND;
 }
 
-/**
- * Not listed on a CsamReport, as SQL over `"Image" i`: the bounty search index's exclusion, for a
- * viewer without the held-media grant. Its uploader still sees it.
- */
+/** Not listed on a CsamReport, as SQL over `"Image" i`, unless `userId` uploaded it. */
 export const notReportListedSql = (userId?: number) =>
   Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
     userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty

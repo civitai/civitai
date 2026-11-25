@@ -82,7 +82,11 @@ async function captureQuery() {
     return Promise.resolve([RAW_ROW]);
   });
 
-  const result = await getImagesByEntity({ id: ENTITY_ID, type: 'BountyEntry' });
+  const result = await getImagesByEntity({
+    id: ENTITY_ID,
+    type: 'BountyEntry',
+    seesReportListed: false,
+  });
 
   // Positive control: the `!id && !ids` early return would leave every assertion
   // below a statement about nothing.

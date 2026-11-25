@@ -78,10 +78,7 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
-import {
-  entityImageVisibilityConditions,
-  notReportListedSql,
-} from '~/server/services/image-visibility.service';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -1245,8 +1242,12 @@ async function getVisibleBountyImageIds({
   ownerSeesReportListed,
 }: BountyImageViewer & { bountyIds: number[] }) {
   if (bountyIds.length === 0) return [];
-  const AND = entityImageVisibilityConditions({ userId, isModerator });
-  if (!seesReportListed) AND.push(notReportListedSql(ownerSeesReportListed ? userId : undefined));
+  const AND = entityImageVisibilityConditions({
+    userId,
+    isModerator,
+    seesReportListed: !!seesReportListed,
+    ownerSeesReportListed,
+  });
   const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
     SELECT ic."imageId"
     FROM "ImageConnection" ic

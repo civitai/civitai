@@ -5444,6 +5444,7 @@ export const getImagesByEntity = async ({
   userId,
   isModerator,
   ownerSeesHeld = false,
+  seesReportListed,
 }: {
   id?: number;
   ids?: number[];
@@ -5452,14 +5453,20 @@ export const getImagesByEntity = async ({
   include?: ['tags'];
   userId?: number;
   isModerator?: boolean;
-  /** The request carries the owner's view (`credentialViews`): `userId`'s held images show. */
+  /** The request carries the owner's view (`credentialViews`): `userId`'s held and listed images show. */
   ownerSeesHeld?: boolean;
+  seesReportListed: boolean;
 }) => {
   if (!id && (!ids || ids.length === 0)) {
     return [];
   }
 
-  const AND = entityImageVisibilityConditions({ userId, isModerator });
+  const AND = entityImageVisibilityConditions({
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed: ownerSeesHeld,
+  });
   if (!isModerator) AND.push(notHeldForReviewSql(ownerSeesHeld ? userId : undefined));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
