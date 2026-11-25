@@ -147,9 +147,8 @@ describe('userDownloadsCache: users with no downloads', () => {
 // together with the debounce in bustUserDownloadsCache (user.service.ts).
 describe('userDownloadsCache: the bust window follows user-downloads-dedicated-clickhouse', () => {
   // Here the row lands 150 s after the bust, and a lookup 145 s after it runs before the row is
-  // there: far past the cache's default
-  // 10 s window, which re-cached the pre-download answer at that lookup. With the flag off the bust
-  // keeps that 10 s default, as before.
+  // there: far past the cache's default 10 s window, which re-cached the pre-download answer at
+  // that lookup. With the flag off the bust keeps that 10 s default, as before.
   beforeEach(() => {
     dedicated.configured = true;
     dedicated.flags['user-downloads-dedicated-clickhouse'] = true;
