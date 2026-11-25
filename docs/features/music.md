@@ -253,7 +253,10 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   on restore: the resolver lifts the removal and rescans an unrated image, and a moderator rates it
   afterwards. A withheld appeal shows no media, owner, words or removal and takes no decision.
 - **Held** lists three kinds of held song, one row per song (chips All, Lyrics, Cover, Song; sort
-  by oldest or newest; search by title, owner or id):
+  by oldest or newest; search by title, owner or id; `owner=<userId>` lists one owner's rows, shown as
+  a removable "Owner:" chip, and like a text search never matches a lyrics hold or a withheld row).
+  The open song's owner card adds "Other held": the owner's other rows that filter lists, by kind
+  ("1 song, 2 covers"), with View linking to it; it is read on this tab only:
   - **Lyrics held:** the song's lyrics are under a Pending CSAM text hold (`TrackLyrics`). The row
     shows "Withheld song #id", "Song withheld" and when it was held, with no audio, cover, lyrics,
     title or owner for anyone on this page, whatever their grants; search finds it only by its exact

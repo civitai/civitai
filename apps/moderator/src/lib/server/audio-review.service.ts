@@ -3,7 +3,9 @@ import { playerSongCoverText, songsOwnCoverText } from '@civitai/db-queries/prof
 import { storedSongDurationSec } from '@civitai/shared';
 import { songNeverReviewable, songScanStateOf } from '@civitai/shared/rating-review';
 import {
+  type AudioTab,
   checkState,
+  DEFAULT_AUDIO_TAB,
   LYRICS_SOURCE_LABELS,
   MANY_REPORTS,
   reportTimeSec,
@@ -314,7 +316,8 @@ async function songModelName(meta: Record<string, unknown> | null): Promise<stri
  *  withheld from `user`. */
 export async function getSongDetails(
   imageId: number,
-  user: App.Locals['user'] | undefined
+  user: App.Locals['user'] | undefined,
+  tab: AudioTab = DEFAULT_AUDIO_TAB
 ): Promise<SongDetails | null> {
   const song = await dbRead
     .selectFrom('Image as s')
@@ -373,11 +376,14 @@ export async function getSongDetails(
     getActiveStrikes(song.userId),
     song.coverId != null ? withheldImageIds(user, [song.coverId]) : [],
   ]);
-  const otherReported = await pendingSongReports()
-    .select(sql<number>`count(DISTINCT i.id)::int`.as('n'))
-    .where('i.userId', '=', song.userId)
-    .where('i.id', '<>', imageId)
-    .executeTakeFirst();
+  const [otherReported, otherHeld] = await Promise.all([
+    pendingSongReports()
+      .select(sql<number>`count(DISTINCT i.id)::int`.as('n'))
+      .where('i.userId', '=', song.userId)
+      .where('i.id', '<>', imageId)
+      .executeTakeFirst(),
+    tab === 'held' ? otherHeldOf(song.userId, imageId, user) : null,
+  ]);
 
   const cover =
     song.coverId != null
@@ -429,6 +435,7 @@ export async function getSongDetails(
           removedSongs: Number(owner.removedSongs ?? 0),
           strikes: strikes.count,
           otherReported: otherReported?.n ?? 0,
+          otherHeld,
         }
       : null,
   };
@@ -589,8 +596,9 @@ export async function isSongAppeal(imageId: number): Promise<boolean> {
 /** What holds a song, before the access rule: its kind, since when, and the hold or flagged cover. */
 type HeldEntry = { id: number; kind: HeldKind; waitingSince: Date; holdId: number | null };
 
-/** Every held song, one entry each: a lyrics hold first, then the song's own flag, then its cover's. */
-async function heldEntries(): Promise<HeldEntry[]> {
+/** Every held song, one entry each: a lyrics hold first, then the song's own flag, then its cover's.
+ *  With `ownerId`, only that owner's songs. */
+async function heldEntries(ownerId?: number): Promise<HeldEntry[]> {
   const [holds, songs, covers] = await Promise.all([
     dbRead
       .selectFrom('TextScanHold as h')
@@ -604,12 +612,14 @@ async function heldEntries(): Promise<HeldEntry[]> {
       .where('h.label', '=', 'csam')
       .where(sql<boolean>`h.status = 'Pending'`)
       .where('s.type', '=', 'audio')
+      .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
       .groupBy('h.entityId')
       .execute(),
     dbRead
       .selectFrom('Image as s')
       .select(['s.id', 's.createdAt as waitingSince'])
       .where(sql<boolean>`${sql.raw(flaggedSongsText('s'))}`)
+      .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
       .execute(),
     dbRead
       .selectFrom('Track as t')
@@ -617,6 +627,7 @@ async function heldEntries(): Promise<HeldEntry[]> {
       .innerJoin('Image as c', 'c.id', 't.coverImageId')
       .select(['s.id', 'c.createdAt as waitingSince'])
       .where(sql<boolean>`${sql.raw(flaggedCoverText('c', 's'))}`)
+      .$if(ownerId != null, (qb) => qb.where('s.userId', '=', ownerId!))
       .execute(),
   ]);
   const entries = new Map<number, HeldEntry>();
@@ -736,7 +747,7 @@ async function heldRows(
  * One page of the Held tab: songs whose lyrics are under a CSAM text hold, songs whose own cover is
  * flagged for review, and songs flagged themselves, one row per song. Filtered here like the other
  * tabs, since a withheld row (every lyrics hold, and what the access rule withholds) matches only
- * its exact id, never its title or owner.
+ * its exact id, never its title or owner, and so is never listed under an owner either.
  */
 export async function getHeldSongs({
   sort,
@@ -744,33 +755,34 @@ export async function getHeldSongs({
   q,
   page,
   user,
+  owner,
 }: {
   sort: HeldSort;
   filter: HeldFilter;
   q: string;
   page: number;
   user: App.Locals['user'] | undefined;
+  owner?: number;
 }) {
-  const entries = (await heldEntries()).sort(
+  const entries = (await heldEntries(owner)).sort(
     (a, b) => a.waitingSince.getTime() - b.waitingSince.getTime() || a.id - b.id
   );
   if (sort === 'newest') entries.reverse();
   const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
-  // Text search reads the rows it may match: the open ones.
-  const rows = q && !asId?.success ? await heldRows(entries, user) : null;
-  const searched = !q
-    ? entries
-    : asId?.success
-    ? entries.filter((e) => e.id === asId.data)
-    : entries.filter((_, i) => {
-        const row = rows![i];
-        const term = q.toLowerCase();
-        return (
-          !row.withheld &&
-          (!!row.title?.toLowerCase().includes(term) ||
-            !!row.owner?.username?.toLowerCase().startsWith(term))
-        );
-      });
+  // Text search and the owner filter read the rows they may match: the open ones.
+  const rows = (q && !asId?.success) || owner != null ? await heldRows(entries, user) : null;
+  const term = q.toLowerCase();
+  const searched = entries.filter((e, i) => {
+    if (rows && owner != null && rows[i].withheld) return false;
+    if (!q) return true;
+    if (asId?.success) return e.id === asId.data;
+    const row = rows![i];
+    return (
+      !row.withheld &&
+      (!!row.title?.toLowerCase().includes(term) ||
+        !!row.owner?.username?.toLowerCase().startsWith(term))
+    );
+  });
   const facets = {
     all: searched.length,
     lyrics: searched.filter((e) => e.kind === 'lyrics').length,
@@ -790,6 +802,18 @@ export async function getHeldSongs({
     facets,
     offset,
     pageSize: PAGE_SIZE,
+  };
+}
+
+/** The owner's held songs on the Held tab other than `songId`, as the owner filter lists them for
+ *  `user` (no lyrics hold, nothing withheld), by kind: a flagged song, or a song with its cover
+ *  flagged. */
+async function otherHeldOf(ownerId: number, songId: number, user: App.Locals['user'] | undefined) {
+  const entries = (await heldEntries(ownerId)).filter((e) => e.id !== songId);
+  const rows = (await heldRows(entries, user)).filter((r) => !r.withheld);
+  return {
+    songs: rows.filter((r) => r.kind === 'song').length,
+    covers: rows.filter((r) => r.kind === 'cover').length,
   };
 }
 

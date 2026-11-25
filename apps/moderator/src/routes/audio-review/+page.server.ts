@@ -62,6 +62,8 @@ const querySchema = z.object({
   q: z.string().trim().max(100).catch(''),
   page: z.coerce.number().int().min(1).max(500).catch(1),
   selected: int4Id.optional().catch(undefined),
+  // Held and Disputes: one owner's rows (the owner card's links).
+  owner: int4Id.optional().catch(undefined),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -72,12 +74,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   if (tab === 'held') {
     const heldSort: HeldSort = sort === 'newest' ? 'newest' : 'oldest';
     const [held, counts] = await Promise.all([
-      getHeldSongs({ sort: heldSort, filter: parsed.held, q, page, user }),
+      getHeldSongs({ sort: heldSort, filter: parsed.held, q, page, user, owner: parsed.owner }),
       songTabCounts(),
     ]);
     return {
       tab,
-      held: { ...held, filters: { sort: heldSort, kind: parsed.held } },
+      held: {
+        ...held,
+        filters: { sort: heldSort, kind: parsed.held, owner: parsed.owner ?? null },
+      },
       counts: { ...counts, held: held.facets.all },
       canOpenHolds: canAccess(user, CSAM_HOLDS) && !!locals.grants[CSAM_HOLDS_GRANT],
       ...shared,

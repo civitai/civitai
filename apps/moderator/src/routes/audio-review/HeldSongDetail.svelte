@@ -69,7 +69,7 @@
 
   const isLyrics = $derived(row.kind === 'lyrics');
   const open = $derived(!row.withheld);
-  const details = songDetails(() => (open ? row.id : null));
+  const details = songDetails(() => (open ? row.id : null), 'held');
   const actions = $derived(heldDecisions(row.kind));
   const enabled = $derived(heldDecisionsEnabled(row, canAct, canOpenHolds));
   const on = (action: string) => enabled[actions.indexOf(action)] ?? false;

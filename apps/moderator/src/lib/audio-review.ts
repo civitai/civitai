@@ -1,5 +1,6 @@
 import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
 import { removedKind, removedTitle, type RemovedState } from '$lib/image-review';
+import { plural } from '$lib/format';
 import { VIOLATION_LABELS } from '$lib/violations';
 
 /**
@@ -198,10 +199,24 @@ export type SongDetails = {
     strikes: number;
     /** Their other songs with a pending report. */
     otherReported: number;
+    /** Their other songs the Held tab's owner filter lists, by kind; read on the Held tab only. */
+    otherHeld: { songs: number; covers: number } | null;
   } | null;
 };
 
-export const songDetailsUrl = (imageId: number) => `/audio-review/details/${imageId}`;
+/** The open song's details, with what `tab` shows beyond the shared cards. */
+export const songDetailsUrl = (imageId: number, tab: AudioTab) =>
+  `/audio-review/details/${imageId}?tab=${tab}`;
+
+/** The Held or Disputes tab listing one owner's rows. */
+export const ownerFilterHref = (tab: 'held' | 'disputes', ownerId: number, extra = '') =>
+  `/audio-review?tab=${tab}&owner=${ownerId}${extra}`;
+
+/** "1 song, 2 covers": what the owner's other held rows are. */
+export function otherHeldText({ songs, covers }: { songs: number; covers: number }) {
+  const parts = [songs ? plural(songs, 'song') : '', covers ? plural(covers, 'cover') : ''];
+  return parts.filter(Boolean).join(', ') || 'None';
+}
 
 /** Appeals tab chips: every appeal, a song's own, or a cover's. */
 export const APPEAL_FILTERS = ['all', 'song', 'cover'] as const;

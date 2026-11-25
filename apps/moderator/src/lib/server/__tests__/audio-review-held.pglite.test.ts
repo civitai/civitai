@@ -40,6 +40,7 @@ const { getHeldSongs } = await import('../audio-review.service');
 const { countHeldSongs, songTabCounts } = await import('../audio-review-count');
 const { getImageReviewQueue, getImageReviewCounts } = await import('../image-review.service');
 const page = await import('../../../routes/audio-review/+page.server');
+const details = await import('../../../routes/audio-review/details/[imageId]/+server');
 
 const OWNER = 7;
 const OTHER = 1;
@@ -256,6 +257,44 @@ describe('the Held tab', () => {
       } as never)) as { counts: Record<string, number> };
       expect(loaded.counts, tab).toEqual(counts);
     }
+  });
+});
+
+describe("an owner's held songs", () => {
+  const load = (user: { id: number; roles: string[] }, query: string) =>
+    page.load({
+      url: new URL(`https://mod.example/audio-review?tab=held&${query}`),
+      locals: { user, grants: GRANTS },
+    } as never) as Promise<{
+      held: Awaited<ReturnType<typeof getHeldSongs>> & { filters: object };
+    }>;
+
+  it('filters the tab to one owner, leaving out lyrics holds and what is withheld', async () => {
+    expect((await held(WITH_GRANT, { owner: OWNER })).items.map((r) => r.id)).toEqual([
+      COVER_SONG,
+      FLAGGED_SONG,
+      WITHHELD_SONG,
+    ]);
+    const loaded = await load(WITHOUT_GRANT, `owner=${OWNER}`);
+    expect(loaded.held.items.map((r) => r.id)).toEqual([COVER_SONG, FLAGGED_SONG]);
+    expect(loaded.held.facets).toEqual({ all: 2, lyrics: 0, cover: 1, song: 1 });
+    expect(loaded.held.filters).toMatchObject({ owner: OWNER });
+    expect((await load(WITH_GRANT, `owner=${OTHER}`)).held.items).toEqual([]);
+  });
+
+  it("counts the owner's other held songs and covers on the open song's owner card", async () => {
+    const get = async (user: { id: number; roles: string[] }, tab: string) => {
+      const res = await details.GET({
+        params: { imageId: String(COVER_SONG) },
+        url: new URL(`https://mod.example/audio-review/details/${COVER_SONG}?tab=${tab}`),
+        locals: { user },
+      } as never);
+      return (await res.json()).owner;
+    };
+    expect(await get(WITHOUT_GRANT, 'held')).toMatchObject({ otherHeld: { songs: 1, covers: 0 } });
+    expect(await get(WITH_GRANT, 'held')).toMatchObject({ otherHeld: { songs: 1, covers: 1 } });
+    // Read on the Held tab only.
+    expect((await get(WITH_GRANT, 'reported')).otherHeld).toBeNull();
   });
 });
 

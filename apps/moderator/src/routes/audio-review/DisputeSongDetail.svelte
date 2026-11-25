@@ -42,7 +42,10 @@
     chosen: number | null;
   } = $props();
 
-  const details = songDetails(() => (row.withheld || row.state === 'gone' ? null : row.songId));
+  const details = songDetails(
+    () => (row.withheld || row.state === 'gone' ? null : row.songId),
+    'disputes'
+  );
 
   // Judged on the song's live level, which may differ from what the owner saw. A gone song is a
   // deleted entity: its ruling applies nothing.

@@ -67,7 +67,7 @@
     onrated: (level: number | null) => void;
   } = $props();
 
-  const details = songDetails(() => (row.withheld ? null : row.id));
+  const details = songDetails(() => (row.withheld ? null : row.id), 'reported');
 
   const enabled = $derived(reportedDecisionsEnabled(row, canAct));
   const reportIds = $derived(row.reports.map((r) => r.id).join(','));

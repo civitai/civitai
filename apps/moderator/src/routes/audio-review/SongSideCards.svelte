@@ -3,7 +3,12 @@
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import type { CheckState, SongDetails } from '$lib/audio-review';
+  import {
+    otherHeldText,
+    ownerFilterHref,
+    type CheckState,
+    type SongDetails,
+  } from '$lib/audio-review';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, plural, timeSince } from '$lib/format';
   import { removedCovers } from '$lib/music/removed-covers';
@@ -134,5 +139,17 @@
     {@render fact('Removed songs', String(d.owner.removedSongs))}
     {@render fact('Strikes', String(d.owner.strikes))}
     {@render fact('Other reported', plural(d.owner.otherReported, 'song'))}
+    {#if d.owner.otherHeld}
+      {@const others = d.owner.otherHeld.songs + d.owner.otherHeld.covers}
+      <div class={FACT_ROW}>
+        <span class="text-dark-2">Other held</span>
+        <span class="text-white">
+          {otherHeldText(d.owner.otherHeld)}
+          {#if others}
+            · <a href={ownerFilterHref('held', d.owner.id)} class={LINK_CLASS}>View</a>
+          {/if}
+        </span>
+      </div>
+    {/if}
   </TriageCard>
 {/if}

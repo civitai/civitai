@@ -25,6 +25,7 @@
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import HeldSongDetail from './HeldSongDetail.svelte';
+  import OwnerFilterChip from './OwnerFilterChip.svelte';
   import QueueEmpty from './QueueEmpty.svelte';
   import { oldestNewestSort } from './queue';
 
@@ -46,7 +47,7 @@
       facets: Record<HeldFilter, number>;
       offset: number;
     };
-    filters: { sort: HeldSort; kind: HeldFilter };
+    filters: { sort: HeldSort; kind: HeldFilter; owner: number | null };
     q: string;
     page: number;
     canAct: boolean;
@@ -79,6 +80,7 @@
       tab: 'held',
       sort: filters.sort === 'oldest' ? undefined : filters.sort,
       held: filters.kind === 'all' ? undefined : filters.kind,
+      owner: filters.owner ?? undefined,
       q,
       page: page > 1 ? page : undefined,
     });
@@ -144,6 +146,12 @@
       <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
     </div>
     <TriageFilterChips groups={[kindGroup]} selectionParam={SELECTION} />
+    {#if filters.owner != null}
+      <OwnerFilterChip
+        ownerId={filters.owner}
+        username={held.items.find((r) => r.owner)?.owner?.username ?? null}
+      />
+    {/if}
   </div>
 {/snippet}
 

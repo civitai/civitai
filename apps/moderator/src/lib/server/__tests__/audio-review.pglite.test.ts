@@ -360,6 +360,7 @@ describe('the open song details', () => {
   const get = async (user: { id: number; roles: string[] }, imageId: number) => {
     const res = await details.GET({
       params: { imageId: String(imageId) },
+      url: new URL(`https://mod.example/audio-review/details/${imageId}`),
       locals: { user },
     } as never);
     return { status: res.status, body: await res.json() };
@@ -488,6 +489,7 @@ describe('Remove cover on a reported song (S2)', () => {
     expect(row).toMatchObject({ coverUrl: null, removableCoverId: null, removed: false });
     const res = await details.GET({
       params: { imageId: String(SONG) },
+      url: new URL(`https://mod.example/audio-review/details/${SONG}`),
       locals: { user: WITH_GRANT },
     } as never);
     expect((await res.json()).cover).toMatchObject({ id: 620, url: null, shown: false });
