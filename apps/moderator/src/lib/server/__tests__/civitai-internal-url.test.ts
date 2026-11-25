@@ -76,6 +76,15 @@ describe.each(Object.entries(calls))('%s', (_, call) => {
   });
 });
 
+it('a strict search-index sync throws in production when the internal base is unset', async () => {
+  delete env.CIVITAI_INTERNAL_URL;
+
+  await expect(
+    syncSearchIndexBulk({ entityType: 'model', entityIds: [1], action: 'update' }, { strict: true })
+  ).rejects.toThrow('CIVITAI_INTERNAL_URL');
+  expect(urls).toEqual([]);
+});
+
 it('a refused call tells the operator why', async () => {
   delete env.CIVITAI_INTERNAL_URL;
 
