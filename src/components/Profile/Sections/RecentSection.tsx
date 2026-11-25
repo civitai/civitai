@@ -1,4 +1,4 @@
-import { Button, Text } from '@mantine/core';
+import { Button } from '@mantine/core';
 import {
   IconArrowRight,
   IconClock,
@@ -86,20 +86,13 @@ export const RecentSection = ({ user }: ProfileSectionProps) => {
                 </div>
               )}
               {article && (
-                <div className="relative min-w-0 @md:col-start-2 @md:row-start-1">
+                <div className="min-w-0 @md:col-start-2 @md:row-start-1">
                   {/* Twice as wide a column beside a 2.2:1 tile: 1.1:1 keeps the two the same height. */}
                   <ArticleCard
                     data={article}
                     aspectRatio={image ? RECENT_TILE_RATIO / 2 : 'landscape'}
+                    label="Latest article"
                   />
-                  <Text
-                    size="10px"
-                    fw={700}
-                    tt="uppercase"
-                    className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded bg-black/70 px-2 py-0.5 tracking-wider text-white"
-                  >
-                    Latest article
-                  </Text>
                 </div>
               )}
               {article && (
