@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 const { mockVariant } = vi.hoisted(() => ({
   mockVariant: vi.fn<(flag: string) => Promise<string | null>>(async () => null),
 }));
-vi.mock('~/server/flipt/client', () => ({
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
   getFliptVariant: (flag: string) => mockVariant(flag),
-  FLIPT_FEATURE_FLAGS: { APP_BLOCKS_REVIEW_BOOT_CHECK: 'app-blocks-review-boot-check' },
 }));
 
 import {

@@ -1422,8 +1422,6 @@ export const AUTO_RETRY_BACKOFF_MS: readonly number[] = [2_000, 5_000];
  * inputs to `worstReachableLaunchMs()` below, and importing them from the
  * component would drag the whole React graph into the `unit` project.
  */
-// The value lives in `~/shared/constants/block-ready.constants` so the review boot check reads
-// the same window; re-exported here for this module's existing importers.
 export { BLOCK_READY_TIMEOUT_MS };
 export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 

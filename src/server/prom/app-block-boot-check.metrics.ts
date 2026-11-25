@@ -4,10 +4,9 @@
 // `unavailable`), labelled by the rollout mode it ran under, its result, and for `unavailable`
 // why. `off` runs no check and counts nothing.
 //
-// 🔴 CARDINALITY: three closed labels, no slug, sha or user: 2 modes x (passed, failed, and
-// unavailable x 7 reasons) = 18 series per pod, all seeded at 0 so "no failures" reads as a zero
-// rather than as no data. `reason="contract"` (the checker refused the request with a 4xx) is a
-// bug in this client or the checker, never an outage.
+// 🔴 CARDINALITY: closed labels only, no slug, sha or user. Every reachable series is seeded at 0
+// so 'no failures' reads as zero, not no data. `reason="contract"` (the checker refused the
+// request with a 4xx) is a bug in this client or the checker, never an outage.
 //
 // HOW TO READ IT: a per-pod counter that resets on restart, like the neighbouring
 // `civitai_app_block_builds_total`. Read it with a range function across pods.

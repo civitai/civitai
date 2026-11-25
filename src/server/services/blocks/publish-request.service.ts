@@ -6436,10 +6436,9 @@ export async function getReviewStatus(opts: {
 
   let previewUrl: string | undefined;
   if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {
-    const { signReviewAccessToken } = await import('./review-session');
+    const { signReviewAccessToken, withReviewEntryToken } = await import('./review-session');
     const token = signReviewAccessToken({ modUserId: opts.modUserId, host: detail.host });
-    const sep = detail.url.includes('?') ? '&' : '?';
-    previewUrl = `${detail.url}${sep}mr=${encodeURIComponent(token)}`;
+    previewUrl = withReviewEntryToken(detail.url, token);
   }
 
   return {
