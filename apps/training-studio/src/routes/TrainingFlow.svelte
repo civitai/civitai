@@ -277,8 +277,8 @@
         ).length
       : images.filter(isImgMature).length
   );
-  // A pair counts once whatever its two sides were rated, so pairs get no breakdown; nor does a dataset
-  // with v2 verdicts, which have no upload rating to break down by.
+  // A pair counts once whatever its two sides were rated, and a dataset with v2 verdicts counts mature by
+  // verdict, not upload rating, so neither gets a breakdown.
   const matureRatings = $derived(
     trainsPairs || images.some((i) => i.v2Mature !== undefined)
       ? []
