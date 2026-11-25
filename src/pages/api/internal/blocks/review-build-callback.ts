@@ -25,7 +25,10 @@ import {
   releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
-import { evaluateReviewBootCheck } from '~/server/services/blocks/review-boot-check.service';
+import {
+  evaluateReviewBootCheck,
+  syncBootCheckHold,
+} from '~/server/services/blocks/review-boot-check.service';
 import {
   BUILD_STEP_LABELS,
   isBuildPipelineStep,
@@ -649,6 +652,10 @@ async function settlePublishedReview(
         url: args.baseDetail.url,
       })
     : null;
+  // Under enforce: a failure places the app's boot-check review hold (what refuses Approve, and
+  // survives a teardown or rebuild), a pass clears it. Before the state write, so the preview
+  // never reads as failed while its app is still approvable. Never throws.
+  if (boot) await syncBootCheckHold(args.publishRequestId, boot);
   if (reachable && boot && !boot.live) {
     // The app never sent BLOCK_READY. Not an apply failure (the deploy worked) and not counted
     // as one; the replay mark is freed so a same-sha rebuild is not swallowed as a duplicate.

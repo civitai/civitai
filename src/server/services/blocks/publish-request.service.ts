@@ -86,9 +86,9 @@ import {
   type FloorAsset,
 } from '~/shared/utils/listing-publish-floor';
 import {
-  BOOT_CHECK_APPROVE_REFUSAL,
-  bootCheckFailed,
+  bootCheckNotVerified,
   reviewBootCheckSummary,
+  type ReviewBootCheckMode,
   type ReviewBootCheckRecord,
 } from '~/shared/utils/review-boot-check';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
@@ -3226,6 +3226,16 @@ async function liveListingFingerprints(
   return out;
 }
 
+/** The review boot check's CURRENT rollout mode (off on any read error). */
+async function currentBootCheckMode(): Promise<ReviewBootCheckMode> {
+  try {
+    const { readReviewBootCheckMode } = await import('./review-boot-check.service');
+    return await readReviewBootCheckMode();
+  } catch {
+    return 'off';
+  }
+}
+
 /** The `where` for the on-site PENDING queue — shared by the list and its count. */
 const PENDING_REQUEST_WHERE = { status: 'pending' } as const;
 
@@ -3320,6 +3330,7 @@ export async function listPendingRequests(
     };
   };
   const now = Date.now();
+  const bootCheckMode = await currentBootCheckMode();
   return {
     items: items.map(
       ({
@@ -3341,10 +3352,14 @@ export async function listPendingRequests(
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
         // #8240's expiry from the build's start), so the queue chip and the page agree.
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
-        // The review boot check's result + mode (never the rest of the detail): the action bar
-        // disables Approve on `bootCheckFailed(previewBootCheck)`, the predicate approveRequest
-        // refuses on, and the queue keeps an unchecked build out of the fast lane.
+        // The review boot check's result + mode (never the rest of the detail), for the action
+        // bar's notices and the fast lane. Approve itself is refused by the boot-check HOLD.
         previewBootCheck: reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail)),
+        // Under a current `enforce` flag: no enforced pass yet ("Boot check not run").
+        previewBootCheckUnverified: bootCheckNotVerified(
+          bootCheckMode,
+          reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail))
+        ),
         // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
         // "not run". `null` = the surface is on and this request has no report.
         ...(agentSummaries ? { agentReview: withStaleness(r.id) } : {}),
@@ -3659,15 +3674,10 @@ async function approveRequestUnderClaim(
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
-  // An enforced review boot check found the build never reaches BLOCK_READY. The review action
-  // bar disables Approve on the same predicate, from the same projection (`previewBootCheck`).
-  if (
-    bootCheckFailed(
-      reviewBootCheckSummary(request.deployState, parseReviewDetail(request.deployDetail))
-    )
-  ) {
-    throw new Error(BOOT_CHECK_APPROVE_REFUSAL);
-  }
+  // 🔴 An enforced review boot check that failed is refused HERE, as a review hold
+  // (`BOOT_CHECK_HOLD_LABEL`, placed by the build watcher): the holds are read from the primary,
+  // and again under the app lock by claimApprove. Not from this row's preview detail, which a
+  // teardown or rebuild replaces.
   const { checkHoldsBeforeApprove, claimApprove } = await import('./publish-request-holds.service');
   const holdDecision = {
     slug: request.slug,
@@ -6568,8 +6578,14 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
     ...rest,
     ...listingFacts(r.id),
     sourceProvenance: reviewSourceProvenance({ sourceCommit, sourceDirty }, actionsRuns.get(r.id)),
-    // Same projection as listPendingRequests (the approve gate's input).
+    // Same projections as listPendingRequests.
     previewBootCheck: reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail)),
+    previewBootCheckUnverified:
+      mode === 'pending' &&
+      bootCheckNotVerified(
+        await currentBootCheckMode(),
+        reviewBootCheckSummary(deployState, parseReviewDetail(deployDetail))
+      ),
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:

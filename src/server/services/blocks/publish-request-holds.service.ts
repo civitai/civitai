@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { BOOT_CHECK_HOLD_LABEL } from '~/shared/utils/review-boot-check';
 import {
   HOLD_LABEL_MAX,
   HOLD_REASON_MAX,
@@ -216,6 +218,63 @@ export async function clearHold(
         cleared_kind = 'cleared', cleared_reason = ${reason}
     WHERE id = ${input.holdId} AND cleared_at IS NULL`;
   if (cleared === 0) throw new PublishRequestHoldInputError('Hold not found or already cleared');
+}
+
+/**
+ * The review BOOT CHECK's hold: an ordinary review hold placed by the system user under
+ * `BOOT_CHECK_HOLD_LABEL`, so approve refuses it like any other and a moderator can override it
+ * with a reason. Only these columns identify it; no other hold is ever matched by them.
+ */
+const BOOT_CHECK_HOLD_MATCH = Prisma.sql`
+  placed_by_label = ${BOOT_CHECK_HOLD_LABEL} AND placed_by_user_id = ${constants.system.user.id}`;
+
+/**
+ * Place the boot-check hold for the app this on-site request belongs to, unless one is already
+ * open on the app (a second failure does not stack holds). Run inside a transaction.
+ */
+export async function placeBootCheckHold(
+  tx: RawClient,
+  input: { publishRequestId: string; reason: string }
+): Promise<'placed' | 'exists'> {
+  const [request] = await tx.$queryRaw<{ slug: string }[]>`
+    SELECT slug FROM app_block_publish_requests WHERE id = ${input.publishRequestId}`;
+  if (!request) throw new PublishRequestHoldInputError('Publish request not found');
+  // Taken before the existence check, so two failures racing for one app place one hold.
+  await lockApp(tx, request.slug);
+  const open = await tx.$queryRaw<{ id: number }[]>`
+    SELECT id FROM app_publish_request_holds
+    WHERE slug = ${request.slug} AND cleared_at IS NULL AND ${BOOT_CHECK_HOLD_MATCH}`;
+  if (open.length > 0) return 'exists';
+  await placeHold(tx, {
+    publishRequestId: input.publishRequestId,
+    kind: 'onsite',
+    actorUserId: constants.system.user.id,
+    reason: input.reason,
+    label: BOOT_CHECK_HOLD_LABEL,
+  });
+  return 'placed';
+}
+
+/**
+ * Clear the open boot-check holds of the app this on-site request belongs to, and no other hold.
+ * App-scoped like the hold itself: only one request per app is pending at a time, so the only
+ * other request such a hold can belong to is a withdrawn or rejected earlier build, whose hold
+ * would otherwise block the fixed one that just passed. Run inside a transaction.
+ */
+export async function clearBootCheckHolds(
+  tx: RawClient,
+  input: { publishRequestId: string; reason: string }
+): Promise<number> {
+  const reason = assertReason(input.reason, 'A clear reason');
+  const [request] = await tx.$queryRaw<{ slug: string }[]>`
+    SELECT slug FROM app_block_publish_requests WHERE id = ${input.publishRequestId}`;
+  if (!request) return 0;
+  await lockApp(tx, request.slug);
+  return tx.$executeRaw`
+    UPDATE app_publish_request_holds
+    SET cleared_at = now(), cleared_by_user_id = ${constants.system.user.id},
+        cleared_kind = 'cleared', cleared_reason = ${reason}
+    WHERE slug = ${request.slug} AND cleared_at IS NULL AND ${BOOT_CHECK_HOLD_MATCH}`;
 }
 
 function describeHolds(holds: PublishRequestHold[]) {

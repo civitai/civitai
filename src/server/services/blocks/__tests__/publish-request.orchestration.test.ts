@@ -3537,51 +3537,60 @@ describe('approveRequest', () => {
    * check and a non-preview row do not: each reaches the Forgejo commit (made to fail with a
    * sentinel here, so "past the gate" is observable without a full approve).
    */
-  describe('the review boot-check gate', () => {
-    const REFUSAL =
-      'Cannot approve: the boot check found that this build never finishes loading (no BLOCK_READY). The developer has to fix it and resubmit. Rebuilding the preview re-runs the check.';
-    const withBootCheck = (deployState: string | null, bootCheck: unknown) =>
-      pendingRequest({
-        deployState,
-        deployDetail: JSON.stringify({
-          sha: 'b'.repeat(40),
-          error: 'Boot check: …',
-          bootCheck,
-        }),
-      });
+  /**
+   * 🔴 THE REVIEW BOOT CHECK at approve: the BLOCK is the app's boot-check review hold (placed by
+   * the build watcher; end to end in review-boot-check-hold.pglite.test.ts), read from the
+   * primary by the ordinary hold check. A failed result left only in the preview's detail is not
+   * the gate: a teardown or rebuild replaces the detail, and an override must be possible.
+   */
+  describe('the review boot check at approve', () => {
+    const bootHold = {
+      id: 11,
+      slug: 'hello',
+      publishRequestId: 'pubreq_1',
+      requestKind: 'onsite',
+      placedByUserId: -1,
+      placedByUsername: 'civitai',
+      placedByLabel: 'Boot check',
+      reason:
+        'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold.',
+    };
 
-    it('🔴 enforce + failed: refused with the reason, nothing committed', async () => {
+    it('🔴 an open boot-check hold refuses approve on the primary, before anything is committed', async () => {
       const { approveRequest } = await import('../publish-request.service');
+      // A torn-down preview: no deploy state and no detail left on the row.
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
-        withBootCheck('preview-failed', { result: 'failed', mode: 'enforce' })
+        pendingRequest({ deployState: null, deployDetail: null })
       );
       mockDbRead.appBlock.findFirst.mockResolvedValue(null);
       mockBundleBuffer.current = await makeValidBundle();
+      mockDbWrite.$queryRaw.mockImplementation((async (strings: unknown) =>
+        Array.isArray(strings) && strings.join('?').includes('FROM app_publish_request_holds')
+          ? [bootHold]
+          : []) as never);
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
-      ).rejects.toThrow(REFUSAL);
+      ).rejects.toThrow(
+        'This app has 1 open review hold: Boot check (civitai): The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold.. Clear them, or approve with an override reason.'
+      );
       expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
       expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
     });
 
-    it.each([
-      ['shadow + failed', 'preview-live', { result: 'failed', mode: 'shadow' }],
-      ['enforce + unavailable', 'preview-live', { result: 'unavailable', mode: 'enforce' }],
-      ['enforce + passed', 'preview-live', { result: 'passed', mode: 'enforce' }],
-      ['no check recorded', 'preview-failed', undefined],
-      // A non-preview row's detail is never read as a preview's.
-      ['not a preview state', null, { result: 'failed', mode: 'enforce' }],
-    ])('%s: not refused by the gate (reaches the commit)', async (_label, state, bootCheck) => {
+    it('invariant: a failed result in the preview detail with NO hold is not itself the gate', async () => {
       const { approveRequest } = await import('../publish-request.service');
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
-        withBootCheck(state, bootCheck)
+        pendingRequest({
+          deployState: 'preview-failed',
+          deployDetail: JSON.stringify({ bootCheck: { result: 'failed', mode: 'enforce' } }),
+        })
       );
       mockDbRead.appBlock.findFirst.mockResolvedValue(null);
       mockBundleBuffer.current = await makeValidBundle();
-      mockForgejo.commitFiles.mockRejectedValue(new Error('SENTINEL: past the boot-check gate'));
+      mockForgejo.commitFiles.mockRejectedValue(new Error('SENTINEL: past the hold check'));
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
-      ).rejects.toThrow('SENTINEL: past the boot-check gate');
+      ).rejects.toThrow('SENTINEL: past the hold check');
     });
   });
 

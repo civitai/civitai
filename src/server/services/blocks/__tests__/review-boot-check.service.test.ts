@@ -78,7 +78,7 @@ describe('callBootChecker', () => {
     ).toEqual({ result: 'passed', ms: 812, messagesSeen: ['BLOCK_READY'], firstError: null });
   });
 
-  it('failed with no console error: the first non-JavaScript module response', async () => {
+  it('🔴 failed with no console error: the COUNT of non-JavaScript scripts (the real shape)', async () => {
     expect(
       await call(
         respond(200, {
@@ -86,17 +86,39 @@ describe('callBootChecker', () => {
           ms: 10004,
           messagesSeen: [],
           consoleErrors: [],
-          failedRequests: [],
-          nonJsModuleResponses: [
-            { url: `https://${HOST}/main.mjs`, contentType: 'application/octet-stream' },
+          failedRequests: [
+            { url: '/main.mjs', status: 200, contentType: 'application/octet-stream' },
           ],
+          nonJsModuleResponses: 2,
+          blockedScripts: [],
         })
       )
     ).toEqual({
       result: 'failed',
       ms: 10004,
       messagesSeen: [],
-      firstError: `https://${HOST}/main.mjs was served as application/octet-stream, not JavaScript`,
+      firstError: '2 scripts were served as non-JavaScript',
+    });
+  });
+
+  it('🔴 a 4xx is a contract refusal: unavailable, reason contract, logged at error level', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const out = await call(respond(400, { reason: 'url must be https' }));
+      expect(out).toMatchObject({ result: 'unavailable', unavailableReason: 'contract' });
+      expect(error).toHaveBeenCalledWith(
+        '[review-boot-check] checker refused the request (400): url must be https'
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("a 503 is unavailable with reason server, and the checker's own reason is kept for the log", async () => {
+    expect(await call(respond(503, { reason: 'inconclusive: entry answered 401' }))).toMatchObject({
+      result: 'unavailable',
+      unavailableReason: 'server',
+      reason: 'checker answered 503: inconclusive: entry answered 401',
     });
   });
 
@@ -104,6 +126,7 @@ describe('callBootChecker', () => {
     ['a 503', respond(503, { error: 'x' })],
     ['a 500', respond(500, 'oops')],
     ['a 404', respond(404, {})],
+    ['a 422', respond(422, {})],
     ['a non-JSON 200', respond(200, '<html>')],
     ['a 200 with no result', respond(200, { ms: 1 })],
     ['a 200 with an unknown result', respond(200, { result: 'maybe' })],
@@ -113,7 +136,7 @@ describe('callBootChecker', () => {
     expect((await call(res)).result).toBe('unavailable');
   });
 
-  it('posts to <base>/v1/boot-check with a 30 s cap', async () => {
+  it("posts to <base>/v1/boot-check with a 35 s cap (above the checker's own 30 s)", async () => {
     const fetchImpl = vi.fn(async () => respond(200, { result: 'passed' }));
     const signalFactory = vi.fn(() => undefined);
     await callBootChecker(REQ, {
@@ -121,7 +144,7 @@ describe('callBootChecker', () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
       signalFactory,
     });
-    expect(signalFactory).toHaveBeenCalledWith(30000);
+    expect(signalFactory).toHaveBeenCalledWith(35000);
     expect(fetchImpl).toHaveBeenCalledWith('http://boot-checker.test/v1/boot-check', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -132,17 +155,25 @@ describe('callBootChecker', () => {
 });
 
 describe('firstBootError / sanitizeBootError', () => {
-  it('prefers the first non-empty console error over a module response', () => {
+  it('prefers the first non-empty console error over the non-JavaScript count', () => {
     expect(
       firstBootError({
         consoleErrors: ['  ', 'TypeError: x is undefined'],
-        nonJsModuleResponses: [{ url: 'a.mjs', contentType: 'text/plain' }],
+        nonJsModuleResponses: 3,
       })
     ).toBe('TypeError: x is undefined');
   });
 
-  it('nothing to report is null', () => {
-    expect(firstBootError({ consoleErrors: [], nonJsModuleResponses: 3 })).toBeNull();
+  it.each([
+    [1, '1 script was served as non-JavaScript'],
+    [3, '3 scripts were served as non-JavaScript'],
+    [0, null],
+    [-1, null],
+    [1.5, null],
+    ['2', null],
+    [[{ url: 'a.mjs' }], null],
+  ])('nonJsModuleResponses %j → %j', (n, out) => {
+    expect(firstBootError({ consoleErrors: [], nonJsModuleResponses: n })).toBe(out);
   });
 
   it('🔴 redacts the entry token a browser error can quote', () => {
@@ -212,6 +243,17 @@ describe('runReviewBootCheck', () => {
     expect(d.sleep).toHaveBeenCalledWith(2000);
     expect(bodyOf(fetchImpl, 0).url).toBe(`${URL_}?mr=tok1-${HOST}`);
     expect(bodyOf(fetchImpl, 1).url).toBe(`${URL_}?mr=tok2-${HOST}`);
+  });
+
+  it('a contract refusal (4xx) is not retried: the same request would be refused again', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { fetchImpl, deps: d } = deps([respond(400, {}), respond(200, { result: 'passed' })]);
+      expect((await runReviewBootCheck(input, d)).result).toBe('unavailable');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('unavailable twice: unavailable, no third attempt', async () => {

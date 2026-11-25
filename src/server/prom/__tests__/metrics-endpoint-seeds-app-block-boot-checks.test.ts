@@ -15,19 +15,25 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 const NAME = 'civitai_app_block_review_boot_checks_total';
 
 describe('/api/metrics publishes the review boot-check series', () => {
-  it('loading the page module seeds mode x result at 0', async () => {
+  it('loading the page module seeds mode x result x reason at 0', async () => {
     await import('~/pages/api/metrics');
     const metric = client.register.getSingleMetric(NAME) as unknown as {
       get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }>;
     };
     const { values } = await metric.get();
-    expect(values.map((v) => `${v.labels.mode}/${v.labels.result}=${v.value}`).sort()).toEqual([
-      'enforce/failed=0',
-      'enforce/passed=0',
-      'enforce/unavailable=0',
-      'shadow/failed=0',
-      'shadow/passed=0',
-      'shadow/unavailable=0',
-    ]);
+    const series = (mode: string) => [
+      `${mode}/failed/none=0`,
+      `${mode}/passed/none=0`,
+      `${mode}/unavailable/body=0`,
+      `${mode}/unavailable/contract=0`,
+      `${mode}/unavailable/crash=0`,
+      `${mode}/unavailable/network=0`,
+      `${mode}/unavailable/no-target=0`,
+      `${mode}/unavailable/server=0`,
+      `${mode}/unavailable/unconfigured=0`,
+    ];
+    expect(
+      values.map((v) => `${v.labels.mode}/${v.labels.result}/${v.labels.reason}=${v.value}`).sort()
+    ).toEqual([...series('enforce'), ...series('shadow')]);
   });
 });

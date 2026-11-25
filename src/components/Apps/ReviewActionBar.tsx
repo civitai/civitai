@@ -35,6 +35,7 @@ import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media
 import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
 import {
   BOOT_CHECK_APPROVE_REFUSAL,
+  BOOT_CHECK_NOT_RUN_NOTICE,
   BOOT_CHECK_UNAVAILABLE_NOTICE,
   bootCheckFailed,
   bootCheckUnavailable,
@@ -170,10 +171,12 @@ export function ReviewActionBar({
   // reason shown, rather than offered and refused.
   const floorMissing = request.approveFloorMissing ?? [];
   const floorBlocked = floorMissing.length > 0;
-  // The review boot check: the SAME predicate approveRequest refuses on, over the same projection
-  // (`previewBootCheck`). Unavailable never blocks; it only adds the notice below.
-  const bootBlocked = bootCheckFailed(request.previewBootCheck);
-  const bootUnavailable = bootCheckUnavailable(request.previewBootCheck);
+  // The review boot check's NOTICES only. A failed enforced check is refused through the
+  // boot-check review hold it placed, which the holds panel shows and which Approve already needs
+  // an override reason for (`holdBlocked`); the notice says why. Unavailable / not run never block.
+  const bootFailed = bootCheckFailed(request.previewBootCheck);
+  const bootUnavailable = !bootFailed && bootCheckUnavailable(request.previewBootCheck);
+  const bootNotRun = !bootFailed && !bootUnavailable && request.previewBootCheckUnverified === true;
   const mediaSplitDecision =
     request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
       ? mediaSplit
@@ -182,7 +185,7 @@ export function ReviewActionBar({
   const [holdOverrideReason, setHoldOverrideReason] = useState('');
   const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
   // Every reason Approve (all three buttons) is disabled, in one place.
-  const approveGated = splitStateUnknown || floorBlocked || holdBlocked || bootBlocked;
+  const approveGated = splitStateUnknown || floorBlocked || holdBlocked;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async (result) => {
@@ -368,7 +371,7 @@ export function ReviewActionBar({
             {listingFloorApproveRefusal(floorMissing)}
           </Alert>
         )}
-        {bootBlocked && (
+        {bootFailed && (
           <Alert color="red" variant="light" data-testid="apps-review-approve-boot-check">
             {BOOT_CHECK_APPROVE_REFUSAL}
           </Alert>
@@ -376,6 +379,11 @@ export function ReviewActionBar({
         {bootUnavailable && (
           <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-unavailable">
             {BOOT_CHECK_UNAVAILABLE_NOTICE}
+          </Alert>
+        )}
+        {bootNotRun && (
+          <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-not-run">
+            {BOOT_CHECK_NOT_RUN_NOTICE}
           </Alert>
         )}
         {mode === 'pending' && <VersionListingRatingNotice publishRequestId={request.id} />}

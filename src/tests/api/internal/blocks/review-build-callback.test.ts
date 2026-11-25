@@ -1267,9 +1267,8 @@ describe('settlePublishedReview: the review boot check', () => {
     messagesSeen: ['BLOCK_HELLO'],
     consoleErrors: [MIME_ERROR],
     failedRequests: [],
-    nonJsModuleResponses: [
-      { url: `https://${HOST}/assets/app.mjs`, contentType: 'application/octet-stream' },
-    ],
+    nonJsModuleResponses: 1,
+    blockedScripts: [],
   };
   const PASSED_BODY = {
     result: 'passed',
@@ -1277,7 +1276,8 @@ describe('settlePublishedReview: the review boot check', () => {
     messagesSeen: ['BLOCK_HELLO', 'BLOCK_READY'],
     consoleErrors: [],
     failedRequests: [],
-    nonJsModuleResponses: [],
+    nonJsModuleResponses: 0,
+    blockedScripts: [],
   };
   const ENFORCED_FAILURE_ERROR =
     'Boot check: the app loaded but never sent BLOCK_READY within 10s. First error: Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "application/octet-stream". Fix and resubmit.';

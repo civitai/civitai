@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOOT_CHECK_APPROVE_REFUSAL,
+  BOOT_CHECK_HOLD_CLEAR_REASON,
+  BOOT_CHECK_HOLD_LABEL,
+  BOOT_CHECK_NOT_RUN_NOTICE,
+  bootCheckHoldReason,
+  bootCheckNotVerified,
   bootCheckFailed,
   bootCheckFailureError,
   bootCheckUnavailable,
@@ -59,10 +64,39 @@ describe('bootCheckFailureError', () => {
       'Boot check: the app loaded but never sent BLOCK_READY within 10s. No console error was reported: check that the app completes the SDK handshake when it loads. Fix and resubmit.'
     );
   });
-  it('the refusal text', () => {
+  it('the failed-check notice', () => {
     expect(BOOT_CHECK_APPROVE_REFUSAL).toBe(
-      'Cannot approve: the boot check found that this build never finishes loading (no BLOCK_READY). The developer has to fix it and resubmit. Rebuilding the preview re-runs the check.'
+      'The boot check found that this build never finishes loading (no BLOCK_READY), and placed a boot-check hold on the app. The hold stays until a build of this app passes the boot check; rebuilding or tearing down the preview does not remove it. To approve before that, override the hold with a written reason.'
     );
+  });
+  it('the hold reason, with and without a first error, and the clear reason', () => {
+    expect(bootCheckHoldReason('TypeError: boom.')).toBe(
+      'The app loaded but never sent BLOCK_READY within 10s (first error: TypeError: boom). A build of this app that passes the boot check clears this hold.'
+    );
+    expect(bootCheckHoldReason(null)).toBe(
+      'The app loaded but never sent BLOCK_READY within 10s. A build of this app that passes the boot check clears this hold.'
+    );
+    expect(BOOT_CHECK_HOLD_CLEAR_REASON).toBe('A later build of this app passed the boot check.');
+    expect(BOOT_CHECK_HOLD_LABEL).toBe('Boot check');
+  });
+  it('the not-run notice', () => {
+    expect(BOOT_CHECK_NOT_RUN_NOTICE).toBe(
+      'Boot check not run: this build has not passed the boot check, so nobody has confirmed the app finishes loading. Check that the preview starts before you approve.'
+    );
+  });
+});
+
+describe('bootCheckNotVerified (current flag x recorded result)', () => {
+  it.each([
+    ['enforce', null, true],
+    ['enforce', { result: 'unavailable', mode: 'enforce' }, true],
+    ['enforce', { result: 'failed', mode: 'enforce' }, true],
+    ['enforce', { result: 'passed', mode: 'shadow' }, true],
+    ['enforce', { result: 'passed', mode: 'enforce' }, false],
+    ['shadow', null, false],
+    ['off', null, false],
+  ] as const)('flag %s, recorded %j → %s', (mode, summary, out) => {
+    expect(bootCheckNotVerified(mode, summary)).toBe(out);
   });
 });
 

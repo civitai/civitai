@@ -12,12 +12,15 @@ import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants
  * The rollout flag decides what a result does (`REVIEW_BOOT_CHECK_FLAG`, a variant flag):
  *   - `off` (or absent): no check runs, nothing is recorded.
  *   - `shadow`: the result is recorded with `mode: 'shadow'` and changes nothing.
- *   - `enforce`: `failed` fails the preview and refuses Approve; `unavailable` (the checker could
- *     not run) leaves the preview live and Approve enabled, with a notice to the moderator.
+ *   - `enforce`: `failed` fails the preview and places the boot-check REVIEW HOLD on the app
+ *     (`BOOT_CHECK_HOLD_LABEL`); a later `passed` clears it. `unavailable` (the checker could not
+ *     run) leaves the preview live and Approve enabled, with a notice to the moderator.
  *
- * 🔴 The predicates below read the RECORDED mode, not the flag's current value, so a result
- * recorded in shadow never blocks an approve after the flag moves to enforce, and a failed build
- * stays blocked if the flag is later turned off (rebuild the preview to re-run the check).
+ * 🔴 What refuses Approve is the HOLD, through the ordinary review-hold check of the approve path:
+ * it lives on the app, not on the preview, so a teardown or a rebuild does not remove it, and a
+ * moderator can override it with a written reason (the escape hatch when the checker is wrong).
+ * The summary predicates below only choose what the moderator is told; they read the RECORDED
+ * mode, so a shadow result never shows as a failure.
  */
 
 /** The Flipt variant flag: `shadow` | `enforce`; any other answer, a missing flag included, is off. */
@@ -73,12 +76,9 @@ export function reviewBootCheckSummary(
 }
 
 /**
- * 🔴 THE approve gate. True when an ENFORCED boot check found that the build never reached
- * `BLOCK_READY`. The server refuses Approve on it and the review action bar disables Approve on
- * it: one predicate, so the button and the refusal cannot disagree.
- *
- * It reads the boot check, not `preview-failed` in general, so a build that failed for any other
- * reason keeps its existing behaviour.
+ * True when an ENFORCED boot check found that the build never reached `BLOCK_READY`: the review
+ * action bar shows why the app is held. NOT the approve gate (the boot-check hold is): it reads
+ * the preview's detail, which a teardown or rebuild replaces.
  */
 export function bootCheckFailed(summary: ReviewBootCheckSummary | null | undefined): boolean {
   return summary?.mode === 'enforce' && summary.result === 'failed';
@@ -100,10 +100,48 @@ export function bootCheckFailureError(firstError: string | null): string {
   return `Boot check: the app loaded but never sent BLOCK_READY within ${READY_WINDOW_SECONDS}s. ${cause} Fix and resubmit.`;
 }
 
-/** What a moderator is told when Approve is refused on a failed boot check (and why it is disabled). */
+/**
+ * What a moderator is told beside a failed enforced boot check. Approve is refused by the
+ * boot-check hold this failure placed (shown in the holds panel), not by this text.
+ */
 export const BOOT_CHECK_APPROVE_REFUSAL =
-  'Cannot approve: the boot check found that this build never finishes loading (no BLOCK_READY). ' +
-  'The developer has to fix it and resubmit. Rebuilding the preview re-runs the check.';
+  'The boot check found that this build never finishes loading (no BLOCK_READY), and placed a ' +
+  'boot-check hold on the app. The hold stays until a build of this app passes the boot check; ' +
+  'rebuilding or tearing down the preview does not remove it. To approve before that, override ' +
+  'the hold with a written reason.';
+
+/** The `placed_by_label` of the boot check's review hold (placed by the system user). */
+export const BOOT_CHECK_HOLD_LABEL = 'Boot check';
+
+/** The reason the boot-check hold carries: what the check saw, and what lifts it. */
+export function bootCheckHoldReason(firstError: string | null): string {
+  return (
+    `The app loaded but never sent BLOCK_READY within ${READY_WINDOW_SECONDS}s` +
+    (firstError ? ` (first error: ${firstError.replace(/[.\s]+$/, '')})` : '') +
+    '. A build of this app that passes the boot check clears this hold.'
+  );
+}
+
+/** The clear reason recorded when a passed boot check lifts the hold. */
+export const BOOT_CHECK_HOLD_CLEAR_REASON = 'A later build of this app passed the boot check.';
+
+/**
+ * Under a CURRENT `enforce` flag: this pending request has no enforced `passed` check, so nobody
+ * has confirmed its app finishes loading. Approve stays enabled (nothing is blocked
+ * retroactively); the moderator is told.
+ */
+export function bootCheckNotVerified(
+  currentMode: ReviewBootCheckMode,
+  summary: ReviewBootCheckSummary | null | undefined
+): boolean {
+  if (currentMode !== 'enforce') return false;
+  return !(summary?.mode === 'enforce' && summary.result === 'passed');
+}
+
+/** The moderator notice for a pending request `bootCheckNotVerified` holds for. */
+export const BOOT_CHECK_NOT_RUN_NOTICE =
+  'Boot check not run: this build has not passed the boot check, so nobody has confirmed the ' +
+  'app finishes loading. Check that the preview starts before you approve.';
 
 /** The moderator notice for a boot check that could not run. */
 export const BOOT_CHECK_UNAVAILABLE_NOTICE =

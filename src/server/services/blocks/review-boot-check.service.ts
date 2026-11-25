@@ -6,7 +6,9 @@ import { recordReviewBootCheck } from '~/server/prom/app-block-boot-check.metric
 import { signReviewAccessToken } from '~/server/services/blocks/review-session';
 import { BLOCK_READY_TIMEOUT_MS } from '~/shared/constants/block-ready.constants';
 import {
+  BOOT_CHECK_HOLD_CLEAR_REASON,
   bootCheckFailureError,
+  bootCheckHoldReason,
   type ReviewBootCheckMode,
   type ReviewBootCheckRecord,
   type ReviewBootCheckRecordedMode,
@@ -28,12 +30,23 @@ import {
  *   200 { result: 'passed' | 'failed', ms, messagesSeen[], consoleErrors[],
  *         failedRequests[{ url, status, contentType }], nonJsModuleResponses }
  *
- * Anything else (a non-200, an unreadable body, a network error, the 30 s client cap, no URL
- * configured) is `unavailable`: FAIL-OPEN, so a checker outage never blocks a submission.
+ * `nonJsModuleResponses` is a COUNT (scripts the browser refused for a non-JavaScript type).
+ *
+ * Anything else (a non-200, an unreadable body, a network error, the 35 s client cap, no URL
+ * configured) is `unavailable`: FAIL-OPEN, so a checker outage never blocks a submission. A 4xx
+ * means this client and the checker disagree about the contract: still `unavailable`, but logged
+ * at error level and counted under `reason="contract"`.
+ *
+ * Under `enforce`, a `failed` check also places the boot-check REVIEW HOLD on the app and a
+ * `passed` one clears it (`syncBootCheckHold`). The hold, not the preview's detail, is what
+ * refuses Approve, so tearing the preview down or rebuilding it cannot get around it.
  */
 
-/** The client-side cap on one checker call. */
-export const BOOT_CHECK_CLIENT_TIMEOUT_MS = 30_000;
+/**
+ * The client-side cap on one checker call. Above the checker's own 30 s hard cap, so its 503 (and
+ * the reason in it) arrives before this client gives up.
+ */
+export const BOOT_CHECK_CLIENT_TIMEOUT_MS = 35_000;
 /** The pause before the single retry of an `unavailable` attempt. */
 export const BOOT_CHECK_RETRY_DELAY_MS = 2_000;
 /** Longest `firstError` stored on the detail (it is shown to moderators and the author). */
@@ -55,6 +68,16 @@ export async function readReviewBootCheckMode(): Promise<ReviewBootCheckMode> {
   }
 }
 
+/** Why a check is `unavailable`: the metric's `reason` label (`none` for passed / failed). */
+export type BootCheckUnavailableReason =
+  | 'unconfigured'
+  | 'network'
+  | 'server'
+  | 'contract'
+  | 'body'
+  | 'no-target'
+  | 'crash';
+
 /** One attempt's outcome, before it is reduced to the stored record. */
 export type BootCheckAttempt = {
   result: ReviewBootCheckResult;
@@ -63,10 +86,19 @@ export type BootCheckAttempt = {
   firstError: string | null;
   /** Why an attempt is `unavailable` (logged, never stored). */
   reason?: string;
+  /** The closed reason label for an `unavailable` attempt. */
+  unavailableReason?: BootCheckUnavailableReason;
 };
 
-function unavailable(reason: string): BootCheckAttempt {
-  return { result: 'unavailable', ms: null, messagesSeen: [], firstError: null, reason };
+function unavailable(label: BootCheckUnavailableReason, reason: string): BootCheckAttempt {
+  return {
+    result: 'unavailable',
+    ms: null,
+    messagesSeen: [],
+    firstError: null,
+    reason,
+    unavailableReason: label,
+  };
 }
 
 function stringList(v: unknown, max = 50): string[] {
@@ -91,31 +123,40 @@ export function sanitizeBootError(raw: string): string {
     : oneLine;
 }
 
-/** A module the static server sent as something other than JavaScript, as one line. */
-function nonJsModuleLine(entry: unknown): string | null {
-  if (typeof entry === 'string') return entry;
-  if (!entry || typeof entry !== 'object') return null;
-  const { url, contentType } = entry as { url?: unknown; contentType?: unknown };
-  if (typeof url !== 'string') return null;
-  return `${url} was served as ${
-    typeof contentType === 'string' && contentType ? contentType : 'an unknown type'
-  }, not JavaScript`;
-}
-
-/** The first thing an author can act on: a console error, else the first non-JavaScript module. */
+/**
+ * The first thing an author can act on: a console error, else how many scripts were served with
+ * a non-JavaScript type (the checker reports that as a count, `nonJsModuleResponses`).
+ */
 export function firstBootError(body: {
   consoleErrors?: unknown;
   nonJsModuleResponses?: unknown;
 }): string | null {
   const consoleError = stringList(body.consoleErrors).find((s) => s.trim().length > 0);
   if (consoleError) return sanitizeBootError(consoleError);
-  if (Array.isArray(body.nonJsModuleResponses)) {
-    for (const entry of body.nonJsModuleResponses) {
-      const line = nonJsModuleLine(entry);
-      if (line) return sanitizeBootError(line);
-    }
+  const n = body.nonJsModuleResponses;
+  if (typeof n === 'number' && Number.isInteger(n) && n > 0) {
+    return n === 1
+      ? '1 script was served as non-JavaScript'
+      : `${n} scripts were served as non-JavaScript`;
   }
   return null;
+}
+
+/** The checker's own reason on a non-200, for the log line (never stored). */
+async function checkerReason(res: Response): Promise<string> {
+  try {
+    const text = (await res.text()).slice(0, 500);
+    try {
+      const body = JSON.parse(text) as { reason?: unknown; error?: unknown };
+      const r = body.reason ?? body.error;
+      if (typeof r === 'string') return sanitizeBootError(r);
+    } catch {
+      /* not JSON: use the text */
+    }
+    return sanitizeBootError(text);
+  } catch {
+    return '';
+  }
 }
 
 export type BootCheckRequest = {
@@ -146,19 +187,32 @@ export async function callBootChecker(
       signal: signalFactory(BOOT_CHECK_CLIENT_TIMEOUT_MS),
     });
   } catch (err) {
-    return unavailable(`checker request failed: ${err instanceof Error ? err.name : 'error'}`);
+    return unavailable(
+      'network',
+      `checker request failed: ${err instanceof Error ? err.name : 'error'}`
+    );
   }
-  if (res.status !== 200) return unavailable(`checker answered ${res.status}`);
+  if (res.status >= 400 && res.status < 500) {
+    // A 4xx is this client's request the checker refused: a contract mismatch, not an outage.
+    const why = await checkerReason(res);
+    // eslint-disable-next-line no-console
+    console.error(`[review-boot-check] checker refused the request (${res.status}): ${why}`);
+    return unavailable('contract', `checker answered ${res.status}: ${why}`);
+  }
+  if (res.status !== 200) {
+    return unavailable('server', `checker answered ${res.status}: ${await checkerReason(res)}`);
+  }
   let body: Record<string, unknown>;
   try {
     const parsed = (await res.json()) as unknown;
-    if (!parsed || typeof parsed !== 'object') return unavailable('checker body is not an object');
+    if (!parsed || typeof parsed !== 'object')
+      return unavailable('body', 'checker body is not an object');
     body = parsed as Record<string, unknown>;
   } catch {
-    return unavailable('checker body is not JSON');
+    return unavailable('body', 'checker body is not JSON');
   }
   if (body.result !== 'passed' && body.result !== 'failed') {
-    return unavailable('checker body has no result');
+    return unavailable('body', 'checker body has no result');
   }
   return {
     result: body.result,
@@ -228,14 +282,14 @@ export async function runReviewBootCheck(
         '[review-boot-check] APP_BLOCK_BOOT_CHECK_URL is not set: every boot check reads unavailable'
       );
     }
-    return unavailable('checker not configured');
+    return unavailable('unconfigured', 'checker not configured');
   }
-  if (!input.host || !input.url) return unavailable('the preview has no host or url');
+  if (!input.host || !input.url) return unavailable('no-target', 'the preview has no host or url');
   const host = input.host;
   const previewUrl = input.url;
   const target = await (deps.loadTarget ?? loadReviewTarget)(input.publishRequestId);
   const blockId = input.slug ?? target.slug;
-  if (!blockId) return unavailable('no slug for the preview');
+  if (!blockId) return unavailable('no-target', 'no slug for the preview');
   const mintToken =
     deps.mintToken ??
     ((h: string) => signReviewAccessToken({ modUserId: BOOT_CHECK_USER_ID, host: h }));
@@ -259,8 +313,9 @@ export async function runReviewBootCheck(
   };
 
   const first = await attempt();
-  // A clean `failed` is a verdict about the app and is never retried.
-  if (first.result !== 'unavailable') return first;
+  // A clean `failed` is a verdict about the app and is never retried; nor is a contract refusal,
+  // which the same request would get again.
+  if (first.result !== 'unavailable' || first.unavailableReason === 'contract') return first;
   await sleep(BOOT_CHECK_RETRY_DELAY_MS);
   return attempt();
 }
@@ -311,7 +366,10 @@ export async function evaluateReviewBootCheck(
   try {
     attempt = await runReviewBootCheck(input, deps);
   } catch (err) {
-    attempt = unavailable(`check crashed: ${err instanceof Error ? err.message : String(err)}`);
+    attempt = unavailable(
+      'crash',
+      `check crashed: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
   if (attempt.result === 'unavailable') {
     // eslint-disable-next-line no-console
@@ -319,6 +377,53 @@ export async function evaluateReviewBootCheck(
       `[review-boot-check] unavailable for ${input.publishRequestId} (${mode}): ${attempt.reason}`
     );
   }
-  recordReviewBootCheck(mode, attempt.result);
+  recordReviewBootCheck(
+    mode,
+    attempt.result,
+    attempt.result === 'unavailable' ? attempt.unavailableReason ?? 'crash' : 'none'
+  );
   return decideBootCheckSettle(mode, attempt, (deps.now ?? (() => new Date()))());
+}
+
+/**
+ * Keep the app's boot-check REVIEW HOLD in step with an ENFORCED result: a `failed` check places
+ * it (once: a second failure does not stack another), a `passed` one clears it. Shadow and
+ * `unavailable` never touch it. Never throws: a hold write that fails is logged at error level,
+ * and the preview state is written regardless.
+ */
+export async function syncBootCheckHold(
+  publishRequestId: string,
+  decision: BootCheckDecision
+): Promise<'placed' | 'exists' | 'cleared' | 'none'> {
+  const { bootCheck } = decision;
+  if (bootCheck.mode !== 'enforce') return 'none';
+  if (bootCheck.result !== 'failed' && bootCheck.result !== 'passed') return 'none';
+  try {
+    const [{ dbWrite }, holds] = await Promise.all([
+      import('~/server/db/client'),
+      import('~/server/services/blocks/publish-request-holds.service'),
+    ]);
+    if (bootCheck.result === 'failed') {
+      return await dbWrite.$transaction((tx) =>
+        holds.placeBootCheckHold(tx, {
+          publishRequestId,
+          reason: bootCheckHoldReason(bootCheck.firstError),
+        })
+      );
+    }
+    const cleared = await dbWrite.$transaction((tx) =>
+      holds.clearBootCheckHolds(tx, { publishRequestId, reason: BOOT_CHECK_HOLD_CLEAR_REASON })
+    );
+    return cleared > 0 ? 'cleared' : 'none';
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[review-boot-check] could not ${
+        bootCheck.result === 'failed' ? 'place' : 'clear'
+      } the boot-check hold for ${publishRequestId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return 'none';
+  }
 }

@@ -167,6 +167,8 @@ export type ReviewedRequestCommon = {
   /** The review boot check's result + mode (pending list + single read); null = no check
    *  recorded. `bootCheckFailed(previewBootCheck)` ⇒ the server refuses Approve. */
   previewBootCheck?: ReviewBootCheckSummary | null;
+  /** Under a current `enforce` flag, a pending request with no enforced pass ("not run"). */
+  previewBootCheckUnverified?: boolean;
 };
 
 export type PendingRequest = ReviewedRequestCommon;
