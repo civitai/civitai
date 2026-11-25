@@ -135,6 +135,18 @@ func TestLoadV1ModelsServeDataMiss(t *testing.T) {
 	}
 }
 
+// FEED_GO_V1_MODELS_ANSWER_NOT_FOUND is off unless set to a true value, and is its own switch: the
+// serve switch does not turn it on.
+func TestLoadV1ModelsAnswerNotFound(t *testing.T) {
+	t.Setenv("FEED_GO_SERVE_V1_MODELS", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", in)
+		if got := LoadV1Models().AnswerNotFound; got != want {
+			t.Errorf("FEED_GO_V1_MODELS_ANSWER_NOT_FOUND=%q -> %v, want %v", in, got, want)
+		}
+	}
+}
+
 // FEED_GO_SERVE_V1_IMAGES is off unless set to a true value, and is its own switch: the models one
 // does not turn it on, nor it the models one.
 func TestLoadV1ImagesServeDefaultsOff(t *testing.T) {

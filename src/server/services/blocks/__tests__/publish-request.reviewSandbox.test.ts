@@ -597,6 +597,30 @@ describe('getReviewStatus', () => {
     expect(r.detail.url).toBe('https://review-x.civit.ai/my-app');
   });
 
+  // The MODERATOR read keeps the whole boot-check record: the author redaction is applied only at
+  // author-facing exits, never here.
+  it('returns the full boot-check record to the moderator, app output included', async () => {
+    const MARKER = 'zq-bootcheck-marker-5e1d0a7c93';
+    const bootCheck = {
+      result: 'failed',
+      ms: 4000,
+      messagesSeen: [`${MARKER}-msg`],
+      firstError: `${MARKER}-err`,
+      checkedAt: '2026-01-01T00:00:00.000Z',
+      mode: 'enforce',
+    };
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-failed',
+      deployDetail: JSON.stringify({ sha: SHA, bootCheck, error: `First error: ${MARKER}-err.` }),
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ });
+    expect(r.detail.bootCheck).toEqual(bootCheck);
+    expect(r.detail.error).toBe(`First error: ${MARKER}-err.`);
+  });
+
   it('returns state:null for a non-preview deploy_state (production building)', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: PUBREQ,

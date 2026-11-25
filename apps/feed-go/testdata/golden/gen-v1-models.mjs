@@ -568,6 +568,19 @@ fx('detail-training-data-red-host', detail(5006, { host: RED_HOST }), trainingDa
   fx('detail-origin-cache-no-versions', detail(5036), w);
 }
 
+// 6c'. Not found: Node answers `res.status(404).json({ error })` (expect.status). With no row from
+// the model statement feed-go may answer that 404 itself (FEED_GO_V1_MODELS_ANSWER_NOT_FOUND); with
+// a row getModelsWithVersions then drops (here: no Published version), the same 404 is Node's, but
+// the decision rests on the model-data cache, and feed-go hands it back.
+fx('detail-not-found', detail(5099), baseWorld());
+{
+  const w = baseWorld();
+  addModel(w, modelRow(5098, { cursorId: '1|1|5098' }), [version(6098, { status: 'Draft' })], {
+    files: { 6098: [file(7098, 6098)] },
+  });
+  fx('detail-not-found-no-published-version', detail(5098), w);
+}
+
 // 6d. The listing's read fails: Node leaves every Training Data file out; whether Node's own read
 // failed is unknown to feed-go, so it falls back rather than answer.
 {

@@ -162,7 +162,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_requests_total",
-			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error|region_blocked|feed_unavailable).",
+			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error|region_blocked|feed_unavailable|not_found).",
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		Fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_total",
@@ -391,8 +391,9 @@ var ShadowResultValues = []string{"match", "match_empty", "match_cached", "field
 // (OutcomeRegionBlocked) is the app's 451 written here for a blocked region: neither a served answer
 // nor a fallback, so the served-traffic and fallback-rate figures keep their meaning. feed_unavailable
 // (OutcomeFeedUnavailable) is, the same way, the app's 503 written here on image.getInfinite for a
-// failed feed-service call.
-var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error", OutcomeRegionBlocked, OutcomeFeedUnavailable}
+// failed feed-service call. not_found (OutcomeNotFound) is, the same way, Node's 404 written here on
+// GET /api/v1/models/{id} for a model the statement finds no row for.
+var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error", OutcomeRegionBlocked, OutcomeFeedUnavailable, OutcomeNotFound}
 
 // computeFallbackReasons are the fallback reasons every compute can end in, whatever its endpoint
 // (Server.within: a panic, a gone client, the budget), so feed_go_fallback_total is seeded with them
@@ -494,7 +495,8 @@ func cachedEndpoint(e string) bool { return e == EndpointV1ModelsID }
 
 // emptyReachable reports whether endpoint can count a trivial answer (served_empty, match_empty) in
 // mode: never on as-posts or site-search, whose computes do not mark one, and on the single-model route
-// only in the shadow, as its trivial answer is the not-found body, which the public route falls back on.
+// only in the shadow, as its trivial answer is the not-found body, which the public route answers as
+// not_found (OutcomeNotFound) or falls back on, never as served_empty.
 func emptyReachable(endpoint, mode string) bool {
 	return endpoint != EndpointAsPosts && endpoint != EndpointSearch && (endpoint != EndpointV1ModelsID || mode == "shadow")
 }
@@ -511,6 +513,8 @@ func outcomeReachable(endpoint, mode, outcome string) bool {
 		return mode == "serve" && endpoint != EndpointSearch
 	case OutcomeFeedUnavailable:
 		return mode == "serve" && endpoint == EndpointInfinite
+	case OutcomeNotFound:
+		return mode == "serve" && endpoint == EndpointV1ModelsID
 	}
 	return true
 }

@@ -575,6 +575,7 @@ func run(log *slog.Logger) error {
 				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
 				ComputeMisses:        cfg.ComputeMisses,
 				ServeDataMiss:        mc.ServeDataMiss,
+				AnswerNotFound:       mc.AnswerNotFound,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
 				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
@@ -722,7 +723,7 @@ func run(log *slog.Logger) error {
 		"FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE", cfg.InfiniteAnswerFeedUnavailable,
 		"FEED_GO_INFINITE_SERVE_INPUT_HUB_ID", cfg.InfiniteServeInputHubID, "user_hubs_flag_read", userHubs != nil)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
-		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
+		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth, "FEED_GO_V1_MODELS_ANSWER_NOT_FOUND", mc.AnswerNotFound)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil)
 	log.Info("public /api/search", "FEED_GO_SERVE_SEARCH", sc.Serve, "mounted", srv.SearchFallback != nil,

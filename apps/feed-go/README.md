@@ -141,7 +141,10 @@ its own reason (DESIGN.md §16.10). The list keeps every API credential a fallba
 with a text `query` is answered from the search index the Node app reads (`SEARCH_HOST`,
 `SEARCH_API_KEY`, `MEILI_CALL_TIMEOUT_MS` capped at 2.5 s, the `MEILI_CIRCUIT_*` breaker settings)
 only with `FEED_GO_V1_MODELS_SERVE_QUERY` on (default off: `v1-models-query`; DESIGN.md §16.11); a
-search the breaker or the 4-call cap rejects is handed back as `v1-models-query`. Credentialed
+search the breaker or the 4-call cap rejects is handed back as `v1-models-query`. A
+`GET /api/v1/models/{id}` request for a model the statement finds no row for is answered with Node's
+404 here only with `FEED_GO_V1_MODELS_ANSWER_NOT_FOUND` on (default off: `v1-models-not-found`;
+outcome `not_found`; DESIGN.md §16.8). Credentialed
 requests reach this service only once the deployment's routing sends them here: the bypass that
 sends them to the Node app is narrowed to the list path (not removed) when `[id]` serves them. The
 REST endpoint's shadow also needs
