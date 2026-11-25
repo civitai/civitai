@@ -272,7 +272,7 @@ func TestLoadGetAllUserCosmeticsMissDefaultsOff(t *testing.T) {
 }
 
 // FEED_GO_INFINITE_SERVE_SORT_RANDOM is off unless set, and is its own switch: FEED_GO_SERVE_INFINITE
-// does not turn it on, nor it FEED_GO_SERVE_INFINITE.
+// does not turn it on, and it does not turn on FEED_GO_SERVE_INFINITE.
 func TestLoadInfiniteServeSortRandomDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -431,7 +431,7 @@ func TestLoadInfiniteAnswerFeedUnavailableDefaultOff(t *testing.T) {
 }
 
 // The publishedOnly port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not
-// turn it on, nor it FEED_GO_SERVE_INFINITE.
+// turn it on, and it does not turn on FEED_GO_SERVE_INFINITE.
 func TestLoadInfinitePublishedOnlyPortDefaultOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -459,7 +459,7 @@ func TestLoadInfinitePublishedOnlyPortDefaultOff(t *testing.T) {
 }
 
 // The postIds port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not turn
-// it on, nor it FEED_GO_SERVE_INFINITE.
+// it on, and it does not turn on FEED_GO_SERVE_INFINITE.
 func TestLoadInfinitePostIDsPortDefaultOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -487,7 +487,7 @@ func TestLoadInfinitePostIDsPortDefaultOff(t *testing.T) {
 }
 
 // The hubId port's switch is off unless set, and is its own: FEED_GO_SERVE_INFINITE does not turn it
-// on, nor it FEED_GO_SERVE_INFINITE.
+// on, and it does not turn on FEED_GO_SERVE_INFINITE.
 func TestLoadInfiniteHubIDPortDefaultOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
