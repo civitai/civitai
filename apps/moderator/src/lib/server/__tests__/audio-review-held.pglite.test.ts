@@ -298,6 +298,62 @@ describe("an owner's held songs", () => {
   });
 });
 
+const heldDecisions = async () =>
+  (
+    await db.query<{ entityId: number; userId: number; details: unknown }>(
+      `SELECT "entityId", "userId", details FROM "ModActivity" WHERE activity = 'audioHeldDecision' ORDER BY "createdAt", id`
+    )
+  ).rows;
+
+describe('a Held decision record', () => {
+  it('records what was decided on the held song: the decision, its flag, song and cover', async () => {
+    await pageAction('approveCover', {
+      imageId: String(COVER_SONG),
+      coverId: String(FLAGGED_COVER),
+      needsReview: 'tag',
+    });
+    await pageAction('removeSong', { imageId: String(FLAGGED_SONG), violationType: 'hate' });
+    expect(await heldDecisions()).toEqual([
+      {
+        entityId: COVER_SONG,
+        userId: WITH_GRANT.id,
+        details: {
+          decision: 'approveCover',
+          kind: 'cover',
+          flag: 'tag',
+          songId: COVER_SONG,
+          coverId: FLAGGED_COVER,
+        },
+      },
+      {
+        entityId: FLAGGED_SONG,
+        userId: WITH_GRANT.id,
+        details: {
+          decision: 'removeSong',
+          kind: 'song',
+          flag: 'modRule',
+          songId: FLAGGED_SONG,
+          coverId: null,
+        },
+      },
+    ]);
+  });
+
+  it('records nothing for a refused decision, or one made on another tab', async () => {
+    await pageAction('approveSong', { imageId: String(COVER_SONG), needsReview: 'tag' });
+    await page.actions.removeSong({
+      request: new Request('https://mod.example/audio-review', {
+        method: 'POST',
+        body: formOf({ imageId: String(FLAGGED_SONG), violationType: 'hate' }),
+      }),
+      locals: { user: WITH_GRANT, grants: GRANTS },
+      getClientAddress: () => '127.0.0.1',
+      url: new URL('https://mod.example/audio-review'),
+    } as never);
+    expect(await heldDecisions()).toEqual([]);
+  });
+});
+
 describe('the Open in CSAM holds link', () => {
   const load = (user: { id: number; roles: string[] }, grants: Record<string, boolean>) =>
     page.load({

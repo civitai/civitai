@@ -61,8 +61,17 @@ export async function writeImageNsfwLevel(
 ): Promise<AfterCommitStep[]> {
   const image = await db
     .selectFrom('Image')
-    .select(['type', 'ingestion', 'metadata', 'postId', thumbnailParentId.as('parentId')])
+    .select([
+      'type',
+      'ingestion',
+      'metadata',
+      'postId',
+      'nsfwLevel',
+      thumbnailParentId.as('parentId'),
+    ])
     .where('id', '=', id)
+    // The level this write replaces is recorded with it, so no other write may land in between.
+    .forUpdate()
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
   // A locked level counts as a review (imageReviewedSql has no song exception) and only a song's own
@@ -139,7 +148,13 @@ export async function writeImageNsfwLevel(
     {
       name: 'image-nsfw-level-activity',
       run: () =>
-        recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' }),
+        recordModActivity({
+          userId,
+          entityType: 'image',
+          entityId: id,
+          activity: 'setNsfwLevel',
+          details: { from: image.nsfwLevel, to: nsfwLevel },
+        }),
     },
     {
       name: 'image-nsfw-level-cache-bust',

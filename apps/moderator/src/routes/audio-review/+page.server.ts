@@ -26,6 +26,8 @@ import {
   getReportedSongs,
   getSongAppeals,
   getSongDisputes,
+  heldStateOf,
+  recordHeldDecision,
   isFlaggedSong,
   isSongAppeal,
   songOfDispute,
@@ -237,6 +239,7 @@ export const actions: Actions = {
     if ('status' in violation) return violation;
     const withheld = await refuseWithheld(event.locals.user, songId, songId);
     if (withheld) return withheld;
+    const held = await heldBefore(event, songId);
     // Read here, not through `visibleSongLinks`, which turns a failed read or a withheld cover into
     // "no cover": each gets its own answer (a withheld cover is refused by the removal writer).
     let coverId: number | null | undefined;
@@ -253,9 +256,9 @@ export const actions: Actions = {
       writerForm({ imageIds: coverId, ...violation }),
       event
     );
-    return 'status' in result
-      ? fail(result.status, { ...result.data, key: songId })
-      : { ...result, coverId, key: songId };
+    if ('status' in result) return fail(result.status, { ...result.data, key: songId });
+    await recordHeldRemoval(event, songId, held, 'removeCover', result, coverId);
+    return { ...result, coverId, key: songId };
   }),
 
   removeSong: gated(async (event) => {
@@ -266,10 +269,14 @@ export const actions: Actions = {
     const violation = parseViolation(form, songId);
     if ('status' in violation) return violation;
     if (!(await isSong(songId))) return fail(404, { error: 'Not a song.', key: songId });
-    return keyed(
-      await removeImagesWithReports(writerForm({ imageIds: songId, ...violation }), event),
-      songId
+    const held = await heldBefore(event, songId);
+    const result = await removeImagesWithReports(
+      writerForm({ imageIds: songId, ...violation }),
+      event
     );
+    if (!('status' in result))
+      await recordHeldRemoval(event, songId, held, 'removeSong', result, held?.coverId ?? null);
+    return keyed(result, songId);
   }),
 
   approveCover: gated((event) => approveHeld(event, 'cover')),
@@ -346,16 +353,39 @@ async function approveHeld(event: RequestEvent, kind: 'cover' | 'song') {
   if (target == null) return fail(409, { error: NOT_HELD[kind], key: songId });
   if (kind === 'cover' && target !== input.coverId)
     return fail(409, { error: NEW_COVER, key: songId });
-  return keyed(
-    await acceptImagesWithReports(
-      writerForm({
-        imageIds: target,
-        needsReviewByImage: JSON.stringify({ [target]: needsReview }),
-      }),
-      event.locals
-    ),
-    songId
+  const result = await acceptImagesWithReports(
+    writerForm({
+      imageIds: target,
+      needsReviewByImage: JSON.stringify({ [target]: needsReview }),
+    }),
+    event.locals
   );
+  if (!('status' in result))
+    await recordHeldDecision({
+      userId: event.locals.user.id,
+      songId,
+      decision: kind === 'cover' ? 'approveCover' : 'approveSong',
+      held: { kind, flag: needsReview },
+      coverId: kind === 'cover' ? target : null,
+    });
+  return keyed(result, songId);
+}
+
+/** What holds the song, read before a removal posted from the Held tab; null from any other tab. */
+const heldBefore = (event: RequestEvent, songId: number) =>
+  event.url.searchParams.get('tab') === 'held' ? heldStateOf(songId) : Promise.resolve(null);
+
+/** A removal on the Held tab, once it went through: not one held for a second moderator. */
+async function recordHeldRemoval(
+  event: RequestEvent,
+  songId: number,
+  held: Awaited<ReturnType<typeof heldStateOf>>,
+  decision: 'removeCover' | 'removeSong',
+  result: { held?: unknown },
+  coverId: number | null
+) {
+  if (!held || typeof result.held === 'string') return;
+  await recordHeldDecision({ userId: event.locals.user.id, songId, decision, held, coverId });
 }
 
 async function decideAppeal(event: RequestEvent, status: 'Approved' | 'Rejected') {

@@ -1765,6 +1765,9 @@ model ModActivity {
   reviewTier String?
   /// Whether that batch was declared suspect at mint. NULL on every other row.
   declaredSuspect Boolean?
+  /// What the action decided, per activity: `setNsfwLevel` stores `{ from, to }`, an Audio review Held
+  /// decision `{ decision, flag, songId, coverId }`. NULL on rows written before it and on every other activity.
+  details    Json?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])

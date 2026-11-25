@@ -273,6 +273,15 @@ describe('the Disputes tab', () => {
 });
 
 describe('ruling a song dispute', () => {
+  it('records the rating it applied with the level it replaced', async () => {
+    await resolve({ reviewId: String(DISPUTE), appliedLevel: '1' });
+    await flush();
+    const { rows } = await db.query<{ details: unknown }>(
+      `SELECT details FROM "ModActivity" WHERE activity = 'setNsfwLevel' AND "entityId" = ${SONG}`
+    );
+    expect(rows.map((r) => r.details)).toEqual([{ from: 2, to: 1 }]);
+  });
+
   it("applies the owner's ask to the reviewed song, locks it, closes the dispute and tells the owner", async () => {
     expect(
       await resolve({ reviewId: String(DISPUTE), appliedLevel: '1', modComment: 'Agreed.' })

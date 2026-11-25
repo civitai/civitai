@@ -40,6 +40,7 @@ import {
 } from './audio-review-count';
 import { canAccess } from './access';
 import { logAxiomError } from './axiom';
+import { recordModActivity } from './mod-activity';
 import { getClickhouse } from './clickhouse';
 import { dbRead } from './db';
 import { getAppealImageQueue, ruleBlockedSql } from './image-review.service';
@@ -985,6 +986,59 @@ async function otherHeldOf(ownerId: number, songId: number, user: App.Locals['us
     songs: rows.filter((r) => r.kind === 'song').length,
     covers: rows.filter((r) => r.kind === 'cover').length,
   };
+}
+
+/** What holds a song on the Held tab that a decision here takes: its own flag, or its own cover's.
+ *  Null for a song not held here (a lyrics hold is decided in CSAM holds). */
+export async function heldStateOf(
+  songId: number
+): Promise<{ kind: 'song' | 'cover'; flag: string; coverId: number | null } | null> {
+  const [song, cover] = await Promise.all([
+    dbRead
+      .selectFrom('Image as s')
+      .select('s.needsReview')
+      .where('s.id', '=', songId)
+      .where(sql<boolean>`${sql.raw(flaggedSongsText('s'))}`)
+      .executeTakeFirst(),
+    dbRead
+      .selectFrom('Track as t')
+      .innerJoin('Image as s', 's.id', 't.imageId')
+      .innerJoin('Image as c', 'c.id', 't.coverImageId')
+      .select(['c.id', 'c.needsReview'])
+      .where('s.id', '=', songId)
+      .where(sql<boolean>`${sql.raw(flaggedCoverText('c', 's'))}`)
+      .executeTakeFirst(),
+  ]);
+  if (song?.needsReview) return { kind: 'song', flag: song.needsReview, coverId: null };
+  if (cover?.needsReview) return { kind: 'cover', flag: cover.needsReview, coverId: cover.id };
+  return null;
+}
+
+export const HELD_DECISION_ACTIVITY = 'audioHeldDecision';
+export type HeldDecision = 'approveCover' | 'approveSong' | 'removeCover' | 'removeSong';
+
+/** One row per decision on the Held tab, beside the writers' own `review` rows (which say neither
+ *  the tab nor what was decided): what the Resolved list reads. */
+export async function recordHeldDecision(input: {
+  userId: number;
+  songId: number;
+  decision: HeldDecision;
+  held: { kind: 'song' | 'cover'; flag: string };
+  coverId: number | null;
+}) {
+  await recordModActivity({
+    userId: input.userId,
+    entityType: 'image',
+    entityId: input.songId,
+    activity: HELD_DECISION_ACTIVITY,
+    details: {
+      decision: input.decision,
+      kind: input.held.kind,
+      flag: input.held.flag,
+      songId: input.songId,
+      coverId: input.coverId,
+    },
+  });
 }
 
 /** Whether song `songId` is held for review itself, with `flag` still its flag (Approve song). */

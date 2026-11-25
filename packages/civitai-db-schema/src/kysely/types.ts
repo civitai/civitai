@@ -4262,6 +4262,11 @@ export type ModActivity = {
    * Whether that batch was declared suspect at mint. NULL on every other row.
    */
   declaredSuspect: boolean | null;
+  /**
+   * What the action decided, per activity: `setNsfwLevel` stores `{ from, to }`, an Audio review Held
+   * decision `{ decision, flag, songId, coverId }`. NULL on rows written before it and on every other activity.
+   */
+  details: unknown | null;
 };
 export type Model = {
   id: Generated<number>;

@@ -1423,6 +1423,7 @@ export interface ModActivity {
   reviewBatchId: string | null;
   reviewTier: string | null;
   declaredSuspect: boolean | null;
+  details: JsonValue | null;
 }
 
 export interface ModThreadClaim {
