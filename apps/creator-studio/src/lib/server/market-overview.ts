@@ -105,10 +105,12 @@ const marketCache = createCache({
     });
     getLogger().logToAxiom({
       name: 'market-overview-fill',
-      ms: Date.now() - started,
-      paid: snapshot.paid.length,
-      free: snapshot.free.length,
-      suppressed: snapshot.suppressed.paid + snapshot.suppressed.free,
+      payload: {
+        ms: Date.now() - started,
+        paid: snapshot.paid.length,
+        free: snapshot.free.length,
+        suppressed: snapshot.suppressed.paid + snapshot.suppressed.free,
+      },
     });
     return snapshot;
   },
