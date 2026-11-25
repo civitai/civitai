@@ -125,6 +125,9 @@ export function ServiceOfferingCard({
     | 'licensePreset'
     | 'licenseCustomText'
     | 'licenseAllowResale'
+    | 'requestForm'
+    | 'requestFormVersion'
+    | 'fromPrice'
   > &
     Partial<Pick<ServiceOffering, 'happyCount' | 'reviewCount'>> & {
       coverImage?: ServiceCoverImage | null;
@@ -163,11 +166,17 @@ export function ServiceOfferingCard({
   );
   const price = (
     <div className="flex w-full items-end justify-between gap-2">
-      <div className="rounded-full bg-black/60 backdrop-blur-sm">
+      <div className="flex items-center rounded-full bg-black/60 backdrop-blur-sm">
+        {/* A service priced by its request form costs at least its cheapest answers. */}
+        {!!offering.requestForm && (
+          <Text size="xs" c="white" pl={10}>
+            from
+          </Text>
+        )}
         <CurrencyBadge
           currency={Currency.BUZZ}
           type={domain === 'green' ? 'green' : 'yellow'}
-          unitAmount={offering.price}
+          unitAmount={offering.fromPrice ?? offering.price}
         />
       </div>
       <div className="rounded-sm bg-black/60 backdrop-blur-sm">

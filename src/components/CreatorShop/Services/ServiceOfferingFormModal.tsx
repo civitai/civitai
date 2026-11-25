@@ -1,8 +1,12 @@
-import { Button, Group, Modal, SimpleGrid, Stack } from '@mantine/core';
+import { Button, Group, Input, Modal, SimpleGrid, Stack, Switch } from '@mantine/core';
 import { useWatch } from 'react-hook-form';
 import { useState } from 'react';
 import type * as z from 'zod';
 import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/SellerAffirmation';
+import {
+  newServiceFormQuestion,
+  ServiceRequestFormEditor,
+} from '~/components/CreatorShop/Services/ServiceRequestFormEditor';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
@@ -48,6 +52,7 @@ import {
   SERVICE_LICENSE_RESALE_LABEL,
   serviceLicenseHasResaleToggle,
 } from '~/shared/constants/creator-service-license.constants';
+import { serviceRequestFormSchema } from '~/shared/utils/service-request-form';
 
 const formSchema = upsertServiceOfferingSchema.omit({
   id: true,
@@ -119,11 +124,19 @@ export function ServiceOfferingFormModal({
             licensePreset: source?.licensePreset ?? null,
             licenseCustomText: source?.licenseCustomText ?? '',
             licenseAllowResale: source?.licenseAllowResale ?? false,
+            requestForm: serviceRequestFormSchema.safeParse(source?.requestForm).data ?? null,
           }
         : {}),
     },
   });
   const licensePreset = useWatch({ control: form.control, name: 'licensePreset' });
+  const requestForm = useWatch({ control: form.control, name: 'requestForm' });
+  const [price, deliveryDays] = useWatch({
+    control: form.control,
+    name: ['price', 'deliveryDays'],
+  });
+  const setRequestForm = (value: FormValues['requestForm']) =>
+    form.setValue('requestForm', value, { shouldDirty: true, shouldValidate: !!value });
 
   const isActive = offering?.status === ServiceOfferingStatus.Active;
   const needsAffirmation = !offering?.termsAffirmed;
@@ -165,7 +178,7 @@ export function ServiceOfferingFormModal({
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <InputNumber
               name="price"
-              label="Price (Buzz)"
+              label={requestForm ? 'Base price (Buzz)' : 'Price (Buzz)'}
               min={SERVICE_PRICE_MIN}
               max={SERVICE_PRICE_MAX}
               step={100}
@@ -236,6 +249,34 @@ export function ServiceOfferingFormModal({
                 <InputSwitch name="licenseAllowResale" label={SERVICE_LICENSE_RESALE_LABEL} />
               )}
             </>
+          )}
+          {licenseEditor && (
+            <Input.Wrapper
+              label="Request form"
+              description="Questions whose answers add to the price and days. Buyers pay the total their answers give."
+              error={form.formState.errors.requestForm && 'Give every question and option a label.'}
+            >
+              <Stack gap="sm" mt="xs">
+                <Switch
+                  label="Price this service by a request form"
+                  checked={!!requestForm}
+                  onChange={(e) =>
+                    setRequestForm(
+                      e.currentTarget.checked
+                        ? { questions: [newServiceFormQuestion('pickOne')] }
+                        : null
+                    )
+                  }
+                />
+                {requestForm && (
+                  <ServiceRequestFormEditor
+                    value={requestForm}
+                    onChange={setRequestForm}
+                    base={{ price: price ?? 0, deliveryDays: deliveryDays ?? 0 }}
+                  />
+                )}
+              </Stack>
+            </Input.Wrapper>
           )}
           {reviewsNext && (
             <InputCheckbox

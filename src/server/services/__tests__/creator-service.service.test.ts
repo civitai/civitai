@@ -1045,10 +1045,20 @@ describe('a request form', () => {
     expect(written()).toMatchObject({ ingestion: 'Pending' });
   });
 
-  it('removes the form, and its "from" price, when cleared', async () => {
+  it('writes the price as the least a buyer pays on a new service without a form', async () => {
+    seller();
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
+    expect(dbMock.dbWrite.serviceOffering.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ fromPrice: fields.price, requestFormVersion: 0 }),
+      })
+    );
+  });
+
+  it('removes the form when cleared, leaving the price as the least a buyer pays', async () => {
     seller();
     saved({ requestForm: FORM });
     await save({ requestForm: null });
-    expect(written()).toMatchObject({ fromPrice: null, requestFormVersion: 3 });
+    expect(written()).toMatchObject({ fromPrice: fields.price, requestFormVersion: 3 });
   });
 });

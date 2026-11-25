@@ -437,8 +437,9 @@ async function findViewableServiceOffering<
 
 const feedOrderBy = {
   newest: [{ createdAt: 'desc' }, { id: 'desc' }],
-  price_asc: [{ price: 'asc' }, { id: 'asc' }],
-  price_desc: [{ price: 'desc' }, { id: 'desc' }],
+  // What a buyer pays at least: the price, or a request form's cheapest total.
+  price_asc: [{ fromPrice: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
+  price_desc: [{ fromPrice: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
   // -1 below SERVICE_HAPPY_MIN_REVIEWS, so offerings without a share sort after those with one.
   happy: [{ happySortKey: 'desc' }, { id: 'desc' }],
 } satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
@@ -672,14 +673,15 @@ export async function upsertServiceOffering({
 
 /**
  * The form's columns for a save: refused when some valid answers would total outside the price
- * bounds or add too many days. `fromPrice` is the cheapest total, what cards and sorting read.
+ * bounds or add too many days. `fromPrice` is the least a buyer pays (the price, or the form's
+ * cheapest total), which the feed sorts by.
  */
 function requestFormFields(
   form: ServiceRequestForm | null,
   base: { price: number; deliveryDays: number },
   requestFormVersion: number
 ) {
-  if (!form) return { requestForm: Prisma.DbNull, fromPrice: null, requestFormVersion };
+  if (!form) return { requestForm: Prisma.DbNull, fromPrice: base.price, requestFormVersion };
   const error = serviceFormRangeError(form, base);
   if (error) throw throwBadRequestError(error);
   return {
