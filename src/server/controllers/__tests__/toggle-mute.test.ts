@@ -113,5 +113,7 @@ describe('toggleMute when the replica lags the primary', () => {
     await toggleMuteHandler({ input: { id: USER }, ctx: ctx() }).catch(() => undefined);
 
     expect(muteWrites()).toHaveLength(0);
+    // The unmute ran: its transaction was entered.
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
   });
 });

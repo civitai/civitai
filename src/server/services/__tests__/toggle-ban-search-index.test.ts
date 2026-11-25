@@ -792,6 +792,7 @@ describe('toggleContestBan when the replica lags the primary', () => {
 
     await contestBan();
 
+    expect(userUpdate).toHaveBeenCalledTimes(1);
     expect(writtenContestBan()).toBeUndefined();
   });
 });
