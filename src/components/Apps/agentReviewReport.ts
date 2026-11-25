@@ -494,8 +494,6 @@ export function degradedReportSummary(
   return `${parts.join(', and ')}. What did complete is shown below.`;
 }
 
-// --- Report picker (pure, unit-testable) -----------------------------------
-
 /** One run of a review, as the report picker lists it. */
 export type AgentReportRunSummary = {
   id: string;
