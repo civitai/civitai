@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { civitaiAppUrl } from './civitai-url';
+import { tryCivitaiInternalUrl } from './civitai-url';
 
 // HARD RULE: a spoke→main callback is allowed ONLY where main owns a fan-out the spoke cannot
 // reproduce without becoming a second source of truth. Port everything else as a direct Kysely
@@ -56,11 +56,15 @@ export async function syncSearchIndexBulk(
 
 /** `logContext` is what reaches the console on failure — never the id array, which can be 1,000 long. */
 async function postSync(body: unknown, logContext: unknown, strict = false): Promise<void> {
-  const base = civitaiAppUrl();
   const token = env.WEBHOOK_TOKEN;
   if (!token) {
     console.warn('[search-index] WEBHOOK_TOKEN not set — skipping Meilisearch sync', logContext);
     if (strict) throw new Error('search-index sync skipped: WEBHOOK_TOKEN not set');
+    return;
+  }
+  const base = tryCivitaiInternalUrl();
+  if (base === null) {
+    if (strict) throw new Error('search-index sync skipped: CIVITAI_INTERNAL_URL not set');
     return;
   }
 

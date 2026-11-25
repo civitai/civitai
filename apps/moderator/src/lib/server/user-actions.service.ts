@@ -18,7 +18,7 @@ import type {
   MembershipResyncResult,
 } from '$lib/membership-extend';
 import type { CompGiftPreview, CompGiftResult, CompGiftTier } from '$lib/membership-gift-comp';
-import { civitaiAppUrl } from './civitai-url';
+import { tryCivitaiInternalUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
@@ -74,6 +74,9 @@ export type ActionResult =
     }
   | { ok: false; error: string; retryAfterSeconds?: number };
 
+const INTERNAL_URL_UNSET =
+  'The main app is unreachable from here: CIVITAI_INTERNAL_URL is not set.';
+
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
  *  the client, so every one of these is called from a form action, never proxied. */
 async function callMainApp(
@@ -84,7 +87,8 @@ async function callMainApp(
   const token = env.WEBHOOK_TOKEN;
   if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
 
-  const base = civitaiAppUrl();
+  const base = tryCivitaiInternalUrl();
+  if (base === null) return { ok: false, error: INTERNAL_URL_UNSET };
   const query = new URLSearchParams({ ...params, token });
   try {
     const res = await fetch(`${base}${path}?${query}`, {
@@ -155,7 +159,8 @@ async function postJson(opts: {
   /** `'session'` only: forward this cookie instead of the current request's. */
   cookie?: string;
 }): Promise<JsonResult> {
-  const base = civitaiAppUrl();
+  const base = tryCivitaiInternalUrl();
+  if (base === null) return { ok: false, error: INTERNAL_URL_UNSET, requestNeverSent: true };
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   let url = `${base}${opts.path}`;
 
