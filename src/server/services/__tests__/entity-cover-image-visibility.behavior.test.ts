@@ -743,21 +743,29 @@ describe('a cover at the Blocked level with no block recorded', () => {
 
 describe("a bounty's image listed on a report", () => {
   // Bounty 3101's images: 3111 listed (as an object entry) and owned by OWNER, 3112 unlisted.
-  // Entry 3102's only image 3113 is listed too; entries are out of this rule's scope.
+  // Entry 3102's images: 3113 listed (as a string entry) and owned by OWNER, 3114 unlisted.
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "Bounty" VALUES (3101, ${OWNER}, 'Public');
       INSERT INTO "BountyEntry" VALUES (3102, 3101, 50);
-      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113);
+      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113), (3114);
       INSERT INTO "ImageConnection" VALUES
-        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'), (3113, 3102, 'BountyEntry');
+        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'),
+        (3113, 3102, 'BountyEntry'), (3114, 3102, 'BountyEntry');
       INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3111}, "3113"]');
     `);
   });
 
-  const coverFor = async (viewer: Viewer, seesReportListed?: boolean) => {
+  const coverFor = async (
+    viewer: Viewer,
+    seesReportListed?: boolean,
+    entity: { entityType: 'Bounty' | 'BountyEntry'; entityId: number } = {
+      entityType: 'Bounty',
+      entityId: 3101,
+    }
+  ) => {
     const covers = await getEntityCoverImage({
-      entities: [{ entityType: 'Bounty', entityId: 3101 }],
+      entities: [entity],
       viewer,
       seesReportListed,
     });
@@ -780,7 +788,21 @@ describe("a bounty's image listed on a report", () => {
     expect(await coverFor(viewers.moderator, true)).toBe(3111);
   });
 
-  it("still serves an entry's listed image", async () => {
-    expect(await coverOf('BountyEntry', 3102, viewers.anonymous)).toBe(3113);
+  // Entries follow their bounty's rule (#10483), so an entry's listed image is passed over too.
+  const entry = { entityType: 'BountyEntry', entityId: 3102 } as const;
+
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    "passes over an entry's listed image for the %s",
+    async (who) => {
+      expect(await coverFor(viewers[who], undefined, entry)).toBe(3114);
+    }
+  );
+
+  it("keeps an entry's listed image for its uploader", async () => {
+    expect(await coverFor(viewers.owner, undefined, entry)).toBe(3113);
+  });
+
+  it("keeps an entry's listed image for a viewer who sees report-listed images", async () => {
+    expect(await coverFor(viewers.moderator, true, entry)).toBe(3113);
   });
 });
