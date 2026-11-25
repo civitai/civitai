@@ -5,7 +5,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '../progression/levels';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage } from '../../../test/seed';
+import { hideTagGroups, seedImage, tagImage } from '../../../test/seed';
+import { KNIGHTS_TAG_GROUPS } from '../knights-tag-groups';
 import { expForLevel } from '../progression/levels';
 import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE } from '../smites/config';
 import { playersDueForReset } from '../smites/smites.service';
@@ -289,6 +290,25 @@ describe('the stream', () => {
     await rating(5);
     await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 5`);
     expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+  });
+
+  it('ignores hidden tag groups: an Acolyte (say, a Knight whose career reset) is still dealt every practice image', async () => {
+    await player(1);
+    // A player who hid every group as a Knight keeps the stored choice through a reset; practice must not read it.
+    await hideTagGroups(
+      pg,
+      1,
+      KNIGHTS_TAG_GROUPS.map((g) => g.key)
+    );
+    const furry = await rating(1);
+    await tagImage(pg, 1, 5140);
+    expect(question(await getApprentice(db, 1)).item.referenceId).toBe(furry);
+
+    await answerNext(1);
+    const gore = await yesNo(2);
+    await tagImage(pg, 2, 1282);
+    const { item } = question(await getApprentice(db, 1));
+    expect(item).toMatchObject({ kind: 'yesno', referenceId: gore });
   });
 
   it('is for Acolytes only', async () => {
