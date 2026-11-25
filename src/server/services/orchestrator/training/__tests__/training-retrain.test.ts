@@ -267,7 +267,11 @@ describe('runRetrainSource', () => {
   // A source was sent an SDXL-family clip skip of 1 when the trainer raised it to 2. Replayed as
   // sent, the retrain would train on the last layer.
   describe('clip skip', () => {
-    const replayed = async (model: string, clipSkip: number, over: Parameters<typeof sourceRun>[0] = {}) => {
+    const replayed = async (
+      model: string,
+      clipSkip: number,
+      over: Parameters<typeof sourceRun>[0] = {}
+    ) => {
       const source = sourceRun(over);
       const step = source.steps![0] as unknown as { input: Record<string, unknown> };
       step.input = { ...step.input, model, clipSkip };
