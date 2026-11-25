@@ -27,7 +27,6 @@ export const APP_BLOCK_ACCEPTED_SOURCE_CLASSES = [
   'external',
 ] as const;
 
-/** The App Blocks source flags whose unreadable evaluations are counted. */
 export const APP_BLOCK_SOURCE_FLAGS = ['source-scanned-rows', 'refuse-external-sources'] as const;
 export type AppBlockSourceFlag = (typeof APP_BLOCK_SOURCE_FLAGS)[number];
 

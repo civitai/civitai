@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/setup';
 
 const { mintAppTokenMock } = vi.hoisted(() => ({
@@ -24,6 +24,7 @@ vi.mock('~/server/services/orchestrator/civitai', () => ({
 
 import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   devTunnelClientId,
@@ -84,6 +85,7 @@ describe('mintDevTunnelOauthToken', () => {
       grants: [],
       allowedScopes: SPEND,
     });
+    // 🔴 The mint never sets the client's mode: a 'testers' or staff-disabled client keeps it.
     expect(client.update).toEqual({ allowedScopes: SPEND });
 
     const consent = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
@@ -125,5 +127,45 @@ describe('mintDevTunnelOauthToken', () => {
       })
     ).rejects.toThrow(/another user/);
     expect(mintAppTokenMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('mintDevTunnelOauthToken on a client a ban disabled', () => {
+  afterEach(() => {
+    redisMock.redis.get.mockReset();
+    redisMock.redis.del.mockReset();
+  });
+
+  it('🔴 re-opens it (the mint runs only past the dev-tunnel gates) and spends the mark', async () => {
+    const marked = new Map([['oauth:ban-disabled:appdev-42-my-app', 'testers']]);
+    redisMock.redis.get.mockImplementation(
+      (async (key: string) => [...marked].find(([m]) => key.endsWith(m))?.[1] ?? null) as never
+    );
+    redisMock.redis.del.mockImplementation((async (key: string) => {
+      const hit = [...marked.keys()].find((m) => key.endsWith(m));
+      return hit && marked.delete(hit) ? 1 : 0;
+    }) as never);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+
+    await mintDevTunnelOauthToken({
+      userId: USER_ID,
+      clientId: 'appdev-42-my-app',
+      scopes: ['user:read:self'],
+      impersonatedBy: null,
+    });
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(marked.size).toBe(0);
+  });
+
+  it('🔴 a cache Redis error does not fail the mint: it still mints, re-opening nothing', async () => {
+    redisMock.redis.get.mockRejectedValue(new Error('cache down'));
+    const minted = await mintDevTunnelOauthToken({
+      userId: USER_ID,
+      clientId: 'appdev-42-my-app',
+      scopes: ['user:read:self'],
+      impersonatedBy: null,
+    });
+    expect(minted.token).toBe('civ_dev_oauth');
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

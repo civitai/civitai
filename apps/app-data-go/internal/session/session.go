@@ -77,6 +77,16 @@
 // `meta` a subscription names, and View answers the stream's latest `meta` beside its records. An
 // `end` naming a reason is an EndedError, and a key cooling down after one answers that reason too.
 //
+// REGION. With Options.Region on, a stream is keyed by the viewer's region too (the edge's region
+// headers the reading request carried, WithRegion), and its subscription carries those headers, so
+// the adapter judges the viewer's region rather than this relay's (WRITES-DESIGN.md, "Region"). A
+// viewer whose region changes opens a new stream. Off (the level streams, read as a service), no
+// stream carries a region, whatever the read's context holds.
+//
+// EXCHANGE FAILURES. Options.ClassifyExchange may name an exchange error (an ExchangeFailure): the
+// stream closes with its reason, the read answers it, and so does every read of its key while it
+// cools down, so a refusal that is not a network blip stays distinguishable from one.
+//
 // A HEAD THAT WENT BACK means the namespace's seqs restarted: the adapter ends the stream
 // `cursor_expired`, and a head below the one held is treated the same. Neither is a failure: the
 // stream closes with no cooldown, its overlays (numbered in the old order) are dropped, and the read
@@ -99,7 +109,55 @@ import (
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
+	"github.com/civitai/civitai/apps/app-data-go/internal/sign"
 )
+
+// Region is the edge's region header values a viewer's request carried, indexed as
+// sign.RegionHeaders, each "" when absent (REGION).
+type Region [3]string
+
+type regionKey struct{}
+
+// WithRegion is ctx carrying r, the reading viewer's region.
+func WithRegion(ctx context.Context, r Region) context.Context {
+	if r == (Region{}) {
+		return ctx
+	}
+	return context.WithValue(ctx, regionKey{}, r)
+}
+
+// RegionOf is the region ctx carries, or the zero Region.
+func RegionOf(ctx context.Context) Region {
+	r, _ := ctx.Value(regionKey{}).(Region)
+	return r
+}
+
+// headers are r's values by header name, the absent ones left out; nil when all are.
+func (r Region) headers() map[string]string {
+	var h map[string]string
+	for i, name := range sign.RegionHeaders {
+		if r[i] == "" {
+			continue
+		}
+		if h == nil {
+			h = map[string]string{}
+		}
+		h[name] = r[i]
+	}
+	return h
+}
+
+// ExchangeFailure is an Exchange error Options.ClassifyExchange named (EXCHANGE FAILURES): its stream
+// closes with Reason, and its reads answer it, while its key cools down too (with ErrCoolingDown).
+type ExchangeFailure struct {
+	Reason string
+	Err    error
+}
+
+func (e *ExchangeFailure) Error() string { return e.Err.Error() }
+
+// Unwrap makes an ExchangeFailure its Err.
+func (e *ExchangeFailure) Unwrap() error { return e.Err }
 
 // PrivateCursorPrefix starts every cursor the adapter's private feed issues
 // (src/server/registry-adapter/private-feed.ts: `p1.<digest>`, or `p1.empty` for a stream that holds
@@ -143,9 +201,10 @@ func (c ClientSubscriber) Subscribe(ctx context.Context, schema, token string) (
 	return c.SubscribeMeta(ctx, schema, token, nil)
 }
 
-// SubscribeMeta implements MetaSubscriber.
+// SubscribeMeta implements MetaSubscriber. The region ctx carries (a stream's, REGION) goes as the
+// subscription's region headers.
 func (c ClientSubscriber) SubscribeMeta(ctx context.Context, schema, token string, meta json.RawMessage) (Stream, error) {
-	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Token: token, Meta: meta})
+	s, err := c.Client.Subscribe(ctx, registry.Request{Schema: schema, Token: token, Meta: meta, Headers: RegionOf(ctx).headers()})
 	if err != nil {
 		return nil, err
 	}
@@ -316,6 +375,12 @@ type Options struct {
 	// InvalidToken, when set, is called each time the registry refuses the token a stream was
 	// opened with (ErrInvalidToken): the level manager's token is this service's own, re-minted then.
 	InvalidToken func()
+	// Region keys each stream by the reading request's region and sends it on the subscription
+	// (REGION). Off, no stream carries one.
+	Region bool
+	// ClassifyExchange, when set, names an Exchange error the manager does not know (EXCHANGE
+	// FAILURES); nil from it, or no ClassifyExchange, leaves it ErrFailed.
+	ClassifyExchange func(err error) *ExchangeFailure
 }
 
 // Budget caps what several managers hold together: the streams (one adapter subscription each) and
@@ -363,6 +428,8 @@ type tokenID [sha256.Size]byte
 type key struct {
 	token  tokenID
 	schema string
+	// region is the viewer's (REGION); zero with Options.Region off.
+	region Region
 }
 
 // Manager holds the streams.
@@ -379,7 +446,8 @@ type Manager struct {
 	sessions map[key]*session
 	perToken map[tokenID]int
 	cooling  map[key]time.Time
-	// coolCause is why a cooling key's stream ended, when its end named a reason (an EndedError).
+	// coolCause is why a cooling key's stream ended, when its end named a reason (an EndedError) or
+	// its exchange failed one ClassifyExchange named (an ExchangeFailure).
 	coolCause map[key]error
 	// reopened is when each key last reopened for a floor (ReopenEvery).
 	reopened map[key]time.Time
@@ -450,6 +518,9 @@ func (m *Manager) ReadAt(ctx context.Context, token, schema string, minSeq int64
 // View is ReadAt, answering the stream's latest `meta` and head beside its records.
 func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) (Snapshot, error) {
 	k := key{token: sha256.Sum256([]byte(token)), schema: schema}
+	if m.opts.Region {
+		k.region = RegionOf(ctx)
+	}
 	// The viewer's address (exchange.ClientIP) goes with a stream this read opens, to its exchange.
 	ip := exchange.ClientIP(ctx)
 	for retried := false; ; retried = true {
@@ -609,18 +680,28 @@ func (m *Manager) Ack(token, schema string, a Ack) {
 	if m.opts.OverlayTTL <= 0 || a.Seq <= 0 || a.Key == "" {
 		return
 	}
+	id := sha256.Sum256([]byte(token))
+	// Every region's stream of the token (REGION): usually one.
+	var open []*session
 	m.mu.Lock()
-	s := m.sessions[key{token: sha256.Sum256([]byte(token)), schema: schema}]
-	m.mu.Unlock()
-	if s == nil {
-		return
+	if m.opts.Region {
+		for k, s := range m.sessions {
+			if k.token == id && k.schema == schema {
+				open = append(open, s)
+			}
+		}
+	} else if s := m.sessions[key{token: id, schema: schema}]; s != nil {
+		open = append(open, s)
 	}
+	m.mu.Unlock()
 	maxOverlay := m.opts.MaxOverlayBytes
 	if maxOverlay <= 0 {
 		maxOverlay = m.opts.MaxBytes
 	}
-	if kind, ok := s.ack(a, m.opts.Now().Add(m.opts.OverlayTTL), m.opts.MaxRecords, maxOverlay); ok && m.opts.Overlaid != nil {
-		m.opts.Overlaid(kind)
+	for _, s := range open {
+		if kind, ok := s.ack(a, m.opts.Now().Add(m.opts.OverlayTTL), m.opts.MaxRecords, maxOverlay); ok && m.opts.Overlaid != nil {
+			m.opts.Overlaid(kind)
+		}
 	}
 }
 
@@ -692,7 +773,7 @@ func (s *session) dropOverlay(k string) {
 func (m *Manager) open(k key, token string, now time.Time, carried map[string]overlay, ip string) *session {
 	delete(m.cooling, k)
 	delete(m.coolCause, k)
-	ctx, cancel := context.WithCancel(exchange.WithClientIP(m.base, ip))
+	ctx, cancel := context.WithCancel(WithRegion(exchange.WithClientIP(m.base, ip), k.region))
 	s := &session{
 		k: k, opened: now, lastRead: now, cancel: cancel,
 		live: make(chan struct{}), done: make(chan struct{}), records: map[string]registry.Entity{},
@@ -815,6 +896,11 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 			return CloseBlockSpent, ErrBlockSpent
 		case errors.Is(err, exchange.ErrBlockCacheFull):
 			return CloseBlockFull, ErrBlockFull
+		}
+		if m.opts.ClassifyExchange != nil {
+			if f := m.opts.ClassifyExchange(err); f != nil {
+				return f.Reason, f
+			}
 		}
 		return CloseError, ErrFailed
 	}
@@ -1044,7 +1130,8 @@ func (m *Manager) end(s *session, reason string, err error) {
 	default:
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.Cooldown)
 		var ended *EndedError
-		if errors.As(err, &ended) {
+		var failure *ExchangeFailure
+		if errors.As(err, &ended) || errors.As(err, &failure) {
 			m.coolCause[s.k] = err
 		}
 	}

@@ -2,11 +2,34 @@ package shared
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/token"
 )
+
+// The `reason` a level stream closes for when its service token could not be minted
+// (metrics.CloseReasons).
+const (
+	CloseServiceTokenRefused     = "service_token_refused"
+	CloseServiceTokenUnavailable = "service_token_unavailable"
+)
+
+// ClassifyServiceToken is the level manager's session.Options.ClassifyExchange: a hub refusal of the
+// service token (token.ErrRefused) is ErrServiceTokenRefused, and any other failure to mint it
+// ErrServiceTokenUnavailable; a cancelled stream is left to the manager.
+func ClassifyServiceToken(err error) *session.ExchangeFailure {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return nil
+	case errors.Is(err, token.ErrRefused):
+		return &session.ExchangeFailure{Reason: CloseServiceTokenRefused, Err: ErrServiceTokenRefused}
+	default:
+		return &session.ExchangeFailure{Reason: CloseServiceTokenUnavailable, Err: ErrServiceTokenUnavailable}
+	}
+}
 
 // Bounds are one manager's stream caps.
 type Bounds struct {
@@ -23,7 +46,9 @@ type Build struct {
 	// so does a per-viewer stream: neither applies acks (overlays live in Overlays).
 	Level, Viewer Bounds
 	// ServiceToken is this service's own token and its expiry (token.Source.TokenExpiring), and
-	// ServiceRefused drops it (token.Source.Invalidate): called when the registry refuses it.
+	// ServiceRefused drops it (token.Source.Invalidate): called when the registry refuses it. A nil
+	// ServiceToken is no service client: Reader.Read refuses every read ErrNoServiceClient before any
+	// stream opens, and it is the only path to the level manager (THE SERVICE TOKEN).
 	ServiceToken   func(ctx context.Context) (string, time.Time, error)
 	ServiceRefused func()
 	// ViewerExchange trades a viewer's token for one toward the adapter (exchange.Router.Exchange).
@@ -37,6 +62,9 @@ type Build struct {
 	Closed                                                                                        func(reason string)
 	// Overlays bound the acknowledged shared writes; ProbesPerApp the signed-out probes per slug.
 	MaxOverlays, MaxOverlayBytes, ProbesPerApp int
+	// ForwardRegion sends each viewer's region on their per-viewer stream (session.Options.Region);
+	// the level streams never carry one.
+	ForwardRegion bool
 }
 
 // NewReader builds the level and per-viewer managers and the Reader over them. The caller runs and
@@ -54,8 +82,9 @@ func NewReader(b Build) (r *Reader, levels, viewers *session.Manager) {
 			tok, expires, err := b.ServiceToken(ctx)
 			return exchange.Token{Access: tok, Expires: expires}, err
 		},
-		InvalidToken: b.ServiceRefused,
-		ExpiryMargin: b.ExpiryMargin, Opened: b.Opened, Closed: b.Closed,
+		ClassifyExchange: ClassifyServiceToken,
+		InvalidToken:     b.ServiceRefused,
+		ExpiryMargin:     b.ExpiryMargin, Opened: b.Opened, Closed: b.Closed,
 		OverlayTTL: b.OverlayTTL, ReopenEvery: b.ReopenEvery,
 		Accept: AcceptLevel, SubscribeMeta: LevelMeta,
 	})
@@ -70,11 +99,13 @@ func NewReader(b Build) (r *Reader, levels, viewers *session.Manager) {
 		Opened: b.Opened, Closed: b.Closed,
 		OverlayTTL: b.OverlayTTL, ReopenEvery: b.ReopenEvery,
 		Accept: AcceptViewer,
+		// The adapter judges the viewer's region on this stream, and names the mask it holds them to.
+		Region: b.ForwardRegion,
 	})
 	r = &Reader{Levels: levels, Viewers: viewers,
 		Overlays: &Overlays{TTL: b.OverlayTTL, Max: b.MaxOverlays, MaxBytes: b.MaxOverlayBytes},
 		// A schema stays Known while any of its level streams can be open.
-		KnownTTL: levelAge, ProbesPerApp: b.ProbesPerApp}
+		KnownTTL: levelAge, ProbesPerApp: b.ProbesPerApp, NoServiceClient: b.ServiceToken == nil}
 	return r, levels, viewers
 }
 

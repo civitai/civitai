@@ -117,6 +117,21 @@ describe('oauth/app-token +server', () => {
     expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(200);
   });
 
+  it('🔴 mints nothing for ANOTHER user’s App Assistant client, even with a consent row for it', async () => {
+    // User 7 asks for a token under user 8's App Assistant client; the client and consent rows
+    // exist and would otherwise pass every check below.
+    const res = await call({ ...body, clientId: 'appassist-8' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_client');
+    expect(h.inserts).toHaveLength(0);
+    // A prefix lookalike is not the user's own client either.
+    expect((await call({ ...body, clientId: 'appassist-77' })).status).toBe(400);
+    expect(h.inserts).toHaveLength(0);
+    // Control: the user's OWN App Assistant client mints.
+    expect((await call({ ...body, clientId: 'appassist-7' })).status).toBe(200);
+    expect(h.inserts).toHaveLength(1);
+  });
+
   it('mints nothing for an impersonation', async () => {
     const res = await call({ ...body, impersonatedBy: 3 });
     expect(res.status).toBe(403);

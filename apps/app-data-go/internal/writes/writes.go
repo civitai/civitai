@@ -85,9 +85,6 @@ var (
 	ifVersionRE = regexp.MustCompile(`^[0-9]{1,15}$`)
 	// majorRE is a schema major: no sign, no leading zero, at most six digits.
 	majorRE = regexp.MustCompile(`^[1-9][0-9]{0,5}$`)
-	// regionValueRE is one region header's value, as the edge sets them (a country, a region code,
-	// a flag).
-	regionValueRE = regexp.MustCompile(`^[A-Za-z0-9-]{1,16}$`)
 )
 
 // The site's refusals of the forward itself (WRITES-DESIGN.md, "The internal route"), raised before
@@ -285,16 +282,11 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 	}
 	// The edge's region headers, copied onto the forward and signed, so the site's region rules see
 	// what the edge set. Each is one well-formed value, or absent.
-	for i, name := range sign.RegionHeaders {
-		vals := r.Header.Values(name)
-		switch {
-		case len(vals) == 0:
-		case len(vals) > 1 || !regionValueRE.MatchString(vals[0]):
-			return ob, refused(http.StatusBadRequest, "invalid_region", "invalid "+name+" header")
-		default:
-			ob.region[i] = vals[0]
-		}
+	region, bad := sign.ReadRegion(r.Header)
+	if bad != "" {
+		return ob, refused(http.StatusBadRequest, "invalid_region", "invalid "+bad+" header")
 	}
+	ob.region = region
 	ob.path = InternalPath
 	if rt.coll {
 		ob.path += "/" + collection

@@ -34,6 +34,54 @@ type Config struct {
 	Scope string
 }
 
+// ErrRefused is a token endpoint answer that refused this client (EndpointError.Refused): asking
+// again with the same credentials gets the same answer, unlike an unreachable or failing hub.
+var ErrRefused = errors.New("token endpoint refused this client")
+
+// EndpointError is a non-2xx answer from the token endpoint: its status and its OAuth `error` code
+// ("none" when it sent none, or one this service does not echo). It never carries a token or secret.
+type EndpointError struct {
+	Status int
+	Code   string
+}
+
+func (e *EndpointError) Error() string {
+	return fmt.Sprintf("token endpoint answered HTTP %d (error %s)", e.Status, e.Code)
+}
+
+// Refused reports whether the hub refused this client, a 4xx other than 429 (RFC 6749 §5.2:
+// invalid_client, unauthorized_client, invalid_scope, ...), rather than failed to answer: a 429 or a
+// 5xx is the hub's trouble, not the client's.
+func (e *EndpointError) Refused() bool {
+	return e.Status >= 400 && e.Status < 500 && e.Status != http.StatusTooManyRequests
+}
+
+// Is makes a refusing EndpointError ErrRefused.
+func (e *EndpointError) Is(target error) bool { return target == ErrRefused && e.Refused() }
+
+// Outcome names a fetch's err as the `outcome` of a fetch metric: "ok", "refused" (ErrRefused) or
+// "unavailable" (anything else: unreachable, a 429 or 5xx, an answer without a token).
+func Outcome(err error) string {
+	switch {
+	case err == nil:
+		return OutcomeOK
+	case errors.Is(err, ErrRefused):
+		return OutcomeRefused
+	default:
+		return OutcomeUnavailable
+	}
+}
+
+// The values Outcome answers.
+const (
+	OutcomeOK          = "ok"
+	OutcomeRefused     = "refused"
+	OutcomeUnavailable = "unavailable"
+)
+
+// Outcomes are every value Outcome answers.
+var Outcomes = []string{OutcomeOK, OutcomeRefused, OutcomeUnavailable}
+
 // Margin is how long before its expiry a token is replaced, so a subscription never opens with a
 // token about to run out.
 const Margin = 30 * time.Second
@@ -147,7 +195,7 @@ func (s *Source) fetch(ctx context.Context) (string, time.Duration, error) {
 		if code == "" || len(code) > 64 || strings.ContainsAny(code, " \n\"") {
 			code = "none"
 		}
-		return "", 0, fmt.Errorf("token endpoint answered HTTP %d (error %s)", res.StatusCode, code)
+		return "", 0, &EndpointError{Status: res.StatusCode, Code: code}
 	}
 	if body.AccessToken == "" {
 		return "", 0, errors.New("token endpoint answered without an access_token")

@@ -2,6 +2,7 @@ package token
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -186,5 +187,33 @@ func TestAnswerWithoutTokenIsAnError(t *testing.T) {
 	s := New(Config{URL: srv.URL, ClientID: clientID, ClientSecret: secret}, nil)
 	if _, err := s.Token(context.Background()); err == nil {
 		t.Fatal("want an error for an answer with no access_token")
+	}
+}
+
+// A refusal is the hub's answer about this client (a 4xx but 429): ErrRefused, outcome `refused`. A
+// 429, a 5xx or an unreachable hub is not: outcome `unavailable`. The error text stays the one it was.
+func TestARefusalIsTellableFromAFailure(t *testing.T) {
+	for status, want := range map[int]string{400: "refused", 401: "refused", 403: "refused", 429: "unavailable", 500: "unavailable", 503: "unavailable"} {
+		h := newHub(t)
+		h.status = status
+		s, _ := source(h, Config{ClientID: clientID, ClientSecret: secret})
+		var seen error
+		s.OnFetch = func(err error) { seen = err }
+		_, err := s.Token(context.Background())
+		if got := Outcome(err); got != want || Outcome(seen) != want || errors.Is(err, ErrRefused) != (want == "refused") {
+			t.Errorf("HTTP %d: outcome %q (OnFetch %q), ErrRefused %v; want %q", status, got, Outcome(seen), errors.Is(err, ErrRefused), want)
+		}
+		if !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d (error invalid_client)", status)) {
+			t.Errorf("HTTP %d: error text %q", status, err)
+		}
+	}
+	h := newHub(t)
+	s, _ := source(h, Config{ClientID: clientID, ClientSecret: secret})
+	h.srv.Close()
+	if _, err := s.Token(context.Background()); Outcome(err) != "unavailable" || errors.Is(err, ErrRefused) {
+		t.Errorf("unreachable: %v, outcome %q", err, Outcome(err))
+	}
+	if Outcome(nil) != "ok" {
+		t.Error("nil is not ok")
 	}
 }
