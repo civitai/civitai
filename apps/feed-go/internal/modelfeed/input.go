@@ -114,6 +114,9 @@ type Ports struct {
 	IDs bool
 	// Followed is FEED_GO_GETALL_SERVE_INPUT_FOLLOWED: compute a request with `followed`.
 	Followed bool
+	// HidePaid is FEED_GO_GETALL_SERVE_HIDE_PAID: compute a request with `hidePaid` true (the
+	// free-version rule, DESIGN.md §15.2.7). Off, it is the `input-hidePaid` fallback.
+	HidePaid bool
 }
 
 // modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).
@@ -344,6 +347,11 @@ func ParseWith(m map[string]any, p Ports) (*Input, error) {
 		if in.Followed, err = booleanString(m["followed"]); err != nil {
 			return nil, fallback.NewfSafe("input-invalid", "followed", "followed: %v", err)
 		}
+	}
+	// Last, so a value the schema refuses is still input-invalid. Node keeps a gated model that has a
+	// free Published version and shows that version; only the port behind p.HidePaid does too.
+	if in.HidePaid && !p.HidePaid {
+		return nil, fallback.New("input-hidePaid")
 	}
 	return in, nil
 }

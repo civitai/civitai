@@ -1,11 +1,9 @@
-import { safeReturnPath } from '@civitai/auth/client';
+import { isSendId } from '@civitai/email';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
+import { safeSitePath, sitePathOf } from '~/server/email/link-tracking';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
-import {
-  signEmailLink,
-  verifyEmailLinkSignature,
-} from '~/server/services/notification-email.service';
+import { signEmailLink, verifyEmailLinkSignature } from '~/server/email/link-signing';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 /**
@@ -20,39 +18,21 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 /** The ClickHouse table (DDL: src/server/clickhouse/migrations/2026-11-24-notification-digest-events.sql). */
 export const DIGEST_EVENTS_TABLE = 'notificationDigestEvents';
 export const DIGEST_CLICK_PATH = '/api/notifications/digest-click';
+/** The digest's template key (missedNotificationsDigest.email.ts), on its emailEvents rows. */
+export const DIGEST_EMAIL_TEMPLATE = 'missedNotificationsDigest';
 /** Where a click with a broken link lands. */
 export const DIGEST_FALLBACK_PATH = '/user/notifications';
 /** The position a click on "See all notifications" records; listed items count from 1. */
 export const DIGEST_ALL_POSITION = 0;
 
-const MAX_PATH_LENGTH = 2048;
-
-/**
- * `to` as a same-site path to redirect to, or null: the shared return-path rule (no scheme, no
- * host, no `//`, backslash or control character, checked again after normalising), plus a length
- * cap. Returns the normalised path.
- */
-export function safeSitePath(to: unknown): string | null {
-  if (typeof to !== 'string' || to.length > MAX_PATH_LENGTH) return null;
-  return safeReturnPath(to);
-}
+/** `to` as a same-site path to redirect to, or null (the email click route's rule). */
+export { safeSitePath };
 
 /**
  * The site path a notification's url points at, or null when it points off the site (that link is
  * left as it is, untracked). Accepts a relative path or an absolute url on this site.
  */
-export function digestTargetPath(url: string | undefined): string | null {
-  if (!url) return null;
-  const base = new URL(getBaseUrl());
-  let parsed: URL;
-  try {
-    parsed = new URL(url, base);
-  } catch {
-    return null;
-  }
-  if (parsed.origin !== base.origin) return null;
-  return safeSitePath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
-}
+export const digestTargetPath = sitePathOf;
 
 export type DigestClick = {
   userId: number;
@@ -64,9 +44,15 @@ export type DigestClick = {
   notificationType: string;
   /** A same-site path. */
   to: string;
+  /**
+   * The email's send id (emailEvents.sendId), so the click is also an emailEvents `click` row.
+   * Links in digests sent before it was added carry none, and still verify.
+   */
+  sendId?: string;
 };
 
-// JSON, so no field can run into the next (a type or path may contain any separator).
+// JSON, so no field can run into the next (a type or path may contain any separator). A link with
+// a send id signs it as a sixth field; one without signs the five fields it always had.
 const clickMessage = (c: DigestClick) =>
   `notification-digest-click:${JSON.stringify([
     c.userId,
@@ -74,6 +60,7 @@ const clickMessage = (c: DigestClick) =>
     c.position,
     c.notificationType,
     c.to,
+    ...(c.sendId === undefined ? [] : [c.sendId]),
   ])}`;
 
 /** The tracked link for one digest link. Throws when `to` is not a same-site path. */
@@ -87,6 +74,7 @@ export function getDigestClickUrl(click: DigestClick) {
     p: String(signed.position),
     n: signed.notificationType,
     to,
+    ...(signed.sendId === undefined ? {} : { e: signed.sendId }),
     s: signEmailLink(clickMessage(signed)),
   });
   return `${getBaseUrl()}${DIGEST_CLICK_PATH}?${params}`;
@@ -108,12 +96,14 @@ export function verifyDigestClick(query: Record<string, unknown>): DigestClick |
   if (userId === null || cycleMs === null || position === null || to === null) return null;
   if (typeof notificationType !== 'string' || notificationType.length > 100) return null;
   if (typeof query.s !== 'string') return null;
+  if (query.e !== undefined && !isSendId(query.e)) return null;
   const click: DigestClick = {
     userId,
     cycleStartedAt: new Date(cycleMs),
     position,
     notificationType,
     to,
+    ...(isSendId(query.e) ? { sendId: query.e } : {}),
   };
   // `to` is signed as the link carried it: a link whose path normalises to something else fails.
   if (to !== query.to) return null;

@@ -277,6 +277,46 @@ func TestIntegrationModelLookups(t *testing.T) {
 	}
 }
 
+// Hide Paid keeps a gated model that has a free Published version (freePublishedVersionExistsSql): with
+// a free Public version always, with a free Private one only while private models are shown; a free
+// Draft or a version under its own live gate never counts. The seed's two gated models each start with
+// one gated version, so both are hidden until a free version is added.
+func TestIntegrationModelHidePaidFreeVersion(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	page := func(hidePrivate bool) []int {
+		return integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, HidePaid: true, HidePrivate: hidePrivate}))
+	}
+	integWant(t, "only gated versions, private hidden", page(true), []int{})
+	integWant(t, "only gated versions, private shown", page(false), []int{})
+	// 3101001: a free Public version. 3101002: a free Private one, a free Draft, and one more gated.
+	integtest.Exec(t, pool, `
+		INSERT INTO "ModelVersion" (id, "modelId", "baseModel", status, availability) VALUES
+		  (3101611, 3101001, 'SDXL 1.0', 'Published', 'Public'),
+		  (3101612, 3101002, 'Pony', 'Published', 'Private'),
+		  (3101613, 3101002, 'Pony', 'Draft', 'Public'),
+		  (3101614, 3101002, 'Pony', 'Published', 'Public');
+		INSERT INTO "PaidAccess" ("entityType", "entityId", "ownerId", "endsAt", "timeframeDays") VALUES
+		  ('ModelVersion', 3101614, 3101902, NULL, NULL);
+	`)
+	integWant(t, "free versions, private hidden", page(true), []int{3101001})
+	integWant(t, "free versions, private shown", page(false), []int{3101001, 3101002})
+	// An expired gate is no gate: 3101002's paid Public version is free once its window ends.
+	integtest.Exec(t, pool, `UPDATE "PaidAccess" SET "endsAt" = '2020-01-01 00:00:00' WHERE "entityId" = 3101614`)
+	integWant(t, "expired gate, private hidden", page(true), []int{3101001, 3101002})
+
+	// The gate read carries each gated model's gated version ids (the expired gate's version is not one).
+	gated, err := paidAccessGates(integtest.Ctx(t), pool, []int{3101001, 3101002, 3101003})
+	if err != nil {
+		t.Fatal(err)
+	}
+	integWant(t, "gated versions of 3101001", gated[3101001].versionIDs, []int{3101601})
+	integWant(t, "gated versions of 3101002", gated[3101002].versionIDs, []int{3101602})
+	if len(gated) != 2 || gated[3101001].deadline == nil || gated[3101002].deadline != nil {
+		t.Fatalf("gates %+v: want two models, 3101001 timed, 3101002 permanent", gated)
+	}
+}
+
 // integSeedCollections adds collections over integSeedModels' models:
 //
 //	3102001 Public   owner 3101901  items: 3101001 ACCEPTED, 3101002 REVIEW added by 3101903, 3101005 REJECTED

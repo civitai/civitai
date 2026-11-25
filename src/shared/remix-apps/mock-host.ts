@@ -8,6 +8,7 @@ import type {
   RemixWorkflowResult,
 } from '~/shared/remix-apps/define';
 import {
+  REMIX_IMAGE_STAND_IN,
   remixLogSize,
   replayRemixApp,
   type RemixEffect,
@@ -23,6 +24,7 @@ export type RemixTraceStep =
 export function firstAnswer(spec: RemixAsk): RemixAnswer {
   if (spec.kind === 'choice') return spec.options[0].value;
   if (spec.kind === 'pick') return 0;
+  if (spec.kind === 'image') return REMIX_IMAGE_STAND_IN;
   return 'remix';
 }
 

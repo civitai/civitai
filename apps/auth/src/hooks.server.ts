@@ -29,6 +29,11 @@ import { authS2sRequestsTotal, unhandledErrorsTotal } from '$lib/server/metrics'
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { callerShape, readInternalCaller } from '$lib/server/auth/s2s';
 import { logAxiomError } from '$lib/server/axiom';
+import { registerEmailSendRecorder } from '$lib/server/email/send-recorder';
+
+// Every send the hub makes (sign-in, verification, invite) is a send row in the main app's
+// emailEvents, through its internal route.
+registerEmailSendRecorder();
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 

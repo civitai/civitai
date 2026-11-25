@@ -2,7 +2,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { heldUserSql } from '@civitai/shared/held-media';
 import { createExternalCsamReportSchema } from '~/server/schema/csam.schema';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import * as eventEngine from '../../../../apps/event-engine/src/vector-sync/held';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -90,7 +89,7 @@ describe('heldUserSql', () => {
     expect(secondary.safeParse(String(JSON_NUMBER)).success).toBe(false);
   });
 
-  it("is the event-engine copy's result too", async () => {
-    expect(await held(eventEngine.heldUserSql)).toEqual(await held(heldUserSql));
+  it('refuses a reference it would splice unchecked', () => {
+    expect(() => heldUserSql('x); DROP TABLE "User"; --')).toThrow(/reference/);
   });
 });
