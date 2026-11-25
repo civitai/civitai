@@ -335,7 +335,7 @@ describe('enableAppAssistant', () => {
     expect(CLIENT_ID.startsWith('firstparty-')).toBe(false);
     const upsert = dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0];
     expect(upsert.where).toEqual({ id: CLIENT_ID });
-    expect(upsert.update).toEqual({ allowedScopes: SCOPE });
+    expect(upsert.update).toEqual({ allowedScopes: SCOPE, accessMode: 'open' });
     expect(upsert.create).toMatchObject({
       id: CLIENT_ID,
       userId: USER_ID,
@@ -408,7 +408,30 @@ describe('enableAppAssistant', () => {
     await enableAppAssistant(USER_ID);
     expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).toEqual({
       allowedScopes: SCOPE,
+      accessMode: 'open',
     });
+  });
+
+  it('🔴 re-opens a client a ban disabled, even when its scopes are already right', async () => {
+    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({
+      allowedScopes: SCOPE,
+      accessMode: 'disabled',
+    });
+    await enableAppAssistant(USER_ID);
+    expect(dbMock.dbWrite.oauthClient.upsert).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.oauthClient.upsert.mock.calls[0][0].update).toEqual({
+      allowedScopes: SCOPE,
+      accessMode: 'open',
+    });
+  });
+
+  it('leaves an open client with the right scopes alone', async () => {
+    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({
+      allowedScopes: SCOPE,
+      accessMode: 'open',
+    });
+    await enableAppAssistant(USER_ID);
+    expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
   });
 });
 

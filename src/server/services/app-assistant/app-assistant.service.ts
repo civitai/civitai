@@ -222,9 +222,12 @@ export async function enableAppAssistant(userId: number): Promise<void> {
 
   const client = await dbWrite.oauthClient.findUnique({
     where: { id: clientId },
-    select: { allowedScopes: true },
+    select: { allowedScopes: true, accessMode: true },
   });
-  if (client?.allowedScopes !== scope)
+  // A ban disables this client (`accessMode: 'disabled'`) and an unban leaves it so. Turning App
+  // Assistant on again re-opens it: every caller runs the App Assistant gate first, so after an
+  // unban this happens only once that gate (approval included) passes again.
+  if (client?.allowedScopes !== scope || client.accessMode === 'disabled')
     await dbWrite.oauthClient.upsert({
       where: { id: clientId },
       create: {
@@ -240,7 +243,7 @@ export async function enableAppAssistant(userId: number): Promise<void> {
         allowedScopes: scope,
         userId,
       },
-      update: { allowedScopes: scope },
+      update: { allowedScopes: scope, accessMode: 'open' },
       select: { id: true },
     });
 

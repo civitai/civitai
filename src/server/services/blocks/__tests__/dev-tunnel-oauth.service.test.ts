@@ -84,7 +84,9 @@ describe('mintDevTunnelOauthToken', () => {
       grants: [],
       allowedScopes: SPEND,
     });
-    expect(client.update).toEqual({ allowedScopes: SPEND });
+    // 🔴 `accessMode: 'open'`: a ban disabled this self-only client; the next mint (past the
+    // dev-tunnel gates) re-opens it.
+    expect(client.update).toEqual({ allowedScopes: SPEND, accessMode: 'open' });
 
     const consent = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
     expect(consent.where).toEqual({

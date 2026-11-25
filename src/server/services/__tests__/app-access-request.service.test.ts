@@ -49,9 +49,10 @@ const {
   decideAppAccessRequest,
   getMyAppAccessRequest,
   listAppAccessRequests,
-  revokeAppAccessForBannedUser,
   submitAppAccessRequest,
 } = await import('../app-access-request.service');
+// The ban leg lives in a leaf module (user.service's import cycle), but writes these same rows.
+const { revokeAppAccessForBannedUser } = await import('../ban-access-cleanup.service');
 
 /**
  * `AppAccessRequest` against REAL rows: the hand-applied migration runs on an in-process Postgres,

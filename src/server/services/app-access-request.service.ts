@@ -101,6 +101,11 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
   }
 }
 
+/** `make_interval` takes int4 and Prisma binds a JS number as int8, so the constant is inlined. */
+const MIN_ACCOUNT_AGE_FOR_AUTO_APPROVAL = Prisma.raw(
+  `make_interval(days => ${APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS})`
+);
+
 /**
  * The basic account checks an instant approval needs: the account exists and is not deleted, is
  * not banned, is not muted, and does not still owe the site's email check — the same rule the rest
@@ -122,7 +127,7 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
       "deletedAt" IS NULL
       AND "bannedAt" IS NULL
       AND "muted" = FALSE
-      AND "createdAt" <= CURRENT_TIMESTAMP - make_interval(days => ${APP_ACCESS_AUTO_APPROVE_MIN_ACCOUNT_AGE_DAYS}::int)
+      AND "createdAt" <= CURRENT_TIMESTAMP - ${MIN_ACCOUNT_AGE_FOR_AUTO_APPROVAL}
       AND NOT EXISTS (
         SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'declined'
       )
@@ -257,36 +262,6 @@ export async function countPendingAppAccessRequests(): Promise<number> {
     SELECT COUNT(*)::int AS "count" FROM "AppAccessRequest" WHERE "status" = 'pending'
   `);
   return row?.count ?? 0;
-}
-
-/**
- * A BAN takes app access away: every approved or pending request the person holds is declined in
- * one statement, attributed to whoever banned them (`reviewSource` 'system' with no reviewer when
- * that is the system account, as an auto-approval is). Because the rows are declined rather than
- * deleted, an unban does not hand access back: `submit` never auto-approves someone holding a
- * declined row, so a new request after the unban waits for a moderator.
- *
- * Sends no notification (the ban email is the notice) and refreshes no session (the ban invalidates
- * it). Idempotent: a second call finds nothing to decline. Returns how many rows it declined.
- */
-export async function revokeAppAccessForBannedUser({
-  userId,
-  actorId,
-}: {
-  userId: number;
-  actorId: number;
-}): Promise<number> {
-  const bySystem = actorId === constants.system.user.id;
-  const rows = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    UPDATE "AppAccessRequest"
-    SET "status" = 'declined',
-        "reviewedAt" = CURRENT_TIMESTAMP,
-        "reviewedById" = ${bySystem ? null : actorId}::int,
-        "reviewSource" = ${bySystem ? 'system' : 'moderator'}
-    WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved')
-    RETURNING "id"
-  `);
-  return rows.length;
 }
 
 /** The statuses each decision may replace. Declining an approved row is the revoke. */

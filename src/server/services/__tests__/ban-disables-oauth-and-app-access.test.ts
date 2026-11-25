@@ -3,15 +3,20 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 
 // A ban disables the account's OAuth apps and takes away its app access; an unban restores
-// neither. Both legs are covered on their own (oauth-ban-cleanup.service.test.ts,
+// neither. Both legs are covered on their own (ban-access-cleanup.service.test.ts,
 // app-access-request.service.test.ts); this pins that every ban reaches them and an unban does not.
 
 const { disableOauthForBannedUser, revokeAppAccessForBannedUser } = vi.hoisted(() => ({
-  disableOauthForBannedUser: vi.fn(async (_userId: number) => ({ clients: [], consents: 0 })),
+  disableOauthForBannedUser: vi.fn(async (_userId: number) => ({
+    disabled: [] as string[],
+    flagged: [] as string[],
+    consents: 0,
+    flagDelivery: null,
+  })),
   revokeAppAccessForBannedUser: vi.fn(async (_args: { userId: number; actorId: number }) => 0),
 }));
-vi.mock('~/server/services/oauth-ban-cleanup.service', () => ({ disableOauthForBannedUser }));
-vi.mock('~/server/services/app-access-request.service', () => ({
+vi.mock('~/server/services/ban-access-cleanup.service', () => ({
+  disableOauthForBannedUser,
   revokeAppAccessForBannedUser,
 }));
 vi.mock('~/server/services/user-token-revocation.service', async (importOriginal) => ({

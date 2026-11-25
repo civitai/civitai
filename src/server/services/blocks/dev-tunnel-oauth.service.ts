@@ -1,4 +1,5 @@
 import { mintAppToken } from '@civitai/auth';
+import { DEV_TUNNEL_CLIENT_PREFIX as DEV_CLIENT_PREFIX } from '@civitai/auth/self-only-client';
 import { dbWrite } from '~/server/db/client';
 import { simpleBuzzLimitToBudgets } from '~/server/schema/api-key.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
@@ -6,8 +7,6 @@ import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import { DEV_TUNNEL_SESSION_BUZZ_CAP } from '~/server/services/blocks/dev-tunnel-session';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
-
-const DEV_CLIENT_PREFIX = 'appdev-';
 
 /** The OAuth client a never-submitted app borrows in its author's tunnel; a submitted app has its own. */
 export function devTunnelClientId(userId: number, slug: string): string {
@@ -66,7 +65,9 @@ export async function mintDevTunnelOauthToken(opts: {
         allowedScopes: scope,
         userId,
       },
-      update: { allowedScopes: scope },
+      // `accessMode` back to open: a ban disables this self-only client, and this mint runs only
+      // once the dev-tunnel gates pass again, so re-enabling it here is the normal way back.
+      update: { allowedScopes: scope, accessMode: 'open' },
       select: { id: true },
     });
   }

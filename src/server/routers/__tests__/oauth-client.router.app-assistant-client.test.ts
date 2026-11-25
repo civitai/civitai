@@ -79,7 +79,10 @@ describe('oauthClient on an App Assistant client', () => {
     expect(dbMock.dbWrite.oauthClient.update).not.toHaveBeenCalled();
   });
 
-  it('🔴 refuses a secret rotation and writes nothing', async () => {
+  // INVARIANT GUARD, not regression coverage: a real App Assistant client is public
+  // (`isConfidential: false`), and `rotateSecret` only finds confidential clients, so before this
+  // guard it already answered NOT_FOUND. The fixture makes the row confidential to reach the guard.
+  it('invariant: refuses a secret rotation and writes nothing', async () => {
     owns(OWN_ASSISTANT, { isConfidential: true });
     await expect(caller().rotateSecret({ id: OWN_ASSISTANT })).rejects.toMatchObject({
       code: 'FORBIDDEN',

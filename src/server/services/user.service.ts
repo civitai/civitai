@@ -42,6 +42,10 @@ import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { assertNotMemorialized, metaWithoutMemorialSql } from '~/server/services/memorial.service';
 import { notifyModAlert } from '~/server/common/mod-alert';
+import {
+  disableOauthForBannedUser,
+  revokeAppAccessForBannedUser,
+} from '~/server/services/ban-access-cleanup.service';
 import dayjs from '~/shared/utils/dayjs';
 import {
   banReasonDetails,
@@ -3279,15 +3283,15 @@ export const toggleBan = async ({
           })
         ),
 
-      // Their OAuth apps: clients they own are disabled (App Assistant's included) and the
-      // consents they gave are deleted. An unban restores neither. Isolated like every other leg.
-      import('~/server/services/oauth-ban-cleanup.service')
-        .then(({ disableOauthForBannedUser }) => disableOauthForBannedUser(id))
-        .then(({ clients, consents }) =>
+      // Their OAuth apps: their own App Assistant and dev-tunnel clients are disabled, any other
+      // app they own is flagged for a moderator (left working for its users), and the consents they
+      // gave are deleted. Isolated like every other leg.
+      disableOauthForBannedUser(id)
+        .then(({ disabled, flagged, consents }) =>
           logToAxiom({
             type: 'info',
             name: 'ban-user-disable-oauth',
-            message: `disabled ${clients.length} oauth client(s) and deleted ${consents} consent(s) for banned user ${id}`,
+            message: `disabled ${disabled.length} self-only oauth client(s), flagged ${flagged.length} for review and deleted ${consents} consent(s) for banned user ${id}`,
           })
         )
         .catch((error) =>
@@ -3302,17 +3306,13 @@ export const toggleBan = async ({
       // or pending request is declined, so the grant is gone and an unban cannot be followed by an
       // automatic re-approval. (The sandbox service's own ban signal is the "*" preview revoke the
       // block-instance leg above sends.) Isolated like every other leg.
-      import('~/server/services/app-access-request.service')
-        .then(({ revokeAppAccessForBannedUser }) =>
-          revokeAppAccessForBannedUser({ userId: id, actorId: userId })
-        )
-        .catch((error) =>
-          logToAxiom({
-            type: 'error',
-            name: 'ban-user-revoke-app-access',
-            message: (error as Error).message,
-          })
-        ),
+      revokeAppAccessForBannedUser({ userId: id, actorId: userId }).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-revoke-app-access',
+          message: (error as Error).message,
+        })
+      ),
 
       // Group B: External operations (subscription + search indexes)
       Promise.all([
