@@ -203,7 +203,6 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCompletedChallengesWithWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
-    // The feed searches the text when the semantic search fails, so it refuses the same way.
     .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const guard = await guardTextQuery(input, ctx);
