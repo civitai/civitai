@@ -76,8 +76,15 @@ vi.mock('~/components/Apps/AgentReviewChat', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
-    useUtils: () => ({ blocks: { getAgentReview: { invalidate: mocks.invalidate } } }),
+    useUtils: () => ({
+      blocks: {
+        getAgentReview: { invalidate: mocks.invalidate },
+        listAgentReviews: { invalidate: mocks.invalidate },
+      },
+    }),
     blocks: {
+      listAgentReviews: { useQuery: () => ({ data: [] }) },
+      getAgentReviewModels: { useQuery: () => ({ data: { available: true, models: [] } }) },
       getAgentReview: {
         useQuery: () => ({
           data: mocks.report,

@@ -24,7 +24,7 @@ import {
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB,
@@ -163,6 +163,7 @@ import {
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
   agentReviewChatSchema,
+  agentReviewRequestSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
   getPublishRequestSchema,
@@ -3233,6 +3234,8 @@ export const blocksRouter = router({
           // Optional targeted re-run (one failed analysis instead of all three).
           // `undefined` ⇒ a full run, exactly as before this field existed.
           sections: input.sections,
+          // Optional OpenRouter model for this run. `undefined` ⇒ the agent's default model.
+          model: input.model,
         });
       } catch (err) {
         // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a
@@ -3272,7 +3275,68 @@ export const blocksRouter = router({
         throw throwAuthorizationError('Agentic review is not enabled');
       }
       const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
-      return getAgentReport(input.publishRequestId);
+      // `reportId` (the report picker) is looked up WITHIN this request, so the per-request
+      // gate above still covers it.
+      return getAgentReport(input.publishRequestId, input.reportId);
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW — every run of a request, newest first (model, status, times, cost),
+   * for the panel's report picker. Gated IDENTICALLY to getAgentReview.
+   */
+  listAgentReviews: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(agentReviewRequestSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAgentReviewLaneEnabled } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { listAgentReports } = await import(
+        '~/server/services/blocks/app-review-report.service'
+      );
+      return listAgentReports(input.publishRequestId);
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW — the models a re-run can be dispatched on: OpenRouter's
+   * tool-capable models with their prices (cached server-side). Gated IDENTICALLY to
+   * startAgentReview, on the request the moderator is reviewing. When OpenRouter cannot be
+   * reached this answers `available: false` rather than failing: the picker still takes a typed
+   * id, and startAgentReview re-checks it.
+   */
+  getAgentReviewModels: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(agentReviewRequestSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAgentReviewLaneEnabled } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { getAgentReviewModelOptions } = await import(
+        '~/server/services/blocks/agent-review-models.service'
+      );
+      try {
+        return { available: true, models: [...(await getAgentReviewModelOptions())] };
+      } catch (err) {
+        logToAxiom({
+          name: 'app-blocks.review.agent-models',
+          type: 'warning',
+          message: 'could not load the OpenRouter model list',
+          error: safeError(err),
+        });
+        return { available: false, models: [] };
+      }
     }),
 
   /**
@@ -3308,6 +3372,8 @@ export const blocksRouter = router({
         return await agentReviewChat({
           publishRequestId: input.publishRequestId,
           messages: input.messages,
+          // The run on screen (report picker). Looked up within this request in the service.
+          reportId: input.reportId,
         });
       } catch (err) {
         // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;

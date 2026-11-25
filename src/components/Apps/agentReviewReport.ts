@@ -493,3 +493,30 @@ export function degradedReportSummary(
   }
   return `${parts.join(', and ')}. What did complete is shown below.`;
 }
+
+// --- Report picker (pure, unit-testable) -----------------------------------
+
+/** One run of a review, as the report picker lists it. */
+export type AgentReportRunSummary = {
+  id: string;
+  model: string | null;
+  status: string;
+  startedAt: Date | string;
+  costUsd?: unknown;
+};
+
+/**
+ * The picker's line for one run: model, status, start time (UTC, so two moderators reading the
+ * same run see the same time) and cost. `model` is shown as stored — it is what the review agent
+ * says it ran — and a run that has not reported a model yet says so rather than guessing.
+ */
+export function agentReportRunLabel(run: AgentReportRunSummary): string {
+  const started = new Date(run.startedAt);
+  const when = Number.isNaN(started.getTime())
+    ? null
+    : `${started.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  const cost = formatCostUsd(run.costUsd);
+  return [run.model ?? 'model not reported', run.status, when, cost]
+    .filter((p): p is string => !!p)
+    .join(' · ');
+}

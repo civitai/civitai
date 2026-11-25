@@ -138,6 +138,26 @@ export function agentSectionFailureMessage(raw: unknown): string | null {
   return null;
 }
 
+/**
+ * The free-text `detail` the review agent attached to a failed section — the provider's or
+ * gateway's own error text, for example — or `null` when there is none.
+ *
+ * Any failure code may carry one (`{ error: 'upstream-error', detail: '…', attempts: 3 }`), and
+ * it is often the only thing that says WHY: a code names the kind of failure, the detail names
+ * the cause ("this model is no longer available"). Only read from an `{ error }` object; a
+ * result slot's own fields are never treated as a failure detail.
+ *
+ * ⚠️ ADVERSARIAL like the error itself: bounded, plain string, render as inert text only.
+ */
+export function agentSectionFailureDetail(raw: unknown): string | null {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (!('error' in o) || o.error == null) return null;
+  if (typeof o.detail !== 'string') return null;
+  const detail = o.detail.trim().slice(0, AGENT_SECTION_ERROR_MAX_CHARS);
+  return detail ? detail : null;
+}
+
 /** Whether a stored section slot is a failure marker rather than a result. */
 export function isAgentSectionFailureMarker(raw: unknown): boolean {
   return agentSectionFailureMessage(raw) != null;
@@ -155,24 +175,33 @@ export function isAgentSectionFailureMarker(raw: unknown): boolean {
  * `Object.create(null)` base plus the `typeof` narrowing in {@link agentSectionErrorMessage}
  * are two independent closes on it; keep both.
  *
- * `truncated-response` is a code the agent runner is gaining in a companion infra change.
- * Until that ships this entry simply never matches, which is the degradation we want.
+ * `truncated-response` and `upstream-error` are codes the review agent may write before or
+ * after this build ships; an entry whose code never arrives simply never matches.
  *
- * The two are worth separating because they call for different actions: a non-JSON response
- * means the model answered in prose where a schema was required, and a re-run usually fixes
- * it; a truncated response was cut off mid-structure, which is a size problem that will
- * usually recur.
+ * They are separated because they call for different actions:
+ *   · `non-json-response` — no structured result could be read. The agent writes it both when
+ *     the model answered in prose and when every attempt came back EMPTY, and an empty reply is
+ *     what a model that is failing outright produces. So it does not promise a re-run helps.
+ *   · `truncated-response` — the reply was cut off mid-structure: a size problem that recurs.
+ *   · `upstream-error` — the provider or gateway refused the call, so no analysis ran at all;
+ *     the same model will usually fail the same way until it recovers.
+ * Any of them may carry a `detail` (see {@link agentSectionFailureDetail}), shown beneath.
  */
 export const AGENT_SECTION_ERROR_MESSAGES: Record<string, string> = Object.assign(
   Object.create(null) as Record<string, string>,
   {
     'non-json-response':
-      'The analysis replied in prose instead of the structured format, so nothing could be ' +
-      'read from it. Re-running this one analysis usually clears it.',
+      'No structured result could be read from the analysis: the model replied in prose, or ' +
+      'returned nothing at all. A prose reply is often a one-off; an empty one usually means ' +
+      'the model itself is failing, so if this repeats, re-run with a different model.',
     'truncated-response':
       'The analysis reply was cut off before it finished, so the structured result is ' +
       'incomplete. This is usually a size problem rather than a transient one — re-running ' +
       'the same bundle will often truncate again.',
+    'upstream-error':
+      'The model provider returned an error, so no analysis ran. Re-running on the same model ' +
+      'will usually fail the same way until the provider recovers; re-run with a different ' +
+      'model instead.',
   }
 );
 
@@ -188,10 +217,15 @@ export const AGENT_SECTION_ERROR_MESSAGES: Record<string, string> = Object.assig
  * 🔴 THE `typeof` NARROWING IS THE SECOND CLOSE ON THE PROTOTYPE HOLE above. Even against a
  * table that somehow carried a non-string, this returns the raw (bounded) error rather than
  * handing a function or an object to a React child.
+ *
+ * A `detail` on the slot, for any code, is appended verbatim on its own line: it is the cause
+ * the code only names the kind of.
  */
 export function agentSectionErrorMessage(raw: unknown): string | null {
   const error = agentSectionFailureMessage(raw);
   if (error == null) return null;
   const mapped = AGENT_SECTION_ERROR_MESSAGES[error];
-  return typeof mapped === 'string' ? mapped : error;
+  const message = typeof mapped === 'string' ? mapped : error;
+  const detail = agentSectionFailureDetail(raw);
+  return detail ? `${message}\n\nDetail: ${detail}` : message;
 }

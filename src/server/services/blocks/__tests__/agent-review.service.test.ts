@@ -114,6 +114,30 @@ import {
   buildAgentReviewApplyScript,
   agentReviewName,
 } from '~/server/services/blocks/agent-review.service';
+import {
+  getAgentReviewModelOptions,
+  OPENROUTER_MODELS_URL,
+} from '~/server/services/blocks/agent-review-models.service';
+
+/** OpenRouter's model list as the chosen-model tests see it (USD per token, as strings). */
+const OPENROUTER_MODELS_BODY = {
+  data: [
+    {
+      id: 'anthropic/claude-haiku-4.5',
+      name: 'Anthropic: Claude Haiku 4.5',
+      context_length: 200_000,
+      pricing: { prompt: '0.000001', completion: '0.000005' },
+      supported_parameters: ['tools', 'tool_choice'],
+    },
+    {
+      id: 'acme/chat-only',
+      name: 'Acme: Chat Only',
+      context_length: 8_000,
+      pricing: { prompt: '0.0000001', completion: '0.0000002' },
+      supported_parameters: ['temperature'],
+    },
+  ],
+};
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 const SHA = 'f'.repeat(64);
@@ -125,6 +149,15 @@ function stubFetch(postOk = true) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init: RequestInit) => {
+      // OpenRouter's public model list (the chosen-model price lookup). Not a k8s call, so it
+      // is not recorded in `calls`.
+      if (String(url).startsWith(OPENROUTER_MODELS_URL)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => OPENROUTER_MODELS_BODY,
+        } as unknown as Response;
+      }
       calls.push({
         url,
         method: String(init.method),
@@ -171,6 +204,7 @@ beforeEach(() => {
   process.env.KUBERNETES_SERVICE_PORT = '443';
   process.env.NEXTAUTH_URL = 'https://civitai.com';
   vi.clearAllMocks();
+  getAgentReviewModelOptions.clear();
   mockAppBlockFindFirst.mockResolvedValue(null);
   mockReportFindFirst.mockResolvedValue(null);
   mockGetPrior.mockResolvedValue(null);
@@ -520,7 +554,13 @@ describe('buildAgentReviewApplyScript', () => {
     // Set only on the connect lane / a targeted re-run: without the :- default the
     // fallback aborts the apply (set -u) on every other run, and without the line at
     // all the connect lane is rendered as on-site.
-    for (const v of ['AGENT_REVIEW_KIND', 'AGENT_REVIEW_SECTIONS']) {
+    for (const v of [
+      'AGENT_REVIEW_KIND',
+      'AGENT_REVIEW_SECTIONS',
+      'ANALYSIS_MODEL',
+      'PRICE_IN_PER_M',
+      'PRICE_OUT_PER_M',
+    ]) {
       expect(script).toContain(`-e "s|\\\${${v}}|\${${v}:-}|g"`);
     }
   });
@@ -711,6 +751,83 @@ describe('startAgentReview — targeted re-run', () => {
     const created = createdRow();
     expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);
     expect(created.securityAudit).toBeUndefined();
+  });
+});
+
+/**
+ * CHOSEN MODEL — a moderator re-runs the review on another OpenRouter model (a second opinion,
+ * or a way round a default model that stopped working).
+ */
+describe('startAgentReview — chosen model', () => {
+  it("passes the model, in the agent's format, WITH its price, and names it on the new row", async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      model: 'anthropic/claude-haiku-4.5',
+    });
+
+    const e = jobEnv();
+    expect(e.ANALYSIS_MODEL).toBe('openrouter/anthropic/claude-haiku-4.5');
+    // The price is what lets the cost cap cost THIS model rather than the default's rate.
+    expect(e.PRICE_IN_PER_M).toBe('1');
+    expect(e.PRICE_OUT_PER_M).toBe('5');
+    expect(createdRow().model).toBe('openrouter/anthropic/claude-haiku-4.5');
+  });
+
+  it('🔴 NO model ⇒ no model vars at all and no model on the row (the default Job is unchanged)', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
+
+    const e = jobEnv();
+    expect(e.ANALYSIS_MODEL).toBeUndefined();
+    expect(e.PRICE_IN_PER_M).toBeUndefined();
+    expect(e.PRICE_OUT_PER_M).toBeUndefined();
+    expect(createdRow().model).toBeUndefined();
+  });
+
+  it('refuses a model that is not a tool-capable OpenRouter model, before any row or Job', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await expect(
+      startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, model: 'acme/chat-only' })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  it("🔴 refuses a model on a TARGETED re-run: one report would mix two models' analyses", async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({ id: 'arar_PREV', model: 'openrouter/x/y' });
+
+    await expect(
+      startAgentReview({
+        publishRequestId: PUBREQ,
+        modUserId: 7,
+        sections: ['codeReview'],
+        model: 'anthropic/claude-haiku-4.5',
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  it('a model with ALL THREE sections is a full run, so it is accepted', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['scopeVerdicts', 'securityAudit', 'codeReview'],
+      model: 'anthropic/claude-haiku-4.5',
+    });
+
+    expect(jobEnv().ANALYSIS_MODEL).toBe('openrouter/anthropic/claude-haiku-4.5');
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBeUndefined();
   });
 });
 

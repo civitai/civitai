@@ -11,10 +11,17 @@ import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { AgentReviewChat } from '~/components/Apps/AgentReviewChat';
 import { CivitaiChecksBlock } from '~/components/Apps/CivitaiChecksBlock';
 import {
+  AgentReviewModelInput,
+  AgentReviewReportPicker,
+  isDispatchableModelInput,
+} from '~/components/Apps/AgentReviewPickers';
+import {
+  AGENT_REPORT_SECTION_LABELS,
   degradedReportSummary,
   failedAgentReportSections,
   hasUsableAgentReportSection,
   missingAgentReportSections,
+  sectionErrorMessage,
   type AgentReportSection,
 } from '~/components/Apps/agentReviewReport';
 import {
@@ -130,8 +137,28 @@ export function AgentReviewPanel({
   // `running`; cleared on any terminal status; reset by the manual "Check again".
   const pollStartedAt = useRef<number | null>(null);
 
-  const reportQuery = trpc.blocks.getAgentReview.useQuery(
+  // The run on screen (report picker); `null` = the latest. A new dispatch snaps back to latest.
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  // The model for a whole-report run; blank = the review agent's default.
+  const [modelInput, setModelInput] = useState('');
+
+  // Every run of this request, newest first, for the picker. Re-read while the newest is running,
+  // so a run finishing is reflected even while an older report is on screen.
+  const runsQuery = trpc.blocks.listAgentReviews.useQuery(
     { publishRequestId },
+    {
+      retry: false,
+      refetchInterval: (query) =>
+        query.state.data?.[0]?.status === 'running' &&
+        (query.state.fetchFailureCount ?? 0) < MAX_CONSECUTIVE_POLL_ERRORS
+          ? AGENT_REVIEW_POLL_MS
+          : false,
+    }
+  );
+  const runs = runsQuery.data ?? [];
+
+  const reportQuery = trpc.blocks.getAgentReview.useQuery(
+    { publishRequestId, reportId: selectedReportId ?? undefined },
     {
       retry: false,
       // react-query v5: the callback receives the Query; poll only while running,
@@ -153,7 +180,11 @@ export function AgentReviewPanel({
     onSuccess: async () => {
       showSuccessNotification({ message: `Agentic review started for ${slug}.` });
       setRerunningSection(null);
-      await utils.blocks.getAgentReview.invalidate({ publishRequestId });
+      setSelectedReportId(null);
+      await Promise.all([
+        utils.blocks.getAgentReview.invalidate({ publishRequestId }),
+        utils.blocks.listAgentReviews.invalidate({ publishRequestId }),
+      ]);
     },
     onError: (e) => {
       // 🔴 CLEAR THE TARGETED MARKER ON THE ERROR PATH TOO. It was cleared only in
@@ -212,6 +243,21 @@ export function AgentReviewPanel({
   const partiallyUsable = failed && !!report && hasUsableAgentReportSection(report);
   const failedSections = report ? failedAgentReportSections(report) : [];
   const missingSections = report ? missingAgentReportSections(report) : [];
+  // `ReportTabs` carries the model in its own header; the other branches need it here.
+  const bodyShowsModel = hasReport || partiallyUsable;
+
+  /**
+   * 🔴 A PER-SECTION RE-RUN IS ONLY OFFERED ON THE LATEST RUN. It carries the other analyses
+   * forward from the LATEST report, not from the one on screen, so offering it under an older
+   * run would merge that run's retry into a different report than the one the moderator read.
+   */
+  const viewingLatest = selectedReportId == null || runs[0]?.id === selectedReportId;
+  const rerunSection = viewingLatest
+    ? (section: AgentReportSection) => {
+        setRerunningSection(section);
+        startMut.mutate({ publishRequestId, sections: [section] });
+      }
+    : undefined;
 
   // Mark / clear the per-run poll start so the time ceiling is measured per-run.
   useEffect(() => {
@@ -255,17 +301,35 @@ export function AgentReviewPanel({
    */
   const dispatchBusy = startMut.isPending;
 
+  /**
+   * A whole-report run, on the default model or a chosen one. Offered in every state that has a
+   * run button — including a COMPLETE report, so a moderator can ask a second model for its
+   * opinion; each run is kept, and the report picker switches between them.
+   */
+  const modelValid = isDispatchableModelInput(modelInput);
   const runButton = (label: string) => (
-    <Button
-      size="xs"
-      variant="light"
-      leftSection={<IconRobot size={14} />}
-      loading={dispatchBusy}
-      disabled={dispatchBusy}
-      onClick={() => startMut.mutate({ publishRequestId })}
-    >
-      {label}
-    </Button>
+    <Group gap="xs" align="flex-end" wrap="wrap">
+      <AgentReviewModelInput
+        publishRequestId={publishRequestId}
+        value={modelInput}
+        onChange={setModelInput}
+        disabled={dispatchBusy}
+      />
+      <Button
+        size="xs"
+        variant="light"
+        leftSection={<IconRobot size={14} />}
+        loading={dispatchBusy}
+        disabled={dispatchBusy || !modelValid}
+        onClick={() => {
+          const model = modelInput.trim();
+          startMut.mutate({ publishRequestId, ...(model ? { model } : {}) });
+        }}
+        data-testid="apps-agent-run"
+      >
+        {label}
+      </Button>
+    </Group>
   );
 
   return (
@@ -284,12 +348,24 @@ export function AgentReviewPanel({
             {status}
           </Badge>
         )}
+        {report?.model && !bodyShowsModel && (
+          <Badge size="sm" variant="outline" color="gray" data-testid="apps-agent-model">
+            {report.model}
+          </Badge>
+        )}
       </Group>
       <Text size="xs" c="dimmed">
         Dispatch an ephemeral, sandboxed agent to code-review + security-audit this pending bundle.
         Advisory decision-support only.
       </Text>
       {report?.civitaiChecks && <CivitaiChecksBlock view={report.civitaiChecks} />}
+      {runs.length > 1 && (
+        <AgentReviewReportPicker
+          runs={runs}
+          value={selectedReportId}
+          onChange={setSelectedReportId}
+        />
+      )}
 
       {reportQuery.isLoading ? (
         <Group gap={6}>
@@ -369,10 +445,7 @@ export function AgentReviewPanel({
           <ReportTabs
             report={report}
             costCapped={false}
-            onRerunSection={(section) => {
-              setRerunningSection(section);
-              startMut.mutate({ publishRequestId, sections: [section] });
-            }}
+            onRerunSection={rerunSection}
             rerunningSection={dispatchBusy ? rerunningSection : null}
             dispatchBusy={dispatchBusy}
           />
@@ -383,6 +456,28 @@ export function AgentReviewPanel({
           <Alert color="red" variant="light" icon={<IconX size={14} />}>
             The agentic review failed.
             {report.summaryMd ? ` ${report.summaryMd}` : ''}
+            {/*
+              🔴 EVERY ANALYSIS FAILED, SO SAY WHY, PER ANALYSIS. This branch used to stop at the
+              line above, and the per-section reasons — "the model provider returned an error",
+              with the provider's own text — were stored on the row and shown nowhere. Inert text.
+            */}
+            {failedSections.length > 0 && (
+              <Stack gap={4} mt={6} data-testid="apps-agent-failed-sections">
+                {failedSections.map((section) => (
+                  <Text
+                    key={section}
+                    size="xs"
+                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                    data-section={section}
+                  >
+                    <Text span size="xs" fw={600}>
+                      {AGENT_REPORT_SECTION_LABELS[section]}:
+                    </Text>{' '}
+                    {sectionErrorMessage(report[section])}
+                  </Text>
+                ))}
+              </Stack>
+            )}
           </Alert>
           <Group gap="xs">{runButton('Run again')}</Group>
         </Stack>
@@ -398,10 +493,7 @@ export function AgentReviewPanel({
           <ReportTabs
             report={report}
             costCapped={status === 'cost-capped'}
-            onRerunSection={(section) => {
-              setRerunningSection(section);
-              startMut.mutate({ publishRequestId, sections: [section] });
-            }}
+            onRerunSection={rerunSection}
             rerunningSection={dispatchBusy ? rerunningSection : null}
             dispatchBusy={dispatchBusy}
           />
@@ -427,8 +519,10 @@ export function AgentReviewPanel({
           surviving sections are precisely what a mod would want to ask about — is chattable
           too. Still hidden for no-report and torn-down: there is nothing persisted to ground
           on. Inherits the panel's client-flag + onsite-pending gate. */}
-      {(running || hasReport || partiallyUsable) && (
-        <AgentReviewChat publishRequestId={publishRequestId} />
+      {(running || hasReport || partiallyUsable) && report && (
+        // Keyed and grounded on the run on screen: switching runs starts a fresh conversation
+        // about the report now shown, never one that mixes two runs' answers.
+        <AgentReviewChat key={report.id} publishRequestId={publishRequestId} reportId={report.id} />
       )}
     </Stack>
   );

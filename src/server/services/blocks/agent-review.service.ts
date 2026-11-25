@@ -20,6 +20,7 @@ import {
   agentReviewLaneFor,
   type AgentReviewLane,
 } from '~/shared/constants/connect-agent-review.constants';
+import { toRunnerModelId } from '~/shared/constants/agent-review-model.constants';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
@@ -89,6 +90,16 @@ export type StartAgentReviewArgs = {
    * `startAgentReviewSchema` for what it does not yet buy.
    */
   sections?: readonly AgentReviewSection[];
+  /**
+   * Run on this OpenRouter model instead of the review agent's default (a second opinion, or a
+   * way round a default model that stopped working). Omitted ⇒ the default, and the Job is
+   * exactly what it was before this field existed.
+   *
+   * Only on a FULL run. A targeted re-run carries the other analyses forward from the latest
+   * report, and a report row names one model, so mixing two models' analyses in one report would
+   * attribute some of them to a model that did not write them. The service refuses the mix.
+   */
+  model?: string;
 };
 
 export type StartAgentReviewResult = {
@@ -126,6 +137,17 @@ export async function startAgentReview(
   // nothing to carry) nor stamp a pointless env var on the Job.
   const requested = args.sections ? Array.from(new Set(args.sections)) : [];
   const targeted = requested.length > 0 && requested.length < AGENT_REVIEW_SECTIONS.length;
+  if (args.model && targeted) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        'A different model can only be chosen for a full re-run: a single re-run analysis would be mixed into a report written by another model.',
+    });
+  }
+  // Resolved (and priced) before anything is staged or written, so an unknown model costs nothing.
+  const analysisModel = args.model
+    ? await (await import('./agent-review-models.service')).resolveAgentReviewModel(args.model)
+    : null;
   const { dbRead, dbWrite } = await import('~/server/db/client');
 
   // ONE DISPATCHER, TWO LANES. The id says which publish request this is: an on-site
@@ -214,6 +236,9 @@ export async function startAgentReview(
       status: 'running',
       startedAt: new Date(),
       priorReportId: prior?.id ?? null,
+      // Named up front so the run is identifiable while it is running; the agent's report
+      // writes the same value when it finishes. The default model's row stays as before.
+      ...(analysisModel ? { model: toRunnerModelId(analysisModel.id) } : {}),
     },
   });
 
@@ -227,6 +252,13 @@ export async function startAgentReview(
     bundlePresignedUrl,
     priorReportJsonB64,
     sections: targeted ? requested : undefined,
+    analysisModel: analysisModel
+      ? {
+          model: toRunnerModelId(analysisModel.id),
+          priceInPerM: String(analysisModel.promptPerM),
+          priceOutPerM: String(analysisModel.completionPerM),
+        }
+      : undefined,
   });
 }
 
@@ -419,6 +451,7 @@ async function provisionAndRecordStart(opts: {
   bundlePresignedUrl: string;
   priorReportJsonB64: string;
   sections: readonly AgentReviewSection[] | undefined;
+  analysisModel: AnalysisModelEnv | undefined;
 }): Promise<StartAgentReviewResult> {
   const { args, reportId, slug } = opts;
   const { publishRequestId } = args;
@@ -470,6 +503,8 @@ async function provisionAndRecordStart(opts: {
       sections: opts.sections,
       // Only on the connect lane, for the same reason: an on-site Job body is unchanged.
       reviewKind: opts.lane === 'connect' ? 'connect' : undefined,
+      // Only when a moderator chose a model: a default-model Job body is unchanged.
+      analysisModel: opts.analysisModel,
     });
   } catch (err) {
     await dbWrite.appReviewAgentReport
@@ -502,6 +537,7 @@ async function provisionAndRecordStart(opts: {
       actor: args.modUserId == null ? 'system' : 'moderator',
       modUserId: args.modUserId,
       sections: opts.sections ?? null,
+      model: opts.analysisModel?.model ?? null,
     },
     'webhooks'
   );
@@ -544,7 +580,22 @@ type ProvisionAgentReviewJobArgs = {
    * prompt; the facts Civitai writes itself are on the report either way.
    */
   reviewKind?: 'connect';
+  /**
+   * A moderator-chosen model ⇒ `ANALYSIS_MODEL` plus its `PRICE_IN_PER_M` / `PRICE_OUT_PER_M`;
+   * omitted for the default model, so that Job body is unchanged. The price travels with the
+   * model because the agent estimates its spend (and enforces `COST_CAP_USD`) from token counts
+   * times a per-model price: without it a dearer model would be costed at the default's rate.
+   *
+   * 🔴 LIKE `AGENT_REVIEW_SECTIONS`, THE POD SIDE SHIPS SEPARATELY. The agent template has to
+   * pass these three to the review agent, and the agent has to dispatch to `ANALYSIS_MODEL`, not
+   * only label its report with it. Until it does they are inert: the run uses the default model
+   * and its report says so.
+   */
+  analysisModel?: AnalysisModelEnv;
 };
+
+/** The chosen-model env values, already in the agent's format (`openrouter/<id>`, USD per M). */
+type AnalysisModelEnv = { model: string; priceInPerM: string; priceOutPerM: string };
 
 /**
  * Create the provisioning apply Job on dp-1's apps namespace. Mirrors
@@ -628,6 +679,14 @@ export async function provisionAgentReviewJob(
                   ? [{ name: 'AGENT_REVIEW_SECTIONS', value: args.sections.join(',') }]
                   : []),
                 ...(args.reviewKind ? [{ name: 'AGENT_REVIEW_KIND', value: args.reviewKind }] : []),
+                // Chosen model only — absent for the default (see the arg's docstring).
+                ...(args.analysisModel
+                  ? [
+                      { name: 'ANALYSIS_MODEL', value: args.analysisModel.model },
+                      { name: 'PRICE_IN_PER_M', value: args.analysisModel.priceInPerM },
+                      { name: 'PRICE_OUT_PER_M', value: args.analysisModel.priceOutPerM },
+                    ]
+                  : []),
               ],
               securityContext: {
                 allowPrivilegeEscalation: false,
@@ -695,9 +754,10 @@ set -euo pipefail
 # envsubst only substitutes EXPORTED env vars; container env vars are already
 # exported into the process env, so AGENT_NAME / PUBLISH_REQUEST_ID / APP_SLUG /
 # BUNDLE_PRESIGNED_URL / CALLBACK_URL / CALLBACK_TOKEN / PRIOR_REPORT_JSON_B64 /
-# COST_CAP_USD / HOOKS_TOKEN all substitute. AGENT_REVIEW_KIND and AGENT_REVIEW_SECTIONS
-# are set only on the connect lane / a targeted re-run, so the sed fallback reads them
-# with \${VAR:-}: under set -u a bare \${VAR} would abort the apply on every other run.
+# COST_CAP_USD / HOOKS_TOKEN all substitute. AGENT_REVIEW_KIND, AGENT_REVIEW_SECTIONS and
+# the chosen-model trio (ANALYSIS_MODEL, PRICE_IN_PER_M, PRICE_OUT_PER_M) are set only on the
+# connect lane / a targeted re-run / a chosen-model run, so the sed fallback reads them with
+# \${VAR:-}: under set -u a bare \${VAR} would abort the apply on every other run.
 if command -v envsubst >/dev/null 2>&1; then
   envsubst < /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 else
@@ -712,6 +772,9 @@ else
       -e "s|\\\${HOOKS_TOKEN}|\${HOOKS_TOKEN}|g" \\
       -e "s|\\\${AGENT_REVIEW_KIND}|\${AGENT_REVIEW_KIND:-}|g" \\
       -e "s|\\\${AGENT_REVIEW_SECTIONS}|\${AGENT_REVIEW_SECTIONS:-}|g" \\
+      -e "s|\\\${ANALYSIS_MODEL}|\${ANALYSIS_MODEL:-}|g" \\
+      -e "s|\\\${PRICE_IN_PER_M}|\${PRICE_IN_PER_M:-}|g" \\
+      -e "s|\\\${PRICE_OUT_PER_M}|\${PRICE_OUT_PER_M:-}|g" \\
       /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 fi
 
@@ -909,6 +972,13 @@ export type AgentReviewChatArgs = {
   /** The running conversation from the client (server prepends its own system
    *  grounding message — the client never supplies the system role). */
   messages: AgentReviewChatMessage[];
+  /**
+   * The report the moderator is looking at. Omitted ⇒ the latest run's. A request can hold
+   * several runs (re-runs, other models' opinions), and the chat must answer about the one on
+   * screen. Looked up within `publishRequestId`, so it can only ever name a run of the request
+   * the caller was authorised for.
+   */
+  reportId?: string;
 };
 
 export type AgentReviewChatResult = { reply: string };
@@ -984,10 +1054,10 @@ function buildAgentReviewChatSystemMessage(report: {
  * leaking internal detail.
  */
 export async function agentReviewChat(args: AgentReviewChatArgs): Promise<AgentReviewChatResult> {
-  const { publishRequestId, messages } = args;
+  const { publishRequestId, messages, reportId } = args;
 
   const { getAgentReport } = await import('./app-review-report.service');
-  const report = await getAgentReport(publishRequestId);
+  const report = await getAgentReport(publishRequestId, reportId);
   if (!report || !CHAT_GROUNDABLE_STATUSES.has(report.status)) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
