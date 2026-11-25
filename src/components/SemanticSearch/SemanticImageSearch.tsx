@@ -1,7 +1,4 @@
 import { Alert, Button, Center, Loader, MultiSelect, Text, TextInput, Title } from '@mantine/core';
-import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
-import { pageRefusal } from '~/components/Search/search-refusal';
-import { SemanticSearchError } from '~/components/SemanticSearch/SemanticSearchError';
 import { IconSearch } from '@tabler/icons-react';
 import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
@@ -26,6 +23,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { pageRefusal } from '~/components/Search/search-refusal';
+import { SemanticSearchError } from '~/components/SemanticSearch/SemanticSearchError';
 
 export function SemanticImageSearch() {
   const router = useRouter();

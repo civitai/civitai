@@ -1,4 +1,3 @@
-import { pageRefusal } from '~/components/Search/search-refusal';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { SemanticModelSearchRequest } from '~/server/schema/semantic-model-search.schema';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
@@ -39,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const modelQueryParamSchema = z
   .object({

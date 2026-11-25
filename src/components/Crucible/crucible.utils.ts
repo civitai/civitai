@@ -1,4 +1,3 @@
-import { pageRefusal } from '~/components/Search/search-refusal';
 import { useMemo } from 'react';
 import * as z from 'zod';
 import type { GetCruciblesInfiniteSchema } from '~/server/schema/crucible.schema';
@@ -16,6 +15,7 @@ import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
 import type { CrucibleContentType } from '~/shared/constants/crucible.constants';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 const crucibleQueryParamsSchema = z.object({
   status: commaDelimitedEnumArray(Object.values(CrucibleStatus)).optional(),

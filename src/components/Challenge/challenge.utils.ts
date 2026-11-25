@@ -1,4 +1,3 @@
-import { pageRefusal } from '~/components/Search/search-refusal';
 import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -15,6 +14,7 @@ import type {
 } from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 // The author to show on a card/detail. User challenges credit the real creator; System/Mod
 // challenges present the judge persona (e.g. CivBot) — System already stores the judge as its

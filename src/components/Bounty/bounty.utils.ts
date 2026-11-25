@@ -1,4 +1,3 @@
-import { pageRefusal } from '~/components/Search/search-refusal';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
@@ -21,6 +20,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { BountySort, BountyStatus } from '~/server/common/enums';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const getBountyCurrency = (bounty?: {
   id: number;

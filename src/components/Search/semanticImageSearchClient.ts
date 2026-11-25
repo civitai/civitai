@@ -1,10 +1,10 @@
-import { throwIfRefused } from '~/components/Search/search-refusal';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { trpcVanilla } from '~/utils/trpc';
+import { throwIfRefused } from '~/components/Search/search-refusal';
 
 /**
  * Image search answers from the semantic search (the cluster search service over Qdrant), not

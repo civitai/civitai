@@ -1,4 +1,3 @@
-import { pageRefusal } from '~/components/Search/search-refusal';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
@@ -16,6 +15,7 @@ import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-se
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 const idleInput: SemanticImageSearchInput = { query: '', browsingLevel: 0, limit: 50 };
 

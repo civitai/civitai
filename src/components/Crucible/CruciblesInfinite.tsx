@@ -8,7 +8,6 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconTrophy, IconPlus, IconSearch } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
@@ -26,6 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 
 export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const cruciblesFilters = useCrucibleFilters();

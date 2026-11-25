@@ -1,4 +1,3 @@
-import { pageRefusal } from '~/components/Search/search-refusal';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useMemo } from 'react';
 import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
@@ -16,6 +15,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
