@@ -43,14 +43,20 @@ export const KOHYA_CONTINUE_KEYS = [
 export const KOHYA_REPLAY_KEYS = [...KOHYA_CONTINUE_KEYS, 'maxTrainEpochs', 'steps'] as const;
 
 /**
- * Workflow metadata stamped on every Training Studio run whose `clipSkip` is what the trainer uses.
- * A run without it was submitted while the trainer raised an SDXL-family clip skip of 1 to 2, so
- * its stored 1 really trained, or should have trained, at 2.
+ * Workflow metadata stamped on every Training Studio run submitted once an SDXL-family clip skip of 1
+ * became selectable. On a run without it, an SDXL-family 1 stands for 2, not a choice.
  */
 export const CLIP_SKIP_AS_SENT = { clipSkipAsSent: true } as const;
 
-/** The Kohya ecosystems whose clip skip 1 the trainer used to raise to 2. */
+/** Kohya ecosystems where an unstamped clip skip of 1 stands for 2. */
 const SDXL_FAMILY = new Set(['sdxl', 'pony', 'illustrious', 'noobai']);
+
+/** The ecosystem of a model AIR, with or without its `urn:` and `air:` prefixes. */
+const airEcosystem = (model: string) =>
+  model
+    .replace(/^(?:urn:)?(?:air:)?/i, '')
+    .split(':')[0]
+    ?.toLowerCase();
 
 /** The entries of `input` named in `keys` that are not undefined. */
 export function pickDefinedKeys<K extends string>(
@@ -64,8 +70,8 @@ export function pickDefinedKeys<K extends string>(
 
 /**
  * The entries of a source run's Kohya `input` named in `keys`, for a new run that copies its
- * settings. A source without `CLIP_SKIP_AS_SENT` in its `metadata` has an SDXL-family clip skip of 1
- * copied as 2, the value it trained at; any other value, and a 1 picked on a stamped run, is kept.
+ * settings. An SDXL-family clip skip of 1 on a source without `CLIP_SKIP_AS_SENT` in its `metadata`
+ * is copied as 2; any other value, and a 1 on a stamped run, is kept.
  */
 export function copyKohyaInput<K extends string>(
   input: Record<string, unknown>,
@@ -75,7 +81,7 @@ export function copyKohyaInput<K extends string>(
   const copied: Partial<Record<string, unknown>> = pickDefinedKeys(input, keys);
   const stamped =
     (metadata as { clipSkipAsSent?: unknown } | null | undefined)?.clipSkipAsSent === true;
-  const ecosystem = typeof input.model === 'string' ? input.model.split(':')[2] : undefined;
+  const ecosystem = typeof input.model === 'string' ? airEcosystem(input.model) : undefined;
   if (!stamped && copied.clipSkip === 1 && ecosystem && SDXL_FAMILY.has(ecosystem))
     copied.clipSkip = 2;
   return copied as Partial<Record<K, unknown>>;

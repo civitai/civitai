@@ -264,8 +264,8 @@ describe('runRetrainSource', () => {
     expect(w.calls.refund + w.calls.submit).toBe(0);
   });
 
-  // A source was sent an SDXL-family clip skip of 1 when the trainer raised it to 2. Replayed as
-  // sent, the retrain would train on the last layer.
+  // On an unstamped source an SDXL-family clip skip of 1 stands for 2: replayed as stored, the
+  // retrain would train on the last layer.
   describe('clip skip', () => {
     const replayed = async (
       model: string,
@@ -286,6 +286,11 @@ describe('runRetrainSource', () => {
         expect(await replayed(model, 1)).toBe(2);
         expect(await replayed(model, 1, { studio: false })).toBe(2);
       }
+    );
+
+    it.each(['air:pony:checkpoint:civitai:101@202', 'illustrious:checkpoint:civitai:101@202'])(
+      'reads the ecosystem of a short-form AIR: %s',
+      async (model) => expect(await replayed(model, 1)).toBe(2)
     );
 
     it('keeps an SD1 clip skip of 1, and a 1 on a stamped run', async () => {

@@ -1654,8 +1654,8 @@ describe('Kohya training', () => {
     };
     const SDXL = 'urn:air:sdxl:checkpoint:civitai:1@2';
 
-    // Runs from before 1 was offered for SDXL were sent 1 and trained at 2: copied as sent, a
-    // continuation would train them on the last layer.
+    // On a run from before 1 was selectable for SDXL, a stored 1 stands for 2: copied as stored, a
+    // continuation would train on the last layer.
     it.each(['sdxl', 'pony', 'illustrious', 'noobai'])(
       'copies an unstamped %s clip skip of 1 as 2',
       async (family) => {
