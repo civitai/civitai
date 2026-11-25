@@ -31,6 +31,10 @@
  * trainingDataListing's statement (`dbRead.$queryRaw`) is captured like the model statement and
  * answered from the fixture's `trainingData` rows of the candidate versions; `expect.trainingDataSql`
  * pins it, its text byte for byte (feed-go hashes those exact bytes to detect drift). isRedCapableHost reads SERVER_DOMAIN_RED* from the environment set below.
+ *
+ * A text `query` (resolveModelSearchIds) is answered from the fixture's `search.hits`; its call (the
+ * index, the text and the params) is captured and pinned as `expect.search`, which feed-go's harness
+ * requires its own search call to equal.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
@@ -86,6 +90,8 @@ type Fixture = {
     body?: string | null;
     sql?: { text: string; values: unknown[] } | null;
     trainingDataSql?: { text: string; values: unknown[] } | null;
+    /** The text search's call (`index.search(q, params)`), when Node made one. */
+    search?: { index: string; q: string; params: Record<string, unknown> } | null;
   };
 };
 
@@ -108,6 +114,7 @@ const state = vi.hoisted(() => ({
   world: {} as Record<string, any>,
   sql: [] as { text: string; values: unknown[] }[],
   trainingDataSql: [] as { text: string; values: unknown[] }[],
+  search: [] as { index: string; q: string; params: Record<string, unknown> }[],
   // The header cases run the real endpoint wrappers; the body cases pass straight to the handler.
   realWrappers: false,
 }));
@@ -333,9 +340,21 @@ vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => 
   };
 });
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: any) => handler }));
+// The text search (resolveModelSearchIds): the call is captured, its params as JSON.stringify sends
+// them (undefined members dropped), and answered with the fixture's `search.hits`, in order. A
+// fixture without `search` has no search answer: a call then fails the case.
 vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
   ...(await importOriginal<typeof MeiliClient>()),
-  searchClient: undefined,
+  searchClient: {
+    index: (index: string) => ({
+      search: async (q: string, params: Record<string, unknown>) => {
+        state.search.push({ index, q, params: JSON.parse(JSON.stringify(params)) });
+        const hits = state.world.search?.hits as number[] | undefined;
+        if (!hits) throw new Error('the fixture has no search answer');
+        return { hits: hits.map((id) => ({ id })) };
+      },
+    }),
+  },
   withMeili: (_op: string, fn: () => unknown) => fn(),
 }));
 vi.mock('~/env/client', async (importOriginal) => {
@@ -405,8 +424,10 @@ const fixtures = loadFixtures();
 
 describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
   it('finds the fixtures (a glob that matched nothing would pass every case below)', () => {
-    expect(fixtures.length).toBeGreaterThanOrEqual(31);
-    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(24);
+    expect(fixtures.length).toBeGreaterThanOrEqual(37);
+    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(28);
+    // The text search is reached: fixtures whose search call Node makes.
+    expect(fixtures.filter(({ fx }) => fx.expect.search).length).toBeGreaterThanOrEqual(4);
     // The Training Data listing is reached: fixtures whose statement Node sends.
     expect(fixtures.filter(({ fx }) => fx.expect.trainingDataSql).length).toBeGreaterThanOrEqual(5);
   });
@@ -426,8 +447,10 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
             values: jsonValue(state.trainingDataSql[0].values),
           }
         : null;
-      const actual = { status: res.statusCode, body, sql, trainingDataSql };
+      const search = state.search[0] ?? null;
+      const actual = { status: res.statusCode, body, sql, trainingDataSql, search };
       expect(state.sql.length, `${file}: one model statement at most`).toBeLessThanOrEqual(1);
+      expect(state.search.length, `${file}: one search call at most`).toBeLessThanOrEqual(1);
       expect(
         state.trainingDataSql.length,
         `${file}: one training data statement at most`
@@ -435,12 +458,13 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
       const want = f.expect.trainingDataSql;
       expect(
         actual,
-        `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql, trainingDataSql })}`
+        `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql, trainingDataSql, search })}`
       ).toEqual({
         status: 200,
         body: f.expect.body,
         sql: f.expect.sql ? { ...f.expect.sql, text: normalizeSql(f.expect.sql.text) } : null,
         trainingDataSql: want ?? null,
+        search: f.expect.search ?? null,
       });
     },
     120_000
@@ -461,6 +485,7 @@ async function runFixture(f: Fixture, extraHeaders: Record<string, string>, real
   state.world = f.world;
   state.sql = [];
   state.trainingDataSql = [];
+  state.search = [];
   state.realWrappers = realWrappers;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(f.now));

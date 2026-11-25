@@ -2665,7 +2665,8 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 2. **Viewer and level.** The list reads a session or an API key; `[id]` reads neither (a block JWT
    only skips the origin cache). The level is `nsfw ? all : PG` on the list, all on `[id]`, PG/PG-13
    in a restricted region on both. No domain cap.
-3. **Text search.** A truthy `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`).
+3. **Text search.** A truthy `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`;
+   ported, §16.11).
    `query` is `z.string().optional()` (no trim), so only the empty string (`?query=`, `?query`) is
    falsy: the handler then takes the database path exactly as with no `query` (cursor and skip kept,
    no `query && page` 400), and `nextPage` leaves the empty value out (QS.stringify's
@@ -2718,7 +2719,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Query | every key above except those on the right; an empty `query` (falsy: the database path); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a truthy or repeated `query` (`v1-models-query`: Meilisearch), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
+| Query | every key above except those on the right; an empty `query` (falsy: the database path); a truthy `query`, the text search (§16.11); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a repeated `query`, or a truthy one with no search backend or (serving) `FEED_GO_V1_MODELS_SERVE_QUERY` off (`v1-models-query`), a text query with `page` (Node's 400), a cursor other than decimal digits or an empty `baseModels` value (each `v1-models-query` too), a text search the search guard did not make (`v1-models-query`), invalid UTF-8 (`v1-models-query-encoding`), a failed search (`v1-models-query-search-failed`), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
 | Viewer | the list signed out; `[id]` always (it reads no session), and with `FEED_GO_V1_BEARER_AUTH` an API credential on `[id]` that Node answers with the same body (§16.10) | a list session (`v1-models-session`); API credentials (`bearer-token`; on `[id]` with `FEED_GO_V1_BEARER_AUTH`, the cases of §16.10) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7); the showcase images and their tag ids read exactly as model.getAll reads them (`hydrate.Sources.VersionImages`, §16.7) | a model-data, model-tags, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a showcase-images or image-tag-ids miss with it off (`model-images-miss`, `tag-ids-miss`; a failed lookup is `<reason>-failed`), a stale files or tag-name entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
@@ -2745,9 +2746,10 @@ in-flight cap. A request with an API credential is counted (`skipped_credential`
 unless the Node app runs with `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true` (default off): then an
 `[id]` request's Authorization credential is sent described, never forwarded (§16.10). The list
 never samples one.
-The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
-them with a fallback (`v1-models-query`, `v1-models-session`). An empty `query` is falsy to the
-sampler's `query || user` test as to the handler, so it is sampled, and answered here. Both routes finish every sampled
+The list route does not sample a signed-in caller: feed-go answers every one with a fallback
+(`v1-models-session`). A text `query` is sampled only with `FEED_GO_SHADOW_V1_MODELS_QUERY=true` on the
+Node app (default off; the sampler decides, `beginRest`); an empty `query` is no text query, to the
+sampler as to the handler, so it is always sampled. Both routes finish every sampled
 request in a `finally`, so one that answers other than 200 is counted `skipped_status`. The sample
 carries the response's headers of `FEED_GO_COMPARED_REST_RESPONSE_HEADERS`, marked
 `responseHeaderSet: "rest"` (§16.8).
@@ -3158,6 +3160,74 @@ credentialed headers; the shadow's description, viewer class and logs), `interna
 (the switch and its startup check), and on the Node side
 `src/server/trpc/__tests__/feed-go-shadow-credential.test.ts` and the credential cases of
 `src/server/trpc/__tests__/feed-go-shadow.test.ts`.
+
+### 16.11 The text search (`query`; served only behind `FEED_GO_V1_MODELS_SERVE_QUERY`, default off)
+
+A truthy `query` (`src/pages/api/v1/models/index.ts` → `resolveModelSearchIds`,
+`src/server/services/model-search.service.ts`) is answered by calling the search index the Node app
+calls, with the same request, then reading the hits' ids through the model statement
+(`internal/v1models/search.go`, `serve.go`):
+
+1. **The call.** `index("models_v9").search(query, options)`, as meilisearch-js sends it: `POST
+   <SEARCH_HOST>/indexes/models_v9/search` (`http://` added to a host without a protocol, a trailing
+   slash added, the host's own path kept), `Authorization: Bearer <SEARCH_API_KEY>` when a key is set,
+   body `{ q, offset?, limit, filter, attributesToRetrieve: ["id"], sort? }`. `offset` is the cursor
+   read as a number (`queryOffset || undefined`: 0 is left out); `limit` is `limit + 1`; `filter` is
+   `nsfwLevel IN [<the level's bits, lowest first>]`, then `type IN [<types>]` when given, then
+   `versions.baseModel IN ["<base model>", …]` (meili-filter's quoting) when given; `sort` is
+   `meiliSortForModelSort` of the sort only when the request names `sort` (`'sort' in req.query`: the
+   schema default is never sent), absent for a sort with no search attribute. `supportsGeneration`
+   (the other filter Node may add) is an unported key and falls back before this.
+2. **The page.** A lookahead hit (more than `limit` hits) makes `nextCursor` the next offset
+   (`String(offset + limit)`) and is dropped; `nextPage` is the request's query with that cursor. No
+   hit is an empty page (`runModelSearch`'s `noTextMatches`): Node still sends its statement with no
+   id clause and discards the rows, so none is sent here. A blocked `tag` empties the page after the
+   search and keeps the search's cursor, as Node's order of calls does.
+3. **The statement.** `ids: searchIds`, no cursor, no skip, the request's sort, period and filters;
+   `hidePrivateModels` is off (the ids are an array). The answer keeps the search's order: each hit the
+   statement returned, in hit order (`searchIds.map(… items.find …)`); the Training Data listing runs
+   over the items in that order.
+
+**Switches.** `FEED_GO_V1_MODELS_SERVE_QUERY` (default off) decides the public route; off, every text
+query there is `v1-models-query`, with no search made. A shadow sample is computed whenever
+`SEARCH_HOST` is set, but the Node sampler sends one only with `FEED_GO_SHADOW_V1_MODELS_QUERY=true`
+(default off), so neither switch changes anything alone. The switch on without `SEARCH_HOST` fails
+startup.
+
+**Failure.** Any failed search (a transport error, a status other than 2xx, a body without integer
+hit ids, the bound passed) falls back (`v1-models-query-search-failed`): the Node app then makes its
+own call and decides its own answer (its 503 on a brownout). The bound is `MEILI_CALL_TIMEOUT_MS`
+capped at 2.5 s (`v1models.MaxSearchTimeout`): a search holds a serve slot while it waits, and one
+that runs out its bound is handed to Node, which searches again under its own bound, so a longer one
+(raised for Node's other searches) would hold the slot longer and leave less of the 6 s request
+budget to the statements and that second call.
+
+**Search guard.** The calls run under the Node app's guard for its `search` backend
+(`runWithLimiter`, `src/server/meilisearch/client.ts`), so a search brownout cannot hold this pod's
+serve slots and push its other routes into `bulkhead` fallbacks: a circuit breaker with Node's
+settings and defaults (`MEILI_CIRCUIT_TRIP_THRESHOLD` 10 calls that ran out their bound within
+`MEILI_CIRCUIT_WINDOW_SECONDS` 30 open it; open, every call is rejected for
+`MEILI_CIRCUIT_COOLDOWN_SECONDS` 30, then one trial call closes or reopens it; a call its caller cut
+short, or a fast error, is not counted), and a cap of 4 calls in flight per process
+(`v1models.SearchConcurrency`, half the default serve slots; past it a call is rejected, not queued
+as Node's limiter queues). A rejected call is never made: the request is handed back at once as
+`v1-models-query` (request-determined, so a canary's fallback comparison is unchanged by a search
+brownout) and counted on its own, `feed_go_search_rejected_total{why=open|busy}`.
+
+**Known divergences.** The two calls run milliseconds apart, so an index update between them can
+change the hits (shadow `membership` / `order` noise on busy queries). A cursor Node reads through
+`Number()` other than as decimal digits (a fraction the search refuses, an exponent, a sign, a
+blank, a date the cursor schema turns into a Date) falls back (`v1-models-query`), as does a lone
+empty `baseModels` value, which the schema drops and the statement here would not.
+
+**Parity evidence.** The `list-query-search-*` golden fixtures carry `world.search.hits`; the Node
+golden test answers the search with them and pins Node's call as `expect.search` (index, text,
+params), which `internal/v1models/golden_test.go` requires Go's call to equal, besides the body and
+the statement. `TestSearchRequestIsNodesCall` pins the request body per option,
+`TestMeiliClientSearch` the HTTP call and the hit reading, `TestServeListTextQueryGate` and
+`TestServeV1ModelsTextQuerySwitch` the switches, `TestMeiliClientCircuitOpensAndHandsBack`,
+`TestMeiliClientConcurrencyCapHandsBack`, `TestMeiliClientCallerCancelIsNotAFailure` and
+`TestSearchCircuitStates` the guard.
 
 ## 17. `model.getAssociatedResourcesCardData` (tRPC, shadow only)
 

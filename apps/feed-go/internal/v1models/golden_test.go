@@ -38,7 +38,7 @@ import (
 const (
 	goldenDir = "../../testdata/golden/v1-models"
 	// The fixture count gen-v1-models.mjs writes: fewer found means the glob matched the wrong place.
-	goldenMin = 31
+	goldenMin = 37
 )
 
 type goldenEntry struct {
@@ -73,7 +73,46 @@ type goldenFixture struct {
 		SQL      *goldenSQL `json:"sql"`
 		// TrainingDataSQL is trainingDataListing's statement, when Node sent one.
 		TrainingDataSQL *goldenSQL `json:"trainingDataSql"`
+		// Search is the text search's call, when Node made one.
+		Search *goldenSearch `json:"search"`
 	} `json:"expect"`
+}
+
+// goldenSearch is the search call Node's resolveModelSearchIds made: `index(index).search(q, params)`,
+// params as JSON.stringify sent them.
+type goldenSearch struct {
+	Index  string         `json:"index"`
+	Q      string         `json:"q"`
+	Params map[string]any `json:"params"`
+}
+
+// same is nil when req is Node's call: the same index, text and request body.
+func (g *goldenSearch) same(req SearchRequest) error {
+	body, err := req.Body()
+	if err != nil {
+		return err
+	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		return err
+	}
+	q := got["q"]
+	delete(got, "q")
+	if req.Index != g.Index || q != g.Q || !reflect.DeepEqual(got, g.Params) {
+		return fmt.Errorf("search call differs from Node's:\n go:   %s %v %v\n node: %s %q %v", req.Index, q, got, g.Index, g.Q, g.Params)
+	}
+	return nil
+}
+
+// goldenSearcher answers the fixture's text search from `world.search.hits` and records each call.
+type goldenSearcher struct {
+	hits []int
+	reqs []SearchRequest
+}
+
+func (g *goldenSearcher) SearchModelIDs(_ context.Context, req SearchRequest) ([]int, error) {
+	g.reqs = append(g.reqs, req)
+	return g.hits, nil
 }
 
 type goldenSQL struct {
@@ -220,6 +259,8 @@ type goldenEnv struct {
 	db      *testkit.DB
 	stmts   int
 	tdStmts int
+	// search answers a fixture with `world.search` (nil: no search backend).
+	search *goldenSearcher
 }
 
 // trainingDataColumns are the training data statement's columns.
@@ -383,6 +424,16 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 		Now: nowFn,
 	}
 	env.users = sources
+	if raw, ok := fx.World["search"]; ok {
+		var s struct {
+			Hits []int `json:"hits"`
+		}
+		if err := json.Unmarshal(raw, &s); err != nil {
+			t.Fatalf("world search: %v", err)
+		}
+		env.search = &goldenSearcher{hits: s.Hits}
+		env.deps.Search = env.search
+	}
 	return env
 }
 
@@ -514,7 +565,21 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 		t.Fatal(err)
 	}
 	want := []byte(*fx.Expect.Body)
-	if fx.Expect.SQL != nil && env.stmts != 1 {
+	searched := env.search != nil && len(env.search.reqs) > 0
+	switch {
+	case fx.Expect.Search == nil && searched:
+		t.Errorf("a search call was made; the fixture expects none")
+	case fx.Expect.Search != nil && (env.search == nil || len(env.search.reqs) != 1):
+		t.Errorf("search calls: %v, want Node's one", env.search)
+	case fx.Expect.Search != nil:
+		if err := fx.Expect.Search.same(env.search.reqs[0]); err != nil {
+			t.Error(err)
+		}
+	}
+	// With no hit Node still sends its statement (no id clause) and discards its rows: none is sent
+	// here.
+	noHits := searched && len(env.search.hits) == 0
+	if fx.Expect.SQL != nil && env.stmts != 1 && (!noHits || env.stmts != 0) {
 		t.Errorf("model statements: %d, want 1", env.stmts)
 	}
 	if fx.Expect.TrainingDataSQL != nil && env.tdStmts != 1 {

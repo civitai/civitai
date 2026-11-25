@@ -35,7 +35,7 @@ func TestParseList(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ListInput{
-		Limit: 5, Page: 3, Sort: SortNewest, Period: "Week", PeriodMode: "stats", Types: []string{"LORA", "DoRA"},
+		Limit: 5, Page: 3, Sort: SortNewest, SortNamed: true, Period: "Week", PeriodMode: "stats", Types: []string{"LORA", "DoRA"},
 		// postgresSlugify: the first space an underscore, then every non-word character dropped.
 		BaseModels: []string{"Pony"}, Username: "artist_onex", Nsfw: true, PrimaryFileOnly: true, EarlyAccess: true,
 		IDs: []int{1, 2},
@@ -51,40 +51,48 @@ func TestParseList(t *testing.T) {
 	}
 
 	for raw, want := range map[string]string{
-		"query=golden": "v1-models-query",
-		// A blank is a truthy string (no trim); a repeated key is an array, which the schema refuses.
-		"query=%20":               "v1-models-query",
-		"query=+":                 "v1-models-query",
-		"query=&query=":           "v1-models-query",
-		"query=&query=x":          "v1-models-query",
-		"limit=5&query=a":         "v1-models-query",
-		"tag=caf%C3%A9":           "v1-models-tag",
-		"tag=a&tag=b":             "v1-models-input-duplicate",
-		"tagname=x":               "v1-models-tagname",
-		"tag=x&tagname=x":         "v1-models-tagname",
-		"favorites=false":         "v1-models-authed-only",
-		"hidden=1":                "v1-models-authed-only",
-		"supportsGeneration=true": "v1-models-supportsGeneration",
-		"browsingLevel=31":        "v1-models-browsingLevel",
-		"limit=0":                 "v1-models-limit",
-		"limit=101":               "v1-models-limit",
-		"limit=1.5":               "v1-models-input-number",
-		"limit=1&limit=2":         "v1-models-input-number",
-		"page=0":                  "v1-models-input-number",
-		"page=11&limit=100":       "v1-models-page-limit",
-		"sort=Recently%20Added":   "v1-models-sort",
-		"sort=Best":               "v1-models-sort",
-		"sort=Newest&sort=Oldest": "v1-models-input-duplicate",
-		"period=Hour":             "v1-models-input-enum",
-		"periodMode=x":            "v1-models-input-enum",
-		"types=Lora":              "v1-models-input-enum",
-		"status=Live":             "v1-models-input-enum",
-		"nsfw=maybe":              "v1-models-input-bool",
-		"nsfw=1&nsfw=0":           "v1-models-input-duplicate",
-		"ids=1,x":                 "v1-models-ids",
-		"cursor=a&cursor=b":       "v1-models-input-duplicate",
-		"username=a&username=b":   "v1-models-input-duplicate",
-		"a=%zz":                   "v1-models-query-encoding",
+		// A repeated key is an array, which the schema refuses.
+		"query=&query=":  "v1-models-query",
+		"query=&query=x": "v1-models-query",
+		// A text query: `query && page` is a 400; a cursor is the search offset, read here only as
+		// decimal digits; a lone empty baseModels value is dropped by the schema, not here. Each is the
+		// one text query reason.
+		"query=a&page=2":                   "v1-models-query",
+		"query=a&cursor=1.5":               "v1-models-query",
+		"query=a&cursor=-1":                "v1-models-query",
+		"query=a&cursor=1e2":               "v1-models-query",
+		"query=a&cursor=%205":              "v1-models-query",
+		"query=a&cursor=1234567890":        "v1-models-query",
+		"query=a&baseModels=":              "v1-models-query",
+		"query=a&baseModels=x&baseModels=": "v1-models-query",
+		"query=%ED%A0%80":                  "v1-models-query-encoding",
+		"tag=caf%C3%A9":                    "v1-models-tag",
+		"tag=a&tag=b":                      "v1-models-input-duplicate",
+		"tagname=x":                        "v1-models-tagname",
+		"tag=x&tagname=x":                  "v1-models-tagname",
+		"favorites=false":                  "v1-models-authed-only",
+		"hidden=1":                         "v1-models-authed-only",
+		"supportsGeneration=true":          "v1-models-supportsGeneration",
+		"browsingLevel=31":                 "v1-models-browsingLevel",
+		"limit=0":                          "v1-models-limit",
+		"limit=101":                        "v1-models-limit",
+		"limit=1.5":                        "v1-models-input-number",
+		"limit=1&limit=2":                  "v1-models-input-number",
+		"page=0":                           "v1-models-input-number",
+		"page=11&limit=100":                "v1-models-page-limit",
+		"sort=Recently%20Added":            "v1-models-sort",
+		"sort=Best":                        "v1-models-sort",
+		"sort=Newest&sort=Oldest":          "v1-models-input-duplicate",
+		"period=Hour":                      "v1-models-input-enum",
+		"periodMode=x":                     "v1-models-input-enum",
+		"types=Lora":                       "v1-models-input-enum",
+		"status=Live":                      "v1-models-input-enum",
+		"nsfw=maybe":                       "v1-models-input-bool",
+		"nsfw=1&nsfw=0":                    "v1-models-input-duplicate",
+		"ids=1,x":                          "v1-models-ids",
+		"cursor=a&cursor=b":                "v1-models-input-duplicate",
+		"username=a&username=b":            "v1-models-input-duplicate",
+		"a=%zz":                            "v1-models-query-encoding",
 	} {
 		if _, err := ParseList(raw); reason(err) != want {
 			t.Errorf("%s: reason %q (%v), want %q", raw, reason(err), err, want)
@@ -104,6 +112,33 @@ func TestParseList(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s: the query key is not kept for nextPage: %+v", raw, in.Query)
+		}
+	}
+	// A truthy `query` (a blank included: no trim) is the text search: its text, the cursor as its
+	// offset, and whether `sort` was named (the schema default is never sent to the search).
+	for raw, want := range map[string]ListInput{
+		"query=golden":                 {Text: "golden"},
+		"query=%20":                    {Text: " "},
+		"query=+":                      {Text: " "},
+		"limit=5&query=a":              {Text: "a"},
+		"query=a&cursor=007":           {Text: "a", TextOffset: 7},
+		"query=a&cursor=":              {Text: "a"},
+		"query=a&sort=Highest%20Rated": {Text: "a", SortNamed: true},
+		"query=a&page=11&limit=100":    {}, // the 429 is decided first
+	} {
+		in, err := ParseList(raw)
+		if want.Text == "" {
+			if reason(err) != "v1-models-page-limit" {
+				t.Errorf("%s: %v, want v1-models-page-limit", raw, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v (%s)", raw, err, reason(err))
+			continue
+		}
+		if in.Text != want.Text || in.TextOffset != want.TextOffset || in.SortNamed != want.SortNamed {
+			t.Errorf("%s: text %q offset %d sortNamed %v, want %+v", raw, in.Text, in.TextOffset, in.SortNamed, want)
 		}
 	}
 	// `tag` is read; an empty one is no filter (`tagname ?? tag` is falsy).
