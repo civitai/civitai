@@ -199,6 +199,7 @@ describe('readFeedGoShadowConfig', () => {
         'http://feed-go.internal.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
       v1ModelsUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models',
       v1ModelsIdUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models/id',
+      siteSearchUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/search',
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
@@ -1757,5 +1758,107 @@ describe('createFeedGoShadow — REST response headers', () => {
     const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
     expect(body).not.toHaveProperty('responseHeaders');
     expect(body).not.toHaveProperty('responseHeaderSet');
+  });
+});
+
+describe('createFeedGoShadow — POST /api/search/*', () => {
+  const SEARCH_URL = 'http://feed-go.test:9090/internal/shadow/api/search';
+
+  function searchHarness(enabled = true) {
+    const outcomes: string[] = [];
+    const queued: Array<() => void> = [];
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+      async () => new Response(null, { status: 202 })
+    );
+    const shadow = createFeedGoShadow({
+      config: config({ siteSearchUrl: SEARCH_URL }),
+      enabled: () => true,
+      enabledSiteSearch: () => enabled,
+      random: () => 0,
+      fetch: fetchMock as unknown as typeof fetch,
+      record: (o) => void outcomes.push(o),
+      recordEncode: () => undefined,
+      now: () => 0,
+      schedule: (fn) => void queued.push(fn),
+    });
+    const flush = async () => {
+      while (queued.length) queued.shift()!();
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    };
+    return { shadow, outcomes, fetchMock, flush };
+  }
+
+  const searchRequest = (headers: Record<string, string> = {}) => ({
+    method: 'POST',
+    url: '/api/search/indexes/models_v9/search?x=1',
+    headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t; _ga=1', ...headers },
+    query: { path: ['indexes', 'models_v9', 'search'] },
+    body: { q: 'cat', limit: 2 },
+  });
+
+  it('is off without its flag, and never mirrors a GET or a credentialed request', () => {
+    expect(searchHarness(false).shadow.beginSiteSearch(searchRequest())).toBeUndefined();
+    const h = searchHarness();
+    expect(h.shadow.beginSiteSearch({ ...searchRequest(), method: 'GET' })).toBeUndefined();
+    expect(
+      h.shadow.beginSiteSearch(searchRequest({ authorization: 'Bearer key' }))
+    ).toBeUndefined();
+    expect(h.outcomes).toEqual(['skipped_credential']);
+  });
+
+  // The sample carries the body as JSON, the path without the query, the session cookie only; the
+  // backend's answer and the call spliced in as JSON, and Node's answer as `node.body`.
+  it('posts the body, the call, the backend answer and the answer Node wrote', async () => {
+    const h = searchHarness();
+    const sample = h.shadow.beginSiteSearch(searchRequest())!;
+    expect(sample.endpoint).toBe('site-search');
+    const backend = Buffer.from('{"hits":[{"id":1,"name":"R","sfwName":"S"}]}');
+    h.shadow.captureSiteSearch(sample, {
+      path: '/indexes/models_v9/search',
+      request: '{"q":"cat","limit":2,"filter":["poi != true"]}',
+      response: backend,
+      body: { hits: [{ id: 1, name: 'S' }] },
+    });
+    h.shadow.finish(sample, 200, { getHeaders: () => ({ 'cache-control': 'private, no-store' }) });
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(SEARCH_URL);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: '{"q":"cat","limit":2}',
+      path: '/api/search/indexes/models_v9/search',
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      upstream: { hits: [{ id: 1, name: 'R', sfwName: 'S' }] },
+      node: {
+        upstream: {
+          path: '/indexes/models_v9/search',
+          body: { q: 'cat', limit: 2, filter: ['poi != true'] },
+        },
+        body: { hits: [{ id: 1, name: 'S' }] },
+      },
+      responseHeaders: { 'cache-control': 'private, no-store' },
+      responseHeaderSet: 'rest',
+    });
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it("a passthrough answer is mirrored as Node's bytes", async () => {
+    const h = searchHarness();
+    const sample = h.shadow.beginSiteSearch(searchRequest())!;
+    const raw = Buffer.from('{"hits":[],"query":"cat"}');
+    h.shadow.captureSiteSearch(sample, { path: '/p', request: '{}', response: raw, raw });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.node.body).toEqual({ hits: [], query: 'cat' });
+  });
+
+  it('a non-200 or an uncaptured answer is not sent', async () => {
+    const h = searchHarness();
+    h.shadow.finish(h.shadow.beginSiteSearch(searchRequest())!, 400);
+    h.shadow.finish(h.shadow.beginSiteSearch(searchRequest())!, 200);
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status', 'skipped_no_capture']);
   });
 });
