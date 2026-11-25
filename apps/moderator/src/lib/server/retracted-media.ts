@@ -14,6 +14,9 @@ import { holdsCsamReview } from './held-media';
 import { WITHHELD_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
+import type { AppealCoverImage, MinorHashMatchDetail } from './minor-hash.service';
+import type { ModelPreview } from './model-preview.service';
+import type { ComFace } from '$lib/com-face';
 
 /** `kind: 'held'` marks held media (`heldImageSql`), so its serve is recorded as a held view; who is served
  *  it is `moderatorMediaWhereSql`'s call. */
@@ -150,6 +153,100 @@ export function withheldRow<T extends object>(row: T) {
     ...(appeal ? { appeal: { ...appeal, message: '' } } : {}),
     ...(approvedAppeal ? { approvedAppeal: withheldApprovedAppeal(approvedAppeal) } : {}),
   } as Omit<T, keyof ReturnType<typeof withheldMedia>> & ReturnType<typeof withheldMedia>;
+}
+
+/** Each row's cover images and civitai.com face cover, with those withheld from `user` sent without
+ *  their key. */
+export async function withheldCoverImages<
+  T extends { coverImages: AppealCoverImage[]; comFace?: ComFace | null }
+>(
+  rows: T[],
+  user: App.Locals['user'] | undefined,
+  list: string
+): Promise<(Omit<T, 'coverImages'> & { coverImages: AppealCoverImage[] })[]> {
+  const ids = rows.flatMap((row) => [
+    ...row.coverImages.map((image) => image.id),
+    ...(row.comFace?.cover ? [row.comFace.cover.id] : []),
+  ]);
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, list);
+  return rows.map((row) => ({
+    ...row,
+    ...(row.comFace?.cover && withheld.has(row.comFace.cover.id)
+      ? { comFace: { ...row.comFace, cover: { ...row.comFace.cover, url: '', restricted: true } } }
+      : {}),
+    coverImages: row.coverImages.map((image) =>
+      withheld.has(image.id)
+        ? { id: image.id, url: '', nsfwLevel: image.nsfwLevel, restricted: true }
+        : image
+    ),
+  }));
+}
+
+/** A model preview with the images withheld from `user` sent with no key or flag. */
+export async function withheldPreviewImages(
+  preview: ModelPreview,
+  user: App.Locals['user'] | undefined
+): Promise<ModelPreview> {
+  const withheld = await listWithheldIds(
+    preview.images.map((i) => i.id),
+    { csamReview: holdsCsamReview(user) },
+    'model-preview'
+  );
+  return {
+    ...preview,
+    images: preview.images.map((i) =>
+      withheld.has(i.id)
+        ? {
+            id: i.id,
+            url: '',
+            type: 'image',
+            nsfwLevel: i.nsfwLevel,
+            blocked: false,
+            minor: false,
+            acceptableMinor: false,
+            restricted: true,
+          }
+        : i
+    ),
+  };
+}
+
+/** A file-match detail with any cover withheld from `user` sent with no key, its type and id gone too. */
+export async function withheldHashDetail(
+  detail: MinorHashMatchDetail | null,
+  user: App.Locals['user'] | undefined
+): Promise<MinorHashMatchDetail | null> {
+  if (!detail) return detail;
+  const ids = [detail.modelCoverId, detail.minorModelCoverId].filter(
+    (id): id is number => id != null
+  );
+  const withheld = await listWithheldIds(
+    ids,
+    { csamReview: holdsCsamReview(user) },
+    'minor-hash-detail'
+  );
+  const blank = (id: number | null) => id != null && withheld.has(id);
+  return {
+    ...detail,
+    ...(blank(detail.modelCoverId)
+      ? {
+          modelCoverId: null,
+          modelCoverUrl: null,
+          modelCoverType: null,
+          modelCoverRestricted: null,
+          modelCoverWithheld: true,
+        }
+      : {}),
+    ...(blank(detail.minorModelCoverId)
+      ? {
+          minorModelCoverId: null,
+          minorModelCoverUrl: null,
+          minorModelCoverType: null,
+          minorModelCoverRestricted: null,
+          minorModelCoverWithheld: true,
+        }
+      : {}),
+  };
 }
 
 /** `restrictedImageAccess`'s kept ids. */

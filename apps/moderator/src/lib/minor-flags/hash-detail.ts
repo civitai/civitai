@@ -23,6 +23,9 @@ export type HashDetail = {
     minorModelCoverUrl: string | null;
     minorModelCoverType: string | null;
     minorModelCoverRestricted: boolean | null;
+    /** The cover is withheld from this moderator: its url and type are null. */
+    modelCoverWithheld?: boolean;
+    minorModelCoverWithheld?: boolean;
     minorModelStatus: string | null;
     minorModelMode: string | null;
     minorModelUnpublishedAt: string | null;
