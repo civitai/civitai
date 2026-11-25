@@ -13,6 +13,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { TRPCError } from '@trpc/server';
 import { commentV3CsamHold, hasOpenCommentReport } from '~/server/services/commentv3/review-hold';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { currentScanContentHashes } from '~/server/services/text-scan/submit';
 import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -203,6 +204,8 @@ export async function hideFlaggedFpComment(
   deps: {
     createReport?: FileReport;
     db?: Pick<typeof dbWrite, '$queryRawUnsafe' | '$transaction'>;
+    /** The text the scan judged, by its scan hash. */
+    textHash?: string;
   } = {}
 ) {
   const client = deps.db ?? dbWrite;
@@ -240,7 +243,14 @@ export async function hideFlaggedFpComment(
   } catch (e) {
     failure = e;
   }
-  const hid = await client.$transaction((tx) => hideAsScan(prismaRunner(tx), commentId, reportId));
+  // Whether the scan judged the comment's current text: only then is the hide bound to its version.
+  const judgedCurrent =
+    deps.textHash === undefined
+      ? undefined
+      : (await currentScanContentHashes('CommentV3', [commentId])).get(commentId) === deps.textHash;
+  const hid = await client.$transaction((tx) =>
+    hideAsScan(prismaRunner(tx), commentId, reportId, judgedCurrent)
+  );
   if (failure) throw failure;
   return hid;
 }
@@ -253,7 +263,8 @@ export async function hideFlaggedFpComment(
 async function hideAsScan(
   db: ReturnType<typeof prismaRunner>,
   commentId: number,
-  reportId: number | null
+  reportId: number | null,
+  judgedCurrent: boolean | undefined
 ) {
   // Locked, then read in a statement of its own, so a lift committed meanwhile is seen.
   await db.query(`SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
@@ -270,16 +281,18 @@ async function hideAsScan(
   if (changed.length)
     await db.query(
       `UPDATE "FeaturePageCommentMirror" m SET "scanHiddenAt" = c."hiddenAt",
-         "scanHiddenVersion" = m.version, "scanHideReportId" = $2
+         "scanHiddenVersion" = CASE WHEN $3::boolean IS FALSE THEN NULL ELSE m.version END,
+         "scanHideReportId" = $2
        FROM "CommentV3" c WHERE m."commentId" = $1 AND c.id = m."commentId"`,
-      [commentId, reportId]
+      [commentId, reportId, judgedCurrent ?? null]
     );
   else if (rows[0]?.scanHiddenAt)
     await db.query(
       `UPDATE "FeaturePageCommentMirror" SET "scanHiddenAt" = $2::timestamptz,
-         "scanHideReportId" = $3
+         "scanHideReportId" = $3,
+         "scanHiddenVersion" = CASE WHEN $4::boolean THEN version ELSE "scanHiddenVersion" END
        WHERE "commentId" = $1`,
-      [commentId, rows[0].scanHiddenAt, reportId]
+      [commentId, rows[0].scanHiddenAt, reportId, judgedCurrent === true]
     );
   return true;
 }

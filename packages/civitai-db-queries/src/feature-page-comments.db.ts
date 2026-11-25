@@ -697,7 +697,7 @@ export async function unactionReportLiftingScanHide(
   });
 }
 
-/** Of these reports, those the scan filed with its comment's current hide: one dismissal each. */
+/** Of these reports, those the scan filed for a hide of its comment, current or since replaced: each is dismissed one at a time. */
 export async function scanHideReportIds(db: Kysely<DB>, reportIds: number[]) {
   if (!reportIds.length) return new Set<number>();
   const found = await rows<{ id: number }>(

@@ -19,4 +19,7 @@ ALTER TABLE "FeaturePageCommentMirror"
 ALTER TABLE "FeaturePageCommentMirror"
   ADD CONSTRAINT "FeaturePageCommentMirror_modHideOrigin_check"
   CHECK ("modHideOrigin" IS NULL OR "modHideOrigin" IN ('scan', 'moderator', 'foreign'));
+-- Report status writes look a report up by it.
+CREATE INDEX IF NOT EXISTS "FeaturePageCommentMirror_scanHideReportId_idx"
+  ON "FeaturePageCommentMirror" ("scanHideReportId") WHERE "scanHideReportId" IS NOT NULL;
 COMMIT;

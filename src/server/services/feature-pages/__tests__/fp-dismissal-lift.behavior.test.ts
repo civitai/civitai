@@ -114,6 +114,28 @@ const scanHides = async (id: number) => {
   return { hid, reportId, createReport };
 };
 
+/** The scan hides it again with a new report, for the text it judged. */
+const rescanHides = async (id: number, textHash: string) => {
+  let reportId = 0;
+  await moderation.hideFlaggedFpComment(id, {
+    textHash,
+    createReport: (async () => {
+      const [report] = await q<{ id: number }>(
+        `INSERT INTO "Report"(status, reason, "userId", details)
+         VALUES ('Pending', 'AdminAttention', $1, '{"comment":"auto-hidden by scan"}') RETURNING id`,
+        [SYSTEM]
+      );
+      await q(`INSERT INTO "CommentV3Report"("commentId", "reportId") VALUES ($1, $2)`, [
+        id,
+        report.id,
+      ]);
+      reportId = report.id;
+      return report;
+    }) as never,
+  });
+  return reportId;
+};
+
 /** A moderator sets the report Unactioned, as the per-report status action does. */
 const unaction = (reportId: number, by = MOD) =>
   unactionReportLiftingScanHide(kysely(), { reportId, actorId: by, systemUserId: SYSTEM });
@@ -392,6 +414,32 @@ describe("a moderator's dismissal of the scan's report", () => {
     await settle();
     expect(modVisibleBySource()).toHaveLength(2);
     expect(decided(id)).toBe('visible');
+  });
+
+  it('7c. the scan hiding a newer text again binds the hide to that text, so its own report lifts it', async () => {
+    const { id, reportId } = await hiddenByScan();
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
+    // Edited while hidden, with no report open; the rescan flags the new text.
+    await q(`UPDATE "CommentV3" SET content = '<p>edited, still flagged</p>' WHERE id = $1`, [id]);
+    await q(`UPDATE "FeaturePageCommentMirror" SET version = version + 1 WHERE "commentId" = $1`, [
+      id,
+    ]);
+    await flagScan(id);
+    const { currentScanContentHashes } = await import('~/server/services/text-scan/submit');
+    const textHash = (await currentScanContentHashes('CommentV3', [id])).get(id)!;
+    const second = await rescanHides(id, textHash);
+    expect(await dismiss(second)).toEqual({ commentId: id, version: 2 });
+  });
+
+  it('7d. a scan of an older text binds nothing new: its report is held, never lifted', async () => {
+    const { id, reportId } = await hiddenByScan();
+    await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
+    await q(`UPDATE "CommentV3" SET content = '<p>edited</p>' WHERE id = $1`, [id]);
+    await q(`UPDATE "FeaturePageCommentMirror" SET version = version + 1 WHERE "commentId" = $1`, [
+      id,
+    ]);
+    const stale = await rescanHides(id, 'an older text');
+    await heldOpen(id, stale, 'version');
   });
 
   it('7b. a lift of one version never shows a newer version the scan has not cleared', async () => {

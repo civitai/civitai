@@ -5677,7 +5677,7 @@ model FeaturePageCommentMirror {
   // report it filed. Any other hide clears scanHiddenAt, so they no longer match the current hide.
   scanHiddenAt      DateTime? @db.Timestamptz(6)
   scanHiddenVersion Int?
-  scanHideReportId  Int?
+  scanHideReportId  Int? // partial index FeaturePageCommentMirror_scanHideReportId_idx (migration only)
   // The `at` of the last moderator hide sent, and what it was sent for: the scan's hide, a
   // moderator's here, or one the platform already held (foreign: never lifted from here).
   modHideSentAt     DateTime? @db.Timestamptz(6)
