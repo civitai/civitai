@@ -29,6 +29,7 @@ beforeAll(async () => {
       "modelRestricted" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
       "tosViolation" boolean NOT NULL DEFAULT false
     );
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
     CREATE TABLE "Crucible" (
       id int PRIMARY KEY, "imageId" int, ingestion "CrucibleIngestionStatus" NOT NULL DEFAULT 'Scanned'
     );
@@ -50,7 +51,7 @@ const run = async (sql: Prisma.Sql) =>
 const entityImageIds = (viewer: { userId?: number; isModerator?: boolean }) =>
   run(
     Prisma.sql`SELECT i.id FROM "Image" i WHERE ${Prisma.join(
-      entityImageVisibilityConditions(viewer),
+      entityImageVisibilityConditions({ ...viewer, seesReportListed: false }),
       ' AND '
     )} ORDER BY i.id`
   );
