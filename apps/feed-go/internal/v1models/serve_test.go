@@ -250,6 +250,12 @@ func TestServeDetailBuilds(t *testing.T) {
 	if ans.Trivial || ans.Cached {
 		t.Fatalf("answer flags: %+v", ans)
 	}
+	// The by-id route serves a taken-down model, as Node's does: no taken-down clause.
+	if stmt := w.modelStatement(t); stmt == "" {
+		t.Fatal("no model statement recorded")
+	} else if strings.Contains(stmt, "IS DISTINCT FROM") {
+		t.Errorf("by-id statement withholds taken-down models:\n%s", stmt)
+	}
 	body, err := superjson.Plain(ans.Body)
 	if err != nil {
 		t.Fatal(err)

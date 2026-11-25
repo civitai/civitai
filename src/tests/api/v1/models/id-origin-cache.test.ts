@@ -436,7 +436,7 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
     });
   });
 
-  it('(m) keeps serving a taken-down model directly, as the list endpoints no longer do', async () => {
+  it('(m) passes includeWithheld, so getModelsWithVersions keeps a taken-down model', async () => {
     await invoke({ id: '123' });
     expect(mockGetModelsWithVersions.mock.calls[0][0]).toMatchObject({ includeWithheld: true });
   });
