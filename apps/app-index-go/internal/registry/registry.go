@@ -14,6 +14,7 @@ package registry
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,6 +55,11 @@ type Entity struct {
 	// sent beside its key by the same feed (body format k2). Zero when the entity carries none: every
 	// other entity, and a private one from an adapter before k2.
 	Seq int64 `json:"seq,omitempty"`
+	// Version, CreatedAt and UpdatedAt are a shared document's, sent beside its key by the adapter's
+	// level streams (src/server/registry-adapter/level-feed.ts); zero on every other entity.
+	Version   int64  `json:"version,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 // Event is one protocol event. Cursor is empty on End, and on any event a registry cannot resume
@@ -67,9 +73,10 @@ type Event struct {
 	Of EventType
 	// Reason says why a Malformed event could not be decoded. It never contains the event's data.
 	Reason string
-	// Meta is the `meta` object a live or progress event carried, as sent (the spec's `Event.meta`);
-	// nil when it carried none. The adapter's private feed names its head there,
-	// `{"head":{"seq":N}}`. Read by the consumer; nothing here interprets it.
+	// Meta is the `meta` object a live, progress or end event carried, as sent (the spec's
+	// `Event.meta`); nil when it carried none. The adapter's private feed names its head there,
+	// `{"head":{"seq":N}}`, and an end its reason, `{"reason":"levels_on"}`. Read by the consumer;
+	// nothing here interprets it.
 	Meta json.RawMessage
 }
 
@@ -111,12 +118,15 @@ func CodeOf(err error) Code {
 	return Unavailable
 }
 
-// Request is a subscribe request. This consumer never sends `urns`, `filter` or `meta`.
+// Request is a subscribe request. This consumer never sends `urns` or `filter`.
 type Request struct {
 	Schema string
 	Cursor string
 	// Token, when set, is this subscription's bearer token, in place of Client.Token.
 	Token string
+	// Meta, when set, is sent as the request's `meta` (a JSON object, as its compact text): the
+	// adapter's level streams are named there, `{"level":4}`.
+	Meta json.RawMessage
 }
 
 // MaxLine bounds one SSE line. The largest app entity is a few KiB.
@@ -190,6 +200,13 @@ func (c *Client) Subscribe(ctx context.Context, req Request) (*Stream, error) {
 	q := url.Values{"schema": {req.Schema}}
 	if req.Cursor != "" {
 		q.Set("cursor", req.Cursor)
+	}
+	if len(req.Meta) > 0 {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, req.Meta); err != nil || compact.Len() == 0 || compact.Bytes()[0] != '{' {
+			return nil, &Error{Code: BadRequest, Message: "meta must be a JSON object"}
+		}
+		q.Set("meta", compact.String())
 	}
 	base.RawQuery = q.Encode()
 
@@ -338,7 +355,15 @@ func ParseEvent(typ EventType, data []byte) Event {
 	switch typ {
 	case Upsert, Delete, Live, Progress:
 	case End:
-		return Event{Type: End} // End carries nothing a consumer reads
+		// An end's only readable field is its `meta` (why the origin ended the stream); data that
+		// cannot be read is an end all the same.
+		var p struct {
+			Meta json.RawMessage `json:"meta"`
+		}
+		if json.Unmarshal(data, &p) != nil || len(p.Meta) == 0 || p.Meta[0] != '{' {
+			return Event{Type: End}
+		}
+		return Event{Type: End, Meta: p.Meta}
 	default:
 		return Event{}
 	}
