@@ -14,11 +14,21 @@ import { tunesServing } from '$lib/server/ranks';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const status = await requireMember(db, locals.user.id);
+  const [status, player] = await Promise.all([
+    requireMember(db, locals.user.id),
+    db
+      .selectFrom('NewOrderPlayer')
+      .select('startAt')
+      .where('userId', '=', locals.user.id)
+      .executeTakeFirst(),
+  ]);
+  // Every player can start over, Acolytes included; the restart itself is `RestartCareerDialog` (GET/POST /career).
+  const career = { swornIn: player?.startAt.toISOString() ?? null };
   if (!tunesServing(status.rank))
     return {
       questions: { available: false as const },
       tagGroups: { available: false as const },
+      career,
     };
   const { playerDefault } = await yesNoConfig();
   const [prefs, hidden] = await Promise.all([
@@ -36,6 +46,7 @@ export const load: PageServerLoad = async ({ locals }) => {
         hidden: hidden.includes(group.key),
       })),
     },
+    career,
   };
 };
 

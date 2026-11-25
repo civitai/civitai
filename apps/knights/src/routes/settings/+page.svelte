@@ -1,5 +1,7 @@
 <script lang="ts">
   import Icon from '$lib/Icon.svelte';
+  import RestartCareerDialog from '$lib/RestartCareerDialog.svelte';
+  import { formatDate } from '$lib/format';
   import SettingSwitch from './SettingSwitch.svelte';
   import type { PageData } from './$types';
 
@@ -8,6 +10,7 @@
   type Status = { kind: 'saved'; text: string } | { kind: 'error'; text: string } | null;
   let questionsStatus = $state<Status>(null);
   let groupsStatus = $state<Status>(null);
+  let restarting = $state(false);
 </script>
 
 <svelte:head>
@@ -109,7 +112,36 @@
       {@render status(groupsStatus)}
     </section>
   {/if}
+
+  <section aria-labelledby="career-title">
+    <h2 id="career-title">Career</h2>
+    <div class="rows">
+      <div class="row">
+        <div class="text">
+          <p class="label"><span id="restart-label">Restart career</span></p>
+          <p class="description" id="restart-description">
+            {#if data.career.swornIn}Sworn in on {formatDate(data.career.swornIn)}.{/if} Starting over
+            returns you to Acolyte and cannot be undone. It costs your unconverted and pending gold, your
+            streak, and your older judgments, which are forfeited. Your shields and the gold you already
+            spent or converted are kept.
+          </p>
+        </div>
+        <button
+          type="button"
+          class="restart"
+          aria-describedby="restart-description"
+          onclick={() => (restarting = true)}
+        >
+          <Icon name="rotate-ccw" size={14} />Restart career…
+        </button>
+      </div>
+    </div>
+  </section>
 </div>
+
+{#if restarting}
+  <RestartCareerDialog onclose={() => (restarting = false)} />
+{/if}
 
 <style>
   .settings {
@@ -119,6 +151,24 @@
     max-width: 45rem;
     margin: 0 auto;
     padding-top: 1rem;
+  }
+
+  .restart {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    border-color: var(--io-crimson);
+    background: transparent;
+    color: var(--io-crimson-text);
+  }
+
+  @media (max-width: 40rem) {
+    .row:has(.restart) {
+      flex-direction: column;
+      align-items: flex-start;
+    }
   }
 
   /* B12: the lede sits 10px under the title, and the page gap alone parts it from the first section. */

@@ -7,7 +7,13 @@ const setYesNoQuestions = vi.hoisted(() => vi.fn());
 const hiddenTagGroups = vi.hoisted(() => vi.fn());
 const setTagGroupHidden = vi.hoisted(() => vi.fn());
 const yesNo = vi.hoisted(() => ({ playerDefault: false }));
-const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
+const startAtRow = vi.hoisted(() => ({ value: undefined as { startAt: Date } | undefined }));
+const PRIMARY = vi.hoisted(() => ({
+  client: 'primary',
+  selectFrom: () => ({
+    select: () => ({ where: () => ({ executeTakeFirst: async () => startAtRow.value }) }),
+  }),
+}));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/standing', async (original) => ({
@@ -52,6 +58,7 @@ beforeEach(() => {
   setTagGroupHidden.mockReset();
   setTagGroupHidden.mockResolvedValue(undefined);
   yesNo.playerDefault = false;
+  startAtRow.value = { startAt: new Date('2026-03-14T00:00:00Z') };
 });
 
 describe('settings load', () => {
@@ -88,6 +95,14 @@ describe('settings load', () => {
       ],
     });
     expect(hiddenTagGroups).toHaveBeenCalledWith(PRIMARY, 7);
+  });
+});
+
+describe('settings load, career', () => {
+  it('gives every player, an Acolyte too, the date they were sworn in for the restart section', async () => {
+    expect((await run()).career).toEqual({ swornIn: '2026-03-14T00:00:00.000Z' });
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 3 });
+    expect((await run()).career).toEqual({ swornIn: '2026-03-14T00:00:00.000Z' });
   });
 });
 
