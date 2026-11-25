@@ -122,7 +122,11 @@ are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-f
 `FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0) logs each written key, rate-limited, never its value
 (DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
-falls back (`index-feed-unconfigured`). The public `/api/v1/models` routes hand their fallbacks to
+falls back (`index-feed-unconfigured`). `FEED_GO_INFINITE_SERVE_GALLERY_SETTINGS_MISS` (default off)
+answers an `image.getInfinite` gallery-settings miss from the model's row (its hold only, lag-aware,
+never written back; DESIGN.md §14.9) instead of the `gallery-settings-miss` fallback; the computed
+misses are counted as `feed_go_cache_miss_total{cache="gallery-hold"}`, which is not a
+`FEED_GO_CACHE_WRITEBACK` name. The public `/api/v1/models` routes hand their fallbacks to
 `FEED_GO_V1_FALLBACK_URL`, the Node app that serves `/api/v1` (a different upstream from
 `FEED_GO_FALLBACK_URL`'s; deployment config, not set here); `FEED_GO_SERVE_V1_MODELS=true` without it
 fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). Both
