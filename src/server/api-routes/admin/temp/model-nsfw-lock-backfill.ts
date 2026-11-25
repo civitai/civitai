@@ -19,7 +19,8 @@
  *   (the marker is parked in the record), and the same call submits a forced text scan of each changed
  *   id (the scan's earlier verdict was skipped under the lock), at most 200 a call. An R+ read stamps
  *   the scan's own marker; a clean read leaves the rating as it is. Each scan's outcome is recorded on
- *   the row (`meta.nsfwLockBackfill.scan`) and any id not submitted is listed in `scans.notSubmitted`.
+ *   the row (`meta.nsfwLockBackfill.scan`); an id not submitted is locked again in the same call and
+ *   listed in `scans.notSubmitted` and `scans.relocked`. Its dry run counts `unlockedUnscanned`.
  *   A model not rated mature keeps its lock: a re-scan would rate it. A revert skips a model whose
  *   rating changed since the unlock, and reports it in `skippedRatingChanged`.
  *
@@ -267,6 +268,17 @@ export async function nextRevertBatch(bucket: Bucket, afterId: number, limit: nu
   return rows.map((r) => r.id);
 }
 
+/** The locks the unlock recorded, in their order, then any lock set since. */
+const priorLocksMergedSql = Prisma.sql`ARRAY(
+  SELECT p FROM (
+    SELECT p, min(o) AS o FROM unnest(
+      ARRAY(SELECT jsonb_array_elements_text(m.meta->'nsfwLockBackfill'->'priorLockedProperties'))
+        || COALESCE(m."lockedProperties", ARRAY[]::text[])
+    ) WITH ORDINALITY AS t(p, o)
+    GROUP BY p
+  ) merged ORDER BY o
+)`;
+
 /**
  * Puts back what the unlock lifted: the prior locks, in their order, then any lock set since. A
  * profanity lock also gets back its exact marker; its rating is the prior one, or it is not reverted.
@@ -280,15 +292,7 @@ export async function revertLocks(bucket: Bucket, ids: number[]) {
       : Prisma.sql`m.meta`;
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     UPDATE "Model" m
-    SET "lockedProperties" = ARRAY(
-          SELECT p FROM (
-            SELECT p, min(o) AS o FROM unnest(
-              ARRAY(SELECT jsonb_array_elements_text(m.meta->'nsfwLockBackfill'->'priorLockedProperties'))
-                || COALESCE(m."lockedProperties", ARRAY[]::text[])
-            ) WITH ORDINALITY AS t(p, o)
-            GROUP BY p
-          ) merged ORDER BY o
-        ),
+    SET "lockedProperties" = ${priorLocksMergedSql},
         meta = jsonb_set(${meta}, '{nsfwLockBackfill,revertedAt}', to_jsonb(now()))
     WHERE m.id = ANY(${ids}::int[]) AND ${revertableSql(bucket)}
     RETURNING m.id
@@ -340,6 +344,50 @@ export async function recordScans(outcomes: { id: number; status: string }[]) {
  * Submits the forced scan of every model a profanity unlock changed, in the same call, since its owner
  * can untick mature once the lock and the filter's marker are gone and until a scan stamps its own.
  */
+/**
+ * Locks again, in the same call, a profanity unlock whose forced scan was not submitted: nothing else
+ * holds its rating (`assertScanRatingKept` needs the lock or a scan marker). The prior locks and the
+ * filter's marker come back, and the record's `scan` says `failed-relocked` with the reason. A later
+ * run from `afterId: 0` picks the model up again; a revert never does, since it is locked.
+ */
+export async function relockUnscanned(outcomes: { id: number; status: string }[]) {
+  if (!outcomes.length) return [];
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "Model" m
+    SET "lockedProperties" = ${priorLocksMergedSql},
+        meta = jsonb_set(
+          m.meta || jsonb_build_object('systemNsfwLock', m.meta->'nsfwLockBackfill'->'priorSystemNsfwLock'),
+          '{nsfwLockBackfill,scan}',
+          jsonb_build_object('status', 'failed-relocked', 'reason', o.status, 'at', now())
+        )
+    FROM unnest(${outcomes.map((o) => o.id)}::int[], ${outcomes.map((o) => o.status)}::text[])
+      AS o(id, status)
+    WHERE m.id = o.id
+      AND jsonb_typeof(m.meta) = 'object'
+      AND m.meta->'nsfwLockBackfill'->>'bucket' = 'profanity-locks'
+      AND (m.meta->'nsfwLockBackfill'->>'revertedAt') IS NULL
+      AND jsonb_typeof(m.meta->'nsfwLockBackfill'->'priorLockedProperties') = 'array'
+      AND jsonb_typeof(m.meta->'nsfwLockBackfill'->'priorSystemNsfwLock') = 'object'
+    RETURNING m.id
+  `;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Profanity unlocks neither scanned nor locked again: a call that died between its unlock and its
+ * scans, or before its relock. Only a dry run reads it, for the operator to relock or re-scan those ids.
+ */
+export async function countUnlockedUnscanned() {
+  const [row] = await dbWrite.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM "Model" m
+    WHERE jsonb_typeof(m.meta) = 'object'
+      AND m.meta->'nsfwLockBackfill'->>'bucket' = 'profanity-locks'
+      AND (m.meta->'nsfwLockBackfill'->>'revertedAt') IS NULL
+      AND COALESCE(m.meta->'nsfwLockBackfill'->'scan'->>'status', '') NOT IN ('submitted', 'failed-relocked')
+  `;
+  return row?.count ?? 0;
+}
+
 async function scanUnlocked(ids: number[], scan: (id: number) => Promise<string>) {
   const limit = pLimit(2);
   const outcomes = await Promise.all(
@@ -350,8 +398,14 @@ async function scanUnlocked(ids: number[], scan: (id: number) => Promise<string>
     acc[o.status] = (acc[o.status] ?? 0) + 1;
     return acc;
   }, {});
-  const notSubmitted = outcomes.filter((o) => o.status !== 'submitted').map((o) => o.id);
-  return { byStatus, notSubmitted };
+  const failed = outcomes.filter((o) => o.status !== 'submitted');
+  const relocked = await relockUnscanned(failed);
+  return {
+    byStatus,
+    notSubmitted: failed.map((o) => o.id),
+    relocked,
+    relockedCount: relocked.length,
+  };
 }
 
 const writeEffects = { bustPublicModelResponseCache, scanModelText };
@@ -374,7 +428,13 @@ export async function runBackfill(
     profanity && action === 'revert' ? await ratingChangedSinceUnlock() : undefined;
   // The bucket count scans every locked model of the bucket, so only an unlock dry run pays for it.
   if (dryRun) {
-    const counts = action === 'unlock' ? await countLocks(bucket) : undefined;
+    const counts =
+      action === 'unlock'
+        ? {
+            ...(await countLocks(bucket)),
+            ...(profanity ? { unlockedUnscanned: await countUnlockedUnscanned() } : {}),
+          }
+        : undefined;
     return {
       bucket,
       action,
@@ -430,7 +490,7 @@ export default defineModeratorEndpoint('model.nsfwLockBackfill', {
     'dryRun defaults to true: the next batch of ids (and, for unlock, the counts), no writes.',
     'A write run re-checks every id in the UPDATE, so a row that changed since the dry run is skipped.',
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
-    'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id and lists any not submitted in scans.notSubmitted.',
+    'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id; one not submitted is locked again (scans.relocked).',
     'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },

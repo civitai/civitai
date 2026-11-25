@@ -23,6 +23,7 @@ const {
   nextRevertBatch,
   nextUnlockBatch,
   PROFANITY_BATCH_LIMIT,
+  recordScans,
   revertLocks,
   runBackfill,
   unlockLocks,
@@ -607,12 +608,15 @@ describe('model nsfw lock backfill: profanity locks', () => {
       expect(result.scans).toEqual({
         byStatus: { submitted: ALL_ELIGIBLE.length },
         notSubmitted: [],
+        relocked: [],
+        relockedCount: 0,
       });
       for (const id of ALL_ELIGIBLE)
         expect((await row(id)).meta.nsfwLockBackfill.scan).toMatchObject({ status: 'submitted' });
     });
 
-    it('marks and lists a changed id whose scan was not submitted, never skipping it silently', async () => {
+    it('locks again, in the same call, a changed id whose scan was not submitted', async () => {
+      const before = await row(ELIGIBLE);
       scanModelText.mockImplementation(async (id: number) => {
         if (id === ELIGIBLE) throw new Error('orchestrator down');
         if (id === ELIGIBLE_TRANSFERRED) return 'not-active/shadow';
@@ -620,11 +624,47 @@ describe('model nsfw lock backfill: profanity locks', () => {
       });
       const result = await unlockRun();
       expect(result.changed).toEqual(ALL_ELIGIBLE);
-      expect(result.scans?.notSubmitted.sort()).toEqual([ELIGIBLE, ELIGIBLE_TRANSFERRED].sort());
-      expect((await row(ELIGIBLE)).meta.nsfwLockBackfill.scan).toMatchObject({ status: 'threw' });
-      expect((await row(ELIGIBLE_TRANSFERRED)).meta.nsfwLockBackfill.scan).toMatchObject({
-        status: 'not-active/shadow',
+      const failed = [ELIGIBLE, ELIGIBLE_TRANSFERRED].sort();
+      expect(result.scans?.notSubmitted.sort()).toEqual(failed);
+      expect(result.scans?.relocked.sort()).toEqual(failed);
+      expect(result.scans?.relockedCount).toBe(2);
+      // Locked again with the filter's exact marker, so its rating is held as before the unlock.
+      const after = await row(ELIGIBLE);
+      expect(after.lockedProperties).toEqual(before.lockedProperties);
+      expect(after.nsfw).toBe(before.nsfw);
+      expect(after.meta.systemNsfwLock).toEqual(profanityMarker);
+      expect(after.meta.nsfwLockBackfill.scan).toMatchObject({
+        status: 'failed-relocked',
+        reason: 'threw',
       });
+      expect((await row(ELIGIBLE_TRANSFERRED)).meta.nsfwLockBackfill.scan).toMatchObject({
+        status: 'failed-relocked',
+        reason: 'not-active/shadow',
+      });
+      // Never reverted while locked; a later run from the start picks both up again.
+      expect(await nextRevertBatch(PROFANITY, 0, 100)).not.toContain(ELIGIBLE);
+      // A later run from the start picks both up again; the submitted ones stay unlocked.
+      expect(await nextUnlockBatch(PROFANITY, 0, 100)).toEqual(failed);
+    });
+
+    it('counts unlocks a call left with no scan outcome', async () => {
+      await unlockLocks(PROFANITY, [ELIGIBLE]);
+      const dry = await runBackfill(backfillSchema.parse({ bucket: PROFANITY }), effects);
+      expect(dry.counts).toMatchObject({ unlockedUnscanned: 1 });
+      // A scan that failed but was never locked again (the relock died) counts too; a relocked one not.
+      await unlockLocks(PROFANITY, [ELIGIBLE_TRANSFERRED]);
+      await recordScans([
+        { id: ELIGIBLE, status: 'threw' },
+        { id: ELIGIBLE_TRANSFERRED, status: 'submitted' },
+      ]);
+      const again = await runBackfill(backfillSchema.parse({ bucket: PROFANITY }), effects);
+      expect(again.counts).toMatchObject({ unlockedUnscanned: 1 });
+      await db.query(
+        `UPDATE "Model" SET meta = jsonb_set(meta, '{nsfwLockBackfill,scan,status}', '"failed-relocked"') WHERE id = $1`,
+        [ELIGIBLE]
+      );
+      const relocked = await runBackfill(backfillSchema.parse({ bucket: PROFANITY }), effects);
+      expect(relocked.counts).toMatchObject({ unlockedUnscanned: 0 });
     });
 
     it('scans nothing on a scan-locks unlock or a dry run', async () => {
