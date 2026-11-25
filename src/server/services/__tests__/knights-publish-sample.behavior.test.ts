@@ -12,6 +12,7 @@ import {
   PostgresQueryCompiler,
   type QueryResult,
 } from 'kysely';
+import { JIT_OFF_STATEMENT } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import {
@@ -485,7 +486,7 @@ describe('offerImagesToKnights', () => {
     for (const i of reads) {
       const begin = log.lastIndexOf('BEGIN', i);
       expect(begin).toBeGreaterThanOrEqual(0);
-      expect(log.slice(begin + 1, i)).toContain('SET LOCAL jit = off');
+      expect(log.slice(begin + 1, i)).toContain(JIT_OFF_STATEMENT);
       expect(log.slice(begin + 1, i)).not.toContain('COMMIT');
     }
   });

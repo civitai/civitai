@@ -128,37 +128,44 @@ export async function getApprenticeProgress(db: Executor, playerId: number) {
 }
 
 async function progressOf(db: Executor, playerId: number): Promise<ApprenticeProgress> {
-  const answered = Number(
-    (
-      await answersOf(db, playerId)
-        .select(sql<string>`count(*)`.as('n'))
-        .executeTakeFirstOrThrow()
-    ).n
-  );
+  return (await standingOf(db, playerId)).progress;
+}
+
+/**
+ * The player's progress, and whether a checkpoint recap waits for them, in one query: every answer and every page load
+ * reads both.
+ */
+async function standingOf(
+  db: Executor,
+  playerId: number
+): Promise<{ progress: ApprenticeProgress; checkpointPending: boolean }> {
   const latest = answersOf(db, playerId)
     .select('a.correct')
     .orderBy('a.id', 'desc')
     .limit(APPRENTICE.window)
     .as('w');
-  const totals = await db
+  const row = await db
     .selectFrom(latest)
     .select([
+      answersOf(db, playerId)
+        .select(sql<string>`count(*)`.as('n'))
+        .as('answered'),
+      // Null when the player has no answer yet.
+      answersOf(db, playerId)
+        .select(sql<boolean>`a."checkpointSeenAt" IS NULL`.as('open'))
+        .orderBy('a.id', 'desc')
+        .limit(1)
+        .as('lastOpen'),
       sql<string>`count(*)`.as('graded'),
       sql<string>`count(*) filter (where w.correct)`.as('correct'),
     ])
     .executeTakeFirstOrThrow();
-  const window: Window = { graded: Number(totals.graded), correct: Number(totals.correct) };
-  return { answered, ...window, accuracy: accuracyOf(window) };
-}
-
-async function checkpointPending(db: Executor, playerId: number, answered: number) {
-  if (!isCheckpoint(answered)) return false;
-  const last = await answersOf(db, playerId)
-    .select('a.checkpointSeenAt')
-    .orderBy('a.id', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  return !!last && last.checkpointSeenAt === null;
+  const answered = Number(row.answered);
+  const window: Window = { graded: Number(row.graded), correct: Number(row.correct) };
+  return {
+    progress: { answered, ...window, accuracy: accuracyOf(window) },
+    checkpointPending: isCheckpoint(answered) && row.lastOpen === true,
+  };
 }
 
 /**
@@ -206,31 +213,36 @@ async function nextRating(
   position: number,
   from: RatingSource
 ): Promise<NextItem | null> {
-  const row = await readWithoutJit(db, (trx) =>
-    servableReferences(trx, [from === 'skill' ? REFERENCE_POOL.skillCheck : REFERENCE_POOL.trials])
-      .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-      .$if(from !== 'skill', (qb) =>
-        qb.where('r.source', from === 'core' ? '=' : '<>', REFERENCE_SOURCE.core)
-      )
-      .where(
-        seenBy(playerId, 'referenceId', {
-          id: 'r.id',
-          imageId: 'r.imageId',
-          questionKey: 'r.questionKey',
-        })
-      )
-      .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
-      .orderBy(shuffled(playerId, position, 'r.id'))
-      .limit(1)
-      .executeTakeFirst()
-  );
+  const [row, question] = await Promise.all([
+    readWithoutJit(db, (trx) =>
+      servableReferences(trx, [
+        from === 'skill' ? REFERENCE_POOL.skillCheck : REFERENCE_POOL.trials,
+      ])
+        .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+        .$if(from !== 'skill', (qb) =>
+          qb.where('r.source', from === 'core' ? '=' : '<>', REFERENCE_SOURCE.core)
+        )
+        .where(
+          seenBy(playerId, 'referenceId', {
+            id: 'r.id',
+            imageId: 'r.imageId',
+            questionKey: 'r.questionKey',
+          })
+        )
+        .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
+        .orderBy(shuffled(playerId, position, 'r.id'))
+        .limit(1)
+        .executeTakeFirst()
+    ),
+    ratingOptions(db),
+  ]);
   if (!row) return null;
   return {
     kind: 'rating',
     referenceId: row.id,
     imageId: row.imageId,
     questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-    ...(await ratingOptions(db)),
+    ...question,
     version: null,
     imageKey: row.imageKey,
     width: row.width,
@@ -423,15 +435,17 @@ export async function getApprentice(
   playerId: number,
   { skillCheckRate = 0 }: { skillCheckRate?: number } = {}
 ): Promise<ApprenticeView> {
-  const player = await db
-    .selectFrom('NewOrderPlayer')
-    .select('rankType')
-    .where('userId', '=', playerId)
-    .executeTakeFirst();
+  const [player, { progress, checkpointPending }] = await Promise.all([
+    db
+      .selectFrom('NewOrderPlayer')
+      .select('rankType')
+      .where('userId', '=', playerId)
+      .executeTakeFirst(),
+    standingOf(db, playerId),
+  ]);
   if (player && player.rankType !== 'Acolyte') return { kind: 'not-acolyte' };
 
-  const progress = await progressOf(db, playerId);
-  if (await checkpointPending(db, playerId, progress.answered)) {
+  if (checkpointPending) {
     return {
       kind: 'checkpoint',
       checkpoint: await buildCheckpoint(db, playerId, progress),
@@ -474,8 +488,7 @@ export async function answerApprentice(
       return { status: 'rejected', reason: 'reset-pending' };
     }
 
-    const before = await progressOf(trx, userId);
-    if (await checkpointPending(trx, userId, before.answered)) {
+    if ((await standingOf(trx, userId)).checkpointPending) {
       return { status: 'rejected', reason: 'checkpoint-pending' };
     }
     const current = await findNext(trx, userId, deps.skillCheckRate ?? 0);
@@ -624,8 +637,7 @@ export async function unsureApprentice(
     if ((await activeSmiteCount(trx, userId)) >= SMITES.max) {
       return { status: 'rejected', reason: 'reset-pending' };
     }
-    const progress = await progressOf(trx, userId);
-    if (await checkpointPending(trx, userId, progress.answered)) {
+    if ((await standingOf(trx, userId)).checkpointPending) {
       return { status: 'rejected', reason: 'checkpoint-pending' };
     }
     const current = await findNext(trx, userId, deps.skillCheckRate ?? 0);
@@ -660,8 +672,7 @@ export async function acknowledgeCheckpoint(
   playerId: number,
   now: Date
 ): Promise<void> {
-  const progress = await progressOf(db, playerId);
-  if (!(await checkpointPending(db, playerId, progress.answered))) return;
+  if (!(await standingOf(db, playerId)).checkpointPending) return;
   const last = await answersOf(db, playerId)
     .select('a.id')
     .orderBy('a.id', 'desc')
