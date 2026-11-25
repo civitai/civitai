@@ -622,6 +622,28 @@ func TestServeV1ModelsAnswersNotFound(t *testing.T) {
 		t.Fatalf("If-None-Match: code=%d body=%q ETag=%q proxied=%d, want a 304", w.Code, w.Body.String(), w.Header().Get("ETag"), up.count())
 	}
 
+	// A credentialed request gets the credentialed Vary on the 404, as on the 200.
+	w = httptest.NewRecorder()
+	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", map[string]string{"Cookie": "__Secure-civ-token=t"}))
+	if w.Code != http.StatusNotFound || w.Header().Get("Vary") != "Authorization, Cookie" {
+		t.Errorf("with a session cookie: code=%d Vary=%q, want 404 and the credentialed Vary", w.Code, w.Header().Get("Vary"))
+	}
+
+	// Control: a fresh origin cache entry for the model is Node's 200 (fetchModelResponseCached reads
+	// it before any statement), never the 404, whatever the statement would find.
+	reg2 := prometheus.NewRegistry()
+	s2, up2, cache2 := notFoundV1Server(t, reg2, true)
+	cache2.SetString(v1models.KeyPublicModelResponse+":v2:42:31", jspack.Pack(jspack.Obj{
+		{K: "data", V: jspack.Obj{{K: "id", V: int64(42)}, {K: "name", V: "cached"}}},
+		{K: "cachedAt", V: float64(time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC).Add(-time.Minute).UnixMilli())},
+	}))
+	w = httptest.NewRecorder()
+	s2.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
+	if w.Code != http.StatusOK || up2.count() != 0 ||
+		v1Count(t, reg2, EndpointV1ModelsID, "feed_go_requests_total", map[string]string{"outcome": "served_cached"}) != 1 {
+		t.Errorf("cached model: code=%d proxied=%d body=%s, want the cached 200", w.Code, up2.count(), w.Body.String())
+	}
+
 	// The lag flag set: a recent write the replica may not show yet, handed to the app.
 	cache.SetString("lag-helper:model:42", []byte("1"))
 	w = httptest.NewRecorder()
