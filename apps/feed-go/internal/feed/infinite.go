@@ -1077,10 +1077,16 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Wrap("feed-unavailable", err)
+		// Node's `timeout` / `error`: its 503, or a last-good page (UnavailableError).
+		return nil, nodeUnavailable(fallback.Wrap("feed-unavailable", err), viewer, query)
 	}
 	if ans.Status != 200 {
-		return nil, fallback.Safef("feed-status", "%d", ans.Status)
+		status := fallback.Safef("feed-status", "%d", ans.Status)
+		if ans.Status >= 500 && ans.Status <= 599 {
+			// Node's `status:5xx`: as a failed call. Any other status is Node's empty page.
+			return nil, nodeUnavailable(status, viewer, query)
+		}
+		return nil, status
 	}
 	next := ""
 	if ans.NextCursor != "" {
