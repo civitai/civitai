@@ -105,12 +105,11 @@ export const hatTurfRouter = router({
     .input(turfEventSchema)
     .use(edgeCacheIt({ ttl: 60 }))
     .query(({ input }) => getFlagRaceTotals(input.event)),
-  // Each team's Comeback Cup week so far against its own pace, for the event page's Cup card.
   getComebackPace: publicProcedure
     .input(turfEventSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.md }))
     .query(({ input }) => getComebackPace(input.event)),
-  // The event page's films and art from the flagRace key, so a new id lands without a deploy.
+  // Films and art come from the flagRace key, so a new id needs no deploy.
   getEventMedia: publicProcedure
     .input(turfEventSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))

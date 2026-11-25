@@ -22,6 +22,35 @@ func parseWith(t *testing.T, raw string, p Ports) (*Input, error) {
 
 var allPorts = Ports{IDs: true, Followed: true}
 
+// Hide Paid true, in each form booleanString reads as true, is the input-hidePaid fallback with its
+// port off and is parsed with it on; false, absent or null is parsed either way. A value the schema
+// refuses is input-invalid either way, also when Hide Paid itself is true.
+func TestPortHidePaid(t *testing.T) {
+	for _, raw := range []string{`{"json":{"hidePaid":true}}`, `{"json":{"hidePaid":"true"}}`, `{"json":{"hidePaid":1}}`} {
+		if _, err := parseWith(t, raw, allPorts); fallback.Reason(err) != "input-hidePaid" {
+			t.Errorf("off, %s: %v (%q), want input-hidePaid", raw, err, fallback.Reason(err))
+		}
+		in, err := parseWith(t, raw, Ports{HidePaid: true})
+		if err != nil || !in.HidePaid {
+			t.Errorf("on, %s: %v (%q), want parsed with Hide Paid", raw, err, fallback.Reason(err))
+		}
+	}
+	for _, raw := range []string{`{"json":{}}`, `{"json":{"hidePaid":false}}`, `{"json":{"hidePaid":"false"}}`, `{"json":{"hidePaid":null}}`} {
+		for _, p := range []Ports{{}, {HidePaid: true}} {
+			if in, err := parseWith(t, raw, p); err != nil || in.HidePaid {
+				t.Errorf("%+v, %s: %v (%q), want parsed without Hide Paid", p, raw, err, fallback.Reason(err))
+			}
+		}
+	}
+	for _, raw := range []string{`{"json":{"hidePaid":"maybe"}}`, `{"json":{"hidePaid":true,"limit":101}}`} {
+		for _, p := range []Ports{{}, {HidePaid: true}} {
+			if _, err := parseWith(t, raw, p); fallback.Reason(err) != "input-invalid" {
+				t.Errorf("%+v, %s: %v (%q), want input-invalid", p, raw, err, fallback.Reason(err))
+			}
+		}
+	}
+}
+
 // Off (the default), each port's shape falls back with the reason it always had, whatever else is on.
 func TestPortsOffFallBackAsBefore(t *testing.T) {
 	for raw, want := range map[string]string{

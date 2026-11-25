@@ -207,8 +207,14 @@ async function lastSentAt(userId: number): Promise<string | null> {
 }
 
 /** The `notificationDigestEvents` rows written so far. */
-const digestEvents = () =>
-  h.insert.mock.calls.flatMap(([arg]) => (arg as { values: Record<string, unknown>[] }).values);
+type Insert = { table: string; values: Record<string, unknown>[] };
+const rowsOf = (table: string) =>
+  h.insert.mock.calls
+    .map(([arg]) => arg as Insert)
+    .filter((arg) => arg.table === table)
+    .flatMap((arg) => arg.values);
+const digestEvents = () => rowsOf('notificationDigestEvents');
+const emailEvents = () => rowsOf('emailEvents');
 const sendRows = () =>
   digestEvents()
     .filter((r) => r.event === 'send')
@@ -616,10 +622,18 @@ describe('the digest email', () => {
     expect(mail.headers?.['List-Unsubscribe']).toContain(`t=${MISSED_DIGEST_EMAIL_TYPE}`);
   });
 
-  it("each link is signed for the user, the pass and the item's place, and leads to the item", async () => {
+  it("each link is signed for the user, the pass, the send and the item's place, and leads to the item", async () => {
     await run();
-    const pass = { userId: 1, cycleStartedAt: NOW, notificationType: 'system-message' };
-    expect(clicksIn(mailFor('one@example.com').html)).toEqual([
+    const mail = mailFor('one@example.com');
+    // The send id the links carry is the one the message goes out with.
+    expect(mail.sendId).toMatch(/^[0-9a-f-]{36}$/);
+    const pass = {
+      userId: 1,
+      cycleStartedAt: NOW,
+      notificationType: 'system-message',
+      sendId: mail.sendId,
+    };
+    expect(clicksIn(mail.html)).toEqual([
       ...Array.from({ length: DIGEST_ITEM_LIMIT }, (_, i) => ({
         ...pass,
         position: i + 1,
@@ -674,6 +688,15 @@ describe('the digest email', () => {
     const result = await run();
     expect(mailedTo()).toEqual(['nine@example.com']);
     expect(result.skipped['opted-out']).toBe(2);
+  });
+});
+
+describe('the digest link positions', () => {
+  it("every item position stays below the rewritten links' first position", async () => {
+    const { DIGEST_REWRITTEN_LINKS_FROM } = await import(
+      '~/server/email/templates/missedNotificationsDigest.email'
+    );
+    expect(DIGEST_ITEM_LIMIT).toBeLessThan(DIGEST_REWRITTEN_LINKS_FROM);
   });
 });
 
@@ -732,6 +755,21 @@ describe('the measurement rows', () => {
     expect(digestEvents().filter((r) => r.event === 'unsubscribe')).toEqual([
       expect.objectContaining({ userId: 1, cycleStartedAt: '2026-11-16 12:00:00.000' }),
     ]);
+    // And once in emailEvents, against the send the email went out as.
+    expect(emailEvents()).toEqual([
+      {
+        time: expect.any(String),
+        event: 'unsubscribe',
+        sendId: mailFor('one@example.com').sendId,
+        template: 'missedNotificationsDigest',
+        mailClass: 'lifecycle',
+        campaign: '',
+        variant: '',
+        userId: 1,
+        position: 0,
+        userAgent: '',
+      },
+    ]);
   });
 });
 
@@ -788,6 +826,60 @@ describe('the digest click endpoint', () => {
         itemCount: 0,
       }),
     ]);
+  });
+
+  it('a link carrying the send id is also an emailEvents click, against that send', async () => {
+    const sendId = '1d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f';
+    const result = await call(queryOf(getDigestClickUrl({ ...click, sendId })));
+    expect(result).toEqual({
+      status: 302,
+      location: '/images/7?tab=comments#c9',
+      insertsAtRedirect: 2,
+    });
+    expect(digestEvents()).toEqual([
+      expect.objectContaining({ event: 'click', userId: 42, position: 3 }),
+    ]);
+    expect(emailEvents()).toEqual([
+      {
+        time: expect.any(String),
+        event: 'click',
+        sendId,
+        template: 'missedNotificationsDigest',
+        mailClass: 'lifecycle',
+        campaign: '2026-11-16T12:00:00.000Z',
+        variant: '',
+        userId: 42,
+        position: 3,
+        userAgent: 'TestMail/1.0',
+      },
+    ]);
+    expect(verifyDigestClick(queryOf(getDigestClickUrl({ ...click, sendId })))).toEqual({
+      ...click,
+      sendId,
+    });
+  });
+
+  it.each([
+    ['another send', { e: '2d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f' }],
+    ['no send at all', { e: undefined }],
+    ['a malformed send', { e: 'not-a-uuid' }],
+  ])('a link with its send id edited to %s records nothing', async (_, edit) => {
+    const sendId = '1d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f';
+    const query: Record<string, string | undefined> = {
+      ...queryOf(getDigestClickUrl({ ...click, sendId })),
+      ...edit,
+    };
+    if (query.e === undefined) delete query.e;
+    const result = await call(query as Record<string, string>);
+    expect(result).toMatchObject({ status: 302, location: '/user/notifications' });
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+
+  it('a link from before send ids (none in it) still records the digest click, and no emailEvents row', async () => {
+    const result = await call(queryOf(getDigestClickUrl(click)));
+    expect(result.location).toBe('/images/7?tab=comments#c9');
+    expect(digestEvents()).toHaveLength(1);
+    expect(emailEvents()).toEqual([]);
   });
 
   it('a HEAD (a link checker) redirects but records nothing', async () => {

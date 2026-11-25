@@ -6,6 +6,10 @@
 export const APP_ACCESS_REQUEST_STATUSES = ['pending', 'approved', 'declined'] as const;
 export type AppAccessRequestStatus = (typeof APP_ACCESS_REQUEST_STATUSES)[number];
 
+/** Who decided a request: a moderator's `decide`, or `app-access-auto-approve` on submit. */
+export const APP_ACCESS_REVIEW_SOURCES = ['moderator', 'system'] as const;
+export type AppAccessReviewSource = (typeof APP_ACCESS_REVIEW_SOURCES)[number];
+
 /** The two outcomes a moderator can record. Declining an approved request revokes it. */
 export const APP_ACCESS_REQUEST_DECISIONS = ['approved', 'declined'] as const;
 export type AppAccessRequestDecision = (typeof APP_ACCESS_REQUEST_DECISIONS)[number];
