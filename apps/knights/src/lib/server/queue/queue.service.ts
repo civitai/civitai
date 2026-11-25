@@ -177,6 +177,12 @@ export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.leng
 export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
 
 /**
+ * The most rows one stage's scan reads per pick (rounds of 100, 200, 400, 800 and 1600), so a bucket that cannot fill
+ * never drives a stage-sized read; past the budget the window keeps what the scan found.
+ */
+export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;
+
+/**
  * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
  * nothing is escalated), then the first `FEED.bucketWindowSize` items of each level bucket in the stage's normal order
  * (priority, age, id), so a crowded bucket cannot push the others out of the window. The caller buckets the escalated
@@ -184,17 +190,17 @@ export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
  * player has already judged for the question, at any stage or in any earlier item.
  *
  * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
- * is full or the stage runs out. Most open items can be unservable (a draft or scheduled post, a deleted image), and
+ * is full, the stage runs out or `rowBudget` rows are read. Most open items can be unservable (a draft or scheduled post, a deleted image), and
  * only the Image and Post rows tell, so a read per bucket would walk the whole stage once per bucket. A bucket that
- * cannot fill makes the scan read every candidate of the stage, so the rounds read only what bucketing and the cursor
- * need, and one more read fetches the served columns of the kept items alone.
+ * cannot fill keeps the scan going to the budget, so the rounds read only what bucketing and the cursor need, and one more read fetches the served columns of the kept items alone.
  */
 async function stageWindow(
   db: Executor,
   userId: number,
   stage: Rank,
   exclude: number[],
-  escalatedSince: Date
+  escalatedSince: Date,
+  rowBudget = STAGE_SCAN_ROW_BUDGET
 ) {
   const eligible = (perRow = true) =>
     servableItems(db)
@@ -245,9 +251,10 @@ async function stageWindow(
   const taken = new Map<LevelBucket | null, number>();
   let filled = 0;
   let after: StageScanCursor | null = null;
-  for (let size = STAGE_SCAN_FIRST_ROUND; ; size *= 2) {
+  for (let size = STAGE_SCAN_FIRST_ROUND, read = 0; read < rowBudget; size *= 2) {
     const cursor: StageScanCursor | null = after;
-    const rows = await eligible(size <= STAGE_SCAN_PER_ROW_PROBE_MAX)
+    const limit = Math.min(size, rowBudget - read);
+    const rows = await eligible(limit <= STAGE_SCAN_PER_ROW_PROBE_MAX)
       .select([
         'i.id',
         'i.priority',
@@ -268,8 +275,9 @@ async function stageWindow(
       .orderBy('i.priority', 'asc')
       .orderBy('i.createdAt', 'asc')
       .orderBy('i.id', 'asc')
-      .limit(size)
+      .limit(limit)
       .execute();
+    read += rows.length;
     for (const row of rows) {
       const bucket = itemBucket(row.prediction, row.imageLevel);
       const count = taken.get(bucket) ?? 0;
@@ -278,7 +286,7 @@ async function stageWindow(
       if (count + 1 === FEED.bucketWindowSize) filled++;
       kept.push(row.id);
     }
-    if (rows.length < size || filled === BUCKET_LEVELS.length) break;
+    if (rows.length < limit || filled === BUCKET_LEVELS.length) break;
     // Annotated so the cursor's type does not depend on the rows its own round read.
     const last: { id: number; priority: number; createdAtKey: string } = rows[rows.length - 1];
     after = { priority: last.priority, createdAt: last.createdAtKey, id: last.id };
@@ -314,7 +322,14 @@ export async function getFeed(
     exclude = [],
     now = new Date(),
     random = Math.random,
-  }: { limit?: number; exclude?: number[]; now?: Date; random?: () => number } = {}
+    scanRowBudget = STAGE_SCAN_ROW_BUDGET,
+  }: {
+    limit?: number;
+    exclude?: number[];
+    now?: Date;
+    random?: () => number;
+    scanRowBudget?: number;
+  } = {}
 ): Promise<Feed | null> {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -331,7 +346,9 @@ export async function getFeed(
   for (const stage of [...stages].reverse()) {
     if (items.length >= limit) break;
     const rows = lowestTierPerItem(
-      await readWithoutJit(db, (trx) => stageWindow(trx, userId, stage, exclude, escalatedSince))
+      await readWithoutJit(db, (trx) =>
+        stageWindow(trx, userId, stage, exclude, escalatedSince, scanRowBudget)
+      )
     ).sort(
       (a, b) =>
         a.tier - b.tier || a.priority - b.priority || +a.createdAt - +b.createdAt || a.id - b.id
