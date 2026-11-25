@@ -125,19 +125,85 @@ describe('/reports/user models tab covers', () => {
 });
 
 describe('/reports/user images tab', () => {
-  const images = async (viewer: never) => {
-    const { getSuspectImages } = await import('../report-triage.service');
-    return (await getSuspectImages(OWNER, undefined, { viewer })).items as unknown as Row[];
+  beforeEach(async () => {
+    await db.exec(`UPDATE "Image" SET name = 'file.png',
+      meta = '{"prompt": "secret prompt", "negativePrompt": "secret negative"}'
+      WHERE id = ${WITHHELD}`);
+  });
+  const images = async (viewer: never, prompt = '') => {
+    const { getSuspectImages, EMPTY_SUSPECT_FILTERS } = await import('../report-triage.service');
+    return getSuspectImages(OWNER, { ...EMPTY_SUSPECT_FILTERS, prompt }, { viewer });
   };
 
-  it('sends a withheld image with no key to a moderator without the grant', async () => {
-    const rows = await images(WITHOUT_GRANT);
-    expect(find(rows, 'id', WITHHELD)).toMatchObject({ url: '', restricted: true });
+  it('sends a withheld image with no key, prompt or name to a moderator without the grant', async () => {
+    const rows = (await images(WITHOUT_GRANT)).items as unknown as Row[];
+    expect(find(rows, 'id', WITHHELD)).toMatchObject({
+      url: '',
+      restricted: true,
+      prompt: null,
+      negativePrompt: null,
+      name: null,
+    });
     expect(find(rows, 'id', CONTROL)).toMatchObject({ url: CONTROL_KEY });
   });
 
   it('sends it to a moderator with the grant', async () => {
-    expect(find(await images(WITH_GRANT), 'id', WITHHELD)).toMatchObject({ url: KEY });
+    const rows = (await images(WITH_GRANT)).items as unknown as Row[];
+    expect(find(rows, 'id', WITHHELD)).toMatchObject({ url: KEY });
+  });
+
+  // Otherwise paging the filter reads the withheld prompt back a substring at a time.
+  it('never matches a withheld image on its prompt for a moderator without the grant', async () => {
+    const result = await images(WITHOUT_GRANT, 'secret');
+    expect(result.items).toEqual([]);
+    expect(result.matched).toBe(0);
+  });
+
+  it('matches it for a moderator with the grant', async () => {
+    const result = await images(WITH_GRANT, 'secret');
+    expect(result.items.map((i) => i.id)).toEqual([WITHHELD]);
+  });
+});
+
+describe('profile avatar and covers', () => {
+  const media = (id: number, url: string) => ({ id, url, type: 'image', nsfwLevel: 1 });
+  const shown = async (viewer: never) => {
+    const { withheldProfileMedia } = await import('../user-lookup.service');
+    return withheldProfileMedia(
+      {
+        profilePictureId: WITHHELD,
+        profilePictureUrl: KEY,
+        profilePictureType: 'image',
+        profilePictureNsfwLevel: 1,
+      } as never,
+      {
+        bio: null,
+        message: null,
+        sfwBio: null,
+        sfwMessage: null,
+        location: null,
+        coverImage: media(WITHHELD, KEY),
+        sfwCoverImage: media(CONTROL, CONTROL_KEY),
+      },
+      viewer
+    );
+  };
+
+  it('sends a withheld avatar and cover with no key to a moderator without the grant', async () => {
+    const { identity, profile } = await shown(WITHOUT_GRANT);
+    expect(identity).toMatchObject({
+      profilePictureUrl: null,
+      profilePictureType: null,
+      profilePictureRestricted: true,
+    });
+    expect(profile?.coverImage).toMatchObject({ url: '', type: null, restricted: true });
+    expect(profile?.sfwCoverImage).toEqual(media(CONTROL, CONTROL_KEY));
+  });
+
+  it('sends them to a moderator with the grant', async () => {
+    const { identity, profile } = await shown(WITH_GRANT);
+    expect(identity).toMatchObject({ profilePictureUrl: KEY });
+    expect(profile?.coverImage).toMatchObject({ url: KEY });
   });
 });
 

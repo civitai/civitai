@@ -15,8 +15,10 @@ const {
   getOpenFlaggerVersions,
   isControlFlaggerVersion,
   itemForToken,
+  itemWithheld,
 } = vi.hoisted(() => ({
   itemForToken: vi.fn(),
+  itemWithheld: vi.fn(),
   getVotedItemOwner: vi.fn(),
   claimNext: vi.fn(),
   getCounters: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock('$lib/server/scan-label.service', () => ({
   getVotedItemOwner,
   isControlFlaggerVersion,
   itemForToken,
+  itemWithheld,
 }));
 
 const { actions, load } = await import('../scan-labels/+page.server');
@@ -70,6 +73,7 @@ beforeEach(() => {
   applyMajorityBlocks.mockResolvedValue({ blocked: [], failed: [] });
   getVotedItemOwner.mockResolvedValue(OWNER);
   itemForToken.mockResolvedValue(5);
+  itemWithheld.mockResolvedValue(false);
 });
 
 describe('vote action', () => {
@@ -241,6 +245,17 @@ describe('vote action', () => {
     };
     expect(result.status).toBe(409);
     expect(result.data.error).toContain('not held by you');
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  it('refuses a vote on an item whose image became withheld after the claim, recording nothing', async () => {
+    itemWithheld.mockResolvedValue(true);
+    const result = (await actions.vote(event({ token: TOKEN, block: '0' }))) as {
+      status: number;
+      data: { error: string };
+    };
+    expect(result.status).toBe(409);
+    expect(itemWithheld).toHaveBeenCalledWith(5, false);
     expect(castVote).not.toHaveBeenCalled();
   });
 

@@ -1,5 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
+import { holdsCsamReview } from './held-media';
+import { listWithheldIds } from './retracted-media';
 import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
@@ -44,7 +46,10 @@ export type UserIdentity = {
   /** Comma-separated moderator usernames who filed an OPEN report on this account, or null. */
   openReportModerators: string | null;
   /** The avatar behind `profilePictureId`. `image` above is the legacy URL and is not the same thing. */
+  profilePictureId: number | null;
   profilePictureUrl: string | null;
+  /** The avatar is withheld from this moderator: no key and no type. */
+  profilePictureRestricted?: true;
   profilePictureType: string | null;
   profilePictureNsfwLevel: number | null;
   /** `Pending` means a SYSTEM restriction nobody has ruled on — the case where `mutedAt` is null and
@@ -94,6 +99,8 @@ export type ProfileMedia = {
   /** The image scan's minor tags, for a moderator checking an avatar or cover. */
   minor?: boolean;
   acceptableMinor?: boolean;
+  /** Withheld from this moderator: `url` is empty. */
+  restricted?: true;
 };
 
 export type UserProfileText = {
@@ -294,7 +301,44 @@ export type UserCard = Pick<
   'identity' | 'subscription' | 'curator' | 'strikeCountAllTime' | 'strikes' | 'modContact'
 >;
 
-export async function getUserCard(userId: number): Promise<UserCard | null> {
+/** The avatar and covers, with any withheld from `viewer` sent without their key. */
+export async function withheldProfileMedia(
+  identity: UserIdentity | null,
+  profile: UserProfileText | null,
+  viewer: App.Locals['user'] | undefined
+) {
+  const ids = [
+    identity?.profilePictureId,
+    profile?.coverImage?.id,
+    profile?.sfwCoverImage?.id,
+  ].filter((id): id is number => id != null);
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(viewer) }, 'user-card');
+  const media = (m: ProfileMedia | null): ProfileMedia | null =>
+    m?.id != null && withheld.has(m.id)
+      ? { id: m.id, url: '', type: null, nsfwLevel: m.nsfwLevel, restricted: true }
+      : m;
+  return {
+    identity:
+      identity?.profilePictureId != null && withheld.has(identity.profilePictureId)
+        ? {
+            ...identity,
+            profilePictureUrl: null,
+            profilePictureType: null,
+            profilePictureRestricted: true as const,
+          }
+        : identity,
+    profile: profile && {
+      ...profile,
+      coverImage: media(profile.coverImage),
+      sfwCoverImage: media(profile.sfwCoverImage),
+    },
+  };
+}
+
+export async function getUserCard(
+  userId: number,
+  viewer: App.Locals['user'] | undefined
+): Promise<UserCard | null> {
   const [identity, subscription, curator, strikeCountAllTime, modContact, strikes] =
     await Promise.all([
       getIdentity(userId),
@@ -307,9 +351,10 @@ export async function getUserCard(userId: number): Promise<UserCard | null> {
       getModeratorContact(userId).catch(() => ({ chats: null, lastAt: null, chatIds: [] })),
       getActiveStrikes(userId),
     ]);
-  return identity
+  const shown = await withheldProfileMedia(identity, null, viewer);
+  return shown.identity
     ? {
-        identity,
+        identity: shown.identity,
         subscription,
         curator,
         strikeCountAllTime: strikeCountAllTime.get(userId) ?? 0,
@@ -319,11 +364,14 @@ export async function getUserCard(userId: number): Promise<UserCard | null> {
     : null;
 }
 
-export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
+export async function getUserLookup(
+  userId: number,
+  viewer: App.Locals['user'] | undefined
+): Promise<UserLookupResult | null> {
   const [card, profile, scores, counts, stats, reportsFiled, reportedContent, ranks] =
     await Promise.all([
-      getUserCard(userId),
-      getProfile(userId),
+      getUserCard(userId, viewer),
+      getProfile(userId, viewer),
       getScores(userId),
       getCounts(userId),
       getStats(userId),
@@ -349,11 +397,12 @@ export type ReportedAccountDetails = {
  * Not the whole lookup: scores, stats and leaderboard ranks answer nothing about a report.
  */
 export async function getReportedAccountDetails(
-  userId: number
+  userId: number,
+  viewer: App.Locals['user'] | undefined
 ): Promise<ReportedAccountDetails | null> {
   const [card, profile, counts] = await Promise.all([
-    getUserCard(userId),
-    getProfile(userId),
+    getUserCard(userId, viewer),
+    getProfile(userId, viewer),
     getCounts(userId),
   ]);
   return card ? { card, profile, counts } : null;
@@ -511,6 +560,7 @@ export async function getIdentity(userId: number): Promise<UserIdentity | null> 
       // Retool's "Look at PFP". `u.image` is the legacy avatar URL and is NOT this — the modern
       // avatar is an Image row behind `profilePictureId`, which carries the nsfwLevel a moderator is
       // actually checking against.
+      'u.profilePictureId',
       sql<string | null>`(SELECT i.url FROM "Image" i WHERE i.id = u."profilePictureId")`.as(
         'profilePictureUrl'
       ),
@@ -531,8 +581,12 @@ export async function getIdentity(userId: number): Promise<UserIdentity | null> 
 // Retool's UserBio, including both cover images. Checking a cover or an avatar for ToS content was an
 // in-tool action there; linking out to the profile instead means the moderator has to load the very
 // page they may be about to act on, in a normal browsing session.
-async function getProfile(userId: number): Promise<UserProfileText | null> {
-  return (await getProfiles([userId])).get(userId) ?? null;
+async function getProfile(
+  userId: number,
+  viewer: App.Locals['user'] | undefined
+): Promise<UserProfileText | null> {
+  const profile = (await getProfiles([userId])).get(userId) ?? null;
+  return (await withheldProfileMedia(null, profile, viewer)).profile;
 }
 
 /** `getProfile` for many accounts in one read (the CSAM holds queue shows a page of them). */

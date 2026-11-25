@@ -10,6 +10,7 @@ import {
   applyCsamHolds,
   applyMajorityBlocks,
   castVote,
+  itemWithheld,
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
@@ -99,6 +100,8 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     const itemId = await itemForToken(input.token, locals.user.id);
     if (itemId === null) return fail(409, { error: REFUSAL['not-yours'] });
+    if (await itemWithheld(itemId, holdsCsamReview(locals.user)))
+      return fail(409, { error: REFUSAL['not-open'] });
     const result = await castVote({
       itemId,
       userId: locals.user.id,

@@ -87,7 +87,7 @@ describe('which account opens', () => {
     );
     const data = await runIndex('?status=Pending');
     expect(data.account).toMatchObject({ suspectId: 77, tab: 'details' });
-    expect(getReportedAccountDetails).toHaveBeenCalledWith(77);
+    expect(getReportedAccountDetails).toHaveBeenCalledWith(77, locals.user);
   });
 
   it('the bare queue, empty: none', async () => {

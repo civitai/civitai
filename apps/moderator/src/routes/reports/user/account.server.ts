@@ -71,7 +71,7 @@ export async function loadAccount(user: number, tab: SuspectTab, url: URL, local
   // Each tab loads only its own data. The image grid and the account history are the two heavy reads,
   // and a moderator settling a spam report from the profile never opens either.
   const [details, suspect, models, accountHistory, timedMute, reports] = await Promise.all([
-    getReportedAccountDetails(user),
+    getReportedAccountDetails(user, locals.user),
     tab === 'images'
       ? getSuspectImages(user, filters, { page: imgPage, viewer: locals.user })
       : null,

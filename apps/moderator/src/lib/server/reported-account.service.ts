@@ -43,7 +43,8 @@ export async function getReportedAccountModels(
       join "Post" p on p."modelVersionId" = mv.id and p."userId" = "Model"."userId"
       join "Image" i on i."postId" = p.id
       where mv."modelId" = "Model".id
-      order by mv.index nulls last, p.id, i.index nulls last
+      -- i.id last: each column is its own subquery, so a tie must break the same way in all three.
+      order by mv.index nulls last, p.id, i.index nulls last, i.id
       limit 1
     )`;
 

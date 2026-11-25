@@ -45,6 +45,7 @@ const {
   getVotedItemOwner,
   isControlFlaggerVersion,
   itemForToken,
+  itemWithheld,
   mediaForToken,
   sourceOrder,
 } = await import('../scan-label.service');
@@ -880,5 +881,28 @@ describe('an item whose image is withheld from the claimer', () => {
     await pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES (99, 'key-1', 'CSAM')`);
     expect(await mediaForToken(token, WITHOUT_GRANT, NOW)).toBeNull();
     expect(await mediaForToken(token, granted(1), NOW)).toMatchObject({ url: 'key-1' });
+  });
+});
+
+describe('itemWithheld', () => {
+  beforeEach(async () => {
+    await pg.exec(`
+      ALTER TABLE "Image" ADD COLUMN "mimeType" TEXT, ADD COLUMN ingestion TEXT NOT NULL DEFAULT 'Scanned',
+        ADD COLUMN "needsReview" TEXT, ADD COLUMN "blockedFor" TEXT,
+        ADD COLUMN minor BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN "postId" INTEGER;
+      ALTER TABLE "User" ADD COLUMN meta JSONB;
+      ${WITHHOLD_TABLES}
+    `);
+  });
+
+  it('is true for an item whose image became withheld, to a moderator without the grant only', async () => {
+    const item = await seedItem(1);
+    expect(await itemWithheld(item, false)).toBe(false);
+    await pg.query(`INSERT INTO "Image" (id, url, "blockedFor") VALUES (99, 'key-1', 'CSAM')`);
+    expect(await itemWithheld(item, false)).toBe(true);
+    expect(await itemWithheld(item, true)).toBe(false);
   });
 });

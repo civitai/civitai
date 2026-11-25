@@ -184,6 +184,18 @@ const notWithheld = (csamReview: boolean) =>
     )}
   )`;
 
+/** Whether the item's image is withheld from this claimer, so their vote on it is refused: a tab
+ *  that claimed it before it became withheld still holds its token. A failed read counts as withheld. */
+export async function itemWithheld(itemId: number, csamReview: boolean): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('ScanLabelItem')
+    .select('imageId')
+    .where('id', '=', itemId)
+    .executeTakeFirst();
+  if (!row) return false;
+  return (await listWithheldIds([row.imageId], { csamReview }, 'scan-label-vote')).has(row.imageId);
+}
+
 /** The media of a card, served exactly while the moderator's vote on it would still land, and
  *  never when its image is withheld from them. */
 export async function mediaForToken(

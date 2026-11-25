@@ -139,7 +139,8 @@
       details.profile?.location?.trim() ||
       details.profile?.coverImage ||
       details.profile?.sfwCoverImage ||
-      identity.profilePictureUrl
+      identity.profilePictureUrl ||
+      identity.profilePictureRestricted
     )
   );
 </script>

@@ -2,6 +2,8 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
 import { isReviewImageSql } from './review-image';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { holdsCsamReview } from './held-media';
 import { withheldRow, withheldRows } from './retracted-media';
 
 // The suspect's own content, for reviewing a report against an account without leaving the queue
@@ -105,6 +107,13 @@ export async function getSuspectImages(
   matched: number;
 }> {
   const base = dbRead.selectFrom('Image').where('userId', '=', userId);
+  // A prompt filter never matches an image withheld from the viewer, or paging it would read the
+  // prompt back a substring at a time.
+  const promptShown = sql<boolean>`NOT EXISTS (
+    SELECT 1 FROM "Image" wi WHERE wi.id = "Image".id AND ${sql.raw(
+      moderatorWithheldSql('wi', { csamReview: holdsCsamReview(viewer) })
+    )}
+  )`;
 
   const filtered = (() => {
     let q = base;
@@ -117,16 +126,19 @@ export async function getSuspectImages(
         sql<boolean>`("tosViolation" = true OR ("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM 'AiNotVerified'))`
       );
     // `meta` is null on an upload and `{}` on a wipe; both are "no prompt" to a moderator.
-    if (filters.noPrompt) q = q.where(sql<boolean>`coalesce("meta" ->> 'prompt', '') = ''`);
+    if (filters.noPrompt)
+      q = q.where(sql<boolean>`coalesce("meta" ->> 'prompt', '') = ''`).where(promptShown);
     if (filters.levels.length) q = q.where('nsfwLevel', 'in', filters.levels);
     if (filters.from) q = q.where('createdAt', '>=', filters.from);
     if (filters.to) q = q.where('createdAt', '<=', filters.to);
     if (filters.prompt)
-      q = q.where(sql<boolean>`"meta" ->> 'prompt' ILIKE ${contains(filters.prompt)}`);
+      q = q
+        .where(sql<boolean>`"meta" ->> 'prompt' ILIKE ${contains(filters.prompt)}`)
+        .where(promptShown);
     if (filters.negativePrompt)
-      q = q.where(
-        sql<boolean>`"meta" ->> 'negativePrompt' ILIKE ${contains(filters.negativePrompt)}`
-      );
+      q = q
+        .where(sql<boolean>`"meta" ->> 'negativePrompt' ILIKE ${contains(filters.negativePrompt)}`)
+        .where(promptShown);
     return q;
   })();
 
