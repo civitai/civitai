@@ -334,7 +334,7 @@ const retractAuthorName = (username: string | null) =>
 /**
  * Pushes what one row should hold now and records the outcome. Never inside a transaction: each
  * call is HTTP, and each record is its own statement. A due row always sends its state, whatever
- * was pushed before; nothing ever sends a moderator's visible.
+ * was pushed before; it never sends a moderator's visible (only the reconcile does, for a lift).
  */
 async function pushRow(e: Evaluated): Promise<PushResult> {
   const { row, state, postDigest } = e;
@@ -442,15 +442,15 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     return 'pushed';
   }
 
-  // Nothing is shown until a finished scan of its current text found nothing, and only while its
-  // author is in standing.
+  // Nothing is shown until a finished scan of its current text found nothing, or a moderator lifted
+  // the scan's hide of that text, and only while its author is in standing.
   if (state === 'visible') {
     if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
       return wait(SCAN_INACTIVE_WAIT_MINUTES, 'text scan not active');
     const scan = await currentTextScan(row.commentId);
-    if (scan === 'not clean')
+    if (scan === 'not clean' && row.liftGrantedVersion !== row.version)
       return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
-    if (scan !== 'clean') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
+    if (scan === 'pending') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
     if (!authorInStanding(row)) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
   }
 
@@ -468,12 +468,20 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       authorName: retractAuthorName(row.username),
       at: retractAt(row),
     });
+  // The `at` of the last verdict sent, and the moderator hide recorded with the push.
+  let sentAt = '';
+  const modHide = () => ({
+    modHide: {
+      at: new Date(sentAt),
+      origin: row.scanHide ? ('scan' as const) : ('moderator' as const),
+    },
+  });
   /** A verdict at now, on any token: a stale one is resent on the token the platform names. */
   const verdict = async (path: string, value: string) => {
     const body = (digest: string | null) => ({
       target: { urn, digest },
       verdict: value,
-      at: new Date().toISOString(),
+      at: (sentAt = new Date().toISOString()),
     });
     let r = await send(path, body(platformDigest));
     if (r.kind === 'stale' && r.digest) {
@@ -616,24 +624,26 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
         const r = await send(PLATFORM_MOD_VERDICT_PATH, {
           target: { sourceId: row.commentId },
           verdict: 'hidden',
-          at: new Date().toISOString(),
+          at: (sentAt = new Date().toISOString()),
         });
         if (r.kind === 'removed') return removed('mod-hidden-ahead');
         if (r.kind === 'erased') return erased();
         if (r.kind !== 'ok') return failed(r, 'mod-hidden-ahead');
-        await done();
+        await done(modHide());
         log('info', 'pushed', { commentId: row.commentId, state, steps: ['mod-hidden-ahead'] });
         return 'pushed';
       }
     }
   }
 
+  let hidAt = {};
   if (state === 'mod-hidden') {
     const r = await verdict(PLATFORM_MOD_VERDICT_PATH, 'hidden');
     if (r.kind === 'removed') return removed('mod-hidden');
     if (r.kind === 'erased') return erased();
     if (r.kind !== 'ok') return failed(r, 'mod-hidden');
     steps.push('mod-hidden');
+    hidAt = modHide();
   } else if (state === 'mod-removed') {
     if (!row.removeWantedAt) await markFpRemoveWanted(kyselyWrite, row.commentId);
     const r = await verdict(PLATFORM_MOD_VERDICT_PATH, 'removed');
@@ -652,7 +662,7 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     platformDigest = parsed.data.digest;
     steps.push('retract');
   }
-  await done(state === 'mod-removed' ? { removeWanted: true } : {});
+  await done(state === 'mod-removed' ? { removeWanted: true } : hidAt);
   log('info', 'pushed', { commentId: row.commentId, state, prior: row.pushedState, steps });
   return 'pushed';
 }
@@ -839,7 +849,14 @@ const FINAL_STATES: readonly FpCommentState[] = ['mod-removed', 'retracted', 'er
 export function reconcileAction(
   e: Evaluated,
   item: PlatformCommentItem
-): FpReconcileAction | 'counted' | 'pipeline-hidden' | 'moderator-hidden' | 'lift' | null {
+):
+  | FpReconcileAction
+  | 'counted'
+  | 'pipeline-hidden'
+  | 'moderator-hidden'
+  | 'lift'
+  | 'moderator-lift'
+  | null {
   const seen = observed(item);
   const textHeld = seen !== 'retracted' && seen !== 'removed';
   if (e.state === 'refused') return null;
@@ -851,6 +868,17 @@ export function reconcileAction(
   if (e.state === 'mod-hidden') return seen === 'visible' ? 'restrict' : null;
   // Retracted there is final: its text is never sent again.
   if (seen === 'retracted') return 'counted';
+  // Hidden there by the moderator hide sent here for the scan, which a moderator here has since
+  // lifted for this text: matched on its `at`, so a platform moderator's own hide never is.
+  if (
+    seen === 'hidden' &&
+    item.verdict?.source === 'moderator' &&
+    e.row.liftGranted &&
+    authorInStanding(e.row) &&
+    !!e.row.modHideSentAt &&
+    Date.parse(item.verdict.at ?? '') === e.row.modHideSentAt.getTime()
+  )
+    return 'moderator-lift';
   if (seen === 'hidden' && item.verdict?.source === 'pipeline') return 'pipeline-hidden';
   // Visible: a takedown's tombstone or another post moved the token, so the text goes again.
   if (item.digest && item.digest !== e.row.platformDigest) return 'repost';
@@ -888,6 +916,7 @@ export async function runFpReconcile() {
   let pipelineHidden = 0;
   let moderatorHidden = 0;
   let liftsLost = 0;
+  let moderatorLifts = 0;
   do {
     const query = new URLSearchParams({
       app: PLATFORM_FEATURE_PAGES_APP,
@@ -898,7 +927,16 @@ export async function runFpReconcile() {
     const page = commentsPageSchema.safeParse(reply.body);
     if (reply.status !== 200 || !page.success) {
       log('error', 'reconcile read failed', { status: reply.status, checked });
-      return { on, checked, mismatched, pipelineHidden, moderatorHidden, liftsLost, failed: true };
+      return {
+        on,
+        checked,
+        mismatched,
+        pipelineHidden,
+        moderatorHidden,
+        liftsLost,
+        moderatorLifts,
+        failed: true,
+      };
     }
     const byUrn = await readFpMirrorByUrns(
       kyselyWrite,
@@ -937,6 +975,22 @@ export async function runFpReconcile() {
         action,
       });
       if (!on || action === 'counted') continue;
+      if (action === 'moderator-lift') {
+        // By sourceId: it lifts the moderator hide and decides for no version, so the site and the
+        // pipeline decide after it, a pipeline hide included. The push then lifts the site's.
+        const r = await send(PLATFORM_MOD_VERDICT_PATH, {
+          target: { sourceId: row.commentId },
+          verdict: 'visible',
+          at: new Date().toISOString(),
+        });
+        if (r.kind !== 'ok') {
+          log('error', 'moderator lift failed', { commentId: row.commentId, kind: r.kind });
+          continue;
+        }
+        moderatorLifts += 1;
+        await markFpReconciled(kyselyWrite, row.commentId, 'due');
+        continue;
+      }
       if (action !== 'lift') {
         await markFpReconciled(kyselyWrite, row.commentId, action);
         continue;
@@ -954,7 +1008,15 @@ export async function runFpReconcile() {
     }
     cursor = page.data.next;
   } while (cursor);
-  const counts = { on, checked, mismatched, pipelineHidden, moderatorHidden, liftsLost };
+  const counts = {
+    on,
+    checked,
+    mismatched,
+    pipelineHidden,
+    moderatorHidden,
+    liftsLost,
+    moderatorLifts,
+  };
   log('info', 'heartbeat', { job: 'reconcile', ...counts });
   return counts;
 }

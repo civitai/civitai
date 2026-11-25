@@ -35,6 +35,7 @@ export const reportStatusActions = ({ rulingsOnly = false } = {}) => ({
       status,
       userId: locals.user.id,
       ip: getClientAddress(),
+      liftScanHide: true,
     });
     // `gone` rather than a bare message: the page reloads the queue on it, so the row the moderator
     // is looking at leaves the screen instead of sitting there accepting further clicks.

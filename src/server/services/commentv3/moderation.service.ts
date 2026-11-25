@@ -16,6 +16,7 @@ import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { FP_AUTO_HIDE_REPORT_COMMENT } from '@civitai/db-queries/feature-page-comments';
 
 /**
  * Removes comments as ToS violations: the flag takes them off the page, their ToS reports are
@@ -191,12 +192,11 @@ type FileReport = (input: {
   foldIntoPendingOnly: boolean;
 }) => Promise<{ id: number } | null | undefined>;
 
-const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
-
 /**
  * A Feature Pages comment is shown at once and hidden if its scan flags it (scam or csam), with a
  * system report in the existing queue, filed or folded on every call, a retry included. Any other
- * comment is left to the site's own rules.
+ * comment is left to the site's own rules. A text version a moderator already lifted the scan's hide
+ * for is left as it is: a repeated scan of it changes nothing.
  */
 export async function hideFlaggedFpComment(
   commentId: number,
@@ -207,11 +207,17 @@ export async function hideFlaggedFpComment(
 ) {
   const client = deps.db ?? dbWrite;
   // Compared as text: this runs for every flagged comment, before the featurePage label exists too.
-  const { rows } = await prismaRunner(client as never).query<{ entityType: string }>(
-    `SELECT "entityType"::text AS "entityType" FROM "CommentV3" WHERE id = $1`,
+  const { rows } = await prismaRunner(client as never).query<{
+    entityType: string;
+    lifted: boolean;
+  }>(
+    `SELECT c."entityType"::text AS "entityType",
+       COALESCE(m."liftGrantedVersion" = m.version, false) AS lifted
+     FROM "CommentV3" c LEFT JOIN "FeaturePageCommentMirror" m ON m."commentId" = c.id
+     WHERE c.id = $1`,
     [commentId]
   );
-  if (rows[0]?.entityType !== 'featurePage') return false;
+  if (rows[0]?.entityType !== 'featurePage' || rows[0].lifted) return false;
 
   const createReport =
     deps.createReport ??
@@ -232,10 +238,41 @@ export async function hideFlaggedFpComment(
   } catch (e) {
     failure = e;
   }
-  await client.$transaction((tx) =>
-    setCommentFlags(prismaRunner(tx), [commentId], { hidden: true })
-  );
+  const hid = await client.$transaction((tx) => hideAsScan(prismaRunner(tx), commentId));
   if (failure) throw failure;
+  return hid;
+}
+
+/**
+ * The scan's hide, recorded as the scan's when it is the scan that hides it, or when it was already
+ * hidden by the scan (a retry): any other hide clears that record in setCommentFlags.
+ */
+async function hideAsScan(db: ReturnType<typeof prismaRunner>, commentId: number) {
+  // Locked, then read in a statement of its own, so a lift committed meanwhile is seen.
+  await db.query(`SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+  const { rows } = await db.query<{ lifted: boolean; scanHiddenAt: string | null }>(
+    `SELECT COALESCE(m."liftGrantedVersion" = m.version, false) AS lifted,
+       CASE WHEN c.hidden AND c."hiddenAt" = m."scanHiddenAt" THEN m."scanHiddenAt"::text END
+         AS "scanHiddenAt"
+     FROM "CommentV3" c LEFT JOIN "FeaturePageCommentMirror" m ON m."commentId" = c.id
+     WHERE c.id = $1`,
+    [commentId]
+  );
+  if (rows[0]?.lifted) return false;
+  const changed = await setCommentFlags(db, [commentId], { hidden: true });
+  if (changed.length)
+    await db.query(
+      `UPDATE "FeaturePageCommentMirror" m SET "scanHiddenAt" = c."hiddenAt",
+         "scanHiddenVersion" = m.version
+       FROM "CommentV3" c WHERE m."commentId" = $1 AND c.id = m."commentId"`,
+      [commentId]
+    );
+  else if (rows[0]?.scanHiddenAt)
+    await db.query(
+      `UPDATE "FeaturePageCommentMirror" SET "scanHiddenAt" = $2::timestamptz
+       WHERE "commentId" = $1`,
+      [commentId, rows[0].scanHiddenAt]
+    );
   return true;
 }
 

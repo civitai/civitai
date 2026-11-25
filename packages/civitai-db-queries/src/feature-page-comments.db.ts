@@ -54,6 +54,17 @@ export type FpMirrorFactsRow = {
   goneAt: Date | null;
   /** The text's own event time (post or edit): the `at` a text post carries. */
   contentAt: Date | null;
+  /** The current hide is the scan's own: a moderator hide sent now is sent for the scan. */
+  scanHide: boolean;
+  /** The `at` of the last moderator hide sent. */
+  modHideSentAt: Date | null;
+  /** The text version a moderator lifted the scan's hide for. */
+  liftGrantedVersion: number | null;
+  /**
+   * A moderator lifted the scan's hide on this version after the last moderator hide sent, and
+   * that hide was sent for the scan.
+   */
+  liftGranted: boolean;
 };
 
 const FACTS = `
@@ -61,6 +72,10 @@ const FACTS = `
          m."pushedDigest", m."platformDigest", m."pendingDigest", m."pushAttempts", m."nextPushAt",
          m."updatedAt"::text AS "mirrorUpdatedAt", m."postAttemptedAt", m."subjectMissingAt",
          m."removeWantedAt", m."restrictedAt", m."postSeq", m."goneAt", m."contentAt",
+         m."modHideSentAt", m."liftGrantedVersion",
+         COALESCE(m."modHideOrigin" = 'scan' AND m."liftGrantedAt" > m."modHideSentAt"
+           AND m."liftGrantedVersion" = m.version, false) AS "liftGranted",
+         COALESCE(c."hiddenAt" = m."scanHiddenAt" AND NOT c."tosViolation", false) AS "scanHide",
          c.id IS NOT NULL AS "commentExists", c.hidden, c."tosViolation", c."deletedAt", c.content,
          c."createdAt", c."entityId" AS "topicId",
          COALESCE(c."replyToId", c."parentId") AS "parentId",
@@ -219,6 +234,8 @@ export type FpPushRecord = {
   clearPostAttempted?: boolean;
   /** The platform holds a removal. */
   removeWanted?: boolean;
+  /** A moderator hide was sent at this `at`, for the scan's hide or not. */
+  modHide?: { at: Date; origin: 'scan' | 'moderator' };
 };
 
 /**
@@ -249,6 +266,8 @@ export async function recordFpPush(db: Kysely<DB>, commentId: number, r: FpPushR
        "postAttemptedAt" = CASE WHEN $14::boolean THEN NULL ELSE "postAttemptedAt" END,
        "removeWantedAt" = CASE WHEN $15::boolean THEN COALESCE("removeWantedAt", now())
          ELSE "removeWantedAt" END,
+       "modHideSentAt" = COALESCE($18::timestamptz, "modHideSentAt"),
+       "modHideOrigin" = CASE WHEN $18::timestamptz IS NULL THEN "modHideOrigin" ELSE $19 END,
        "leaseUntil" = NULL,
        "updatedAt" = now()
      WHERE "commentId" = $1`,
@@ -270,6 +289,8 @@ export async function recordFpPush(db: Kysely<DB>, commentId: number, r: FpPushR
       !!r.removeWanted,
       r.parkedWant ?? null,
       !!r.parkedRestricting,
+      r.modHide?.at ?? null,
+      r.modHide?.origin ?? null,
     ]
   );
 }
@@ -511,4 +532,79 @@ export async function readFpRunbookCounts(db: Kysely<DB>) {
     unreachable: counts?.unreachable ?? 0,
     targets: counts?.targets ?? 0,
   };
+}
+
+/** The details.comment of the report the scan files when it hides a Feature Pages comment. */
+export const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
+
+/**
+ * A moderator's own dismissal of the scan's report lifts the scan's hide, and nothing else: the
+ * report is the scan's, set Unactioned by this moderator (never the system user); the current hide is
+ * the one the scan made for the current text version; the comment is not ToS-removed, held or gone;
+ * and its author is not banned or muted. Then, in one transaction under the hold decision's lock and
+ * the comment's, it unhides the comment and records the grant, timed under the lock, and the
+ * moderator's activity. Returns the lifted comment, or null when any of that does not hold.
+ */
+export async function grantFpScanLift(
+  db: Kysely<DB>,
+  { reportId, actorId, systemUserId }: { reportId: number; actorId: number; systemUserId: number }
+) {
+  if (actorId === systemUserId) return null;
+  return db.transaction().execute(async (trx) => {
+    const [report] = await rows<{ commentId: number }>(
+      trx,
+      `SELECT cr."commentId" FROM "Report" r JOIN "CommentV3Report" cr ON cr."reportId" = r.id
+       WHERE r.id = $1 AND r.status = 'Unactioned' AND r."statusSetBy" = $2 AND r."userId" = $3
+         AND r.reason = 'AdminAttention' AND r.details->>'comment' = $4
+       FOR UPDATE OF r`,
+      [reportId, actorId, systemUserId, FP_AUTO_HIDE_REPORT_COMMENT]
+    );
+    if (!report) return null;
+    const { commentId } = report;
+    // csamHoldLockKey('CommentV3') in the main app: a hold decision cannot land mid-check.
+    await rows(trx, `SELECT pg_advisory_xact_lock(hashtext('csam-hold:CommentV3'), $1::int)`, [
+      commentId,
+    ]);
+    // Locked one statement at a time, then read in a statement of its own, so the check sees what
+    // any writer it waited on committed.
+    await rows(trx, `SELECT id FROM "CommentV3" WHERE id = $1 FOR UPDATE`, [commentId]);
+    await rows(trx, `SELECT 1 FROM "FeaturePageCommentMirror" WHERE "commentId" = $1 FOR UPDATE`, [
+      commentId,
+    ]);
+    const [lifted] = await rows<{ commentId: number; version: number }>(
+      trx,
+      `WITH ok AS (
+         SELECT m."commentId", m.version FROM "FeaturePageCommentMirror" m
+         JOIN "CommentV3" c ON c.id = m."commentId"
+         JOIN "User" u ON u.id = c."userId"
+         WHERE m."commentId" = $1 AND c."entityType"::text = 'featurePage'
+           AND c."deletedAt" IS NULL AND c.hidden AND NOT c."tosViolation"
+           AND c."hiddenAt" = m."scanHiddenAt" AND m."scanHiddenVersion" = m.version
+           AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL
+           AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND NOT u.muted
+           AND NOT ${csamQueueHeldText('CommentV3', 'm."commentId"')}
+       ), shown AS (
+         UPDATE "CommentV3" SET hidden = false, "hiddenAt" = NULL, "updatedAt" = now()
+         WHERE id = (SELECT "commentId" FROM ok)
+         RETURNING id
+       )
+       UPDATE "FeaturePageCommentMirror" m SET "liftGrantedAt" = clock_timestamp(),
+         "liftGrantedBy" = $2, "liftGrantedVersion" = ok.version, "nextPushAt" = now(),
+         "pushAttempts" = 0, "pendingDigest" = NULL, "updatedAt" = now()
+       FROM ok, shown WHERE m."commentId" = ok."commentId" AND shown.id = ok."commentId"
+       RETURNING m."commentId", m."liftGrantedVersion" AS version`,
+      [commentId, actorId]
+    );
+    if (!lifted) return null;
+    // The moderator's record, in the same transaction: the comment lifted and the report that lifted
+    // it. The version is the mirror's liftGrantedVersion.
+    await rows(
+      trx,
+      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
+       VALUES ($1, 'commentV3', 'scanLift', $2), ($1, 'report', 'scanLift', $3)
+       ON CONFLICT DO NOTHING`,
+      [actorId, commentId, reportId]
+    );
+    return lifted;
+  });
 }

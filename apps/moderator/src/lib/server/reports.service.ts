@@ -1,5 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
+import { grantFpScanLift } from '@civitai/db-queries/feature-page-comments';
 import { reportersWithoutReward } from '@civitai/shared/report-reward';
 import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
@@ -541,6 +542,7 @@ export async function setReportStatus({
   ip,
   noRewardFor = [],
   noReward = false,
+  liftScanHide = false,
 }: {
   id: number;
   status: ReportStatus;
@@ -550,6 +552,11 @@ export async function setReportStatus({
   noRewardFor?: readonly number[];
   /** Closes the report without paying any of its reporters. */
   noReward?: boolean;
+  /**
+   * This moderator's own ruling on this one report: set Unactioned, a Feature Pages scan report
+   * lifts the scan's hide (`grantFpScanLift`). Only the per-report status action passes it.
+   */
+  liftScanHide?: boolean;
 }) {
   // A stale tab or a forged id must not report success. The UPDATE is deliberately a no-op when the
   // report is ALREADY in the requested status (that guard protects the reward path), so "nothing
@@ -582,6 +589,9 @@ export async function setReportStatus({
   await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
 
   await syncResolvedMarker(id, status);
+
+  if (liftScanHide && updated && status === ReportStatus.Unactioned)
+    await grantFpScanLift(dbWrite, { reportId: id, actorId: userId, systemUserId: SYSTEM_USER_ID });
 
   // `updated` is set only when the row actually changed, so re-actioning an already-Actioned report never
   // double-rewards.

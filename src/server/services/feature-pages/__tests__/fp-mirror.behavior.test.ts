@@ -196,7 +196,7 @@ describe('the brake', () => {
 });
 
 describe('moderation changes the mirror carries', () => {
-  it('a scam flag: hidden with a moderator hide on the platform and a system report; dismissing the report leaves it hidden', async () => {
+  it('a scam flag: hidden with a moderator hide on the platform and a system report; the report's status alone does not show it', async () => {
     const { comment } = await seed('flagged');
     const hidden = async () =>
       (

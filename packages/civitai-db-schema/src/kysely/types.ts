@@ -3358,6 +3358,13 @@ export type FeaturePageCommentMirror = {
   contentAt: Generated<Timestamp>;
   removeWantedAt: Timestamp | null;
   restrictedAt: Timestamp | null;
+  scanHiddenAt: Timestamp | null;
+  scanHiddenVersion: number | null;
+  modHideSentAt: Timestamp | null;
+  modHideOrigin: string | null;
+  liftGrantedAt: Timestamp | null;
+  liftGrantedBy: number | null;
+  liftGrantedVersion: number | null;
   nextPushAt: Timestamp | null;
   leaseUntil: Timestamp | null;
   createdAt: Generated<Timestamp>;

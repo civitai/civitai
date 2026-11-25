@@ -470,6 +470,7 @@ export async function bootFpDatabase(holder: { kysely: unknown }) {
     const [value, rest] = migration('20271125140000_feature_page_comments').split('\n-- 2.');
     await pg.db.exec(value);
     await pg.db.exec(`-- 2.${rest}`);
+    await pg.db.exec(migration('20271129120000_feature_page_mirror_lift'));
   }
   holder.kysely = new Kysely({ dialect: dialect(pg.db) });
   vi.stubEnv('AUTH_JWT_ISSUER', HUB);

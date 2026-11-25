@@ -118,6 +118,7 @@ describe.skipIf(!URL_BASE)('Feature Pages comment writers on real Postgres', () 
     const [value, rest] = migration('20271125140000_feature_page_comments').split('\n-- 2.');
     await c0.query(value);
     await c0.query(`-- 2.${rest}`);
+    await c0.query(migration('20271129120000_feature_page_mirror_lift'));
     // Every column the report path's Prisma queries read or write.
     await c0.query(
       `ALTER TABLE "Report" ADD COLUMN "userId" int NOT NULL DEFAULT 1,
