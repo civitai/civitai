@@ -27,7 +27,7 @@ import {
 } from '~/server/services/blocks/dev-tunnel-session';
 import {
   drainPreviewRevokeQueue,
-  PREVIEW_REVOKE_MAX_AGE_MS,
+  PREVIEW_REVOKE_SESSION_MAX_AGE_MS,
   revokePreviewSession,
 } from '~/server/services/blocks/preview-revoke.service';
 import { previewHostHash } from '~/server/services/blocks/preview-session-host';
@@ -135,12 +135,13 @@ const directUsedKey = (userId: number, previewId: string) =>
   `${USER_PREFIX}:direct-used:{${userId}}:${previewId}` as const;
 /**
  * How long a `used` marker lives: the session cap (the latest its session can end and queue a
- * revoke) plus the longest a queued revoke is kept and retried (PREVIEW_REVOKE_MAX_AGE_MS, 7
- * days). Shorter, and a revoke sent from the queue after the marker expired could end a new
- * session opened on the same id.
+ * revoke) plus the longest a queued per-session revoke is kept and retried
+ * (PREVIEW_REVOKE_SESSION_MAX_AGE_MS). Shorter, and a revoke sent from the queue after the marker
+ * expired could end a new session opened on the same id. Only a per-session revoke names an id;
+ * a `"*"` revoke matches by its `issuedAt` instead, so its longer window does not apply here.
  */
 export const DIRECT_USED_MARKER_SECONDS =
-  DEV_TUNNEL_HARD_SECONDS + Math.ceil(PREVIEW_REVOKE_MAX_AGE_MS / 1000);
+  DEV_TUNNEL_HARD_SECONDS + Math.ceil(PREVIEW_REVOKE_SESSION_MAX_AGE_MS / 1000);
 /**
  * App Assistant direct preview: every live direct session's id, so the reaper can find them. A
  * direct session has no IngressRoute or Middleware, which is all the route sweep discovers.

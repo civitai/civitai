@@ -1231,16 +1231,14 @@ describe('POST preview/open (App Assistant direct preview)', () => {
     }
   );
 
-  it('the used marker outlives the session cap plus the revoke queue’s 7 day retry window', async () => {
+  it('the used marker outlives the session cap plus the revoke queue’s 8 h retry window', async () => {
     await open(OWNER, OWNED_APP, PID_A);
     const marks = redisMock.redis.set.mock.calls.filter(
       (c) => c[0] === `${PREFIX}:direct-used:{${OWNER}}:${PID_A}`
     );
     expect(marks).toHaveLength(1);
-    // 8 h session cap + 7 day queue max age, in seconds.
-    expect((marks[0][2] as { EX: number }).EX).toBeGreaterThanOrEqual(
-      8 * 60 * 60 + 7 * 24 * 60 * 60
-    );
+    // 8 h session cap + 8 h queue max age, in seconds.
+    expect((marks[0][2] as { EX: number }).EX).toBeGreaterThanOrEqual(16 * 60 * 60);
   });
 
   it('logs a direct session host only as a hash, at start and at stop', async () => {

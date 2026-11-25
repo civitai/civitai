@@ -42,14 +42,24 @@ export const PREVIEW_REVOKE_HEADERS = {
 /** Added to a `"*"` revoke's first send attempt: the clock difference between the two clusters, and a session opened while the ban propagates. */
 export const PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS = 120_000;
 /**
- * A queued revoke or hold release older than this (7 days) is dropped unsent. Longer than the
- * session cap on purpose: a ban's hold and an unban's hold release do not expire with a session,
- * so they must survive a long sandbox service outage. A late per-session revoke cannot end a
- * newer session: its preview id is never opened again while the id's `used` marker lives, and
- * that marker outlives this bound (DIRECT_USED_MARKER_SECONDS, dev-tunnel.service.ts). The queue
- * key's TTL is floored at the same bound.
+ * A queued per-session revoke older than this (the 8 h session cap) is dropped unsent: every
+ * session host it could match has expired by then. A late one cannot end a newer session either:
+ * its preview id is never opened again while the id's `used` marker lives, and that marker
+ * outlives this bound (DIRECT_USED_MARKER_SECONDS, dev-tunnel.service.ts).
  */
-export const PREVIEW_REVOKE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const PREVIEW_REVOKE_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+/**
+ * A queued `"*"` revoke or hold release older than this (7 days) is dropped unsent. Longer than
+ * the session cap on purpose: a ban's hold and an unban's hold release do not expire with a
+ * session, so they must survive a long sandbox service outage. The queue key's TTL is floored at
+ * this bound, the longer of the two.
+ */
+export const PREVIEW_REVOKE_BAN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** `"*"` revokes and hold releases: the longer retry window, and drained first. */
+const isBanScoped = (r: Pick<PreviewRevoke, 'previewId' | 'op'>) =>
+  r.op === 'release' || r.previewId === '*';
+const maxAgeOf = (r: Pick<PreviewRevoke, 'previewId' | 'op'>) =>
+  isBanScoped(r) ? PREVIEW_REVOKE_BAN_MAX_AGE_MS : PREVIEW_REVOKE_SESSION_MAX_AGE_MS;
 const SEND_TIMEOUT_MS = 5_000;
 /** At most this many queued revokes are sent per reaper run, so a long outage cannot stall it. */
 const DRAIN_BATCH = 50;
@@ -80,7 +90,7 @@ const fieldOf = (r: Pick<PreviewRevoke, 'userId' | 'previewId' | 'op'>) =>
 const cluster = <T>(fn: string, op: () => Promise<T>) =>
   boundedClusterCall(`previewRevoke.${fn}`, op);
 
-/** HSET the entry and floor the queue's TTL at PREVIEW_REVOKE_MAX_AGE_MS, in one script. */
+/** HSET the entry and floor the queue's TTL at PREVIEW_REVOKE_BAN_MAX_AGE_MS, in one script. */
 const ENQUEUE = `
   redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
   if redis.call('TTL', KEYS[1]) < tonumber(ARGV[3]) then redis.call('EXPIRE', KEYS[1], ARGV[3]) end
@@ -196,7 +206,7 @@ async function enqueue(entry: QueuedRevoke): Promise<void> {
         arguments: [
           fieldOf(entry),
           JSON.stringify(entry),
-          String(Math.ceil(PREVIEW_REVOKE_MAX_AGE_MS / 1000)),
+          String(Math.ceil(PREVIEW_REVOKE_BAN_MAX_AGE_MS / 1000)),
         ],
       })
     );
@@ -313,11 +323,13 @@ const isOutageStatus = (s: PreviewRevokeAttemptStatus) =>
 
 /**
  * Send every queued revoke (at most DRAIN_BATCH a run), each signed now and with its original
- * `issuedAt`. Sent and refused ones leave the queue; retryable ones stay; one older than
- * PREVIEW_REVOKE_MAX_AGE_MS (7 days), or unreadable, is dropped (an aged one is logged, so a
- * revoke that never got through is visible rather than silently lost). After DRAIN_MAX_CONSECUTIVE_FAILURES consecutive network or
- * 5xx failures the run stops and leaves the rest queued for the next one. Run by the dev-tunnel
- * reaper, which logs the counts. Never throws.
+ * `issuedAt`. `"*"` revokes and hold releases go first, so per-session revokes kept for retry
+ * cannot fill the batch ahead of them. Sent and refused ones leave the queue; retryable ones
+ * stay; one older than its retry window (PREVIEW_REVOKE_SESSION_MAX_AGE_MS for a per-session
+ * revoke, PREVIEW_REVOKE_BAN_MAX_AGE_MS otherwise), or unreadable, is dropped (an aged one is
+ * logged, so a revoke that never got through is visible rather than silently lost). After
+ * DRAIN_MAX_CONSECUTIVE_FAILURES consecutive network or 5xx failures the run stops and leaves the
+ * rest queued for the next one. Run by the dev-tunnel reaper, which logs the counts. Never throws.
  */
 export async function drainPreviewRevokeQueue(
   nowMs: number = Date.now()
@@ -329,7 +341,13 @@ export async function drainPreviewRevokeQueue(
   } catch {
     return out;
   }
-  const batch = Object.entries(entries).slice(0, DRAIN_BATCH);
+  const banScoped: [string, string][] = [];
+  const rest: [string, string][] = [];
+  for (const kv of Object.entries(entries)) {
+    const e = parseQueued(kv[1]);
+    (e && isBanScoped(e) ? banScoped : rest).push(kv);
+  }
+  const batch = [...banScoped, ...rest].slice(0, DRAIN_BATCH);
   let consecutiveFailures = 0;
   for (const [i, [field, raw]] of batch.entries()) {
     if (consecutiveFailures >= DRAIN_MAX_CONSECUTIVE_FAILURES) {
@@ -344,7 +362,7 @@ export async function drainPreviewRevokeQueue(
     const entry = parseQueued(raw);
     let outcome: PreviewRevokeOutcome;
     if (!entry) outcome = 'drop';
-    else if (nowMs - entry.queuedAt > PREVIEW_REVOKE_MAX_AGE_MS) {
+    else if (nowMs - entry.queuedAt > maxAgeOf(entry)) {
       outcome = 'drop';
       logToAxiom({
         type: 'app-assistant.preview-revoke.expired',
