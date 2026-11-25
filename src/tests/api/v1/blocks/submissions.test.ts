@@ -793,7 +793,6 @@ describe('GET /api/v1/blocks/submissions — boot-check author redaction', () =>
       result: 'failed',
       mode: 'enforce',
       reason: 'page-error',
-      checkedAt: '2026-06-22T00:00:00.000Z',
     });
     expect(detail.error).toBe(
       'Boot check: the app loaded but never sent BLOCK_READY within 10s. An error was reported while it loaded (a console error, or a script served with a non-JavaScript type): open the app and check the browser console. Fix and resubmit.'

@@ -108,6 +108,9 @@ export function bootCheckUnavailable(summary: ReviewBootCheckSummary | null | un
 
 const READY_WINDOW_SECONDS = Math.round(BLOCK_READY_TIMEOUT_MS / 1000);
 
+const NO_ERROR_CAUSE =
+  'No console error was reported: check that the app completes the SDK handshake when it loads.';
+
 /**
  * The `detail.error` of a preview an enforced boot check failed, as STORED and as moderators see
  * it. Authors never see this string (it quotes `firstError`): every author-facing exit replaces it
@@ -115,11 +118,17 @@ const READY_WINDOW_SECONDS = Math.round(BLOCK_READY_TIMEOUT_MS / 1000);
  */
 export function bootCheckFailureError(firstError: string | null): string {
   // A browser error usually ends in its own full stop; drop it so the sentence ends in one.
-  const cause = firstError
-    ? `First error: ${firstError.replace(/[.\s]+$/, '')}.`
-    : 'No console error was reported: check that the app completes the SDK handshake when it loads.';
+  const cause = firstError ? `First error: ${firstError.replace(/[.\s]+$/, '')}.` : NO_ERROR_CAUSE;
   return `Boot check: the app loaded but never sent BLOCK_READY within ${READY_WINDOW_SECONDS}s. ${cause} Fix and resubmit.`;
 }
+
+/**
+ * Matches every string `bootCheckFailureError` has produced, under any window length: the fixed
+ * opening it always starts with. Used to find a boot-check `error` wherever it sits in a detail,
+ * including one carried forward next to a later result.
+ */
+const BOOT_CHECK_FAILURE_ERROR_RE =
+  /^Boot check: the app loaded but never sent BLOCK_READY within \d+s\. /;
 
 /**
  * What a moderator is told beside a failed enforced boot check. Approve is refused by the
@@ -154,8 +163,10 @@ export const BOOT_CHECK_HOLD_CLEAR_REASON = 'A later build of this app passed th
  * ran in the checker's browser (`messagesSeen`, `firstError`, and `firstError` quoted in the failed
  * preview's `error`). Authors should not see raw boot-check output, so an author is given only a
  * FIXED reason, derived from the recorded `result` and from whether an error was recorded at all;
- * moderators keep the full record. `ms` is dropped too: the app can influence how long the check
- * takes.
+ * moderators keep the full record. `ms` and `checkedAt` are dropped too, since the app can
+ * influence how long the check takes. This does NOT remove every timing signal: the row's
+ * `deployUpdatedAt`, returned beside the detail, still records when the result was written (out of
+ * scope here).
  *
  *   - `passed`: the app sent BLOCK_READY within the window.
  *   - `no-ready-signal`: it did not, and no error was recorded.
@@ -176,7 +187,6 @@ export type ReviewBootCheckAuthorView = {
   result: ReviewBootCheckResult;
   mode: ReviewBootCheckRecordedMode;
   reason: ReviewBootCheckAuthorReason;
-  checkedAt: string | null;
 };
 
 /** The fixed author reason of a recorded result. */
@@ -194,22 +204,14 @@ export function bootCheckAuthorReason(
 /** The author view of a stored record, or null when the record is malformed. */
 export function bootCheckAuthorView(raw: unknown): ReviewBootCheckAuthorView | null {
   if (!raw || typeof raw !== 'object') return null;
-  const { result, mode, firstError, checkedAt } = raw as {
+  const { result, mode, firstError } = raw as {
     result?: unknown;
     mode?: unknown;
     firstError?: unknown;
-    checkedAt?: unknown;
   };
   if (!isResult(result)) return null;
   if (mode !== 'shadow' && mode !== 'enforce') return null;
-  // Re-serialised, so the field can only ever be a timestamp the server formatted.
-  const at = typeof checkedAt === 'string' ? new Date(checkedAt) : null;
-  return {
-    result,
-    mode,
-    reason: bootCheckAuthorReason(result, firstError),
-    checkedAt: at && !Number.isNaN(at.getTime()) ? at.toISOString() : null,
-  };
+  return { result, mode, reason: bootCheckAuthorReason(result, firstError) };
 }
 
 /** The failed preview's `error` as an author sees it: fixed text per reason, no app output. */
@@ -217,17 +219,33 @@ export function bootCheckAuthorError(reason: 'no-ready-signal' | 'page-error'): 
   const cause =
     reason === 'page-error'
       ? 'An error was reported while it loaded (a console error, or a script served with a non-JavaScript type): open the app and check the browser console.'
-      : 'No console error was reported: check that the app completes the SDK handshake when it loads.';
+      : NO_ERROR_CAUSE;
   return `Boot check: the app loaded but never sent BLOCK_READY within ${READY_WINDOW_SECONDS}s. ${cause} Fix and resubmit.`;
+}
+
+/**
+ * The author's text for a stored boot-check `error`, read from the error itself rather than from
+ * the record beside it: writers carry the previous detail forward, so a failed check's error can sit
+ * next to a later `passed` or `unavailable` record. Null when the string is not a boot-check error
+ * (a build or deploy failure), which is left as it is.
+ */
+function authorBootCheckErrorFor(error: string): string | null {
+  if (!BOOT_CHECK_FAILURE_ERROR_RE.test(error)) return null;
+  return bootCheckAuthorError(
+    error.endsWith(` ${NO_ERROR_CAUSE} Fix and resubmit.`) ? 'no-ready-signal' : 'page-error'
+  );
 }
 
 /**
  * 🔴 THE ONE author-facing redaction of a publish request's `deploy_detail`, applied at every exit
  * that returns the column to its author (GET /api/v1/blocks/submissions,
- * `blocks.listMyPublishRequests`, the listing History tab). A detail carrying a `bootCheck` record
- * (a review preview's JSON detail) has the record replaced by its author view and, when the check
- * failed, the boot-check `error` replaced by fixed text. Any other detail (a plain-text build
- * failure, a detail with no boot check) is returned unchanged. Moderator reads never call this.
+ * `blocks.listMyPublishRequests`, the listing History tab, the personal-data export). In a JSON
+ * detail:
+ *   - a `bootCheck` record is replaced by its author view (dropped when malformed);
+ *   - an `error` produced by `bootCheckFailureError` is replaced by fixed text, whatever record (if
+ *     any) sits beside it.
+ * Anything else (a plain-text build failure, a build or deploy `error`, the other preview fields)
+ * is returned unchanged. Moderator reads never call this.
  */
 export function redactDeployDetailForAuthor(deployDetail: string | null): string | null {
   if (!deployDetail) return deployDetail;
@@ -238,26 +256,22 @@ export function redactDeployDetailForAuthor(deployDetail: string | null): string
     return deployDetail;
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return deployDetail;
-  if (!Object.prototype.hasOwnProperty.call(parsed, 'bootCheck')) return deployDetail;
-  const { bootCheck, ...rest } = parsed as Record<string, unknown>;
-  const view = bootCheckAuthorView(bootCheck);
-  const out: Record<string, unknown> = { ...rest };
-  if (view) {
-    out.bootCheck = view;
-    // The watcher sets `error` beside a failed boot check only from the check itself
-    // (`bootCheckFailureError`, which quotes `firstError`).
-    if (
-      (view.reason === 'no-ready-signal' || view.reason === 'page-error') &&
-      typeof out.error === 'string'
-    ) {
-      out.error = bootCheckAuthorError(view.reason);
-    }
-  } else if (typeof out.error === 'string') {
-    // A record this module cannot read: its `error` cannot be told apart from one quoting the
-    // app's output, so it is not shown.
-    out.error = 'Boot check: the preview failed. Fix and resubmit.';
+  const out: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+  let changed = false;
+  if (Object.prototype.hasOwnProperty.call(out, 'bootCheck')) {
+    const view = bootCheckAuthorView(out.bootCheck);
+    if (view) out.bootCheck = view;
+    else delete out.bootCheck;
+    changed = true;
   }
-  return JSON.stringify(out);
+  if (typeof out.error === 'string') {
+    const authorError = authorBootCheckErrorFor(out.error);
+    if (authorError !== null) {
+      out.error = authorError;
+      changed = true;
+    }
+  }
+  return changed ? JSON.stringify(out) : deployDetail;
 }
 
 /**
