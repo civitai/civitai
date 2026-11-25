@@ -638,9 +638,6 @@ async function settlePublishedReview(
   const reachable = host
     ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
     : true;
-  // Ordering: the boot check runs only once the probe passed, and before the preview-state write
-  // (`null` = the flag is off, and the writes are unchanged). The hold is synced only after that
-  // guarded write matched the row, so only the build that owns the active preview moves it.
   const boot = reachable
     ? await evaluateReviewBootCheck({
         publishRequestId: args.publishRequestId,
@@ -649,6 +646,7 @@ async function settlePublishedReview(
         url: args.baseDetail.url,
       })
     : null;
+  // Only the build whose guarded write matched (it owns the active preview) may move the hold.
   const syncHold = async (marked: number) => {
     if (boot && marked > 0)
       await syncBootCheckHold(args.publishRequestId, boot, { expectedSha: args.sha });
