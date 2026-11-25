@@ -15,7 +15,7 @@
 </svelte:head>
 
 {#snippet status(current: Status)}
-  <p class="status" role="status">
+  <p class="status" class:idle={!current} role="status">
     {#if current?.kind === 'error'}
       <span class="error">{current.text}</span>
     {:else if current}
@@ -86,7 +86,8 @@
         {#each data.tagGroups.groups as group (group.key)}
           <div class="row">
             <div class="text">
-              <p class="label"><span id="group-{group.key}-label">Hide {group.label.toLowerCase()}</span></p>
+              <p class="label"><span id="group-{group.key}-label">{group.label}</span></p>
+              <p class="description" id="group-{group.key}-description">{group.description}</p>
             </div>
             <SettingSwitch
               action="?/tagGroup"
@@ -94,7 +95,7 @@
               fields={{ key: group.key }}
               on={group.hidden}
               labelledby="group-{group.key}-label"
-              describedby="groups-description"
+              describedby="group-{group.key}-description groups-description"
               onsaved={(hidden) =>
                 (groupsStatus = {
                   kind: 'saved',
@@ -207,6 +208,12 @@
     margin: 0;
     color: var(--io-parchment-muted);
     font: 0.75rem/1.4 var(--io-font-ui);
+  }
+
+  /* An empty live region stays in the page for screen readers but takes no space, so it opens no gap. */
+  .status.idle {
+    min-height: 0;
+    margin-top: -0.875rem;
   }
 
   .status :global(svg) {

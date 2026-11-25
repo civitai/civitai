@@ -32,6 +32,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       groups: KNIGHTS_TAG_GROUPS.map((group) => ({
         key: group.key,
         label: group.label,
+        description: group.description,
         hidden: hidden.includes(group.key),
       })),
     },

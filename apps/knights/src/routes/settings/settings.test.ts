@@ -81,10 +81,10 @@ describe('settings load', () => {
     expect((await run()).tagGroups).toEqual({
       available: true,
       groups: [
-        { key: 'anime', label: 'Anime', hidden: false },
-        { key: 'furry', label: 'Furry', hidden: false },
-        { key: 'gore', label: 'Gore', hidden: true },
-        { key: 'political', label: 'Political', hidden: false },
+        { key: 'anime', label: 'Anime', description: 'Anime and manga', hidden: false },
+        { key: 'furry', label: 'Furry', description: 'Anthro and furry', hidden: false },
+        { key: 'gore', label: 'Gore', description: 'Gore and body horror', hidden: true },
+        { key: 'political', label: 'Political', description: 'Political content', hidden: false },
       ],
     });
     expect(hiddenTagGroups).toHaveBeenCalledWith(PRIMARY, 7);

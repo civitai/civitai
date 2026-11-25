@@ -7,6 +7,7 @@
 export const KNIGHTS_TAG_GROUPS = [
   {
     key: 'anime',
+    description: 'Anime and manga',
     label: 'Anime',
     tags: [
       { id: 4, name: 'anime' },
@@ -15,6 +16,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'furry',
+    description: 'Anthro and furry',
     label: 'Furry',
     tags: [
       { id: 5139, name: 'anthro' },
@@ -23,6 +25,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'gore',
+    description: 'Gore and body horror',
     label: 'Gore',
     tags: [
       { id: 1282, name: 'gore' },
@@ -31,6 +34,7 @@ export const KNIGHTS_TAG_GROUPS = [
   },
   {
     key: 'political',
+    description: 'Political content',
     label: 'Political',
     tags: [{ id: 2470, name: 'political' }],
   },
