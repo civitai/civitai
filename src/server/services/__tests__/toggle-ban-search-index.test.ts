@@ -50,6 +50,7 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => {
 });
 vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: mockInvalidateSession,
+  refreshSession: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -125,7 +126,9 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   return { ...mocked, default: mocked };
 });
 
-const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
+const { toggleBan, toggleContestBan, AlreadyBannedError } = await import(
+  '~/server/services/user.service'
+);
 const { BanReasonCode } = await import('~/server/common/enums');
 
 const USER_ID = 5501;
@@ -735,8 +738,6 @@ describe('toggleBan -> version showcases', () => {
   });
 });
 
-// The toggle's direction comes from the primary: a replica that has not seen the last ban or unban
-// would otherwise reverse it, or ban twice and run the ban's side effects again.
 describe('toggleBan when the replica lags the primary', () => {
   const row = (bannedAt: Date | null) => ({ bannedAt, meta: {}, username: 'someone', email: null });
   const writtenBannedAt = () =>
@@ -759,5 +760,38 @@ describe('toggleBan when the replica lags the primary', () => {
     await call();
 
     expect(writtenBannedAt()).toBeNull();
+  });
+});
+
+describe('toggleContestBan when the replica lags the primary', () => {
+  const contestBan = () =>
+    toggleContestBan({ id: USER_ID, userId: ACTOR_ID } as Parameters<typeof toggleContestBan>[0]);
+  const writtenContestBan = () =>
+    (
+      userUpdate.mock.calls.at(-1)?.[0] as
+        | { data: { meta: { contestBanDetails?: { bannedAt: Date } } } }
+        | undefined
+    )?.data.meta.contestBanDetails;
+
+  it('bans an account the primary shows unbanned, though the replica still shows it banned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      meta: { contestBanDetails: { bannedAt: ALREADY_BANNED_AT } },
+    });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ meta: {} });
+
+    await contestBan();
+
+    expect(writtenContestBan()?.bannedAt).toBeInstanceOf(Date);
+  });
+
+  it('unbans an account the primary shows banned, though the replica shows it unbanned', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ meta: {} });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      meta: { contestBanDetails: { bannedAt: ALREADY_BANNED_AT } },
+    });
+
+    await contestBan();
+
+    expect(writtenContestBan()).toBeUndefined();
   });
 });

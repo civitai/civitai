@@ -3477,7 +3477,8 @@ export const toggleContestBan = async ({
   id,
   detailsInternal,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
-  const user = await getUserById({ id, select: { meta: true } });
+  // From the primary: the direction, and the whole meta written back, must not come from a stale read.
+  const user = await getUserById({ id, select: { meta: true }, db: dbWrite });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;

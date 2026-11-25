@@ -87,8 +87,6 @@ describe('setUserMuted when the account is already muted', () => {
   });
 });
 
-// The toggle's direction comes from the primary: a replica that has not seen the last mute or unmute
-// would otherwise flip it back.
 describe('toggleMute when the replica lags the primary', () => {
   const muteWrites = () =>
     dbMock.dbWrite.user.update.mock.calls.filter(
