@@ -386,7 +386,7 @@ export const startAgentReviewSchema = z.object({
   /**
    * Run on this OpenRouter model (`vendor/model`, as OpenRouter lists it) instead of the review
    * agent's default. Omitted on a full run ⇒ the default, and the provisioned Job sets no model
-   * values, so it behaves as before this field existed. On a targeted re-run it must be the
+   * values. On a targeted re-run it must be the
    * latest run's own model. An id OpenRouter does not list as tool-capable is refused (the
    * service needs its price for the cost cap).
    */

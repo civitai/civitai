@@ -1,4 +1,5 @@
 import type { SessionUser } from '~/types/session';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { agentReviewLaneFor } from '~/shared/constants/connect-agent-review.constants';
 
 /**
@@ -17,4 +18,21 @@ export async function isAgentReviewLaneEnabled(
   return agentReviewLaneFor(publishRequestId) === 'connect'
     ? flags.isAppListingsAgenticReviewEnabled(opts)
     : flags.isAppBlocksAgenticReviewEnabled(opts);
+}
+
+/**
+ * The access gate every agent-review procedure runs (start, read, list, chat, models): a
+ * moderator, and the request's lane enabled for them. Throws UNAUTHORIZED otherwise. The
+ * moderator check comes first, so a non-moderator never reaches a flag read.
+ */
+export async function assertAgentReviewAccess(
+  user: SessionUser | undefined | null,
+  publishRequestId: string
+): Promise<void> {
+  if (!user?.isModerator) {
+    throw throwAuthorizationError('Agentic review is restricted to civitai team');
+  }
+  if (!(await isAgentReviewLaneEnabled(publishRequestId, { user }))) {
+    throw throwAuthorizationError('Agentic review is not enabled');
+  }
 }

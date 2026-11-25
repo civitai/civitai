@@ -97,7 +97,7 @@ export type StartAgentReviewArgs = {
   /**
    * Run on this OpenRouter model instead of the review agent's default (a second opinion, or a
    * way round a default model that stopped working). Omitted on a full run ⇒ the default, and
-   * the Job sets no model values, so it behaves exactly as before this field existed.
+   * the Job sets no model values.
    *
    * 🔴 ON A TARGETED RE-RUN IT MUST BE THE LATEST RUN'S OWN MODEL. A targeted re-run carries the
    * other analyses forward from the latest report, and a report row names one model, so the
@@ -142,7 +142,7 @@ export async function startAgentReview(
   // nothing to carry) nor stamp a pointless env var on the Job.
   const requested = args.sections ? Array.from(new Set(args.sections)) : [];
   const targeted = requested.length > 0 && requested.length < AGENT_REVIEW_SECTIONS.length;
-  // (d'') A targeted re-run is only allowed on the model of the run it carries from — checked
+  // A targeted re-run is only allowed on the model of the run it carries from — checked
   // before anything is staged or written.
   const latest = targeted
     ? await (await import('./app-review-report.service')).getAgentReport(publishRequestId)
@@ -247,8 +247,7 @@ export async function startAgentReview(
       status: 'running',
       startedAt: new Date(),
       priorReportId: prior?.id ?? null,
-      // Named up front so the run is identifiable while it is running; the agent's report
-      // writes the same value when it finishes. The default model's row stays as before.
+      // Named up front so the run is identifiable while it is running.
       ...(analysisModel ? { model: toRunnerModelId(analysisModel.id) } : {}),
     },
   });
