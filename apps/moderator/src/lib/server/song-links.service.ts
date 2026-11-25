@@ -1,9 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import {
-  blockMarkerText,
-  songNoticeSubject as sharedSongNoticeSubject,
-  songsOwnCoverText,
-} from '@civitai/db-queries/profile-picture-clear';
+import { blockMarkerText, songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
 import { logAxiomError } from './axiom';
 import { dbRead } from './db';
 import { holdsCsamReview } from './held-media';
@@ -45,9 +41,6 @@ export async function getSongLinks(imageIds: number[]): Promise<Map<number, Song
 }
 
 export const NO_SONG_LINKS: SongLinks = { songCoverId: null, coverOf: null };
-
-/** The shared `songNoticeSubject`, on this app's replica. */
-export const songNoticeSubject = (imageId: number) => sharedSongNoticeSubject(dbRead, imageId);
 
 /** `getSongLinks` without a link to an image withheld from `user` (the card's own check does not
  *  cover the image a link names). A failed read leaves the cards without links rather than failing
