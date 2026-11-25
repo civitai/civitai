@@ -242,12 +242,8 @@ func TestImageResourcesMissUnderAProbe(t *testing.T) {
 	}
 }
 
-// The query is the Node lookup's: its three tables, joins and columns, filtered on the image ids, and
-// ordered by image then model version as Node's imageResourcesQuery orders it. Without the ORDER BY the
-// two sides' plans returned an image's rows in different orders, so a miss computed here came out in
-// another order than Node's (`modelVersionIds` permuted, and for an image with two Checkpoints another
-// `baseModel`); src/server/redis/__tests__/image-resources.sql.behavior.test.ts pins Node's ORDER BY
-// to this one.
+// The query is the Node lookup's (tables, joins, columns), filtered on the image ids and ordered as
+// imageResourcesQuery is, pinned by src/server/redis/__tests__/image-resources.sql.behavior.test.ts.
 func TestImageResourcesQueryIsTheNodeLookup(t *testing.T) {
 	for _, frag := range []string{
 		`FROM "ImageResourceNew" ir`,

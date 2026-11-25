@@ -2033,8 +2033,6 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
     // image-resource-use-write Flipt flag forces reads to the writer.
     const forceWrite = fromWrite || (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE));
     const db = forceWrite ? dbWrite : await getDbWithoutLagBatch('imageResource', imageIds);
-    // Ordered by image then model version: the grouping below keeps row order, and that order is
-    // the cached order (`modelVersionIds`, and the first Checkpoint's `baseModel`).
     const resources = await db.$queryRaw<ImageResourceCacheItem[]>(imageResourcesQuery(imageIds));
 
     // Group resources by imageId

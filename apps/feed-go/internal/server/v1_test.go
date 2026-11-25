@@ -125,27 +125,20 @@ func TestV1TrivialAnswerIsKeptOutOfServedAndMatch(t *testing.T) {
 	}
 }
 
-// The v1-images sample is compared with shadow.CompareV1Images: an image's `modelVersionIds` holding
-// the same ids in another order is a match (the image-resources cache's order, which the endpoint never
-// promised, differed between the two sides' lookups), while a differing id is still a fields diff under
-// its category.
-func TestV1ShadowComparesModelVersionIDsAsAMultiset(t *testing.T) {
+// The v1-images sample is compared exactly (shadow.CompareJSON): an image's `modelVersionIds` holding
+// the same ids in another order is a fields diff, one value diff per index that moved.
+func TestV1ShadowComparesModelVersionIDsInOrder(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 2, nil)
 	s.computeV1Fn = func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(`{"items":[{"id":79140094,"modelVersionIds":[331598,454217,1768080],"baseModel":"Pony"}],"metadata":{}}`)}, nil
+		return &computed{payload: []byte(`{"items":[{"id":3,"modelVersionIds":[5,7,9],"baseModel":"Pony"}],"metadata":{}}`)}, nil
 	}
-	v1 := func(result string) func() bool {
-		return func() bool {
-			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": result})
-			return v == 1 && len(s.ShadowQueue) == 0
-		}
-	}
-	postV1(t, s, `{"items":[{"id":79140094,"modelVersionIds":[1768080,454217,331598],"baseModel":"Pony"}],"metadata":{}}`)
-	waitFor(t, "the permuted ids' match", v1("match"))
-	postV1(t, s, `{"items":[{"id":79140094,"modelVersionIds":[1768080,454218,331598],"baseModel":"Pony"}],"metadata":{}}`)
-	waitFor(t, "the differing id's fields diff", v1("fields"))
-	if n, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointV1Images, "category": "items.*.modelVersionIds.*", "kind": "value"}); n != 1 {
-		t.Fatalf("modelVersionIds diff count = %v, want 1", n)
+	postV1(t, s, `{"items":[{"id":3,"modelVersionIds":[9,7,5],"baseModel":"Pony"}],"metadata":{}}`)
+	waitFor(t, "the permuted ids' fields diff", func() bool {
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "fields"})
+		return v == 1 && len(s.ShadowQueue) == 0
+	})
+	if n, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointV1Images, "category": "items.*.modelVersionIds.*", "kind": "value"}); n != 2 {
+		t.Fatalf("modelVersionIds value diffs = %v, want 2", n)
 	}
 }

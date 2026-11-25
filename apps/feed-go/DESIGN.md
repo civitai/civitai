@@ -1837,13 +1837,9 @@ undefined member is absent on both (`JSON.stringify` drops it; this service's wr
 does the same). Categories stop at `meta` only: `metadata` is the paging object here, so
 `metadata.nextCursor` / `metadata.nextPage` keep their keys. Results classify by `items[].id`
 (images, not posts): `match`, `fields`, `order`, `membership`, `unsupported`, `deadline`, `go_error`.
-This endpoint's samples are compared by `shadow.CompareV1Images`, which is `CompareJSON` with one
-exception: `items.*.modelVersionIds` is compared as a multiset of numbers (sorted on both sides, then
-walked by index, so a missing, extra or changed id is still a `fields` diff under
-`items.*.modelVersionIds[.*]`). The ids are in the image-resources cache's order, which the endpoint
-never promised; a miss each side computes for itself (this service never writes one back) came out
-in different orders before both lookups carried the same `ORDER BY`, and does again whenever the two
-sides run different releases of it. Every other path, `baseModel` included, keeps its exact compare.
+`items.*.modelVersionIds` keeps its array order too: both sides' image-resources lookups carry the
+same `ORDER BY` (`imageResourcesQuery`), so the same ids in another order are a `fields` diff under
+`items.*.modelVersionIds.*`.
 
 ### 13.6 Measurement: the go/no-go is for the ported subset
 
