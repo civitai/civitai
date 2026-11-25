@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getBrowsingLevelLabel } from '@civitai/shared';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import { RETRACTED_REFUSED } from '$lib/held-media';
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { AppealCoverImage } from '$lib/server/minor-hash.service';
@@ -39,9 +39,8 @@
         role={blurred ? 'img' : undefined}
         class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
       >
-        <EdgeMedia
-          src={image.url}
-          type={mediaType(image)}
+        <CdnOrRetractedMedia
+          item={{ id: image.id, url: image.url, type: mediaType(image) }}
           width={450}
           anim={false}
           hoverPlay={!blurred}

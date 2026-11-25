@@ -2,7 +2,7 @@
   import { browser } from '$app/environment';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import { IconPhotoOff } from '@tabler/icons-svelte';
   import { WITHHELD_REFUSED } from '$lib/held-media';
@@ -112,9 +112,8 @@
                 aria-label={`Open ${image.type} #${image.id}`}
                 onclick={() => (openIndex = viewable(p).findIndex((v) => v.id === image.id))}
               >
-                <EdgeMedia
-                  src={image.url}
-                  type={image.type}
+                <CdnOrRetractedMedia
+                  item={image}
                   width={320}
                   anim={false}
                   class="h-full w-full object-cover"

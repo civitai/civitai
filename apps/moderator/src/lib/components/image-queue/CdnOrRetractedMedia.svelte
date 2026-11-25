@@ -17,6 +17,8 @@
     alt = '',
     class: className,
     unprocessed = false,
+    anim,
+    hoverPlay,
   }: {
     item: { id: number; url: string; type?: MediaType | null; name?: string | null };
     width?: number;
@@ -24,6 +26,9 @@
     class?: string;
     /** The upload never finished processing, so storage has no file to fall back to either. */
     unprocessed?: boolean;
+    /** Passed to `EdgeMedia` for the CDN copy. */
+    anim?: boolean;
+    hoverPlay?: boolean;
   } = $props();
 
   const mediaType = $derived(
@@ -104,6 +109,8 @@
       type={mediaType}
       {width}
       {alt}
+      {anim}
+      {hoverPlay}
       class={className}
     />
   </span>
