@@ -129,7 +129,7 @@ beforeEach(() => {
   }
 });
 
-/** The target and the bystander each with a private doc and a shared post the other voted on. */
+/** The target and the bystander each with a private doc and a shared post the other reported. */
 async function seed() {
   const app = `ab_RMWIPE_${(appSeq += 1)}`;
   const store = createDocStore({ db: h.db });
@@ -139,7 +139,7 @@ async function seed() {
   ]) {
     await store.put(ctx(app, NS_PROD, uid), PREFS, 'theme', { uid: `u${uid}` });
     await store.put(ctx(app, NS_PROD, uid), POSTS, `post-${uid}`, { status: 'open' });
-    await store.mark(ctx(app, NS_PROD, other), POSTS, `post-${uid}`, 'vote');
+    await store.report(ctx(app, NS_PROD, other), POSTS, `post-${uid}`);
   }
   return app;
 }

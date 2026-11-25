@@ -61,7 +61,13 @@ export const APP_STORAGE_IMPORT_FROM_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 export const APP_STORAGE_IMPORT_ACCESS = ['read', 'readwrite'] as const;
 export type AppStorageImportAccess = (typeof APP_STORAGE_IMPORT_ACCESS)[number];
 
-/** Counter and mark names — the same rule as a collection name. */
+/**
+ * Counter and mark names — the same rule as a collection name. Counters and marks were REMOVED
+ * (docs/app-storage-generic-core.md, rollout step 5): the parser still validates them exactly as
+ * before, so every approved manifest parses (and keeps its schema majors) unchanged, but nothing
+ * serves them, and submit refuses one a collection did not already declare
+ * (`deprecatedPrimitiveErrors`). A declared one is inert.
+ */
 export const APP_STORAGE_TALLY_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
 /** Most counters one collection may declare. */
 export const APP_STORAGE_MAX_COUNTERS = 8;
@@ -69,8 +75,8 @@ export const APP_STORAGE_MAX_COUNTERS = 8;
 export const APP_STORAGE_MAX_MARKS = 8;
 
 /**
- * Marks every shared collection has without declaring them. `report` feeds moderation, so
- * an app neither declares it nor reads its count. Declaring one is refused, and so is a
+ * Mark names reserved on every shared collection. `report` is the name a moderation report is
+ * stored under (the report API), so an app neither declares it nor reads its count. Declaring one is refused, and so is a
  * COUNTER of the same name — a counter and a mark of one name would be two different
  * tallies a reader can confuse.
  */
@@ -111,11 +117,11 @@ export type AppStorageVisibility = (typeof APP_STORAGE_VISIBILITIES)[number];
  *   - `anyone` — eligible viewers may update or delete any document (later phase; see the
  *                feature switch).
  *   - `owner`  — only the app owner writes documents (later phase; see the feature switch).
- *   - `none`   — nobody creates, updates or deletes documents. Viewers may only increment
- *                the declared counters and set the declared marks; incrementing a counter
- *                on a document that does not exist creates an empty one authored by nobody.
- *                For tallies keyed by something outside the store (plays per item, votes
- *                per model) — no viewer publishes anything, so no publish scope or prompt.
+ *   - `none`   — REMOVED with counters (docs/app-storage-generic-core.md, rollout step 5).
+ *                Still parsed, because approved manifests declare it, and served READ-ONLY:
+ *                nobody creates, updates or deletes documents (`assertShareWritable`). Never
+ *                read as an absent `write` (= `own`). Submit refuses it on a collection that
+ *                did not already declare it.
  */
 export const APP_STORAGE_WRITE_POLICIES = ['own', 'anyone', 'owner', 'none'] as const;
 export type AppStorageWritePolicy = (typeof APP_STORAGE_WRITE_POLICIES)[number];
@@ -838,10 +844,10 @@ function parseCollection(
   const sharedOnly = (field: string) =>
     errors.push(`${at}.${field} applies only to shared collections`);
 
-  // Counters are SHARED-ONLY by decision, not by necessity: a counter is a tally on a
-  // document that many viewers increment, and on a private collection only one viewer can
-  // ever touch the document, so a counter there is a plain field of `data`. Refusing it
-  // keeps one name from meaning two things; relaxing it later breaks no manifest.
+  // Counters and marks were removed (rollout step 5) and are inert, but their parse is kept
+  // exactly as it was, cross-field rules included: approved manifests are replayed through it
+  // (`deriveCollectionMajors` skips a manifest that does not parse, which would shift every
+  // later major), and a manifest that parsed before must parse now.
   const beforeTallies = errors.length;
   let counters: string[] = [];
   if (raw.counters !== undefined) {
@@ -1777,7 +1783,7 @@ function availableViewerAuthoredPolicies(): string[] {
  * - Declaring any collection requires {@link APP_STORAGE_BASE_SCOPE}.
  * - Declaring a shared collection whose `write` is `own` or `anyone` requires
  *   {@link APP_STORAGE_PUBLISH_SCOPE}. `owner` and `none` do not: no viewer authors a
- *   document in them (marks and counters are `apps:storage`).
+ *   document in them.
  * - Declaring any import requires {@link APP_STORAGE_IMPORT_SCOPE} (and the base scope:
  *   the storage route requires it on every call).
  * - REFUSED, not warned: requesting any of these scopes with nothing in `storage` for it to

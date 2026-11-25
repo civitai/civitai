@@ -20,7 +20,7 @@ import { createPgliteHarness, type Harness } from './doc-store.harness';
 /**
  * A shared document PUT that changes nothing is free behind `app-blocks-storage-unchanged-writes-free`:
  * no shared-write budget token, no moderation scan, nothing written. End to end, as
- * `doc-store-api.publish.test.ts` drives it: a REAL signed block token → the REAL route → the REAL
+ * `doc-store-api.contract.test.ts` drives it: a REAL signed block token → the REAL route → the REAL
  * document store on an embedded Postgres (RLS on, the content-levels migration applied). Replaced
  * at the boundary only: the Postgres rows the resolver reads, Redis (an in-memory map plus the Lua
  * harness for the token-bucket script), the session hub, the App Blocks and Flipt flags, and the
@@ -846,7 +846,7 @@ async function send(opts: {
   return { status: res.statusCode, body, headers: resHeaders };
 }
 
-/** Every document-store rate bucket the app's viewer has spent (read, write, tally, report). */
+/** Every document-store rate bucket the app's viewer has spent (read, write, report). */
 const docBuckets = (app: AppRow) =>
   [...kv.keys()].filter((k) => k.includes(':docs-') && k.includes(`:${app.id}:`)).sort();
 
@@ -1091,7 +1091,10 @@ describe('the signed internal route', () => {
     expect(del.body).toEqual({ deleted: true });
   });
 
-  it('a mark answers markSeq on the internal route only', async () => {
+  // docs/app-storage-generic-core.md, rollout step 5: the tally PATCH was removed, on both routes,
+  // even on a collection whose manifest still declares a mark. The internal route serves only the
+  // writes, so its 405 names PUT and DELETE; the public one also names GET.
+  it('PATCH is no route on either route: 405, nothing written', async () => {
     const A = freshApp(VOTE_MANIFEST);
     const t = await mint(A, V1);
     const created = await expectOk(
@@ -1106,22 +1109,33 @@ describe('the signed internal route', () => {
       201
     );
     const key = (created.body as { key: string }).key;
-    const marked = await expectOk(
-      send({
-        internal: true,
-        token: t,
-        method: 'PATCH',
-        path: `/clips/${key}`,
-        query: { from: A.blockId },
-        body: { $mark: 'vote' },
-      })
-    );
-    expect(marked.body).toMatchObject({ marked: true, count: 1 });
-    expect(typeof (marked.body as { markSeq: unknown }).markSeq).toBe('number');
-    const unmarked = await expectOk(
-      call({ token: t, method: 'PATCH', path: `/clips/${key}`, body: { $unmark: 'vote' } })
-    );
-    expect(unmarked.body).toEqual({ marked: false, count: 0 });
+    const seqBefore = await lastSeq(A);
+    const internal = await send({
+      internal: true,
+      token: t,
+      method: 'PATCH',
+      path: `/clips/${key}`,
+      query: { from: A.blockId },
+      body: { $mark: 'vote' },
+    });
+    const direct = await send({
+      internal: false,
+      token: t,
+      method: 'PATCH',
+      path: `/clips/${key}`,
+      body: { $mark: 'vote' },
+    });
+    expect([internal.status, internal.headers.allow, direct.status, direct.headers.allow]).toEqual([
+      405,
+      'PUT, DELETE',
+      405,
+      'GET, PUT, DELETE',
+    ]);
+    expect([
+      (internal.body as { code: string }).code,
+      (direct.body as { code: string }).code,
+    ]).toEqual(['method_not_allowed', 'method_not_allowed']);
+    expect(await lastSeq(A)).toBe(seqBefore);
   });
 
   it('a revoked token is refused on the internal route exactly as on the public route', async () => {

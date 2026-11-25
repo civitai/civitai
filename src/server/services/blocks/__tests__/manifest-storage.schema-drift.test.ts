@@ -771,10 +771,10 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(() => schemaAccepts({ $ref: '#/$defs/missing' }, 1)).toThrow(/cannot resolve/);
   });
 
-  // docs/app-storage-generic-core.md, "Manifest, schema majors and the SDK": the tally primitives
-  // are marked deprecated in the published schema WITHOUT changing what validates (approved
-  // manifests keep them; submit refuses a new one, `deprecatedPrimitiveErrors`).
-  it('marks counters and marks deprecated (and write "none" in its description), as annotations only', () => {
+  // docs/app-storage-generic-core.md, rollout step 5: the tally primitives are removed, and the
+  // published schema says so WITHOUT changing what validates (approved manifests keep them, inert;
+  // submit refuses a new one, `deprecatedPrimitiveErrors`).
+  it('marks counters and marks removed (and write "none" in its description), as annotations only', () => {
     const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
     const collection = Object.values(
       collections.patternProperties as Record<string, SchemaObject>
@@ -782,14 +782,15 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     const p = collection.properties as Record<string, SchemaObject>;
     for (const field of ['counters', 'marks'] as const) {
       expect(p[field].deprecated, field).toBe(true);
-      expect(String(p[field].description), field).toMatch(/^DEPRECATED — use a viewer-keyed/);
+      expect(String(p[field].description), field).toMatch(/^REMOVED — use a viewer-keyed/);
     }
     // Not the whole `write` property: "own" is not deprecated, so `none` is deprecated in the
     // description only (`deprecated` cannot sit on one enum value), and the description must not
     // also offer it as available.
     expect(p.write.deprecated).toBeUndefined();
     const write = String(p.write.description);
-    expect(write).toContain('"none" is DEPRECATED');
+    expect(write).toContain('"none" is REMOVED');
+    expect(write).toContain('READ-ONLY');
     expect(write).toContain('Use "own" with `keyedBy` (a viewer-keyed collection) instead.');
     expect(write).not.toContain('Available today: "own" and "none".');
     // Still accepted by the schema (and the parser, with every feature on, as on replay).
