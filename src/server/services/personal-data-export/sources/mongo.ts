@@ -57,7 +57,7 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
  * second guard behind the allowlist. Case-insensitive, because stored documents use PascalCase.
  */
 const NESTED_DENY_RE =
-  /(callback|scan|hash|blobkey|trace|moderat|safety|classif|score|label|verdict|xguard|clavata|matchedterm|matchedregex|threshold|policy|rating|flagged|^category$|reason|blocked|^user$|^messages$|responseformat|chattemplate)/i;
+  /(callback|scan|hash|blobkey|trace|moderat|safety|classif|score|label|verdict|audit|xguard|clavata|matchedterm|matchedregex|threshold|policy|rating|flagged|^category$|reason|blocked|^user$|^messages$|responseformat|chattemplate)/i;
 
 /**
  * Only generations the user asked for are written: a workflow is kept when EVERY step's type is
@@ -69,24 +69,43 @@ const NESTED_DENY_RE =
  * input carries the site's own instructions.
  */
 export const USER_STEP_TYPES: ReadonlySet<string> = new Set(
+  // The step types whose output the generator shows the user (`normalizeStepOutput` in
+  // orchestration-new.service.ts), plus training.
   [
     'textToImage',
     'imageGen',
-    'videoGen',
     'comfy',
-    'aceStepAudio',
-    'polyGen',
-    'videoInterpolation',
-    'videoUpscaler',
-    'imageBackgroundRemoval',
+    'model3DPreview',
+    'imageUpscaler',
     'preprocessImage',
+    'imageBackgroundRemoval',
+    'videoGen',
+    'videoUpscaler',
+    'videoEnhancement',
+    'videoInterpolation',
+    'preprocessVideo',
+    'aceStepAudio',
+    'miniMaxMusic3',
+    'yuE2',
+    'soniloAudioGen',
+    'polyGen',
     'training',
     'imageResourceTraining',
   ].map((t) => t.toLowerCase())
 );
 
-/** A site-set purpose such as `text-scan-preview`, matched as a whole word so `checkpoint` is not one. */
-const SYSTEM_PURPOSE_RE = /(^|[^a-z])(scan|moderat\w*|audit|review|classif\w*|check)([^a-z]|$)/i;
+/**
+ * A site-set purpose such as `text-scan-preview` or `imageReview`: split into words at separators
+ * and case changes, and matched word by word with its inflections, so `checkpoint` is not one.
+ */
+const SYSTEM_PURPOSE_WORD_RE =
+  /^(scan|scann|moderat\w*|audit|review|classif\w*|check)(s|es|ed|ing)?$/;
+const isSystemPurpose = (purpose: string) =>
+  purpose
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .some((w) => SYSTEM_PURPOSE_WORD_RE.test(w));
 
 const stepType = (t: unknown) =>
   typeof t === 'string' ? t.toLowerCase().replace(/step$/, '') : undefined;
@@ -94,7 +113,7 @@ const stepType = (t: unknown) =>
 export function isUserGeneration(doc: unknown): boolean {
   if (!isObject(doc)) return false;
   const meta = isObject(doc.Metadata) ? doc.Metadata : {};
-  if (typeof meta.purpose === 'string' && SYSTEM_PURPOSE_RE.test(meta.purpose)) return false;
+  if (typeof meta.purpose === 'string' && isSystemPurpose(meta.purpose)) return false;
   if ('scan' in meta) return false;
   const steps = Array.isArray(doc.Steps) ? doc.Steps : [];
   if (steps.length === 0) return false;
@@ -115,7 +134,7 @@ type Shape = 'leaf' | 'tree' | { readonly [key: string]: Shape };
 
 const PAYMENT_TIPS: Shape = { Civitai: 'leaf', Creators: 'leaf' };
 
-/** An output file: its link and what it is, never its internal ids or storage tier. */
+/** An output file: its link and what it is, never its job id or storage fields. */
 const MEDIA: Shape = {
   _id: 'leaf',
   Url: 'leaf',
@@ -237,7 +256,7 @@ export async function exportWorkflows({
     source: 'mongo',
     rows: 0,
     description:
-      'Your generation workflows: prompts, settings, resources, steps and dates. Outputs are listed as links and details, not files. Not included: workflows the site runs itself, and generations made with chat (language-model) steps.',
+      'Your generation workflows: prompts, settings, resources, steps and dates. Outputs are listed as links and details, not files. Not included: workflows the site runs itself, and generations that include chat (language-model), custom-workflow or image-conversion steps.',
     status: 'complete',
   };
   // One past the cap, so reaching it is distinguishable from having exactly that many.

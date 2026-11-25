@@ -344,43 +344,6 @@ describe('exportWorkflows', () => {
     expect(out.Steps[0]).not.toHaveProperty('NewStepThing');
   });
 
-  it('leaves out whole workflows the site ran as automated checks, and keeps generations', async () => {
-    const check = {
-      _id: '777-2',
-      Metadata: { purpose: 'text-scan-preview' },
-      Steps: [
-        {
-          _t: 'ChatCompletionStep',
-          Name: 'textScan',
-          Input: { Messages: [{ _t: 'SystemMessage', Content: 'SYSTEM-TEXT' }] },
-        },
-      ],
-    };
-    // A check with no purpose set is still caught by its step.
-    const unlabeled = { ...check, _id: '777-3', Metadata: {} };
-    const collection: WorkflowCollection = {
-      find() {
-        return Object.assign(
-          (async function* () {
-            yield storedDoc();
-            yield check;
-            yield unlabeled;
-          })(),
-          { close: async () => undefined }
-        );
-      },
-    };
-    const { files, writer } = memoryWriter();
-    const entry = await exportWorkflows({ userId: SUBJECT, writer, collection });
-    const text = files.get(entry.file)!;
-    expect(entry.rows).toBe(1);
-    expect(text).toContain('"777-1"');
-    expect(text).toContain('a cat');
-    expect(text).not.toContain('777-2');
-    expect(text).not.toContain('777-3');
-    expect(text).not.toContain('SYSTEM-TEXT');
-  });
-
   describe('which workflows are written', () => {
     const step = (
       _t: string,
@@ -391,7 +354,8 @@ describe('exportWorkflows', () => {
       Name,
       Input,
     });
-    // Shapes the site's own checks submit: none sets a purpose the old denylist recognised.
+    // Shapes the site's own checks submit, most with no purpose set, so the step types alone must
+    // exclude them.
     const siteChecks: Record<string, object> = {
       'text moderation': {
         Metadata: { mode: 'text', entityType: 'Article', entityId: 1 },
@@ -423,10 +387,19 @@ describe('exportWorkflows', () => {
       },
       'language model check': {
         Metadata: { purpose: 'text-scan-preview' },
-        Steps: [step('ChatCompletionStep', 'textScan', { Messages: [] })],
+        Steps: [
+          step('ChatCompletionStep', 'textScan', {
+            Messages: [{ _t: 'SystemMessage', Content: 'SYSTEM-TEXT' }],
+          }),
+        ],
       },
       'unknown future step type': { Metadata: {}, Steps: [step('someNewInternalStep', '0')] },
       'a step with no type': { Metadata: {}, Steps: [{ Name: '0', Input: {} }] },
+      'a step that is not an object': { Metadata: {}, Steps: [step('imageGen', '0'), null] },
+      'a scan marker on a generation step': {
+        Metadata: { scan: 'audio' },
+        Steps: [step('imageGen', '0')],
+      },
       'no steps': { Metadata: {}, Steps: [] },
       'a site purpose on a generation step': {
         Metadata: { purpose: 'moderation-review' },
@@ -448,11 +421,36 @@ describe('exportWorkflows', () => {
 
     it('keeps generations, whichever way the step type is stored', () => {
       expect(isUserGeneration(storedDoc())).toBe(true);
-      for (const purpose of ['checkpoint-merge', 'reviewed-style', 'generationSource'])
+      for (const purpose of [
+        'checkpoint-merge',
+        'preview-style',
+        'generationSource',
+        'trainingData',
+      ])
         expect(isUserGeneration({ ...storedDoc(), Metadata: { purpose } }), purpose).toBe(true);
-      for (const purpose of ['text-scan-preview', 'moderation-review', 'audit'])
+      for (const purpose of [
+        'text-scan-preview',
+        'moderation-review',
+        'audit',
+        'textScan',
+        'imageReview',
+        'promptAudit',
+        'scanning',
+        'checks',
+        'reviewed',
+      ])
         expect(isUserGeneration({ ...storedDoc(), Metadata: { purpose } }), purpose).toBe(false);
-      for (const t of ['imageGen', 'ImageGenStep', 'videoGen', 'VideoGenStep', 'comfy', 'training'])
+      for (const t of [
+        'imageGen',
+        'ImageGenStep',
+        'videoGen',
+        'VideoGenStep',
+        'comfy',
+        'training',
+        'imageUpscaler',
+        'soniloAudioGen',
+        'yuE2',
+      ])
         expect(isUserGeneration({ Steps: [step(t, '0'), step('textToImage', '1')] }), t).toBe(true);
     });
 
@@ -472,42 +470,53 @@ describe('exportWorkflows', () => {
       const entry = await exportWorkflows({ userId: SUBJECT, writer, collection });
       const text = files.get(entry.file)!;
       expect(entry.rows).toBe(1);
-      for (const s of ['777-9', 'OTHER', 'https://other']) expect(text, s).not.toContain(s);
+      for (const s of ['777-9', 'OTHER', 'https://other', 'SYSTEM-TEXT'])
+        expect(text, s).not.toContain(s);
     });
   });
 
   it("inside the user's settings, still drops credential and check-shaped keys", () => {
-    const doc = storedDoc();
-    doc.Steps[0].Input = {
-      ...doc.Steps[0].Input,
+    // One key per term, so dropping any term from the deny lists turns this red.
+    const denied = {
       ApiKey: 'k',
       SafetyScore: 0.2,
       Messages: [{ Content: 'x' }],
       XGuardResult: { A: 1 },
-      ClavataLabels: ['x'],
+      Clavata: 'c',
       PHash: 'p',
       Scores: [1],
       Threshold: 0.3,
       Flagged: true,
       BlockedReason: 'policy',
       Reason: 'r',
-    } as never;
-    const input = (reduceWorkflow(doc) as Record<string, any>).Steps[0].Input;
-    for (const k of [
-      'ApiKey',
-      'SafetyScore',
-      'Messages',
-      'XGuardResult',
-      'ClavataLabels',
-      'PHash',
-      'Scores',
-      'Threshold',
-      'Flagged',
-      'BlockedReason',
-      'Reason',
-    ])
-      expect(input, k).not.toHaveProperty(k);
-    expect(input.Prompt).toBe('a cat');
+      MatchedTerms: ['t'],
+      MatchedRegex: 'x',
+      Policy: 'p',
+      Rating: 'r',
+      Category: 'c',
+      Verdict: 'v',
+      AuditNote: 'a',
+      ModerationResult: 'm',
+      ClassifierOut: 'c',
+      OnCallback: 'https://x/cb',
+      TraceId: 't',
+      BlobKey: 'b',
+      Labels: ['l'],
+      ScanResult: 's',
+      SafetyLevel: 1,
+      WasBlocked: true,
+      ResponseFormat: 'json',
+      ChatTemplate: 't',
+      User: 'u',
+    };
+    for (const [k, v] of Object.entries(denied)) {
+      const doc = storedDoc();
+      doc.Steps[0].Input = { ...doc.Steps[0].Input, Nested: { [k]: v } } as never;
+      const input = (reduceWorkflow(doc) as Record<string, any>).Steps[0].Input;
+      // A blocked marker drops the whole object; either way the key is gone.
+      expect(input.Nested ?? {}, k).toEqual({});
+      expect(input.Prompt).toBe('a cat');
+    }
   });
 
   it('refuses a user id that is not a positive integer', () => {
