@@ -595,7 +595,11 @@ export async function setReportStatus({
       systemUserId: SYSTEM_USER_ID,
     });
     if (held)
-      return { ok: false as const, error: `${SCAN_LIFT_HELD[held]} This report is still open.` };
+      return {
+        ok: false as const,
+        held: true as const,
+        error: `${SCAN_LIFT_HELD[held]} This report is still open.`,
+      };
     await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
     await syncResolvedMarker(id, status);
     return {

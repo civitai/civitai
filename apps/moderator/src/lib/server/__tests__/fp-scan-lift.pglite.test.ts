@@ -167,7 +167,11 @@ describe("the scan's report on a Feature Pages comment", () => {
         userId: MOD,
         liftScanHide: true,
       })
-    ).toEqual({ ok: false, error: expect.stringContaining('Rule on that report first') });
+    ).toEqual({
+      ok: false,
+      held: true,
+      error: expect.stringContaining('Rule on that report first'),
+    });
     expect(
       (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
     ).toEqual({ status: 'Pending' });
@@ -187,7 +191,7 @@ describe("the scan's report on a Feature Pages comment", () => {
         userId: MOD,
         liftScanHide: true,
       })
-    ).toEqual({ ok: false, error: expect.stringContaining('Try again in a minute') });
+    ).toEqual({ ok: false, held: true, error: expect.stringContaining('Try again in a minute') });
     expect(
       (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
     ).toEqual({ status: 'Pending' });
@@ -203,7 +207,7 @@ describe("the scan's report on a Feature Pages comment", () => {
         userId: MOD,
         liftScanHide: true,
       })
-    ).toEqual({ ok: false, error: expect.stringContaining('banned or muted') });
+    ).toEqual({ ok: false, held: true, error: expect.stringContaining('banned or muted') });
     expect(
       (await db.query(`SELECT status FROM "Report" WHERE id = $1`, [SCAN_REPORT])).rows[0]
     ).toEqual({ status: 'Pending' });

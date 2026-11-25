@@ -536,7 +536,7 @@ export async function readFpRunbookCounts(db: Kysely<DB>) {
   };
 }
 
-/** An open report on `comment` from anyone but the system user (`system`, a parameter). */
+/** SQL predicate: an open report on the comment id expression `comment` from anyone but the user id expression `system`. */
 const openPersonReport = (comment: string, system: string) => `EXISTS (
   SELECT 1 FROM "CommentV3Report" pcr JOIN "Report" pr ON pr.id = pcr."reportId"
   WHERE pcr."commentId" = ${comment} AND pr.status IN ('Pending', 'Processing')

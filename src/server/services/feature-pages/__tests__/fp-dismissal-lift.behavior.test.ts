@@ -9,6 +9,8 @@ import type * as ModerationService from '~/server/services/commentv3/moderation.
 import type * as MirrorService from '~/server/services/feature-pages/mirror.service';
 import { unactionReportLiftingScanHide } from '@civitai/db-queries/feature-page-comments';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
+import { getTextScanProfile } from '~/server/services/text-scan/profiles';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import {
   AUTHOR,
   bootFpDatabase,
@@ -83,7 +85,6 @@ const commentOf = async (id: number) =>
     )
   )[0];
 
-/** The scan's verdict on the current text, flagged. */
 const flagScan = async (id: number) => {
   await scanClean(id);
   await q(
@@ -93,9 +94,13 @@ const flagScan = async (id: number) => {
   );
 };
 
-/** The scan flags the comment and hides it, filing its report as createReport would. */
+/** The textHash a scan callback hands the hide for the comment's text now (callback.ts). */
+const judgedText = async (id: number) =>
+  textScanTextHash((await getTextScanProfile('CommentV3')!.load([id])).get(id)!);
+
 const scanHides = async (id: number) => {
   await flagScan(id);
+  const textHash = await judgedText(id);
   let reportId = 0;
   const createReport = vi.fn(async (input: { details: Record<string, unknown> }) => {
     const [report] = await q<{ id: number }>(
@@ -110,7 +115,10 @@ const scanHides = async (id: number) => {
     reportId = report.id;
     return report;
   });
-  const hid = await moderation.hideFlaggedFpComment(id, { createReport: createReport as never });
+  const hid = await moderation.hideFlaggedFpComment(id, {
+    textHash,
+    createReport: createReport as never,
+  });
   return { hid, reportId, createReport };
 };
 
@@ -425,20 +433,19 @@ describe("a moderator's dismissal of the scan's report", () => {
       id,
     ]);
     await flagScan(id);
-    const { currentScanContentHashes } = await import('~/server/services/text-scan/submit');
-    const textHash = (await currentScanContentHashes('CommentV3', [id])).get(id)!;
-    const second = await rescanHides(id, textHash);
+    const second = await rescanHides(id, await judgedText(id));
     expect(await dismiss(second)).toEqual({ commentId: id, version: 2 });
   });
 
   it('7d. a scan of an older text binds nothing new: its report is held, never lifted', async () => {
     const { id, reportId } = await hiddenByScan();
+    const older = await judgedText(id);
     await q(`UPDATE "Report" SET status = 'Actioned' WHERE id = $1`, [reportId]);
     await q(`UPDATE "CommentV3" SET content = '<p>edited</p>' WHERE id = $1`, [id]);
     await q(`UPDATE "FeaturePageCommentMirror" SET version = version + 1 WHERE "commentId" = $1`, [
       id,
     ]);
-    const stale = await rescanHides(id, 'an older text');
+    const stale = await rescanHides(id, older);
     await heldOpen(id, stale, 'version');
   });
 
@@ -447,8 +454,8 @@ describe("a moderator's dismissal of the scan's report", () => {
     await flagScan(id);
     let reportId = 0;
     const hiding = moderation.hideFlaggedFpComment(id, {
-      textHash: 'h',
-      scanHashes: async () => {
+      textHash: await judgedText(id),
+      currentTextHash: async () => {
         throw new Error('config read failed');
       },
       createReport: (async () => {

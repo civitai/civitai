@@ -13,7 +13,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { TRPCError } from '@trpc/server';
 import { commentV3CsamHold, hasOpenCommentReport } from '~/server/services/commentv3/review-hold';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
-import { currentScanContentHashes } from '~/server/services/text-scan/submit';
+import { getTextScanProfile } from '~/server/services/text-scan/profiles';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -204,9 +205,9 @@ export async function hideFlaggedFpComment(
   deps: {
     createReport?: FileReport;
     db?: Pick<typeof dbWrite, '$queryRawUnsafe' | '$transaction'>;
-    /** The text the scan judged, by its scan hash. */
+    /** The text the scan judged, by `textScanTextHash`. */
     textHash?: string;
-    scanHashes?: typeof currentScanContentHashes;
+    currentTextHash?: typeof currentFpTextHash;
   } = {}
 ) {
   const client = deps.db ?? dbWrite;
@@ -249,8 +250,8 @@ export async function hideFlaggedFpComment(
   let judgedCurrent: boolean | undefined;
   if (deps.textHash !== undefined)
     try {
-      const hashes = await (deps.scanHashes ?? currentScanContentHashes)('CommentV3', [commentId]);
-      judgedCurrent = hashes.get(commentId) === deps.textHash;
+      judgedCurrent =
+        (await (deps.currentTextHash ?? currentFpTextHash)(commentId)) === deps.textHash;
     } catch (e) {
       judgedCurrent = false;
       failure ??= e;
@@ -262,10 +263,16 @@ export async function hideFlaggedFpComment(
   return hid;
 }
 
+async function currentFpTextHash(commentId: number) {
+  const subject = (await getTextScanProfile('CommentV3')?.load([commentId]))?.get(commentId);
+  return subject && textScanTextHash(subject);
+}
+
 /**
- * The scan's hide, recorded as the scan's, with the report filed for it, when it is the scan that
- * hides it, or when it was already hidden by the scan (a retry): any other hide clears that record in
- * setCommentFlags. With no report filed, no dismissal can lift it.
+ * Hides as the scan and records the hide, its report and, when the scan judged the current text, its
+ * text version on the mirror row. Any other hide clears that record in setCommentFlags; a retry while
+ * the scan's hide still stands records it again. With no report or no version, no dismissal lifts it.
+ * Returns false, writing nothing, once a moderator has lifted this version.
  */
 async function hideAsScan(
   db: ReturnType<typeof prismaRunner>,
