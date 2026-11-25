@@ -15,9 +15,8 @@ import (
 // ClientIPHeader is the edge's header naming the viewer's address. Cloudflare sets it on every request
 // it forwards and replaces any value the client sent, as it replaces the region headers this service
 // already trusts on the same precondition (WRITES-DESIGN.md, "Region"). A request without it did not
-// come through the edge: an in-cluster caller (the site's shadow read), or one that reached the origin
-// around Cloudflare, which could name any address here anyway. Such a request is not throttled per
-// address (Guard) and no address is forwarded to the hub for it.
+// come through the edge (an in-cluster caller, such as the site's shadow read). Such a request is not
+// throttled per address (Guard) and no address is forwarded to the hub for it.
 const ClientIPHeader = "CF-Connecting-IP"
 
 // ClientIPFrom is the viewer's address from the edge's header, canonical, or "" when the header is
