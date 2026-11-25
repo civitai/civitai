@@ -177,7 +177,7 @@ export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.leng
 export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
 
 /**
- * The most rows one stage's scan reads per pick (rounds of 100, 200, 400, 800 and 1600), so a bucket that cannot fill
+ * The most rows one stage's scan reads per pick (five doubling rounds from `STAGE_SCAN_FIRST_ROUND`), so a bucket that cannot fill
  * never drives a stage-sized read; past the budget the window keeps what the scan found.
  */
 export const STAGE_SCAN_ROW_BUDGET = STAGE_SCAN_FIRST_ROUND * 31;

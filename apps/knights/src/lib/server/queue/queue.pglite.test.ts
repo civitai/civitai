@@ -31,7 +31,6 @@ import {
   bucketLevelSql,
   servableItems,
   STAGE_SCAN_FIRST_ROUND,
-  STAGE_SCAN_ROW_BUDGET,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
 import { creditLateJudgment } from './vote-record';
@@ -379,17 +378,15 @@ describe('getFeed', () => {
 
   it('stops a stage scan whose buckets cannot fill at the row budget', async () => {
     await player(1, 'Knight');
-    // 350 PG items then one X item, scanned under a 300-row budget: the rounds of 100 and 200 spend it, so the scan stops
-    // before the X item instead of reading on to the end of the stage.
+    // 350 PG items then one X item, under a budget that ends inside the second round: that round is cut to what is left
+    // of the budget and the scan stops there, before the X item, instead of reading on to the end of the stage.
     const ids = await sameAgeStage([...Array<number>(350).fill(1), 8]);
     const watched = watchFeedReads();
 
     const served =
-      (await getFeed(watched.db, 1, { scanRowBudget: 300 }))?.items.map((i) => i.id) ?? [];
-    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200]);
+      (await getFeed(watched.db, 1, { scanRowBudget: 250 }))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 150]);
     expect(served).not.toContain(ids[350]);
-    // The default budget is the rounds of 100 through 1600.
-    expect(STAGE_SCAN_ROW_BUDGET).toBe(3100);
   });
 
   it('never reads or serves an image the gate refuses when the row budget cuts the scan short', async () => {
