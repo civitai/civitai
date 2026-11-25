@@ -43,6 +43,15 @@ describe('npmInstallRunningProbe', () => {
       expect(probe({ '1': ['/sbin/init'], '812': argv }), JSON.stringify(argv)).toBe('installing');
   });
 
+  it('passes over entries that are not a pid, even one whose cmdline names an install', () => {
+    // As `/proc/self` would read if it pointed at an install: not a process of its own.
+    expect(probe({ '1': ['/sbin/init'], self: ['npm', 'install'], net: ['npm', 'ci'] })).toBe(
+      'idle'
+    );
+    // Control: the same command line under a pid is seen.
+    expect(probe({ '1': ['/sbin/init'], '77': ['npm', 'install'] })).toBe('installing');
+  });
+
   it('is idle when no npm install runs', () => {
     expect(
       probe(

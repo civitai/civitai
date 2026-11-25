@@ -239,11 +239,13 @@ export class PreviewRestarter implements PreviewRestarts {
         if (!(error instanceof DevServerNotRunningError)) throw error;
         // Not running (as after every resume): start it as the assistant would (installing its
         // dependencies first when they are not, as a woken or remixed app's are not), then the
-        // same reopen. Still no run, no model call and no Buzz. A reply's own `npm install` running
-        // in this sandbox meanwhile is seen (`installing`) and none is started beside it; one that
-        // has just finished installing, before its dev server starts, would see its dev server
-        // started early, as the runner cannot see the page's replies from here. The preview grant
-        // covers the install's bound (civitai's `PREVIEW_GRANT_TTL_SECONDS`).
+        // same reopen. Still no run, no model call and no Buzz. The runner cannot see the page's
+        // replies from here. A reply's own `npm install` is looked for (`installing`) only when this
+        // project's dependencies are not installed yet, and only once, before ours starts: over an
+        // installed project a reply's install is not seen, and one a reply starts after that look
+        // can still run beside ours. A reply that has just finished installing, before its dev
+        // server starts, sees its dev server started early. The preview grant covers the install's
+        // bound (civitai's `PREVIEW_GRANT_TTL_SECONDS`).
         await preview.startDevServer();
         try {
           shown = await preview.reopen();
