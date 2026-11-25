@@ -34,6 +34,11 @@ describe('clipDisplaySeconds', () => {
     expect(formatDuration(clipDisplaySeconds(30.5, 30))).toBe('00:30');
   });
 
+  // formatDuration rounds seconds without carrying into minutes, so a fraction here printed "00:60".
+  it('shows an allowed clip just under a minute limit as the limit', () => {
+    expect(formatDuration(clipDisplaySeconds(59.6, 60))).toBe('1:00');
+  });
+
   it('shows a rejected clip as longer than the limit', () => {
     expect(formatDuration(clipDisplaySeconds(30.501, 30))).toBe('00:31');
   });
@@ -42,7 +47,9 @@ describe('clipDisplaySeconds', () => {
   // never read as over the limit, and a rejected one never as equal to it.
   it('never contradicts the verdict for any limit', () => {
     const asShown = (seconds: number) => {
-      const [m, s] = formatDuration(seconds).split(':').map(Number);
+      const text = formatDuration(seconds);
+      const [m, s] = text.split(':').map(Number);
+      expect(s, `${seconds}s shown as ${text}`).toBeLessThan(60);
       return m * 60 + s;
     };
     for (const max of CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS) {

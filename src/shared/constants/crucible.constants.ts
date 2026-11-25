@@ -189,16 +189,17 @@ export const clipLengthAllowed = (durationSeconds: number | null, maxClipSeconds
   durationSeconds <= maxClipSeconds + CRUCIBLE_CLIP_LENGTH_TOLERANCE_SECONDS;
 
 /**
- * The length to show beside "max <limit>". An allowed clip inside the tolerance shows as the limit,
- * not a rounded-up second over it; a rejected one is ceiled so it never reads as equal to the limit
- * (at a 0.5s tolerance rounding alone already lands over; the ceiling holds if the tolerance shrinks).
+ * The whole seconds to show beside "max <limit>". An allowed clip inside the tolerance shows as the
+ * limit, not a rounded-up second over it; a rejected one is ceiled so it never reads as equal to the
+ * limit (at a 0.5s tolerance rounding alone already lands over; the ceiling holds if it shrinks).
+ * Whole, because `formatDuration` rounds seconds without carrying: 59.6 would print "00:60".
  */
 export const clipDisplaySeconds = (durationSeconds: number, maxClipSeconds: number | null) =>
   !clipLengthAllowed(durationSeconds, maxClipSeconds)
     ? Math.ceil(durationSeconds)
     : maxClipSeconds == null
-    ? durationSeconds
-    : Math.min(durationSeconds, maxClipSeconds);
+    ? Math.round(durationSeconds)
+    : Math.min(Math.round(durationSeconds), maxClipSeconds);
 
 /**
  * `timeupdate` fires about every 250ms during playback. A gap larger than this is a seek or a
