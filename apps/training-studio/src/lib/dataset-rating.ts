@@ -32,8 +32,15 @@ export function isStoredRating(value: unknown): value is StoredRating {
   );
 }
 
-/** The server's maturity count for a dataset under the v2 rating, for Review. `unrated` images were
- *  counted from their upload rating, as before. */
+/** The server's maturity count for a dataset under the v2 rating, for Review, and each rated image's
+ *  verdict, for its tile. `unrated` images were counted from their upload rating, as before. A null
+ *  `matureCount` is a count Review should not use: it keeps its own. */
 export type DatasetRatingCount =
   | { enabled: false }
-  | { enabled: true; matureCount: number; unrated: number };
+  | {
+      enabled: true;
+      matureCount: number | null;
+      unrated: number;
+      /** Mature or not by blob id: the v2 verdict alone, never a level or why. */
+      verdicts: Record<string, boolean>;
+    };

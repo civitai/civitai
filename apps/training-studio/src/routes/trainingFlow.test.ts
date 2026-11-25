@@ -22,6 +22,10 @@ import {
   addSamplePrompt,
   asDatasetFilter,
   matchesRatingFilter,
+  matchesVerdictFilter,
+  imgRatingLabel,
+  isImgMature,
+  withVerdicts,
   ratingChoices,
   buildTrainingRuns,
   stampMature,
@@ -1277,6 +1281,52 @@ describe('rating filters', () => {
     expect(matchesRatingFilter(img('X'), 'rating:x')).toBe(true);
     expect(matchesRatingFilter(img('x', 'blocked'), 'rating:x')).toBe(false);
     expect(matchesRatingFilter(img('pg'), 'all')).toBeUndefined();
+  });
+});
+
+describe('v2 verdicts on tiles', () => {
+  const img = (blobId: string, nsfwLevel: string | undefined, status: Img['status'] = 'uploaded') =>
+    ({
+      id: nextImgId(),
+      name: `${blobId}.png`,
+      previewUrl: '',
+      mediaType: 'image',
+      status,
+      progress: 1,
+      blobId,
+      nsfwLevel,
+      tags: [],
+      caption: '',
+    } as unknown as Img);
+
+  // A restricted verdict reaches the Studio as mature (the main app folds it in), so mature it shows.
+  it('a mature verdict shows Mature and counts mature, whatever the upload rating said', () => {
+    const [shown] = withVerdicts([img('a', 'pg')], { a: true })!;
+    expect(imgRatingLabel(shown!)).toBe('Mature');
+    expect(isImgMature(shown!)).toBe(true);
+    expect(matchesVerdictFilter(shown!, 'not-mature')).toBe(false);
+  });
+
+  it('a not-mature verdict replaces a mature upload rating', () => {
+    const [shown] = withVerdicts([img('a', 'r')], { a: false })!;
+    expect(imgRatingLabel(shown!)).toBe('Not mature');
+    expect(isImgMature(shown!)).toBe(false);
+    expect(matchesVerdictFilter(shown!, 'not-mature')).toBe(true);
+  });
+
+  it('an image with no verdict keeps its upload rating and shows as not rated yet', () => {
+    const [a, b] = withVerdicts([img('a', 'r'), img('b', 'pg')], { b: false })!;
+    expect(imgRatingLabel(a!)).toBe('R');
+    expect(isImgMature(a!)).toBe(true);
+    expect(matchesVerdictFilter(a!, 'not-rated')).toBe(true);
+    expect(matchesVerdictFilter(b!, 'not-rated')).toBe(false);
+  });
+
+  it('a blocked image never counts, and an unchanged dataset is not rewritten', () => {
+    const blocked = withVerdicts([img('a', 'pg', 'blocked')], { a: true })![0]!;
+    expect(isImgMature(blocked)).toBe(false);
+    expect(withVerdicts([blocked], { a: true })).toBeUndefined();
+    expect(withVerdicts([img('a', 'pg')], { other: true })).toBeUndefined();
   });
 });
 

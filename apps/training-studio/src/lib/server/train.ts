@@ -38,14 +38,27 @@ export async function submitTrainingBatch(
     checkText: requestTextCheck(cookie, userId),
     datasetRating,
     onMatureCount: datasetRating
-      ? ({ unratedKeys, ...count }) =>
+      ? ({
+          images,
+          mature,
+          failed,
+          rated,
+          unratedKeys,
+          v2NotMatureUploadMature,
+          v2MatureUploadNotMature,
+        }) =>
           void logToAxiom({
             name: 'training-studio-dataset-rating',
             type: 'info',
             message: 'submit mature count',
             userId,
-            ...count,
+            images,
+            mature,
+            failed,
+            rated,
             unrated: unratedKeys.length,
+            // Not Axiom fields on this dataset, so they ride in payload.
+            payload: { v2NotMatureUploadMature, v2MatureUploadNotMature },
           })
       : undefined,
     callbacks: workflowSignalCallbacks(userId),
