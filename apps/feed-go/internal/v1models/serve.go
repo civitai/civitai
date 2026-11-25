@@ -90,7 +90,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	}
 	res, err := d.getModelsWithVersions(ctx, withVersionsInput{
 		raw: RawInput{
-			IDs: []int{id}, Sort: SortHighestRated, Archived: true, Period: "AllTime", PeriodMode: "published",
+			IDs: []int{id}, Sort: SortHighestRated, Archived: true, IncludeWithheld: true, Period: "AllTime", PeriodMode: "published",
 			BrowsingLevel: level,
 		},
 		ignoreAddons: true,

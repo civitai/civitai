@@ -435,4 +435,9 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
       ignoreBrowsingAddons: true,
     });
   });
+
+  it('(m) keeps serving a taken-down model directly, as the list endpoints no longer do', async () => {
+    await invoke({ id: '123' });
+    expect(mockGetModelsWithVersions.mock.calls[0][0]).toMatchObject({ includeWithheld: true });
+  });
 });

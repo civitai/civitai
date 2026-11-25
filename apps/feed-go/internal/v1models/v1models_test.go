@@ -250,8 +250,8 @@ func TestPeriodStart(t *testing.T) {
 
 func TestRawQueryDetail(t *testing.T) {
 	text, args, err := RawQuery(&RawInput{
-		IDs: []int{5001}, Sort: SortHighestRated, Archived: true, Period: "AllTime", PeriodMode: "published",
-		BrowsingLevel: 31, DisablePoi: true,
+		IDs: []int{5001}, Sort: SortHighestRated, Archived: true, IncludeWithheld: true, Period: "AllTime",
+		PeriodMode: "published", BrowsingLevel: 31, DisablePoi: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -287,16 +287,16 @@ func TestRawQueryCursorForms(t *testing.T) {
 	}
 	n := NormalizeSQL(text)
 	for _, frag := range []string{
-		`(mm."mode" IS NULL OR mm."mode" != $1::"ModelModifier") AND (mm."poi" = false OR mm."userId" = $2) AND mm."minor" = false AND m.type = ANY(ARRAY[$3,$4]::"ModelType"[])`,
-		`AND (mm."lastVersionAt" = $7 AND mm."modelId" <= $8) ORDER BY mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC LIMIT $9 ) UNION ALL ( SELECT`,
-		`AND ((mm."lastVersionAt") < ($16)) ORDER BY mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC LIMIT $17 ) LIMIT $18`,
+		`(mm."mode" IS NULL OR mm."mode" != $1::"ModelModifier") AND ( mm."mode" IS DISTINCT FROM $2::"ModelModifier" OR ($3::boolean AND mm."userId" = $4) OR $5::boolean ) AND (mm."poi" = false OR mm."userId" = $6) AND mm."minor" = false AND m.type = ANY(ARRAY[$7,$8]::"ModelType"[])`,
+		`AND (mm."lastVersionAt" = $11 AND mm."modelId" <= $12) ORDER BY mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC LIMIT $13 ) UNION ALL ( SELECT`,
+		`AND ((mm."lastVersionAt") < ($24)) ORDER BY mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC LIMIT $25 ) LIMIT $26`,
 		`CONCAT(mm."lastVersionAt", '|', mm."modelId") as "cursorId"`,
 	} {
 		if !strings.Contains(n, frag) {
 			t.Errorf("split statement lacks %q:\n%s", frag, n)
 		}
 	}
-	if len(args) != 18 || args[8] != 2 || args[17] != 2 || args[6] != time.Date(2026, 6, 2, 9, 0, 0, 250*int(time.Millisecond), time.UTC) {
+	if len(args) != 26 || args[12] != 2 || args[25] != 2 || args[10] != time.Date(2026, 6, 2, 9, 0, 0, 250*int(time.Millisecond), time.UTC) {
 		t.Errorf("split args: %d %#v", len(args), args)
 	}
 
@@ -310,9 +310,9 @@ func TestRawQueryCursorForms(t *testing.T) {
 	}
 	n = NormalizeSQL(text)
 	for _, frag := range []string{
-		`AND tom."tagId" IN ($2,$3) )`,
-		`(mm."lastVersionAt" >= $4)`,
-		`AND ((mm."lastVersionAt" > $6) OR (mm."lastVersionAt" = $7 AND mm."modelId" >= $8)) AND (mm."nsfwLevel" & $9) != 0 ORDER BY mm."lastVersionAt" ASC, mm."modelId" LIMIT $10`,
+		`AND tom."tagId" IN ($6,$7) )`,
+		`(mm."lastVersionAt" >= $8)`,
+		`AND ((mm."lastVersionAt" > $10) OR (mm."lastVersionAt" = $11 AND mm."modelId" >= $12)) AND (mm."nsfwLevel" & $13) != 0 ORDER BY mm."lastVersionAt" ASC, mm."modelId" LIMIT $14`,
 	} {
 		if !strings.Contains(n, frag) {
 			t.Errorf("legacy statement lacks %q:\n%s", frag, n)
@@ -321,7 +321,7 @@ func TestRawQueryCursorForms(t *testing.T) {
 	if strings.Contains(n, "UNION ALL") {
 		t.Error("an ASC-headed cursor must not split")
 	}
-	if args[3] != time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) || args[9] != 101 {
+	if args[7] != time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) || args[13] != 101 {
 		t.Errorf("legacy args: %#v", args)
 	}
 }
@@ -333,15 +333,15 @@ func TestRawQueryBaseModelPaths(t *testing.T) {
 		frags []string
 	}{
 		{"no metrics flag: an EXISTS on the versions", RawInput{BaseModels: []string{"Pony"}, Sort: SortHighestRated}, []string{
-			`EXISTS ( SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m."id" AND mv."baseModel" IN ($2) )`,
+			`EXISTS ( SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m."id" AND mv."baseModel" IN ($6) )`,
 			`FROM "ModelMetric" mm JOIN "Model" m`,
 		}},
 		{"one base model: the per-base-model row", RawInput{BaseModels: []string{"Pony"}, BaseModelMetrics: true, Sort: SortMostDownloaded}, []string{
-			`mbm."modelId" as "id"`, `mbm."baseModel" = $2`, `FROM "ModelBaseModelMetric" mbm JOIN "Model" m ON m."id" = mbm."modelId"`,
+			`mbm."modelId" as "id"`, `mbm."baseModel" = $6`, `FROM "ModelBaseModelMetric" mbm JOIN "Model" m ON m."id" = mbm."modelId"`,
 			`ORDER BY mbm."downloadCount" DESC, mbm."thumbsUpCount" DESC, mbm."modelId"`,
 		}},
 		{"several, Newest: driven from ModelMetric", RawInput{BaseModels: []string{"Pony", "SDXL 1.0"}, BaseModelMetrics: true, Sort: SortNewest}, []string{
-			`mm."modelId" as "id"`, `'downloadCount', mbm."downloadCount"`, `mbmm."baseModel" IN ($4,$5)`, // after the LATERAL's own two in the FROM
+			`mm."modelId" as "id"`, `'downloadCount', mbm."downloadCount"`, `mbmm."baseModel" IN ($8,$9)`, // after the LATERAL's own two in the FROM
 			`LEFT JOIN LATERAL ( SELECT LEAST(SUM("downloadCount")::int, mm."downloadCount") as "downloadCount"`,
 		}},
 		{"several, a stat sort: the aggregate", RawInput{BaseModels: []string{"Pony", "SDXL 1.0"}, BaseModelMetrics: true, Sort: SortImageCount}, []string{
@@ -373,8 +373,31 @@ func TestRawQueryBaseModelPaths(t *testing.T) {
 		t.Errorf("bad cursor: %v", err)
 	}
 	text, _, _ := RawQuery(&RawInput{Sort: SortHighestRated, EarlyAccess: true, TargetUserID: 7})
-	if n := NormalizeSQL(text); !strings.Contains(n, `mm."userId" = $2`) || !strings.Contains(n, `pa."endsAt" > NOW()`) {
+	if n := NormalizeSQL(text); !strings.Contains(n, `mm."userId" = $6`) || !strings.Contains(n, `pa."endsAt" > NOW()`) {
 		t.Errorf("username / earlyAccess clauses: %s", n)
+	}
+}
+
+// A taken-down model is withheld from the list for a signed-out viewer (modelNotWithheldSql); only the
+// by-id route keeps it.
+func TestRawQueryTakenDown(t *testing.T) {
+	clause := `( mm."mode" IS DISTINCT FROM $2::"ModelModifier" OR ($3::boolean AND mm."userId" = $4) OR $5::boolean )`
+	text, args, err := RawQuery(&RawInput{Sort: SortHighestRated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(NormalizeSQL(text), clause) {
+		t.Errorf("list lacks the taken-down clause:\n%s", NormalizeSQL(text))
+	}
+	if !reflect.DeepEqual(args[1:5], []any{"TakenDown", false, nil, false}) {
+		t.Errorf("taken-down args: %#v", args[1:5])
+	}
+	text, _, err = RawQuery(&RawInput{Sort: SortHighestRated, IncludeWithheld: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "IS DISTINCT FROM") {
+		t.Errorf("by-id input keeps taken-down models, got:\n%s", NormalizeSQL(text))
 	}
 }
 

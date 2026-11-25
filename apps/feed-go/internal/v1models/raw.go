@@ -27,12 +27,14 @@ const (
 // shapes reach, after enforceBlockedBrowsingTagsForModels has applied the browsing-settings addons.
 // The viewer is always signed out here: every per-viewer clause binds a null user id.
 type RawInput struct {
-	Take           int // 0 = undefined (the query then reads 100 + 1)
-	Cursor         string
-	Archived       bool
-	DisablePoi     bool
-	DisableMinor   bool
-	ExcludedTagIDs []int
+	Take     int // 0 = undefined (the query then reads 100 + 1)
+	Cursor   string
+	Archived bool
+	// IncludeWithheld keeps taken-down models (the by-id route only), as getModelsRaw's includeWithheld.
+	IncludeWithheld bool
+	DisablePoi      bool
+	DisableMinor    bool
+	ExcludedTagIDs  []int
 	// TagID is the `tag` filter's tag as the replica named it (nil: no filter, or a name no tag has).
 	TagID        *int
 	TargetUserID int // the `username` filter's resolved user, 0 = none
@@ -326,6 +328,13 @@ func RawQuery(in *RawInput) (string, []any, error) {
 	var and []*sqlFrag
 	if !in.Archived {
 		and = append(and, sqlRaw("("+pAlias+`."mode" IS NULL OR `+pAlias+`."mode" != `).arg("Archived").raw(`::"ModelModifier")`))
+	}
+	// Port of modelNotWithheldSql (src/server/utils/model-withheld.ts) for a signed-out viewer: a
+	// taken-down model is its owner's and moderators' alone.
+	if !in.IncludeWithheld {
+		and = append(and, sqlRaw("( "+pAlias+`."mode" IS DISTINCT FROM `).arg("TakenDown").
+			raw(`::"ModelModifier" OR (`).arg(false).raw(`::boolean AND mm."userId" = `).arg(nil).
+			raw(`) OR `).arg(false).raw(`::boolean )`))
 	}
 	if in.DisablePoi {
 		and = append(and, sqlRaw("("+pAlias+`."poi" = false OR mm."userId" = `).arg(nil).raw(")"))
