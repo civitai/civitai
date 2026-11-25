@@ -7,15 +7,15 @@ import { unit } from '../hidden/hidden.service';
 type Executor = Kysely<DB> | Transaction<DB>;
 
 /**
- * The feed's rhythm for Knights and above: a gap of ratings (5, 8 or 10), then a burst of yes/no questions (5 to 10), each
+ * The feed's rhythm for Knights and above: a gap of ratings (15, 18 or 20), then a burst of yes/no questions (5 to 10), each
  * length rolled anew.
  */
-export const BURSTS = { gaps: [5, 8, 10], burst: { min: 5, max: 10 } } as const;
+export const BURSTS = { gaps: [15, 18, 20], burst: { min: 5, max: 10 } } as const;
 
 /** One thing the player was served, oldest first: a yes/no question or not (a rating or a hidden check), and a stable key. */
 export type Served = { yesno: boolean; key: string };
 
-/** Enough history to see the longest run (a gap of 10) and the item that ended the run before it. */
+/** Enough history to see the longest run (a gap of 20) and the item that ended the run before it. */
 const HISTORY = Math.max(...BURSTS.gaps, BURSTS.burst.max) + 1;
 
 /**

@@ -102,27 +102,27 @@ describe('servedHistory', () => {
     ]);
   });
 
-  it('reads only the last 11 votes, enough for the longest gap and the item before it', async () => {
+  it('reads only the last 21 votes, enough for the longest gap and the item before it', async () => {
     await seedPlayer(pg, 1);
-    for (let i = 1; i <= 15; i++)
+    for (let i = 1; i <= 25; i++)
       await seedSettledVote(pg, { itemId: 9000 + i, playerId: 1, imageId: 10, createdAt: at(i) });
     const history = await servedHistory(db, 1);
-    expect(history).toHaveLength(11);
+    expect(history).toHaveLength(21);
     expect(history[0].key).toBe('r9005');
-    expect(history.at(-1)?.key).toBe('r9015');
+    expect(history.at(-1)?.key).toBe('r9025');
   });
 
-  it('reads only the last 11 of votes and Not sure answers together', async () => {
+  it('reads only the last 21 of votes and Not sure answers together', async () => {
     await seedPlayer(pg, 1);
     const question = await yesNoItem(50);
-    for (let i = 1; i <= 15; i++)
+    for (let i = 1; i <= 25; i++)
       await seedSettledVote(pg, { itemId: 9000 + i, playerId: 1, imageId: 10, createdAt: at(i) });
     await pg.query(
       `INSERT INTO "KnightsUnsure" ("playerId", "itemId", "questionKey", "imageId", "createdAt") VALUES (1, $1, 'knights.yesno.violence', 50, $2)`,
-      [question, at(16)]
+      [question, at(26)]
     );
     const history = await servedHistory(db, 1);
-    expect(history).toHaveLength(11);
+    expect(history).toHaveLength(21);
     expect(history[0].key).toBe('r9006');
     expect(history.at(-1)).toEqual({ yesno: true, key: `y${question}` });
   });
