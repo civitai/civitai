@@ -80,6 +80,7 @@ import type {
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
 import {
+  clipDisplaySeconds,
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   crucibleHasEnded,
@@ -2805,13 +2806,12 @@ export const submitEntry = async ({
 
     const clipSeconds = (image.metadata as VideoMetadata | null)?.duration ?? null;
     if (!clipLengthAllowed(clipSeconds, crucible.maxClipSeconds)) {
-      // Ceiling on the actual duration: durations are fractional and `formatDuration` rounds, so a
-      // 120.01s clip against a 120s limit rendered both halves as "2:00" — the entrant was told the
-      // entry was too long and shown two identical numbers.
       return throwBadRequestError(
         `Entries in this crucible can be at most ${formatDuration(
           crucible.maxClipSeconds as number
-        )}; this one is ${formatDuration(Math.ceil(clipSeconds as number))}.`
+        )}; this one is ${formatDuration(
+          clipDisplaySeconds(clipSeconds as number, crucible.maxClipSeconds)
+        )}.`
       );
     }
 
