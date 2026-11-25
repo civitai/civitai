@@ -51,6 +51,8 @@ export async function createCsamReportHandler({
   return fileCsamReport({ ...input, reportedById: ctx.user.id });
 }
 
+export const CSAM_LISTED_BLOCK_FAILED_MESSAGE =
+  'Blocking the listed images failed, so nothing was filed. File the report again.';
 export const CSAM_BLOCKLIST_FAILED_MESSAGE =
   'The report was filed and the account removed. Writing the image hashes to the blocklist failed and has been logged. Do not file again.';
 /** The blocklist entry landed but its review copy did not. An operator repairs it with the reconcile
@@ -87,9 +89,23 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     contextText,
   };
   const filed = contextText.length ? { ...filing, details: withContext } : filing;
-  // Before the report row, and not caught: a filing whose images could not be blocked files nothing,
-  // so a retry is clean. Search drops a listed image through its own row, whoever owns it.
-  await blockListedImagesAsCsam(imageIds);
+  // Before the report row: a filing whose images could not be blocked files nothing, so a retry is
+  // clean. Search drops a listed image through its own row, whoever owns it.
+  try {
+    await blockListedImagesAsCsam(imageIds);
+  } catch (error) {
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      important: true,
+      message: 'blocking the listed images failed; nothing filed',
+      userId,
+      error: (error as Error)?.message,
+      payload: { reportedById, imageCount: imageIds.length },
+    });
+    // A 503 so the message reaches the moderator (a 500's is replaced).
+    throwServiceUnavailableError(CSAM_LISTED_BLOCK_FAILED_MESSAGE, error);
+  }
   const report = supplementalOf
     ? await createSupplementalCsamReport({ ...filed, supplementalOf })
     : await createCsamReport({ ...filed, writeBlocklist: false });

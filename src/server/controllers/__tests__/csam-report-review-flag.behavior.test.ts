@@ -213,7 +213,8 @@ describe('fileCsamReport', () => {
   });
 
   // Held by an earlier report on its owner. This one names no owner, but blocks the image it lists,
-  // so the owner's open report takes over from the flag.
+  // so the owner's open report takes over from the flag. Supersedes the earlier "keeps the flag on
+  // an image that is not removed", from when a report without an owner blocked nothing.
   it('blocks an image an ownerless report lists, and its owner’s open report takes the flag', async () => {
     await report(-1, [UNBLOCKED_HELD]);
 
@@ -362,17 +363,36 @@ describe('fileCsamReport', () => {
     expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
   });
 
-  it('files nothing when the listed images cannot be blocked', async () => {
+  it('tells the moderator when the listed images cannot be blocked, files nothing, and can be filed again', async () => {
+    const { createCsamReportHandler, CSAM_LISTED_BLOCK_FAILED_MESSAGE } = await import(
+      '~/server/controllers/csam.controller'
+    );
+    const reports = async () =>
+      Number(
+        (await pg.query<{ n: number }>(`SELECT count(*)::int AS n FROM "CsamReport"`)).rows[0].n
+      );
+    const before = await reports();
     const real = dbMock.dbWrite.$executeRaw.getMockImplementation();
     dbMock.dbWrite.$executeRaw.mockImplementationOnce((async () => {
       throw new Error('write failed');
     }) as never);
+    const file = () =>
+      createCsamReportHandler({
+        input: { userId: OWNER, imageIds: [OTHER_OWNERS_SCANNED], type: 'Image' },
+        ctx: { user: { id: 2 } },
+      } as never);
 
-    await expect(report(OWNER, [OWNED])).rejects.toThrow('write failed');
-
-    expect(createCsamReport).not.toHaveBeenCalled();
+    await expect(file()).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: CSAM_LISTED_BLOCK_FAILED_MESSAGE,
+    });
+    expect(await reports()).toBe(before);
     expect(softDeleteUser).not.toHaveBeenCalled();
+
     dbMock.dbWrite.$executeRaw.mockImplementation(real as never);
+    await file();
+    expect(await reports()).toBe(before + 1);
+    expect(await blockedFor(OTHER_OWNERS_SCANNED)).toBe('CSAM');
   });
 
   it('fails loudly with the flag still on when removing the account fails', async () => {
@@ -383,11 +403,13 @@ describe('fileCsamReport', () => {
     expect(await flag(OWNED)).toBe('csam');
   });
 
-  it('fails loudly with the flag still on when filing the report fails', async () => {
+  // The images are blocked before the report row, so a failed insert leaves them blocked, which is safe.
+  it('fails loudly with the flag still on, and the images blocked, when filing the report fails', async () => {
     createCsamReport.mockRejectedValueOnce(new Error('connection lost'));
 
     await expect(report(OWNER, [OWNED])).rejects.toThrow('connection lost');
 
     expect(await flag(OWNED)).toBe('csam');
+    expect(await blockedFor(OWNED)).toBe('CSAM');
   });
 });
