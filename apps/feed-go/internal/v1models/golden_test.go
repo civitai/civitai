@@ -424,8 +424,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			CoverageNext:         fx.Config.CoverageNext,
 			BaseModelFeedMetrics: fx.Config.BaseModelFeedMetrics,
 			ServeDataMiss:        fx.Config.ServeDataMiss,
-			// The switch needs the miss computation (ValidateMisses), which a sample's computation
-			// of the miss reads (Deps.computeDataMiss).
+			// ServeDataMiss needs ComputeMisses (ValidateMisses).
 			ComputeMisses:    fx.Config.ServeDataMiss,
 			ResponseCacheTTL: 180 * time.Second,
 			// The Node golden test runs the non-production build (isProd false): localhost origins.
