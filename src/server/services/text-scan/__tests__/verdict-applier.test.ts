@@ -20,6 +20,29 @@ describe('applying a text-scan verdict', () => {
     );
   });
 
+  // Without instrumentation (it failed, or never ran), the tRPC entry still registers it, so a
+  // stale verdict cleared during a request (submit.ts clearStaleVerdict) is applied.
+  it('is registered by loading the tRPC router, without instrumentation', async () => {
+    vi.resetModules();
+    globalThis.__civitaiTextScanVerdictApplier = undefined;
+    await import('~/server/routers');
+    expect(globalThis.__civitaiTextScanVerdictApplier).toBeDefined();
+
+    const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
+    const { applyTextScanVerdict } = await import('~/server/services/text-scan/verdict-applier');
+    const apply = vi
+      .spyOn(getModerationAdapter('Post')!, 'applyTextScan')
+      .mockResolvedValue(undefined as never);
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+
+    await applyTextScanVerdict('Post', args);
+
+    expect(apply).toHaveBeenCalledWith(args);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'verdict applier not registered' })
+    );
+  });
+
   // The server loads the registry at start (instrumentation.ts), so this is the production wiring.
   it("reaches the entity's own adapter once the registry has loaded", async () => {
     vi.resetModules();
