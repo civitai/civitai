@@ -89,8 +89,7 @@ export type DocRating = {
 
 export type DocAuthor =
   /** `uid` is for the envelope layer to resolve a username from; it must never reach a reader. */
-  | { kind: 'user'; uid: number; isViewer: boolean }
-  | { kind: 'app' };
+  { kind: 'user'; uid: number; isViewer: boolean } | { kind: 'app' };
 
 export type DocRecord = {
   key: string;
@@ -188,7 +187,7 @@ export const DOC_STORE_BOUNDS = {
 } as const;
 
 /**
- * The one `appdata.doc_mark` name still written: a moderation report (the report API,
+ * The one `doc_mark` name still written: a moderation report (the report API,
  * `doc-store-report-api.ts`). Marks, counters and their tallies were removed from the core
  * (docs/app-storage-generic-core.md, rollout step 5); `doc_mark` is the report store.
  */

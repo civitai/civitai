@@ -30,7 +30,6 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
-  TALLIES,
 } from './doc-store.functional';
 import { APPDATA_TABLES } from './doc-store.sql-scan';
 
@@ -89,18 +88,6 @@ const NAMES_NOBODY = {
   'usage_user.user_id': 0,
 };
 
-/** Every mark tally equals the number of marks behind it — the decrement and the delete agree. */
-async function assertTalliesMatchMarks(h: Harness, appId: string) {
-  const rows = await h.raw(
-    `SELECT t.ns, t.coll, t.key, t.name, t.count::int AS count,
-            (SELECT count(*)::int FROM appdata.doc_mark m WHERE m.app_id = t.app_id AND m.ns = t.ns
-               AND m.coll = t.coll AND m.key = t.key AND m.name = t.name) AS marks
-       FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.kind = 'mark'`,
-    [appId]
-  );
-  expect(rows.filter((r) => r.count !== r.marks)).toEqual([]);
-}
-
 async function rawDoc(h: Harness, appId: string, ns: string, coll: string, key: string) {
   const [row] = await h.raw(
     `SELECT author_kind, author_uid, last_writer_uid, data, version, seq FROM appdata.doc
@@ -110,25 +97,9 @@ async function rawDoc(h: Harness, appId: string, ns: string, coll: string, key: 
   return row;
 }
 
-async function tally(
-  h: Harness,
-  appId: string,
-  coll: string,
-  key: string,
-  kind: string,
-  name: string
-) {
-  const [row] = await h.raw(
-    `SELECT count::int AS n FROM appdata.doc_tally
-      WHERE app_id = $1 AND ns = 'prod' AND coll = $2 AND key = $3 AND kind = $4 AND name = $5`,
-    [appId, coll, key, kind, name]
-  );
-  return row ? Number(row.n) : null;
-}
-
 /**
  * One user's data in one (app, ns): two private docs (one indexed), a private tombstone, one
- * authored shared post and board note, and one counter-created document.
+ * authored shared post and board note.
  */
 async function seedUser(store: DocStore, appId: string, ns: string, uid: number, tag: string) {
   const c = ctx(appId, ns, uid);
@@ -138,7 +109,6 @@ async function seedUser(store: DocStore, appId: string, ns: string, uid: number,
   await store.delete(c, PREFS, 'tmp');
   await store.put(c, POSTS, `post-${tag}`, { status: 'open', score: 7, meta: { tag } });
   await store.put(c, BOARD, `note-${tag}`, { t: tag });
-  await store.increment(c, TALLIES, `game-${tag}`, 'plays', 2);
 }
 
 function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
@@ -156,27 +126,20 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
     await h?.close();
   });
 
-  /** WIPED and OTHER in one app's prod, each marking both posts; WIPED stars and reports OTHER's. */
+  /** WIPED and OTHER in one app's prod; each reports the other's post. */
   async function seedProd(tag: string) {
     const app = freshApp(tag);
     await seedUser(store, app, NS_PROD, WIPED, 'w');
     await seedUser(store, app, NS_PROD, OTHER, 'o');
     const w = ctx(app, NS_PROD, WIPED);
     const o = ctx(app, NS_PROD, OTHER);
-    for (const c of [w, o]) {
-      await store.mark(c, POSTS, 'post-w', 'vote');
-      await store.mark(c, POSTS, 'post-o', 'vote');
-    }
-    await store.mark(w, POSTS, 'post-o', 'star');
-    await store.mark(w, POSTS, 'post-o', 'report');
-    await store.mark(o, POSTS, 'post-w', 'report');
-    // OTHER increments WIPED's counter document: the counts are the documents', not the user's.
-    await store.increment(o, TALLIES, 'game-w', 'plays', 3);
+    await store.report(w, POSTS, 'post-o');
+    await store.report(o, POSTS, 'post-w');
     return app;
   }
 
   describe('a shared namespace (prod): only what names the account', () => {
-    it('deletes private docs (index rows, tombstones) and the shared docs the account authored (index rows, tallies, every viewer’s marks, refunds, tombstones), releases counter docs, removes its marks with their tallies, and releases usage — touching nothing else of anyone else', async () => {
+    it('deletes private docs (index rows, tombstones) and the shared docs the account authored (index rows, every viewer’s reports, refunds, tombstones), removes its reports, and releases usage — touching nothing else of anyone else', async () => {
       const app = await seedProd('WIPEPROD');
       const [usageBefore] = await h.raw(
         `SELECT bytes::int AS bytes, docs FROM appdata.usage_app WHERE app_id = $1 AND ns = 'prod'`,
@@ -198,10 +161,6 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         expect({ k, named: n > 0 }).toEqual({ k, named: true });
       expect(privBefore.docs).toBe(2);
       expect(sharedBefore.docs).toBe(2);
-      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'vote')).toBe(2);
-      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'star')).toBe(1);
-      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'report')).toBe(1);
-      expect(await tally(h, app, 'posts', 'post-w', 'mark', 'vote')).toBe(2);
       const indexRows = (key: string) =>
         h.raw(`SELECT name FROM appdata.doc_index WHERE app_id = $1 AND key = $2`, [app, key]);
       expect((await indexRows('post-w')).length).toBeGreaterThan(0);
@@ -225,11 +184,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
           [app, OTHER]
         ),
       };
-      expect(before.otherMarks.map((m) => `${m.key}:${m.name}`)).toEqual([
-        'post-o:vote',
-        'post-w:report',
-        'post-w:vote',
-      ]);
+      expect(before.otherMarks.map((m) => `${m.key}:${m.name}`)).toEqual(['post-w:report']);
 
       const out = await maint.wipeAccount(WIPED);
       expect(out).toEqual({
@@ -245,8 +200,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
             privateBytes: privBefore.bytes,
             sharedDocs: 2,
             sharedBytes: sharedBefore.bytes,
-            counterDocsReleased: 1,
-            marks: 4,
+            marks: 1,
             namespaceRows: 0,
             maintRunsScrubbed: 0,
           },
@@ -256,12 +210,11 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       // Nothing anywhere still holds the account's id.
       expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
 
-      // The authored shared docs are gone, hidden or not, with their index rows and tallies; each
+      // The authored shared docs are gone, hidden or not, with their index rows and reports; each
       // left a tombstone for the change feed.
       expect(await rawDoc(h, app, NS_PROD, 'posts', 'post-w')).toBeUndefined();
       expect(await rawDoc(h, app, NS_PROD, 'board', 'note-w')).toBeUndefined();
       expect(await indexRows('post-w')).toEqual([]);
-      expect(await tally(h, app, 'posts', 'post-w', 'mark', 'vote')).toBeNull();
       expect(
         (
           await h.raw(
@@ -270,22 +223,15 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
           )
         ).map((r) => `${r.coll}/${r.key}`)
       ).toEqual(['board/note-w', 'posts/post-w']);
-      // The counter document stays a counter document, with its counts, owned by nobody.
-      expect(await rawDoc(h, app, NS_PROD, 'tallies', 'game-w')).toMatchObject({
-        author_kind: 'counter',
-        author_uid: null,
-        last_writer_uid: null,
-      });
-      expect(await tally(h, app, 'tallies', 'game-w', 'counter', 'plays')).toBe(5);
+      // The account's report on post-o is gone with its row.
+      expect(
+        await h.raw(`SELECT user_id FROM appdata.doc_mark WHERE app_id = $1 AND key = 'post-o'`, [
+          app,
+        ])
+      ).toEqual([]);
 
-      // Each surviving tally lost exactly the account's marks.
-      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'vote')).toBe(1);
-      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'star')).toBe(0);
-      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'report')).toBe(0);
-      await assertTalliesMatchMarks(h, app);
-
-      // The bystander: its own documents and usage exactly as they were; of its marks, only the
-      // ones on the deleted documents went with them.
+      // The bystander: its own documents and usage exactly as they were; its report on the deleted
+      // document went with it.
       expect(
         await h.raw(
           `SELECT * FROM appdata.doc WHERE app_id = $1 AND scope_uid = $2 ORDER BY coll, key`,
@@ -298,7 +244,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
           [app, OTHER]
         )
       ).toEqual(before.otherShared);
-      expect((await otherMarks()).map((m) => `${m.key}:${m.name}`)).toEqual(['post-o:vote']);
+      expect(await otherMarks()).toEqual([]);
       expect(
         await h.raw(
           `SELECT bytes, docs FROM appdata.usage_user WHERE app_id = $1 AND user_id = $2`,
@@ -344,7 +290,6 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       for (const c of [w, o, anon]) {
         expect(await store.get(c, POSTS, 'post-w')).toBeNull();
         expect((await store.list(c, POSTS)).items.map((d) => d.key)).toEqual(['post-o']);
-        expect((await store.get(c, TALLIES, 'game-w'))?.author).toEqual({ kind: 'counter' });
       }
       expect(await mod.get(app, NS_PROD, 'board', 'note-w')).toBeNull();
       // post-w is deleted; post-o's only report was the account's own.
@@ -354,8 +299,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         'post-o',
       ]);
       expect(await store.get(o, POSTS, 'post-o')).toMatchObject({
-        marks: { vote: 1, star: 0 },
-        viewer: { marks: ['vote'] },
+        data: { status: 'open', score: 7, meta: { tag: 'o' } },
       });
       // The account's own private documents are gone; the bystander's are not.
       expect(await store.get(w, PREFS, 'theme')).toBeNull();
@@ -364,10 +308,8 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect(await store.put(o, POSTS, 'post-w', { status: 'new' })).toMatchObject({
         version: 1,
         author: { kind: 'user', uid: OTHER, isViewer: true },
-        marks: { vote: 0, star: 0 },
       });
       await assertUsageConsistent(h, app, NS_PROD);
-      await assertTalliesMatchMarks(h, app);
     });
   });
 
@@ -386,9 +328,9 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       await seedUser(store, app1, ownDev, WIPED, 'w');
       await seedUser(store, req, ownRev, WIPED, 'w');
       await seedUser(store, app1, otherDev, OTHER, 'o');
-      // In this app the account only voted: no usage row, found through its mark.
+      // In this app the account only reported: no usage row, found through its report row.
       await store.put(ctx(markOnly, NS_PROD, OTHER), POSTS, 'p', { status: 'open' });
-      await store.mark(ctx(markOnly, NS_PROD, WIPED), POSTS, 'p', 'vote');
+      await store.report(ctx(markOnly, NS_PROD, WIPED), POSTS, 'p');
       expect(
         await h.raw(`SELECT 1 FROM appdata.usage_user WHERE app_id = $1 AND user_id = $2`, [
           markOnly,
@@ -400,7 +342,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         `SELECT * FROM appdata.doc WHERE app_id = $1 AND ns = $2 ORDER BY coll, scope_uid, key`,
         [app1, otherDev]
       );
-      expect(keepOtherDev.length).toBe(5);
+      expect(keepOtherDev.length).toBe(4);
       const keepUsageOtherDev = await h.raw(
         `SELECT * FROM appdata.usage_app WHERE app_id = $1 AND ns = $2`,
         [app1, otherDev]
@@ -456,7 +398,6 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
           otherDev,
         ])
       ).toEqual(keepUsageOtherDev);
-      expect(await tally(h, markOnly, 'posts', 'p', 'mark', 'vote')).toBe(0);
       for (const [appId, ns] of [
         [app1, NS_PROD],
         [app1, otherDev],
@@ -466,7 +407,6 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       ]) {
         await assertUsageConsistent(h, appId, ns);
       }
-      await assertTalliesMatchMarks(h, markOnly);
     });
 
     it('a row naming the account inside ANOTHER user’s dev or review namespace is handled per user — that namespace is never deleted outright', async () => {
@@ -493,7 +433,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
           )
         )
       );
-      expect(keep.map((k) => k.length)).toEqual([5, 5]);
+      expect(keep.map((k) => k.length)).toEqual([4, 4]);
 
       try {
         const out = await maint.wipeAccount(WIPED);
@@ -554,18 +494,6 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect(left.n).toBe(0);
     });
 
-    it('a tally already below its marks (drift) stops at 0 instead of failing the wipe', async () => {
-      const app = await seedProd('WIPEDRIFT');
-      await h.raw(
-        `UPDATE appdata.doc_tally SET count = 0 WHERE app_id = $1 AND key = 'post-o' AND kind = 'mark' AND name = 'star'`,
-        [app]
-      );
-      const out = await maint.wipeAccount(WIPED);
-      expect(out.failures).toEqual([]);
-      expect(await tally(h, app, 'posts', 'post-o', 'mark', 'star')).toBe(0);
-      expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
-    });
-
     it('leaves every row of an account it was not asked about exactly as it was', async () => {
       const app = await seedProd('WIPEBYSTANDER');
       await seedUser(store, app, NS_PROD, THIRD, 't');
@@ -580,7 +508,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         ]),
       });
       const keep = await thirdRows();
-      expect(keep.docs.length).toBe(5);
+      expect(keep.docs.length).toBe(4);
       await maint.wipeAccount(WIPED);
       expect(await thirdRows()).toEqual(keep);
     });
@@ -616,7 +544,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
           const inner = await h.db.connect();
           const client: DocStoreClient = {
             async query(sql, params) {
-              // After every change to documents, marks, tallies and usage_app: all must undo.
+              // After every change to documents, reports and usage_app: all must undo.
               if (/DELETE FROM appdata\.usage_user u/.test(sql) && params?.[0] === bad) {
                 throw new Error('injected wipe failure');
               }
@@ -652,7 +580,6 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect(retry.namespaces.map((n) => n.appId)).toEqual([bad]);
       expect(await rowsNaming(h, bad, WIPED)).toEqual(NAMES_NOBODY);
       await assertUsageConsistent(h, bad, NS_PROD);
-      await assertTalliesMatchMarks(h, bad);
     });
 
     it('refuses a malformed user id, and a store with no connection is storage_disabled', async () => {
@@ -781,7 +708,7 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
     }
   );
 
-  it('two accounts that authored posts and marked each other’s are wiped concurrently without deadlock, round after round', async () => {
+  it('two accounts that authored posts and reported each other’s are wiped concurrently without deadlock, round after round', async () => {
     const store = createDocStore({ db: h.db });
     const maint = createDocStoreMaintenance({ db: h.db });
     const ROUNDS = 10;
@@ -796,8 +723,8 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
         await store.put(c, POSTS, `post-${tag}1`, { status: 'open' });
         await store.put(c, POSTS, `post-${tag}2`, { status: 'open' });
       }
-      for (const key of ['post-b1', 'post-b2']) await store.mark(a, POSTS, key, 'vote');
-      for (const key of ['post-a1', 'post-a2']) await store.mark(b, POSTS, key, 'vote');
+      for (const key of ['post-b1', 'post-b2']) await store.report(a, POSTS, key);
+      for (const key of ['post-a1', 'post-a2']) await store.report(b, POSTS, key);
 
       const [wa, wb] = await Promise.all([maint.wipeAccount(WIPED), maint.wipeAccount(OTHER)]);
       expect({ round, failures: [...wa.failures, ...wb.failures] }).toEqual({
@@ -811,49 +738,7 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
     }
   });
 
-  it('two accounts that created counter documents and reported each other’s are wiped concurrently without deadlock, round after round', async () => {
-    const store = createDocStore({ db: h.db });
-    const maint = createDocStoreMaintenance({ db: h.db });
-    const ROUNDS = 10;
-    for (let round = 0; round < ROUNDS; round++) {
-      const app = freshApp('WIPECOUNTERX');
-      const a = ctx(app, NS_PROD, WIPED);
-      const b = ctx(app, NS_PROD, OTHER);
-      for (const [c, tag] of [
-        [a, 'a'],
-        [b, 'b'],
-      ] as const) {
-        await store.increment(c, TALLIES, `game-${tag}1`, 'plays', 1);
-        await store.increment(c, TALLIES, `game-${tag}2`, 'plays', 1);
-      }
-      for (const key of ['game-b1', 'game-b2']) await store.mark(a, TALLIES, key, 'report');
-      for (const key of ['game-a1', 'game-a2']) await store.mark(b, TALLIES, key, 'report');
-
-      const [wa, wb] = await Promise.all([maint.wipeAccount(WIPED), maint.wipeAccount(OTHER)]);
-      expect({ round, failures: [...wa.failures, ...wb.failures] }).toEqual({
-        round,
-        failures: [],
-      });
-      expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
-      expect(await rowsNaming(h, app, OTHER)).toEqual(NAMES_NOBODY);
-      // Counter documents survive their creators, released.
-      expect(
-        await h.raw(
-          `SELECT key, author_kind, author_uid FROM appdata.doc WHERE app_id = $1 ORDER BY key`,
-          [app]
-        )
-      ).toEqual(
-        ['game-a1', 'game-a2', 'game-b1', 'game-b2'].map((key) => ({
-          key,
-          author_kind: 'counter',
-          author_uid: null,
-        }))
-      );
-      await assertUsageConsistent(h, app, NS_PROD);
-    }
-  });
-
-  it('marks, unmarks and an author delete running alongside the wipe neither deadlock nor leave a tally out of step with its marks', async () => {
+  it('reports and an author delete running alongside the wipe do not deadlock, and leave nothing naming the account', async () => {
     const store = createDocStore({ db: h.db });
     const maint = createDocStoreMaintenance({ db: h.db });
     const app = freshApp('WIPERACE');
@@ -862,17 +747,18 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
     await store.put(w, POSTS, 'post-w', { status: 'open' });
     for (let i = 0; i < 4; i++) {
       await store.put(voters[i], POSTS, `post-${i}`, { status: 'open' });
-      await store.mark(w, POSTS, `post-${i}`, 'vote');
+      await store.report(w, POSTS, `post-${i}`);
     }
-    await store.mark(w, POSTS, 'post-w', 'vote');
+    await store.report(w, POSTS, 'post-w');
     const [wipe, ...racers] = await Promise.allSettled([
       maint.wipeAccount(WIPED),
-      ...voters.map((v, i) => store.mark(v, POSTS, `post-${i % 4}`, 'vote')),
-      ...voters.map((v) => store.mark(v, POSTS, 'post-w', 'vote')),
+      ...voters.map((v, i) => store.report(v, POSTS, `post-${i % 4}`)),
+      ...voters.map((v) => store.report(v, POSTS, 'post-w')),
       store.delete(voters[0], POSTS, 'post-0'),
     ]);
     // The wipe completed first time: no namespace failed (a deadlock or lock timeout would be
-    // reported there). A racer may lose only by marking `post-0` after its delete.
+    // reported there). A racer may lose only by reporting `post-0` after its delete, or `post-w`
+    // after the wipe deleted it.
     expect(wipe).toEqual({
       status: 'fulfilled',
       value: expect.objectContaining({ failures: [] }),
@@ -880,11 +766,10 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
     for (const r of racers) {
       if (r.status === 'rejected') expect(String(r.reason)).toMatch(/document not found/);
     }
-    // Whichever order they committed in, the wipe left nothing and every tally is exact.
+    // Whichever order they committed in, the wipe left nothing naming the account.
     const again = await maint.wipeAccount(WIPED);
     expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [], stopped: false });
     expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
-    await assertTalliesMatchMarks(h, app);
     await assertUsageConsistent(h, app, NS_PROD);
     expect(h.violations).toEqual([]);
   });

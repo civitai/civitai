@@ -143,11 +143,8 @@ describe('the level streams over the store (rls on)', () => {
       if (level !== null) await rate(POSTS, key, level);
     }
     await mod.setHidden(app, NS_PROD, POSTS.name, 'ph-hidden', true, MOD);
-    // Tallies the store still holds: a level entity carries none of them.
-    await store.mark(me, POSTS, 'p04-r', 'vote');
-    await store.mark(them, POSTS, 'p04-r', 'star');
-    await store.mark(them, POSTS, 'p04-r', 'report');
-    await store.increment(me, TALLIES, 'c-plays', 'plays', 3);
+    // A report the store holds: a level entity never carries it.
+    await store.report(them, POSTS, 'p04-r');
     // Two viewers' votes on one parent, each at the key the `@me` route derives for it.
     for (const [viewer, value] of [
       [VIEWER_1, 1],
@@ -259,7 +256,7 @@ describe('the level streams over the store (rls on)', () => {
   const metaOf = (events: StreamEvent[], type: 'live' | 'progress') =>
     events.flatMap((e) => (e.type === type ? [e.meta] : []));
 
-  it('🔴 the five bit streams partition the rated board; the unrated, Blocked, hidden and counter documents are on none', async () => {
+  it('🔴 the five bit streams partition the rated board; the unrated, Blocked and hidden documents are on none', async () => {
     const held: Record<number, string[]> = {};
     for (const bit of [1, 2, 4, 8, 16]) {
       const run = await open(bit);
@@ -279,7 +276,7 @@ describe('the level streams over the store (rls on)', () => {
     }
   });
 
-  it('🔴 an entity is a plain document: key, body, version, timestamps and seq; no tallies, author or marks', async () => {
+  it('🔴 an entity is a plain document: key, body, version, timestamps and seq; no author or reports', async () => {
     const run = await open(4);
     const [e] = upserted(run.events);
     expect(e).toMatchObject({
@@ -288,7 +285,7 @@ describe('the level streams over the store (rls on)', () => {
       version: 1,
       seq: await docSeq('p04-r'),
     });
-    // The document holds a vote, a star and a report: none of them is on the entity.
+    // The document holds a report: it is not on the entity.
     expect(Object.keys(e).sort()).toEqual(PLAIN_ENTITY_KEYS);
     expect(JSON.stringify(e)).not.toMatch(/tallies|marks|counters|report|author|viewer/);
     // One sequence: the head it names is the store's seq head, and nothing else.
@@ -298,13 +295,13 @@ describe('the level streams over the store (rls on)', () => {
     await close(run);
   });
 
-  it('🔴 a mark moves nothing on a level stream; a write is an Upsert at its new seq, and the head follows it', async () => {
+  it('🔴 a report moves nothing on a level stream; a write is an Upsert at its new seq, and the head follows it', async () => {
     const run = await open(4);
     const seqBefore = await docSeq('p04-r');
     const headBefore = await feed.feedHead(app);
-    await store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'p04-r', 'star');
-    const [afterMark] = await pollAll(run);
-    expect(afterMark).toEqual([]);
+    await store.report(ctx(app, NS_PROD, VIEWER_1), POSTS, 'p04-r');
+    const [afterReport] = await pollAll(run);
+    expect(afterReport).toEqual([]);
     expect([await docSeq('p04-r'), await feed.feedHead(app)]).toEqual([seqBefore, headBefore]);
 
     // Positive control: a document write on the same stream is seen.
@@ -414,13 +411,5 @@ describe('the level streams over the store (rls on)', () => {
       ]);
       expect(page.tombs).toEqual([]);
     }
-  });
-
-  it('a counter document is on no level stream', async () => {
-    const pg = await open(1, TALLIES);
-    expect(upserted(pg.events)).toEqual([]);
-    // Positive control: the counter document exists.
-    expect(typeof (await docSeq('c-plays', TALLIES))).toBe('number');
-    await close(pg);
   });
 });

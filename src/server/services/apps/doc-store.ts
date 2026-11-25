@@ -2964,9 +2964,7 @@ function buildDocStore(deps: DocStoreDeps) {
   /** Whose per-user usage a migrated document's size change is charged to; null for none. */
   function migrationOwner(scope: number, row: Record<string, unknown>): number | null {
     if (scope !== 0) return scope;
-    return row.author_kind === 'user' &&
-      row.author_uid !== null &&
-      row.author_uid !== undefined
+    return row.author_kind === 'user' && row.author_uid !== null && row.author_uid !== undefined
       ? Number(row.author_uid)
       : null;
   }

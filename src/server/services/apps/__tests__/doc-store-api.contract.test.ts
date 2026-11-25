@@ -65,8 +65,6 @@ const h = vi.hoisted(() => ({
   unchangedWritesApps: new Set<string>(),
   /** The viewer-keyed switch (`app-blocks-storage-viewer-keyed-open`), by collection: absent is closed. */
   vkOpen: new Map<string, boolean>(),
-  /** `app-blocks-storage-publish`, for every app; off unless a case turns it on. */
-  publishOn: false,
   isFlipt: undefined as unknown as ReturnType<
     typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
   >,
@@ -90,7 +88,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         h.vkOpen.get((context as { collection?: string } | undefined)?.collection ?? '') ?? false
       );
     }
-    if (flag === 'app-blocks-storage-publish' && h.publishOn) return true;
     return real.isFlipt(flag, entityId, context as never);
   });
   return {
@@ -806,7 +803,7 @@ describe('the contract file', () => {
       stale_major:
         'raised only on the signed internal route, never the public one; doc-store-api.unchanged-writes.test.ts',
       removed:
-        'needs a frozen mark (a recorded mark migration run), which the request table cannot express; the tooling that froze marks is removed (rollout step 5)',
+        'raised by nothing since the mark, counter and publish routes were removed (rollout step 5): they answer as unknown routes',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)
@@ -868,22 +865,18 @@ describe('reserved path segments cannot collide with a collection name or a docu
       expect(matchStorageRoute('GET', ['c', segment])).toEqual({
         route: { op: 'get', collection: 'c', key: segment },
       });
-      expect(matchStorageRoute('POST', ['c', segment, 'counters', 'n'])).toEqual({
-        route: { op: 'increment', collection: 'c', key: segment, name: 'n' },
-      });
       // As a COLLECTION, every reserved word the collection alphabet admits is parsed as one.
       if (APP_STORAGE_COLLECTION_NAME_RE.test(segment)) {
         expect(matchStorageRoute('GET', [segment])).toEqual({
           route: { op: 'list', collection: segment },
         });
-        expect(matchStorageRoute('PUT', [segment, segment, 'marks', segment])).toEqual({
-          route: { op: 'mark', collection: segment, key: segment, name: segment },
-        });
       }
     }
   });
 
-  it('live: documents keyed with every reserved word, in collections NAMED like them, are addressable', async () => {
+  // `counters`, `marks`, `_publish` and `_unpublish` were reserved words until the tally and publish
+  // routes were removed (rollout step 5); documents and collections named like them stay addressable.
+  it('live: documents keyed with every once-reserved word, in collections NAMED like them, are addressable', async () => {
     const decl = { visibility: 'shared', write: 'own', marks: ['vote'], counters: ['views'] };
     const { A } = freshApps('approved', {
       scopes: contract.defaultScopes,
@@ -891,7 +884,7 @@ describe('reserved path segments cannot collide with a collection name or a docu
     });
     const token = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     for (const coll of ['counters', 'marks']) {
-      for (const key of ['_get', 'counters', 'marks']) {
+      for (const key of ['_get', 'counters', 'marks', '_publish']) {
         const put = await call({
           token,
           method: 'PUT',
@@ -901,10 +894,17 @@ describe('reserved path segments cannot collide with a collection name or a docu
         expect(put.status, `${coll}/${key}`).toBe(200);
         const get = await call({ token, method: 'GET', path: `/${coll}/${key}` });
         expect(get.body).toMatchObject({ key, data: { at: `${coll}/${key}` } });
+        // The removed per-tally paths under it are no route at all.
         const mark = await call({ token, method: 'PUT', path: `/${coll}/${key}/marks/vote` });
-        expect(mark.body).toEqual({ marked: true, count: 1 });
+        expect({ status: mark.status, code: mark.body.code }).toEqual({
+          status: 404,
+          code: 'not_found',
+        });
         const inc = await call({ token, method: 'POST', path: `/${coll}/${key}/counters/views` });
-        expect(inc.body).toEqual({ value: 1 });
+        expect({ status: inc.status, code: inc.body.code }).toEqual({
+          status: 404,
+          code: 'not_found',
+        });
       }
       const many = await call({
         token,
@@ -995,7 +995,7 @@ describe('namespaces per token kind', () => {
     ]);
   });
 
-  it('two moderators reviewing ONE request share nothing: private and shared docs, marks, counters', async () => {
+  it('two moderators reviewing ONE request share nothing: private and shared docs, reports', async () => {
     freshApps();
     const pubreq = {
       id: 'pubreq_01JREVIEWTWOMODS00000000',
@@ -1009,44 +1009,46 @@ describe('namespaces per token kind', () => {
     const req = (token: string, method: string, path: string, body?: unknown) =>
       call({ token, method, path, body });
 
-    // Moderator 1 writes a private doc, a shared doc, a mark, a counter and a counter-created doc.
+    const posts: DocCollection = {
+      name: 'posts',
+      config: parseManifestStorage(MANIFEST).collections.get('posts')!,
+    };
+    const nsOf = (uid: number) => `rev:${pubreq.id}:${uid}`;
+    const reportAs = (uid: number) =>
+      liveStore.report({ appId: pubreq.id, ns: nsOf(uid), viewerUid: uid }, posts, 'p1');
+
+    // Moderator 1 writes a private doc and two shared docs, and reports one (the report API's
+    // store write, in moderator 1's own namespace).
     expect((await req(m1, 'PUT', '/prefs/k', { data: { who: 1 } })).status).toBe(200);
     expect((await req(m1, 'PUT', '/posts/p1', { data: { status: 'open' } })).status).toBe(200);
-    expect((await req(m1, 'PUT', '/posts/p1/marks/vote')).body).toMatchObject({ count: 1 });
-    expect((await req(m1, 'POST', '/posts/p1/counters/views', { by: 5 })).body).toEqual({
-      value: 5,
-    });
-    expect((await req(m1, 'POST', '/plays/g1/counters/plays', { by: 3 })).body).toEqual({
-      value: 3,
-    });
+    expect((await req(m1, 'PUT', '/notes/g1', { data: { t: 'mine' } })).status).toBe(200);
+    expect(await reportAs(VIEWER_IDS.v1)).toEqual({ added: true });
 
     // Moderator 2 sees none of it.
     expect((await req(m2, 'GET', '/prefs/k')).status).toBe(404);
     expect((await req(m2, 'GET', '/posts/p1')).status).toBe(404);
-    expect((await req(m2, 'GET', '/plays/g1')).status).toBe(404);
+    expect((await req(m2, 'GET', '/notes/g1')).status).toBe(404);
     expect((await req(m2, 'GET', '/posts')).body).toMatchObject({ items: [] });
-    // The same keys are fresh for moderator 2: no `not_author` on moderator 1's shared doc,
-    // and marks and counters start from zero.
+    // The same keys are fresh for moderator 2: no `not_author` on moderator 1's shared doc, and a
+    // report there finds moderator 2's own document, not moderator 1's.
     expect((await req(m2, 'PUT', '/posts/p1', { data: { status: 'closed' } })).body).toMatchObject({
       version: 1,
       author: { kind: 'user', isViewer: true },
     });
-    expect((await req(m2, 'PUT', '/posts/p1/marks/vote')).body).toMatchObject({ count: 1 });
-    expect((await req(m2, 'POST', '/posts/p1/counters/views', { by: 2 })).body).toEqual({
-      value: 2,
-    });
-    expect((await req(m2, 'POST', '/plays/g1/counters/plays', { by: 1 })).body).toEqual({
-      value: 1,
-    });
+    expect(await reportAs(VIEWER_IDS.v2)).toEqual({ added: true });
 
     // …and moderator 1's own data is unchanged by moderator 2's writes.
     expect((await req(m1, 'GET', '/posts/p1')).body).toMatchObject({
       data: { status: 'open' },
       version: 1,
-      counters: { views: 5 },
-      marks: { vote: 1 },
     });
-    expect((await req(m1, 'GET', '/plays/g1')).body).toMatchObject({ counters: { plays: 3 } });
+    expect((await req(m1, 'GET', '/notes/g1')).body).toMatchObject({ data: { t: 'mine' } });
+    expect(
+      await harness.raw(
+        `SELECT ns FROM appdata.doc_mark WHERE app_id = $1 AND name = 'report' ORDER BY ns`,
+        [pubreq.id]
+      )
+    ).toEqual([nsOf(VIEWER_IDS.v1), nsOf(VIEWER_IDS.v2)].sort().map((ns) => ({ ns })));
     expect((await req(m1, 'GET', '/posts')).body).toMatchObject({
       items: [{ key: 'p1', data: { status: 'open' } }],
     });
@@ -1064,15 +1066,7 @@ describe('namespaces per token kind', () => {
     // positive control that every table HAS rows before the purge.
     expect((await req(m1, 'PUT', '/notes/n1', { data: { t: 'x' } })).status).toBe(200);
     expect((await req(m1, 'DELETE', '/notes/n1')).status).toBe(200);
-    const TABLES = [
-      'doc',
-      'doc_index',
-      'doc_tally',
-      'doc_mark',
-      'doc_tomb',
-      'usage_app',
-      'usage_user',
-    ];
+    const TABLES = ['doc', 'doc_index', 'doc_mark', 'doc_tomb', 'usage_app', 'usage_user'];
     const count = async (t: string) =>
       Number(
         (
@@ -1099,9 +1093,8 @@ describe('namespaces per token kind', () => {
 
   describe('schema_major: the major a write is stamped with follows the token kind', () => {
     // Approved history for A: `prefs` gains a schema, then (at the enforced MANIFEST) loses it
-    // again, so it is on @v3; `posts` loses one it had from the start, so it is on @v2; `plays`
-    // never changes (@v1 — and as a `write: 'none'` collection it cannot take a schema at all).
-    // Distinct majors per collection.
+    // again, so it is on @v3; `posts` loses one it had from the start, so it is on @v2; `notes`
+    // never changes (@v1). Distinct majors per collection.
     const withSchema = (names: string[]) => ({
       ...MANIFEST,
       storage: {
@@ -1149,23 +1142,21 @@ describe('namespaces per token kind', () => {
       }
     });
 
-    it('🔴 a production write stamps the collection’s current major: put, and the counter document a first increment creates', async () => {
+    it('🔴 a production write stamps the collection’s current major: a private put, a shared create and a shared put', async () => {
       const { A } = freshApps();
       const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
       expect(
         (await call({ token: t, method: 'PUT', path: '/prefs/k1', body: { data: { a: 1 } } }))
           .status
       ).toBe(200);
-      expect(
-        (
-          await call({
-            token: t,
-            method: 'POST',
-            path: '/plays/g1/counters/plays',
-            body: { by: 1 },
-          })
-        ).status
-      ).toBe(200);
+      const created = await call({
+        token: t,
+        method: 'POST',
+        path: '/notes',
+        body: { data: { t: 'g1' } },
+      });
+      expect(created.status).toBe(201);
+      const g1 = (created.body as { key: string }).key;
       expect(
         (
           await call({
@@ -1178,7 +1169,7 @@ describe('namespaces per token kind', () => {
       ).toBe(200);
       expect(await majorOf(A.id, 'prod', 'k1')).toEqual([3]);
       expect(await majorOf(A.id, 'prod', 'p1')).toEqual([2]);
-      expect(await majorOf(A.id, 'prod', 'g1')).toEqual([1]);
+      expect(await majorOf(A.id, 'prod', g1)).toEqual([1]);
     });
 
     it('🔴 a dev write never stamps', async () => {
@@ -1189,14 +1180,8 @@ describe('namespaces per token kind', () => {
           .status
       ).toBe(200);
       expect(
-        (
-          await call({
-            token: dev,
-            method: 'POST',
-            path: '/plays/g1/counters/plays',
-            body: { by: 1 },
-          })
-        ).status
+        (await call({ token: dev, method: 'PUT', path: '/notes/g1', body: { data: { t: 1 } } }))
+          .status
       ).toBe(200);
       const ns = `dev:${VIEWER_IDS.v2}`;
       expect(await majorOf(A.id, ns, 'k1')).toEqual([null]);
@@ -1432,8 +1417,10 @@ describe('rate limits: separate buckets', () => {
   });
 });
 
-describe('a report cannot be withdrawn: refused at the route before any budget or trust lookup', () => {
-  it('an untrusted viewer gets 400 invalid_request, not 403', async () => {
+// The tally routes were removed (rollout step 5), the report-withdrawal path with them: each is no
+// route at all, answered before any budget or trust lookup.
+describe('a removed tally path is no route, before any budget or trust lookup', () => {
+  it('an untrusted viewer gets 404 not_found, not 403, and spends nothing', async () => {
     const { A } = freshApps();
     const author = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     const newbie = await mint({ app: A, uid: VIEWER_IDS.newbie, scopes: contract.defaultScopes });
@@ -1447,48 +1434,33 @@ describe('a report cannot be withdrawn: refused at the route before any budget o
         })
       ).status
     ).toBe(200);
-    // Positive control: the same viewer IS refused by the trust gate on a mark.
-    expect((await call({ token: newbie, method: 'PUT', path: '/posts/w/marks/vote' })).status).toBe(
-      403
-    );
-    const r = await call({ token: newbie, method: 'DELETE', path: '/posts/w/marks/report' });
-    expect({ status: r.status, code: r.body.code }).toEqual({
-      status: 400,
-      code: 'invalid_request',
-    });
-  });
-
-  it('an exhausted tally budget still gets 400, and a refused withdrawal spends no budget', async () => {
-    const { A } = freshApps();
-    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
-    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
-    await call({ token: v1, method: 'PUT', path: '/posts/w', body: { data: { status: 'open' } } });
-    // v2 withdraws first (refused), then must still have the WHOLE tally budget.
-    const first = await call({ token: v2, method: 'DELETE', path: '/posts/w/marks/report' });
-    expect(first.status).toBe(400);
-    let allowed = 0;
-    for (let i = 0; i < 200; i++) {
-      const r = await call({ token: v2, method: 'PUT', path: '/posts/w/marks/vote' });
-      if (r.status === 429) break;
-      expect(r.status).toBe(200);
-      allowed += 1;
+    // Positive control: the same viewer IS refused by the trust gate on a shared write.
+    expect(
+      (
+        await call({
+          token: newbie,
+          method: 'PUT',
+          path: '/posts/n',
+          body: { data: { status: 'open' } },
+        })
+      ).status
+    ).toBe(403);
+    const before = [...kv.keys()].filter((k) => k.includes(':docs-')).length;
+    const evals = lua.calls.length;
+    for (const [method, path] of [
+      ['DELETE', '/posts/w/marks/report'],
+      ['PUT', '/posts/w/marks/vote'],
+      ['POST', '/posts/w/counters/views'],
+    ] as const) {
+      const r = await call({ token: newbie, method, path });
+      expect({ path, status: r.status, code: r.body.code }).toEqual({
+        path,
+        status: 404,
+        code: 'not_found',
+      });
     }
-    // The bucket's full size, measured on a viewer that never withdrew.
-    const v3 = await mint({ app: A, uid: VIEWER_IDS.v3, scopes: contract.defaultScopes });
-    let control = 0;
-    for (let i = 0; i < 200; i++) {
-      const r = await call({ token: v3, method: 'PUT', path: '/posts/w/marks/vote' });
-      if (r.status === 429) break;
-      control += 1;
-    }
-    expect(control).toBeGreaterThan(1);
-    expect(allowed).toBe(control);
-    // Exhausted now: a withdrawal is still the contract's 400, not a 429.
-    const r = await call({ token: v2, method: 'DELETE', path: '/posts/w/marks/report' });
-    expect({ status: r.status, code: r.body.code }).toEqual({
-      status: 400,
-      code: 'invalid_request',
-    });
+    expect([...kv.keys()].filter((k) => k.includes(':docs-')).length).toBe(before);
+    expect(lua.calls.length).toBe(evals);
   });
 });
 
@@ -1561,12 +1533,10 @@ describe('route faults and CORS', () => {
     }
   );
 
-  it('the preflight from an opaque origin allows PUT, DELETE and PATCH', async () => {
+  it('the preflight from an opaque origin allows PUT and DELETE, and no longer PATCH', async () => {
     const r = await call({ token: null, method: 'OPTIONS', path: '/prefs/k', origin: 'null' });
     expect(r.status).toBe(204);
-    expect(r.headers['access-control-allow-methods']).toBe(
-      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
-    );
+    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
   });
 });
 
@@ -1842,7 +1812,7 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
   });
 
-  it('the preflight from an ALLOWLISTED origin allows PUT, DELETE and PATCH too', async () => {
+  it('the preflight from an ALLOWLISTED origin allows PUT and DELETE too', async () => {
     const { _internalsForTests } = await import('~/server/middleware/block-scope.middleware');
     _internalsForTests.resetOriginCache();
     dbMock.dbRead.oauthClient.findMany.mockResolvedValue([
@@ -1856,9 +1826,7 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
     expect(r.status).toBe(204);
     expect(r.headers['access-control-allow-origin']).toBe('https://contract-app.example');
-    expect(r.headers['access-control-allow-methods']).toBe(
-      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
-    );
+    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
     _internalsForTests.resetOriginCache();
   });
 
@@ -2207,7 +2175,7 @@ describe('round 1: approved manifests, dot keys, CORS default, failures, deletes
     expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [A.id])).toEqual([]);
   });
 
-  it('a collection using a deferred feature is refused at the route: no tally charge, no write budget, no moderation scan', async () => {
+  it('a collection using a deferred feature is refused at the route: no rate charge, no write budget, no moderation scan', async () => {
     const { scanSharedData, scanCounterKey } = await import(
       '~/server/services/apps/shared-data-moderation'
     );
@@ -2228,14 +2196,19 @@ describe('round 1: approved manifests, dot keys, CORS default, failures, deletes
     vi.mocked(scanSharedData).mockClear();
     vi.mocked(scanCounterKey).mockClear();
     const evalsBefore = lua.calls.length;
-    const inc = await call({ token: t, method: 'POST', path: '/budgeted/k/counters/n' });
     const put = await call({
       token: t,
       method: 'PUT',
       path: '/budgeted/k',
       body: { data: { t: 'x' } },
     });
-    for (const r of [inc, put]) {
+    const create = await call({
+      token: t,
+      method: 'POST',
+      path: '/budgeted',
+      body: { data: { t: 'x' } },
+    });
+    for (const r of [put, create]) {
       expect(r.status).toBe(400);
       expect(r.body).toMatchObject({
         code: 'invalid_request',
@@ -2599,23 +2572,6 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
     expect(r.body).toEqual(refusedBody);
   });
 
-  it('marks and counters never touch data, so they work on a document holding any version', async () => {
-    const { tokenOf } = await setup();
-    const v1 = await tokenOf(VIEWER_IDS.v1);
-    const v2 = await tokenOf(VIEWER_IDS.v2);
-    expect(
-      (await call({ token: v1, method: 'PUT', path: '/picks/k', body: pick(V1_OWN) })).status
-    ).toBe(200);
-    lookups = [];
-    expect((await call({ token: v2, method: 'PUT', path: '/picks/k/marks/vote' })).status).toBe(
-      200
-    );
-    expect(
-      (await call({ token: v2, method: 'POST', path: '/picks/k/counters/views' })).status
-    ).toBe(200);
-    expect(lookups).toEqual([]);
-  });
-
   it("[invariant guard] a collection that does not declare the rule stores another user's version unchecked", async () => {
     const { tokenOf } = await setup();
     const v1 = await tokenOf(VIEWER_IDS.v1);
@@ -2628,82 +2584,6 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
 // ---------------------------------------------------------------------------
 // Shared-data moderation follows the per-app shadow/enforce flags
 // ---------------------------------------------------------------------------
-
-// INVARIANT GUARD (green before the store's marks answered a sequence, and must stay green): the
-// store now answers each mark, unmark and increment's `markSeq`, and a creating increment's `seq`,
-// for the app-data service's internal route. The public route answers none of them.
-describe('the public mark and counter answers carry no mark sequence or seq', () => {
-  it('mark, a repeated mark, unmark, report, an increment, and an increment that creates its document', async () => {
-    const { A } = freshApps();
-    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
-    const other = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
-    expect(
-      (await call({ token: t, method: 'PUT', path: '/posts/m1', body: { data: { status: 'a' } } }))
-        .status
-    ).toBe(200);
-    const answers = [
-      await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
-      await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
-      await call({ token: t, method: 'DELETE', path: '/posts/m1/marks/vote' }),
-      await call({ token: other, method: 'PUT', path: '/posts/m1/marks/report' }),
-      await call({ token: t, method: 'POST', path: '/posts/m1/counters/views' }),
-      await call({ token: t, method: 'POST', path: '/plays/new-one/counters/plays' }),
-    ];
-    expect(answers.map((r) => ({ status: r.status, body: r.body }))).toEqual([
-      { status: 200, body: { marked: true, count: 1 } },
-      { status: 200, body: { marked: true, count: 1 } },
-      { status: 200, body: { marked: false, count: 0 } },
-      { status: 200, body: { marked: true } },
-      { status: 200, body: { value: 1 } },
-      { status: 200, body: { value: 1 } },
-    ]);
-    // Positive control: the store did take a sequence for each of the six.
-    const [mh] = await harness.raw(
-      `SELECT mh.last_mark_seq FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns = 'prod'`,
-      [A.id]
-    );
-    expect(Number(mh.last_mark_seq)).toBe(6);
-  });
-
-  it('🔴 before the mark-sequence migration is applied, the same calls answer the same bodies', async () => {
-    const absent = await createPgliteHarness({ rls: true, markHead: false });
-    try {
-      h.store = createDocStore({ db: absent.db });
-      const { A } = freshApps();
-      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
-      const other = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
-      expect(
-        (
-          await call({
-            token: t,
-            method: 'PUT',
-            path: '/posts/m1',
-            body: { data: { status: 'a' } },
-          })
-        ).status
-      ).toBe(200);
-      const answers = [
-        await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
-        await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
-        await call({ token: t, method: 'DELETE', path: '/posts/m1/marks/vote' }),
-        await call({ token: other, method: 'PUT', path: '/posts/m1/marks/report' }),
-        await call({ token: t, method: 'POST', path: '/posts/m1/counters/views' }),
-        await call({ token: t, method: 'POST', path: '/plays/new-one/counters/plays' }),
-      ];
-      expect(answers.map((r) => ({ status: r.status, body: r.body }))).toEqual([
-        { status: 200, body: { marked: true, count: 1 } },
-        { status: 200, body: { marked: true, count: 1 } },
-        { status: 200, body: { marked: false, count: 0 } },
-        { status: 200, body: { marked: true } },
-        { status: 200, body: { value: 1 } },
-        { status: 200, body: { value: 1 } },
-      ]);
-      expect(absent.violations).toEqual([]);
-    } finally {
-      await absent.close();
-    }
-  });
-});
 
 describe('shared-data moderation follows the per-app shadow / enforce flags', () => {
   const HITS_TABLE = 'appBlocksSharedDataHits';
@@ -2778,7 +2658,7 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
       for (const alert of BLOCK_ALERTS) expect(eventNames()).not.toContain(alert);
     });
 
-    it('🔴 REGRESSION: a hit on a create and on a counter-created key is recorded after the write, never refused', async () => {
+    it('🔴 REGRESSION: a hit on a create and on an app-chosen key is recorded after the write, never refused', async () => {
       const { v1 } = await setup('shadow');
       const created = await call({
         token: v1,
@@ -2788,12 +2668,13 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
       });
       expect(created.status).toBe(201);
       const createdKey = (created.body as { key: string }).key;
-      const counted = await call({
+      const keyed = await call({
         token: v1,
-        method: 'POST',
-        path: '/plays/contract-blocked-term/counters/plays',
+        method: 'PUT',
+        path: '/notes/contract-blocked-term',
+        body: { data: { t: 'clean' } },
       });
-      expect(counted.status).toBe(200);
+      expect(keyed.status).toBe(200);
 
       await vi.waitFor(() => expect(rowsOf(HITS_TABLE)).toHaveLength(2));
       expect(rowsOf(HITS_TABLE)).toEqual(
@@ -2807,7 +2688,7 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
           }),
           expect.objectContaining({
             rowKey: 'contract-blocked-term',
-            surface: 'counter',
+            surface: 'update',
             mode: 'shadow',
             blocked: 0,
           }),
@@ -2866,15 +2747,15 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
       expect(key).not.toHaveBeenCalled();
     });
 
-    it('a create or a counter increment that fails in the store schedules no scan', async () => {
+    it('a create or a keyed put that fails in the store schedules no scan', async () => {
       const { v1, data, key } = await setup('shadow');
       h.store = {
         ...liveStore,
         create: async () => {
           throw new Error('store create failed');
         },
-        increment: async () => {
-          throw new Error('store increment failed');
+        put: async () => {
+          throw new Error('store put failed');
         },
       } as DocStore;
       const created = await call({
@@ -2884,12 +2765,13 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
         body: { data: { t: 'contract-blocked-term' } },
       });
       expect(created.status).toBe(500);
-      const counted = await call({
+      const keyed = await call({
         token: v1,
-        method: 'POST',
-        path: '/plays/contract-blocked-term/counters/plays',
+        method: 'PUT',
+        path: '/notes/contract-blocked-term',
+        body: { data: { t: 'clean' } },
       });
-      expect(counted.status).toBe(500);
+      expect(keyed.status).toBe(500);
       await flushImmediates();
       expect(data).not.toHaveBeenCalled();
       expect(key).not.toHaveBeenCalled();
@@ -2918,12 +2800,13 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
         body: { data: { t: 'contract-blocked-term' } },
       });
       expect(put.status).toBe(200);
-      const counted = await call({
+      const keyed = await call({
         token: v1,
-        method: 'POST',
-        path: '/plays/contract-blocked-term/counters/plays',
+        method: 'PUT',
+        path: '/notes/contract-blocked-term',
+        body: { data: { t: 'clean' } },
       });
-      expect(counted.status).toBe(200);
+      expect(keyed.status).toBe(200);
       await flushImmediates();
       expect(data).not.toHaveBeenCalled();
       expect(key).not.toHaveBeenCalled();
@@ -4242,9 +4125,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     }
   });
 
-  // ── Counters and marks on the source's SHARED collections need its publish consent too ────
-
-  it("a tally through a readwrite import needs the viewer's apps:storage:publish in the source", async () => {
+  it('through a readwrite import, a removed tally path is no route, and a write: none source collection stays read-only', async () => {
     seq += 1;
     const app = (label: string, manifest: unknown): AppRow => {
       const r = {
@@ -4262,7 +4143,6 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       storage: {
         collections: {
           board: { visibility: 'shared', write: 'own', marks: ['vote'] },
-          // `write: "none"`: no viewer authors a document, but a tally is still shared state.
           plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
         },
       },
@@ -4275,7 +4155,6 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       },
     });
     await grant(VIEWER_IDS.v1, C, S);
-    // A shared document in the source to mark, written by another viewer there.
     const made = await call({
       token: await sourceToken(S, VIEWER_IDS.v2),
       method: 'PUT',
@@ -4284,29 +4163,46 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     });
     expect(made.status).toBe(200);
     const c = await as(C, VIEWER_IDS.v1);
-    const tallies = [
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    const removed = [
       { method: 'POST', path: '/plays/p1/counters/plays', body: { by: 1 } },
       { method: 'PUT', path: '/board/b1/marks/vote' },
       { method: 'PUT', path: '/board/b1/marks/report' },
       { method: 'DELETE', path: '/board/b1/marks/vote' },
     ];
-    for (const t of tallies) {
+    for (const t of removed) {
       const r = await call({ token: c, ...t, query: { from: S.blockId } });
-      expect(r.status, `${t.method} ${t.path}`).toBe(403);
-      expect(r.body, `${t.method} ${t.path}`).toMatchObject({
-        code: 'consent_required',
-        details: { scope: PUBLISH_SCOPE, from: S.blockId },
+      expect({ at: `${t.method} ${t.path}`, status: r.status, code: r.body.code }).toEqual({
+        at: `${t.method} ${t.path}`,
+        status: 404,
+        code: 'not_found',
       });
     }
+    // With the source's publish consent held, a document write to its `write: "none"`
+    // collection is still refused: the policy is read-only, never `own`.
+    const none = await call({
+      token: c,
+      method: 'PUT',
+      path: '/plays/p1',
+      body: { data: {} },
+      query: { from: S.blockId },
+    });
+    expect({ status: none.status, code: none.body.code }).toEqual({
+      status: 403,
+      code: 'write_policy',
+    });
     expect(
       await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'p1'`, [S.id])
     ).toEqual([]);
-    // With the viewer's own publish consent in the source, the same tallies land.
-    grantPublishInSource(VIEWER_IDS.v1, S);
-    for (const t of tallies) {
-      const r = await call({ token: c, ...t, query: { from: S.blockId } });
-      expect(r.status, `${t.method} ${t.path}`).toBe(200);
-    }
+    // Control: the same consent lands a write to the source's `own` collection.
+    const own = await call({
+      token: c,
+      method: 'PUT',
+      path: '/board/b2',
+      body: { data: { title: 'mine' } },
+      query: { from: S.blockId },
+    });
+    expect(own.status).toBe(200);
   });
 
   it('a read or a delete through an import never reads the source publish consent', async () => {
@@ -4985,12 +4881,7 @@ describe('orchestrator media links in shared data are refused in every moderatio
 
   it.each([
     ['a document key', 'PUT', '/posts/orchestration.civitai.com', { data: { caption: 'fine' } }],
-    [
-      'a counter key that creates a document',
-      'POST',
-      '/plays/orchestration.civitai.com/counters/plays',
-      undefined,
-    ],
+    ['a key in another collection', 'PUT', '/notes/orchestration.civitai.com', { data: {} }],
   ] as const)('an orchestrator host as %s is refused', async (_label, method, path, body) => {
     h.moderationMode = 'off';
     const { A } = freshApps();
@@ -5267,7 +5158,6 @@ describe('viewer-keyed documents', () => {
       ['votes', true],
       ['likes', true],
     ]);
-    h.publishOn = true;
     h.isFlipt.mockClear();
     const m = await import('~/server/services/apps/shared-data-moderation');
     vi.mocked(m.scanCounterKey).mockClear();
@@ -5275,7 +5165,6 @@ describe('viewer-keyed documents', () => {
   });
   afterEach(() => {
     h.vkOpen = new Map();
-    h.publishOn = false;
     envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: undefined });
   });
 
@@ -5590,56 +5479,43 @@ describe('viewer-keyed documents', () => {
   });
 
   describe('🔴 no path writes a viewer-keyed collection at a key the client names', () => {
-    it('the route: publish into it, unpublish from it, and every tally route are 400 viewer_keyed', async () => {
+    it('the route: the removed publish and tally paths are no route on a viewer-keyed collection either', async () => {
       const A = vkApp();
       const t1 = await vkMint(A, VK_V1);
       const key = `${VK_P1}:${'b'.repeat(26)}`;
       await vkOk(vkCall(t1, 'PUT', ['drafts', key], { body: { data: { value: 1 } } }));
-      const refusals: Promise<Reply>[] = [
+      for (const r of [
         vkCall(t1, 'POST', ['_publish', 'votes'], { body: { from: 'drafts', keys: [key] } }),
         vkCall(t1, 'POST', ['_unpublish', 'votes'], { body: { keys: [key] } }),
-        vkCall(t1, 'PATCH', ['votes', key], { body: { $mark: 'vote' } }),
-        vkCall(t1, 'PATCH', ['votes', key], { body: { $unmark: 'vote' } }),
-        vkCall(t1, 'PATCH', ['likes', key], { body: { $inc: { plays: 1 } } }),
         vkCall(t1, 'PUT', ['votes', key, 'marks', 'vote']),
         vkCall(t1, 'POST', ['likes', key, 'counters', 'plays'], { body: { by: 1 } }),
-      ];
-      for (const r of refusals) await vkRefused(r, 400, 'invalid_request', 'viewer_keyed');
+      ]) {
+        await vkRefused(r, 404, 'not_found');
+      }
+      // The tally PATCH: the path exists, the method does not.
+      const patch = await vkCall(t1, 'PATCH', ['votes', key], { body: { $mark: 'vote' } });
+      expect({ status: patch.status, allow: patch.headers.allow, code: patch.body.code }).toEqual({
+        status: 405,
+        allow: 'GET, PUT, DELETE',
+        code: 'method_not_allowed',
+      });
       expect(await vkRows(A, 'votes')).toEqual([]);
-      // Control: the same publish into a collection without keyedBy lands.
-      const published = await vkOk(
-        vkCall(t1, 'POST', ['_publish', 'records'], { body: { from: 'drafts', keys: [key] } })
-      );
-      expect((published.body as { created: string[] }).created).toEqual([key]);
     });
 
-    it('the store, for every caller: publish, unpublish, increment, mark and unmark refuse, even with tallies declared; a report does not', async () => {
+    it('the store: a report stays possible on a viewer-keyed document', async () => {
       const A = vkApp();
       const ctx = { appId: A.id, ns: 'prod', viewerUid: VK_V1 };
-      // Declared as no manifest can be any more (the parser refuses tallies beside keyedBy): the
-      // store's own refusal must not depend on that.
       const keyed: DocCollection = {
         name: 'votes',
         config: {
           kind: 'docs',
           visibility: 'shared',
           write: 'own',
-          counters: ['plays'],
-          marks: ['vote'],
-          indexes: new Map(),
-          showAuthor: false,
-          keyedBy: 'parent+viewer',
-        },
-      };
-      const drafts: DocCollection = {
-        name: 'drafts',
-        config: {
-          kind: 'docs',
-          visibility: 'private',
           counters: [],
           marks: [],
           indexes: new Map(),
           showAuthor: false,
+          keyedBy: 'parent+viewer',
         },
       };
       const reasonOf = (p: Promise<unknown>) =>
@@ -5647,20 +5523,9 @@ describe('viewer-keyed documents', () => {
           () => 'resolved',
           (e: { code?: string; details?: { reason?: string } }) => `${e.code}:${e.details?.reason}`
         );
+      // It passes the collection checks and finds no document.
       const key = `${VK_P2}:${'c'.repeat(26)}`;
-      expect(
-        await Promise.all([
-          reasonOf(
-            liveStore.publishCopies(ctx, drafts, keyed, { keys: [key], checked: new Map() })
-          ),
-          reasonOf(liveStore.unpublishCopies(ctx, keyed, [key])),
-          reasonOf(liveStore.increment(ctx, keyed, key, 'plays', 1)),
-          reasonOf(liveStore.mark(ctx, keyed, key, 'vote')),
-          reasonOf(liveStore.unmark(ctx, keyed, key, 'vote')),
-        ])
-      ).toEqual(Array(5).fill('invalid_request:viewer_keyed'));
-      // A report stays possible on a viewer-keyed document: it passes the check and finds no document.
-      expect(await reasonOf(liveStore.mark(ctx, keyed, key, 'report'))).toBe('not_found:undefined');
+      expect(await reasonOf(liveStore.report(ctx, keyed, key))).toBe('not_found:undefined');
     });
   });
 });

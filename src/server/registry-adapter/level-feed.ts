@@ -9,8 +9,7 @@
  * WHAT EACH STREAM HOLDS. A BIT stream (1, 2, 4, 8, 16): the visible documents rated, for their
  * current version, at exactly that bit, so the five partition the rated board (an unrated, pending,
  * stale-rated or Blocked document is on none). `none`: every visible document, served only while
- * content levels are OFF for the app. Neither carries a counter document (`author_kind =
- * 'counter'`): the predicate admits one at every level, so it would sit on all five bit streams.
+ * content levels are OFF for the app.
  * Each entity is a PLAIN document (body, `key`, `version`, `createdAt`, `updatedAt`, `seq`; never
  * its author, a tally or a mark), under the shared document's key URN as the public document feed
  * builds it (`services/apps/app-record.ts`). A delete, a moderator hide and a re-rating off the bit

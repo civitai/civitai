@@ -26,33 +26,31 @@ const Name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/);
 /** A JSON value that must be PRESENT (`null` when there is nothing), never omitted. */
 const Present = z.unknown().refine((v) => v !== undefined, { message: 'required (send null)' });
 
-
 /** The single argument the hook's default export is called with. */
-export const HookInput = z
-  .strictObject({
-    op: Op,
-    collection: Name,
-    /** The document key; for `create` the caller pre-generates it so the hook can see it. */
-    key: z.string().min(1).max(200),
-    /** The stored document's data before this write, or null (create, or absent). */
-    before: Present,
-    /** The document's data after this write, or null (delete). */
-    after: Present,
-    /** Metadata of the stored document (version, author kind; `counters` / `marks` always
-     *  empty), or null. Its inner shape is the write path's to define; the runner passes it
-     *  through. */
-    doc: z.record(z.string(), z.unknown()).nullable(),
-    /** Always null since the tally ops were removed; still a required field, so a hook written
-     *  against it keeps reading `null`. */
-    tally: z.null(),
-    viewer: z.strictObject({ userId: z.number().int() }),
-    app: z.strictObject({ blockId: Name }),
-    /** The importing app's blockId on a `?from=` write, else null. */
-    from: Name.nullable(),
-    /** On a viewer-keyed collection only: the parent key a `@me` write names (null under
-     *  `keyedBy: "viewer"`). Absent on every other collection. */
-    parent: z.string().min(1).max(96).nullable().optional(),
-  });
+export const HookInput = z.strictObject({
+  op: Op,
+  collection: Name,
+  /** The document key; for `create` the caller pre-generates it so the hook can see it. */
+  key: z.string().min(1).max(200),
+  /** The stored document's data before this write, or null (create, or absent). */
+  before: Present,
+  /** The document's data after this write, or null (delete). */
+  after: Present,
+  /** Metadata of the stored document (version, author kind; `counters` / `marks` always
+   *  empty), or null. Its inner shape is the write path's to define; the runner passes it
+   *  through. */
+  doc: z.record(z.string(), z.unknown()).nullable(),
+  /** Always null since the tally ops were removed; still a required field, so a hook written
+   *  against it keeps reading `null`. */
+  tally: z.null(),
+  viewer: z.strictObject({ userId: z.number().int() }),
+  app: z.strictObject({ blockId: Name }),
+  /** The importing app's blockId on a `?from=` write, else null. */
+  from: Name.nullable(),
+  /** On a viewer-keyed collection only: the parent key a `@me` write names (null under
+   *  `keyedBy: "viewer"`). Absent on every other collection. */
+  parent: z.string().min(1).max(96).nullable().optional(),
+});
 export type HookInput = z.infer<typeof HookInput>;
 
 export const CheckRequest = z

@@ -23,17 +23,27 @@
 // the store's rater-lookup transaction; `isRaterLookupStatement` names it. The rating-id sequence
 // (`appdata.doc_rating_id_seq`) is named only as `nextval`'s argument, never as a relation.
 
+/** The appdata tables the store names: every statement's table is one of these. */
 export const APPDATA_TABLES = [
   'doc',
   'doc_index',
-  'doc_tally',
   'doc_mark',
   'doc_tomb',
-  'mark_head',
   'maint_run',
   'usage_app',
   'usage_user',
 ] as const;
+
+/**
+ * The tables of marks, counters and their tallies, removed from the store
+ * (docs/app-storage-generic-core.md, rollout step 5). Still in the schema (and so in the RLS
+ * probes and the harness) until the hand-applied cleanup drops them, but a statement naming one
+ * is a violation: nothing may read or write them any more.
+ */
+export const APPDATA_RETIRED_TABLES = ['doc_tally', 'mark_head'] as const;
+
+/** Every table in the `appdata` schema today: the store's and the retired ones. */
+export const APPDATA_SCHEMA_TABLES = [...APPDATA_TABLES, ...APPDATA_RETIRED_TABLES] as const;
 
 /** The RLS settings (`appdata.<name>`), which are not relations. */
 const SETTING_NAMES = new Set([
@@ -115,6 +125,10 @@ export function scanStatement(sql: string): string[] {
     const keyword = m[1].toUpperCase();
     const table = m[2];
     const alias = m[3] && !NOT_AN_ALIAS.has(m[3].toLowerCase()) ? m[3] : null;
+    if ((APPDATA_RETIRED_TABLES as readonly string[]).includes(table)) {
+      violations.push(`retired appdata relation ${table}: no statement may name it`);
+      continue;
+    }
     if (!(APPDATA_TABLES as readonly string[]).includes(table)) {
       violations.push(`unknown appdata relation ${table}`);
       continue;

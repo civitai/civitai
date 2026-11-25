@@ -18,7 +18,6 @@ import {
   NS_PROD,
   POSTS,
   PREFS,
-  TALLIES,
 } from '~/server/services/apps/__tests__/doc-store.functional';
 import { APPDATA_TABLES } from '~/server/services/apps/__tests__/doc-store.sql-scan';
 
@@ -61,8 +60,7 @@ async function request(status: string | null): Promise<string> {
     const c = ctx(id, reviewNamespace(id, uid), uid);
     await store.put(c, PREFS, 'k', { uid });
     await store.put(c, POSTS, 'p', { status: 'open' });
-    await store.mark(c, POSTS, 'p', 'vote');
-    await store.increment(c, TALLIES, 'g', 'plays', 1);
+    await store.report(c, POSTS, 'p');
   }
   return id;
 }

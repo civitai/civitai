@@ -575,7 +575,9 @@ function whereValue(decl: DeclaredStorageCollection, field: string, raw: string)
 // Presentation
 // ---------------------------------------------------------------------------
 
-export type PresentedAuthor = { kind: 'user'; isViewer: boolean; username?: string } | { kind: 'app' };
+export type PresentedAuthor =
+  | { kind: 'user'; isViewer: boolean; username?: string }
+  | { kind: 'app' };
 
 export type PresentedDoc = {
   key: string;

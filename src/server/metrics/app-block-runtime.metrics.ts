@@ -2272,11 +2272,8 @@ export function setDocStoreEnabled(enabled: boolean, reg: Registry = client.regi
  */
 export function seedAppBlockDocStoreMetrics(reg: Registry = client.register): void {
   try {
-    const {
-      reviewStorageCleanupTotal,
-      reviewStorageSweepTotal,
-      docStoreErrorsTotal,
-    } = ensureRegisterAppBlockRuntimeMetrics(reg);
+    const { reviewStorageCleanupTotal, reviewStorageSweepTotal, docStoreErrorsTotal } =
+      ensureRegisterAppBlockRuntimeMetrics(reg);
     for (const outcome of REVIEW_STORAGE_CLEANUP_OUTCOMES) {
       reviewStorageCleanupTotal.inc({ outcome }, 0);
     }

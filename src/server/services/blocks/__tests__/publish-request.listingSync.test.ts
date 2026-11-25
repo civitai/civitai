@@ -1216,7 +1216,7 @@ describe('approveRequest — keyedBy immutability against every approval', () =>
 // docs/app-storage-generic-core.md, rollout step 3, at APPROVE: a push-originated request never
 // passes `submitVersion`, so approve refuses a NEW mark, counter or `write: "none"` too, against
 // what the store enforces. The storage-migration modules are real here.
-describe('approveRequest — deprecated marks, counters and write "none"', () => {
+describe('approveRequest — removed marks, counters and write "none"', () => {
   const withVotes = (votes: Record<string, unknown>) => ({
     ...VK_NEW_MANIFEST,
     storage: { collections: { notes: { visibility: 'private' }, votes } },
@@ -1242,10 +1242,10 @@ describe('approveRequest — deprecated marks, counters and write "none"', () =>
       withVotes({ visibility: 'shared', write: 'none', counters: ['n'] })
     );
     expect(outcome).toContain(
-      'storage.collections.votes.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated'
+      'storage.collections.votes.write: "none" is not declared on this collection by the previous approved version, and write "none" was removed'
     );
     expect(outcome).toContain(
-      'storage.collections.votes.counters: "n" is not declared on this collection by the previous approved version, and counters are deprecated'
+      'storage.collections.votes.counters: "n" is not declared on this collection by the previous approved version, and counters were removed'
     );
     const approvedWrites = [
       ...db.write.appBlockPublishRequest.update.mock.calls,
@@ -1273,7 +1273,7 @@ describe('approveRequest — deprecated marks, counters and write "none"', () =>
       () => null,
       (err: Error) => err.message
     );
-    // Whatever later step this stubbed harness reaches, it is not the deprecation refusal.
-    expect(outcome ?? '').not.toContain('deprecated');
+    // Whatever later step this stubbed harness reaches, it is not the removed-primitive refusal.
+    expect(outcome ?? '').not.toContain('were removed');
   });
 });
