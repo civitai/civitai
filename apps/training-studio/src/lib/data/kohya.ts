@@ -1,5 +1,6 @@
 import type { KohyaTrainingInputWritable } from '@civitai/orchestration-client';
 import { baseModelSupportsClipSkip } from '@civitai/shared/basemodel.constants';
+import { KOHYA_SDXL_ECOSYSTEMS } from '@civitai/shared/training-kohya-replay';
 import {
   TARGET_STEPS,
   type ModelVersionInfo,
@@ -44,14 +45,10 @@ export const KOHYA_SCHEDULERS = [
 export function kohyaFamily(
   ecosystem: string
 ): 'sd1' | 'sdxl' | 'flux1' | 'chroma' | 'anima' | undefined {
+  if (KOHYA_SDXL_ECOSYSTEMS.has(ecosystem)) return 'sdxl';
   switch (ecosystem) {
     case 'sd1':
       return 'sd1';
-    case 'sdxl':
-    case 'pony':
-    case 'illustrious':
-    case 'noobai':
-      return 'sdxl';
     case 'flux1':
       return 'flux1';
     case 'chroma':

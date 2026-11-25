@@ -48,8 +48,13 @@ export const KOHYA_REPLAY_KEYS = [...KOHYA_CONTINUE_KEYS, 'maxTrainEpochs', 'ste
  */
 export const CLIP_SKIP_AS_SENT = { clipSkipAsSent: true } as const;
 
-/** Kohya ecosystems where an unstamped clip skip of 1 stands for 2. */
-const SDXL_FAMILY = new Set(['sdxl', 'pony', 'illustrious', 'noobai']);
+/** The Kohya ecosystems that train as SDXL. On these, an unstamped clip skip of 1 stands for 2. */
+export const KOHYA_SDXL_ECOSYSTEMS: ReadonlySet<string> = new Set([
+  'sdxl',
+  'pony',
+  'illustrious',
+  'noobai',
+]);
 
 /** The ecosystem of a model AIR, with or without its `urn:` and `air:` prefixes. */
 const airEcosystem = (model: string) =>
@@ -82,7 +87,7 @@ export function copyKohyaInput<K extends string>(
   const stamped =
     (metadata as { clipSkipAsSent?: unknown } | null | undefined)?.clipSkipAsSent === true;
   const ecosystem = typeof input.model === 'string' ? airEcosystem(input.model) : undefined;
-  if (!stamped && copied.clipSkip === 1 && ecosystem && SDXL_FAMILY.has(ecosystem))
+  if (!stamped && copied.clipSkip === 1 && ecosystem && KOHYA_SDXL_ECOSYSTEMS.has(ecosystem))
     copied.clipSkip = 2;
   return copied as Partial<Record<K, unknown>>;
 }
