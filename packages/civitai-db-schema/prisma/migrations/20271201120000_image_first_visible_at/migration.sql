@@ -30,14 +30,16 @@ COMMIT;
 BEGIN;
 -- 0. Shared pieces.
 --
--- The public feed's row-level gates (getAllImages): no review flag, not acceptableMinor, a
--- browsable level, reviewed (imageReviewedSql), not blocked, not a ToS removal. Per-viewer
--- rules (browsing level choice, restricted models, POI opt-out) are not row facts and stay out.
+-- The public feed's row-level gates (getAllImages, for a viewer who is neither the owner nor a
+-- moderator): no review flag, not acceptableMinor, a browsable level, reviewed (imageReviewedSql),
+-- not blocked, not a minor-flagged mature image, not a mature image from a
+-- restricted model. Rules that depend on the viewer's settings (browsing level choice, POI or
+-- minor opt-out, excluded tags) stay out. tosViolation is not one of the gates: the feed
+-- does not read it, so a ToS removal and restore of a served image never counts as a release.
 -- image-first-visible-sort-at.pglite.test.ts fails if this and the TS helpers disagree.
 CREATE OR REPLACE FUNCTION image_row_public(
-  ingestion "ImageIngestionStatus", needs_review text, blocked_for text, tos_violation boolean,
-  acceptable_minor boolean, nsfw_level int, nsfw_level_locked boolean, metadata jsonb,
-  scan_jobs jsonb
+  ingestion "ImageIngestionStatus", needs_review text, blocked_for text, acceptable_minor boolean, nsfw_level int, nsfw_level_locked boolean, metadata jsonb,
+  scan_jobs jsonb, minor boolean, model_restricted boolean
 ) RETURNS boolean
   LANGUAGE sql IMMUTABLE AS
 $$
@@ -46,7 +48,8 @@ SELECT COALESCE(
   AND NOT acceptable_minor
   AND (nsfw_level & 31) <> 0
   AND blocked_for IS NULL
-  AND NOT tos_violation
+  AND NOT (COALESCE(minor, FALSE) AND (nsfw_level = 0 OR nsfw_level >= 4))
+  AND ((nsfw_level & 28) = 0 OR NOT model_restricted)
   AND (
     ingestion = 'Scanned'
     OR (
@@ -118,13 +121,14 @@ BEGIN
   END IF;
   IF NEW."firstVisibleAt" IS NULL
     AND NEW.id > image_first_visible_min_id()
-    AND image_row_public(NEW.ingestion, NEW."needsReview", NEW."blockedFor", NEW."tosViolation",
-      NEW."acceptableMinor", NEW."nsfwLevel", NEW."nsfwLevelLocked", NEW.metadata, NEW."scanJobs")
+    AND image_row_public(NEW.ingestion, NEW."needsReview", NEW."blockedFor",
+      NEW."acceptableMinor", NEW."nsfwLevel", NEW."nsfwLevelLocked", NEW.metadata, NEW."scanJobs",
+      NEW.minor, NEW."modelRestricted")
     AND (
       TG_OP = 'INSERT'
       OR NOT image_row_public(OLD.ingestion, OLD."needsReview", OLD."blockedFor",
-        OLD."tosViolation", OLD."acceptableMinor", OLD."nsfwLevel", OLD."nsfwLevelLocked",
-        OLD.metadata, OLD."scanJobs")
+        OLD."acceptableMinor", OLD."nsfwLevel", OLD."nsfwLevelLocked",
+        OLD.metadata, OLD."scanJobs", OLD.minor, OLD."modelRestricted")
     )
   THEN
     NEW."firstVisibleAt" := now();

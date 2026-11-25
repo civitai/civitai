@@ -3,7 +3,12 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { imageBlockedForConditions, imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  imageBlockedForConditions,
+  imageNotRestrictedSql,
+  imageReviewedSql,
+  minorMatureImageVisibleSql,
+} from '~/server/common/image-visibility';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -40,6 +45,8 @@ beforeAll(async () => {
       "blockedFor" text,
       "tosViolation" boolean NOT NULL DEFAULT false,
       "acceptableMinor" boolean NOT NULL DEFAULT false,
+      minor boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "nsfwLevel" int NOT NULL DEFAULT 0,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       metadata jsonb NOT NULL DEFAULT '{}',
@@ -222,55 +229,62 @@ describe('rows inserted before the migration', () => {
 });
 
 describe('the trigger’s public-row test', () => {
-  // The public feed's row-level gates. imageReviewedSql and imageBlockedForConditions are the
-  // feed's own helpers; the other four are inline conditions in getAllImages and are restated here,
-  // so a change to one of those must be made here too.
+  // The public feed's row-level gates for a viewer who is neither owner nor moderator. The four
+  // helpers are the ones getAllImages calls; the first three conditions are inline there and are
+  // restated here, so a change to one of those must be made here too.
   const tsPublic = Prisma.sql`(
     i."needsReview" IS NULL
     AND i."acceptableMinor" = FALSE
     AND (i."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
     AND ${imageReviewedSql()}
     AND ${Prisma.join(imageBlockedForConditions({}), ' AND ')}
-    AND i."tosViolation" = FALSE
+    AND ${minorMatureImageVisibleSql({})}
+    AND ${imageNotRestrictedSql({ alias: 'i' })}
   )`;
 
   it('agrees with the feed gates on every combination of the columns they read', async () => {
     const values: string[] = [];
     for (const ingestion of Object.values(ImageIngestionStatus))
       for (const locked of [false, true])
-        for (const level of [0, 1, 16, 32])
-          for (const review of ['NULL', `'poi'`, `'csam'`])
-            for (const blocked of ['NULL', `'Moderated'`, `'AiNotVerified'`])
+        for (const level of [0, 1, 4, 16, 32])
+          for (const review of ['NULL', `'poi'`])
+            for (const blocked of ['NULL', `'AiNotVerified'`])
               for (const tos of [false, true])
-                for (const minor of [false, true])
-                  for (const reason of [
-                    `'{}'`,
-                    `'{"nsfwLevelReason": "${KNIGHTS_VOTE_NSFW_LEVEL_REASON}"}'`,
-                    `'{"nsfwLevelReason": "Moderator"}'`,
+                for (const acceptable of [false, true])
+                  for (const [minor, restricted] of [
+                    [false, false],
+                    [true, false],
+                    [false, true],
+                    [true, true],
                   ])
-                    for (const jobs of [
-                      'NULL',
-                      `'{"error": {"failureClass": "permanent"}}'`,
-                      `'{"lastFailure": {"failureClass": "permanent"}}'`,
-                      `'{"permanentFailure": true}'`,
-                      `'{"permanentFailure": false}'`,
-                      `'{"error": {"failureClass": "transient"}}'`,
+                    for (const reason of [
+                      `'{}'`,
+                      `'{"nsfwLevelReason": "${KNIGHTS_VOTE_NSFW_LEVEL_REASON}"}'`,
+                      `'{"nsfwLevelReason": "Moderator"}'`,
                     ])
-                      values.push(
-                        `('${ingestion}', ${locked}, ${level}, ${review}, ${blocked}, ${tos}, ${minor}, ${reason}::jsonb, ${jobs}::jsonb)`
-                      );
+                      for (const jobs of [
+                        'NULL',
+                        `'{"error": {"failureClass": "permanent"}}'`,
+                        `'{"lastFailure": {"failureClass": "permanent"}}'`,
+                        `'{"permanentFailure": true}'`,
+                        `'{"permanentFailure": false}'`,
+                        `'{"error": {"failureClass": "transient"}}'`,
+                      ])
+                        values.push(
+                          `('${ingestion}', ${locked}, ${level}, ${review}, ${blocked}, ${tos}, ${acceptable}, ${minor}, ${restricted}, ${reason}::jsonb, ${jobs}::jsonb)`
+                        );
     await pg.exec(`
       CREATE TABLE parity (LIKE "Image" INCLUDING DEFAULTS);
       INSERT INTO parity (ingestion, "nsfwLevelLocked", "nsfwLevel", "needsReview", "blockedFor",
-        "tosViolation", "acceptableMinor", metadata, "scanJobs")
+        "tosViolation", "acceptableMinor", minor, "modelRestricted", metadata, "scanJobs")
       VALUES ${values.join(',\n')};
     `);
     const q = Prisma.sql`
       SELECT count(*)::int AS total,
         count(*) FILTER (WHERE ${tsPublic})::int AS public,
         count(*) FILTER (WHERE image_row_public(i.ingestion, i."needsReview", i."blockedFor",
-          i."tosViolation", i."acceptableMinor", i."nsfwLevel", i."nsfwLevelLocked", i.metadata,
-          i."scanJobs") IS DISTINCT FROM ${tsPublic})::int AS mismatched
+          i."acceptableMinor", i."nsfwLevel", i."nsfwLevelLocked", i.metadata, i."scanJobs",
+          i.minor, i."modelRestricted") IS DISTINCT FROM ${tsPublic})::int AS mismatched
       FROM parity i`;
     const { rows } = await pg.query<{ total: number; public: number; mismatched: number }>(
       q.text,
