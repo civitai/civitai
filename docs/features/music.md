@@ -98,8 +98,8 @@ pieces live in `src/components/Music/SongDetail/`.
 | Blurred by the image guard               | Title only: no cover, no lyrics, no play button until revealed.                                                                                                                                                                                                                                                                                                                                                                          |
 
 The lyrics come from `image.getSongLyrics` (`src/server/services/track-lyrics.service.ts`). It returns the
-lines only when the viewer may open the song and the song is reviewed and not blocked, for every viewer
-including the owner and moderators; otherwise null. It refuses an image or video, and refuses everyone
+lines only when the viewer may open the song, the song is reviewed and not blocked, and the lyrics
+have their own clean verdict, for every viewer including the owner and moderators; otherwise null. It refuses an image or video, and refuses everyone
 while the flag is off. It is rate limited like `image.getSongCovers`.
 
 Covers, the backdrop, the Up next panel and the More-from list read at the viewer's own browsing level

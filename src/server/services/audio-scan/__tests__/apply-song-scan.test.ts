@@ -332,6 +332,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
   const transcribed = (lyrics: string, over: Partial<AudioScanParse> = {}): AudioScanParse =>
     ({ ok: true, flagged: false, hasAudio: true, result: { lyrics }, ...over } as AudioScanParse);
   const saved = { text: 'Rain on the window.\nSun on the floor.' };
+  const pending = song({ ingestion: 'Pending' });
 
   beforeEach(() => {
     dbMock.dbWrite.trackLyrics.createMany.mockResolvedValue({ count: 1 } as never);
@@ -346,7 +347,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
   });
 
   it('saves the transcript as its lyrics, sends them to their scan and holds the song for it', async () => {
-    await run(transcribed('Rain on the window. Sun on the floor.'));
+    await run(transcribed('Rain on the window. Sun on the floor.'), pending);
 
     expect(dbMock.dbWrite.trackLyrics.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -358,7 +359,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
   });
 
   it('sends the saved lyrics to be timed against the song', async () => {
-    await run(transcribed('Rain on the window. Sun on the floor.'));
+    await run(transcribed('Rain on the window. Sun on the floor.'), pending);
 
     await vi.waitFor(() => expect(orchestrator.align).toHaveBeenCalledTimes(1));
     expect(orchestrator.align.mock.calls[0][0].body).toEqual({
@@ -374,7 +375,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
   ])('saves nothing when %s', async (_, parsed) => {
     dbMock.dbWrite.trackLyrics.findUnique.mockReset().mockResolvedValue(null);
 
-    await run(parsed);
+    await run(parsed, pending);
 
     expect(dbMock.dbWrite.trackLyrics.createMany).not.toHaveBeenCalled();
     expect(lyricsScan.submit).not.toHaveBeenCalled();
@@ -385,7 +386,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
     dbMock.dbWrite.trackLyrics.findUnique.mockReset();
     withLyrics({ status: 'Succeeded' });
 
-    await run(transcribed('Rain.'));
+    await run(transcribed('Rain.'), pending);
 
     expect(dbMock.dbWrite.trackLyrics.createMany).not.toHaveBeenCalled();
   });
@@ -394,12 +395,21 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
     dbMock.dbWrite.trackLyrics.createMany.mockRejectedValue(new Error('db down'));
     dbMock.dbWrite.trackLyrics.findUnique.mockReset().mockResolvedValue(null);
 
-    await run(transcribed('Rain.'));
+    await run(transcribed('Rain.'), pending);
 
     expect(lyricsScan.submit).not.toHaveBeenCalled();
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
     );
+  });
+
+  it('takes no transcript for a song past its first decision (a rescan)', async () => {
+    dbMock.dbWrite.trackLyrics.findUnique.mockReset().mockResolvedValue(null);
+
+    await run(transcribed('Rain.'), song({ ingestion: 'Rescan' }));
+
+    expect(dbMock.dbWrite.trackLyrics.createMany).not.toHaveBeenCalled();
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalled();
   });
 
   it('takes no transcript when its lyrics verdict decides it', async () => {

@@ -38,6 +38,9 @@ const SCHEMA = `
     "modelRestricted" boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "TrackLyrics" ("imageId" int PRIMARY KEY, text text NOT NULL, lines jsonb NOT NULL);
+  CREATE TABLE "EntityModeration" (
+    "entityType" text NOT NULL, "entityId" int NOT NULL, status text NOT NULL, blocked boolean
+  );
   CREATE TABLE "Post" (
     id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
     availability "Availability" DEFAULT 'Public', "collectionId" int
@@ -90,7 +93,22 @@ beforeAll(async () => {
       (207, 'x', '${JSON.stringify(TIMED)}'),
       (208, 'x', '[{"t": "soon", "text": 1}]'),
       (209, 'x', '${JSON.stringify(TIMED)}'),
-      (212, 'x', '${JSON.stringify(TIMED)}');
+      (212, 'x', '${JSON.stringify(TIMED)}'),
+      (213, 'x', '${JSON.stringify(TIMED)}'),
+      (214, 'x', '${JSON.stringify(TIMED)}'),
+      (215, 'x', '${JSON.stringify(TIMED)}');
+    -- 213: lyrics scan still pending; 214: rating locked while Pending, lyrics unscanned;
+    -- 215: lyrics blocked.
+    INSERT INTO "Image" (id, "userId", "postId", type, ingestion, "nsfwLevelLocked") VALUES
+      (213, ${OWNER}, 1, 'audio', 'Scanned', false),
+      (214, ${OWNER}, 1, 'audio', 'Pending', true),
+      (215, ${OWNER}, 1, 'audio', 'Scanned', false);
+    INSERT INTO "EntityModeration" ("entityType", "entityId", status, blocked)
+      SELECT 'TrackLyrics', "imageId", 'Succeeded', false FROM "TrackLyrics"
+      WHERE "imageId" NOT IN (213, 214, 215);
+    INSERT INTO "EntityModeration" ("entityType", "entityId", status, blocked) VALUES
+      ('TrackLyrics', 213, 'Pending', NULL),
+      ('TrackLyrics', 215, 'Succeeded', true);
   `);
   const raw = pgliteRaw(db);
   const queryRaw = ((s: TemplateStringsArray, ...v: unknown[]) => raw.queryRaw(s, ...v)) as never;
@@ -107,6 +125,15 @@ const read = (id: number, ctx: Parameters<typeof getSongLyrics>[0]['ctx'] = view
 describe('getSongLyrics', () => {
   it("returns a visible, reviewed song's stored lines, timed and untimed", async () => {
     expect(await read(201)).toEqual(TIMED);
+  });
+
+  it('returns nothing until the lyrics have their own clean verdict, even past a rating lock', async () => {
+    expect(await read(213)).toBeNull();
+    expect(await read(214)).toBeNull();
+    expect(await read(215)).toBeNull();
+    expect(
+      await read(213, { user: { id: OWNER, isModerator: false }, features: { music: true } })
+    ).toBeNull();
   });
 
   it('returns them to a signed-out viewer too', async () => {
