@@ -1321,7 +1321,7 @@ describe('releasePendingDeletes', () => {
         `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${IMAGE}, 'Pending')`
       );
     await deleteImageRows(db, { ids: [IMAGE], actor: drain });
-    expect((await imageState()).needsReview).toBe(afterHide);
+    expect(await imageState()).toMatchObject({ needsReview: afterHide });
     await closeCase();
 
     await release();
