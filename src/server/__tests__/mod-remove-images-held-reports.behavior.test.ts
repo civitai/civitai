@@ -46,7 +46,7 @@ const TOS_ACTIONED = 71;
 const NSFW_OPEN = 72;
 const TOS_PROCESSING = 73;
 const OTHER_TOS_OPEN = 74;
-const TOS_UNACTIONED = 75; // reviewed and left up: no later removal actions it
+const TOS_UNACTIONED = 75;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -67,7 +67,10 @@ beforeAll(async () => {
       "resolvedAt" TIMESTAMP(3), "resolvedBy" INTEGER, "resolvedReason" TEXT, "resolvedMessage" TEXT
     );
     CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER UNIQUE, "removalLabel" TEXT);
-    CREATE TABLE "Report" (id int PRIMARY KEY, reason "ReportReason" NOT NULL, status "ReportStatus" NOT NULL);
+    CREATE TABLE "Report" (
+      id int PRIMARY KEY, reason "ReportReason" NOT NULL, status "ReportStatus" NOT NULL,
+      "userId" int NOT NULL DEFAULT 1, "statusSetAt" TIMESTAMP(3), "statusSetBy" int
+    );
     CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
   `);
   await holder.db.exec(MIGRATION);
@@ -105,9 +108,8 @@ beforeEach(async () => {
 });
 
 const { default: handler } = await import('~/server/api-routes/mod/remove-images');
-const { getOpenImageReportIds, getOpenImageReportIdsByImage } = await import(
-  '~/server/services/image.service'
-);
+const { getOpenImageReportIds, getOpenImageReportIdsByImage, updateImageReportStatusByReason } =
+  await import('~/server/services/image.service');
 
 const call = async (body: unknown) => {
   const res = {
@@ -173,5 +175,28 @@ describe('open image reports', () => {
       [TOS_OPEN, TOS_PROCESSING].sort()
     );
     expect(await getOpenImageReportIds(HELD, 'NSFW' as never)).toEqual([NSFW_OPEN]);
+  });
+});
+
+// A direct (not held) removal actions the image's reports through this write; what it returns is
+// whom setTosViolation rewards.
+describe('a direct removal of an image', () => {
+  it('actions only its open TOS reports, and returns only those to reward', async () => {
+    const moved = await updateImageReportStatusByReason({
+      id: HELD,
+      reason: 'TOSViolation' as never,
+      status: 'Actioned' as never,
+      actorId: MODERATOR,
+    });
+
+    expect(moved.map((r) => r.id).sort()).toEqual([TOS_OPEN, TOS_PROCESSING].sort());
+    const { rows } = await holder.db.query<{ id: number; status: string }>(
+      `SELECT id, status FROM "Report" WHERE id = ANY($1::int[]) ORDER BY id`,
+      [[TOS_ACTIONED, TOS_UNACTIONED]]
+    );
+    expect(rows).toEqual([
+      { id: TOS_ACTIONED, status: 'Actioned' },
+      { id: TOS_UNACTIONED, status: 'Unactioned' },
+    ]);
   });
 });

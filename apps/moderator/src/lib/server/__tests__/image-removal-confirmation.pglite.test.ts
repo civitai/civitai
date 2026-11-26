@@ -524,6 +524,10 @@ describe('deciding a held removal', () => {
     await confirmRemoval({ id, userId: CONFIRMER });
 
     expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7]);
+    // The write itself is guarded too, for a review landing between this read and the write.
+    expect(setReportStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ fromStatuses: ['Pending', 'Processing'] })
+    );
   });
 
   it('runs the removal once when two moderators confirm', async () => {

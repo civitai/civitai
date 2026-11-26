@@ -175,6 +175,35 @@ describe('setReportStatus', () => {
     expect(recordModActivity).toHaveBeenCalledTimes(1);
   });
 
+  it('moves the report only from the statuses a caller names, in the UPDATE itself', async () => {
+    await setReportStatus({
+      id: 1,
+      status: ReportStatus.Actioned,
+      userId: 7,
+      fromStatuses: [ReportStatus.Pending, ReportStatus.Processing],
+    });
+
+    expect(updateWheres()).toContainEqual([
+      'status',
+      'in',
+      [ReportStatus.Pending, ReportStatus.Processing],
+    ]);
+  });
+
+  it('rewards nobody when that guard matched nothing (a report reviewed meanwhile)', async () => {
+    updateResult = undefined;
+
+    const result = await setReportStatus({
+      id: 1,
+      status: ReportStatus.Actioned,
+      userId: 7,
+      fromStatuses: [ReportStatus.Pending, ReportStatus.Processing],
+    });
+
+    expect(result).toEqual({ ok: true, changed: false });
+    expect(rewardReportReporters).not.toHaveBeenCalled();
+  });
+
   it('keeps the status guard on the UPDATE, which is what makes changed:false reachable', async () => {
     await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7 });
 

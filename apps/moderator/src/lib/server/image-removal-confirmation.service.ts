@@ -215,6 +215,7 @@ export async function confirmRemoval({
       status: ReportStatus.Actioned,
       userId,
       noReward: unpaid,
+      fromStatuses: OPEN_REPORT_STATUSES,
     });
   await recordModActivity({
     userId,

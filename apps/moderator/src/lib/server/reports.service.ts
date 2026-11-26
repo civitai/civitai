@@ -562,6 +562,7 @@ export async function setReportStatus({
   noRewardFor = [],
   noReward = false,
   liftScanHide = false,
+  fromStatuses,
 }: {
   id: number;
   status: ReportStatus;
@@ -577,6 +578,8 @@ export async function setReportStatus({
    * passes it.
    */
   liftScanHide?: boolean;
+  /** Moves the report only from one of these statuses, in the write itself. */
+  fromStatuses?: readonly ReportStatus[];
 }) {
   // A stale tab or a forged id must not report success. The UPDATE is deliberately a no-op when the
   // report is ALREADY in the requested status (that guard protects the reward path), so "nothing
@@ -611,7 +614,7 @@ export async function setReportStatus({
     };
   }
 
-  const updated = await dbWrite
+  let update = dbWrite
     .updateTable('Report')
     .set({
       status,
@@ -624,7 +627,9 @@ export async function setReportStatus({
         : {}),
     })
     .where('id', '=', id)
-    .where('status', '!=', status)
+    .where('status', '!=', status);
+  if (fromStatuses) update = update.where('status', 'in', [...fromStatuses]);
+  const updated = await update
     .returning(['userId', 'alsoReportedBy', 'details'])
     .executeTakeFirst();
 

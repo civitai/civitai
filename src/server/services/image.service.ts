@@ -2043,8 +2043,9 @@ export const updateImageReportStatusByReason = ({
   status: ReportStatus;
   actorId: number;
 }) => {
-  // Stamped only on a real change: `statusSetAt` drives the reporter notifications, so re-stamping a
-  // report already in this status would notify its reporter again.
+  // Only open reports (`OPEN_REPORT_STATUSES`) move, so an Unactioned one is neither overturned nor
+  // rewarded. Stamped only on a real change: `statusSetAt` drives the reporter notifications, so
+  // re-stamping a report already in this status would notify its reporter again.
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
     UPDATE "Report" r SET
       status = ${status}::"ReportStatus",
@@ -2054,6 +2055,9 @@ export const updateImageReportStatusByReason = ({
     WHERE i."reportId" = r.id
       AND i."imageId" = ${id}
       AND r.reason = ${reason}::"ReportReason"
+      AND r.status IN (${Prisma.join(
+        OPEN_REPORT_STATUSES.map((open) => Prisma.sql`${open}::"ReportStatus"`)
+      )})
     RETURNING id, "userId"
   `;
 };
