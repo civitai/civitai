@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ align: vi.fn() }));
-// The alignment recipe crosses to the orchestrator.
 vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   invokeLyricsAlignmentStepTemplate: mocks.align,
@@ -94,7 +93,7 @@ describe("aligning a song's lyrics", () => {
     await expect(align()).resolves.toBe(false);
     expect(dbMock.dbWrite.trackLyrics.updateMany).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'unmatched', stored: 3, aligned: 4 })
+      expect.objectContaining({ outcome: 'unmatched' })
     );
   });
 

@@ -101,7 +101,6 @@ vi.mock('~/server/services/audio-scan/track-lyrics', async (importOriginal) => (
   ...(await importOriginal<object>()),
   submitTrackLyricsScan: mocks.submitTrackLyricsScan,
 }));
-// The alignment recipe crosses to the orchestrator.
 vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   invokeLyricsAlignmentStepTemplate: mocks.alignLyrics,

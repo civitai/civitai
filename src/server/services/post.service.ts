@@ -2105,7 +2105,7 @@ export const addPostImage = async ({
     }).catch(handleLogError);
     if (saved) {
       submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
-      // Up to a minute on a cold worker: never awaited, and the song is visible untimed meanwhile.
+      // Not awaited: the recipe is slow on a cold worker.
       alignTrackLyrics({ imageId: partialResult.id, url: imageProps.url }).catch(handleLogError);
     }
   }
