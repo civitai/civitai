@@ -114,7 +114,10 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
   it('keeps the current cover sent back with no url, as an editor who may not see it sends it', async () => {
     const deps = makeDeps({ assertUsableAsCover: refuse() });
     await expect(
-      resolveCoverImageId({ coverImage: { id: 42, url: '' }, userId: 7, currentCoverId: 42 }, deps)
+      resolveCoverImageId(
+        { coverImage: { ...coverImage, id: 42, url: '' }, userId: 7, currentCoverId: 42 },
+        deps
+      )
     ).resolves.toBe(42);
   });
 

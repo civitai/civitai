@@ -67,16 +67,18 @@ export const getInfiniteArticlesSchema = infiniteQuerySchema
   .merge(userPreferencesForArticlesSchema)
   .merge(articleWhereSchema);
 
+/** An article body, sanitized on the way in. */
+export const articleContentSchema = getSanitizedStringSchema({ allowBlurbs: true }).refine(
+  (data) => data && data.length > 0 && data !== '<p></p>',
+  'Cannot be empty'
+);
+
 export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
   // Omitted on an update keeps the stored body (the article page's Publish sends none).
-  content: getSanitizedStringSchema({ allowBlurbs: true })
-    .refine((data) => {
-      return data && data.length > 0 && data !== '<p></p>';
-    }, 'Cannot be empty')
-    .optional(),
+  content: articleContentSchema.optional(),
   // The save comes from the edit form, whose placeholders are the only way to remove a body
   // image the saver may not see.
   editForm: z.boolean().optional(),

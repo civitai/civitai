@@ -1349,6 +1349,7 @@ export const upsertArticle = async ({
         const article = await tx.article.create({
           data: {
             ...data,
+            content: sent,
             publishedAt,
             scheduledAt: scheduledAtWrite,
             coverId,
