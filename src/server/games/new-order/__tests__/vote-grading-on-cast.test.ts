@@ -266,6 +266,19 @@ describe('grading a Knight vote when it is cast', () => {
     expect(voidedIds()).toEqual([]);
   });
 
+  it('judges the loosening against the primary level when the replica still has the old one', async () => {
+    dbMock.dbRead.image.findUnique.mockImplementation(async (args: any) => ({
+      ...row(args.where.id, args.select),
+      ...('nsfwLevel' in args.select && { nsfwLevel: NsfwLevel.X }),
+    }));
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ nsfwLevel: NsfwLevel.XXX } as never);
+    mockUpdateLevel.mockResolvedValue(NsfwLevel.X);
+    expect(
+      await castVote({ voteNumber: 5, rating: NsfwLevel.X, tally: CONSENSUS_X, imageId: WITHHELD })
+    ).toBe(NewOrderImageRatingStatus.Pending);
+    expect(mockUpdateLevel).not.toHaveBeenCalled();
+  });
+
   // A moderator's own rating writes at once, under the moderator's own grant.
   it.each([false, true])(
     "forwards a moderator's grant (%s) to the rating write",

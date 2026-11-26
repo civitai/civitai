@@ -637,16 +637,25 @@ async function processImageRating({
     // refused above.
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
+      // The replica can lag a raise made since this round began.
+      const primaryLevel = consensus
+        ? (
+            await dbWrite.image.findUnique({
+              where: { id: imageId },
+              select: { nsfwLevel: true },
+            })
+          )?.nsfwLevel ?? image.nsfwLevel
+        : image.nsfwLevel;
       // Guard against excessive down-rating: allow down-rating by at most 1 level,
       // escalate to Inquisitor (mod) queue if the distance is greater
       const isExcessiveDownRating =
-        consensus && consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
+        consensus && consensus < primaryLevel && Flags.distance(primaryLevel, consensus) > 1;
       // A vote holds no grant, so it does not loosen what is withheld from a moderator without one:
       // the image keeps its level and goes to a moderator like an excessive down-rating.
       const isWithheldDownRating =
         !isExcessiveDownRating &&
         !!consensus &&
-        loosensImageLevel(image.nsfwLevel, consensus) &&
+        loosensImageLevel(primaryLevel, consensus) &&
         (await withheldImageIds([imageId], { csamReview: false })).has(imageId);
 
       if (isExcessiveDownRating || isWithheldDownRating) {
@@ -678,15 +687,13 @@ async function processImageRating({
             name: 'new-order-down-rating-escalated',
             details: {
               imageId,
-              currentLevel: image.nsfwLevel,
+              currentLevel: primaryLevel,
               consensusLevel: consensus,
-              distance: Flags.distance(image.nsfwLevel, consensus),
+              distance: Flags.distance(primaryLevel, consensus),
               voteCount: newVoteCount,
             },
-            message: `Image ${imageId} down-rating consensus (${
-              image.nsfwLevel
-            } → ${consensus}, distance ${Flags.distance(
-              image.nsfwLevel,
+            message: `Image ${imageId} down-rating consensus (${primaryLevel} → ${consensus}, distance ${Flags.distance(
+              primaryLevel,
               consensus
             )}) escalated to Inquisitor queue`,
           });
