@@ -459,6 +459,7 @@ describe('submitVersion — advisories', () => {
     ]);
     expect(storedFileSummary().sdkFloor).toEqual({
       lockfile: 'package-lock.json',
+      lockfileStatus: 'read',
       below: [
         { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
         { package: '@civitai/blocks-react', installed: '0.80.2', minimum: '0.87.0' },
@@ -481,6 +482,41 @@ describe('submitVersion — advisories', () => {
     });
     expect(result.advisories).toEqual([]);
     expect(storedFileSummary()).not.toHaveProperty('sdkFloor');
+    await settleFollowUps();
+  });
+
+  it('a malformed lockfile: the submit still succeeds, with no SDK advisory and nothing recorded', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        ...OWN_ACCENT,
+        'package-lock.json': '{"lockfileVersion": 3, "packages": {"node_modules/@civitai/sdk": ',
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
+    expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    expect(result.advisories).toEqual([]);
+    expect(storedFileSummary()).not.toHaveProperty('sdkFloor');
+    await settleFollowUps();
+  });
+
+  it('a malformed lockfile with an override: the reading is recorded as unreadable, not absent', async () => {
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID, {
+        ...OWN_ACCENT,
+        'package-lock.json': 'not json at all',
+      }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+      sdkFloorOverride: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+    });
+    expect(result.advisories).toEqual([]);
+    expect(storedFileSummary().sdkFloor).toEqual({
+      lockfile: 'package-lock.json',
+      lockfileStatus: 'unreadable',
+      below: [],
+      override: [{ package: '@civitai/sdk', installed: '0.29.1', minimum: '0.33.0' }],
+    });
     await settleFollowUps();
   });
 

@@ -57,21 +57,49 @@ describe('reviewSdkFloorLines', () => {
     ]);
   });
 
-  it('an override the server could not confirm from a lockfile', () => {
-    expect(
-      reviewSdkFloorLines({
-        ...files,
-        sdkFloor: {
-          lockfile: null,
-          below: [],
-          override: [{ package: '@civitai/sdk', installed: '0.30.0', minimum: '0.33.0' }],
-        },
-      })[0]
-    ).toEqual({
+  /** The bundle line when nothing is below, for each thing the server could make of the lockfile. */
+  const bundleLineFor = (sdkFloor: Record<string, unknown>) =>
+    reviewSdkFloorLines({
+      ...files,
+      sdkFloor: {
+        below: [],
+        override: [{ package: '@civitai/sdk', installed: '0.30.0', minimum: '0.33.0' }],
+        ...sdkFloor,
+      },
+    })[0];
+
+  it('an override the server read the lockfile for and found nothing below', () => {
+    expect(bundleLineFor({ lockfile: 'pnpm-lock.yaml', lockfileStatus: 'read' })).toEqual({
       key: 'bundle',
       heading: 'Outdated SDK (read from the bundle lockfile)',
-      value: 'no lockfile the server reads',
+      value: 'none below the minimum in pnpm-lock.yaml',
     });
+  });
+
+  it('an override with NO lockfile in the bundle', () => {
+    expect(bundleLineFor({ lockfile: 'package-lock.json', lockfileStatus: 'absent' })).toEqual({
+      key: 'bundle',
+      heading: 'Outdated SDK (read from the bundle lockfile)',
+      value:
+        'the bundle carries no package-lock.json (the lockfile its build command installs from)',
+    });
+  });
+
+  it('an override whose lockfile could not be read (unparseable or timed out)', () => {
+    expect(bundleLineFor({ lockfile: 'yarn.lock', lockfileStatus: 'unreadable' })).toEqual({
+      key: 'bundle',
+      heading: 'Outdated SDK (read from the bundle lockfile)',
+      value: 'yarn.lock could not be read (unparseable, or the read timed out)',
+    });
+  });
+
+  it('a reading with no recognisable lockfile or status says so, never "none below"', () => {
+    expect(bundleLineFor({ lockfile: null, lockfileStatus: 'read' })?.value).toBe(
+      'no lockfile reading recorded'
+    );
+    expect(bundleLineFor({ lockfile: 'package-lock.json' })?.value).toBe(
+      'no lockfile reading recorded'
+    );
   });
 
   it('a request that records nothing, or a pre-existing row, renders nothing', () => {

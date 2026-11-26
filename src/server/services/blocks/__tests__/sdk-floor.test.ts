@@ -4,6 +4,7 @@ import {
   belowSdkFloor,
   judgeBundleSdkFloor,
   lockedSdkVersions,
+  lockfileFor,
   sdkFloorAdvisories,
   sdkFloorRecord,
 } from '~/server/services/blocks/sdk-floor';
@@ -45,9 +46,11 @@ describe('lockedSdkVersions — reads the LOCKFILE, not package.json', () => {
       await zipOf({
         'package.json': PKG_AT_FLOOR_RANGE,
         'package-lock.json': npmLock('0.31.4', '0.80.2'),
-      })
+      }),
+      'npm run build'
     );
-    expect(locked?.lockfile).toBe('package-lock.json');
+    expect(locked.lockfile).toBe('package-lock.json');
+    expect(locked.lockfileStatus).toBe('read');
     expect(Object.fromEntries(locked!.versions)).toEqual({
       '@civitai/sdk': '0.31.4',
       '@civitai/blocks-react': '0.80.2',
@@ -61,7 +64,8 @@ describe('lockedSdkVersions — reads the LOCKFILE, not package.json', () => {
           lockfileVersion: 1,
           dependencies: { '@civitai/sdk': { version: '0.30.1' } },
         }),
-      })
+      }),
+      undefined
     );
     expect(Object.fromEntries(locked!.versions)).toEqual({ '@civitai/sdk': '0.30.1' });
   });
@@ -80,8 +84,8 @@ describe('lockedSdkVersions — reads the LOCKFILE, not package.json', () => {
       '        version: 0.32.5',
       '',
     ].join('\n');
-    const locked = await lockedSdkVersions(await zipOf({ 'pnpm-lock.yaml': pnpm }));
-    expect(locked?.lockfile).toBe('pnpm-lock.yaml');
+    const locked = await lockedSdkVersions(await zipOf({ 'pnpm-lock.yaml': pnpm }), 'pnpm build');
+    expect(locked.lockfile).toBe('pnpm-lock.yaml');
     expect(Object.fromEntries(locked!.versions)).toEqual({
       '@civitai/sdk': '0.32.5',
       '@civitai/blocks-react': '0.82.1',
@@ -97,13 +101,158 @@ describe('lockedSdkVersions — reads the LOCKFILE, not package.json', () => {
       '  resolved "https://registry.yarnpkg.com/x"',
       '',
     ].join('\n');
-    const locked = await lockedSdkVersions(await zipOf({ 'yarn.lock': yarn }));
-    expect(locked?.lockfile).toBe('yarn.lock');
+    const locked = await lockedSdkVersions(await zipOf({ 'yarn.lock': yarn }), 'yarn run build');
+    expect(locked.lockfile).toBe('yarn.lock');
     expect(Object.fromEntries(locked!.versions)).toEqual({ '@civitai/sdk': '0.29.7' });
   });
 
-  it('no lockfile: nothing to read', async () => {
-    expect(await lockedSdkVersions(await zipOf({ 'package.json': PKG_AT_FLOOR_RANGE }))).toBeNull();
+  it('yarn berry (`version: x` form, `npm:` header)', async () => {
+    const yarn = [
+      '__metadata:',
+      '  version: 8',
+      '',
+      '"@civitai/sdk@npm:^0.33.0":',
+      '  version: 0.28.3',
+      '  resolution: "@civitai/sdk@npm:0.28.3"',
+      '',
+    ].join('\n');
+    const locked = await lockedSdkVersions(await zipOf({ 'yarn.lock': yarn }), 'yarn run build');
+    expect(locked.lockfileStatus).toBe('read');
+    expect(Object.fromEntries(locked.versions)).toEqual({ '@civitai/sdk': '0.28.3' });
+  });
+
+  it('yarn with more than one resolved version of a package: no version for it', async () => {
+    const yarn = [
+      '# yarn lockfile v1',
+      '',
+      '"@civitai/sdk@^0.29.0":',
+      '  version "0.29.7"',
+      '',
+      '"@civitai/sdk@^0.31.0":',
+      '  version "0.31.2"',
+      '',
+      '"@civitai/blocks-react@^0.80.0":',
+      '  version "0.81.6"',
+      '',
+    ].join('\n');
+    const locked = await lockedSdkVersions(await zipOf({ 'yarn.lock': yarn }), 'yarn run build');
+    expect(Object.fromEntries(locked.versions)).toEqual({ '@civitai/blocks-react': '0.81.6' });
+  });
+
+  it('pnpm v5 (top-level bare string, `_` peer suffix) and v6 (top-level `{ specifier, version }`)', async () => {
+    const v5 = [
+      'lockfileVersion: 5.4',
+      'specifiers:',
+      "  '@civitai/sdk': ^0.33.0",
+      'dependencies:',
+      "  '@civitai/sdk': 0.27.9_react@18.2.0",
+      'devDependencies:',
+      "  '@civitai/blocks-react': 0.79.4",
+      '',
+    ].join('\n');
+    const v6 = [
+      "lockfileVersion: '6.0'",
+      'dependencies:',
+      "  '@civitai/sdk':",
+      '    specifier: ^0.33.0',
+      '    version: 0.26.8(react@18.2.0)',
+      '',
+    ].join('\n');
+    const r5 = await lockedSdkVersions(await zipOf({ 'pnpm-lock.yaml': v5 }), 'pnpm run build');
+    const r6 = await lockedSdkVersions(await zipOf({ 'pnpm-lock.yaml': v6 }), 'pnpm run build');
+    expect(Object.fromEntries(r5.versions)).toEqual({
+      '@civitai/sdk': '0.27.9',
+      '@civitai/blocks-react': '0.79.4',
+    });
+    expect(Object.fromEntries(r6.versions)).toEqual({ '@civitai/sdk': '0.26.8' });
+  });
+
+  it('no lockfile: absent, nothing read', async () => {
+    const locked = await lockedSdkVersions(
+      await zipOf({ 'package.json': PKG_AT_FLOOR_RANGE }),
+      'npm run build'
+    );
+    expect(locked).toEqual({
+      lockfile: 'package-lock.json',
+      lockfileStatus: 'absent',
+      versions: new Map(),
+    });
+  });
+
+  it('an unparseable lockfile: unreadable, nothing read', async () => {
+    const npm = await lockedSdkVersions(
+      await zipOf({ 'package-lock.json': '{"lockfileVersion": 3, "packages": {' }),
+      'npm run build'
+    );
+    const pnpm = await lockedSdkVersions(
+      await zipOf({ 'pnpm-lock.yaml': 'importers:\n  .: [unclosed\n' }),
+      'pnpm run build'
+    );
+    expect(npm.lockfileStatus).toBe('unreadable');
+    expect(pnpm.lockfileStatus).toBe('unreadable');
+    expect(npm.versions.size + pnpm.versions.size).toBe(0);
+  });
+});
+
+/**
+ * The lockfile is the one the BUILD installs from, chosen by buildCommand as civitai/cli's
+ * `packageManagerFor` chooses it — not the first one present. Each case carries a STALE lockfile
+ * of another manager beside the real one, at a version that would answer the opposite way.
+ */
+describe('lockfileFor / lockfile choice follows buildCommand', () => {
+  it('first word of the trimmed buildCommand; everything else is npm', () => {
+    expect(lockfileFor('pnpm build')).toBe('pnpm-lock.yaml');
+    expect(lockfileFor('  pnpm run build ')).toBe('pnpm-lock.yaml');
+    expect(lockfileFor('yarn run build')).toBe('yarn.lock');
+    expect(lockfileFor('npm run build')).toBe('package-lock.json');
+    expect(lockfileFor('vite build')).toBe('package-lock.json');
+    expect(lockfileFor('npx vite build')).toBe('package-lock.json');
+    expect(lockfileFor('pnpmx build')).toBe('package-lock.json');
+    expect(lockfileFor('')).toBe('package-lock.json');
+    expect(lockfileFor(undefined)).toBe('package-lock.json');
+    expect(lockfileFor(42)).toBe('package-lock.json');
+  });
+
+  const pnpmLock = (sdk: string) =>
+    [
+      "lockfileVersion: '9.0'",
+      'importers:',
+      '  .:',
+      '    dependencies:',
+      "      '@civitai/sdk':",
+      '        specifier: ^0.33.0',
+      `        version: ${sdk}`,
+      '',
+    ].join('\n');
+
+  it('pnpm build: a current pnpm-lock beside a stale package-lock → no finding', async () => {
+    const zip = await zipOf({
+      'package-lock.json': npmLock('0.30.0'),
+      'pnpm-lock.yaml': pnpmLock('0.34.2'),
+    });
+    await expect(judgeBundleSdkFloor(zip, 'pnpm build')).resolves.toEqual({
+      lockfile: 'pnpm-lock.yaml',
+      lockfileStatus: 'read',
+      below: [],
+    });
+  });
+
+  it('npm run build: a stale package-lock beside a current pnpm-lock → finding', async () => {
+    const zip = await zipOf({
+      'package-lock.json': npmLock('0.30.0'),
+      'pnpm-lock.yaml': pnpmLock('0.34.2'),
+    });
+    await expect(judgeBundleSdkFloor(zip, 'npm run build')).resolves.toEqual({
+      lockfile: 'package-lock.json',
+      lockfileStatus: 'read',
+      below: [{ package: '@civitai/sdk', installed: '0.30.0', minimum: '0.33.0' }],
+    });
+  });
+
+  it('pnpm build with only a package-lock: absent (the other lockfile is never a fallback)', async () => {
+    await expect(
+      judgeBundleSdkFloor(await zipOf({ 'package-lock.json': npmLock('0.30.0') }), 'pnpm build')
+    ).resolves.toEqual({ lockfile: 'pnpm-lock.yaml', lockfileStatus: 'absent', below: [] });
   });
 });
 
@@ -177,9 +326,13 @@ describe('sdkFloorAdvisories', () => {
 describe('judgeBundleSdkFloor — never fails or holds up a submit', () => {
   it('below-floor lockfile → its findings', async () => {
     await expect(
-      judgeBundleSdkFloor(await zipOf({ 'package-lock.json': npmLock('0.31.4', '0.80.2') }))
+      judgeBundleSdkFloor(
+        await zipOf({ 'package-lock.json': npmLock('0.31.4', '0.80.2') }),
+        'npm run build'
+      )
     ).resolves.toEqual({
       lockfile: 'package-lock.json',
+      lockfileStatus: 'read',
       below: [
         { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
         { package: '@civitai/blocks-react', installed: '0.80.2', minimum: '0.87.0' },
@@ -189,21 +342,24 @@ describe('judgeBundleSdkFloor — never fails or holds up a submit', () => {
 
   it('at-floor lockfile → nothing below', async () => {
     await expect(
-      judgeBundleSdkFloor(await zipOf({ 'package-lock.json': npmLock('0.33.0', '0.87.0') }))
-    ).resolves.toEqual({ lockfile: 'package-lock.json', below: [] });
+      judgeBundleSdkFloor(
+        await zipOf({ 'package-lock.json': npmLock('0.33.0', '0.87.0') }),
+        'npm run build'
+      )
+    ).resolves.toEqual({ lockfile: 'package-lock.json', lockfileStatus: 'read', below: [] });
   });
 
-  it('a read that throws, or never settles, answers nothing', async () => {
-    const none = { lockfile: null, below: [] };
+  it('a read that throws, or never settles, answers unreadable with nothing below', async () => {
+    const none = { lockfile: 'yarn.lock', lockfileStatus: 'unreadable', below: [] };
     await expect(
-      judgeBundleSdkFloor(Buffer.from('x'), {
+      judgeBundleSdkFloor(Buffer.from('x'), 'yarn run build', {
         read: async () => {
           throw new Error('corrupt zip');
         },
       })
     ).resolves.toEqual(none);
     await expect(
-      judgeBundleSdkFloor(Buffer.from('x'), {
+      judgeBundleSdkFloor(Buffer.from('x'), 'yarn run build', {
         read: () => new Promise(() => undefined),
         timeoutMs: 50,
       })
@@ -216,26 +372,37 @@ describe('sdkFloorRecord', () => {
 
   it('keeps the server reading and the client override apart', () => {
     expect(
-      sdkFloorRecord({ lockfile: 'package-lock.json', below }, [
+      sdkFloorRecord({ lockfile: 'package-lock.json', lockfileStatus: 'read', below }, [
         { package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' },
       ])
     ).toEqual({
       lockfile: 'package-lock.json',
+      lockfileStatus: 'read',
       below,
       override: [{ package: '@civitai/sdk', installed: '0.31.4', minimum: '0.33.0' }],
     });
   });
 
   it('below with no override (an older CLI): recorded, override null', () => {
-    expect(sdkFloorRecord({ lockfile: 'yarn.lock', below }, undefined)).toEqual({
+    expect(
+      sdkFloorRecord({ lockfile: 'yarn.lock', lockfileStatus: 'read', below }, undefined)
+    ).toEqual({
       lockfile: 'yarn.lock',
+      lockfileStatus: 'read',
       below,
       override: null,
     });
   });
 
   it('nothing below and no override: nothing recorded', () => {
-    expect(sdkFloorRecord({ lockfile: 'package-lock.json', below: [] }, undefined)).toBeNull();
-    expect(sdkFloorRecord({ lockfile: null, below: [] }, [])).toBeNull();
+    expect(
+      sdkFloorRecord(
+        { lockfile: 'package-lock.json', lockfileStatus: 'read', below: [] },
+        undefined
+      )
+    ).toBeNull();
+    expect(
+      sdkFloorRecord({ lockfile: 'yarn.lock', lockfileStatus: 'absent', below: [] }, [])
+    ).toBeNull();
   });
 });

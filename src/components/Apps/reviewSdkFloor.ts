@@ -39,6 +39,29 @@ function findings(raw: unknown): Finding[] | null {
 const render = (list: Finding[]) =>
   list.map((f) => `${f.package} ${f.installed} (minimum ${f.minimum})`).join(', ');
 
+const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']);
+
+/**
+ * The bundle line when the server found nothing below: WHY it found nothing, from the
+ * `lockfileStatus` recorded with the reading. A lockfile that was read and is fine, one the bundle
+ * does not carry, and one the server could not read are three different things to a moderator.
+ */
+function noFindingValue(rec: object): string {
+  const lockfile = (rec as { lockfile?: unknown }).lockfile;
+  const status = (rec as { lockfileStatus?: unknown }).lockfileStatus;
+  if (typeof lockfile !== 'string' || !LOCKFILES.has(lockfile)) {
+    return 'no lockfile reading recorded';
+  }
+  if (status === 'read') return `none below the minimum in ${lockfile}`;
+  if (status === 'absent') {
+    return `the bundle carries no ${lockfile} (the lockfile its build command installs from)`;
+  }
+  if (status === 'unreadable') {
+    return `${lockfile} could not be read (unparseable, or the read timed out)`;
+  }
+  return 'no lockfile reading recorded';
+}
+
 /** The lines to show, or `[]` when the request records nothing about its SDK versions. */
 export function reviewSdkFloorLines(fileSummary: unknown): ReviewSdkFloorLine[] {
   if (!fileSummary || typeof fileSummary !== 'object') return [];
@@ -46,14 +69,9 @@ export function reviewSdkFloorLines(fileSummary: unknown): ReviewSdkFloorLine[] 
   if (!rec || typeof rec !== 'object') return [];
   const below = findings((rec as { below?: unknown }).below) ?? [];
   const override = findings((rec as { override?: unknown }).override);
-  const lockfile = (rec as { lockfile?: unknown }).lockfile;
   if (below.length === 0 && !override?.length) return [];
 
-  const bundleValue = below.length
-    ? render(below)
-    : typeof lockfile === 'string'
-    ? `none below the minimum in ${lockfile}`
-    : 'no lockfile the server reads';
+  const bundleValue = below.length ? render(below) : noFindingValue(rec);
   return [
     { key: 'bundle', heading: SDK_FLOOR_BUNDLE_LABEL, value: bundleValue },
     {

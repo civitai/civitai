@@ -1534,9 +1534,10 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
 
   // OUTDATED SDK: the server's own lockfile reading (never throws, time-bounded) and the client's
   // `--allow-outdated-sdk` claim, stored for the moderator under `fileSummary.sdkFloor` (absent
-  // when there is nothing to say). Never refuses. See `sdk-floor.ts`.
+  // when there is nothing to say). Never refuses. The lockfile read is the one the manifest's
+  // `buildCommand` installs from, chosen as the CLI chooses it. See `sdk-floor.ts`.
   const { judgeBundleSdkFloor, sdkFloorRecord, sdkFloorAdvisories } = await import('./sdk-floor');
-  const sdkFloor = await judgeBundleSdkFloor(bundleBuffer);
+  const sdkFloor = await judgeBundleSdkFloor(bundleBuffer, manifest.buildCommand);
   const sdkFloorRecorded = sdkFloorRecord(sdkFloor, sdkFloorOverride);
 
   const publishRequestId = `pubreq_${newUlid()}`;
