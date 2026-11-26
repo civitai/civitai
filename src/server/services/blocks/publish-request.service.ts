@@ -7507,26 +7507,52 @@ async function getPreviousApprovedFiles(
 export async function getPublishRequestDiff(opts: {
   publishRequestId: string;
 }): Promise<BundleLineDiff> {
+  return diffPendingBundle(opts.publishRequestId, await loadPendingBundle(opts.publishRequestId));
+}
+
+/**
+ * The line diff of a pending bundle already loaded with {@link loadPendingBundle}, so a caller
+ * that also reads the files (the review agent chat) extracts the bundle once.
+ */
+export async function diffPendingBundle(
+  publishRequestId: string,
+  pending: PendingBundle
+): Promise<BundleLineDiff> {
+  // A row with neither bundle pointer is unexpected → no diffable artifact.
+  if (!pending.files) return { files: [], truncated: false };
+  // Diff against the version BEFORE this row (exclude self so re-reviewing an
+  // approved row doesn't compare it to itself → an all-empty diff).
+  const previousFiles = await getPreviousApprovedFiles(pending.slug, publishRequestId);
+  return computeBundleLineDiff(pending.files, previousFiles);
+}
+
+/** Whether a bundle file is binary, by the same rule the line diff elides binaries with. */
+export function isBinaryBundleFile(path: string, content: Buffer): boolean {
+  return isBinaryExtension(path) || looksBinary(content);
+}
+
+export type PendingBundle = {
+  slug: string;
+  files: Array<{ path: string; content: Buffer }> | null;
+};
+
+/**
+ * A publish request's pending bundle, extracted (same caps as the diff, `readZipEntryCapped`).
+ * PUSH-ORIGINATED requests carry an empty bundleKey, so they are reconstructed from Forgejo at
+ * the pushed sha (as approveRequest does). `files` is null for a row with neither pointer.
+ */
+export async function loadPendingBundle(publishRequestId: string): Promise<PendingBundle> {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
-    where: { id: opts.publishRequestId },
+    where: { id: publishRequestId },
     select: { bundleKey: true, slug: true, forgejoCommitSha: true },
   });
-  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
-  // PUSH-ORIGINATED requests carry an empty bundleKey — reconstruct from Forgejo
-  // at the pushed sha (as approveRequest / getPublishRequestScreenshots do). A
-  // row with neither pointer is unexpected → no diffable artifact.
-  if (!row.bundleKey && !row.forgejoCommitSha) {
-    return { files: [], truncated: false };
-  }
+  if (!row) throw new Error(`publish request ${publishRequestId} not found`);
+  if (!row.bundleKey && !row.forgejoCommitSha) return { slug: row.slug, files: null };
   const bundleBuffer = row.bundleKey
     ? await fetchBundleBuffer(row.bundleKey)
     : await reconstructBundleFromForgejo(row.slug, row.forgejoCommitSha as string);
-  const currentFiles = await extractBundleFilesFromBuffer(bundleBuffer);
-  // Diff against the version BEFORE this row (exclude self so re-reviewing an
-  // approved row doesn't compare it to itself → an all-empty diff).
-  const previousFiles = await getPreviousApprovedFiles(row.slug, opts.publishRequestId);
-  return computeBundleLineDiff(currentFiles, previousFiles);
+  return { slug: row.slug, files: await extractBundleFilesFromBuffer(bundleBuffer) };
 }
 
 export type RejectRequestParams = {
