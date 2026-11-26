@@ -214,7 +214,7 @@ async function readCachedRewardsMultiplier(
   return undefined;
 }
 
-// Port of the main app's userMultipliersCache lookup (src/server/redis/caches.ts:543-553) and its
+// Port of the main app's userMultipliersCache lookupFn query (src/server/redis/caches.ts) and its
 // fold, both pinned to main's by src/server/redis/__tests__/moderator-user-multipliers.parity.test.ts.
 async function getRewardsMultipliersFromDb(userIds: number[]): Promise<Map<number, number>> {
   const { rows } = await sql<UserMultiplierRow>`

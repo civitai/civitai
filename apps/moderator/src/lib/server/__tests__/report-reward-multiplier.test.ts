@@ -384,7 +384,7 @@ describe('rewardReportReporters multiplier', () => {
 
   it('skips a reporter neither the cache nor Postgres can answer, logs it, and pays the rest', async () => {
     // Paying 1x here is the bug this file pins: a member is underpaid and nothing says so. A
-    // skipped row is left for a retry instead, and the moderator's action still succeeds.
+    // skipped row is left out and logged instead, and the moderator's action still succeeds.
     redisGet.mockImplementation(async (key: string) => {
       if (key.endsWith(':42')) throw new Error('connection reset');
       return cached(2);
