@@ -36,7 +36,7 @@ type MigrationStats = {
   articlesWithUnrecordedKeys: number;
   /** Content urls with no upload in the image store: no row created, deferred on their article (dry run counts them only). */
   uploadsAbsent: number;
-  /** New content urls the image store gave no answer for: linked unchecked, as before. */
+  /** New content urls linked unchecked: the image store, or the issue-record lookup, gave no answer. */
   uploadsUnchecked: number;
   errors: number;
 };
@@ -463,7 +463,7 @@ async function processBatch(
     }
   }
 
-  // Recompute every article in the batch. Articles with images flip to
+  // Recompute every article in the batch whose hold write did not fail. Articles with images flip to
   // Pending (webhook recomputes them back to Scanned once scans complete);
   // text-only articles stay wherever their text-moderation state puts them.
   const recomputeTasks = batchIds
