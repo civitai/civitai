@@ -74,8 +74,11 @@ type Credentials struct {
 	Cookie, Bearer, QueryToken string
 }
 
-// Resolve turns a Mapping into the credentials of a loaded account, or a not_replayable reason.
-func (a *Accounts) Resolve(m Mapping) (Credentials, string) {
+// Resolve turns a Mapping into the credentials of a loaded account for a case whose Host header is
+// host, or a not_replayable reason: the account's session token is the one for host
+// (Account.session), and a case no token of the account serves (no-session) or whose token expired
+// (account-expired) is not replayable, the API key's cases included.
+func (a *Accounts) Resolve(m Mapping, host string) (Credentials, string) {
 	if m.NotReplayable != "" {
 		return Credentials{}, m.NotReplayable
 	}
@@ -90,17 +93,21 @@ func (a *Accounts) Resolve(m Mapping) (Credentials, string) {
 		return Credentials{ViewerUsed: ViewerAnon, Identity: Identity{SearchText: a.searchText}}, ""
 	}
 	acc := a.byRole[role]
-	switch {
-	case acc == nil:
+	if acc == nil {
 		return Credentials{}, "no-account:" + role
-	case acc.Expired:
+	}
+	s := acc.session(host)
+	switch {
+	case s == nil:
+		return Credentials{}, "no-session:" + role
+	case s.expired:
 		return Credentials{}, "account-expired:" + role
 	}
 	c := Credentials{ViewerUsed: role, Identity: Identity{
 		UserID: acc.UserID, Username: acc.Username, CollectionID: acc.CollectionID, SearchText: acc.SearchText,
 	}}
 	if m.Cookie {
-		c.Cookie = a.cookie + "=" + acc.token
+		c.Cookie = a.cookie + "=" + s.token
 	}
 	if m.APIKey {
 		c.ViewerUsed = "apikey:" + role
