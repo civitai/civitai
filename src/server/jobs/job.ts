@@ -3,7 +3,6 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { jobDurationHistogram, jobErrorsCounter, seedJobMetrics } from '~/server/prom/client';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
-import { applySourceMaps } from '~/server/utils/errorHandling';
 
 export type Job = {
   name: string;
@@ -133,11 +132,11 @@ export function createJob(
         ? runWithLongTaskLabel(`job:${name}`, () => fn(jobContext))
         : fn(jobContext);
       const result = started
-        .catch(async (e) => {
+        .catch((e) => {
           jobErrorsCounter.inc({ job: name });
           const error = e instanceof Error ? e : undefined;
           const message = typeof e === 'string' ? e : error?.message;
-          const stack = error?.stack ? await applySourceMaps(error.stack) : undefined;
+          const stack = error?.stack;
           logToAxiom({
             type: 'job-error',
             name,

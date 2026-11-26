@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
@@ -43,6 +44,7 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -50,7 +52,8 @@ beforeAll(async () => {
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "tosViolation" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, "modelVersionId" int,
@@ -58,11 +61,14 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "userId" int DEFAULT ${OWNER}, status text,
-      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int
+      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int,
+      availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,
-      availability "Availability" DEFAULT 'Public', mode "ModelModifier"
+      availability "Availability" DEFAULT 'Public', mode "ModelModifier",
+      minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false,
+      "gallerySettings" jsonb
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, index int DEFAULT 0, status text, "publishedAt" timestamp,
@@ -73,6 +79,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
@@ -102,6 +109,11 @@ beforeAll(async () => {
     INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
       (301, 311, 'Published', now()), (302, 312, 'Draft', null), (303, null, 'Draft', null);
     INSERT INTO "ImageConnection" VALUES (313, 303, 'Article');
+    -- 308 and 309 follow the article availability rule: one by its cover, one by a content image.
+    INSERT INTO "Image" (id) VALUES (318), (319);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability) VALUES
+      (308, 318, 'Published', now(), 'Private'), (309, null, 'Published', now(), 'Private');
+    INSERT INTO "ImageConnection" VALUES (319, 309, 'Article');
 
     -- Models: 401 public, 402 Private, 403 draft. One version and owner post each.
     INSERT INTO "Model" (id, status, availability) VALUES
@@ -258,6 +270,72 @@ beforeAll(async () => {
     INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
       (1621, 1611, now() - interval '1 day'), (1622, 1612, now() - interval '1 day');
     INSERT INTO "Image" (id, "postId") VALUES (1631, 1621), (1632, 1622);
+    -- Held models, each leading its owner post with an image above its gallery level:
+    -- 2001 minor (PG stored), 2101 SFW-only with PG stored, so its PG-13 lead is above it too.
+    INSERT INTO "Model" (id, status, minor, "sfwOnly", "gallerySettings") VALUES
+      (2001, 'Published', true, false, '{"level": 1}'),
+      (2101, 'Published', false, true, '{"level": 1}');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (2011, 2001, 'Published'), (2111, 2101, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (2021, 2011, now() - interval '1 day'), (2121, 2111, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
+      (2031, 2021, 0, ${NsfwLevel.X}), (2032, 2021, 1, ${NsfwLevel.PG}),
+      (2131, 2121, 0, ${NsfwLevel.PG13}), (2132, 2121, 1, ${NsfwLevel.PG});
+    -- Controls: unflagged model 2201 leads with an X image; SFW-only model 2301 has no stored
+    -- level, so its whole limit applies; minor model 2401 stores X, outside its limit, so its
+    -- whole limit applies; minor model 2501 stores a non-numeric level.
+    INSERT INTO "Model" (id, status, minor, "sfwOnly", "gallerySettings") VALUES
+      (2201, 'Published', false, false, '{"level": 31}'),
+      (2301, 'Published', false, true, NULL),
+      (2401, 'Published', true, false, '{"level": ${NsfwLevel.X}}'),
+      (2501, 'Published', true, false, '{"level": "PG"}');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (2211, 2201, 'Published'), (2311, 2301, 'Published'), (2411, 2401, 'Published'),
+      (2511, 2501, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (2221, 2211, now() - interval '1 day'), (2321, 2311, now() - interval '1 day'),
+      (2421, 2411, now() - interval '1 day'), (2521, 2511, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
+      (2231, 2221, 0, ${NsfwLevel.X}),
+      (2331, 2321, 0, ${NsfwLevel.R}), (2332, 2321, 1, ${NsfwLevel.PG13}),
+      (2431, 2421, 0, ${NsfwLevel.X}), (2432, 2421, 1, ${NsfwLevel.PG13}),
+      (2531, 2521, 0, ${NsfwLevel.X}), (2532, 2521, 1, ${NsfwLevel.PG13});
+    -- Public bounty 2701 links the minor model's X image and its PG one; model 2801 stores a
+    -- level beyond int range.
+    INSERT INTO "Bounty" VALUES (2701, ${OWNER}, 'Public');
+    INSERT INTO "ImageConnection" VALUES (2031, 2701, 'Bounty'), (2032, 2701, 'Bounty');
+    INSERT INTO "Model" (id, status, minor, "gallerySettings") VALUES
+      (2801, 'Published', true, '{"level": 1e40}');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (2811, 2801, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES (2821, 2811, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
+      (2831, 2821, 0, ${NsfwLevel.X}), (2832, 2821, 1, ${NsfwLevel.PG13});
+    -- Article 2901's cover is the minor model's X image; article 2902's the unflagged model's.
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
+      (2901, 2031, 'Published', now()), (2902, 2231, 'Published', now());
+    -- Article 2903's cover is the taken-down model's image.
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (2903, 1631, 'Published', now());
+    -- Articles 2904-2906: a blocked cover, a ToS-violating cover, and an R cover on a restricted
+    -- base model, none on a post.
+    INSERT INTO "Image" (id, "blockedFor", "tosViolation", "nsfwLevel", "modelRestricted") VALUES
+      (2914, 'tos', false, 1, false), (2915, NULL, true, 1, false), (2916, NULL, false, ${NsfwLevel.R}, true);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
+      (2904, 2914, 'Published', now()), (2905, 2915, 'Published', now()), (2906, 2916, 'Published', now());
+    -- An X image on published post 201, which is on no model.
+    INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (2631, 201, ${NsfwLevel.X});
+    -- Public model 1101 whose first image is minor-flagged and rated R; model 1102 whose only
+    -- image is minor-flagged and rated X. Article 1141 and bounty 13 lead with one too.
+    INSERT INTO "Model" (id, status) VALUES (1101, 'Published'), (1102, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1111, 1101, 'Published'), (1112, 1102, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (1121, 1111, now() - interval '1 day'), (1122, 1112, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel", minor) VALUES
+      (1131, 1121, 0, 4, true), (1132, 1121, 1, 4, false), (1136, 1122, 0, 8, true);
+    INSERT INTO "Image" (id, "nsfwLevel", minor) VALUES (1133, 4, true), (1134, 4, true), (1135, 1, NULL);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1141, 1133, 'Published', now());
+    INSERT INTO "Bounty" VALUES (13, ${OWNER}, 'Public');
+    INSERT INTO "ImageConnection" VALUES (1134, 13, 'Bounty'), (1135, 13, 'Bounty');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -275,6 +353,8 @@ const hidden: [string, string, number, number][] = [
   ["a taken-down model's version", 'ModelVersion', 1611, 1631],
   ["a taken-down model's image", 'Image', 1631, 1631],
   ["a post on a taken-down model's version", 'Post', 1621, 1631],
+  ["an article whose cover is a taken-down model's image", 'Article', 2903, 1631],
+  ['an article whose cover violates the ToS', 'Article', 2905, 2915],
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
   ['an article whose cover is flagged', 'Article', 1401, 1411],
@@ -289,6 +369,8 @@ const hidden: [string, string, number, number][] = [
   ['a Private post', 'Post', 204, 214],
   ['a draft article', 'Article', 302, 312],
   ['a draft article with content images only', 'Article', 303, 313],
+  ['an article following the availability rule, by its cover', 'Article', 308, 318],
+  ['an article following the availability rule, by a content image', 'Article', 309, 319],
   ['a Private model', 'Model', 402, 432],
   ['a draft model', 'Model', 403, 433],
   ['a version of a Private model', 'ModelVersion', 412, 432],
@@ -357,6 +439,27 @@ const placeholderOwned: [string, string, number, number, number][] = [
 ];
 
 describe('getEntityCoverImage respects the parent entity visibility', () => {
+  describe('an article whose cover is blocked', () => {
+    it.each(['anonymous', 'stranger', 'owner'] as const)('has no cover for the %s', async (who) => {
+      expect(await coverOf('Article', 2904, viewers[who])).toBeNull();
+    });
+    it('keeps its cover for a moderator', async () => {
+      expect(await coverOf('Article', 2904, viewers.moderator)).toBe(2914);
+    });
+  });
+
+  describe('a blocked image as its own cover', () => {
+    it.each(['anonymous', 'stranger', 'owner'] as const)('has no cover for the %s', async (who) => {
+      expect(await coverOf('Image', 2914, viewers[who])).toBeNull();
+    });
+    it('keeps its cover for a moderator', async () => {
+      expect(await coverOf('Image', 2914, viewers.moderator)).toBe(2914);
+    });
+    it("CONTROL: an unblocked image of the owner's is its own cover for them", async () => {
+      expect(await coverOf('Image', 1135, viewers.owner)).toBe(1135);
+    });
+  });
+
   describe.each(hidden)('%s', (_, entityType, entityId, imageId) => {
     it.each(['anonymous', 'stranger'] as const)('has no cover for a %s viewer', async (who) => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBeNull();
@@ -429,6 +532,108 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     }
   );
 
+  // A held first image falls back to the next one within the gallery level; the owner and
+  // moderators see the first.
+  describe.each([
+    ['a minor model', 'Model', 2001, 2031, 2032],
+    ["a minor model's version", 'ModelVersion', 2011, 2031, 2032],
+    ["a post on a minor model's version", 'Post', 2021, 2031, 2032],
+    ['an SFW-only model held to PG', 'Model', 2101, 2131, 2132],
+  ] as const)('%s', (_, entityType, entityId, heldImage, withinImage) => {
+    it.each(['anonymous', 'stranger'] as const)(
+      'falls back to the image within its gallery level for a %s viewer',
+      async (who) => {
+        expect(await coverOf(entityType, entityId, viewers[who])).toBe(withinImage);
+      }
+    );
+    it.each(['owner', 'moderator'] as const)('keeps the first image for the %s', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(heldImage);
+    });
+  });
+
+  describe.each([
+    ['an unflagged model', 'Model', 2201, 2231],
+    ["an unflagged model's version", 'ModelVersion', 2211, 2231],
+    ["a post on an unflagged model's version", 'Post', 2221, 2231],
+    ["an unflagged model's image", 'Image', 2231, 2231],
+    ['an image on a post on no model', 'Image', 2631, 2631],
+    ['an SFW-only model with no stored level', 'Model', 2301, 2332],
+    ['a minor model whose stored level is outside its limit', 'Model', 2401, 2432],
+    ['a minor model whose stored level is not a number', 'Model', 2501, 2532],
+    ['a minor model whose stored level is beyond int range', 'Model', 2801, 2832],
+    ["a bounty linking a minor model's image above its gallery level", 'Bounty', 2701, 2032],
+    ["an article whose cover is an unflagged model's image", 'Article', 2902, 2231],
+  ] as const)('%s', (_, entityType, entityId, imageId) => {
+    it.each(['anonymous', 'stranger'] as const)(
+      'has the cover %s viewers are served',
+      async (who) => {
+        expect(await coverOf(entityType, entityId, viewers[who])).toBe(imageId);
+      }
+    );
+  });
+
+  it.each(['anonymous', 'stranger'] as const)(
+    "has no cover for a minor model's image above its gallery level, for a %s viewer",
+    async (who) => {
+      expect(await coverOf('Image', 2031, viewers[who])).toBeNull();
+      expect(await coverOf('Image', 2032, viewers[who])).toBe(2032);
+    }
+  );
+
+  it.each(['owner', 'moderator'] as const)(
+    "keeps a minor model's image above its gallery level for the %s",
+    async (who) => {
+      expect(await coverOf('Image', 2031, viewers[who])).toBe(2031);
+    }
+  );
+
+  it.each(['anonymous', 'stranger'] as const)(
+    "has no cover for an article whose cover is a minor model's image above its gallery level, for a %s viewer",
+    async (who) => {
+      expect(await coverOf('Article', 2901, viewers[who])).toBeNull();
+    }
+  );
+
+  it.each(['owner', 'moderator'] as const)(
+    "keeps an article cover above its model's gallery level for the %s",
+    async (who) => {
+      expect(await coverOf('Article', 2901, viewers[who])).toBe(2031);
+    }
+  );
+
+  // Its uploader keeps it, as in 'keeps the restricted cover for its uploader' below.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'has no cover for an article whose R cover is on a restricted base model, for the %s',
+    async (who) => {
+      expect(await coverOf('Article', 2906, viewers[who])).toBeNull();
+    }
+  );
+
+  // An unrated image is its moderators' alone: never a cover for anyone else, owner included.
+  describe.each(visible)('%s whose cover image is unrated', (_, entityType, entityId, imageId) => {
+    let level: number;
+    beforeEach(async () => {
+      const { rows } = await db.query<{ nsfwLevel: number }>(
+        `SELECT "nsfwLevel" FROM "Image" WHERE id = $1`,
+        [imageId]
+      );
+      level = rows[0].nsfwLevel;
+      await db.query(`UPDATE "Image" SET "nsfwLevel" = 0 WHERE id = $1`, [imageId]);
+    });
+    afterEach(async () => {
+      await db.query(`UPDATE "Image" SET "nsfwLevel" = $2 WHERE id = $1`, [imageId, level]);
+    });
+    it.each(['anonymous', 'stranger', 'owner'] as const)(
+      'is not the cover for the %s',
+      async (who) => {
+        expect(await coverOf(entityType, entityId, viewers[who])).not.toBe(imageId);
+      }
+    );
+    it('is still the cover for a moderator', async () => {
+      expect(await coverOf(entityType, entityId, viewers.moderator)).toBe(imageId);
+    });
+  });
+
   it('treats a missing viewer as anonymous', async () => {
     const covers = await getEntityCoverImage({
       entities: [
@@ -437,5 +642,235 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       ],
     } as Parameters<typeof getEntityCoverImage>[0]);
     expect(covers.map((c) => c.id)).toEqual([102]);
+  });
+});
+
+describe('getEntityCoverImage withholds mature images on a restricted base model', () => {
+  beforeAll(async () => {
+    // Article 1701's cover is restricted mature, article 1702's cover restricted but SFW. Public
+    // bounty 1721 has a restricted mature image ahead of a clean one.
+    await db.exec(`
+      INSERT INTO "Image" (id, "nsfwLevel", "modelRestricted") VALUES
+        (1711, 8, true), (1712, 1, true), (1731, 16, true), (1732, 8, false);
+      INSERT INTO "Post" (id, "publishedAt") VALUES (1751, now() - interval '1 day');
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", "modelRestricted") VALUES (1741, 1751, 4, true);
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
+        (1701, 1711, 'Published', now()), (1702, 1712, 'Published', now());
+      INSERT INTO "Bounty" VALUES (1721, ${OWNER}, 'Public');
+      INSERT INTO "ImageConnection" VALUES (1731, 1721, 'Bounty'), (1732, 1721, 'Bounty');
+    `);
+  });
+
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'gives a %s viewer no restricted cover',
+    async (who) => {
+      expect(await coverOf('Article', 1701, viewers[who])).toBeNull();
+      expect(await coverOf('Bounty', 1721, viewers[who])).toBe(1732);
+    }
+  );
+
+  it.each(['stranger', 'moderator'] as const)(
+    'gives a %s no restricted Image-entity cover',
+    async (who) => {
+      expect(await coverOf('Image', 1741, viewers[who])).toBeNull();
+    }
+  );
+
+  it('keeps the restricted cover for its uploader', async () => {
+    expect(await coverOf('Article', 1701, viewers.owner)).toBe(1711);
+    expect(await coverOf('Image', 1741, viewers.owner)).toBe(1741);
+    expect(await coverOf('Bounty', 1721, viewers.owner)).toBe(1731);
+  });
+
+  it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+    'keeps a SFW cover on a restricted base model for a %s viewer',
+    async (who) => {
+      expect(await coverOf('Article', 1702, viewers[who])).toBe(1712);
+    }
+  );
+});
+
+describe('a minor-flagged cover rated R or above', () => {
+  // [label, entityType, entityId, cover for anonymous/stranger, cover for owner/moderator]
+  const cases: [string, string, number, number | null, number][] = [
+    ["a model's first image", 'Model', 1101, 1132, 1131],
+    ["a version's first image", 'ModelVersion', 1111, 1132, 1131],
+    ["a post's first image", 'Post', 1121, 1132, 1131],
+    ["a model's only image", 'Model', 1102, null, 1136],
+    ["a version's only image", 'ModelVersion', 1112, null, 1136],
+    ["an article's cover", 'Article', 1141, null, 1133],
+    ["a bounty's first connected image", 'Bounty', 13, 1135, 1134],
+    ['an image asked for by id', 'Image', 1131, null, 1131],
+  ];
+
+  describe.each(cases)('as %s', (_, entityType, entityId, othersSee, ownerSees) => {
+    it.each(['anonymous', 'stranger'] as const)('is passed over for a %s viewer', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(othersSee);
+    });
+
+    it.each(['owner', 'moderator'] as const)('is kept for the %s', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(ownerSees);
+    });
+  });
+});
+
+describe('a blocked or ToS-violating bounty image', () => {
+  beforeAll(async () => {
+    // Bounty 3001 leads with a blocked image, then a clean one; bounty 3002's only image violates
+    // the ToS. Entry 3003, on public bounty 2, leads with a blocked image, then a clean one. Bounty
+    // 3004 leads with an image held for its metadata, then a clean one.
+    await db.exec(`
+      INSERT INTO "Image" (id, "blockedFor", "tosViolation") VALUES
+        (3011, 'tos', false), (3012, NULL, false), (3013, NULL, true),
+        (3014, 'tos', false), (3015, NULL, false), (3016, 'AiNotVerified', false),
+        (3017, NULL, false);
+      INSERT INTO "Bounty" VALUES (3001, ${OWNER}, 'Public'), (3002, ${OWNER}, 'Public'),
+        (3004, ${OWNER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (3003, 2, ${OWNER});
+      INSERT INTO "ImageConnection" VALUES
+        (3011, 3001, 'Bounty'), (3012, 3001, 'Bounty'), (3013, 3002, 'Bounty'),
+        (3014, 3003, 'BountyEntry'), (3015, 3003, 'BountyEntry'), (3016, 3004, 'Bounty'),
+        (3017, 3004, 'Bounty');
+    `);
+  });
+
+  // [label, entityType, entityId, cover for anonymous/stranger, for the owner, for a moderator]
+  // The owner column split from the moderator one in civitai/civitai#10505: a block refuses the owner too.
+  const cases: [string, string, number, number | null, number, number][] = [
+    ["a bounty's first connected image, blocked", 'Bounty', 3001, 3012, 3012, 3011],
+    ["a bounty's only image, violating the ToS", 'Bounty', 3002, null, 3013, 3013],
+    ["an entry's first connected image, blocked", 'BountyEntry', 3003, 3015, 3015, 3014],
+    ["a bounty's first connected image, held for its metadata", 'Bounty', 3004, 3017, 3016, 3016],
+  ];
+
+  describe.each(cases)('as %s', (_, entityType, entityId, othersSee, ownerSees, modSees) => {
+    it.each(['anonymous', 'stranger'] as const)('is passed over for a %s viewer', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(othersSee);
+    });
+
+    it('is kept for the owner only where the block leaves them the media', async () => {
+      expect(await coverOf(entityType, entityId, viewers.owner)).toBe(ownerSees);
+    });
+
+    it('is kept for a moderator', async () => {
+      expect(await coverOf(entityType, entityId, viewers.moderator)).toBe(modSees);
+    });
+  });
+});
+
+describe('a cover at the Blocked level with no block recorded', () => {
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "blockedFor", "nsfwLevel") VALUES (3022, NULL, ${NsfwLevel.Blocked});
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3032, 3022, 'Published', now());
+    `);
+  });
+
+  it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
+    expect(await coverOf('Article', 3032, viewers[who])).toBeNull();
+  });
+});
+
+describe("a bounty's image listed on a report", () => {
+  // Bounty 3101's images: 3111 listed (as an object entry) and owned by OWNER, 3112 unlisted.
+  // Entry 3102's images: 3113 listed (as a string entry) and owned by OWNER, 3114 unlisted.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Bounty" VALUES (3101, ${OWNER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (3102, 3101, 50);
+      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113), (3114);
+      INSERT INTO "ImageConnection" VALUES
+        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'),
+        (3113, 3102, 'BountyEntry'), (3114, 3102, 'BountyEntry');
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3111}, "3113"]');
+    `);
+  });
+
+  const coverFor = async (
+    viewer: Viewer,
+    seesReportListed?: boolean,
+    entity: { entityType: 'Bounty' | 'BountyEntry'; entityId: number } = {
+      entityType: 'Bounty',
+      entityId: 3101,
+    }
+  ) => {
+    const covers = await getEntityCoverImage({
+      // BountyEntry is outside the request schema's entity types; the query serves it all the same.
+      entities: [entity] as Parameters<typeof getEntityCoverImage>[0]['entities'],
+      viewer,
+      seesReportListed,
+    });
+    return covers[0]?.id ?? null;
+  };
+
+  // The bounty search index drops these images; a moderator needs the held-media grant too.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'is passed over for the %s',
+    async (who) => {
+      expect(await coverFor(viewers[who])).toBe(3112);
+    }
+  );
+
+  it('is kept for its uploader', async () => {
+    expect(await coverFor(viewers.owner)).toBe(3111);
+  });
+
+  it('is kept for a viewer who sees report-listed images', async () => {
+    expect(await coverFor(viewers.moderator, true)).toBe(3111);
+  });
+
+  // Entries follow their bounty's rule (#10483), so an entry's listed image is passed over too.
+  const entry = { entityType: 'BountyEntry', entityId: 3102 } as const;
+
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    "passes over an entry's listed image for the %s",
+    async (who) => {
+      expect(await coverFor(viewers[who], undefined, entry)).toBe(3114);
+    }
+  );
+
+  it("keeps an entry's listed image for its uploader", async () => {
+    expect(await coverFor(viewers.owner, undefined, entry)).toBe(3113);
+  });
+
+  it("keeps an entry's listed image for a viewer who sees report-listed images", async () => {
+    expect(await coverFor(viewers.moderator, true, entry)).toBe(3113);
+  });
+});
+
+describe("an article's cover listed on a report", () => {
+  // Article 3201's cover 3211 is listed and owned by OWNER; 3212, a content image, is not.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id) VALUES (3211), (3212);
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3201, 3211, 'Published', now());
+      INSERT INTO "ImageConnection" VALUES (3212, 3201, 'Article');
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3211}]');
+    `);
+  });
+
+  const articleCover = async (viewer: Viewer, seesReportListed?: boolean) => {
+    const covers = await getEntityCoverImage({
+      entities: [{ entityType: 'Article', entityId: 3201 }],
+      viewer,
+      seesReportListed,
+    });
+    return covers[0]?.id ?? null;
+  };
+
+  // Articles follow the bounty rule (#10485): the next image stands in for the listed cover.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'is passed over for the %s',
+    async (who) => {
+      expect(await articleCover(viewers[who])).toBe(3212);
+    }
+  );
+
+  it('is kept for its uploader', async () => {
+    expect(await articleCover(viewers.owner)).toBe(3211);
+  });
+
+  it('is kept for a viewer who sees report-listed images', async () => {
+    expect(await articleCover(viewers.moderator, true)).toBe(3211);
   });
 });

@@ -9,6 +9,24 @@ import {
   readSfwModelNamesViaPrisma,
 } from '~/server/services/hot-reads-7.reads';
 import { logToAxiom } from '~/server/logging/client';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
+import {
+  activeComFaceIntentPromptId,
+  activeTextScanPromptId,
+  COM_FACE_INTENT_LOCK_SOURCE,
+  type ComFaceIntentListing,
+  comFaceIntentFields,
+  comFaceIntentTextHash,
+  getOwnTriggerWords,
+  lockForComFaceIntent,
+  readComFaceIntentModel,
+  recordComFaceIntent,
+  reusableComFaceIntent,
+  suppressComFaceIntentRelock,
+} from '~/server/services/model-com-face-intent.service';
+
+export { getOwnTriggerWords };
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
 import type { TextScanField } from '~/server/services/text-scan/types';
@@ -17,12 +35,16 @@ import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants'
 import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
   COM_FACE_REFUSED_MESSAGE,
 } from '~/shared/utils/model-sfw-face';
+import { passedSfwFaceCheck } from '~/server/services/model-sfw-face-stamp';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
 const SFW_FACE_CHECK_WAIT_SECONDS = 10;
+/** A dispute is judged by a job, with no owner waiting on the answer. */
+const DISPUTE_CHECK_WAIT_SECONDS = 60;
 
 /**
  * The .com titles of the given models that have a face on, for a viewer `showsSfwFace` admits.
@@ -38,7 +60,7 @@ export async function getSfwModelNames(modelIds: number[], showSfwFace: boolean)
 }
 
 export type SfwFaceVerdict =
-  | { status: 'clean' }
+  | { status: 'clean'; promptId?: number }
   | { status: 'flagged'; level: string; reason: string }
   | { status: 'unavailable' };
 
@@ -49,7 +71,7 @@ async function checkFields(fields: TextScanField[]): Promise<SfwFaceVerdict> {
   try {
     const preview = await previewTextScanNsfw({ fields, waitSeconds: SFW_FACE_CHECK_WAIT_SECONDS });
     if (preview.status !== 'ok') return { status: 'unavailable' };
-    if (preview.level <= NsfwLevel.PG13) return { status: 'clean' };
+    if (preview.level <= NsfwLevel.PG13) return { status: 'clean', promptId: preview.promptId };
     return {
       status: 'flagged',
       level: browsingLevelLabels[preview.level as keyof typeof browsingLevelLabels] ?? 'mature',
@@ -65,6 +87,9 @@ async function checkFields(fields: TextScanField[]): Promise<SfwFaceVerdict> {
   }
 }
 
+/** The id of the nsfw prompt version the face check runs on now; undefined when it cannot be read. */
+export const activeSfwFacePromptId = () => activeTextScanPromptId('nsfw');
+
 /**
  * Checks the .com face for content that would be mature on civitai.com. `versions` covers the
  * version names and trigger words of the caller's own model, which show on .com unchanged.
@@ -74,13 +99,20 @@ export async function checkSfwFace({
   sfwDescription,
   modelId,
   userId,
+  db = dbRead,
+  versionFields: readVersionFields,
 }: {
   sfwName?: string | null;
   sfwDescription?: string | null;
   modelId?: number;
   userId: number;
+  /** The primary, for a caller reading an edit that has just committed. */
+  db?: Pick<typeof dbRead, 'modelVersion'>;
+  /** The version text, already read by a caller that also stamps what it checked. */
+  versionFields?: TextScanField[];
 }) {
-  const versionFields = modelId ? await getOwnVersionFields({ modelId, userId }) : [];
+  const versionFields =
+    readVersionFields ?? (modelId ? await getOwnVersionFields({ modelId, userId, db }) : []);
   const description = removeTags(sfwDescription ?? '').trim();
 
   const [name, desc, versions] = await Promise.all([
@@ -96,8 +128,17 @@ export async function checkSfwFace({
   return verdicts;
 }
 
-async function getOwnVersionFields({ modelId, userId }: { modelId: number; userId: number }) {
-  const versions = await dbRead.modelVersion.findMany({
+/** The version names and trigger words of the caller's own model, as the face check reads them. */
+export async function getOwnVersionFields({
+  modelId,
+  userId,
+  db,
+}: {
+  modelId: number;
+  userId: number;
+  db: Pick<typeof dbRead, 'modelVersion'>;
+}) {
+  const versions = await db.modelVersion.findMany({
     where: { modelId, model: { userId } },
     select: { name: true, trainedWords: true },
   });
@@ -115,44 +156,35 @@ const fieldLabels: Record<SfwFaceCheckField, string> = {
   versions: 'version names and trigger words',
 };
 
-export { COM_FACE_CHECK_UNAVAILABLE_MESSAGE, COM_FACE_REFUSED_MESSAGE };
+export {
+  COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
+  COM_FACE_REFUSED_MESSAGE,
+};
 
 /** The intent check's verdict. `reason` is for moderators and logs only; never send it to the owner. */
 export type ComFaceIntentVerdict =
-  | { status: 'allowed' | 'unavailable' }
-  | { status: 'detected'; reason?: string };
+  | { status: 'allowed' | 'unavailable'; promptId?: number }
+  | { status: 'detected'; reason?: string; promptId?: number };
 
 /**
  * The intent check on a model's own listing: its .red title, description and trigger words.
  * `unavailable` when no verdict came back.
  */
-export async function checkComFaceIntent(args: {
-  name: string;
-  description?: string | null;
-  triggerWords: string[];
-}): Promise<'allowed' | 'detected' | 'unavailable'> {
+export async function checkComFaceIntent(args: ComFaceIntentListing) {
   return (await checkComFaceIntentVerdict(args)).status;
 }
 
-/** {@link checkComFaceIntent}, keeping the classifier's reason for a detection. */
+/** {@link checkComFaceIntent}, keeping the classifier's reason for a detection. `thinking` asks for
+ *  the slower pass a dispute gets. */
 export async function checkComFaceIntentVerdict({
-  name,
-  description,
-  triggerWords,
-}: {
-  name: string;
-  description?: string | null;
-  triggerWords: string[];
-}): Promise<ComFaceIntentVerdict> {
-  const text = removeTags(description ?? '').trim();
-  const fields: TextScanField[] = [
-    { heading: 'Name', text: name },
-    ...(text ? [{ heading: 'Description', text }] : []),
-    ...(triggerWords.length ? [{ heading: 'Trained words', text: triggerWords.join(', ') }] : []),
-  ];
+  thinking,
+  ...listing
+}: ComFaceIntentListing & { thinking?: boolean }): Promise<ComFaceIntentVerdict> {
   const verdict = await previewComFaceIntent({
-    fields,
-    waitSeconds: SFW_FACE_CHECK_WAIT_SECONDS,
+    fields: comFaceIntentFields(listing),
+    waitSeconds: thinking ? DISPUTE_CHECK_WAIT_SECONDS : SFW_FACE_CHECK_WAIT_SECONDS,
+    thinking,
   }).catch((error) => {
     logToAxiom({
       type: 'error',
@@ -162,38 +194,134 @@ export async function checkComFaceIntentVerdict({
     return { status: 'unavailable' as const };
   });
   if (verdict.status !== 'ok') return { status: 'unavailable' };
-  return verdict.output.detected
-    ? { status: 'detected', reason: verdict.output.reason }
-    : { status: 'allowed' };
+  const { promptId } = verdict;
+  if (verdict.output.detected)
+    return { status: 'detected', reason: verdict.output.reason, promptId };
+  // Counted per prompt version, so a publish that shifts how much is allowed shows up.
+  logToAxiom({
+    type: 'info',
+    name: 'model-com-face-intent',
+    message: 'allowed',
+    payload: { promptId },
+  });
+  return { status: 'allowed', promptId };
+}
+
+export type ComFaceIntentWrites = {
+  record: typeof recordComFaceIntent;
+  lock: typeof lockForComFaceIntent;
+  suppress: typeof suppressComFaceIntentRelock;
+};
+
+/**
+ * The owner's verdict on this listing text: the stored one while the text is unchanged, else a fresh
+ * check, stored only when it read the model's stored listing (a draft is judged, never stored, so it
+ * cannot replace a ruled verdict). A detection of the model's own stored listing on a mature model locks its nsfw
+ * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
+ * first made while the model was not mature, unless a moderator has ruled on its rating since.
+ * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
+ * owns the model. `writes` replaces how the verdict is stored, the lock added and a ruling's
+ * relock suppression kept.
+ */
+export async function resolveComFaceIntent(
+  { modelId, userId, ...listing }: ComFaceIntentListing & { modelId?: number; userId?: number },
+  writes: ComFaceIntentWrites = {
+    record: recordComFaceIntent,
+    lock: lockForComFaceIntent,
+    suppress: suppressComFaceIntentRelock,
+  }
+): Promise<ComFaceIntentVerdict & { disputable?: boolean }> {
+  const found = modelId && userId ? await readComFaceIntentModel(modelId) : null;
+  const model = found && found.userId === userId ? found : null;
+  const textHash = comFaceIntentTextHash(listing);
+  const stored = model
+    ? reusableComFaceIntent(model.meta, textHash, await activeComFaceIntentPromptId())
+    : null;
+  const storedHash = model
+    ? comFaceIntentTextHash({
+        name: model.name,
+        description: model.description,
+        triggerWords: listing.triggerWords,
+      })
+    : null;
+
+  let verdict: ComFaceIntentVerdict;
+  if (stored)
+    verdict = stored.detected
+      ? { status: 'detected', reason: stored.reason, promptId: stored.promptId }
+      : { status: 'allowed', promptId: stored.promptId };
+  else {
+    verdict = await checkComFaceIntentVerdict(listing);
+    if (!model || verdict.status === 'unavailable' || storedHash !== textHash) return verdict;
+    await writes.record(model.id, {
+      detected: verdict.status === 'detected',
+      textHash,
+      ...(verdict.status === 'detected' && verdict.reason && { reason: verdict.reason }),
+      ...(verdict.promptId && { promptId: verdict.promptId }),
+    });
+  }
+  if (!model || verdict.status !== 'detected') return verdict;
+
+  const meta = model.meta as ModelMeta | null;
+  const intentLocked =
+    !!model.lockedProperties?.includes('nsfw') &&
+    meta?.systemNsfwLock?.source === COM_FACE_INTENT_LOCK_SOURCE;
+  if (intentLocked) return { ...verdict, disputable: true };
+
+  // Locked only for the text the model lists now, never for an unsaved edit or a draft.
+  if (storedHash !== textHash || !model.nsfw) return verdict;
+  // A moderator's ruling since this text was last judged (an unlock from the model form, say) is not
+  // undone: neither by the stored detection nor by a fresh one under a new prompt version.
+  const earlier = meta?.comFaceIntent;
+  const recordedAt = earlier?.textHash === textHash && earlier.at ? new Date(earlier.at) : null;
+  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) {
+    await writes.suppress(model.id, textHash);
+    return verdict;
+  }
+
+  const locked = await writes.lock(model.id, textHash).catch((error: Error) => {
+    logToAxiom({
+      type: 'error',
+      name: 'model-com-face-intent',
+      message: 'lock not added',
+      modelId: model.id,
+      error: error.message,
+    });
+    return false;
+  });
+  // Counted per prompt version beside 'allowed'; ids and the reason stay in the database.
+  if (locked)
+    logToAxiom({
+      type: 'info',
+      name: 'model-com-face-intent',
+      message: 'locked',
+      payload: { promptId: verdict.promptId },
+    });
+  return { ...verdict, disputable: locked };
 }
 
 /**
  * Refuses a .com face for a model whose own listing the intent check flags. Fails closed: no
- * verdict is a refusal. The check also re-runs after a listing edit on a model that keeps a face
- * (`recheckComFace`).
+ * verdict is a refusal. The refusal offers the dispute only while there is a lock to dispute. The
+ * check also re-runs after a listing edit on a model that keeps a face (`recheckComFace`).
  */
-export async function assertComFaceAllowed({
-  modelId,
-  ...args
-}: {
-  name: string;
-  description?: string | null;
-  triggerWords: string[];
-  modelId?: number;
-}) {
-  const verdict = await checkComFaceIntentVerdict(args);
+export async function assertComFaceAllowed(
+  args: ComFaceIntentListing & { modelId?: number; userId?: number }
+) {
+  const verdict = await resolveComFaceIntent(args);
   if (verdict.status === 'unavailable')
     throw throwBadRequestError(COM_FACE_CHECK_UNAVAILABLE_MESSAGE);
   if (verdict.status === 'detected') {
-    // For moderators: the owner is told which fields were read, never why.
+    // Counted per prompt version; ids and the reason stay in the database (meta.comFaceIntent).
     logToAxiom({
       type: 'info',
       name: 'model-com-face-intent',
       message: 'refused at save',
-      modelId,
-      reason: verdict.reason,
-    }).catch(() => undefined);
-    throw throwBadRequestError(COM_FACE_REFUSED_MESSAGE);
+      payload: { promptId: verdict.promptId },
+    });
+    throw throwBadRequestError(
+      verdict.disputable ? COM_FACE_REFUSED_MESSAGE : COM_FACE_REFUSED_EDIT_MESSAGE
+    );
   }
 }
 
@@ -217,14 +345,22 @@ export async function assertSfwFaceSafe({
   userId: number;
 }) {
   // Both checks wait on the orchestrator, so they run together; the listing refusal still wins.
-  const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
+  const [triggerWords, versionFields] = modelId
+    ? await Promise.all([
+        getOwnTriggerWords({ modelId, userId }),
+        getOwnVersionFields({ modelId, userId, db: dbRead }),
+      ])
+    : [[], []];
   const [allowed, verdicts] = await Promise.allSettled([
-    assertComFaceAllowed({ name, description, triggerWords, modelId }),
-    checkSfwFace({ sfwName, sfwDescription, userId }),
+    assertComFaceAllowed({ name, description, triggerWords, modelId, userId }),
+    checkSfwFace({ sfwName, sfwDescription, userId, versionFields }),
   ]);
   if (allowed.status === 'rejected') throw allowed.reason;
   if (verdicts.status === 'rejected') throw verdicts.reason;
-  const entries = Object.entries(verdicts.value) as [SfwFaceCheckField, SfwFaceVerdict][];
+  // The version text never refuses a save here (the listing re-check owns it), but the stamp
+  // vouches for all the scan's re-check reads, so only a clean read of it earns one.
+  const { versions: _versions, ...faceVerdicts } = verdicts.value;
+  const entries = Object.entries(faceVerdicts) as [SfwFaceCheckField, SfwFaceVerdict][];
 
   const flagged = entries.filter(([, verdict]) => verdict.status === 'flagged');
   if (flagged.length)
@@ -238,6 +374,8 @@ export async function assertSfwFaceSafe({
     throw throwBadRequestError(
       "We couldn't check the civitai.com title and description just now. Try saving again."
     );
+  const pass = passedSfwFaceCheck(verdicts.value);
+  return { stamp: pass && { promptId: pass.promptId, versionFields } };
 }
 
 const DRAFT_MODEL = 'openai/gpt-4o-mini';
@@ -280,7 +418,7 @@ export async function draftSfwFace({
   userId: number;
 }) {
   const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
-  await assertComFaceAllowed({ name, description, triggerWords, modelId });
+  await assertComFaceAllowed({ name, description, triggerWords, modelId, userId });
   const source = JSON.stringify({ title: name, description: description ?? '', triggerWords });
   let draft = await requestDraft([{ role: 'user', content: source }], userId);
 
@@ -360,20 +498,4 @@ function parseDraft(content: string | undefined) {
   } catch {
     return null;
   }
-}
-
-export async function getOwnTriggerWords({
-  modelId,
-  userId,
-  db = dbRead,
-}: {
-  modelId: number;
-  userId: number;
-  db?: Pick<typeof dbRead, 'modelVersion'>;
-}) {
-  const versions = await db.modelVersion.findMany({
-    where: { modelId, model: { userId } },
-    select: { trainedWords: true },
-  });
-  return [...new Set(versions.flatMap((version) => version.trainedWords))];
 }

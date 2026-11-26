@@ -1,0 +1,490 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import {
+  buildPreviewRevokeRequest,
+  clearQueuedBanRevoke,
+  drainPreviewRevokeQueue,
+  releaseHoldsForUnbannedUser,
+  revokePreviewSession,
+  revokePreviewsForBannedUser,
+} from '~/server/services/blocks/preview-revoke.service';
+
+/**
+ * App Assistant direct preview: the revoke civitai sends the sandbox service, and its retry
+ * queue. The signature is pinned against literals computed by an independent implementation
+ * (Python hmac/hashlib) of the canonical scheme the sandbox service verifies; the queue runs in
+ * the real Lua harness, so "queued", "kept" and "removed" are read back from Redis state.
+ */
+
+// TEST-ONLY secret and base URL.
+const SECRET = 'test-only-preview-revoke-secret';
+const BASE = 'https://sandbox.test';
+const NOW_MS = 1795046400_000;
+const USER = 4101;
+const PID = '0123456789abcdeffedcba9876543210';
+const QUEUE = `${REDIS_KEYS.BLOCKS.DEV_TUNNEL_USER}:preview-revoke-queue`;
+
+let lua: LuaRedis;
+let fetchMock: ReturnType<typeof vi.fn>;
+const answer = (status: number) => fetchMock.mockResolvedValue(new Response('{}', { status }));
+const sentBodies = () =>
+  fetchMock.mock.calls.map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+/** Each logToAxiom payload, without its free-text message. */
+const logged = () =>
+  loggingMock.logToAxiom.mock.calls.map((c) => {
+    const { message: _message, ...rest } = c[0] as Record<string, unknown>;
+    return rest;
+  });
+const queued = () =>
+  Object.fromEntries(
+    Object.entries(lua.hash(QUEUE) ?? {}).map(([k, v]) => [k, JSON.parse(v) as unknown])
+  );
+
+beforeEach(() => {
+  setEnv({ APP_ASSISTANT_SANDBOX_URL: BASE, PREVIEW_REVOKE_HMAC_SECRET: SECRET });
+  lua = createLuaRedis(NOW_MS, { integerArgs: true });
+  const r = redisMock.redis;
+  r.eval.mockImplementation((script: string, opts: { keys: string[]; arguments: string[] }) =>
+    lua.eval(script, opts)
+  );
+  r.hGetAll.mockImplementation(async (k: string) => lua.hash(k) ?? {});
+  r.hDel.mockImplementation((k: string, f: string) =>
+    lua.eval("return redis.call('HDEL', KEYS[1], ARGV[1])", { keys: [k], arguments: [f] })
+  );
+  fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+});
+afterEach(() => vi.unstubAllGlobals());
+
+// buildPreviewRevokeRequest + PREVIEW_REVOKE_* (preview-revoke.service.ts): the sandbox's contract.
+describe('the signed revoke request (wire contract)', () => {
+  it('a "*" revoke: exact body bytes, timestamp in seconds, and the independently computed signature', () => {
+    const req = buildPreviewRevokeRequest(
+      { userId: USER, previewId: '*', issuedAt: 1795046520000, reason: 'ban' },
+      SECRET,
+      NOW_MS
+    );
+    expect(req.body).toBe(
+      '{"userId":4101,"previewId":"*","issuedAt":1795046520000,"reason":"ban"}'
+    );
+    expect(req.headers['x-preview-revoke-timestamp']).toBe('1795046400');
+    expect(req.headers['x-preview-revoke-signature']).toBe(
+      'v1=7d6102549f198f59ad8870c1f66e8c64e1077e58f1cb038a3bf41e9cfe8c9de7'
+    );
+  });
+
+  it('a per-session revoke carries no issuedAt', () => {
+    const req = buildPreviewRevokeRequest(
+      { userId: USER, previewId: PID, issuedAt: 1, reason: 'teardown:stop' },
+      SECRET,
+      NOW_MS
+    );
+    expect(req.body).toBe(`{"userId":4101,"previewId":"${PID}","reason":"teardown:stop"}`);
+    expect(req.headers['x-preview-revoke-signature']).toBe(
+      'v1=d19c49b1cd2f4672c820f7ae0cb78c45cbaa90b016dece023fb9518eefcb7c92'
+    );
+  });
+});
+
+describe('delivery: once inline, then the queue', () => {
+  it('a 200 is sent and leaves nothing queued; the request goes to the revoke path', async () => {
+    answer(200);
+    expect(await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS)).toBe(
+      'sent'
+    );
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/previews/revoke`);
+    expect(queued()).toEqual({});
+  });
+
+  it.each([404, 503, 401, 409, 502])(
+    'a %i is retryable: queued unsigned under its user and id',
+    async (status) => {
+      answer(status);
+      expect(
+        await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS)
+      ).toBe('retry');
+      expect(queued()).toEqual({
+        [`${USER}:${PID}`]: { userId: USER, previewId: PID, reason: 'r', queuedAt: NOW_MS },
+      });
+    }
+  );
+
+  it('a network failure, or no secret configured, queues too (a configuration gap never loses one)', async () => {
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    setEnv({ PREVIEW_REVOKE_HMAC_SECRET: undefined });
+    await revokePreviewsForBannedUser(USER + 1, NOW_MS);
+    expect(Object.keys(queued()).sort()).toEqual([`${USER}:${PID}`, `${USER + 1}:*`]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a 400 is dropped, not queued: the request itself is wrong and would be refused forever', async () => {
+    answer(400);
+    expect(await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS)).toBe(
+      'drop'
+    );
+    expect(queued()).toEqual({});
+  });
+
+  // 120 s: PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS (preview-revoke.service.ts), per the sandbox's contract.
+  it('a ban sends "*" with issuedAt = the first attempt + 120 s', async () => {
+    answer(200);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    expect(sentBodies()).toEqual([
+      { userId: USER, previewId: '*', issuedAt: NOW_MS + 120_000, reason: 'ban' },
+    ]);
+  });
+});
+
+describe('the reaper drains the queue', () => {
+  // + 120 s: PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS (preview-revoke.service.ts), per the sandbox's contract.
+  it('a queued "*" is signed when it is SENT and keeps its first issuedAt', async () => {
+    answer(503);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    fetchMock.mockClear();
+    answer(200);
+    const later = NOW_MS + 600_000; // well past the 300 s signature window of the first attempt
+    expect(await drainPreviewRevokeQueue(later)).toEqual({
+      sent: 1,
+      dropped: 0,
+      retrying: 0,
+      lastStatus: 200,
+    });
+    const init = fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+    expect(JSON.parse(String(init.body))).toEqual({
+      userId: USER,
+      previewId: '*',
+      issuedAt: NOW_MS + 120_000,
+      reason: 'ban',
+    });
+    expect(init.headers['x-preview-revoke-timestamp']).toBe(String(later / 1000));
+    expect(init.headers['x-preview-revoke-signature']).toBe(
+      buildPreviewRevokeRequest(
+        { userId: USER, previewId: '*', issuedAt: NOW_MS + 120_000, reason: 'ban' },
+        SECRET,
+        later
+      ).headers['x-preview-revoke-signature']
+    );
+    expect(queued()).toEqual({});
+  });
+
+  it('a gateway 404 keeps it queued (direct preview switched off at the gateway), then it goes', async () => {
+    answer(404);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    expect(await drainPreviewRevokeQueue(NOW_MS + 1000)).toEqual({
+      sent: 0,
+      dropped: 0,
+      retrying: 1,
+      lastStatus: 404,
+    });
+    expect(Object.keys(queued())).toEqual([`${USER}:${PID}`]);
+    answer(200);
+    expect((await drainPreviewRevokeQueue(NOW_MS + 2000)).sent).toBe(1);
+    expect(queued()).toEqual({});
+  });
+
+  // 3: DRAIN_MAX_CONSECUTIVE_FAILURES in preview-revoke.service.ts.
+  describe('a down sandbox service stops the run after 3 consecutive failures', () => {
+    const pid = (n: number) => `${'0'.repeat(31)}${n}`;
+    /** Five revokes queued (each first send answered 503), then a clean fetch mock and log. */
+    async function queueFive() {
+      answer(503);
+      for (let n = 1; n <= 5; n++)
+        await revokePreviewSession({ userId: USER, previewId: pid(n), reason: 'r' }, NOW_MS);
+      fetchMock.mockReset();
+      loggingMock.logToAxiom.mockClear();
+    }
+
+    it.each([
+      ['a 503', () => answer(503)],
+      ['a timeout or network error', () => fetchMock.mockRejectedValue(new TypeError('timeout'))],
+    ])('%s three times in a row: 3 sends, the other 2 left queued and untried', async (_, fail) => {
+      await queueFive();
+      fail();
+      const drained = await drainPreviewRevokeQueue(NOW_MS + 1000);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(drained).toMatchObject({ sent: 0, dropped: 0, retrying: 3, unattempted: 2 });
+      expect(Object.keys(queued())).toHaveLength(5);
+      expect(
+        logged().filter((l) => l.type === 'app-assistant.preview-revoke.drain-stopped')
+      ).toEqual([
+        {
+          type: 'app-assistant.preview-revoke.drain-stopped',
+          payload: expect.objectContaining({ retrying: 3, unattempted: 2 }),
+        },
+      ]);
+    });
+
+    it('a succeeding sender sends every due entry', async () => {
+      await queueFive();
+      answer(200);
+      expect(await drainPreviewRevokeQueue(NOW_MS + 1000)).toEqual({
+        sent: 5,
+        dropped: 0,
+        retrying: 0,
+        lastStatus: 200,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(queued()).toEqual({});
+    });
+
+    it('failures that are not consecutive, or a 404, do not stop it', async () => {
+      await queueFive();
+      for (const s of [503, 503, 200, 503, 503])
+        fetchMock.mockResolvedValueOnce(new Response('{}', { status: s }));
+      expect(await drainPreviewRevokeQueue(NOW_MS + 1000)).toEqual({
+        sent: 1,
+        dropped: 0,
+        retrying: 4,
+        lastStatus: 503,
+      });
+      fetchMock.mockReset();
+      answer(404);
+      expect((await drainPreviewRevokeQueue(NOW_MS + 2000)).retrying).toBe(4);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  // The retry windows in preview-revoke.service.ts: PREVIEW_REVOKE_SESSION_MAX_AGE_MS (8 h) for a
+  // per-session revoke, PREVIEW_REVOKE_BAN_MAX_AGE_MS (7 days) for a "*" revoke or a hold release.
+  // Literal ms, never derived from the constants, so a change to a bound is a change to this test.
+  const MINUTE_MS = 60_000;
+  const HOUR_MS = 60 * MINUTE_MS;
+  const DAY_MS = 24 * HOUR_MS;
+  /** A distinct 32-hex preview id per index. */
+  const pid = (i: number) => i.toString(16).padStart(32, 'a');
+
+  it('the queue key lives 7 days from an enqueue', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    expect(lua.pttl(QUEUE)).toBe(604_800_000);
+  });
+
+  it('a per-session revoke queued 7 h 59 m ago is still sent', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    const later = NOW_MS + 7 * HOUR_MS + 59 * MINUTE_MS;
+    lua.nowMs = later;
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toMatchObject({ sent: 1, dropped: 0 });
+    expect(sentBodies()).toEqual([{ userId: USER, previewId: PID, reason: 'r' }]);
+  });
+
+  it('a per-session revoke queued 9 h ago is dropped unsent, and the drop is logged', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    const later = NOW_MS + 9 * HOUR_MS;
+    lua.nowMs = later;
+    fetchMock.mockClear();
+    loggingMock.logToAxiom.mockClear();
+    expect(await drainPreviewRevokeQueue(later)).toEqual({ sent: 0, dropped: 1, retrying: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queued()).toEqual({});
+    expect(logged()).toEqual([
+      {
+        type: 'app-assistant.preview-revoke.expired',
+        userId: USER,
+        reason: 'r',
+        payload: { ageMs: 32_400_000 },
+      },
+    ]);
+  });
+
+  it('a ban revoke queued 6 d 23 h ago is still in Redis and is sent, signed at send time', async () => {
+    answer(503);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    const later = NOW_MS + 6 * DAY_MS + 23 * HOUR_MS;
+    lua.nowMs = later; // the queue key's own TTL runs too
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toEqual({
+      sent: 1,
+      dropped: 0,
+      retrying: 0,
+      lastStatus: 200,
+    });
+    const init = fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+    expect(init.headers['x-preview-revoke-timestamp']).toBe(String(later / 1000));
+    expect(init.headers['x-preview-revoke-signature']).toBe(
+      buildPreviewRevokeRequest(
+        { userId: USER, previewId: '*', issuedAt: NOW_MS + 120_000, reason: 'ban' },
+        SECRET,
+        later
+      ).headers['x-preview-revoke-signature']
+    );
+    expect(queued()).toEqual({});
+  });
+
+  it('a hold release queued 6 d 23 h ago is still in Redis and is sent', async () => {
+    answer(503);
+    await releaseHoldsForUnbannedUser(USER, NOW_MS);
+    const later = NOW_MS + 6 * DAY_MS + 23 * HOUR_MS;
+    lua.nowMs = later;
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(later)).toMatchObject({ sent: 1, dropped: 0 });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+  });
+
+  // The Redis clock is left at the enqueue, so the age check (not the key TTL) is what drops them.
+  it('a ban revoke and a hold release queued 7 d 1 h ago are dropped unsent and logged', async () => {
+    answer(503);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    await releaseHoldsForUnbannedUser(USER + 1, NOW_MS);
+    fetchMock.mockClear();
+    loggingMock.logToAxiom.mockClear();
+    expect(await drainPreviewRevokeQueue(NOW_MS + 7 * DAY_MS + HOUR_MS)).toEqual({
+      sent: 0,
+      dropped: 2,
+      retrying: 0,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queued()).toEqual({});
+    expect(logged()).toEqual([
+      {
+        type: 'app-assistant.preview-revoke.expired',
+        userId: USER,
+        reason: 'ban',
+        payload: { ageMs: 608_400_000 },
+      },
+      {
+        type: 'app-assistant.preview-revoke.expired',
+        userId: USER + 1,
+        reason: 'unban',
+        payload: { ageMs: 608_400_000 },
+      },
+    ]);
+  });
+
+  it('55 per-session revokes stuck on 404 cannot starve a "*" revoke or a hold release queued after them', async () => {
+    answer(404);
+    for (let i = 0; i < 55; i++)
+      await revokePreviewSession({ userId: USER, previewId: pid(i), reason: 'r' }, NOW_MS);
+    await revokePreviewsForBannedUser(USER + 1, NOW_MS);
+    await releaseHoldsForUnbannedUser(USER + 2, NOW_MS);
+    expect(Object.keys(queued())).toHaveLength(57);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { previewId?: string };
+      const priority = String(url).endsWith('/internal/v1/holds/release') || body.previewId === '*';
+      return new Response('{}', { status: priority ? 200 : 404 });
+    });
+    const out = await drainPreviewRevokeQueue(NOW_MS + MINUTE_MS);
+    expect(out.sent).toBe(2);
+    expect(Object.keys(queued())).not.toContain(`${USER + 1}:*`);
+    expect(Object.keys(queued())).not.toContain(`${USER + 2}:release`);
+    expect(Object.keys(queued())).toHaveLength(55);
+  });
+});
+
+describe('a failed revoke is visible in the logs', () => {
+  beforeEach(() => loggingMock.logToAxiom.mockClear());
+
+  it('a retried 503, 401 or network failure is logged with its status, never the signature', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    answer(401);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    expect(logged()).toEqual([
+      { type: 'app-assistant.preview-revoke.retry', userId: USER, status: 503, reason: 'r' },
+      { type: 'app-assistant.preview-revoke.retry', userId: USER, status: 401, reason: 'r' },
+      {
+        type: 'app-assistant.preview-revoke.retry',
+        userId: USER,
+        status: 'network',
+        reason: 'ban',
+      },
+    ]);
+    const everything = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+    expect(everything).not.toContain(SECRET);
+    expect(everything).not.toContain('v1=');
+  });
+
+  it('a 404 (the gateway rolled back) stays quiet, inline and in the drain', async () => {
+    answer(404);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    await drainPreviewRevokeQueue(NOW_MS + 1000);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+  });
+});
+
+describe('unban', () => {
+  it('clears a queued "*" for that user and leaves everything else queued', async () => {
+    answer(503);
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    await revokePreviewsForBannedUser(USER + 1, NOW_MS);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    fetchMock.mockClear();
+    await clearQueuedBanRevoke(USER);
+    expect(Object.keys(queued()).sort()).toEqual([`${USER}:${PID}`, `${USER + 1}:*`]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// The sandbox service's hold release (HOLD_RELEASE_PATH): an unban lifts the hold the ban's "*"
+// revoke placed, signed and queued exactly like a revoke.
+describe('unban: the hold release', () => {
+  it('🔴 exact body bytes over its own path, and the independently computed signature', () => {
+    const req = buildPreviewRevokeRequest(
+      { userId: USER, previewId: '', reason: 'unban', op: 'release' },
+      SECRET,
+      NOW_MS
+    );
+    expect(req.body).toBe('{"userId":4101,"reason":"unban"}');
+    expect(req.headers['x-preview-revoke-timestamp']).toBe('1795046400');
+    // HMAC-SHA256 over "v1\nPOST\n/internal/v1/holds/release\n<ts>\n<sha256(body)>", computed
+    // independently (Python hmac/hashlib), so a revoke signature can never authorize a release.
+    expect(req.headers['x-preview-revoke-signature']).toBe(
+      'v1=02ae4841560da26de4cac5eec4c37090fd9e7a485be9fd9fb49ab492f0ce5c12'
+    );
+  });
+
+  it('🔴 is sent to the release path, and leaves nothing queued on a 200', async () => {
+    answer(200);
+    expect(await releaseHoldsForUnbannedUser(USER, NOW_MS)).toBe('sent');
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+    expect(sentBodies()).toEqual([{ userId: USER, reason: 'unban' }]);
+    expect(queued()).toEqual({});
+  });
+
+  it('🔴 fails safe: a 503 queues it (the hold stays meanwhile) and the reaper sends it to the release path', async () => {
+    answer(503);
+    expect(await releaseHoldsForUnbannedUser(USER, NOW_MS)).toBe('retry');
+    expect(Object.keys(queued())).toEqual([`${USER}:release`]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'app-assistant.preview-revoke.retry', status: 503 })
+    );
+    fetchMock.mockClear();
+    answer(200);
+    expect(await drainPreviewRevokeQueue(NOW_MS + 60_000)).toMatchObject({ sent: 1 });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/internal/v1/holds/release`);
+    expect(queued()).toEqual({});
+  });
+
+  it('🔴 a later BAN drops a release still queued, so it cannot lift the new hold', async () => {
+    answer(503);
+    await releaseHoldsForUnbannedUser(USER, NOW_MS);
+    await releaseHoldsForUnbannedUser(USER + 1, NOW_MS);
+    await revokePreviewsForBannedUser(USER, NOW_MS + 1_000);
+    expect(Object.keys(queued()).sort()).toEqual([`${USER}:*`, `${USER + 1}:release`]);
+  });
+
+  it('🔴 the unban clearer (toggleBan’s unban branch) sends it, even when its own block reads fail', async () => {
+    const { clearBlockInstancesForPublisher } = await import(
+      '~/server/services/blocks/publisher-ban-revocation.service'
+    );
+    answer(200);
+    await clearBlockInstancesForPublisher({ userId: USER }).catch(() => undefined);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(
+      `${BASE}/internal/v1/holds/release`
+    );
+    expect(sentBodies()).toContainEqual({ userId: USER, reason: 'unban' });
+  });
+});

@@ -10,7 +10,6 @@ import {
   Tabs,
   Text,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -28,6 +27,7 @@ import { formatDate, recentOrDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { REMIX_GALLERY_QUEUE_LIMIT } from '~/shared/utils/remix-gallery';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const TABS = ['received', 'sent'] as const;
 type TabValue = (typeof TABS)[number];
@@ -431,9 +431,9 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                 loading={retract.isPending && retract.variables?.placementId === row.id}
                 disabled={retract.isPending}
                 onClick={() =>
-                  openConfirmModal({
+                  openConfirm({
                     title: 'Withdraw this submission',
-                    children: (
+                    message: (
                       <Text size="sm">
                         It comes out of {row.owner?.username ?? 'the creator'}&apos;s review queue
                         {row.free

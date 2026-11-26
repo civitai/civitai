@@ -14,6 +14,7 @@
   import { formatRange } from '$lib/date-range';
   import { impressionsComparable } from '$lib/impressions';
   import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
+  import BuzzCurrencyToggleGroup from '$lib/components/BuzzCurrencyToggleGroup.svelte';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
     CHANNEL_HEAD,
@@ -22,21 +23,22 @@
     shownChannels,
     type PerformanceChannel,
   } from '$lib/analytics/earning-channels';
-  import {
-    BANKABLE_CURRENCIES,
-    FILTERABLE_CURRENCIES,
-    currencySelectionKind,
-  } from '$lib/buzz-currency-filter';
+  import { currencySelectionKind } from '$lib/buzz-currency-filter';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
   import { modelGroupingState } from '$lib/state/model-grouping.svelte';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import Pagination from '$lib/components/Pagination.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import { CookieState } from '$lib/state/cookie-state.svelte';
+  import { MODEL_PERIOD_COOKIE, type ModelPeriod } from '$lib/model-period';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
-  const periodLabel = $derived(`for ${formatRange(data.range)}`);
+  const period = new CookieState<ModelPeriod>(MODEL_PERIOD_COOKIE, () => data.period);
+  const periodLabel = $derived(
+    data.period === 'all' ? 'across all time' : `for ${formatRange(data.range)}`
+  );
   const impressionsDeltaOk = $derived(impressionsComparable(data.compare.from));
   const perPage = $derived(analyticsPageSize.value);
 
@@ -219,7 +221,24 @@
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
 </script>
 
-<AnalyticsHeader range={data.range} compare={data.compare} />
+<AnalyticsHeader
+  range={period.value === 'month' ? data.range : undefined}
+  compare={period.value === 'month' ? data.compare : undefined}
+>
+  <ToggleGroup.Root
+    type="single"
+    variant="outline"
+    size="sm"
+    spacing={1}
+    bind:value={() => period.value, (v: string) => v && period.set(v as ModelPeriod)}
+    aria-label="Show one month or all time"
+  >
+    <ToggleGroup.Item value="month" class="text-xs">Month</ToggleGroup.Item>
+    <ToggleGroup.Item value="all" class="text-xs" title="Everything since your first model version"
+      >All time</ToggleGroup.Item
+    >
+  </ToggleGroup.Root>
+</AnalyticsHeader>
 
 {#if showImpressions}
   <ImpressionsNotice />
@@ -235,7 +254,7 @@
           {selectionLabel}
         </span>
       </p>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <span class="text-xs text-dark-3">View</span>
         <ToggleGroup.Root
           type="single"
@@ -254,29 +273,10 @@
           >
         </ToggleGroup.Root>
         <span class="ml-2 text-xs text-dark-3">Counting</span>
-        <ToggleGroup.Root
-          type="multiple"
-          variant="outline"
-          size="sm"
-          spacing={1}
-          value={[...selected]}
-          onValueChange={(v: string[]) => currencies.set(v)}
-          aria-label="Which buzz types the earnings columns count"
-        >
-          {#each FILTERABLE_CURRENCIES as c (c)}
-            <ToggleGroup.Item
-              value={c}
-              title={(BANKABLE_CURRENCIES as readonly string[]).includes(c)
-                ? `${currencyMeta(c).label} — can be withdrawn`
-                : `${currencyMeta(c).label} — cannot be withdrawn`}
-              class="gap-1.5 text-xs"
-            >
-              <span class="size-2 shrink-0 rounded-full" style="background:{currencyMeta(c).color}"
-              ></span>
-              {currencyMeta(c).label}
-            </ToggleGroup.Item>
-          {/each}
-        </ToggleGroup.Root>
+        <BuzzCurrencyToggleGroup
+          {currencies}
+          ariaLabel="Which buzz types the earnings columns count"
+        />
       </div>
     </div>
     <!-- `title` is required, not optional: Svelte strips the TS annotation from a snippet parameter but

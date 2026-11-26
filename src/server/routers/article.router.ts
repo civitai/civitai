@@ -1,4 +1,6 @@
 import * as z from 'zod';
+import { actsAsModerator } from '~/server/utils/image-media-visibility';
+import { reportListedViewerOf } from '~/server/utils/report-listed-viewer';
 import {
   router,
   publicProcedure,
@@ -10,6 +12,7 @@ import {
 } from '~/server/trpc';
 import type { UpsertArticleInput } from '~/server/schema/article.schema';
 import {
+  getArticleByIdSchema,
   getInfiniteArticlesSchema,
   upsertArticleInput,
   articleRateLimits,
@@ -57,7 +60,9 @@ import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service
 import { eventViewerOf } from '~/server/events/event-viewer';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getCaller } from '~/server/routers/remix-app.router';
 import {
@@ -99,6 +104,8 @@ export const articleRouter = router({
       getArticles({
         ...input,
         sessionUser: ctx?.user,
+        asModerator: actsAsModerator(ctx),
+        reportListedViewer: reportListedViewerOf(ctx),
         include: ['cosmetics'],
         // Uncached per viewer, so a flagged viewer may see decorations before launch.
         eventDecorationViewer: eventViewerOf(ctx),
@@ -115,13 +122,15 @@ export const articleRouter = router({
     .query(() => getOfficialArticleTag()),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
-    .input(getByIdSchema)
+    .input(getArticleByIdSchema)
     .query(async ({ input, ctx }) => {
       const [article, eventDecorations] = await Promise.all([
         getArticleById({
           ...input,
           userId: ctx.user?.id,
-          isModerator: ctx.user?.isModerator,
+          // A moderator on a session or a full-access key, as the media rule reads one.
+          isModerator: actsAsModerator(ctx),
+          reportListedViewer: reportListedViewerOf(ctx),
         }),
         // The hat the cover wears. A signed-out response is edge-cached for every signed-out
         // viewer (createContext), so the hat gate must read nothing but the user.
@@ -136,10 +145,25 @@ export const articleRouter = router({
             name: 'article-get-event-decoration',
             message: (error as Error).message,
             articleId: input.id,
-          }).catch(() => undefined);
+          });
           return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
         }),
       ]);
+      // Region-dependent above SFW: a restricted region gets the same NOT_FOUND as a missing article
+      // (as on /api/v1/articles/[id]), its owner and moderators excepted, and the answer stays out of
+      // the edge cache, which does not key on region.
+      if (!isArticleServableWhenRestricted(article)) {
+        // A moderator only on a session or a full-access personal key, as for moderatorProcedure.
+        const viewerMayRead =
+          eventViewerOf(ctx).isModerator || (!!ctx.user && ctx.user.id === article.userId);
+        if (!viewerMayRead && isRegionRestricted(getRegion(ctx.req)))
+          throw throwNotFoundError(`No article with id ${input.id}`);
+        if (ctx.cache) {
+          ctx.cache.edgeTTL = 0;
+          ctx.cache.browserTTL = 0;
+          ctx.cache.staleWhileRevalidate = 0;
+        }
+      }
       return { ...article, eventDecoration: eventDecorations[article.id] ?? null };
     }),
   // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns
@@ -189,6 +213,7 @@ export const articleRouter = router({
         articleId: input.articleId,
         shareToken: ctx.req?.cookies?.[articleShareCookieName(input.articleId)],
         viewerId: ctx.user?.id,
+        reportListedViewer: reportListedViewerOf(ctx),
       })
     ),
   getMyDraftArticles: protectedProcedure
@@ -230,7 +255,13 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
-    .mutation(({ input, ctx }) => rescanArticle({ ...input, isModerator: ctx.user.isModerator })),
+    .mutation(({ input, ctx }) =>
+      rescanArticle({
+        ...input,
+        isModerator: ctx.user.isModerator,
+        csamReview: ctx.user.isModerator && !!ctx.features?.csamReports,
+      })
+    ),
   // Author-facing scan detail: per-image URLs, `blockedFor` moderation labels, scan failure
   // reasons and the article's text-moderation verdict, for any id including an unpublished
   // draft. Same guard as its `rescan` sibling, which takes the same input — every caller is
@@ -240,11 +271,19 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
-    .query(({ input }) => getArticleScanStatus(input)),
+    .query(({ input, ctx }) =>
+      getArticleScanStatus({ ...input, viewerIsModerator: actsAsModerator(ctx) })
+    ),
   resolveImageScan: moderatorProcedure
     .input(resolveArticleImageScanSchema)
     .use(isFlagProtected('articleImageScanning'))
-    .mutation(({ input, ctx }) => resolveArticleImageScan({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      resolveArticleImageScan({
+        ...input,
+        userId: ctx.user.id,
+        csamReview: !!ctx.features?.csamReports,
+      })
+    ),
   rescanImage: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(rescanArticleImageSchema)
@@ -254,6 +293,7 @@ export const articleRouter = router({
         ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        csamReview: ctx.user.isModerator && !!ctx.features?.csamReports,
       })
     ),
   reframeQuote: protectedProcedure

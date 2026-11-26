@@ -2,16 +2,21 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ARTICLE_CATEGORY_BACKFILL_SQL } from '~/server/services/text-scan/article-category-backfill-query';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const MIGRATION = readFileSync(
-  path.resolve(
-    __dirname,
-    '../../../../packages/civitai-db-schema/prisma/migrations/20261112170000_story_writer_leaderboard/migration.sql'
-  ),
-  'utf8'
-);
+const migration = (name: string) =>
+  readFileSync(
+    path.resolve(
+      __dirname,
+      `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+    ),
+    'utf8'
+  );
+const MIGRATION = migration('20261112170000_story_writer_leaderboard');
+const SWITCH = migration('20271114120000_story_writer_system_category');
+const COUNT_MATURE = migration('20271116120000_story_writer_count_mature');
 
 const SCHEMA = `
   CREATE TYPE "DomainColor" AS ENUM ('green', 'blue', 'red', 'all');
@@ -27,13 +32,14 @@ const SCHEMA = `
     source "CosmeticSource" NOT NULL, "permanentUnlock" boolean NOT NULL, data jsonb NOT NULL,
     "leaderboardId" text, "leaderboardPosition" int
   );
-  CREATE TABLE "Tag" (id int PRIMARY KEY, name text NOT NULL);
+  CREATE TABLE "Tag" (id int PRIMARY KEY, name text NOT NULL, "adminOnly" boolean NOT NULL DEFAULT false);
   CREATE TABLE "TagsOnTags" ("fromTagId" int NOT NULL, "toTagId" int NOT NULL);
   CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
   CREATE TABLE "Article" (
     id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, "publishedAt" timestamp,
     nsfw boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL, ingestion text NOT NULL,
-    "tosViolation" boolean NOT NULL, unlisted boolean NOT NULL, availability text NOT NULL
+    "tosViolation" boolean NOT NULL, unlisted boolean NOT NULL, availability text NOT NULL,
+    "systemCategoryId" int, "updatedAt" timestamp NOT NULL DEFAULT now()
   );
   CREATE TABLE "TagsOnArticle" ("articleId" int NOT NULL, "tagId" int NOT NULL);
   CREATE TABLE "ArticleMetric" (
@@ -66,6 +72,8 @@ type ArticleFixture = {
   id: number;
   userId: number;
   tag: number;
+  /** The category call's answer; defaults to the author's tag. */
+  systemCategory?: number | null;
   daysAgo?: number;
   status?: string;
   nsfwLevel?: number;
@@ -88,8 +96,8 @@ async function seedArticles(pg: PGlite, articles: ArticleFixture[]) {
       [a.userId, a.userDeleted ?? false, a.userBanned ?? false]
     );
     await pg.query(
-      `INSERT INTO "Article" (id, "userId", status, "publishedAt", "nsfwLevel", ingestion, "tosViolation", unlisted, availability)
-       VALUES ($1, $2, $3, now() - make_interval(days => $4), $5, $6, $7, $8, $9)`,
+      `INSERT INTO "Article" (id, "userId", status, "publishedAt", "nsfwLevel", ingestion, "tosViolation", unlisted, availability, "systemCategoryId")
+       VALUES ($1, $2, $3, now() - make_interval(days => $4), $5, $6, $7, $8, $9, $10)`,
       [
         a.id,
         a.userId,
@@ -100,6 +108,7 @@ async function seedArticles(pg: PGlite, articles: ArticleFixture[]) {
         a.tosViolation ?? false,
         a.unlisted ?? false,
         a.availability ?? 'Public',
+        a.systemCategory === undefined ? a.tag : a.systemCategory,
       ]
     );
     await pg.query(`INSERT INTO "TagsOnArticle" VALUES ($1, $2)`, [a.id, a.tag]);
@@ -110,6 +119,27 @@ async function seedArticles(pg: PGlite, articles: ArticleFixture[]) {
     );
   }
 }
+
+/** Two story articles that count, then one fixture per filter, each of which would top the board. */
+const ELIGIBILITY: ArticleFixture[] = [
+  { id: 1, userId: 10, tag: STORY, views: 100, likes: 49 },
+  { id: 2, userId: 11, tag: STORY, bookmarks: 100, nsfwLevel: 2 },
+  // Each of these would top the board if it counted.
+  { id: 3, userId: 12, tag: NEWS, ...HUGE },
+  { id: 4, userId: 13, tag: STORY, nsfwLevel: 4, ...HUGE },
+  { id: 5, userId: 14, tag: STORY, daysAgo: 40, ...HUGE },
+  { id: 6, userId: 15, tag: STORY, nsfwLevel: 0, ...HUGE },
+  { id: 7, userId: 16, tag: STORY, status: 'Draft', ...HUGE },
+  { id: 8, userId: 17, tag: STORY, userDeleted: true, ...HUGE },
+  { id: 9, userId: 18, tag: STORY, userBanned: true, ...HUGE },
+  { id: 10, userId: -1, tag: STORY, ...HUGE },
+  { id: 11, userId: 19, tag: STORY, ingestion: 'Pending', ...HUGE },
+  { id: 12, userId: 20, tag: STORY, tosViolation: true, ...HUGE },
+  { id: 13, userId: 21, tag: STORY, unlisted: true, ...HUGE },
+  { id: 14, userId: 22, tag: STORY, availability: 'Private', ...HUGE },
+  { id: 15, userId: 23, tag: STORY, nsfwLevel: 32, ...HUGE },
+  { id: 20, userId: 28, tag: STORY, daysAgo: -1, ...HUGE },
+];
 
 /** The board's query as prepare-leaderboard's defaultLeadboardPopulation wraps it. */
 async function standings(pg: PGlite) {
@@ -129,30 +159,51 @@ async function standings(pg: PGlite) {
   return rows;
 }
 
+// Rated R (4) and above, not story, would top the board if it counted.
+const MATURE_NEWS = { id: 21, userId: 29, tag: NEWS, nsfwLevel: 8, ...HUGE };
+const USER_TAGGED_ONLY = { id: 16, userId: 24, tag: STORY, systemCategory: NEWS, ...HUGE };
+// (sqrt(400)*1 + 1*7 + 1*4) * 100
+const SYSTEM_STORY_ONLY = { id: 17, userId: 25, tag: NEWS, systemCategory: STORY, views: 400 };
+
+describe('story-writer leaderboard after its migrations', () => {
+  const db = { pg: null as unknown as PGlite };
+
+  beforeAll(async () => {
+    db.pg = new PGlite();
+    await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+    await seedArticles(db.pg, [...ELIGIBILITY, USER_TAGGED_ONLY, SYSTEM_STORY_ONLY, MATURE_NEWS]);
+    await db.pg.exec(MIGRATION + SWITCH + COUNT_MATURE);
+  });
+
+  afterAll(async () => {
+    await db.pg.close();
+  });
+
+  it('ranks recent, public, rated story articles (by system category) by live users, with bookmarks weighted 4', async () => {
+    const rows = await standings(db.pg);
+    // (sqrt(100)*1 + sqrt(49)*7 + sqrt(1)*4) * 100; the greatest(..., 1) floor makes empty terms 1.
+    // 13 and 23 are the R+ stories (ids 4 and 15).
+    expect(rows.map((r) => [r.userId, r.score]).sort((a, b) => a[0] - b[0])).toEqual([
+      [10, 6300],
+      [11, 4800],
+      [13, 210000],
+      [23, 210000],
+      [25, 3100],
+    ]);
+    expect(rows.find((r) => r.userId === 11)?.metrics).toEqual({
+      viewCount: 0,
+      bookmark: 100,
+      reactionCount: 0,
+    });
+  });
+});
+
 describe('story-writer leaderboard migration', () => {
   const db = { pg: null as unknown as PGlite };
 
   beforeAll(async () => {
     db.pg = new PGlite();
     await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
-    await seedArticles(db.pg, [
-      { id: 1, userId: 10, tag: STORY, views: 100, likes: 49 },
-      { id: 2, userId: 11, tag: STORY, bookmarks: 100, nsfwLevel: 2 },
-      // Each of these would top the board if it counted.
-      { id: 3, userId: 12, tag: NEWS, ...HUGE },
-      { id: 4, userId: 13, tag: STORY, nsfwLevel: 4, ...HUGE },
-      { id: 5, userId: 14, tag: STORY, daysAgo: 40, ...HUGE },
-      { id: 6, userId: 15, tag: STORY, nsfwLevel: 0, ...HUGE },
-      { id: 7, userId: 16, tag: STORY, status: 'Draft', ...HUGE },
-      { id: 8, userId: 17, tag: STORY, userDeleted: true, ...HUGE },
-      { id: 9, userId: 18, tag: STORY, userBanned: true, ...HUGE },
-      { id: 10, userId: -1, tag: STORY, ...HUGE },
-      { id: 11, userId: 19, tag: STORY, ingestion: 'Pending', ...HUGE },
-      { id: 12, userId: 20, tag: STORY, tosViolation: true, ...HUGE },
-      { id: 13, userId: 21, tag: STORY, unlisted: true, ...HUGE },
-      { id: 14, userId: 22, tag: STORY, availability: 'Private', ...HUGE },
-      { id: 15, userId: 23, tag: STORY, nsfwLevel: 32, ...HUGE },
-    ]);
     await db.pg.exec(MIGRATION);
   });
 
@@ -169,16 +220,6 @@ describe('story-writer leaderboard migration', () => {
     expect(rows).toEqual([
       { slot: 1, same_display: true, active: true, public: true, title: 'Story Writers' },
     ]);
-  });
-
-  it('ranks only recent, public, PG/PG-13 story articles by live users, with bookmarks weighted 4', async () => {
-    const rows = await standings(db.pg);
-    // (sqrt(100)*1 + sqrt(49)*7 + sqrt(1)*4) * 100; the greatest(..., 1) floor makes empty terms 1.
-    expect(rows.map((r) => [r.userId, r.score])).toEqual([
-      [10, 6300],
-      [11, 4800],
-    ]);
-    expect(rows[1].metrics).toEqual({ viewCount: 0, bookmark: 100, reactionCount: 0 });
   });
 
   it('awards four Storyteller badges at 1, 3, 10 and 25 each with its own Storyteller art', async () => {
@@ -244,5 +285,205 @@ describe('story-writer leaderboard migration preconditions', () => {
     } finally {
       await pg.close();
     }
+  });
+});
+
+describe('story-writer system-category switch', () => {
+  const db = { pg: null as unknown as PGlite };
+
+  beforeAll(async () => {
+    db.pg = new PGlite();
+    await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+    await db.pg.exec(MIGRATION + SWITCH);
+  });
+
+  afterAll(async () => {
+    await db.pg.close();
+  });
+
+  it('is idempotent: a re-run leaves the switched query as it is', async () => {
+    const read = async () =>
+      (
+        await db.pg.query<{ query: string }>(
+          `SELECT query FROM "Leaderboard" WHERE id = 'story-writer'`
+        )
+      ).rows[0].query;
+    const before = await read();
+    await db.pg.exec(SWITCH);
+    expect(await read()).toBe(before);
+    expect(before).not.toContain('TagsOnArticle');
+  });
+});
+
+describe('story-writer system-category switch preconditions', () => {
+  async function refuses(setup: string, error: RegExp) {
+    const pg = new PGlite();
+    const boards = async () =>
+      (await pg.query(`SELECT * FROM "Leaderboard" WHERE id = 'story-writer'`)).rows;
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+      await pg.exec(MIGRATION);
+      await pg.exec(setup);
+      const before = await boards();
+      await expect(pg.exec(SWITCH)).rejects.toThrow(error);
+      await pg.exec('ROLLBACK');
+      expect(await boards()).toEqual(before);
+    } finally {
+      await pg.close();
+    }
+  }
+
+  it('refuses when there is no story article category', () =>
+    refuses(`DELETE FROM "TagsOnTags" WHERE "toTagId" = ${STORY};`, /no 'story' tag/));
+
+  it('refuses when the story category is adminOnly, which the category call is never offered', () =>
+    refuses(`UPDATE "Tag" SET "adminOnly" = true WHERE id = ${STORY};`, /adminOnly/));
+
+  it('refuses when the board row is missing', () =>
+    refuses(`DELETE FROM "Leaderboard" WHERE id = 'story-writer';`, /row not found/));
+
+  it('refuses, changing nothing, when the query was edited since it was added', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = 'SELECT 2' WHERE id = 'story-writer';`,
+      /was edited/
+    ));
+
+  it('refuses an edit outside the predicate it replaces, such as a changed weight', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = replace(query, '* 4', '* 5') WHERE id = 'story-writer';`,
+      /was edited/
+    ));
+});
+
+describe('story-writer counts R+ stories preconditions', () => {
+  async function refuses(setup: string, error: RegExp) {
+    const pg = new PGlite();
+    const boards = async () =>
+      (await pg.query(`SELECT * FROM "Leaderboard" WHERE id = 'story-writer'`)).rows;
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES + MIGRATION + SWITCH);
+      await pg.exec(setup);
+      const before = await boards();
+      await expect(pg.exec(COUNT_MATURE)).rejects.toThrow(error);
+      await pg.exec('ROLLBACK');
+      expect(await boards()).toEqual(before);
+    } finally {
+      await pg.close();
+    }
+  }
+
+  it('refuses when the board row is missing', () =>
+    refuses(`DELETE FROM "Leaderboard" WHERE id = 'story-writer';`, /row not found/));
+
+  it('refuses a query edited since the system-category switch', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = replace(query, 'a."systemCategoryId" = (', 'a."systemCategoryId" IN (') WHERE id = 'story-writer';`,
+      /not the reviewed text/
+    ));
+
+  it('refuses an edit outside the clause it replaces, such as a changed weight', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = replace(query, '* 4', '* 5') WHERE id = 'story-writer';`,
+      /not the reviewed text/
+    ));
+});
+
+describe('story-writer counts R+ stories', () => {
+  it('is idempotent: a re-run leaves the query as it is', async () => {
+    const pg = new PGlite();
+    const read = async () =>
+      (
+        await pg.query<{ query: string }>(
+          `SELECT query FROM "Leaderboard" WHERE id = 'story-writer'`
+        )
+      ).rows[0].query;
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES + MIGRATION + SWITCH + COUNT_MATURE);
+      const before = await read();
+      await pg.exec(COUNT_MATURE);
+      expect(await read()).toBe(before);
+    } finally {
+      await pg.close();
+    }
+  });
+});
+
+describe('article category backfill selection', () => {
+  const db = { pg: null as unknown as PGlite };
+  const select = async (
+    afterId: number,
+    limit: number,
+    includeMature = false,
+    publishedBefore = new Date()
+  ) =>
+    (
+      await db.pg.query<{ id: number }>(ARTICLE_CATEGORY_BACKFILL_SQL, [
+        afterId,
+        limit,
+        includeMature,
+        publishedBefore,
+      ])
+    ).rows.map((r) => r.id);
+
+  beforeAll(async () => {
+    db.pg = new PGlite();
+    await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+    await seedArticles(db.pg, [
+      ...ELIGIBILITY.map((a) => ({ ...a, systemCategory: null })),
+      { id: 18, userId: 26, tag: STORY, systemCategory: NEWS },
+      { id: 19, userId: 27, tag: NEWS, systemCategory: null },
+    ]);
+    await db.pg.exec(MIGRATION + SWITCH + COUNT_MATURE);
+    await db.pg.exec(
+      `UPDATE "Article" SET "updatedAt" = "publishedAt" WHERE "publishedAt" < now()`
+    );
+  });
+
+  afterAll(async () => {
+    await db.pg.close();
+  });
+
+  it('selects unclassified articles the board could score, whatever their author tag, paged by id', async () => {
+    expect(await select(0, 100)).toEqual([1, 2, 3, 19]);
+    expect(await select(0, 2)).toEqual([1, 2]);
+    expect(await select(2, 2)).toEqual([3, 19]);
+  });
+
+  it('selects only articles published and last edited before the given time', async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000);
+    expect(await select(0, 100, true, hoursAgo(12))).toEqual([1, 2, 3, 4, 15, 19]);
+    expect(await select(0, 100, true, hoursAgo(48))).toEqual([]);
+    await db.pg.exec(`UPDATE "Article" SET "updatedAt" = now() WHERE id = 19`);
+    expect(await select(0, 100, true, hoursAgo(12))).toEqual([1, 2, 3, 4, 15]);
+    await db.pg.exec(`UPDATE "Article" SET "updatedAt" = "publishedAt" WHERE id = 19`);
+  });
+
+  it('selects R+ articles too only when asked, and never unrated ones', async () => {
+    expect(await select(0, 100, true)).toEqual([1, 2, 3, 4, 15, 19]);
+    expect(await select(3, 2, true)).toEqual([4, 15]);
+  });
+
+  it("filters on exactly the live board's conditions other than the category", async () => {
+    const conditions = (where: string) =>
+      where
+        .split('\n')
+        .map((line) => line.trim().replace(/^AND /, ''))
+        .filter(Boolean);
+    const {
+      rows: [{ query }],
+    } = await db.pg.query<{ query: string }>(
+      `SELECT query FROM "Leaderboard" WHERE id = 'story-writer'`
+    );
+    const board = query.split(/^WHERE$/m)[1].split('  AND a."systemCategoryId" = (')[0];
+    const backfill = ARTICLE_CATEGORY_BACKFILL_SQL.split(/^WHERE$/m)[1].split('ORDER BY')[0];
+    expect(
+      conditions(backfill).filter(
+        (c) =>
+          !c.includes('systemCategoryId') &&
+          c !== 'a.id > $1' &&
+          !c.includes('$3') &&
+          !c.includes('$4')
+      )
+    ).toEqual(conditions(board).filter((c) => !c.startsWith('am.'))); // the metric join, not eligibility
   });
 });

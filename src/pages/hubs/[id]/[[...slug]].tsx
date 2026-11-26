@@ -1,8 +1,8 @@
 import { Badge, Button, Card, Center, Group, Loader, Text, Title } from '@mantine/core';
 import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import { IconCopy, IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';
+import type { NextApiRequest } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -46,6 +46,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getUserHubForRoute, hubRouteIsDark } from '~/server/services/user-hub.service';
 import { decodeHubId } from '~/server/utils/hub-id';
+import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -55,6 +56,7 @@ import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { setCookie } from '~/utils/cookies-helpers';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -74,7 +76,8 @@ export const getServerSideProps = createServerSideProps({
     const hub = await getUserHubForRoute({
       id,
       userId: session?.user?.id,
-      isModerator: session?.user?.isModerator,
+      isModerator:
+        !!session?.user?.isModerator && isFullScopeSession(ctx.req as unknown as NextApiRequest),
     });
     if (!hub) return { notFound: true };
 
@@ -328,9 +331,9 @@ export default Page(
                           aria-label="Share hub"
                           loading={shareMutation.isPending}
                           onClick={() =>
-                            openConfirmModal({
+                            openConfirm({
                               title: 'Share this hub?',
-                              children: (
+                              message: (
                                 <Text size="sm">
                                   This hub is private. Sharing it makes it viewable by anyone you
                                   give the link to. You can turn sharing back off at any time, and
@@ -404,9 +407,9 @@ export default Page(
                               color="red"
                               leftSection={<IconTrash size={16} />}
                               onClick={() =>
-                                openConfirmModal({
+                                openConfirm({
                                   title: `Delete "${hub.name}"?`,
-                                  children: (
+                                  message: (
                                     <Text size="sm">
                                       Its sources go with it and this cannot be undone. The images
                                       stay where they are.

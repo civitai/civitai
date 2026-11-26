@@ -4,16 +4,34 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
 import { NsfwLevel } from '~/server/common/enums';
-import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
+import {
+  COLLECTIONS_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 
-const { mockGetServerAuthSession, mockGetFeatureFlagsLazy, mockRateLimit, mockRegionBlocked } =
-  vi.hoisted(() => ({
-    mockGetServerAuthSession: vi.fn(),
-    mockGetFeatureFlagsLazy: vi.fn(),
-    mockRateLimit: vi.fn(),
-    mockRegionBlocked: vi.fn(),
-  }));
+const {
+  mockGetServerAuthSession,
+  mockGetFeatureFlagsLazy,
+  mockRateLimit,
+  mockRegionBlocked,
+  mockPassthroughOn,
+} = vi.hoisted(() => ({
+  mockGetServerAuthSession: vi.fn(),
+  mockGetFeatureFlagsLazy: vi.fn(),
+  mockRateLimit: vi.fn(),
+  mockRegionBlocked: vi.fn(),
+  mockPassthroughOn: vi.fn(),
+}));
+
+vi.mock('~/server/services/site-search-passthrough', () => ({
+  isSiteSearchPassthroughOn: mockPassthroughOn,
+}));
 
 vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
   ...(await importOriginal<typeof RegionBlocking>()),
@@ -42,7 +60,18 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const fetchMock = vi.fn();
 
-async function post(path: string[], body: unknown, headers: Record<string, string> = {}) {
+// A managed profanity list holding one synthetic token, on no real list.
+const PROFANE = 'zqvoxprofanitytoken';
+const managedList = {
+  read: async () => ({ blocked: [PROFANE], allowed: null, source: 'managed' as const }),
+};
+
+async function post(
+  path: string[],
+  body: unknown,
+  headers: Record<string, string> = {},
+  context?: object
+) {
   const res = {
     statusCode: 200,
     status: vi.fn().mockReturnThis(),
@@ -60,10 +89,12 @@ async function post(path: string[], body: unknown, headers: Record<string, strin
     query: { path },
     body,
     socket: { remoteAddress: '10.0.0.1' },
+    context,
   } as unknown as NextApiRequest;
   // The wrapper swaps response methods on entry; keep the spies from before the call.
   const spies = {
     json: res.json as any,
+    send: res.send as any,
     status: res.status as any,
     end: res.end as any,
     setHeader: res.setHeader as any,
@@ -74,6 +105,13 @@ async function post(path: string[], body: unknown, headers: Record<string, strin
     status: spies.status.mock.calls.at(-1)?.[0] ?? res.statusCode,
     ended: spies.end.mock.calls.at(-1)?.[0],
     body: spies.json.mock.calls.at(-1)?.[0],
+    sent: spies.send.mock.calls.at(-1)?.[0],
+    contentLength: spies.setHeader.mock.calls
+      .filter(([name]: [string]) => name === 'Content-Length')
+      .at(-1)?.[1],
+    contentType: spies.setHeader.mock.calls
+      .filter(([name]: [string]) => name === 'Content-Type')
+      .at(-1)?.[1],
     cacheControl: spies.setHeader.mock.calls
       .filter(([name]: [string]) => name === 'Cache-Control')
       .at(-1)?.[1],
@@ -84,6 +122,19 @@ async function post(path: string[], body: unknown, headers: Record<string, strin
 }
 
 const sentQueries = () => JSON.parse(fetchMock.mock.calls.at(-1)[1].body).queries;
+
+const personalKey = (tokenScope: bigint) => ({
+  tokenScope,
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+});
+const appToken = {
+  tokenScope: TokenScope.Full,
+  apiKeyId: 2,
+  apiKeyType: ApiKeyType.Access,
+  subject: { type: 'oauth', id: 'client-abc' },
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -96,6 +147,8 @@ beforeEach(() => {
   mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true });
   mockRateLimit.mockResolvedValue({ allowed: true });
   mockRegionBlocked.mockReturnValue(false);
+  mockPassthroughOn.mockReturnValue(false);
+  setProfanityListReaderForTests(managedList);
   setEnv({ NEXT_PUBLIC_SEARCH_HOST: 'http://search.test', SEARCH_TOKEN_API_KEY: 'server-key' });
 });
 afterEach(() => {
@@ -136,6 +189,54 @@ describe('POST /api/search/multi-search', () => {
     await post(['multi-search'], { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] });
     expect(sentQueries()[0].filter).toBeUndefined();
   });
+
+  it.each([
+    ['a scoped key', TokenScope.ModelsRead, false],
+    ['a full-access key', TokenScope.Full, true],
+  ])(
+    'a moderator on %s searches as a moderator only on full access',
+    async (_, tokenScope, asMod) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: { id: 7, isModerator: true } });
+      const context = {
+        tokenScope,
+        apiKeyId: 1,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 1 },
+      };
+      await post(
+        ['multi-search'],
+        { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] },
+        {},
+        context
+      );
+      if (asMod) expect(sentQueries()[0].filter).toBeUndefined();
+      else expect(sentQueries()[0].filter).toEqual(['poi != true', 'availability != Private']);
+    }
+  );
+
+  // The caller's own poi and Private models come back only where tRPC would show them the owner view.
+  it.each([
+    ['a session', undefined, true],
+    ['a full-access key', personalKey(TokenScope.Full), true],
+    ['a scoped key', personalKey(TokenScope.ModelsRead), false],
+    ['an app token', appToken, false],
+  ])(
+    'a signed-in viewer on %s sees their own models only with the owner view',
+    async (_, context, own) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+      await post(
+        ['multi-search'],
+        { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] },
+        {},
+        context
+      );
+      expect(sentQueries()[0].filter).toEqual(
+        own
+          ? ['poi != true OR user.id = 42', 'availability != Private OR user.id = 42']
+          : ['poi != true', 'availability != Private']
+      );
+    }
+  );
 
   it('caps a signed-in viewer on civitai.com to PG and PG-13', async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
@@ -316,5 +417,136 @@ describe('other paths', () => {
       expect((await post(path, {})).status).toBe(404);
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('passthrough (site-search-passthrough)', () => {
+  // Spacing a parse and re-serialize would rewrite, so only the upstream bytes equal it.
+  const upstream = '{ "results" : [ { "indexUid" : "tools_v2", "hits" : [ { "id" : 1 } ] } ] }';
+
+  it('on: an unshaped response is sent as the upstream bytes, as JSON, still uncacheable', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.sent).toBeUndefined();
+    expect(Buffer.isBuffer(res.ended)).toBe(true);
+    expect(res.ended.toString('utf8')).toBe(upstream);
+    expect(res.contentLength).toBe(Buffer.byteLength(upstream));
+    expect(res.contentType).toBe('application/json; charset=utf-8');
+    expect(res.cacheControl).toBe('private, no-store');
+    expect(res.body).toBeUndefined();
+  });
+
+  it('on: a response with model hits is still shaped and sent through res.json', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              { indexUid: MODELS_SEARCH_INDEX, hits: [{ id: 9, name: 'Red', sfwName: 'Com' }] },
+            ],
+          })
+        )
+    );
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
+    expect(res.body.results[0].hits[0]).not.toHaveProperty('sfwName');
+  });
+
+  it('off: the same unshaped response goes through res.json, as before', async () => {
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
+    expect(res.body).toEqual({ results: [{ indexUid: TOOLS_SEARCH_INDEX, hits: [{ id: 1 }] }] });
+  });
+
+  it('on: the request body is still validated, so unknown params never reach the backend', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    await post(['multi-search'], {
+      queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x', hybrid: { embedder: 'e' } }],
+    });
+    expect(sentQueries()[0]).not.toHaveProperty('hybrid');
+  });
+});
+
+describe('collection covers for a signed-in viewer where the site caps nothing', () => {
+  const cover = { id: 20, nsfwLevel: NsfwLevel.R };
+  const search = async (user: object) => {
+    mockGetServerAuthSession.mockResolvedValue({ user });
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [{ indexUid: COLLECTIONS_SEARCH_INDEX, hits: [{ id: 1, image: cover }] }],
+          })
+        )
+    );
+    const { body } = await post(['multi-search'], {
+      queries: [{ indexUid: COLLECTIONS_SEARCH_INDEX, q: '' }],
+    });
+    return body.results[0].hits[0].image;
+  };
+
+  it("drops a cover above the viewer's own level", async () => {
+    expect(
+      await search({ id: 42, isModerator: false, showNsfw: true, browsingLevel: NsfwLevel.PG })
+    ).toBeNull();
+  });
+
+  it('control: a viewer whose level includes it keeps it', async () => {
+    expect(
+      await search({
+        id: 42,
+        isModerator: false,
+        showNsfw: true,
+        browsingLevel: NsfwLevel.PG | NsfwLevel.R,
+      })
+    ).toEqual(cover);
+  });
+
+  it('a moderator keeps what they see today', async () => {
+    expect(
+      await search({ id: 7, isModerator: true, showNsfw: true, browsingLevel: NsfwLevel.PG })
+    ).toEqual(cover);
+  });
+});
+
+describe('profanity refusal', () => {
+  const multi = { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: `a ${PROFANE} b` }] };
+
+  it('refuses a profane search on civitai.com without searching or naming the words', async () => {
+    mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true, isGreen: true });
+    const result = await post(['multi-search'], multi);
+    expect(result.status).toBe(422);
+    expect(result.body).toEqual({
+      message: 'This search is not allowed.',
+      code: 'search_refused',
+      type: 'invalid_request',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('runs a clean search on civitai.com', async () => {
+    mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true, isGreen: true });
+    const result = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'ordinary words' }],
+    });
+    expect(result.status).toBe(200);
+  });
+
+  it('runs no profanity check off civitai.com', async () => {
+    const result = await post(['multi-search'], multi);
+    expect(result.status).toBe(200);
   });
 });

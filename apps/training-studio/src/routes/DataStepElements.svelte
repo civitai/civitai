@@ -1,0 +1,1976 @@
+<script lang="ts">
+  import '$lib/civitai-elements';
+  import { onMount } from 'svelte';
+  import { buzzMode } from '$lib/buzz-mode.svelte';
+  import JSZip from 'jszip';
+  import {
+    IconSparkles,
+    IconArchive,
+    IconDownload,
+    IconRepeat,
+    IconUpload,
+    IconPhoto,
+    IconTag,
+    IconFileText,
+    IconCheck,
+    IconAlertTriangle,
+    IconPlus,
+    IconMusic,
+    IconRefresh,
+    IconPencil,
+    IconX,
+    IconArrowLeft,
+    IconArrowRight,
+    IconBoltFilled,
+    IconTrash,
+    IconFilter,
+  } from '@tabler/icons-svelte';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import type { CivitaiCheckbox } from '@civitai/components/civitai-checkbox';
+  import type { CivitaiSegmentedControl } from '@civitai/components/civitai-segmented-control';
+  import type { CivitaiTextInput } from '@civitai/components/civitai-text-input';
+  import type { CivitaiTextarea } from '@civitai/components/civitai-textarea';
+  import type { StudioPopover } from '$lib/elements/studio-popover';
+  import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
+  import { autoLabelAvailable, browser, hostConfig, hostLink } from '$lib/host';
+  import { nsfwLevelLabel } from '$lib/nsfw-rating';
+  import StickySummary from '$lib/components/StickySummary.svelte';
+  import { blobPreview, directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { playOnHover, resetOnLeave } from '$lib/video-preview';
+  import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
+  import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
+  import { pool } from '$lib/pool';
+  import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
+  import { buildTagExcluder, loadTagCategories, type TagCategories } from '$lib/autolabel-exclude';
+  import { isAbort } from '$lib/upload';
+  import { trainingBlobKey } from '$lib/train-core';
+  import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
+  import { triggerForImport } from './triggerSuggest';
+  import {
+    blobAirFromUrl,
+    captionTriggerHit,
+    compareFileNames,
+    defaultStepsForRun,
+    imgBytes,
+    selectionFromTotal,
+    isFailed,
+    autoLabelTargets,
+    canAutoLabelImage,
+    handLabelOnlyCount,
+    isLabeled,
+    labelTextAfterSwitch,
+    isTrainable,
+    repeatsOf,
+    clampRepeats,
+    selectionTakesRepeats,
+    isTriggerTag,
+    labelOptions,
+    labelString,
+    matchesTagFilter,
+    mergeAutoLabel,
+    newBatch,
+    nextImgId,
+    parseLabel,
+    plural,
+    runCard,
+    splitTags,
+    startLabelPass,
+    tagsHaveTrigger,
+    withFilterTags,
+    asDatasetFilter,
+    matchesRatingFilter,
+    matchesVerdictFilter,
+    imgRatingLabel,
+    isImgMature,
+    ratingChoices,
+    type BatchSource,
+    type DatasetFilter,
+    type Img,
+    type LabelPosition,
+    type Selection,
+    type TagFilter,
+  } from './trainingFlow';
+  import { groupTags } from './tagReplace';
+  import LabelEditorModal from './LabelEditorModalElements.svelte';
+  import TagEditor from './TagEditor.svelte';
+  import GenerationPickerModal from './GenerationPickerModalElements.svelte';
+  import { fileDrop, isZip, pickedFiles } from './fileDrop';
+  import { inFlight, uploadedFields, uploadTile } from './tileUpload';
+  import { datasetEpoch, planRemoval } from './datasetRemoval';
+  import ReuseDatasetModal from './ReuseDatasetModalElements.svelte';
+  import ManageTagsModal from './ManageTagsModalElements.svelte';
+  import RepeatsStepper from './RepeatsStepper.svelte';
+  import type { GenerationItem } from '$lib/data/trainingRows';
+
+  // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
+  let {
+    selection,
+    prices,
+    ratingV2 = false,
+    images = $bindable([]),
+    trigger = $bindable(''),
+    labelMode = $bindable('tag'),
+    autoLabel = $bindable('auto'),
+    excludeTags = $bindable([]),
+    excludeCharacter = $bindable(true),
+    excludeSource = $bindable(true),
+    filter = $bindable('all'),
+    reuseItems = [],
+    findReplace = false,
+    onContinue,
+    onBack,
+  }: {
+    selection: Selection;
+    /** Live "from" quotes per card type — keeps the running price visible during upload. */
+    prices: Record<string, number>;
+    /** The server rates this dataset with the v2 rating: filter by its verdicts, not upload ratings. */
+    ratingV2?: boolean;
+    images: Img[];
+    trigger: string;
+    /** The chosen dataset label format — owned by the flow. Fixed to the model's format for single-format
+     *  models; user-selectable for a `bothLabels` model (e.g. Anima). */
+    labelMode: LabelType;
+    /** Owned by the flow (survive Back/Continue): whether auto-label runs on its own as uploads
+     *  settle, and tags auto-label results must never apply (tag mode; a caption no-op). */
+    autoLabel: 'auto' | 'manual';
+    excludeTags: string[];
+    /** Drop the tagger's character / source-material (Danbooru "copyright") tags. */
+    excludeCharacter: boolean;
+    excludeSource: boolean;
+    /** Owned by the flow so Review's "see which" can land on the Mature view. */
+    filter: DatasetFilter;
+    findReplace?: boolean;
+    /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
+    reuseItems?: ReuseItem[];
+    onContinue: () => void;
+    onBack: () => void;
+  } = $props();
+
+  // Uploads are content-addressed; the orchestrator rejects a dataset naming one blob twice (at Start,
+  // by a hash the user can't map to a file), so every ingress dedupes on the key.
+  const keyOfImg = (img: Img) => (img.blobId ? trainingBlobKey(img.blobId) : undefined);
+  const ownerOf = (key: string, selfId: number) =>
+    images.find((i) => i.id !== selfId && keyOfImg(i) === key);
+  let dupOwnerIds = $state<number[]>([]);
+  const dupNotice = $derived.by(() => {
+    const owners = dupOwnerIds
+      .map((id) => images.find((i) => i.id === id))
+      .filter((i): i is Img => !!i);
+    const names = [...new Set(owners.map((i) => i.name))];
+    const shown = names.slice(0, 3).join(', ');
+    return {
+      count: owners.length,
+      names: names.length > 3 ? `${shown} and ${names.length - 3} more` : shown,
+    };
+  });
+
+  // Silent: a Back/Continue remount re-seeds the same blobs, which the user didn't add twice.
+  onMount(() => {
+    if (reuseItems.length)
+      addFromBlobs(
+        reuseItems.map((r) => ({
+          blobId: r.air,
+          name: r.name,
+          caption: r.caption,
+          previewWorkflowId: r.workflowId,
+          repeats: r.repeats,
+        })),
+        { silent: true }
+      );
+  });
+
+  const type = $derived(loraTypeById(selection.loraType));
+  // A dataset has one label type; SelectStep's label-type lock guarantees every run in a multi-run
+  // selection shares run[0]'s, so run[0] is representative of the whole dataset.
+  const primaryCard = $derived(runCard(selection.runs[0]!));
+  const noun = $derived(labelMode === 'tag' ? 'tags' : 'captions');
+  const media = $derived(selection.media);
+  // The model can train on either format → offer the choice. Single-run only: a multi-run sweep's runs were
+  // locked to one format in Select, so mid-flow switching there could desync them.
+  const canChooseLabel = $derived(labelOptions(primaryCard).length > 1 && selection.runs.length === 1);
+
+  // Switching format used to clear every image's label and re-auto-label from scratch — which
+  // silently destroyed captions a tester's dataset arrived with. Now: labels that CAME with the
+  // dataset (`sourceLabel`) always survive a switch (re-applied verbatim in the new format), and a
+  // switch that would discard anything else asks first — convert the text, or re-label from scratch.
+  // `pendingLabelMode` is the dialog's payload; `switchDialogOpen` alone drives visibility.
+  let pendingLabelMode = $state<LabelType | null>(null);
+  let switchDialogOpen = $state(false);
+  const switchDiscardCount = $derived(images.filter((i) => isLabeled(i) && !i.sourceLabel).length);
+
+  function switchLabelMode(next: LabelType) {
+    if (next === labelMode) return;
+    if (switchDiscardCount > 0) {
+      pendingLabelMode = next;
+      switchDialogOpen = true;
+      return;
+    }
+    applyLabelModeSwitch(next, 'convert');
+  }
+
+  function applyLabelModeSwitch(next: LabelType, choice: 'convert' | 'relabel') {
+    const prev = labelMode;
+    switchDialogOpen = false;
+    // Results from a drain still running in the OLD mode would land after the switch, mark tiles
+    // labeled, and train empty labels — kill it. Null the slot synchronously too: the aborted
+    // drain's finally hasn't run yet, and ensureLabeling below would otherwise see it occupied
+    // and start nothing.
+    labelController?.abort();
+    labelController = null;
+    labelMode = next;
+    for (const img of images) {
+      const text = labelTextAfterSwitch(img, prev, choice);
+      const parsed = parseLabel(text, next);
+      img.tags = parsed.tags;
+      img.caption = parsed.caption;
+      img.labelTried = text.length > 0;
+      img.labelError = undefined;
+      // The aborted drain's catch skips flag-clearing on abort — without this, mid-flight tiles
+      // stay `labeling` forever and the whole step wedges (toggle disabled, Continue blocked).
+      img.labeling = false;
+    }
+    // 'relabel' is an explicit request to auto-label, so it runs even in manual mode.
+    if (choice === 'relabel') void ensureLabeling();
+    else void maybeAutoLabel();
+  }
+
+  const uploadedCount = $derived(images.filter(isTrainable).length);
+  // The estimate at the Review step's default step budget (fixed per base model — dataset size no
+  // longer moves it). Null (unpriced) hides the badge.
+  const estTotal = $derived(selectionFromTotal(prices, selection.runs));
+  const stepBudgets = $derived(selection.runs.map(defaultStepsForRun));
+  const estSteps = $derived(Math.max(...stepBudgets));
+  // A multi-run sweep can mix budgets (anima 1500 + LTX 3000) — "up to" keeps the badge honest.
+  const mixedStepBudgets = $derived(new Set(stepBudgets).size > 1);
+  const busy = $derived(images.some((i) => i.status === 'uploading'));
+  const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
+  const errorCount = $derived(images.filter((i) => i.status === 'error').length);
+  const failedTotal = $derived(blockedCount + errorCount);
+  // A trainable image needs a label (tags or a caption); an unlabeled dataset must not reach Review.
+  // Reused images can only be hand-labeled.
+  const labeledCount = $derived(images.filter((i) => isTrainable(i) && isLabeled(i)).length);
+  const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
+  const labelingActive = $derived(images.some((i) => i.labeling));
+  // The card whose inline editor has focus: an auto-label pass taking it would unmount the editor and
+  // drop what's being typed. Focus leaving commits the draft, then re-offers the card to auto-label.
+  let inlineFocusId = $state<number | null>(null);
+  // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
+  // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
+  // returned nothing (failed steps go to the editor's Re-run).
+  const unlabeled = $derived(
+    autoLabelTargets(images, { skipLabeled: true, skipTried: true, focusId: inlineFocusId })
+  );
+  const handOnly = $derived(handLabelOnlyCount(images));
+  const handOnlyNotice = $derived(
+    handOnly > 0
+      ? `${plural(handOnly, 'reused image')} can't be auto-labeled; edit ${handOnly === 1 ? 'its label' : 'their labels'} by hand.`
+      : null
+  );
+  const canContinue = $derived(uploadedCount > 0 && !busy && !labelingActive && allLabeled);
+  const enough = $derived(uploadedCount >= type.minImg);
+
+  // Filter the tile grid so a single unlabeled image in a big dataset is findable. Partitions ALL images by
+  // whether they carry a label (tags or caption), so a blocked/erroring tile with no label surfaces under
+  // "Unlabeled" too — it's a problem tile the user needs to see.
+  const labeledTotal = $derived(images.filter(isLabeled).length);
+  const unlabeledTotal = $derived(images.length - labeledTotal);
+  // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
+  const isMature = isImgMature;
+  const matureTotal = $derived(images.filter(isMature).length);
+  // Under the v2 rating the upload ratings are no filter: Mature / Not mature / Not rated yet are.
+  const ratingFilters = $derived(ratingV2 ? [] : ratingChoices(images, filter));
+  const notMatureTotal = $derived(images.filter((i) => matchesVerdictFilter(i, 'not-mature')).length);
+  const notRatedTotal = $derived(images.filter((i) => matchesVerdictFilter(i, 'not-rated')).length);
+  // With/without tag filter (and Manage tags' "Show images"): the images that matched when the filter
+  // last changed — a snapshot, so adding a missing tag to one while reviewing doesn't hide it.
+  let tagFilter = $state<(TagFilter & { ids: number[] }) | null>(null);
+  function setTagFilter(next: TagFilter) {
+    tagFilter =
+      next.include.length || next.exclude.length
+        ? { ...next, ids: images.filter((i) => matchesTagFilter(i.tags, next)).map((i) => i.id) }
+        : null;
+  }
+  const showTag = (tag: string) => setTagFilter({ include: [tag], exclude: [] });
+  let tagFilterDraft = $state('');
+  function addFilterTags(side: keyof TagFilter) {
+    if (tagFilterDraft.trim())
+      setTagFilter(withFilterTags(tagFilter ?? { include: [], exclude: [] }, tagFilterDraft, side));
+    tagFilterDraft = '';
+  }
+  function dropFilterTag(tag: string) {
+    if (!tagFilter) return;
+    setTagFilter({
+      include: tagFilter.include.filter((t) => t !== tag),
+      exclude: tagFilter.exclude.filter((t) => t !== tag),
+    });
+  }
+  function flipFilterTag(tag: string) {
+    if (!tagFilter) return;
+    setTagFilter(withFilterTags(tagFilter, tag, tagFilter.include.includes(tag) ? 'exclude' : 'include'));
+  }
+  const tagVocabId = $props.id();
+  // A card being edited inline stays under Labeled/Unlabeled until the filter changes, or the first
+  // keystroke of a caption would label it and pull it out of the grid mid-word.
+  let editedInline = $state<{ filter: DatasetFilter; ids: number[] }>({ filter: 'all', ids: [] });
+  const keptInView = (i: Img) => editedInline.filter === filter && editedInline.ids.includes(i.id);
+  function showFilter(next: DatasetFilter) {
+    filter = next;
+    editedInline = { filter: next, ids: [] };
+  }
+  function keepInView(id: number) {
+    if (editedInline.filter !== filter) editedInline = { filter, ids: [id] };
+    else if (!editedInline.ids.includes(id)) editedInline.ids.push(id);
+  }
+  const statusShownImages = $derived(
+    filter === 'labeled'
+      ? images.filter((i) => isLabeled(i) || keptInView(i))
+      : filter === 'unlabeled'
+        ? images.filter((i) => !isLabeled(i) || keptInView(i))
+        : filter === 'mature'
+          ? images.filter(isMature)
+          : filter === 'failed'
+            ? images.filter(isFailed)
+            : filter.startsWith('rating:')
+              ? images.filter((i) => matchesRatingFilter(i, filter))
+              : filter === 'not-mature' || filter === 'not-rated'
+                ? images.filter((i) => matchesVerdictFilter(i, filter))
+                : images
+  );
+  // Per-image repeats: tucked into the label editor, a bulk setter while a tag filter is on, and a
+  // ×N badge only on images that repeat.
+  const takesRepeats = $derived(selectionTakesRepeats(selection));
+  let bulkRepeats = $state(2);
+  let bulkRepeatsOpen = $state(false);
+  function applyBulkRepeats() {
+    for (const img of shownImages) img.repeats = bulkRepeats > 1 ? bulkRepeats : undefined;
+    bulkRepeatsOpen = false;
+  }
+  // A skipped duplicate the user meant to keep is a weighting: one more repeat on the image it copies.
+  function keepDuplicatesAsRepeats() {
+    for (const id of dupOwnerIds) {
+      const img = images.find((i) => i.id === id);
+      if (img) img.repeats = clampRepeats(repeatsOf(img) + 1);
+    }
+    dupOwnerIds = [];
+  }
+  const shownImages = $derived.by(() => {
+    if (!tagFilter) return statusShownImages;
+    const ids = new Set(tagFilter.ids);
+    return statusShownImages.filter((i) => ids.has(i.id));
+  });
+  // Where the host has no auto-label, none of its actions are offered (the toggle, the Auto-label
+  // and Label-all buttons, the editor's Re-run, the switch dialog's Re-label); the guards below back
+  // that up for the callers that don't go through a button.
+  const canAutoLabel = autoLabelAvailable();
+  const autoLabelLink = hostConfig().autoLabelUrl;
+
+  let dragging = $state(false);
+  let fileInput: HTMLInputElement;
+  const uploads = inFlight<number>();
+
+  // Mutate the tile through `images` (the state proxy) rather than the captured ref, so the change
+  // is reactive.
+  function patch(id: number, values: Partial<Img>) {
+    const tile = images.find((x) => x.id === id);
+    if (tile) Object.assign(tile, values);
+  }
+
+  async function addFiles(list: Iterable<File> | null | undefined) {
+    if (!list) return;
+    const matched = [...list]
+      .map((file) => ({ file, fileMediaType: fileMedia(file.type) }))
+      .filter((x): x is { file: File; fileMediaType: Media } => !!x.fileMediaType);
+    if (matched.length === 0) return;
+    const batch = newBatch('upload');
+    const added: Img[] = matched.map(({ file, fileMediaType }) => ({
+      id: nextImgId(),
+      file,
+      name: file.name,
+      previewUrl: URL.createObjectURL(file),
+      mediaType: fileMediaType,
+      status: 'uploading',
+      progress: 0,
+      tags: [],
+      caption: '',
+      batch,
+    }));
+    images = [...images, ...added];
+    await pool(added, 4, (img) => uploadOne(img.id, img.file!));
+    // Auto-label as soon as this batch's uploads settle. If a run is already going, it drains this batch too.
+    void maybeAutoLabel();
+  }
+
+  async function uploadOne(id: number, file: File) {
+    const blob = await uploads.run(id, (signal) => uploadTile(file, (values) => patch(id, values), signal));
+    if (!blob) return;
+    const owner = ownerOf(trainingBlobKey(blob.id), id);
+    if (owner) {
+      // Whichever copy finishes first is kept, so a zip's caption can sit on the dropped one.
+      const dropped = images.find((i) => i.id === id);
+      if (dropped?.sourceLabel && !owner.sourceLabel && !isLabeled(owner))
+        patch(owner.id, {
+          tags: dropped.tags,
+          caption: dropped.caption,
+          sourceLabel: dropped.sourceLabel,
+          labelTried: dropped.labelTried,
+        });
+      dupOwnerIds = [...dupOwnerIds, owner.id];
+      remove(id);
+      return;
+    }
+    patch(id, uploadedFields(blob));
+  }
+
+  function retry(id: number) {
+    const tile = images.find((x) => x.id === id);
+    if (tile?.file) void uploadOne(id, tile.file).then(maybeAutoLabel);
+  }
+
+  // Add items backed by EXISTING orchestrator blobs (a generation or a reused dataset): already uploaded
+  // and scanned, so no upload. A `caption` (from a reused dataset) is applied to the right field for the
+  // dataset's label type and marks the item labeled; un-captioned items (generations) get auto-labeled.
+  // Items may arrive with a ready `url` (generations) or with a `previewWorkflowId` (reused dataset
+  // blobs, whose previews need an authenticated fetch) — those tiles render placeholders and hydrate
+  // in the background, so seeding never waits on media downloads.
+  function addFromBlobs(
+    items: {
+      blobId: string;
+      name: string;
+      url?: string;
+      caption?: string;
+      previewWorkflowId?: string;
+      nsfwLevel?: string;
+      repeats?: number;
+    }[],
+    { silent = false, source = 'reuse' }: { silent?: boolean; source?: BatchSource } = {}
+  ) {
+    // Skip blobs already in the dataset (the picker can't see what's here) or repeated in the batch.
+    const have = new Map<string, number>();
+    for (const i of images) {
+      const key = keyOfImg(i);
+      if (key && !have.has(key)) have.set(key, i.id);
+    }
+    const skipped: number[] = [];
+    const fresh: ((typeof items)[number] & { id: number })[] = [];
+    for (const item of items) {
+      const key = trainingBlobKey(item.blobId);
+      const owner = have.get(key);
+      if (owner !== undefined) {
+        skipped.push(owner);
+        continue;
+      }
+      const id = nextImgId();
+      have.set(key, id);
+      fresh.push({ ...item, id });
+    }
+    if (!silent && skipped.length) dupOwnerIds = [...dupOwnerIds, ...skipped];
+    if (fresh.length === 0) return;
+    const toHydrate: { id: number; air: string; workflowId: string }[] = [];
+    const batch = newBatch(source);
+    const added: Img[] = fresh.map(({ id, ...item }) => {
+      const label = item.caption?.trim() ?? '';
+      if (!item.url && item.previewWorkflowId)
+        toHydrate.push({ id, air: item.blobId, workflowId: item.previewWorkflowId });
+      // A video dataset can legitimately hold stills, and a reused blob's air keeps its file
+      // extension — type each tile from it so a still never renders inside a <video>.
+      const ext = extOfAir(item.blobId);
+      return {
+        id,
+        name: item.name,
+        previewUrl: item.url ?? '',
+        mediaType: (ext && extMedia(ext)) || media,
+        status: 'uploaded',
+        progress: 1,
+        blobId: item.blobId,
+        blobUrl: item.url,
+        nsfwLevel: item.nsfwLevel,
+        ...parseLabel(label, labelMode),
+        // Verbatim — the switch logic promises to restore the ARRIVAL text exactly.
+        sourceLabel: item.caption || undefined,
+        labelTried: label ? true : undefined,
+        repeats: item.repeats,
+        batch,
+      };
+    });
+    images = [...images, ...added];
+    void hydrateBlobPreviews(toHydrate);
+    void maybeAutoLabel();
+  }
+
+  // Fetch reused-blob previews after the tiles exist. A failed preview stays a placeholder — the
+  // `air` is what trains. `blobUrl` gets the same local object URL the eager path used to set;
+  // it is browser-local, so `canAutoLabelImage` keeps these tiles out of auto-label.
+  async function hydrateBlobPreviews(targets: { id: number; air: string; workflowId: string }[]) {
+    if (targets.length === 0) return;
+    await pool(targets, 4, async (t) => {
+      const direct = directDatasetUrl(t.air);
+      const { url, nsfwLevel } = direct ? { url: direct } : await blobPreview(t.air, t.workflowId);
+      if (!url) return;
+      // Tile removed mid-fetch — or the whole flow unmounted (its cleanup empties `images`, so
+      // this same guard catches a late resolve after teardown and the URL never leaks).
+      if (!images.some((i) => i.id === t.id)) {
+        if (!direct) URL.revokeObjectURL(url);
+        return;
+      }
+      patch(t.id, { previewUrl: url, blobUrl: url, ...(nsfwLevel ? { nsfwLevel } : {}) });
+    });
+    // A directly fetchable (https) item only becomes labelable once `blobUrl` exists — the add-time
+    // drain saw nothing to do, so run it again now.
+    void maybeAutoLabel();
+  }
+
+  // Video models train on stills too (the on-site trainer has always accepted images for video
+  // training — its absence here was reported as a regression), so a video dataset accepts image
+  // files; each tile carries its OWN mediaType so previews and labeling treat it correctly.
+  // Classification itself (ext↔media↔mime) lives in $lib/media — this is only the acceptance policy.
+  const acceptedMedia = $derived<Media[]>(media === 'video' ? ['video', 'image'] : [media]);
+  const acceptedExtsText = $derived(
+    extsOfMedia(acceptedMedia)
+      .map((ext) => ext.toUpperCase())
+      .join(', ')
+  );
+  const fileMedia = (mime: string): Media | undefined =>
+    acceptedMedia.find((m) => mime.startsWith(`${m}/`));
+  const extMedia = (ext: string): Media | undefined => {
+    const m = mediaOfExt(ext);
+    return m && acceptedMedia.includes(m) ? m : undefined;
+  };
+
+  // Import a dataset .zip (round-trips with the detail page's Download): each media file becomes an
+  // uploaded + scanned tile; a same-named `.txt` supplies its caption (standard LoRA layout). Captioned
+  // images are pre-labeled and skip auto-label; un-captioned ones still get it. Several zips (one drop,
+  // a multi-pick, or a drop mid-import) queue and are handled one at a time — each zip's uploads finish
+  // before the next is unpacked, which bounds both upload concurrency and memory to one zip.
+  let importing = $state(false);
+  let importNotice = $state('');
+  let zipInput: HTMLInputElement;
+  // Each zip captures the epoch when it is queued, not when the drain starts: a Remove all drops the
+  // zips queued before it, while one dropped after it still imports.
+  const zipQueue: { file: File; current: () => boolean }[] = [];
+  async function importZips(files: File[]) {
+    zipQueue.push(...files.map((file) => ({ file, current: epoch.capture() })));
+    if (importing) return;
+    importing = true;
+    importNotice = '';
+    const unreadable: string[] = [];
+    const empty: string[] = [];
+    let suggested: string | null = null;
+    try {
+      for (let next = zipQueue.shift(); next; next = zipQueue.shift()) {
+        const { file, current } = next;
+        if (!current()) continue;
+        let entries: Awaited<ReturnType<typeof readZip>>;
+        try {
+          entries = await readZip(file);
+        } catch {
+          unreadable.push(file.name);
+          continue;
+        }
+        if (entries.length === 0) empty.push(file.name);
+        // A Remove all while a zip was extracting: the user emptied the dataset this would refill.
+        // One fill per batch: a user who clears it while the next zip unpacks has said no.
+        else if (current()) suggested = (await addImported(entries, suggested === null)) ?? suggested;
+      }
+    } finally {
+      importing = false;
+      importNotice = [
+        unreadable.length > 0 && `Couldn't read ${unreadable.join(', ')} — not a valid .zip.`,
+        empty.length > 0 && `No ${acceptedExtsText} files in ${empty.join(', ')}.`,
+        // Not if the user has since changed or cleared it.
+        suggested && trigger === suggested && `Trigger word set to "${suggested}" from the imported tags.`,
+      ]
+        .filter(Boolean)
+        .join(' ');
+    }
+  }
+  async function readZip(file: File) {
+    const zip = await JSZip.loadAsync(file);
+    const captions = new Map<string, string>();
+    const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
+      [];
+    const ordered = Object.values(zip.files).sort((a, b) => compareFileNames(a.name, b.name));
+    for (const entry of ordered) {
+      if (entry.dir) continue;
+      const name = entry.name.split('/').pop() ?? entry.name;
+      if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
+      const dot = name.lastIndexOf('.');
+      const base = dot >= 0 ? name.slice(0, dot) : name;
+      const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+      if (ext === 'txt') captions.set(base, (await entry.async('string')).trim());
+      else if (extMedia(ext)) mediaFiles.push({ name, base, ext, entry });
+    }
+    return Promise.all(
+      mediaFiles.map(async (m) => ({
+        file: new File([await m.entry.async('blob')], m.name, {
+          type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
+        }),
+        caption: captions.get(m.base) ?? '',
+        // The tile shows the in-zip path: the grid is sorted by it, and two `img.png`s in different
+        // folders must be told apart.
+        path: m.entry.name,
+      }))
+    );
+  }
+
+  // Exports the current labels so a dataset can be tagged across sessions: nothing in this step
+  // persists, and the run page's Download only exists after Start.
+  let exporting = $state(false);
+  let exportNotice = $state('');
+  async function exportZip() {
+    if (exporting) return;
+    // A tile still uploading or that failed to upload keeps its File and labels — the work this exists
+    // to save. Blocked ones failed the scan and stay out.
+    const items = images.filter((i) => i.status !== 'blocked');
+    const blocked = images.length - items.length;
+    if (items.length === 0) return;
+    exporting = true;
+    exportNotice = '';
+    try {
+      const splitExt = (name: string) => {
+        const dot = name.lastIndexOf('.');
+        const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+        return mediaOfExt(ext) ? { base: name.slice(0, dot), ext } : { base: name, ext: undefined };
+      };
+      const named = items.map((img) => splitExt(img.name));
+      const bases = uniqueBaseNames(named.map((n) => n.base));
+      const { blob, failed } = await buildDatasetZip(
+        items.map((img, i) => {
+          const airExt = img.blobId ? extOfAir(img.blobId) : undefined;
+          return {
+            base: bases[i]!,
+            ext: named[i]!.ext ?? (airExt && mediaOfExt(airExt) ? airExt : undefined),
+            caption: labelString(img, labelMode),
+            load: () => imgBytes(img),
+          };
+        }),
+        trigger
+      );
+      if (!blob) {
+        exportNotice = "Couldn't fetch any of the files — nothing to download.";
+        return;
+      }
+      saveBlob(blob, 'training-dataset.zip');
+      exportNotice = [
+        failed > 0 && `${plural(failed, 'file')} couldn't be fetched`,
+        blocked > 0 && `${plural(blocked, 'file')} blocked by the scan`,
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      if (exportNotice) exportNotice += ' — left out of the zip.';
+    } finally {
+      exporting = false;
+    }
+  }
+
+  // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
+  // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
+  /** Returns the trigger word it filled in from the captions, if any (see triggerForImport). */
+  async function addImported(entries: { file: File; caption: string; path: string }[], mayFill: boolean) {
+    if (entries.length === 0) return null;
+    const suggested = triggerForImport({
+      labelMode,
+      trigger,
+      mayFill,
+      captions: entries.map((e) => e.caption),
+    });
+    if (suggested) trigger = suggested;
+    const batch = newBatch('zip');
+    const added: Img[] = entries.map((e) => {
+      const label = e.caption.trim();
+      return {
+        id: nextImgId(),
+        file: e.file,
+        name: e.path,
+        previewUrl: URL.createObjectURL(e.file),
+        mediaType: fileMedia(e.file.type) ?? media,
+        status: 'uploading' as const,
+        progress: 0,
+        ...parseLabel(label, labelMode),
+        // Verbatim (untrimmed) — the switch logic promises to restore the file's text exactly.
+        sourceLabel: e.caption || undefined,
+        labelTried: label ? true : undefined,
+        batch,
+      };
+    });
+    images = [...images, ...added];
+    await pool(added, 4, (img) => uploadOne(img.id, img.file!));
+    void maybeAutoLabel();
+    return suggested;
+  }
+  function onPickZip(e: Event) {
+    void importZips(pickedFiles(e));
+  }
+
+  function remove(id: number) {
+    uploads.abort(id);
+    const tile = images.find((x) => x.id === id);
+    if (tile) URL.revokeObjectURL(tile.previewUrl);
+    images = images.filter((x) => x.id !== id);
+  }
+
+  const epoch = datasetEpoch();
+  // Remove all, or only the tiles the current filter shows.
+  let removeDialogOpen = $state(false);
+  const filtered = $derived(filter !== 'all' || tagFilter != null);
+  const removeTargets = $derived(filtered ? shownImages : images);
+  function removeMany(ids: number[]) {
+    removeDialogOpen = false;
+    const { kept, removed, abortLabelPass } = planRemoval(images, ids, labelController != null);
+    if (removed.length === 0) return;
+    for (const tile of removed) {
+      uploads.abort(tile.id);
+      URL.revokeObjectURL(tile.previewUrl);
+    }
+    if (abortLabelPass) {
+      // Null the slot synchronously, as the label-mode switch does: the aborted drain's finally
+      // runs later and must not be what frees it.
+      labelController?.abort();
+      labelController = null;
+      labelRun = null;
+    }
+    images = kept;
+    if (kept.length === 0) {
+      epoch.bump();
+      dupOwnerIds = [];
+      labelAllNotice = null;
+    }
+    // A filter left over an emptied view would show a blank grid with the rest of the dataset hidden.
+    if (filtered && shownImages.length === 0) {
+      tagFilter = null;
+      showFilter('all');
+    }
+  }
+
+  // Free auto-labeling, automatic: it kicks off as soon as an upload batch settles (and after a retry),
+  // tag models get WD tags, caption models get a caption. A single drain loop labels every uploaded image
+  // once — images that finish uploading while a run is in flight are picked up on the next pass, so a
+  // second `ensureLabeling()` call during a run is a no-op. `labelRun` tracks the current pass for the
+  // progress counter (labeledCount is whole-set, so it can't stand in here).
+  let labelController: AbortController | null = null;
+  let labelRun = $state<{ total: number; done: number; keys: Set<string> } | null>(null);
+
+  // The automatic trigger sites (upload settled, blobs added, previews hydrated) go through this so
+  // manual mode labels nothing until the Auto-label button is clicked. The button and other explicit
+  // requests call ensureLabeling directly.
+  function maybeAutoLabel(): Promise<void> | undefined {
+    if (autoLabel !== 'auto') return;
+    return ensureLabeling();
+  }
+
+  async function ensureLabeling() {
+    if (!canAutoLabel || labelController) return; // a drain loop is already running; it will pick up new uploads
+    const controller = new AbortController();
+    labelController = controller;
+    try {
+      while (unlabeled.length > 0) {
+        // Load before claiming: an await between startLabelPass and runAutoLabel lets a mode switch
+        // abort a pass that still submits, while the replacement drain submits the same images.
+        await ensureTagCategories();
+        if (controller.signal.aborted) return;
+        const targets = unlabeled;
+        const { byKey, items } = startLabelPass(targets);
+        labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
+        // A result that resolves between abort and delivery must be dropped — post-switch it
+        // would write an OLD-mode label into a freshly reset tile and mark it done.
+        const sent = await runAutoLabel(
+          labelMode,
+          media,
+          items,
+          (r) => {
+            const img = byKey.get(r.key);
+            if (img && !controller.signal.aborted) applyLabel(img, r);
+          },
+          controller.signal
+        );
+        // Every target was over the per-image cap: re-selecting them again would spin without end.
+        if (sent === 0) break;
+        // In manual mode label only the pass the user asked for — draining uploads that settled
+        // mid-run is the automatic behavior the toggle opts out of.
+        if (autoLabel !== 'auto') break;
+      }
+    } catch (err) {
+      // labelTried stays set: these tiles may already be submitted (and charged) — Re-run is the retry.
+      if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
+    } finally {
+      // Only release the slot/progress if they're still OURS — an aborted drain's finally runs
+      // after the aborter has already started a replacement, and clearing that one's state would
+      // let a third drain start concurrently (or blank the live progress counter).
+      if (labelController === controller) {
+        labelController = null;
+        labelRun = null;
+      }
+    }
+  }
+
+  function applyLabel(img: Img, r: AutoLabelResult, position: LabelPosition = 'replace') {
+    img.labeling = false;
+    img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
+    if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
+    img.labelError = r.status === 'failed' ? r.error : undefined;
+    if (r.status === 'failed') return;
+    Object.assign(img, mergeAutoLabel(img, r, labelMode, position, excludeTag));
+  }
+
+  // Shares labelController with the drain, so neither starts while the other runs; the drain resumes after.
+  type LabelAllPolicy = LabelPosition | 'skip';
+  let labelAllChoice = $state<LabelType | null>(null);
+  // WD tagging reads pixels; audio datasets only have the captioner.
+  const labelAllEngine = $derived<LabelType>(media === 'audio' ? 'caption' : (labelAllChoice ?? labelMode));
+  let labelAllPolicy = $state<LabelAllPolicy>('after');
+  let labelAllNotice = $state<string | null>(null);
+  const labelAllTargets = $derived(
+    autoLabelTargets(images, {
+      skipLabeled: labelAllPolicy === 'skip',
+      skipTried: false,
+      focusId: inlineFocusId,
+    })
+  );
+
+  async function labelAll() {
+    if (!canAutoLabel || labelController || labelAllTargets.length === 0) return;
+    const controller = new AbortController();
+    labelController = controller;
+    labelAllNotice = null;
+    const position: LabelPosition = labelAllPolicy === 'skip' ? 'after' : labelAllPolicy;
+    let targets: Img[] = [];
+    let failed = 0;
+    let reason: string | undefined;
+    try {
+      await ensureTagCategories(); // before claiming, as in ensureLabeling
+      if (controller.signal.aborted) return;
+      targets = labelAllTargets;
+      const { byKey, items } = startLabelPass(targets);
+      labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
+      await runAutoLabel(
+        labelAllEngine,
+        media,
+        items,
+        (r) => {
+          const img = byKey.get(r.key);
+          if (!img || controller.signal.aborted) return;
+          if (r.status === 'failed') {
+            failed += 1;
+            reason ??= r.error;
+          }
+          applyLabel(img, r, position);
+        },
+        controller.signal
+      );
+    } catch (err) {
+      if (!isAbort(err)) for (const i of targets) if (i.labeling) patch(i.id, { labeling: false });
+    } finally {
+      if (labelController === controller) {
+        labelController = null;
+        labelRun = null;
+      }
+    }
+    if (controller.signal.aborted) return;
+    // Daily-limit and per-image-cap refusals arrive as failed results.
+    if (failed > 0)
+      labelAllNotice = `${plural(failed, 'image')} not labeled${reason ? `: ${reason}` : ' — use Re-run in the editor.'}`;
+    void maybeAutoLabel();
+  }
+
+  // One drop target's worth of handlers, shared by the empty-state dropzone and the populated
+  // dataset area (dropping used to work only before the first upload).
+  const drop = fileDrop(
+    (v) => (dragging = v),
+    (files) => {
+      // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
+      // before. Every zip in the drop is imported, as the classic trainer did.
+      const zips = files.filter(isZip);
+      if (zips.length > 0) void importZips(zips);
+      void addFiles(files.filter((f) => !isZip(f)));
+    }
+  );
+  function onPick(e: Event) {
+    void addFiles(pickedFiles(e));
+  }
+
+  let genPickerOpen = $state(false);
+  let reuseOpen = $state(false);
+  function addFromGenerations(items: GenerationItem[]) {
+    addFromBlobs(
+      items.map((i) => ({
+        // The AIR (what trains) comes from the FULL blob url. Image tiles preview through the small
+        // preview so importing doesn't pull every full-size image into the browser — but a video's
+        // previewUrl is a STILL thumbnail, which a <video> tag can't play; those keep the real url
+        // (preload="metadata" keeps the cost to a first frame until hovered).
+        blobId: blobAirFromUrl(i.url),
+        url: media === 'image' ? i.previewUrl ?? i.url : i.url,
+        name: `generation ${i.blobId.slice(0, 8)}`,
+        nsfwLevel: i.nsfwLevel,
+      })),
+      { source: 'generations' }
+    );
+  }
+
+  // 'large' is one uncropped image per row with its editor beside it, for hand-labeling image by image.
+  type LabelView = 'grid' | 'inline' | 'large';
+  const LABEL_VIEW_KEY = 'ts-label-view';
+  function storedLabelView(): LabelView {
+    try {
+      const v = browser ? localStorage.getItem(LABEL_VIEW_KEY) : null;
+      return v === 'inline' || v === 'large' ? v : 'grid';
+    } catch {
+      return 'grid';
+    }
+  }
+  let labelView = $state(storedLabelView());
+  const editsOnCard = $derived(labelView !== 'grid');
+  function setLabelView(next: LabelView) {
+    labelView = next;
+    try {
+      localStorage.setItem(LABEL_VIEW_KEY, next);
+    } catch {
+      // Blocked storage only loses the remembered choice.
+    }
+  }
+
+  // ---- label editor: opens LabelEditorModal for one uploaded image ----
+  let editorOpen = $state(false);
+  let editorId = $state(0);
+  const editing = $derived(images.find((x) => x.id === editorId));
+
+  // Prev/next walk the grid as it was when the editor opened, so labeling an image under "Unlabeled"
+  // doesn't pull it out of the sequence mid-pass.
+  let editorSequence = $state<number[]>([]);
+  const editorSteps = $derived(
+    editorSequence.filter((id) => images.some((x) => x.id === id && x.status === 'uploaded'))
+  );
+  const editorIndex = $derived(editorSteps.indexOf(editorId));
+
+  function openEditor(id: number) {
+    editorSequence = shownImages.filter((i) => i.status === 'uploaded').map((i) => i.id);
+    editorId = id;
+    editorOpen = true;
+  }
+  function stepEditor(delta: -1 | 1) {
+    const next = editorSteps[editorIndex + delta];
+    if (next !== undefined) editorId = next;
+  }
+
+  // This dataset's tags, casings folded and frequency-ranked — feeds the editor's autocomplete and the
+  // Manage-tags panel.
+  const tagGroups = $derived(groupTags(images));
+  const tagVocab = $derived(tagGroups.map((g) => g.tag));
+
+  let manageOpen = $state(false);
+
+  // Entry dedupe for the exclude list; result filtering is excludeTag.
+  const excludedSet = $derived(new Set(excludeTags.map((t) => t.toLowerCase())));
+  let tagCategories = $state.raw<TagCategories | null>(null);
+  const excludeTag = $derived(
+    buildTagExcluder({ never: excludeTags, categories: tagCategories, excludeCharacter, excludeSource })
+  );
+  // Awaited before each auto-label submit so the first result already sees the category lists. A failed
+  // chunk load labels without them rather than blocking labeling; the next run retries.
+  let warnedTagCategories = false;
+  async function ensureTagCategories() {
+    if (tagCategories) return;
+    tagCategories = await loadTagCategories().catch((err) => {
+      if (!warnedTagCategories) {
+        warnedTagCategories = true;
+        console.warn(
+          '[training-studio] tag categories failed to load; character/source exclusion is off for this run',
+          err
+        );
+      }
+      return null;
+    });
+  }
+
+  // ---- Exclude list editing: comma/Enter-separated entry, deduped case-insensitively.
+  let excludeDraft = $state('');
+  function addExcludeTags() {
+    const have = new Set(excludedSet); // grown while deduping within the draft itself
+    const added = splitTags(excludeDraft).filter(
+      (t) => !have.has(t.toLowerCase()) && (have.add(t.toLowerCase()), true)
+    );
+    if (added.length) excludeTags = [...excludeTags, ...added];
+    excludeDraft = '';
+  }
+
+  // Re-run auto-label for one image (the editor's Re-run) — clears its label first so an already-attempted
+  // image (labelTried) gets a fresh pass.
+  async function relabelOne(id: number) {
+    const img = images.find((x) => x.id === id);
+    if (!canAutoLabel || !img || !img.blobUrl || !canAutoLabelImage(img) || img.labeling) return;
+    patch(id, { labeling: true, labelTried: false, labelError: undefined, tags: [], caption: '' });
+    try {
+      // Not a drain-pass index, so the drain's progress counter never counts it.
+      const item = [{ key: 'relabel', mediaUrl: img.blobUrl }];
+      await ensureTagCategories();
+      await runAutoLabel(labelMode, media, item, (r) => applyLabel(img, r), new AbortController().signal);
+    } catch (err) {
+      if (!isAbort(err)) patch(id, { labeling: false });
+    }
+  }
+
+  // For the tile previews' prepended trigger chip; the display rules live in trainingFlow.
+  const triggerText = $derived(trigger.trim());
+</script>
+
+{#snippet ratingBadge(img: Img)}
+  {@const rating = imgRatingLabel(img)}
+  {#if rating}
+    {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
+    {#if isMature(img)}
+      <studio-popover class="absolute bottom-1.5 left-1.5">
+        <button
+          slot="trigger"
+          type="button"
+          aria-label="Rated {rating}"
+          class="rounded bg-buzz px-1.5 py-0.5 font-mono text-xs font-semibold text-black">{rating}</button
+        >
+        <p class="max-w-[240px] text-xs">
+          {buzzMode.blueFirst
+            ? `Rated ${rating}. Mature content can't be paid with Green Buzz, so anything beyond your Blue Buzz is charged in Yellow.`
+            : `Rated ${rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.`}
+        </p>
+      </studio-popover>
+    {:else}
+      <span class="{badgeClass} bg-black/60 text-on-accent" title="Rated {rating}">{rating}</span>
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet triggerTags(tags: string[], limit: number)}
+  <div class="flex flex-wrap gap-1">
+    {#if triggerText && !tagsHaveTrigger(trigger, tags)}
+      <span class="rounded border border-buzz/30 bg-buzz/10 px-1.5 py-0.5 font-mono text-xs text-buzz">
+        {triggerText}
+      </span>
+    {/if}
+    {#each tags.slice(0, limit) as t (t)}
+      <span
+        class="rounded border px-1.5 py-0.5 font-mono text-xs {isTriggerTag(trigger, t)
+          ? 'border-buzz/30 bg-buzz/10 text-buzz'
+          : 'border-dark-4 bg-dark-7 text-dark-2'}"
+      >
+        {t}
+      </span>
+    {/each}
+    {#if tags.length > limit}
+      {@const triggerHidden =
+        triggerText &&
+        tagsHaveTrigger(trigger, tags) &&
+        !tags.slice(0, limit).some((t) => isTriggerTag(trigger, t))}
+      <span
+        class="rounded px-1.5 py-0.5 font-mono text-xs {triggerHidden
+          ? 'border border-buzz/30 bg-buzz/10 text-buzz'
+          : 'text-dark-2'}"
+        title={triggerHidden ? `includes the trigger word "${triggerText}"` : undefined}
+      >
+        +{tags.length - limit}
+      </span>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet filterChip(tag: string, excluded: boolean)}
+  <span
+    class="inline-flex items-center rounded border font-mono {excluded
+      ? 'border-red-400/30 bg-red-400/10 text-red-300'
+      : 'border-dark-4 bg-dark-6 text-dark-0'}"
+  >
+    <button
+      type="button"
+      class="py-0.5 pl-2 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      title={excluded ? 'Switch to images with this tag' : 'Switch to images without this tag'}
+      onclick={() => flipFilterTag(tag)}
+    >
+      {excluded ? 'without' : 'with'} {tag}
+    </button>
+    <button
+      type="button"
+      class="py-0.5 pl-0.5 pr-1.5 opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      aria-label="Remove {tag} from the filter"
+      onclick={() => dropFilterTag(tag)}
+    >
+      <IconX size={11} stroke={2} />
+    </button>
+  </span>
+{/snippet}
+
+{#snippet triggerCaption(caption: string)}
+  {@const hit = captionTriggerHit(trigger, caption)}
+  <div class="line-clamp-3 text-xs leading-snug text-dark-2">
+    {#if hit}{hit.before}<span class="font-semibold text-buzz">{hit.match}</span>{hit.after}{:else}{#if triggerText}<span
+          class="font-semibold text-buzz">{triggerText}</span
+        >, {/if}{caption}{/if}
+  </div>
+{/snippet}
+
+<div class="flex flex-col gap-5">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h2 class="m-0 text-xl font-semibold text-white">Add your data</h2>
+      <p class="mt-1 text-sm text-dark-2">
+        Drop your files — they upload and get scanned as you go.
+        {#if canAutoLabel}
+          We'll auto-label them as <strong class="text-dark-0">{noun}</strong> for free.
+        {:else}
+          Label them as <strong class="text-dark-0">{noun}</strong> yourself.
+        {/if}
+      </p>
+    </div>
+    {#if estTotal != null}
+      <div class="shrink-0 rounded-xl border border-dark-4 bg-dark-6 px-4 py-2 text-right">
+        <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Estimated price</div>
+        <div class="font-mono text-lg font-bold leading-tight text-buzz">
+          <IconBoltFilled size={15} stroke={2} class="mb-0.5 inline" />{estTotal.toLocaleString()}
+        </div>
+        <div class="mt-0.5 font-mono text-xs text-dark-2">
+          {mediaCount(uploadedCount, media)} · {mixedStepBudgets
+            ? 'up to '
+            : ''}~{estSteps.toLocaleString()} steps · adjust at Review
+        </div>
+      </div>
+    {/if}
+  </div>
+
+  <div class="flex flex-wrap items-center gap-2.5">
+    <civitai-button onclick={() => fileInput.click()}>
+      <span slot="left"><IconUpload size={15} stroke={2} /></span>Upload files
+    </civitai-button>
+    <civitai-button variant="outline" onclick={() => (genPickerOpen = true)}>
+      <span slot="left"><IconPhoto size={15} stroke={2} /></span>From my generations
+    </civitai-button>
+    <civitai-button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
+      <span slot="left"><IconArchive size={15} stroke={2} /></span>{importing ? 'Importing…' : 'Import .zip'}
+    </civitai-button>
+    <civitai-button variant="outline" onclick={() => (reuseOpen = true)}>
+      <span slot="left"><IconRepeat size={15} stroke={2} /></span>Reuse a dataset
+    </civitai-button>
+    <civitai-button
+      class="ml-auto"
+      variant="subtle"
+      onclick={exportZip}
+      disabled={exporting || images.every((i) => i.status === 'blocked')}
+      title="Download your {media} files with their {noun} as same-named .txt files"
+    >
+      <span slot="left"><IconDownload size={15} stroke={2} /></span>{exporting ? 'Zipping…' : 'Download .zip'}
+    </civitai-button>
+  </div>
+
+  {#if exportNotice}
+    <p class="text-sm text-amber-400" role="status">{exportNotice}</p>
+  {/if}
+  {#if importNotice}
+    <p class="text-sm text-amber-400" role="status">{importNotice}</p>
+  {/if}
+
+  {#if dupNotice.count > 0}
+    <civitai-alert closable close-label="Dismiss duplicate notice" onclose={() => (dupOwnerIds = [])}>
+      <span>
+        Skipped {dupNotice.count} duplicate{dupNotice.count === 1 ? '' : 's'} — same content as
+        <strong class="text-dark-0">{dupNotice.names}</strong>.
+        {#if takesRepeats}
+          Meant to train {dupNotice.count === 1 ? 'it' : 'them'} more?
+          <button
+            type="button"
+            class="ml-1 font-semibold text-primary underline-offset-2 hover:underline"
+            onclick={keepDuplicatesAsRepeats}>Count as repeats</button
+          >
+        {/if}
+      </span>
+    </civitai-alert>
+  {/if}
+
+  <input
+    bind:this={fileInput}
+    type="file"
+    multiple
+    accept={acceptedMedia.map((m) => `${m}/*`).join(',')}
+    class="hidden"
+    onchange={onPick}
+  />
+  <input
+    bind:this={zipInput}
+    type="file"
+    multiple
+    accept=".zip,application/zip"
+    class="hidden"
+    onchange={onPickZip}
+  />
+
+  <div class="rounded-xl border border-dark-4 bg-dark-6 px-4 py-3">
+    <div class="flex items-center gap-3">
+      <span class="grid h-8 w-8 shrink-0 place-items-center rounded bg-primary/15 text-primary">
+        {#if labelMode === 'tag'}<IconTag size={16} stroke={2} />{:else}<IconFileText
+            size={16}
+            stroke={2}
+          />{/if}
+      </span>
+      <div class="min-w-0">
+        <div class="text-sm font-bold text-dark-0">{canAutoLabel ? `Auto-labeled as ${noun} · free` : `Labeled with ${noun}`}</div>
+        <div class="font-mono text-xs text-dark-2">
+          {labelMode === 'tag'
+            ? `${primaryCard.name} trains on booru-style tags`
+            : `${primaryCard.name} learns from natural-language captions`}{canChooseLabel
+            ? ' — switch the format below'
+            : ' — chosen automatically'}
+        </div>
+      </div>
+      {#if canChooseLabel}
+        <div class="ml-auto shrink-0">
+          <civitai-segmented-control
+            size="sm"
+            aria-label="Label with"
+            disabled={labelingActive}
+            data={[
+              { value: 'tag', label: 'Tags' },
+              { value: 'caption', label: 'Captions' },
+            ]}
+            value={labelMode}
+            onchange={(e: Event) => {
+              const control = e.currentTarget as CivitaiSegmentedControl;
+              const v = control.value;
+              if (v === 'tag' || v === 'caption') switchLabelMode(v);
+              // A switch can wait on the confirm dialog, so show the mode actually in effect.
+              control.value = labelMode;
+            }}
+          ></civitai-segmented-control>
+        </div>
+      {/if}
+    </div>
+    <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
+      {#if !canAutoLabel}
+        <p class="font-mono text-xs text-dark-2" role="note">
+          Auto-labeling is available in the trainer on
+          {#if autoLabelLink}<a class="text-primary underline" {...hostLink(autoLabelLink)}>civitai.com</a>{:else}civitai.com{/if}.
+        </p>
+      {:else}
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-xs text-dark-2">Auto-label</span>
+        <civitai-segmented-control
+          size="sm"
+          aria-label="Auto-label"
+          data={[
+            { value: 'auto', label: 'Automatic' },
+            { value: 'manual', label: 'Manual' },
+          ]}
+          value={autoLabel}
+          onchange={(e: Event) => {
+            const v = (e.currentTarget as CivitaiSegmentedControl).value;
+            if (v !== 'auto' && v !== 'manual') return;
+            autoLabel = v;
+            // Pick up any backlog the manual mode left behind.
+            if (v === 'auto') void ensureLabeling();
+          }}
+        ></civitai-segmented-control>
+      </div>
+      {/if}
+      {#if labelMode === 'tag'}
+        <!-- These only filter auto-label results, so they're not offered where there is none. -->
+        {#if canAutoLabel}
+        <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+          <civitai-text-input
+            size="sm"
+            label="Never apply"
+            class="w-40"
+            value={excludeDraft}
+            placeholder="tag, press Enter"
+            oninput={(e: Event) => (excludeDraft = (e.currentTarget as CivitaiTextInput).value)}
+            onkeydown={(e: KeyboardEvent) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addExcludeTags();
+              }
+            }}
+            onfocusout={addExcludeTags}
+          ></civitai-text-input>
+          {#each excludeTags as t (t)}
+            <span
+              class="inline-flex items-center gap-1 rounded border border-dark-4 bg-dark-7 px-1.5 py-0.5 font-mono text-xs text-dark-2"
+            >
+              {t}
+              <button
+                type="button"
+                aria-label="Stop excluding {t}"
+                onclick={() => (excludeTags = excludeTags.filter((x) => x !== t))}
+                class="text-dark-2 transition-colors hover:text-white"
+              >
+                <IconX size={11} stroke={2} />
+              </button>
+            </span>
+          {/each}
+          <civitai-checkbox
+            size="sm"
+            label="Exclude character tags"
+            checked={excludeCharacter}
+            onchange={(e: Event) => (excludeCharacter = (e.currentTarget as CivitaiCheckbox).checked)}
+          ></civitai-checkbox>
+          <civitai-checkbox
+            size="sm"
+            label="Exclude source material tags"
+            checked={excludeSource}
+            onchange={(e: Event) => (excludeSource = (e.currentTarget as CivitaiCheckbox).checked)}
+          ></civitai-checkbox>
+        </div>
+        {/if}
+        {#if tagGroups.length}
+          <civitai-button
+            variant="outline"
+            size="sm"
+            class="ml-auto"
+            onclick={() => (manageOpen = true)}
+          >
+            <span slot="left"><IconTag size={13} stroke={2} /></span>Manage tags
+          </civitai-button>
+        {/if}
+      {/if}
+    </div>
+    {#if canAutoLabel && uploadedCount > 0 && handOnly === uploadedCount}
+      <p class="mt-3 border-t border-dark-4 pt-3 font-mono text-xs text-dark-2" role="status">
+        {handOnlyNotice}
+      </p>
+    {:else if canAutoLabel && uploadedCount > 0}
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-dark-2">Label all with</span>
+          <civitai-segmented-control
+            size="sm"
+            aria-label="Label all with"
+            data={[
+              { value: 'tag', label: 'Tags', disabled: media === 'audio' },
+              { value: 'caption', label: 'Captions' },
+            ]}
+            value={labelAllEngine}
+            onchange={(e: Event) => {
+              const v = (e.currentTarget as CivitaiSegmentedControl).value;
+              if (v === 'tag' || v === 'caption') labelAllChoice = v;
+            }}
+          ></civitai-segmented-control>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-dark-2">Existing labels</span>
+          <civitai-segmented-control
+            size="sm"
+            aria-label="Existing labels"
+            data={[
+              { value: 'after', label: 'Add after' },
+              { value: 'before', label: 'Add before' },
+              { value: 'replace', label: 'Replace' },
+              { value: 'skip', label: 'Skip labeled' },
+            ]}
+            value={labelAllPolicy}
+            onchange={(e: Event) => {
+              const v = (e.currentTarget as CivitaiSegmentedControl).value;
+              if (v === 'after' || v === 'before' || v === 'replace' || v === 'skip')
+                labelAllPolicy = v;
+            }}
+          ></civitai-segmented-control>
+        </div>
+        <civitai-button
+          size="sm"
+          class="ml-auto"
+          onclick={labelAll}
+          disabled={labelRun != null || labelingActive || labelAllTargets.length === 0}
+        >
+          <span slot="left"><IconSparkles size={13} stroke={2} /></span>Label {plural(
+            labelAllTargets.length,
+            'image'
+          )}
+        </civitai-button>
+        {#if labelAllNotice}
+          <p class="w-full font-mono text-xs text-buzz" role="status">{labelAllNotice}</p>
+        {/if}
+        {#if handOnlyNotice}
+          <p class="w-full font-mono text-xs text-dark-2" role="status">{handOnlyNotice}</p>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  {#if images.length === 0}
+    <button
+      type="button"
+      onclick={() => fileInput.click()}
+      {...drop}
+      class="rounded-xl border-2 border-dashed p-9 text-center transition
+        {dragging ? 'border-primary bg-primary/[0.06]' : 'border-dark-4 bg-dark-6 hover:border-primary'}"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="mx-auto h-8 w-8 text-dark-2"
+        aria-hidden="true"
+      >
+        <path d="M12 13v8" />
+        <path d="m8 17 4-4 4 4" />
+        <path
+          d="M20 16.7A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"
+        />
+      </svg>
+      <div class="mt-2 text-base font-semibold text-dark-0">
+        Drop your {media} files or a .zip here, or click to browse
+      </div>
+      <div class="mt-1 text-sm text-dark-2">
+        Accepts {acceptedExtsText}, or a .zip of them with matching .txt labels
+      </div>
+      <div class="mt-2 font-mono text-xs text-dark-2">Uploaded one by one · scanned on upload</div>
+    </button>
+  {:else}
+    <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
+    <div
+      {...drop}
+      class="relative grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
+    >
+      {#if dragging}
+        <!-- pointer-events-none: the overlay must not intercept the drag, or its appearance would
+             fire dragleave on the container and dismiss itself. -->
+        <div
+          class="pointer-events-none absolute -inset-1.5 z-10 grid place-items-center rounded-xl border-2 border-dashed border-primary bg-primary/[0.06]"
+        >
+          <span
+            class="rounded-md border border-dark-4 bg-dark-7/95 px-3.5 py-2 text-sm font-semibold text-dark-0"
+          >
+            Drop to add files
+          </span>
+        </div>
+      {/if}
+      <div class="min-w-0">
+        <div
+          class="mb-4 flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm
+            {enough
+            ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
+            : 'border-buzz/30 bg-buzz/10 text-buzz'}"
+        >
+          {#if enough}
+            <IconCheck size={15} stroke={2} class="mr-1 inline shrink-0" />{uploadedCount} uploaded — good
+            for a {type.name.toLowerCase()} (we recommend ≥{type.minImg}).
+          {:else}
+            <IconAlertTriangle size={15} stroke={2} class="mr-1 inline shrink-0" />{uploadedCount} uploaded.
+            We recommend at least {type.minImg} for a {type.name.toLowerCase()} — add more.
+          {/if}
+        </div>
+
+        <div class="mb-3 flex items-center justify-between">
+          <b class="text-dark-0">
+            {images.length}
+            {images.length === 1 ? 'file' : 'files'}
+            {#if busy}· uploading…{/if}
+            {#if uploadedCount > 0}·
+              <span class={labeledCount === uploadedCount ? 'text-emerald-400' : 'text-dark-2'}>
+                {labeledCount}/{uploadedCount} labeled
+              </span>{/if}
+            {#if blockedCount > 0}· <span class="text-red-400">{blockedCount} blocked</span>{/if}
+            {#if errorCount > 0}· <span class="text-buzz">{errorCount} failed</span>{/if}
+          </b>
+          <div class="flex items-center gap-2">
+            {#if canAutoLabel && (unlabeled.length > 0 || labelRun)}
+              <civitai-button size="sm" onclick={ensureLabeling} disabled={labelRun != null || unlabeled.length === 0}>
+                <span slot="left"><IconSparkles size={13} stroke={2} /></span>{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
+              </civitai-button>
+            {/if}
+            <civitai-button
+              variant="outline"
+              size="sm"
+              onclick={() => fileInput.click()}
+              title="Accepts {acceptedExtsText}"
+            >
+              <span slot="left"><IconPlus size={13} stroke={2} /></span>Add more
+            </civitai-button>
+            {#if removeTargets.length > 0}
+              <civitai-button
+                variant="subtle"
+                size="sm"
+                onclick={() => (removeDialogOpen = true)}
+                color="error"
+              >
+                <span slot="left"><IconTrash size={13} stroke={2} /></span>{filtered
+                  ? `Remove ${removeTargets.length} shown`
+                  : 'Remove all'}
+              </civitai-button>
+            {/if}
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <studio-chip-group
+              class="self-start"
+              aria-label="Show"
+              data={[
+                { value: 'all', label: `All ${images.length}` },
+                { value: 'labeled', label: `Labeled ${labeledTotal}` },
+                { value: 'unlabeled', label: `Unlabeled ${unlabeledTotal}` },
+                ...(filter === 'mature' || ratingV2 ? [{ value: 'mature', label: `Mature ${matureTotal}` }] : []),
+                ...(ratingV2
+                  ? [
+                      { value: 'not-mature', label: `Not mature ${notMatureTotal}` },
+                      { value: 'not-rated', label: `Not rated yet ${notRatedTotal}` },
+                    ]
+                  : []),
+                ...ratingFilters.map((r) => ({ value: `rating:${r.rating}`, label: `${r.label} ${r.count}` })),
+                ...(failedTotal > 0 || filter === 'failed'
+                  ? [{ value: 'failed', label: `Failed ${failedTotal}` }]
+                  : []),
+              ]}
+              value={filter}
+              onchange={(e: Event) => {
+                const v = (e.currentTarget as StudioChipGroup).value;
+                const next = asDatasetFilter(v);
+                if (next) showFilter(next);
+              }}
+            ></studio-chip-group>
+            <civitai-segmented-control
+              size="sm"
+              aria-label="Layout"
+              data={[
+                { value: 'grid', label: 'Grid' },
+                { value: 'inline', label: 'Edit inline' },
+                { value: 'large', label: 'Large' },
+              ]}
+              value={labelView}
+              onchange={(e: Event) => {
+                const v = (e.currentTarget as CivitaiSegmentedControl).value;
+                if (v === 'grid' || v === 'inline' || v === 'large') setLabelView(v);
+              }}
+            ></civitai-segmented-control>
+          </div>
+          {#if tagGroups.length > 0 || tagFilter}
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
+              <IconFilter size={14} stroke={2} aria-hidden="true" />
+              <Input
+                bind:value={tagFilterDraft}
+                list={tagVocabId}
+                placeholder="Filter by tag…"
+                aria-label="Tag to filter the images by"
+                class="h-7 w-44 font-mono text-xs"
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  if (tagFilterDraft.trim()) addFilterTags('include');
+                }}
+              />
+              <datalist id={tagVocabId}>
+                {#each tagVocab as t (t)}<option value={t}></option>{/each}
+              </datalist>
+              <civitai-button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!tagFilterDraft.trim()}
+                title="Show only images that have this tag"
+                onclick={() => addFilterTags('include')}
+              >
+                With
+              </civitai-button>
+              <civitai-button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!tagFilterDraft.trim()}
+                title="Show only images that don't have this tag"
+                onclick={() => addFilterTags('exclude')}
+              >
+                Without
+              </civitai-button>
+              {#if tagFilter}
+                {#each tagFilter.include as t (t)}
+                  {@render filterChip(t, false)}
+                {/each}
+                {#each tagFilter.exclude as t (t)}
+                  {@render filterChip(t, true)}
+                {/each}
+                <span>Showing {mediaCount(shownImages.length, media)}</span>
+                {#if takesRepeats && shownImages.length > 0}
+                  <studio-popover
+                    open={bulkRepeatsOpen}
+                    ontoggle={(e: Event) => (bulkRepeatsOpen = (e.currentTarget as StudioPopover).open)}
+                  >
+                    <button
+                      slot="trigger"
+                      type="button"
+                      class="rounded px-2 py-1 font-mono text-xs text-dark-2 hover:bg-dark-5 hover:text-white"
+                    >
+                      Set repeats…
+                    </button>
+                    <div class="w-64 text-xs">
+                      <p class="mb-2 text-dark-2">
+                        Repeats for the {mediaCount(shownImages.length, media)} shown. 1 trains each once.
+                      </p>
+                      <div class="flex items-center justify-between gap-2">
+                        <RepeatsStepper label="Repeats for the shown images" bind:value={bulkRepeats} />
+                        <civitai-button size="sm" type="button" onclick={applyBulkRepeats}>Apply</civitai-button>
+                      </div>
+                    </div>
+                  </studio-popover>
+                {/if}
+                <civitai-button variant="subtle" size="sm" onclick={() => (tagFilter = null)}>
+                  <span slot="left"><IconX size={12} stroke={2} /></span>Clear
+                </civitai-button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
+        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !!i.previewUrl && !i.nsfwLevel)}
+          <p class="mb-3 text-xs text-dark-2">
+            Some images have no rating badge. Every image is checked again when you start training; if
+            that finds mature content, nothing is charged until you check the price and start again.
+          </p>
+        {/if}
+
+        {#if shownImages.length === 0}
+          <div
+            class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-8 text-center font-mono text-xs text-dark-2"
+          >
+            {tagFilter && statusShownImages.length > 0
+              ? 'No images match this tag filter.'
+              : filter === 'unlabeled'
+                ? 'No unlabeled images — every image has a label.'
+                : filter === 'labeled'
+                  ? 'No labeled images yet.'
+                  : filter === 'mature'
+                    ? 'No images rated mature.'
+                    : filter === 'failed'
+                      ? 'No failed uploads.'
+                      : filter.startsWith('rating:')
+                        ? `No images rated ${nsfwLevelLabel(filter.slice('rating:'.length))}.`
+                        : filter === 'not-mature'
+                          ? 'No images rated not mature.'
+                          : filter === 'not-rated'
+                            ? 'Every image is rated.'
+                            : 'No images.'}
+          </div>
+        {/if}
+
+        <div
+          class="grid gap-3 {labelView === 'large'
+            ? 'grid-cols-1'
+            : labelView === 'inline'
+              ? 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]'
+              : 'grid-cols-[repeat(auto-fill,minmax(140px,1fr))]'}"
+        >
+          {#each shownImages as img (img.id)}
+            <div
+              class="overflow-hidden rounded-md border border-dark-4 bg-dark-6 {labelView === 'large'
+                ? 'md:grid md:grid-cols-[3fr_2fr]'
+                : ''}"
+            >
+              <div
+                class="relative bg-dark-7 {labelView === 'large'
+                  ? 'grid min-h-48 place-items-center'
+                  : 'aspect-square'}"
+              >
+                {#if !img.previewUrl}
+                  <!-- Reused-blob preview still hydrating (or unavailable) — the air still trains. -->
+                  <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
+                    {#if img.mediaType === 'audio'}
+                      <IconMusic size={20} stroke={2} class="text-dark-2" />
+                    {:else}
+                      <IconPhoto size={20} stroke={2} class="text-dark-2" />
+                    {/if}
+                    <span class="line-clamp-2 break-all font-mono text-xs leading-tight text-dark-2">
+                      {img.name}
+                    </span>
+                  </div>
+                {:else if img.mediaType === 'image'}
+                  <!-- Lazy: a few hundred full-width images must not all decode at once in the large view. -->
+                  <img
+                    src={img.previewUrl}
+                    alt={img.name}
+                    loading="lazy"
+                    decoding="async"
+                    class={labelView === 'large'
+                      ? 'max-h-[75dvh] w-full object-contain'
+                      : 'h-full w-full object-cover'}
+                  />
+                {:else if img.mediaType === 'video'}
+                  <video
+                    src={img.previewUrl}
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    onmouseenter={playOnHover}
+                    onmouseleave={resetOnLeave}
+                    class={labelView === 'large'
+                      ? 'max-h-[75dvh] w-full object-contain'
+                      : 'h-full w-full object-cover'}
+                  ></video>
+                {:else}
+                  <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
+                    <IconMusic size={20} stroke={2} class="text-dark-2" />
+                    <span class="line-clamp-2 break-all font-mono text-xs leading-tight text-dark-2">
+                      {img.name}
+                    </span>
+                    <audio src={img.previewUrl} controls preload="metadata" class="h-8 w-full"></audio>
+                  </div>
+                {/if}
+
+                {#if img.status === 'uploading'}
+                  <div class="absolute inset-0 grid place-items-center bg-black/50">
+                    <span class="flex items-center gap-1 font-mono text-xs text-white">
+                      <IconUpload size={12} stroke={2} />{Math.round(img.progress * 100)}%
+                    </span>
+                  </div>
+                  <div class="absolute bottom-0 left-0 h-1 bg-primary transition-[width]" style:width="{img.progress * 100}%"></div>
+                {:else if img.status === 'blocked'}
+                  <div class="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-red-950/70 p-2 text-center">
+                    <IconAlertTriangle size={18} stroke={2} class="text-red-200" />
+                    <span class="font-mono text-xs leading-tight text-red-200">{img.message}</span>
+                  </div>
+                {:else if img.status === 'error'}
+                  <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 p-2 text-center">
+                    <span class="font-mono text-xs leading-tight text-buzz">{img.message}</span>
+                    <civitai-button variant="outline" size="sm" onclick={() => retry(img.id)}>
+                      <span slot="left"><IconRefresh size={12} stroke={2} /></span>Retry
+                    </civitai-button>
+                  </div>
+                {/if}
+
+                <div class="absolute right-1.5 top-1.5 flex gap-1">
+                  {#if img.status === 'uploaded'}
+                    <button
+                      type="button"
+                      aria-label="Edit label"
+                      onclick={() => openEditor(img.id)}
+                      class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-on-accent hover:bg-primary"
+                    >
+                      <IconPencil size={13} stroke={2} />
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    aria-label="Remove"
+                    onclick={() => remove(img.id)}
+                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-on-accent hover:bg-red-500"
+                  >
+                    <IconX size={13} stroke={2} />
+                  </button>
+                </div>
+
+                {#if img.status === 'uploaded'}
+                  <span class="absolute left-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-on-accent">
+                    <IconCheck size={12} stroke={3} />
+                  </span>
+                  {@render ratingBadge(img)}
+                  {#if takesRepeats && repeatsOf(img) > 1}
+                    <button
+                      type="button"
+                      title="Trained {repeatsOf(img)} times — change in the label editor"
+                      aria-label="Repeats ×{repeatsOf(img)}"
+                      onclick={() => openEditor(img.id)}
+                      class="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-xs font-semibold text-on-accent hover:bg-primary"
+                    >
+                      ×{repeatsOf(img)}
+                    </button>
+                  {/if}
+                {/if}
+              </div>
+
+              <div
+                class="min-h-[44px] p-2.5"
+                onfocusin={editsOnCard
+                  ? () => {
+                      keepInView(img.id);
+                      inlineFocusId = img.id;
+                    }
+                  : undefined}
+                onfocusout={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null) && inlineFocusId === img.id) {
+                    inlineFocusId = null;
+                    void maybeAutoLabel();
+                  }
+                }}
+              >
+                {#if img.status !== 'uploaded'}
+                  <!-- The failure overlay covers the preview, so the filename is how the user finds it. -->
+                  <div class="font-mono text-xs text-dark-2">
+                    {img.status === 'uploading' ? 'uploading…' : img.status === 'blocked' ? 'blocked' : 'failed'}
+                  </div>
+                  <div class="truncate font-mono text-xs text-dark-0" title={img.name}>{img.name}</div>
+                {:else if img.labeling}
+                  <div class="flex items-center justify-center gap-1 font-mono text-xs text-primary">
+                    <IconSparkles size={12} stroke={2} /> labeling…
+                  </div>
+                {:else if editsOnCard}
+                  {#if img.labelError}
+                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                  {/if}
+                  {#if labelMode === 'tag'}
+                    <TagEditor
+                      tags={img.tags}
+                      onchange={(tags) => patch(img.id, { tags })}
+                      name={img.name}
+                      {trigger}
+                      compact={labelView === 'inline'}
+                    />
+                  {:else}
+                    <civitai-textarea
+                      label="Caption"
+                      size="sm"
+                      value={img.caption}
+                      rows={labelView === 'large' ? 8 : 4}
+                      placeholder="Describe the image…"
+                      oninput={(e: Event) => (img.caption = (e.currentTarget as CivitaiTextarea).value)}
+                    ></civitai-textarea>
+                    {#if triggerText && !captionTriggerHit(trigger, img.caption)}
+                      <p class="mt-1 text-xs text-dark-2">
+                        <span class="text-buzz">{triggerText}</span> is prepended automatically.
+                      </p>
+                    {/if}
+                  {/if}
+                {:else if img.tags.length === 0 && !img.caption}
+                  {#if img.labelError}
+                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                  {/if}
+                  <button
+                    type="button"
+                    onclick={() => openEditor(img.id)}
+                    class="inline-flex items-center gap-1 font-mono text-xs text-dark-2 hover:text-primary"
+                  >
+                    <IconPlus size={12} stroke={2} />add label
+                  </button>
+                {:else if labelMode === 'tag'}
+                  {@render triggerTags(img.tags, 4)}
+                {:else}
+                  {@render triggerCaption(img.caption)}
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Below lg the trigger word comes before the image grid, not after an arbitrarily long one. -->
+      <StickySummary class="order-first lg:order-none">
+        <civitai-text-input
+          label="Trigger word"
+          description="An optional word prepended to every label. The model learns to associate it with your subject, so you type it in prompts to summon the LoRA. Less essential on modern caption models; handy for characters. Some large/video models can't train it (no-op)."
+          placeholder="optional, e.g. my_character"
+          value={trigger}
+          oninput={(e: Event) => (trigger = (e.currentTarget as CivitaiTextInput).value)}
+        ></civitai-text-input>
+        <p class="mt-2 text-[12px] leading-snug text-dark-2">
+          Prepended to each label when missing, and <span class="text-buzz">highlighted</span> where
+          it already appears. Leave blank to skip.
+        </p>
+      </StickySummary>
+    </div>
+  {/if}
+
+  <!-- Below lg the actions float over a long image grid instead of waiting at its end. Embedded, they
+       clear the host's sticky footer (`--footer-height`); standalone the var is unset and adds 0. -->
+  <div
+    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-[calc(0.75rem+var(--footer-height,0px)+var(--safe-area-inset-bottom-unpaid,0px))] max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
+  >
+    <civitai-button variant="outline" onclick={onBack}>
+      <span slot="left"><IconArrowLeft size={15} stroke={2} /></span>Back
+    </civitai-button>
+    <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1.5">
+      {#if uploadedCount > 0 && !busy && !allLabeled}
+        <button
+          id="continue-blocked-reason"
+          type="button"
+          onclick={() => showFilter('unlabeled')}
+          class="font-mono text-xs text-buzz underline decoration-dotted underline-offset-2 transition-colors hover:text-buzz/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          {uploadedCount - labeledCount} unlabeled — show {uploadedCount - labeledCount === 1
+            ? 'it'
+            : 'them'}
+        </button>
+      {/if}
+      <civitai-button
+        disabled={!canContinue}
+        onclick={onContinue}
+        title={!canContinue && uploadedCount > 0 && !allLabeled
+          ? 'Label every image to continue'
+          : undefined}
+      >
+        Continue to review<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
+      </civitai-button>
+    </div>
+  </div>
+</div>
+
+<LabelEditorModal
+  bind:open={editorOpen}
+  {editing}
+  {labelMode}
+  {trigger}
+  {tagVocab}
+  onRelabel={canAutoLabel ? relabelOne : undefined}
+  position={{ index: editorIndex, total: editorSteps.length }}
+  onStep={stepEditor}
+  repeatsEnabled={takesRepeats}
+/>
+
+<GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
+<ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
+
+<ManageTagsModal
+  bind:open={manageOpen}
+  {tagGroups}
+  {images}
+  {media}
+  {findReplace}
+  onShowTag={showTag}
+/>
+
+<civitai-modal
+  open={switchDialogOpen}
+  heading={`Switch to ${pendingLabelMode === 'tag' ? 'tags' : 'captions'}?`}
+  with-close-button
+  close-label="Cancel"
+  onclose={() => (switchDialogOpen = false)}
+>
+  <p class="m-0 text-sm text-dark-1">
+    {mediaCount(switchDiscardCount, media)} in this dataset already {switchDiscardCount === 1
+      ? 'has'
+      : 'have'}
+    {noun}. <strong>Convert</strong> keeps that text and reformats it — nothing is re-labeled.
+    {#if canAutoLabel}
+      <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
+      with your files{handOnly > 0 ? ", and reused images, which can't be auto-labeled," : ''} are kept
+      either way).
+    {/if}
+  </p>
+  <div class="mt-4 flex flex-wrap justify-end gap-2">
+    <civitai-button variant="subtle" size="sm" onclick={() => (switchDialogOpen = false)}>
+      Cancel
+    </civitai-button>
+    {#if canAutoLabel}
+      <civitai-button
+        variant="outline"
+        size="sm"
+        onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'relabel')}
+      >
+        Re-label everything
+      </civitai-button>
+    {/if}
+    <civitai-button size="sm" onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'convert')}>
+      Convert existing labels
+    </civitai-button>
+  </div>
+</civitai-modal>
+
+<civitai-confirm-dialog
+  open={removeDialogOpen}
+  heading={filtered
+    ? `Remove ${plural(removeTargets.length, 'shown file')}?`
+    : `Remove all ${plural(removeTargets.length, 'file')}?`}
+  confirm-label={filtered ? 'Remove shown' : 'Remove all'}
+  destructive
+  onconfirm={() => removeMany(removeTargets.map((i) => i.id))}
+  onclose={() => (removeDialogOpen = false)}
+>
+  <p class="m-0 text-sm text-dark-1">
+    {#if filtered}
+      Only the files this filter shows are removed; the rest of the dataset stays.
+    {:else}
+      The dataset is emptied.
+    {/if}
+    Their labels go with them and any upload still running is cancelled. <strong>Download .zip</strong>
+    first to keep a copy with the labels.
+  </p>
+</civitai-confirm-dialog>

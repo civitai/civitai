@@ -149,9 +149,6 @@ describe('preserveGeneratorEvidence', () => {
       [INPUT, 'input'],
     ]);
     expect(blobs[1].derivedOutputIds).toEqual([OUTPUT]);
-    expect(dbMock.dbWrite.evidenceHold.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ userId: USER, role: 'manual', createdById: 1 }),
-    });
     expect(reviewConsumerStrikes).not.toHaveBeenCalled();
     expect(softDeleteUser).not.toHaveBeenCalled();
     for (const write of [
@@ -350,8 +347,6 @@ describe('preserveGeneratorEvidence', () => {
   });
 
   describe('the file limit of one request', () => {
-    beforeEach(() => dbMock.dbWrite.evidenceHold.create.mockClear());
-
     // One input plus `outputs` outputs.
     const serveWorkflowWith = (outputs: number) => {
       const images = Array.from({ length: outputs }, (_, i) => ({
@@ -379,7 +374,6 @@ describe('preserveGeneratorEvidence', () => {
     const nothingWritten = (store: EvidenceStore) => {
       expect(fetched.filter((path) => path.startsWith('/v2/consumer/blobs/'))).toEqual([]);
       expect(store.upload).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.evidenceHold.create).not.toHaveBeenCalled();
       expect(createCsamReport).not.toHaveBeenCalled();
     };
 

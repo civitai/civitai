@@ -33,7 +33,7 @@ function logError({ error, name, details }: { error: Error; name: string; detail
       message: error.message,
       stack: error.stack,
       cause: error.cause,
-    }).catch();
+    });
   } else {
     console.log(`Failed to get a connection to ${name}`);
     console.error(error);

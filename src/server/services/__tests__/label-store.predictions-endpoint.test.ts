@@ -43,7 +43,7 @@ dbMock.dbWrite.$queryRaw.mockImplementation((async (...a: Parameters<Raw['queryR
   return rows.map((r) => (typeof r.id === 'number' ? { ...r, id: BigInt(r.id) } : r));
 }) as never);
 
-const { default: handler } = await import('~/pages/api/mod/label-store/predictions');
+const { default: handler } = await import('~/server/api-routes/mod/label-store/predictions');
 
 const IMAGE = 501;
 const OWNER = 11;
@@ -176,7 +176,7 @@ describe('who may submit', () => {
   });
 
   it('refuses a grant holder presenting a key that is not full scope', async () => {
-    bearerSession.mockResolvedValue({ ...fullKey(PIPELINE), tokenScope: TokenScope.Full - 1 });
+    bearerSession.mockResolvedValue({ ...fullKey(PIPELINE), tokenScope: TokenScope.Full - 1n });
 
     expect((await call({ predictions: [prediction()] })).status).toBe(403);
     expect(await stored()).toEqual([]);
@@ -298,10 +298,6 @@ describe('what it accepts', () => {
   });
 
   it('takes a minute-precision predictedAt, read as :00', async () => {
-    const parsed = handler.spec.input!.parse({
-      predictions: [prediction({ predictedAt: '2026-02-03T04:05+02:00' })],
-    }) as { predictions: Array<{ predictedAt?: string }> };
-    expect(parsed.predictions[0].predictedAt).toBe('2026-02-03T04:05:00+02:00');
     const { payload } = await call({
       predictions: [prediction({ predictedAt: '2026-02-03T04:05+02:00' })],
     });

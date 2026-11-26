@@ -50,18 +50,34 @@ describe('creator card profile picture', () => {
     expect(read?.user.profilePicture).toBeNull();
   });
 
-  it('carries no Scanned picture flagged csam', async () => {
-    row.current = { ...creatorRow('Scanned'), profilePictureNeedsReview: 'csam' };
+  it.each(['csam', 'minor'])('carries no Scanned picture held %s', async (hold) => {
+    row.current = { ...creatorRow('Scanned'), profilePictureNeedsReview: hold };
     const read = await readUserCreatorViaKysely(db, { id: 5 });
     expect(read?.user.profilePicture).toBeNull();
   });
 
-  it('the profile read drops a picture flagged csam for every viewer, its owner included', () => {
-    // `profilePictureOf` also builds the profile read's picture (hot-reads-9), whose owner branch
-    // otherwise serves the owner their own unscanned picture.
-    const flagged = { ...creatorRow('Scanned'), profilePictureNeedsReview: 'csam' };
-    expect(profilePictureOf(flagged as never)).toBeNull();
-    expect(profilePictureOf(creatorRow('Pending') as never)?.url).toBe('avatar-Pending');
+  it.each(['csam', 'minor'])(
+    'the profile read drops a picture held %s for every viewer, its owner included',
+    (hold) => {
+      // `profilePictureOf` also builds the profile read's picture (hot-reads-9), whose owner branch
+      // otherwise serves the owner their own unscanned picture.
+      const held = { ...creatorRow('Scanned'), profilePictureNeedsReview: hold };
+      expect(profilePictureOf(held as never)).toBeNull();
+      expect(profilePictureOf(creatorRow('Pending') as never)?.url).toBe('avatar-Pending');
+      const otherReview = { ...creatorRow('Scanned'), profilePictureNeedsReview: 'poi' };
+      expect(profilePictureOf(otherReview as never)?.url).toBe('avatar-Scanned');
+    }
+  );
+
+  it.each([
+    ['csam', 'https://cdn.example/AVATAR-SCANNED/width=96', null],
+    ['minor', 'avatar-Scanned', null],
+    ['minor', 'legacy', 'legacy'],
+    [null, 'avatar-Scanned', 'avatar-Scanned'],
+  ])('a picture held %s drops a User.image %s naming it', async (hold, image, expected) => {
+    row.current = { ...creatorRow('Scanned'), image, profilePictureNeedsReview: hold };
+    const read = await readUserCreatorViaKysely(db, { id: 5 });
+    expect(read?.user.image).toBe(expected);
   });
 
   it('carries a Scanned picture', async () => {

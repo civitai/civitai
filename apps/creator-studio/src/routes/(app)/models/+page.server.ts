@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import { PAGE_SIZE_OPTIONS } from '$lib/server/models';
+import { countComFaceReadyModels, PAGE_SIZE_OPTIONS } from '$lib/server/models';
 import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
 import { darkFlagEnabled } from '$lib/server/main-app-flags';
 import { firstError } from '$lib/server/form-errors';
@@ -74,8 +74,16 @@ const versionIdsSchema = z
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
-  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots, feeBoost] =
-    await Promise.all([
+  const [
+    view,
+    modelsScore,
+    pricingUsed,
+    earlyAccessUsed,
+    creatorScore,
+    pricingSlots,
+    feeBoost,
+    comReadyCount,
+  ] = await Promise.all([
       getModelsView(locals.user, url, cookies),
       resolveTotalScore(
         locals.user.id,
@@ -91,6 +99,8 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       ),
       listPricingSlots(locals.user.id),
       getFeeAllowanceBoost(locals.user.id),
+      // The "can be listed on civitai.com" nudge; a failed count only hides it.
+      countComFaceReadyModels(locals.user.id).catch(() => 0),
     ]);
 
   // Query-independent, so they stay out of getModelsView: the creator's own sale windows and the
@@ -130,6 +140,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       canSetGenerationOnly: canSetGenerationOnly(locals.user),
     },
     giftLinksEnabled: await darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, locals.user),
+    comReadyCount,
   };
 };
 
@@ -403,6 +414,7 @@ export const actions: Actions = {
     return {
       bulk: true,
       usageUpdated: result.updated,
+      usageSkipped: result.skipped,
       migrated: result.migrated,
       failed: result.migrationFailures,
     };
@@ -432,7 +444,10 @@ export const actions: Actions = {
     );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
     if (result.updated === 0)
-      return fail(404, { versionId: versionId.data, error: 'Version not found or not yours.' });
+      return fail(404, {
+        versionId: versionId.data,
+        error: 'Version not found, not yours, or its usage control is set by moderators.',
+      });
 
     await bustVersionCache(request.headers.get('cookie') ?? '', [versionId.data]);
     if (result.migrationFailures > 0)

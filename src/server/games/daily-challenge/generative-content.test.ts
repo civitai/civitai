@@ -207,3 +207,36 @@ describe('caller mapping — parsed judging categories carry key', () => {
     expect(systemText(messages)).toContain(RUBRIC.theme);
   });
 });
+
+describe('buildFallbackMessages — recent winners (anti-sameness)', () => {
+  const userText = (messages: ReturnType<typeof buildFallbackMessages>) => {
+    const content = messages[1].content as { type: string; text?: string }[];
+    return content.find((c) => c.type === 'text')?.text ?? '';
+  };
+  const ideas = ['A snowman melting down at a desk', 'Gingerbread skyscraper'];
+
+  it('lists the ideas as data after the untrusted-fields preamble and adds the freshness rule', () => {
+    const config = makeConfig('Judge. {{SCORING_RUBRICS}}');
+    const messages = buildFallbackMessages(
+      { ...makeInput(config, CATS), recentWinnerIdeas: ideas },
+      CATS_BLOCK
+    );
+
+    const text = userText(messages);
+    expect(text.indexOf('DATA')).toBeLessThan(text.indexOf('Recent winning ideas'));
+    expect(text).toContain(JSON.stringify(ideas));
+    expect(systemText(messages)).toContain('FRESHNESS');
+  });
+
+  it('leaves both messages unchanged without ideas', () => {
+    const config = makeConfig('Judge. {{SCORING_RUBRICS}}');
+    const without = buildFallbackMessages(makeInput(config, CATS), CATS_BLOCK);
+    const empty = buildFallbackMessages(
+      { ...makeInput(config, CATS), recentWinnerIdeas: [] },
+      CATS_BLOCK
+    );
+
+    expect(empty).toEqual(without);
+    expect(systemText(without)).not.toContain('FRESHNESS');
+  });
+});

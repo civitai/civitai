@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * `collection.getAllCollectionItems` asks the service to answer a collection the viewer may not
@@ -32,6 +33,25 @@ describe('collectionItemsInfiniteHandler', () => {
       ctx: { user: { id: 77, isModerator: false } } as never,
     });
     expect(getItems).toHaveBeenCalledWith(expect.objectContaining({ requireRead: true }));
+  });
+
+  it.each([
+    ['a scoped key', TokenScope.ModelsRead, false],
+    ['a full-access key (control)', TokenScope.Full, true],
+  ])("reads a moderator's %s with moderator and owner views: %s", async (_, tokenScope, view) => {
+    await collectionItemsInfiniteHandler({
+      input: { collectionId: 7 } as never,
+      ctx: {
+        user: { id: 78, isModerator: true },
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope,
+      } as never,
+    });
+    expect(getItems).toHaveBeenCalledWith(
+      expect.objectContaining({ asModerator: view, asOwner: view })
+    );
   });
 });
 

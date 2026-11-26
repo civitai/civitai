@@ -1,7 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
+import {
+  appRateLimitMeta,
+  retryAfterSecondsOf,
+  sendAppRateLimited,
+} from '~/server/utils/app-rate-limit';
 
 /**
  * Abuse-control rate limiter for the PUBLIC app-catalog read endpoints
@@ -78,16 +82,15 @@ export async function enforceAppsCatalogRateLimit({
 
   if (count > RATE_LIMIT.max) {
     const retryAfter = await sysRedis.ttl(rateKey).catch(() => RATE_LIMIT.windowSeconds);
-    res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
     // Conforms to the shared REST error envelope (civitai#3845) — `code` +
-    // string `message` + the retained `error` key — with the pre-existing
-    // informational fields kept alongside it.
-    res.status(429).json({
-      ...restErrorBody(REST_ERROR_CODE.TOO_MANY_REQUESTS, 'Rate limit exceeded'),
-      retryAfterSeconds: retryAfter,
-      limit: RATE_LIMIT.max,
-      windowSeconds: RATE_LIMIT.windowSeconds,
-    });
+    // string `message` + the retained `error` key + `rateLimit` — with the
+    // pre-existing top-level `retryAfterSeconds` kept alongside it.
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.directory', retryAfterSecondsOf(retryAfter, RATE_LIMIT.windowSeconds)),
+      'Rate limit exceeded',
+      { retryAfterSeconds: retryAfter }
+    );
     return true;
   }
 

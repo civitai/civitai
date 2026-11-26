@@ -15,11 +15,15 @@ vi.mock('~/providers/FiltersProvider', async (importOriginal) => ({
     select({ setImageFilters, images: saved.images }),
 }));
 
+const viewer = vi.hoisted(() => ({ value: null as { id: number } | null }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.value }));
+
 // The shared stub's singleton, the same object `useRouter()` returns.
 const router = Router as unknown as {
   query: Record<string, string>;
   pathname: string;
   replace: ReturnType<typeof vi.fn>;
+  push: ReturnType<typeof vi.fn>;
 };
 
 // Base model came in on the URL; the period is the viewer's saved feed filter.
@@ -44,8 +48,49 @@ describe('ImageFeedSearchSummary', () => {
     router.pathname = '/images';
     router.query = { query: 'red dragon', baseModels: 'Illustrious' };
     router.replace.mockClear();
+    router.push.mockClear();
     setImageFilters.mockClear();
     saved.images = {};
+    viewer.value = null;
+  });
+
+  const renderSimilar = (props: { unavailable?: boolean; failed?: boolean } = {}) =>
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query=""
+        similarTo={42}
+        filters={{}}
+        failed={props.failed ?? false}
+        unavailable={props.unavailable}
+        onRetry={vi.fn()}
+      />
+    );
+
+  test('"more like this" from an image it can\'t search says so, not that search is down', async () => {
+    router.query = { similarTo: '42' };
+    renderSimilar({ failed: true, unavailable: true });
+    await expect
+      .element(page.getByText(/More like this isn’t available for this image/))
+      .toBeVisible();
+    expect(page.getByText('Retry search').query()).toBeNull();
+  });
+
+  test('a signed-in viewer can leave their own images out of "more like this"', async () => {
+    viewer.value = { id: 7 };
+    router.query = { similarTo: '42' };
+    renderSimilar();
+    await page.getByText('Hide my images').click();
+    expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({
+      similarTo: '42',
+      excludeOwn: 'true',
+    });
+  });
+
+  test('a signed-out viewer has no own images to hide', async () => {
+    router.query = { similarTo: '42' };
+    renderSimilar();
+    await expect.element(page.getByText('Similar to this image')).toBeVisible();
+    expect(page.getByText('Hide my images').query()).toBeNull();
   });
 
   test('removing a filter the URL set takes it off the URL, not the saved filters', async () => {
@@ -55,6 +100,54 @@ describe('ImageFeedSearchSummary', () => {
     expect(setImageFilters).not.toHaveBeenCalled();
   });
 
+  test('removing the "more like this" chip is a new search without similarTo', async () => {
+    router.query = { similarTo: '42', baseModels: 'Illustrious' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query=""
+        similarTo={42}
+        filters={{ baseModels: ['Illustrious'] }}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('link', { name: 'this image' })).toBeVisible();
+    await removeChip('Similar to this image');
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
+  });
+
+  test('removing the anchor drops its preferred tag', async () => {
+    router.query = { similarTo: '42', prefer: '1676' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query=""
+        similarTo={42}
+        preferRow={<span>prefer row</span>}
+        filters={{}}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('prefer row')).toBeVisible();
+    await removeChip('Similar to this image');
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({});
+  });
+
+  test('Clear search leaves "more like this" too', async () => {
+    router.query = { similarTo: '42' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query=""
+        similarTo={42}
+        filters={{}}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await page.getByRole('button', { name: 'Clear search' }).click();
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({});
+  });
+
   test('removing a saved filter changes the saved filters, not the URL', async () => {
     renderSummary();
     await removeChip('Posted: past week');
@@ -62,10 +155,29 @@ describe('ImageFeedSearchSummary', () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  test('clearing the search keeps the filters', async () => {
+  test('clearing the search keeps the filters, as a history entry Back returns from', async () => {
     renderSummary();
     await page.getByText('Clear search').click();
-    expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test('shows Made On-site and Metadata only, and removing one takes it off the URL', async () => {
+    router.query = { query: 'red dragon', fromPlatform: 'true', withMeta: 'true' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query="red dragon"
+        filters={{ fromPlatform: true, withMeta: true }}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('Metadata only')).toBeVisible();
+    await removeChip('Made On-site');
+    expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({
+      query: 'red dragon',
+      withMeta: 'true',
+    });
   });
 
   test('removing the last base model from the URL clears a saved one rather than uncovering it', async () => {

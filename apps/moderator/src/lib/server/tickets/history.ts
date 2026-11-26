@@ -1,7 +1,7 @@
 import type { getUserNotes } from '../moderation-memory.service';
 import type { getImageRemovals, getModActivity } from '../user-account.service';
 import type { getLiveStrikes } from '../user-lookup.service';
-import { capped, section, type CardSection } from './section';
+import { capped, section, type CardSection } from '$lib/server/section';
 
 /** Rows shown per section; each read asks for one more so a cut is told from a total. */
 export const HISTORY_ROWS = 10;

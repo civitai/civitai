@@ -44,6 +44,7 @@ const row = (
     userId: targetUserId,
     tosViolation: false,
     needsReview: null,
+    modelRestricted: false,
     ingestion: ImageIngestionStatus.Scanned,
     nsfwLevelLocked: false,
     post: postId
@@ -90,6 +91,31 @@ describe('getHiddenImagesForUser', () => {
     expect(items[0].canViewMedia).toBe(true);
   });
 
+  // civitai/civitai#10097
+  it('withholds media for a block reason read through the selected columns', async () => {
+    const hidden = posted(16, {
+      ingestion: ImageIngestionStatus.Error,
+      nsfwLevelLocked: true,
+      metadata: { nsfwLevelReason: 'reviewed' },
+      scanJobs: { error: { failureClass: 'unknown' } },
+      blockedFor: 'moderated',
+    });
+    // Hands back only what the query selects, as Prisma does.
+    dbMock.dbRead.imageEngagement.findMany.mockImplementation((async (args: {
+      select: { image: { select: Record<string, unknown> } };
+    }) => {
+      const picked = Object.fromEntries(
+        Object.entries(hidden.image).filter(([key]) => key in args.select.image.select)
+      );
+      return [{ ...hidden, image: picked }];
+    }) as never);
+
+    const { items } = await getHiddenImagesForUser({ userId: viewerId, targetUserId });
+
+    expect(items[0].canViewMedia).toBe(false);
+    expect(items[0].url).toBeNull();
+  });
+
   it('asks only for the caller own Hide rows on the target user images', async () => {
     dbMock.dbRead.imageEngagement.findMany.mockResolvedValue([] as never);
 
@@ -110,6 +136,10 @@ describe('getHiddenImagesForUser', () => {
       ['an unscanned image', posted(3, { ingestion: ImageIngestionStatus.Pending })],
       ['an image in a review queue', posted(13, { needsReview: 'minor' })],
       [
+        'a mature image of a restricted base model',
+        posted(14, { nsfwLevel: NsfwLevel.R, modelRestricted: true }),
+      ],
+      [
         'a Knights-locked errored scan',
         posted(10, {
           ingestion: ImageIngestionStatus.Error,
@@ -123,6 +153,17 @@ describe('getHiddenImagesForUser', () => {
           ingestion: ImageIngestionStatus.Error,
           nsfwLevelLocked: true,
           scanJobs: { error: { failureClass: 'permanent' } },
+        }),
+      ],
+      [
+        // civitai/civitai#10097
+        'an errored image a moderator rated that still carries a block reason',
+        posted(15, {
+          ingestion: ImageIngestionStatus.Error,
+          nsfwLevelLocked: true,
+          metadata: { nsfwLevelReason: 'reviewed' },
+          scanJobs: { error: { failureClass: 'unknown' } },
+          blockedFor: 'moderated',
         }),
       ],
       ['an unpublished post', posted(4, {}, { publishedAt: null })],

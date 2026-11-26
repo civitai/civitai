@@ -85,6 +85,8 @@ type Props = UnstyledButtonProps & {
   size: number;
   color?: MantineColor | CustomVariantType;
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  // A middle click, which fires no `click`.
+  onAuxClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   keepIconOnHover?: boolean;
 };
 export default HoverActionButton;

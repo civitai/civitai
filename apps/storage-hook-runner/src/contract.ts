@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { TIMEOUT_DEFAULT_MS, TIMEOUT_MAX_MS, TIMEOUT_MIN_MS } from './limits.ts';
+import {
+  MAX_REMIX_ANSWER_CHARS,
+  MAX_REMIX_BRANCHES,
+  MAX_REMIX_EFFECTS,
+  TIMEOUT_DEFAULT_MS,
+  TIMEOUT_MAX_MS,
+  TIMEOUT_MIN_MS,
+} from './limits.ts';
 
 /**
  * The wire contract of `POST /v1/check`. The README documents it; the civitai write path (the
@@ -8,22 +15,16 @@ import { TIMEOUT_DEFAULT_MS, TIMEOUT_MAX_MS, TIMEOUT_MIN_MS } from './limits.ts'
  * hook silently reading `undefined` for a field it relies on.
  */
 
-export const HOOK_OPS = ['create', 'put', 'delete', 'increment', 'mark', 'unmark'] as const;
+/** The document writes. The tally ops (increment, mark, unmark) were removed from App Storage. */
+export const HOOK_OPS = ['create', 'put', 'delete'] as const;
 const Op = z.enum(HOOK_OPS);
 
-/** blockIds, collection, counter and mark names. Bounded because `app` and `collection` are
+/** blockIds and collection names. Bounded because `app` and `collection` are
  *  metric labels (and only a signed caller can send them). */
 const Name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/);
 
 /** A JSON value that must be PRESENT (`null` when there is nothing), never omitted. */
 const Present = z.unknown().refine((v) => v !== undefined, { message: 'required (send null)' });
-
-const Tally = z
-  .discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('counter'), name: Name, by: z.number().finite() }),
-    z.strictObject({ kind: z.literal('mark'), name: Name }),
-  ])
-  .nullable();
 
 /** The single argument the hook's default export is called with. */
 export const HookInput = z.strictObject({
@@ -33,17 +34,22 @@ export const HookInput = z.strictObject({
   key: z.string().min(1).max(200),
   /** The stored document's data before this write, or null (create, or absent). */
   before: Present,
-  /** The document's data after this write, or null (delete, increment, mark, unmark). */
+  /** The document's data after this write, or null (delete). */
   after: Present,
-  /** Metadata of the stored document (version, author kind, counters, marks), or null. Its
-   *  inner shape is the write path's to define; the runner passes it through. */
+  /** Metadata of the stored document (version, author kind; `counters` / `marks` always
+   *  empty), or null. Its inner shape is the write path's to define; the runner passes it
+   *  through. */
   doc: z.record(z.string(), z.unknown()).nullable(),
-  /** For increment / mark / unmark: which counter (and by how much) or which mark. */
-  tally: Tally,
+  /** Always null since the tally ops were removed; still a required field, so a hook written
+   *  against it keeps reading `null`. */
+  tally: z.null(),
   viewer: z.strictObject({ userId: z.number().int() }),
   app: z.strictObject({ blockId: Name }),
   /** The importing app's blockId on a `?from=` write, else null. */
   from: Name.nullable(),
+  /** On a viewer-keyed collection only: the parent key a `@me` write names (null under
+   *  `keyedBy: "viewer"`). Absent on every other collection. */
+  parent: z.string().min(1).max(96).nullable().optional(),
 });
 export type HookInput = z.infer<typeof HookInput>;
 
@@ -70,6 +76,59 @@ export const CheckRequest = z
   );
 export type CheckRequest = z.infer<typeof CheckRequest>;
 
+const Url = z.string().min(1).max(2048);
+const Dimension = z.number().int().positive().max(100_000);
+
+const RemixImage = z.strictObject({
+  url: Url,
+  width: Dimension.optional(),
+  height: Dimension.optional(),
+});
+
+/** One recorded step of a run: a workflow's result, or the answer to an ask. */
+const RemixLogEntry = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('workflow'),
+    result: z.strictObject({
+      workflowId: z.string().min(1).max(128),
+      images: z.array(RemixImage).max(16),
+    }),
+  }),
+  z.strictObject({
+    type: z.literal('ask'),
+    answer: z.union([z.string().max(MAX_REMIX_ANSWER_CHARS), z.number().int().nonnegative()]),
+  }),
+]);
+const RemixLog = z.array(RemixLogEntry).max(MAX_REMIX_EFFECTS);
+
+/**
+ * The wire contract of `POST /v1/remix/replay`, strict like `/v1/check`'s. `base` is replayed,
+ * then `base` followed by each of `branches` (the host prices a choice's options this way).
+ */
+export const RemixReplayRequest = z.strictObject({
+  ts: z.number().int(),
+  /** The remix row's blockId. */
+  appId: Name,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  source: z.string(),
+  input: z
+    .strictObject({
+      source: z.strictObject({
+        imageId: z.number().int().positive(),
+        url: Url,
+        width: Dimension,
+        height: Dimension,
+      }),
+      base: RemixLog,
+      branches: z.array(RemixLog).max(MAX_REMIX_BRANCHES).optional(),
+      autoAnswer: z.literal('first').optional(),
+    })
+    .refine((i) => (i.branches ?? []).every((b) => i.base.length + b.length <= MAX_REMIX_EFFECTS), {
+      message: `base plus a branch holds at most ${MAX_REMIX_EFFECTS} entries`,
+    }),
+});
+export type RemixReplayRequest = z.infer<typeof RemixReplayRequest>;
+
 export function clampTimeout(ms: number | undefined): number {
   if (ms === undefined) return TIMEOUT_DEFAULT_MS;
   return Math.min(TIMEOUT_MAX_MS, Math.max(TIMEOUT_MIN_MS, Math.round(ms)));
@@ -86,4 +145,5 @@ export type RefusalCode =
   | 'overloaded'
   | 'worker_crashed'
   | 'worker_terminated'
+  | 'quarantined'
   | 'shutting_down';

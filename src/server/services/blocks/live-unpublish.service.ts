@@ -41,6 +41,7 @@
  * (offsite-listing.service); the after-deploy check from build-callback.
  */
 import { liveAppImageRef } from '~/server/services/blocks/app-block-image';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
 type JobOutcome = 'succeeded' | 'failed' | 'timeout';
 type PointerJob =
@@ -96,16 +97,27 @@ const LOCK_TTL_S = 10 * 60;
 const MAX_STEPS = 6;
 
 const redisKeys = async () => {
-  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
+  const { REDIS_KEYS, REDIS_SYS_KEYS } = await import('~/server/redis/client');
   return {
     takedown: (slug: string) => `${REDIS_SYS_KEYS.BLOCKS.LIVE_POINTER_TAKEDOWN}:${slug}` as const,
-    lock: (slug: string) => `${REDIS_SYS_KEYS.BLOCKS.LIVE_POINTER_LOCK}:${slug}` as const,
-    dirty: (slug: string) => `${REDIS_SYS_KEYS.BLOCKS.LIVE_POINTER_DIRTY}:${slug}` as const,
+    lock: (slug: string) => `${REDIS_KEYS.BLOCKS.LIVE_POINTER_LOCK}:${slug}` as const,
+    dirty: (slug: string) => `${REDIS_KEYS.BLOCKS.LIVE_POINTER_DIRTY}:${slug}` as const,
   };
 };
 const sys = async () => (await import('~/server/redis/client')).sysRedis;
 const read = async <T>(p: Promise<T>) =>
   (await import('~/server/redis/client')).withSysReadDeadline(p);
+// The lock and the dirty mark are on the cache cluster, each command bounded like a sys read.
+const cluster = async <T>(
+  fn: string,
+  op: (client: typeof import('~/server/redis/client')['redis']) => Promise<T>
+) => {
+  const [{ redis }, { boundedClusterCall }] = await Promise.all([
+    import('~/server/redis/client'),
+    import('~/server/utils/cluster-window-count'),
+  ]);
+  return boundedClusterCall(fn, () => op(redis));
+};
 
 // The takedown key holds 'attempted' or 'confirmed'; any other value present reads as attempted.
 const redisStore: LivePointerStore = {
@@ -123,20 +135,28 @@ const redisStore: LivePointerStore = {
   clearTakedown: async (slug) => {
     await (await sys()).del((await redisKeys()).takedown(slug));
   },
-  acquire: async (slug) =>
-    !!(await read(
-      (await sys()).set((await redisKeys()).lock(slug), '1', { NX: true, EX: LOCK_TTL_S })
-    )),
+  acquire: async (slug) => {
+    const key = (await redisKeys()).lock(slug);
+    return !!(await cluster('livePointer.acquire', (r) =>
+      r.set(key, '1', { NX: true, EX: LOCK_TTL_S })
+    ));
+  },
   refresh: async (slug) => {
-    await (await sys()).set((await redisKeys()).lock(slug), '1', { XX: true, EX: LOCK_TTL_S });
+    const key = (await redisKeys()).lock(slug);
+    await cluster('livePointer.refresh', (r) => r.set(key, '1', { XX: true, EX: LOCK_TTL_S }));
   },
   release: async (slug) => {
-    await (await sys()).del((await redisKeys()).lock(slug));
+    const key = (await redisKeys()).lock(slug);
+    await cluster('livePointer.release', (r) => r.del(key));
   },
   markDirty: async (slug) => {
-    await (await sys()).set((await redisKeys()).dirty(slug), '1', { EX: LOCK_TTL_S });
+    const key = (await redisKeys()).dirty(slug);
+    await cluster('livePointer.markDirty', (r) => r.set(key, '1', { EX: LOCK_TTL_S }));
   },
-  takeDirty: async (slug) => (await (await sys()).del((await redisKeys()).dirty(slug))) > 0,
+  takeDirty: async (slug) => {
+    const key = (await redisKeys()).dirty(slug);
+    return (await cluster('livePointer.takeDirty', (r) => r.del(key))) > 0;
+  },
 };
 
 const defaultDeps: LiveUnpublishDeps = {
@@ -212,14 +232,32 @@ export async function isReadinessProbeApp(
   return readinessListIncludes(slug, d);
 }
 
+/** How long the approve that a late hold re-suspends waits on the takedown before it answers. */
+export const LATE_HOLD_TAKEDOWN_WAIT_MS = 20_000;
+
+/** The line the moderator gets back when the app's subdomain may still serve it. */
+export function unconfirmedTakedownNote(slug: string, why: string): string {
+  return `${slug} may still be served on its subdomain: ${why}`;
+}
+
+const UNSETTLED_WHY: Record<Exclude<SyncOutcome, 'settled'> | 'waiting', string> = {
+  failed: 'its live takedown failed. It is reported, and the next takedown or deploy retries it',
+  unsettled: 'its live takedown did not settle. It is reported, and the next takedown retries it',
+  queued: 'its live takedown is queued behind another run of the app and is not confirmed yet',
+  waiting: 'its live takedown is still running and is not confirmed yet',
+};
+
 /**
- * After a takedown COMMITS: start reconciling the app's pointer (not awaited) and return the note
- * for the moderator, if any. For the readiness app nothing is started and the note says the app
- * keeps serving. With the flag off, nothing. Never throws; the takedown already happened.
+ * After a takedown COMMITS: reconcile the app's pointer and return the note for the moderator, if
+ * any. Not awaited by default. With `awaitMs`, waits up to that long and notes any outcome short of
+ * settled. For the readiness app nothing is started and the note says the app keeps serving. With
+ * the flag off, nothing; a flag read that fails is noted, never read as "off". An unreadable
+ * readiness list does not stop the takedown (the unpublish script enforces the list). Never
+ * throws; the takedown already happened.
  */
 export async function takeDownLiveApp(
   slug: string,
-  opts: Opts = {}
+  opts: Opts & { awaitMs?: number } = {}
 ): Promise<{ liveNote?: string }> {
   const d = { ...defaultDeps, ...opts.deps };
   try {
@@ -230,10 +268,16 @@ export async function takeDownLiveApp(
     }
   } catch (err) {
     warn(`live takedown of ${slug} not started`, err);
-    return {};
+    return {
+      liveNote: unconfirmedTakedownNote(slug, 'its live takedown could not be started'),
+    };
   }
-  void syncLivePointer(slug, opts).catch(() => undefined);
-  return {};
+  const sync = syncLivePointer(slug, opts).catch((): SyncOutcome => 'failed');
+  if (!opts.awaitMs || opts.awaitMs <= 0) return {};
+  const outcome = await withTimeoutFallback<SyncOutcome | 'waiting'>(sync, opts.awaitMs, 'waiting');
+  return outcome === 'settled'
+    ? {}
+    : { liveNote: unconfirmedTakedownNote(slug, UNSETTLED_WHY[outcome]) };
 }
 
 /**

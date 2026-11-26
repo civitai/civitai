@@ -1,6 +1,8 @@
 // The web-component's StudioBackend: the browser-direct half of the contract in
-// docs/training-studio-web-component.md. Every call runs with a freshly-minted host token and talks
-// to the orchestrator with the client-safe cores — no server routes involved.
+// docs/training-studio-web-component.md. Most calls run with a freshly-minted host token and talk to
+// the orchestrator with the client-safe cores. Every call that spends (a training run, an edit, a
+// suggestion, an epoch archive), plus pricing a continuation and Review's mature count, goes to the
+// Studio's own server routes through the host's `studioServer` hook.
 import { createCivitaiClient } from '@civitai/orchestration-client';
 import type { StudioBackend } from '$lib/backend';
 import type {
@@ -14,33 +16,40 @@ import type {
 import { UploadError } from '$lib/upload';
 import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import { computeFromPrices } from '$lib/pricing-core';
+import { KOHYA_FLAG_KEY } from '$lib/data/trainingModels';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
 import * as edit from '$lib/edit-helpers-core';
 import type { TrainingTextCheckInput } from '$lib/training-text';
 import { parseServiceStatus } from '$lib/service-status-core';
+import { studioServerCalls, type StudioServerFetch } from '$lib/studio-server-calls';
 
 /** What an embedding page must inject into <civitai-training-studio> (as a JS property, never an
  *  attribute — it carries a credential provider). */
 export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
-  /** The main app's check, called before anything is submitted: a run's trigger word, or the
-   *  prompt of an edit the element is about to generate. Resolves `{ ok: false, error }` on a
-   *  refusal; rejects when the check could not run. A host without it cannot start training or
-   *  generate an edit: the element refuses rather than submit unchecked. */
+  /** The Studio's server routes, reached through the host's server as this user: `path` is the
+   *  Studio route's path and query (`/api/train`, `/api/continue-training?…`, `/api/dataset-rating`,
+   *  `/api/edit-image`, `/api/suggest-instruction`, `/api/epoch-archive?…`). A host without it cannot
+   *  start or price training, generate an edit or a suggestion, or build an archive: the element
+   *  refuses rather than spend from the browser. */
+  studioServer?: StudioServerFetch;
+  /** Unused: an edit's prompt is now checked by the Studio server it is submitted to. Kept so
+   *  existing hosts still type-check. */
   checkTrainingText?(
     input: TrainingTextCheckInput
   ): Promise<{ ok: true } | { ok: false; error: string }>;
-  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
-   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
-   *  its stored modelId unchecked. */
-  modelLive?(modelId: number): Promise<boolean>;
+  /** Whether the run's model (and, when given, the run's version on it) still counts for this user
+   *  (not missing, not deleted by its owner), answered by the host's server; it should settle (time
+   *  out) on its own. Omit and a run links its stored modelId unchecked. */
+  modelLive?(modelId: number, modelVersionId?: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available, moderator message, blocked models). Omit (or
-   *  resolve null) and the element shows no status banner, no unavailable cards, and leaves Start enabled. */
+   *  resolve null) and the element shows no status banner and blocks only the models the Studio itself
+   *  can't train (Flux.2). */
   getTrainingStatus?(): Promise<{
     available: boolean;
     message?: string | null;
@@ -56,8 +65,6 @@ export interface StudioElementHost {
     orchestratorEndpoint: string;
     orchestratorMode?: 'dev' | 'prod';
     imageLocation?: string | null;
-    /** Opt training jobs into the NDJSON live trace (`events` or `logs`); off when omitted. */
-    traceMode?: string;
     /** The host page's Buzz color (green domain vs yellow). When set, the element locks the Buzz
      *  mode to it — no user toggle, and nothing persisted to localStorage. Omit to leave the
      *  user's own toggle in charge. */
@@ -67,11 +74,11 @@ export interface StudioElementHost {
      *  affordance disables with a membership explanation instead of silently doing nothing. Omit
      *  when the host doesn't know (behaves as before). */
     canGenerateUnpublished?: boolean;
-    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
-     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
-     *  the host doesn't know. */
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, a mature
+     *  run's samples are blurred when Blue paid any of it, and Review says so. Omit when the host
+     *  doesn't know. */
     isPaidMember?: boolean;
-    /** The host's membership-plans page, linked from that explanation. Relative = same-tab
+    /** The host's membership-plans page, linked from the membership explanations. Relative = same-tab
      *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
     pricingUrl?: string;
     /** The host's support ticket portal, offered on a run held for review past the raise
@@ -79,8 +86,12 @@ export interface StudioElementHost {
     supportUrl?: string;
     /** The host's dataset storage policy, linked beside the dataset-sharing choice. */
     dataPolicyUrl?: string;
-    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
-     *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
+    /** The signed-in user's id. Keys the New training flow's browser-local autosave; omit and
+     *  nothing is autosaved. */
+    userId?: number;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see, plus `KOHYA_FLAG_KEY`
+     *  when they may train with Kohya — the embed's stand-in for the shell's server-side
+     *  `allowedModelFlags`. Omitted => every gated model, and Kohya, stays hidden. */
     enabledModelFlags?: string[];
   };
   hrefFor(loc: StudioLocation): string;
@@ -95,6 +106,9 @@ export interface StudioElementHost {
   /** URL for the main app's publish-from-workflow entry (draft model + wizard) for a run's
    *  checkpoint; omit to hide the Publish affordance. Relative = same-tab, absolute = new tab. */
   publishUrl?(req: PublishRequest): string;
+  /** The same entry, adding the run as a new version of one of the owner's models; omit to offer
+   *  only the new-model Publish. */
+  publishVersionUrl?(req: PublishRequest): string;
   /** URL for the run's model page — draft or published (runs carry a modelId once a draft
    *  exists); omit to hide the "view model" affordance. Relative = same-tab, absolute = new tab. */
   modelPageUrl?(req: ModelPageRequest): string;
@@ -106,6 +120,8 @@ export interface StudioElementHost {
 class UnauthorizedError extends Error {}
 
 const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
+const TRAINING_UNAVAILABLE =
+  'Training is unavailable on this page right now. Reload and try again.';
 // Nothing was sent, so the image keeps its cap slot.
 const autoLabelUnavailable = () =>
   Promise.reject(new AutoLabelRefusedError(AUTO_LABEL_UNAVAILABLE));
@@ -143,24 +159,14 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     throw retried.err;
   };
 
-  const hostTextCheck: train.TrainingTextCheck = async (input) => {
-    if (!host.checkTrainingText)
-      throw new Error('Training is unavailable on this page right now. Reload and try again.');
-    const result = await host.checkTrainingText(input);
-    if (!result.ok) throw new train.TrainingTextRefusedError(result.error);
-  };
-
-  // Read fresh before each submit so a model blocked after the page loaded is refused. This is the
-  // browser's own check: the element submits straight to the orchestrator, so no server of ours sees it.
   const hostStatus = async () => {
     const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
     return raw ? parseServiceStatus(raw) : null;
   };
-  const submitOpts = async (): Promise<train.SubmitOptions> => ({
-    // No signal callbacks: the element runs on polling alone (signalsEndpoint is null there).
-    traceMode: host.config.traceMode ?? 'events',
-    status: await hostStatus().catch(() => null),
-  });
+  const kohyaAllowed = () => host.config.enabledModelFlags?.includes(KOHYA_FLAG_KEY) === true;
+  const server = host.studioServer
+    ? studioServerCalls(host.studioServer)
+    : studioServerCalls(() => Promise.reject(new Error(TRAINING_UNAVAILABLE)));
 
   return {
     listTrainings: () => call((client) => orch.listTrainingWorkflows(client)),
@@ -173,7 +179,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       }),
 
     // No hook: the stored link stands unchecked.
-    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
+    modelLive: (modelId, modelVersionId) =>
+      host.modelLive ? host.modelLive(modelId, modelVersionId) : Promise.resolve(true),
 
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 
@@ -185,7 +192,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         );
         if (res.status === 401) throw new UnauthorizedError(`Dataset image unavailable (401)`);
         if (!res.ok) throw new Error(`Dataset image unavailable (${res.status})`);
-        return res.blob();
+        // The orchestrator's CORS exposes X-NSFW-Level.
+        return { blob: await res.blob(), nsfwLevel: res.headers.get('x-nsfw-level') ?? undefined };
       }),
 
     listGenerations: (media) => call((client) => orch.listGenerations(client, media)),
@@ -210,59 +218,41 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         ? host.autoLabelPoll(workflowId, signal)
         : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
-    submitTraining: async (runs) => {
-      const opts = await submitOpts();
-      return call((client) =>
-        train.submitTrainingBatch(client, runs, { ...opts, checkText: hostTextCheck })
-      );
-    },
+    submitTraining: server.submitTraining,
+
+    datasetRating: host.studioServer ? server.datasetRating : undefined,
+    pendingLicenses: host.studioServer ? server.pendingLicenses : undefined,
+    acceptLicense: host.studioServer ? server.acceptLicense : undefined,
 
     listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
 
     editImageQuote: (imageUrl) => call((client) => edit.editImageQuote(client, imageUrl)),
 
-    editImageSubmit: async (req) => {
-      await hostTextCheck({ editPrompt: req.prompt, inputImages: [req.imageUrl] });
-      return { workflowId: await call((client) => edit.submitEditImage(client, req)) };
-    },
+    editImageSubmit: server.editImageSubmit,
 
     editImagePoll: (workflowId) => call((client) => edit.pollEditImage(client, workflowId)),
 
     suggestQuote: () => call((client) => edit.suggestQuote(client)),
 
-    suggestSubmit: async (req) => ({
-      workflowId: await call((client) => edit.submitSuggest(client, req)),
-    }),
+    suggestSubmit: server.suggestSubmit,
 
     suggestPoll: (workflowId) => call((client) => edit.pollSuggest(client, workflowId)),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
-    epochArchive: (workflowId, kind) =>
-      call((client) => orch.createEpochArchive(client, workflowId, kind)),
+    epochArchive: server.epochArchive,
     deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
-    continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
-      const opts = await submitOpts();
-      return call((client) =>
-        train.continueTrainingWhatIf(client, { workflowId, fromEpoch, addEpochs, currencies }, opts)
-      );
-    },
+    continueQuote: server.continueQuote,
 
-    continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
-      const opts = await submitOpts();
-      return call((client) =>
-        train.continueTraining(
-          client,
-          { workflowId, fromEpoch, addEpochs, currencies, matureAck },
-          { ...opts, checkText: hostTextCheck }
-        )
-      );
-    },
+    continueRun: server.continueRun,
 
     getFromPrices: () => call((client) => computeFromPrices(client)),
 
-    quoteRun: (input) => call((client) => orch.trainingWhatIf(client, input)),
+    quoteRun: (input) =>
+      input.engine === 'kohya' && !kohyaAllowed()
+        ? Promise.reject(new Error(train.KOHYA_UNAVAILABLE))
+        : call((client) => orch.trainingPreview(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
 

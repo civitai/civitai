@@ -13,3 +13,7 @@ import './crucible.profile';
 import './collection.profile';
 import './storyline.profile';
 import './image-caption.profile';
+import './service-offering.profile';
+import './post-text.profile';
+import './app-doc.profile';
+import './service-deal-review.profile';

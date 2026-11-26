@@ -3,10 +3,12 @@ import {
   getRatingTotalsSchema,
   getResourceReviewsInfiniteSchema,
   updateResourceReviewSchema,
+  getRecommendedBySchema,
   getResourceReviewPagedSchema,
   getResourceReviewImagesSchema,
   getUserResourceReviewSchema,
 } from './../schema/resourceReview.schema';
+import { withMaskedDetails } from '~/server/services/profanity-mask.service';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   createResourceReviewHandler,
@@ -29,6 +31,7 @@ import {
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   getPagedResourceReviews,
+  getRecommendedBy,
   getRatingTotals,
   getResourceReview,
   getResourceReviewsInfinite,
@@ -66,21 +69,40 @@ export const resourceReviewRouter = router({
   get: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }) =>
-      getResourceReview({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
-    ),
+    .query(async ({ input, ctx }) => {
+      const review = await getResourceReview({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      });
+      const [masked] = await withMaskedDetails([review]);
+      return masked;
+    }),
   getUserResourceReview: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getUserResourceReviewSchema)
-    .query(({ input, ctx }) => getUserResourceReview({ ...input, userId: ctx.user.id })),
+    .query(async ({ input, ctx }) => {
+      const reviews = await getUserResourceReview({ ...input, userId: ctx.user.id });
+      return reviews ? withMaskedDetails(reviews) : reviews;
+    }),
   getInfinite: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getResourceReviewsInfiniteSchema)
-    .query(({ input, ctx }) => getResourceReviewsInfinite({ ...input, viewerId: ctx.user?.id })),
+    .query(async ({ input, ctx }) => {
+      const page = await getResourceReviewsInfinite({ ...input, viewerId: ctx.user?.id });
+      return { ...page, items: await withMaskedDetails(page.items) };
+    }),
   getPaged: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getResourceReviewPagedSchema)
-    .query(({ input, ctx }) => getPagedResourceReviews({ input, userId: ctx.user?.id })),
+    .query(async ({ input, ctx }) => {
+      const page = await getPagedResourceReviews({ input, userId: ctx.user?.id });
+      return { ...page, items: await withMaskedDetails(page.items) };
+    }),
+  getRecommendedBy: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getRecommendedBySchema)
+    .query(({ input, ctx }) => getRecommendedBy({ input, userId: ctx.user?.id })),
   getImages: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getResourceReviewImagesSchema)

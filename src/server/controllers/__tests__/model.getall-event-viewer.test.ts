@@ -54,3 +54,23 @@ describe('model.getAll event decoration viewer', () => {
     });
   });
 });
+
+describe('model.getAll held-showcase viewer', () => {
+  it.each([
+    ['a session', {}, true],
+    ['a scoped token', scopedKey, false],
+  ])('exempts a moderator from the hold only on %s', async (_label, credential, heldViewer) => {
+    await getModelsInfiniteHandler({
+      input: { limit: 20, browsingLevel: 1 },
+      ctx: {
+        user: moderator,
+        ...credential,
+        features: {},
+        req: { headers: {} },
+        cache: { canCache: true },
+      },
+    } as never);
+    const [arg] = getModelsWithImagesAndModelVersions.mock.calls.at(-1)!;
+    expect((arg as { heldViewer?: boolean }).heldViewer).toBe(heldViewer);
+  });
+});

@@ -430,7 +430,7 @@ export function createEventPointsPusher(deps: PushDeps) {
 }
 
 function logPush(type: 'warning' | 'error', event: string | undefined, extra: object) {
-  logToAxiom({ type, name: 'event-points-push', event, ...extra }).catch(() => undefined);
+  logToAxiom({ type, name: 'event-points-push', event, ...extra });
 }
 
 let pusher: ReturnType<typeof createEventPointsPusher> | undefined;

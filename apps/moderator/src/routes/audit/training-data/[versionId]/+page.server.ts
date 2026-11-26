@@ -6,6 +6,7 @@ import {
   CSAM_CONTENTS,
   CSAM_CONTENT_KEYS,
   getDatasetItemStates,
+  getTrainingGateState,
   getTrainingVersionDetail,
   getTrainingWorkflowDetail,
   invalidateTrainingReviewQueue,
@@ -27,6 +28,8 @@ export const load: PageServerLoad = async ({ params }) => {
   const studioDataset = loadStudioDataset(detail);
   return {
     detail,
+    // Streamed: a manager read, which can take its full timeout.
+    gate: getTrainingGateState(versionId.data),
     csamContents: CSAM_CONTENTS,
     studioDataset,
     studioItemStates: studioDataset.then((loaded) =>

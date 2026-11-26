@@ -1,5 +1,5 @@
 import { Badge, Button, Group, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useEffect, useState } from 'react';
 import type { ScopeConsentState } from '~/components/Apps/scopeConsentRows';
 import {
@@ -34,19 +34,7 @@ import { trpc } from '~/utils/trpc';
  * `ScopeConsentList`.
  */
 
-/**
- * ⚠️ NO `SPEND_SCOPE` DECLARATION AND NO RE-EXPORT HERE — read `BLOCK_SPEND_SCOPE` in
- * `~/shared/constants/block-scope.constants` instead, which is what this file now imports.
- *
- * Phase 3 declared the literal here, then round 1 moved it to shared constants and left
- * `export const SPEND_SCOPE = BLOCK_SPEND_SCOPE` behind so `src/pages/apps/activity.tsx` would keep
- * working. Round 2's reuse lane showed that alias defeated the point: the finding was never "the
- * literal is in the wrong file", it was that the BUDGET EDITOR — which predates revoke and is
- * independent of it — took its spend-scope identity from a module that imports `@mantine/core`,
- * `@mantine/modals`, `trpc` and `formatDate` to render a revoke dialog. Re-exporting preserved that
- * dependency edge verbatim while the docblock above it claimed the edge was the reason for moving.
- * A rename is not a consolidation.
- */
+/** Do not declare or re-export `SPEND_SCOPE` here: the budget editor reads `BLOCK_SPEND_SCOPE` from `~/shared/constants/block-scope.constants`, so this file's imports stay out of its graph. */
 
 /**
  * What a revoke actually does, in the viewer's terms — the confirm step's body.
@@ -59,8 +47,8 @@ import { trpc } from '~/utils/trpc';
  *     marker. So this is NOT the weaker "at the next token refresh" that a durable-row-only
  *     revoke would justify. ⚠️ The one state where it IS weaker is a Redis publish failure, and
  *     that state does not go unreported: the server answers 503 with
- *     `CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE`, which says so in those words, and
- *     `useScopeRevoke` below surfaces it instead of a success.
+ *     `CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE` (flagged `data.consentRevokeRecorded`), which says
+ *     so in those words, and `useScopeRevoke` below surfaces it instead of a success.
  *   - "may ask you for it again" — a revoked scope lands in `partitionByConsent`'s `missing`,
  *     which is an explicit consent PROMPT, not a silent re-grant.
  *   - "saying yes to that prompt gives it back" — true, by design, and stated rather than
@@ -174,10 +162,10 @@ export function ScopeRevokeAllConfirmBody({
 /**
  * The failure a revoke can leave on screen, as distinct from a notification that has faded.
  *
- * `degraded` is the 503 half and it is NOT an error in the sense the viewer cares about: the
- * permission WAS removed durably and only the in-flight-token half is lagging. Collapsing the
- * two into one "could not remove" message would tell a viewer nothing was recorded when the
- * half that governs every future mint was.
+ * `degraded` is the flagged-503 half (`isRevokeRecordedButLagging`) and it is NOT an error in
+ * the sense the viewer cares about: the permission WAS removed durably and only the
+ * in-flight-token half is lagging. Collapsing the two into one "could not remove" message would
+ * tell a viewer nothing was recorded when the half that governs every future mint was.
  */
 export type ScopeRevokeFailure = {
   message: string;
@@ -191,6 +179,27 @@ export type ScopeRevokeFailure = {
  * per-scope guarantee this surface does not make. Found by the test-review lane.
  */
 
+type RevokeError = {
+  data?: { code?: string; consentRevokeRecorded?: boolean };
+  message?: string;
+};
+
+/**
+ * Whether a failed `blocks.revokeScopes` call still WROTE the grant row (only the in-flight marker
+ * failed), which is the one failure reported as "Permission removed".
+ *
+ * 🔴 THE SERVER'S `consentRevokeRecorded` FLAG, NOT THE 503 CODE. The code alone is ambiguous: the
+ * `mapDbUnavailable` middleware (`src/server/trpc.ts`) answers an unreachable database with a 503 —
+ * including on the reads `revokeScopes` makes BEFORE it writes, where nothing was removed. Reading
+ * every 503 as "recorded" told the viewer "Permission removed" and hid the Remove control while the
+ * grant stayed live. The flag is set only by the post-write marker-failure throw and is lifted onto
+ * `data` by `src/server/trpc/error-formatter.ts`. Both are required, so a flag on any other code is
+ * not read as a removal either.
+ */
+export function isRevokeRecordedButLagging(error: RevokeError | null | undefined): boolean {
+  return error?.data?.code === 'SERVICE_UNAVAILABLE' && error?.data?.consentRevokeRecorded === true;
+}
+
 /**
  * The revoke mutation plus its confirm gate, for ONE app.
  *
@@ -202,7 +211,8 @@ export type ScopeRevokeFailure = {
  * 🔴 THE THREE OUTCOMES ARE HANDLED SEPARATELY BECAUSE THEY MEAN DIFFERENT THINGS, and the
  * middle one is the trap. `blocks.revokeScopes` can answer:
  *   - 2xx              → removed, and enforced immediately. Invalidate; say so.
- *   - 503              → removed DURABLY, but the in-flight-token marker did not go out. The
+ *   - 503 + `data.consentRevokeRecorded`
+ *                      → removed DURABLY, but the in-flight-token marker did not go out. The
  *                        row must be re-read (it changed!) and the viewer told the honest
  *                        partial truth. Treating this as a plain failure would leave the list
  *                        showing a permission that is actually gone.
@@ -364,26 +374,11 @@ export function useScopeRevoke({
    * 🔴 NO `onSuccess`/`onError`/`onSettled` OPTIONS — THE OUTCOME IS HANDLED IN THE `onConfirm`
    * CLOSURE. THE REASON IS ORDERING (see the block on the chain below), NOT LIFECYCLE.
    *
-   * ⚠️ A PREVIOUS VERSION OF THIS DOCBLOCK GAVE A DIFFERENT AND FALSE REASON, AND IT IS RETRACTED
-   * RATHER THAN REWORDED. It said: *"the dialog outlives this component … react-query unsubscribes
-   * this `useMutation` observer, so confirming still fired the mutation SERVER-SIDE while none of
-   * the option callbacks ran … The permission changed and the viewer was told nothing."* Two lanes
-   * independently reported that hazard in round 1 and the round-2 correctness lane RETRACTED it
-   * after reading the installed source: in `@tanstack/query-core@5.101.0`, `Mutation.execute`
-   * awaits `this.options.onSuccess/onError/onSettled` **unconditionally**, with no reference to
-   * `#observers`. The only listener-gated path is `MutationObserver.#notify`, which fires
-   * `#mutateOptions` — the PER-CALL options passed as `mutate(vars, options)`, which this code
-   * never used. Hook options become the MUTATION's options (`useMutation` →
-   * `observer.setOptions` → `mutationCache.build(client, this.options)`), so they would have fired
-   * after unmount. There was nothing to fix.
+   * Not lifecycle: `openConfirm` renders in the global `DialogProvider`, so the dialog outlives this
+   * component, but hook options would still fire after unmount (`Mutation.execute` awaits them
+   * regardless of observers; only per-call `mutate(vars, options)` callbacks are listener-gated).
    *
-   * The premise about the dialog is still true — `openConfirmModal` renders into the global
-   * `CustomModalsProvider` in `src/pages/_app.tsx`, so it does outlive this component — but the
-   * conclusion drawn from it was wrong, and a comment asserting a library behaviour that does not
-   * exist is worse than no comment: the next reader trusts it, and the test fixture below was
-   * written to ENFORCE this shape on that false rationale.
-   *
-   * WHAT IS STILL TRUE AND IS THE REAL REASON TO KEEP THIS SHAPE: handling the outcome here is what
+   * The reason: handling the outcome here is what
    * lets the viewer be told BEFORE the cache is reconciled, which the option-callback form could not
    * express (`execute` awaits `onSuccess` before `onSettled`, so an `await invalidate()` inside
    * `onSuccess` necessarily delayed the spinner). React is 18.3.1, so the two `setState` calls are
@@ -393,9 +388,9 @@ export function useScopeRevoke({
   const mutation = trpc.blocks.revokeScopes.useMutation();
 
   const requestRevoke = (scope: string) => {
-    openConfirmModal({
+    openConfirm({
       title: `Remove “${blockScopeTitle(scope)}”?`,
-      children: <ScopeRevokeConfirmBody appName={appName} scope={scope} />,
+      message: <ScopeRevokeConfirmBody appName={appName} scope={scope} />,
       labels: { confirm: 'Remove permission', cancel: 'Keep it' },
       confirmProps: { color: 'red', 'data-testid': 'scope-revoke-confirm' },
       cancelProps: { 'data-testid': 'scope-revoke-cancel' },
@@ -455,19 +450,20 @@ export function useScopeRevoke({
               // payload carries the revocation. See `justRevoked`.
               void utils.blocks.listMyScopeGrants.invalidate();
             },
-            (error: { data?: { code?: string }; message?: string }) => {
+            (error: RevokeError) => {
               const code = error?.data?.code;
-              const degraded = code === 'SERVICE_UNAVAILABLE';
+              const degraded = isRevokeRecordedButLagging(error);
               const message = error?.message ?? 'The permission could not be removed just now.';
               setFailure({ message, degraded });
               if (degraded) {
                 // A WARNING, not an error: the permission IS gone. The notification and the inline
                 // notice carry the same server sentence rather than two paraphrases of it.
                 showWarningNotification({ title: 'Permission removed', message });
-                // 🔴 AND IT COUNTS AS REVOKED FOR THE ROW, exactly as a 2xx does. On a 503 Postgres
-                // was written and only the in-flight-token marker failed, so the permission really is
-                // withdrawn — leaving a live "Remove" control on it would be the same misreport as
-                // the success path's, in the arm that is already telling the viewer it is gone.
+                // 🔴 AND IT COUNTS AS REVOKED FOR THE ROW, exactly as a 2xx does. On a flagged
+                // 503 Postgres was written and only the in-flight-token marker failed, so the
+                // permission really is withdrawn — leaving a live "Remove" control on it would be
+                // the same misreport as the success path's, in the arm that is already telling the
+                // viewer it is gone.
                 setJustRevoked((prev) => (prev.includes(scope) ? prev : [...prev, scope]));
               }
               // See the hook docblock: 412 is the only outcome the server states left the row
@@ -506,9 +502,9 @@ export function useScopeRevoke({
    */
   const requestRevokeAll = (scopes: string[], keptCount: number) => {
     if (scopes.length === 0 || scopes.length > REVOKE_SCOPES_MAX_PER_CALL) return;
-    openConfirmModal({
+    openConfirm({
       title: `Remove ${scopes.length} permission${scopes.length === 1 ? '' : 's'}?`,
-      children: (
+      message: (
         <ScopeRevokeAllConfirmBody appName={appName} scopes={scopes} keptCount={keptCount} />
       ),
       labels: { confirm: 'Remove all', cancel: 'Keep them' },
@@ -532,7 +528,7 @@ export function useScopeRevoke({
             // not theirs to lose here.
             const again = scopes.filter((s) => held.has(s) && allowed.has(s));
             if (again.length === 0) throw error;
-            // Before the call: a 503 on the retry still means THESE were written.
+            // Before the call: a flagged 503 on the retry still means THESE were written.
             scopes = again;
             return send(again);
           })
@@ -547,9 +543,9 @@ export function useScopeRevoke({
               });
               void utils.blocks.listMyScopeGrants.invalidate();
             },
-            (error: { data?: { code?: string }; message?: string }) => {
+            (error: RevokeError) => {
               const code = error?.data?.code;
-              const degraded = code === 'SERVICE_UNAVAILABLE';
+              const degraded = isRevokeRecordedButLagging(error);
               const message = error?.message ?? 'The permissions could not be removed just now.';
               setFailure({ message, degraded });
               if (degraded) {

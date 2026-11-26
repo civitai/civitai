@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type {
   GenerationFetchPrincipal,
   GenerationFetchRefusal,
+  ProviderFetchPrincipal,
 } from '~/server/services/download-link/generation-fetch.service';
 import { checkGenerationFetch } from '~/server/services/download-link/generation-fetch.service';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
@@ -15,20 +16,28 @@ import {
   findReusableLink,
   isAllowlistedMinter,
   isLinkToken,
+  isOverFetchCap,
+  linksAreReusable,
+  readLink,
+  mayMintProviderLinks,
   mayMintPublicLinks,
   recordFetch,
   takeMintBudget,
   credentialKey,
   secretEpoch,
 } from '~/server/services/download-link/download-link.store';
+import { serveProviderFetch } from '~/server/services/provider-download/provider-download.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
 import type { Session } from '~/types/session';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { bearerScopeMode } from '~/server/auth/bearer-scope-tighten';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
+import { hasScope, readApiKeyScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 export const DEFAULT_LINK_TTL_SECONDS = 24 * 60 * 60;
+export const PROVIDER_LINK_TTL_SECONDS = 6 * 60 * 60;
 const MINT_CONCURRENCY = 8;
 
 /**
@@ -49,7 +58,13 @@ export type MintItem = {
   modelVersionId: number;
   fileId?: number;
   ttlSeconds: number;
-} & ({ mode: 'public' } | { mode: 'user'; onBehalfOfUserId: number; workflowId: string });
+} & (
+  | { mode: 'public' }
+  | { mode: 'user'; onBehalfOfUserId: number; workflowId: string }
+  | { mode: 'provider'; provider: DownloadLinkProvider }
+);
+
+export type DownloadLinkProvider = 'orchestrator';
 
 export type MintError = GenerationFetchRefusal | 'rate-limited';
 export type MintItemResult =
@@ -76,9 +91,12 @@ const refused = (error: MintError): MintItemResult => ({
   error,
 });
 
-/** Off, unknown or unreachable all read as off. */
-export const downloadLinksEnabled = () =>
-  isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_LINKS_ENABLED).catch(() => false);
+/**
+ * Off, unknown or unreachable all read as off. `mode`: `api` for `/api/v1/download-links` and its
+ * links, `provider` for the links mini hands a provider.
+ */
+export const downloadLinksEnabled = (mode: 'api' | 'provider') =>
+  isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_LINKS_ENABLED, undefined, { mode }).catch(() => false);
 
 const linkUrl = (id: string) => `${getBaseUrl()}/api/download/l/${id}`;
 
@@ -116,7 +134,7 @@ function logMint(
     error: result.ok ? null : result.error,
     linkId: result.ok ? result.linkId : null,
     reused: result.ok ? result.reused : null,
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -165,24 +183,29 @@ async function gateItems(
   return gates;
 }
 
+/** `takeFreshMintBudget`, when given, is asked only when no link can be reused. */
 async function mintOne(
   credential: DownloadLinkCredential,
   item: MintItem,
-  principal: GenerationFetchPrincipal | null,
-  now: number
+  principal: GenerationFetchPrincipal | ProviderFetchPrincipal | null,
+  now: number,
+  takeFreshMintBudget?: () => Promise<boolean>
 ): Promise<MintItemResult> {
   const check = await checkGenerationFetch({
     modelVersionId: item.modelVersionId,
     fileId: item.fileId,
     principal,
+    cacheReads: item.mode === 'provider',
   });
   if (!check.ok) return refused(check.error);
 
-  const onBehalfOfUserId = principal?.id ?? null;
+  const onBehalfOfUserId = principal && 'id' in principal ? principal.id : null;
+  const provider = item.mode === 'provider' ? item.provider : null;
   const reusable = await findReusableLink({
     credential,
     fileId: check.fileId,
     onBehalfOfUserId,
+    provider,
     now,
     minRemainingMs: env.DOWNLOAD_LINK_MIN_REUSE_SECONDS * 1000,
     maxExpiresAt: now + item.ttlSeconds * 1000,
@@ -197,11 +220,15 @@ async function mintOne(
     };
   }
 
+  if (takeFreshMintBudget && !(await takeFreshMintBudget())) return refused('rate-limited');
+
   const expiresAt = now + item.ttlSeconds * 1000;
   const { id, linkId } = await createLink({
-    maxFetches: linkFetchCap(check.sizeKB),
+    // A provider link has no cap: older workers GET it once per range, and its lifetime bounds it.
+    maxFetches: provider ? 0 : linkFetchCap(check.sizeKB),
     credential,
     onBehalfOfUserId,
+    provider,
     // The link pins the version and file the check resolved, not the ones asked for.
     modelVersionId: check.modelVersionId,
     fileId: check.fileId,
@@ -229,7 +256,7 @@ export async function mintDownloadLinks(
   items: MintItem[],
   now = Date.now()
 ): Promise<MintOutcome> {
-  if (!(await downloadLinksEnabled())) return { status: 503 };
+  if (!(await downloadLinksEnabled('api'))) return { status: 503 };
   const budget = await takeMintBudget(
     `cred:${credentialKey(credential)}`,
     items.length,
@@ -254,6 +281,42 @@ export async function mintDownloadLinks(
   return { status: 200, items: results };
 }
 
+/**
+ * A link `provider` fetches one file with as itself, minted for the credential calling mini. Null
+ * when provider links are off: the flag, a credential not on the provider allowlist, or no
+ * `DOWNLOAD_LINK_SECRET` (every call would then mint a new link).
+ */
+export async function mintProviderLink(
+  credential: DownloadLinkCredential,
+  {
+    provider,
+    modelVersionId,
+    fileId,
+  }: { provider: DownloadLinkProvider; modelVersionId: number; fileId: number },
+  now = Date.now()
+): Promise<MintItemResult | null> {
+  if (!linksAreReusable() || !mayMintProviderLinks(credential)) return null;
+  if (!(await downloadLinksEnabled('provider'))) return null;
+  const item: MintItem = {
+    mode: 'provider',
+    provider,
+    modelVersionId,
+    fileId,
+    ttlSeconds: PROVIDER_LINK_TTL_SECONDS,
+  };
+  const result = await mintOne(credential, item, { kind: 'provider', provider }, now, () =>
+    takeMintBudget(
+      `cred:${credentialKey(credential)}`,
+      1,
+      env.DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL,
+      now
+    ).then((budget) => budget.allowed)
+  );
+  // Mini asks on every call; a reuse is the common answer and says nothing new.
+  if (!result.ok || !result.reused) logMint(credential, item, result);
+  return result;
+}
+
 /** Whether the credential that minted a link may still be honoured. */
 async function isCredentialLive(credential: DownloadLinkCredential, now: number) {
   if (!isAllowlistedMinter(credential)) return false;
@@ -262,14 +325,36 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
     if (!Number.isInteger(id)) return false;
     const key = await dbRead.apiKey.findUnique({
       where: { id },
-      select: { expiresAt: true, user: { select: { bannedAt: true, deletedAt: true } } },
+      select: {
+        expiresAt: true,
+        type: true,
+        tokenScope: true,
+        tokenScopeWide: true,
+        user: { select: { bannedAt: true, deletedAt: true } },
+      },
     });
-    return (
+    const live =
       !!key &&
       (!key.expiresAt || key.expiresAt.getTime() > now) &&
       !key.user.bannedAt &&
-      !key.user.deletedAt
+      !key.user.deletedAt;
+    if (!live) return false;
+    // The mint's model-read rule, re-read here so narrowing the key ends its links.
+    // `mintProviderLink` carries no such rule: mini, its only caller, is behind
+    // download-scope-gate.
+    const tokenScope = readApiKeyScope(key);
+    if (MODEL_VIEW_SCOPES.some((bit) => hasScope(tokenScope, bit))) return true;
+    const mode = await bearerScopeMode(
+      'download-link-fetch',
+      {
+        apiKeyId: id,
+        apiKeyType: key.type,
+        subject: { type: 'apiKey', id },
+        tokenScope,
+      },
+      'ModelsRead|AIServicesRead'
     );
+    return mode !== 'enforce';
   }
   const client = await dbRead.oauthClient.findUnique({
     where: { id: credential.id },
@@ -284,16 +369,14 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
     !!client &&
     secretEpoch(client.secret) === credential.epoch &&
     client.grants.includes('client_credentials') &&
-    (client.allowedScopes & TokenScope.DownloadLink) !== 0 &&
+    (client.allowedScopes & TokenScope.DownloadLink) !== 0n &&
     !client.user.bannedAt &&
     !client.user.deletedAt
   );
 }
 
 function logUse(linkId: string, outcome: string, fetch?: number) {
-  logToAxiom({ name: 'download-link', type: 'info', message: 'use', linkId, outcome, fetch }).catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'download-link', type: 'info', message: 'use', linkId, outcome, fetch });
 }
 
 /** Logs why a fetch was refused and answers the refusal. */
@@ -318,13 +401,21 @@ export async function fetchDownloadLink({
   now?: number;
 }): Promise<string | null> {
   if (!isLinkToken(id)) return null;
-  if (!(await downloadLinksEnabled())) return null;
+  const [apiEnabled, providerEnabled] = await Promise.all([
+    downloadLinksEnabled('api'),
+    downloadLinksEnabled('provider'),
+  ]);
+  if (!apiEnabled && !providerEnabled) return null;
+  // A fetch refused by its mode's flag must not count: it would spend the cap, or the first fetch.
+  if (apiEnabled !== providerEnabled && !!(await readLink(id))?.provider !== providerEnabled)
+    return null;
 
   const counted = await recordFetch(id);
   if (!counted) return null;
   const { link, fetch } = counted;
+  if (!(link.provider ? providerEnabled : apiEnabled)) return null;
   if (now >= link.expiresAt) return refuseUse(link.linkId, 'expired', fetch);
-  if (!(fetch <= link.maxFetches)) return refuseUse(link.linkId, 'over-cap', fetch);
+  if (isOverFetchCap(link, fetch)) return refuseUse(link.linkId, 'over-cap', fetch);
   const credential = {
     kind: link.credentialKind,
     id: link.credentialId,
@@ -332,6 +423,29 @@ export async function fetchDownloadLink({
   };
   if (!(await isCredentialLive(credential, now)))
     return refuseUse(link.linkId, 'credential-dead', fetch);
+
+  if (link.provider) {
+    if (!mayMintProviderLinks(credential)) return refuseUse(link.linkId, 'credential-dead', fetch);
+    const check = await checkGenerationFetch({
+      modelVersionId: link.modelVersionId,
+      fileId: link.fileId,
+      principal: { kind: 'provider', provider: link.provider },
+      cacheReads: true,
+    });
+    if (check.ok && check.fileId !== link.fileId) return refuseUse(link.linkId, 'not-found', fetch);
+    const served = await serveProviderFetch({
+      req,
+      res,
+      provider: link.provider,
+      check,
+      expiresInSeconds: env.DOWNLOAD_LINK_FILE_URL_TTL_SECONDS,
+      // Older workers GET the link once per range: one download, one record.
+      record: fetch === 1,
+    });
+    if (!served.ok) return refuseUse(link.linkId, check.ok ? 'not-found' : check.error, fetch);
+    logUse(link.linkId, 'redirect', fetch);
+    return served.url;
+  }
 
   let principal: GenerationFetchPrincipal | null = null;
   if (link.onBehalfOfUserId != null) {

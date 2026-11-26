@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { canAccessMinorQueue } from '$lib/server/minor-queue-access';
 import { getAutoFlaggedMinorDetail, getMinorHashMatchDetail } from '$lib/server/minor-hash.service';
+import { withheldHashDetail } from '$lib/server/retracted-media';
 
 // Per-row on expand, not joined into the list: covers, uploader counts and flag provenance are
 // per-model lookups that would turn a 50-row page into 50x the work for detail most rows never show.
@@ -20,7 +21,11 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   if (minorModelId)
     return json({
       match: null,
-      detail: await getMinorHashMatchDetail({ modelId, minorModelId, label }),
+      detail: await withheldHashDetail(
+        await getMinorHashMatchDetail({ modelId, minorModelId, label }),
+        locals.user
+      ),
     });
-  return json(await getAutoFlaggedMinorDetail({ modelId, label }));
+  const { match, detail } = await getAutoFlaggedMinorDetail({ modelId, label });
+  return json({ match, detail: await withheldHashDetail(detail, locals.user) });
 };

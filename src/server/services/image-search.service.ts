@@ -1,3 +1,5 @@
+import { credentialViews } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -9,7 +11,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getAllImages, getImagesFromFeedServiceForRest } from '~/server/services/image.service';
 import { parseFeedCursor } from '~/server/common/feed-cursor';
-import { imageMetaCache, thumbnailCache } from '~/server/redis/caches';
+import { imageMetaCache, servableThumbnails, thumbnailCache } from '~/server/redis/caches';
 import type { PublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import {
@@ -136,6 +138,7 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
+  const views = credentialViews({ ...getRequestCredential(req), user });
   const {
     limit,
     skip,
@@ -155,11 +158,8 @@ export async function runImageSearch(
   // Meili feed query builder does not filter on any of them, so they'd silently
   // return the global feed.
   //
-  // 🔴 The mechanism is the QUERY BUILDER, not the index schema, and an earlier
-  // version of this comment had that wrong ("it indexes postedToId/
-  // modelVersionId only"). Image `id` IS a filterable attribute — on the metrics
-  // index (`metrics-images.search-index.ts` filterableAttributes). What
-  // is missing is the CLAUSE: `ImagesFeed.queryDocuments`
+  // 🔴 The mechanism is the QUERY BUILDER, not the index schema. What is
+  // missing is the CLAUSE: `ImagesFeed.queryDocuments`
   // (event-engine-common/feeds/images.feed.ts) never destructures `ids` and
   // never pushes an `id IN [...]` filter, while its sibling `models.feed.ts`
   // does (line 558). So an `ids` key reaching the feed is dropped on the floor
@@ -265,6 +265,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     user,
+    ...views,
     disableMinor: true,
     disablePoi: true,
     includeBaseModel: true,
@@ -281,7 +282,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     currentUserId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator: views.asModerator,
     disableMinor: true,
     disablePoi: true,
     actor,
@@ -307,7 +308,8 @@ export async function runImageSearch(
   }
 
   const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);
-  const customThumbnails = videoIds.length > 0 ? await thumbnailCache.fetch(videoIds) : {};
+  const customThumbnails =
+    videoIds.length > 0 ? servableThumbnails(await thumbnailCache.fetch(videoIds)) : {};
 
   const shaped: ShapedImage[] = items.map((image) => {
     const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
@@ -380,7 +382,9 @@ export async function withoutHeldImages<T extends Pick<ShapedImage, 'postId' | '
   // Loaded on demand: the model service's import graph is large.
   const { getHeldLevelsByPost } = await import('~/server/services/model.service');
   const postIdOf = (image: T) => (typeof image.postId === 'number' ? image.postId : undefined);
-  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined));
+  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined), {
+    withOwners: false,
+  });
   return items.filter((image) => {
     const postId = postIdOf(image);
     const hold = postId ? held.get(postId) : undefined;

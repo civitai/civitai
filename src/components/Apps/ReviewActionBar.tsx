@@ -1,12 +1,22 @@
 import { Alert, Box, Button, Chip, Group, Stack, Text, Textarea } from '@mantine/core';
-import { IconArrowRight, IconCheck, IconClock, IconNote, IconX } from '@tabler/icons-react';
+import {
+  IconArrowRight,
+  IconCheck,
+  IconClock,
+  IconNote,
+  IconPlayerTrackNext,
+  IconX,
+} from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   ListingMediaSplitControlForListing,
   MEDIA_SPLIT_NO_DECISION,
   type ListingMediaSplitResolution,
 } from '~/components/Apps/ListingMediaSplitControl';
-import { OnsiteApproveRatingWarning } from '~/components/Apps/ListingRatingNotices';
+import {
+  OnsiteApproveRatingWarning,
+  VersionListingRatingNotice,
+} from '~/components/Apps/ListingRatingNotices';
 import {
   ReasonGatedField,
   ReasonGatedSubmitButton,
@@ -15,16 +25,35 @@ import {
 import { REJECT_REASON_CHIPS } from '~/components/Apps/reviewDecisionFlow';
 import {
   enqueueReviewApproval,
+  noteReviewDecision,
+  REVIEW_TOAST_POSITION,
   undoReviewApproval,
   usePendingApprovalEntry,
 } from '~/components/Apps/reviewApprovalToasts';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
 import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  BOOT_CHECK_APPROVE_REFUSAL,
+  BOOT_CHECK_NOT_RUN_NOTICE,
+  BOOT_CHECK_UNAVAILABLE_NOTICE,
+  bootCheckFailed,
+  bootCheckOverrideMissing,
+  bootCheckUnavailable,
+} from '~/shared/utils/review-boot-check';
+import {
+  HOLD_REASON_MAX,
+  HOLD_REASON_MIN,
+} from '~/shared/constants/publish-request-holds.constants';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { trpcKeepalive } from '~/utils/trpc-keepalive';
 import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
+import {
+  holdOverrideSatisfied,
+  PublishRequestHoldsPanel,
+  useOpenPublishRequestHolds,
+} from '~/components/Apps/PublishRequestHoldsPanel';
 
 /**
  * The moderator approve/reject control surface for an App Block review — extracted
@@ -53,6 +82,22 @@ import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal'
  * so it stays browser-testable and never drags the tRPC server graph into the client bundle.
  */
 
+type LateHoldNotice = { title: string; message: string };
+
+/** The notice for an approve a late hold re-suspended (no build; the request stays pending). */
+function lateHoldNotice(
+  request: { slug: string; version: string },
+  result: { lateHoldIds?: number[]; liveNote?: string } | null | undefined
+): LateHoldNotice | null {
+  if (!result?.lateHoldIds?.length) return null;
+  return {
+    title: 'App suspended: a review hold was placed during the approve',
+    message:
+      `${request.slug} v${request.version} was not built. It stays suspended and off the store until the hold is cleared and this version is approved again.` +
+      (result.liveNote ? ` ${result.liveNote}` : ''),
+  };
+}
+
 export type ReviewActionStatus = 'idle' | 'submitting' | 'approved' | 'rejected' | 'error';
 
 export function ReviewActionBar({
@@ -63,6 +108,7 @@ export function ReviewActionBar({
   onActioned,
   sticky = false,
   approveAndNext = false,
+  onSkip,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
   /** Invoked after a successful approve/reject (modal closes / page redirects). */
@@ -86,8 +132,15 @@ export function ReviewActionBar({
    * always was.
    */
   approveAndNext?: boolean;
+  /**
+   * The review page's "Skip": open the next submission and leave this one exactly as it is —
+   * no approve, reject or hold is sent (`useNextPendingReview`'s `skip`). Shown only with
+   * `approveAndNext`.
+   */
+  onSkip?: () => void;
 }) {
   const utils = trpc.useUtils();
+  const barRef = useRef<HTMLDivElement>(null);
   const { request, mode } = selection;
   const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
   const [approvalNotes, setApprovalNotes] = useState('');
@@ -123,17 +176,42 @@ export function ReviewActionBar({
   // reason shown, rather than offered and refused.
   const floorMissing = request.approveFloorMissing ?? [];
   const floorBlocked = floorMissing.length > 0;
+  // The review boot check: unavailable or not run only add a notice; a failure gates Approve via
+  // holdBlocked / bootOverrideMissing below.
+  const bootFailed = bootCheckFailed(request.previewBootCheck);
+  const bootUnavailable = !bootFailed && bootCheckUnavailable(request.previewBootCheck);
+  const bootNotRun = !bootFailed && !bootUnavailable && request.previewBootCheckUnverified === true;
   const mediaSplitDecision =
     request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
       ? mediaSplit
       : undefined;
+  const openHolds = useOpenPublishRequestHolds(mode === 'pending' ? request.slug : null);
+  const [holdOverrideReason, setHoldOverrideReason] = useState('');
+  const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
+  // The recorded enforced failure: the SAME predicate the server refuses on. One written override
+  // reason passes both this and the holds (never a hard block).
+  const bootOverrideMissing = bootCheckOverrideMissing(
+    request.previewBootCheck,
+    holdOverrideReason
+  );
+  const approveGated = splitStateUnknown || floorBlocked || holdBlocked || bootOverrideMissing;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({
-        message: `Approved ${request.slug} v${request.version}. Build started.`,
-      });
-      onStatusChange?.('approved');
+    onSuccess: async (result) => {
+      const lateHold = lateHoldNotice(request, result);
+      if (lateHold) {
+        // Stays up: the request is left suspended and needs action.
+        showErrorNotification({
+          title: lateHold.title,
+          error: new Error(lateHold.message),
+          position: REVIEW_TOAST_POSITION,
+          autoClose: false,
+        });
+      } else {
+        noteReviewDecision('approved', `${request.slug} v${request.version}`);
+      }
+      // A late hold leaves the request pending: the approve did not take.
+      onStatusChange?.(lateHold ? 'error' : 'approved');
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listApprovedRequests.invalidate();
       await onActioned?.();
@@ -144,14 +222,14 @@ export function ReviewActionBar({
       showErrorNotification({
         title: 'Approve failed',
         error: new Error(e.message),
+        position: REVIEW_TOAST_POSITION,
+        autoClose: false,
       });
     },
   });
   const rejectMut = trpc.blocks.rejectRequest.useMutation({
     onSuccess: async () => {
-      showSuccessNotification({
-        message: `Rejected ${request.slug} v${request.version}.`,
-      });
+      noteReviewDecision('rejected', `${request.slug} v${request.version}`);
       onStatusChange?.('rejected');
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listRejectedRequests.invalidate();
@@ -163,6 +241,8 @@ export function ReviewActionBar({
       showErrorNotification({
         title: 'Reject failed',
         error: new Error(e.message),
+        position: REVIEW_TOAST_POSITION,
+        autoClose: false,
       });
     },
   });
@@ -173,19 +253,31 @@ export function ReviewActionBar({
     publishRequestId: request.id,
     approvalNotes: approvalNotes.trim() || undefined,
     ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
+    ...(openHolds.length || bootFailed
+      ? {
+          holdOverrideReason: holdOverrideReason.trim(),
+          holdOverrideIds: openHolds.map((h) => h.id),
+        }
+      : {}),
   });
 
   const approveLater = () => {
     if (delayedApproveFired.current) return;
     delayedApproveFired.current = true;
     const input = approveInput();
+    let lateHold: LateHoldNotice | null = null;
     const accepted = enqueueReviewApproval({
       id: request.id,
       label: `${request.slug} v${request.version}`,
       // `keepalive`: this send may start from `pagehide` (the tab closing), and a plain fetch
       // is cancelled with the page. Same procedure, input and wire format as the bar's own
       // immediate approve.
-      commit: () => trpcKeepalive.blocks.approveRequest.mutate(input),
+      commit: async () => {
+        const result = await trpcKeepalive.blocks.approveRequest.mutate(input);
+        lateHold = lateHoldNotice(request, result);
+        return result;
+      },
+      committedNotice: () => lateHold,
       onCommitted: async () => {
         await Promise.all([
           utils.blocks.listPendingRequests.invalidate(),
@@ -208,6 +300,7 @@ export function ReviewActionBar({
   useEffect(() => {
     if (busy) onStatusChange?.('submitting');
   }, [busy, onStatusChange]);
+  useReserveViewportBottom(barRef, sticky && mode === 'pending');
 
   // Read-only history (approved/rejected) has no terminal action — render nothing
   // so a page can mount the bar unconditionally without an empty sticky shell.
@@ -273,11 +366,52 @@ export function ReviewActionBar({
       </Stack>
     ) : (
       <Stack gap="xs">
+        <PublishRequestHoldsPanel
+          slug={request.slug}
+          publishRequestId={request.id}
+          kind="onsite"
+          holds={openHolds}
+          overrideReason={holdOverrideReason}
+          onOverrideReasonChange={setHoldOverrideReason}
+          disabled={busy}
+        />
         {floorBlocked && (
           <Alert color="orange" variant="light" data-testid="apps-review-approve-floor">
             {listingFloorApproveRefusal(floorMissing)}
           </Alert>
         )}
+        {bootFailed && (
+          <Alert color="red" variant="light" data-testid="apps-review-approve-boot-check">
+            {BOOT_CHECK_APPROVE_REFUSAL}
+          </Alert>
+        )}
+        {bootFailed && openHolds.length === 0 && (
+          // No hold to carry the override field (its write may have failed): the recorded failure
+          // takes the same reason, sent the same way.
+          <ReasonGatedField
+            value={holdOverrideReason}
+            onChange={setHoldOverrideReason}
+            disabled={busy}
+            minLength={HOLD_REASON_MIN}
+            maxLength={HOLD_REASON_MAX}
+            label="Override reason (required to approve past the failed boot check)"
+            placeholder="Why it is safe to approve although the boot check failed. Not shown to the developer."
+            testId="apps-review-boot-check-override-reason"
+            minRows={2}
+            maxRows={6}
+          />
+        )}
+        {bootUnavailable && (
+          <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-unavailable">
+            {BOOT_CHECK_UNAVAILABLE_NOTICE}
+          </Alert>
+        )}
+        {bootNotRun && (
+          <Alert color="yellow" variant="light" data-testid="apps-review-boot-check-not-run">
+            {BOOT_CHECK_NOT_RUN_NOTICE}
+          </Alert>
+        )}
+        {mode === 'pending' && <VersionListingRatingNotice publishRequestId={request.id} />}
         {request.approveRating && (
           <OnsiteApproveRatingWarning
             listingId={request.approveRating.listingId}
@@ -320,6 +454,19 @@ export function ReviewActionBar({
               Add note
             </Button>
           )}
+          {approveAndNext && onSkip && (
+            <Button
+              variant="subtle"
+              color="gray"
+              rightSection={<IconPlayerTrackNext size={14} />}
+              onClick={onSkip}
+              disabled={busy}
+              title="Open the next submission and leave this one pending, undecided"
+              data-testid="apps-review-skip"
+            >
+              Skip
+            </Button>
+          )}
           <Button
             color="red"
             variant="default"
@@ -335,7 +482,7 @@ export function ReviewActionBar({
                 variant="default"
                 leftSection={<IconCheck size={14} />}
                 onClick={() => approveMut.mutate(approveInput())}
-                disabled={busy || splitStateUnknown || floorBlocked}
+                disabled={busy || approveGated}
                 loading={approveMut.isPending}
                 title="Approve now, with no undo window"
                 data-testid="apps-review-approve-now-button"
@@ -346,7 +493,7 @@ export function ReviewActionBar({
                 color="green"
                 rightSection={<IconArrowRight size={14} />}
                 onClick={approveLater}
-                disabled={busy || splitStateUnknown || floorBlocked}
+                disabled={busy || approveGated}
                 data-testid="apps-review-approve-next"
               >
                 Approve &amp; next
@@ -357,7 +504,7 @@ export function ReviewActionBar({
               color="green"
               leftSection={<IconCheck size={14} />}
               onClick={() => approveMut.mutate(approveInput())}
-              disabled={busy || splitStateUnknown || floorBlocked}
+              disabled={busy || approveGated}
               loading={approveMut.isPending}
             >
               Approve + build
@@ -420,6 +567,7 @@ export function ReviewActionBar({
   // order (no focus trap); respects the mobile safe-area inset.
   return (
     <Box
+      ref={barRef}
       role="group"
       aria-label="Review actions"
       data-testid="apps-review-action-bar"
@@ -445,6 +593,48 @@ export function ReviewActionBar({
  * where Approve lives. `paddingRight` reserves that corner so the buttons end before it.
  */
 export const REVIEW_ACTION_BAR_FAB_GUTTER_PX = 96;
+
+/**
+ * The CSS variable the sticky bar publishes on `<html>`: how far its top edge sits above the
+ * viewport bottom. `globals.css` lifts the `bottom-*` notification containers by it, so a toast
+ * raised by anything else on the page (the preview's notices, a generic error) lands ABOVE the
+ * bar instead of on its buttons. Removed when the bar unmounts.
+ */
+export const REVIEW_ACTION_BAR_RESERVE_VAR = '--review-action-bar-reserve';
+
+export function useReserveViewportBottom(
+  ref: React.RefObject<HTMLDivElement | null>,
+  active: boolean
+) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el || typeof window === 'undefined') return;
+    const root = document.documentElement;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const reserve = Math.max(0, Math.round(window.innerHeight - el.getBoundingClientRect().top));
+      root.style.setProperty(REVIEW_ACTION_BAR_RESERVE_VAR, `${reserve}px`);
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    resize?.observe(el);
+    // Capture: the page scrolls inside a container, and `scroll` does not bubble. The footer
+    // sliding in and out on scroll moves the bar.
+    window.addEventListener('scroll', schedule, { passive: true, capture: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      resize?.disconnect();
+      window.removeEventListener('scroll', schedule, { capture: true });
+      window.removeEventListener('resize', schedule);
+      root.style.removeProperty(REVIEW_ACTION_BAR_RESERVE_VAR);
+    };
+  }, [ref, active]);
+}
 
 const REVIEW_ACTION_BAR_STICKY_STYLE: React.CSSProperties = {
   position: 'sticky',

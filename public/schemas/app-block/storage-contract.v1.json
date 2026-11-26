@@ -6,8 +6,10 @@
     "blockedLink": "https://contract-blocked.example/x",
     "scannerDown": "contract-scanner-down",
     "note": "A runner's moderation scanner rejects any string leaf, object key or document key containing blockedText (category blocked) or blockedLink (category link), and fails (an outage) on scannerDown. The moderation cases describe an app whose shared-data moderation is ENFORCED, which the host decides per app: where it runs in shadow, the scan runs after the write and neither a hit nor a scanner outage refuses it, and where it is off nothing is scanned.",
-    "rateLimits": "Each fixed-window limit is per (app, viewer): reads 300/min (an anonymous reader per client IP), private document writes and every delete 120/min, marks and counters 30/min, reports 20/day. A report is a mark, so it also spends one from the marks-and-counters bucket. Shared document creates and updates spend the shared write budget, per (app, viewer), three token buckets refilling continuously: burst 10 (one token back every 6 minutes), daily 50 (one back every 28.8 minutes), and rejections 10 (one back every 30 minutes). A write takes one burst and one daily token and is refused while either, or the rejection bucket, is empty; a write that does not land gives both back, and if the refusal was about the request rather than an outage it also spends one rejection token.",
-    "keys": "A document key is 1-128 characters of [A-Za-z0-9._:-] and must not consist only of dots: URL clients rewrite `.` and `..` path segments, so such a key could never be addressed."
+    "rateLimits": "Each fixed-window limit is per (app, viewer): reads 300/min (an anonymous reader per client IP), private document writes and every delete 120/min. Shared document creates and updates spend the document store's shared write budget, per (app, viewer), three token buckets refilling continuously: burst 30 (one token back every minute), daily 300 (one back every 4.8 minutes), and rejections 10 (one back every 30 minutes). A write takes one burst and one daily token and is refused while either, or the rejection bucket, is empty; a write that does not land gives both back, and if the refusal was about the request rather than an outage it also spends one rejection token.",
+    "keys": "A document key is 1-128 characters of [A-Za-z0-9._:-] and must not consist only of dots: URL clients rewrite `.` and `..` path segments, so such a key could never be addressed.",
+    "publish": "Server-side publish was removed: POST /_publish/<to> and POST /_unpublish/<to> answer 404 not_found exactly as an unknown route. A client copies a private document into a shared collection by reading it and writing it (put).",
+    "tallies": "Marks, counters and their tallies were removed: a collection may still declare `marks`, `counters` or write \"none\" in an approved manifest, but nothing serves them. Info lists every collection's `counters` and `marks` as []. A document is answered with `counters: {}`, `marks: {}` and `viewer` ({marks: []} for a signed-in viewer, null otherwise) for compatibility with older SDKs. PATCH /<c>/<key> is 405 method_not_allowed (Allow: GET, PUT, DELETE); /<c>/<key>/counters/<name> and /<c>/<key>/marks/<name> are 404 not_found, as any unknown route. A write \"none\" collection is read-only: every create, put and delete is 403 write_policy. A list refuses markedBy and mark as unknown parameters, and sort=counter:… / mark:… as an undeclared sort field."
   },
   "storage": {
     "collections": {
@@ -40,11 +42,17 @@
           "required": ["title"],
           "additionalProperties": false,
           "properties": {
-            "title": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
             "tags": {
               "type": "array",
               "maxItems": 3,
-              "items": { "enum": ["red", "green", "blue"] }
+              "items": {
+                "enum": ["red", "green", "blue"]
+              }
             }
           }
         }
@@ -103,15 +111,17 @@
                 "posts": {
                   "visibility": "shared",
                   "write": "own",
-                  "marks": ["vote"],
-                  "counters": ["views"],
+                  "marks": [],
+                  "counters": [],
                   "indexes": {
                     "status": "string"
                   },
                   "showAuthor": true
                 },
                 "plays": {
-                  "write": "none"
+                  "write": "none",
+                  "counters": [],
+                  "marks": []
                 }
               },
               "limits": {
@@ -557,960 +567,7 @@
       ]
     },
     {
-      "name": "counters: an increment creates a document only in a write:none collection",
-      "steps": [
-        {
-          "as": "v1@A",
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
-          "body": {
-            "by": 3
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "value": 3
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
-          "expect": {
-            "status": 200,
-            "body": {
-              "value": 4
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "GET",
-          "path": "/plays/m1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "author": {
-                "kind": "counter"
-              },
-              "counters": {
-                "plays": 4
-              },
-              "data": {}
-            }
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "POST",
-          "path": "/posts/absent/counters/views",
-          "expect": {
-            "status": 404,
-            "code": "not_found"
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
-          "body": {
-            "by": 101
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "anon@A",
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
-          "expect": {
-            "status": 401,
-            "code": "sign_in_required"
-          }
-        }
-      ]
-    },
-    {
-      "name": "marks and the report mark",
-      "steps": [
-        {
-          "as": "v1@A",
-          "method": "PUT",
-          "path": "/posts/p1",
-          "body": {
-            "data": {
-              "status": "open"
-            }
-          },
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/vote",
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": true,
-              "count": 1
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "GET",
-          "path": "/posts/p1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "marks": {
-                "vote": 1
-              },
-              "viewer": {
-                "marks": ["vote"]
-              }
-            }
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "GET",
-          "path": "/posts/p1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "marks": {
-                "vote": 1
-              },
-              "viewer": {
-                "marks": []
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "DELETE",
-          "path": "/posts/p1/marks/vote",
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": false,
-              "count": 0
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/report",
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": true,
-              "count": "$absent"
-            }
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "GET",
-          "path": "/posts/p1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "marks": {
-                "vote": 0,
-                "report": "$absent"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/vote",
-          "body": {
-            "note": "marks carry no payload"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/report",
-          "body": {
-            "reason": "marks carry no payload"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "DELETE",
-          "path": "/posts/p1/marks/report",
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/star",
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/absent/marks/vote",
-          "expect": {
-            "status": 404,
-            "code": "not_found"
-          }
-        }
-      ]
-    },
-    {
-      "name": "update operators: PATCH $inc, $mark and $unmark tally a document like the deprecated routes",
-      "steps": [
-        {
-          "as": "v1@A",
-          "method": "PATCH",
-          "path": "/plays/u1",
-          "body": {
-            "$inc": {
-              "plays": 3
-            }
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "value": 3
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/plays/u1",
-          "body": {
-            "$inc": {
-              "plays": 1
-            }
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "value": 4
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "POST",
-          "path": "/plays/u1/counters/plays",
-          "expect": {
-            "status": 200,
-            "body": {
-              "value": 5
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "GET",
-          "path": "/plays/u1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "author": {
-                "kind": "counter"
-              },
-              "counters": {
-                "plays": 5
-              },
-              "data": {}
-            }
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "PUT",
-          "path": "/posts/q1",
-          "body": {
-            "data": {
-              "status": "open"
-            }
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "version": 1
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": true,
-              "count": 1
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": true,
-              "count": 1
-            }
-          }
-        },
-        {
-          "as": "v3@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": true,
-              "count": 2
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$inc": {
-              "views": 2
-            }
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "value": 2
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "GET",
-          "path": "/posts/q1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "data": {
-                "status": "open"
-              },
-              "version": 1,
-              "marks": {
-                "vote": 2
-              },
-              "counters": {
-                "views": 2
-              },
-              "viewer": {
-                "marks": ["vote"]
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$unmark": "vote"
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": false,
-              "count": 1
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$unmark": "vote"
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": false,
-              "count": 1
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$mark": "report"
-          },
-          "expect": {
-            "status": 200,
-            "body": {
-              "marked": true,
-              "count": "$absent"
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$unmark": "report"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "GET",
-          "path": "/posts/q1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "data": {
-                "status": "open"
-              },
-              "version": 1,
-              "marks": {
-                "vote": 1,
-                "report": "$absent"
-              },
-              "counters": {
-                "views": 2
-              }
-            }
-          }
-        },
-        {
-          "as": "anon@A",
-          "method": "PATCH",
-          "path": "/plays/u1",
-          "body": {
-            "$inc": {
-              "plays": 1
-            }
-          },
-          "expect": {
-            "status": 401,
-            "code": "sign_in_required"
-          }
-        },
-        {
-          "as": "anon@A",
-          "method": "PATCH",
-          "path": "/posts/q1",
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 401,
-            "code": "sign_in_required"
-          }
-        }
-      ]
-    },
-    {
-      "name": "update operators: refused PATCH bodies",
-      "steps": [
-        {
-          "as": "v1@A",
-          "method": "PUT",
-          "path": "/posts/r1",
-          "body": {
-            "data": {
-              "status": "open"
-            }
-          },
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "empty_patch"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {},
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "empty_patch"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": ["$mark", "vote"],
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$set": {
-              "status": "closed"
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "unknown_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {
-              "views": 1
-            },
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "multiple_operators"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$mark": "vote",
-            "$unmark": "vote"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "multiple_operators"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$mark": "vote",
-            "status": "closed"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$mark": "report",
-            "reason": "marks carry no payload"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "status": "closed"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "merge_patch_unsupported"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {
-              "views": 1,
-              "plays": 1
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {}
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": 1
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$mark": 1
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$unmark": ["vote"]
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request",
-            "body": {
-              "details": {
-                "reason": "malformed_operator"
-              }
-            }
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {
-              "views": "1"
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {
-              "views": 1.5
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {
-              "views": 0
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {
-              "views": 101
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$inc": {
-              "likes": 1
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "body": {
-            "$mark": "star"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/prefs/k",
-          "body": {
-            "$inc": {
-              "views": 1
-            }
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/prefs/k",
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/absent",
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 404,
-            "code": "not_found"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/absent",
-          "body": {
-            "$inc": {
-              "views": 1
-            }
-          },
-          "expect": {
-            "status": 404,
-            "code": "not_found"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/absent",
-          "body": {
-            "$unmark": "report"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/nope/k",
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 404,
-            "code": "collection_not_declared"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PATCH",
-          "path": "/posts/r1",
-          "query": {
-            "ifVersion": "1"
-          },
-          "body": {
-            "$mark": "vote"
-          },
-          "expect": {
-            "status": 400,
-            "code": "invalid_request"
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "GET",
-          "path": "/posts/r1",
-          "expect": {
-            "status": 200,
-            "body": {
-              "data": {
-                "status": "open"
-              },
-              "version": 1,
-              "marks": {
-                "vote": 0
-              },
-              "counters": {
-                "views": 0
-              },
-              "viewer": {
-                "marks": []
-              }
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "a collection schema: every document write must match it; counters and marks are not document bodies",
+      "name": "a collection schema: every document write must match it",
       "steps": [
         {
           "as": "v1@A",
@@ -1960,29 +1017,11 @@
         },
         {
           "as": "v1@A",
-          "scopes": ["apps:storage"],
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v1@A",
           "method": "PUT",
           "path": "/posts/p1",
           "body": {
             "data": {}
           },
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v2@A",
-          "scopes": ["apps:storage"],
-          "method": "PUT",
-          "path": "/posts/p1/marks/vote",
           "expect": {
             "status": 200
           }
@@ -2084,33 +1123,6 @@
                 "reason": "account_too_new"
               }
             }
-          }
-        },
-        {
-          "as": "newbie@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/vote",
-          "expect": {
-            "status": 403,
-            "code": "not_eligible"
-          }
-        },
-        {
-          "as": "newbie@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/report",
-          "expect": {
-            "status": 403,
-            "code": "not_eligible"
-          }
-        },
-        {
-          "as": "newbie@A",
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
-          "expect": {
-            "status": 403,
-            "code": "not_eligible"
           }
         },
         {
@@ -2305,15 +1317,6 @@
         },
         {
           "as": "v1@A",
-          "method": "POST",
-          "path": "/plays/contract-blocked-term/counters/plays",
-          "expect": {
-            "status": 422,
-            "code": "content_rejected"
-          }
-        },
-        {
-          "as": "v1@A",
           "method": "PUT",
           "path": "/posts/p1",
           "body": {
@@ -2398,78 +1401,52 @@
       ]
     },
     {
-      "name": "rate limits: marks and counters per minute, reports per day",
+      "name": "rate limits: private document writes per minute",
       "steps": [
         {
           "as": "v1@A",
           "method": "PUT",
-          "path": "/posts/p1",
+          "path": "/prefs/k",
           "body": {
-            "data": {}
+            "data": {
+              "n": 1
+            }
           },
+          "repeat": 120,
           "expect": {
             "status": 200
           }
         },
         {
-          "as": "v2@A",
+          "as": "v1@A",
           "method": "PUT",
-          "path": "/posts/p1/marks/report",
-          "repeat": 20,
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v2@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/report",
+          "path": "/prefs/k",
+          "body": {
+            "data": {
+              "n": 2
+            }
+          },
           "expect": {
             "status": 429,
             "code": "rate_limited",
             "body": {
               "details": {
-                "bucket": "report",
+                "bucket": "write",
                 "retryAfter": "$number"
               }
             }
           }
         },
         {
-          "as": "v3@A",
+          "$comment": "Per (app, viewer): another viewer's bucket is untouched.",
+          "as": "v2@A",
           "method": "PUT",
-          "path": "/posts/p1/marks/vote",
-          "repeat": 30,
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v3@A",
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
-          "expect": {
-            "status": 429,
-            "code": "rate_limited",
-            "body": {
-              "details": {
-                "bucket": "tally"
-              }
+          "path": "/prefs/k",
+          "body": {
+            "data": {
+              "n": 3
             }
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "PUT",
-          "path": "/posts/p1/marks/vote",
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v3@B",
-          "method": "POST",
-          "path": "/plays/m1/counters/plays",
+          },
           "expect": {
             "status": 200
           }
@@ -2501,14 +1478,6 @@
               "app": "A"
             }
           },
-          "expect": {
-            "status": 200
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "POST",
-          "path": "/plays/m/counters/plays",
           "expect": {
             "status": 200
           }
@@ -2569,24 +1538,6 @@
         },
         {
           "as": "v1@B",
-          "method": "PUT",
-          "path": "/posts/s/marks/vote",
-          "expect": {
-            "status": 404,
-            "code": "not_found"
-          }
-        },
-        {
-          "as": "v1@B",
-          "method": "POST",
-          "path": "/posts/s/counters/views",
-          "expect": {
-            "status": 404,
-            "code": "not_found"
-          }
-        },
-        {
-          "as": "v1@B",
           "method": "DELETE",
           "path": "/posts/s",
           "expect": {
@@ -2598,13 +1549,15 @@
         },
         {
           "as": "v1@B",
-          "method": "POST",
-          "path": "/plays/m/counters/plays",
-          "expect": {
-            "status": 200,
-            "body": {
-              "value": 1
+          "method": "PUT",
+          "path": "/prefs/b",
+          "body": {
+            "data": {
+              "app": "B"
             }
+          },
+          "expect": {
+            "status": 200
           }
         },
         {
@@ -2728,22 +1681,8 @@
               "data": {
                 "app": "A"
               },
-              "marks": {
-                "vote": 0
-              }
-            }
-          }
-        },
-        {
-          "as": "v1@A",
-          "method": "GET",
-          "path": "/plays/m",
-          "expect": {
-            "status": 200,
-            "body": {
-              "counters": {
-                "plays": 1
-              }
+              "counters": {},
+              "marks": {}
             }
           }
         }

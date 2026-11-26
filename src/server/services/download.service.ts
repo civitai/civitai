@@ -1,3 +1,4 @@
+import type { HeldGalleryViewer } from '~/server/services/model.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userDownloadsCache } from '~/server/redis/caches';
@@ -47,8 +48,11 @@ export type DownloadHistoryItem = {
 
 export const getUserDownloads = async ({
   userId,
+  viewer,
 }: {
   userId: number;
+  /** Sees a held model's thumbnail whole if they own it or moderate (see `heldGalleryViewer`). */
+  viewer?: HeldGalleryViewer;
 }): Promise<{ items: DownloadHistoryItem[] }> => {
   // Fetch cached downloads and user settings in parallel
   const [cached, { hideDownloadsSince }] = await Promise.all([
@@ -106,6 +110,9 @@ export const getUserDownloads = async ({
           id: true,
           name: true,
           type: true,
+          userId: true,
+          minor: true,
+          sfwOnly: true,
         },
       },
       files: {
@@ -140,7 +147,25 @@ export const getUserDownloads = async ({
   const versionMap = new Map(modelVersions.map((mv) => [mv.id, mv]));
 
   // Fetch images for model versions from cache
-  const imageCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  const imageCache = await holdShowcaseImages(
+    await imagesForModelVersionsCache.fetch(modelVersionIds),
+    new Map(
+      modelVersions.map(
+        (mv) =>
+          [
+            mv.id,
+            {
+              modelId: mv.model.id,
+              ownerId: mv.model.userId,
+              minor: mv.model.minor,
+              sfwOnly: mv.model.sfwOnly,
+            },
+          ] as const
+      )
+    ),
+    viewer
+  );
 
   // Combine the data, filtering out downloads where the model version no longer exists
   const items: DownloadHistoryItem[] = [];

@@ -85,6 +85,47 @@ describe('visibility', () => {
     });
     expect(m.storylineVisible).not.toHaveBeenCalled();
   });
+
+  it('keeps a Feature Pages thread on the generic comment surfaces from members, and opens it to moderators', async () => {
+    await expect(commentSurface('featurePage').assertVisible?.(1, member)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    await expect(
+      commentSurface('featurePage').assertVisible?.(1, moderator)
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('a post', () => {
+  const visible = commentSurface('post').assertVisible!;
+  const stranger = { user: { id: 3, isModerator: false } } as never;
+  const anon = { user: undefined } as never;
+
+  it("is not found for a stranger when the post detail rule doesn't show it them", async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-13T00:00:00Z'), toFake: ['Date'] });
+    try {
+      dbMock.dbRead.post.findFirst.mockResolvedValue(null as never);
+      // The post detail rule, for each viewer: published and rated, theirs, or a collection they judge.
+      const { getPostDetailVisibility } = await import('~/server/services/post-detail-visibility');
+      for (const [ctx, user] of [
+        [stranger, { id: 3, isModerator: false }],
+        [anon, undefined],
+      ] as const) {
+        dbMock.dbRead.post.findFirst.mockClear();
+        await expect(visible(7, ctx)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(dbMock.dbRead.post.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 7, ...getPostDetailVisibility(user) } })
+        );
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is readable when the rule finds the post (control)', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ id: 7 } as never);
+    await expect(visible(7, stranger)).resolves.toBeUndefined();
+  });
 });
 
 describe('a comic chapter', () => {
@@ -202,6 +243,14 @@ describe('writes', () => {
     );
   });
 
+  it('refuses every generic write on a Feature Pages thread, moderators too; a model takes them', async () => {
+    await expect(commentSurface('featurePage').assertWritable?.(1, member)).rejects.toThrow(
+      'feature page'
+    );
+    await expect(commentSurface('featurePage').assertWritable?.(1, moderator)).rejects.toThrow();
+    expect(commentSurface('model').assertWritable).toBeUndefined();
+  });
+
   it('refuses a member on a storyline taken down for ToS; a moderator may', async () => {
     dbMock.dbRead.storyline.findUnique.mockResolvedValue({ tosViolation: true } as never);
     await expect(commentSurface('storyline').assertWritable?.(6, member)).rejects.toThrow(
@@ -251,6 +300,52 @@ describe('a new comic chapter comment', () => {
   it('tells nobody about a reply', async () => {
     chapter(5);
     commentSurface('comicChapter').onCreated?.(comment({ parentId: 1 }), member);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(m.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('a new storyline text comment', () => {
+  const comment = (over: Record<string, unknown> = {}) =>
+    ({ id: 310, entityId: 50, userId: 2, parentId: null, ...over } as never);
+  const text = (ownerId: number) =>
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([
+      { postId: 31, userId: ownerId, title: 'Chapter one', anchorImageId: 10 },
+    ] as never);
+  const created = async (c: never) => {
+    commentSurface('postText').onCreated?.(c, member);
+    await vi.waitFor(() => expect(dbMock.dbRead.$queryRawUnsafe).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("tells the post's owner as a post comment, linked to the text slide, deduped with the thread's", async () => {
+    text(5);
+    await created(comment());
+    expect(m.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'new-post-comment', userId: 5, dedupeKey: 'comment:v2:310' })
+    );
+    const { commentNotifications } = await import('~/server/notifications/comment.notifications');
+    const { details } = m.notify.mock.calls[0][0] as unknown as { details: never };
+    // Names the post, not the text, and opens the slide.
+    expect(commentNotifications['new-post-comment'].prepareMessage({ details } as never)).toEqual({
+      message: 'ann commented on your post: "Chapter one"',
+      url: '/images/10?text=50&highlight=310',
+    });
+  });
+
+  it('tells nobody about a text with no image to open it on', async () => {
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([
+      { postId: 31, userId: 5, title: 'Chapter one', anchorImageId: null },
+    ] as never);
+    await created(comment());
+    expect(m.notify).not.toHaveBeenCalled();
+  });
+
+  it('tells nobody about the owner’s own comment, or a reply', async () => {
+    text(2);
+    await created(comment());
+    text(5);
+    commentSurface('postText').onCreated?.(comment({ parentId: 1 }), member);
     await new Promise((r) => setTimeout(r, 0));
     expect(m.notify).not.toHaveBeenCalled();
   });

@@ -1,3 +1,8 @@
+import {
+  FEED_EVENT_FEEDS,
+  FEED_EVENT_INDEX_MAX,
+  FEED_EVENT_TYPES,
+} from '~/shared/constants/feed-events.constants';
 import * as z from 'zod';
 import {
   BRIDGE_HOSTS,
@@ -924,11 +929,12 @@ export const PUSH_PROMPT_ACTIONS = [
   'failed',
 ] as const;
 export const PUSH_PROMPT_VARIANTS = ['new', 'finish', 'another-device'] as const;
+export const PUSH_PROMPT_SURFACES = ['visit-prompt', 'settings-card', 'deal-flow'] as const;
 const pushPromptSchema = z.object({
   type: z.literal('Push_Prompt'),
   details: z.object({
     action: z.enum(PUSH_PROMPT_ACTIONS),
-    surface: z.enum(['visit-prompt', 'settings-card']),
+    surface: z.enum(PUSH_PROMPT_SURFACES),
     variant: z.enum(PUSH_PROMPT_VARIANTS),
     platform: z.enum(['desktop', 'mobile']),
   }),
@@ -1151,14 +1157,38 @@ export const trackImpressionSchema = z.object({
 });
 export type TrackImpressionInput = z.infer<typeof trackImpressionSchema>;
 
+// A feed event: a page of a feed loaded, the items of it that passed the impression dwell check, or a
+// click on one of them. Every row carries the viewer's feed context (feed, page, sort, page index,
+// filters), so a question about a filter, a sort or a position is a GROUP BY, not a join.
+// userId and memberType are never taken from here: the server stamps them from the session.
+export const trackFeedSchema = z.object({
+  event: z.enum(FEED_EVENT_TYPES),
+  sessionKey: z.string().min(1).max(32),
+  feed: z.enum(FEED_EVENT_FEEDS),
+  // The route pattern; the server maps anything it does not know to 'other'.
+  page: z.string().max(200),
+  sort: z.string().max(64).default(''),
+  pageIndex: z.number().int().min(0).max(FEED_EVENT_INDEX_MAX).default(0),
+  filters: z.record(z.string().max(64), z.string()).default({}),
+  entityType: z.enum(IMPRESSION_ENTITY_TYPES).optional(),
+  entityId: z.number().int().positive().max(2_147_483_647).optional(),
+  position: z.number().int().min(0).max(FEED_EVENT_INDEX_MAX).optional(),
+  seenIds: z
+    .array(z.number().int().positive().max(2_147_483_647))
+    .max(IMPRESSION_ENTITIES_MAX)
+    .optional(),
+});
+export type TrackFeedInput = z.infer<typeof trackFeedSchema>;
+
 // One coalesced telemetry event in a /api/track/batch payload. `kind` selects the
-// destination (search -> Tracker.search, action -> Tracker.action) and `data` is
-// the EXACT existing per-event input for that destination. No field is added,
-// dropped, or reshaped — the transport changes, the recorded row does not.
+// destination. For search, action and impression, `data` is the EXACT existing per-event input
+// of that Tracker method: no field is added, dropped, or reshaped. `feed` has no Tracker method;
+// it goes to the feed events recorder.
 export const trackBatchEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('search'), data: trackSearchSchema }),
   z.object({ kind: z.literal('action'), data: trackActionSchema }),
   z.object({ kind: z.literal('impression'), data: trackImpressionSchema }),
+  z.object({ kind: z.literal('feed'), data: trackFeedSchema }),
 ]);
 export type TrackBatchEvent = z.infer<typeof trackBatchEventSchema>;
 
@@ -1168,6 +1198,24 @@ export type TrackBatchEvent = z.infer<typeof trackBatchEventSchema>;
 // at the schema layer before any Tracker dispatch.
 export const trackBatchSchema = z.array(trackBatchEventSchema).min(1).max(TRACK_BATCH_MAX);
 export type TrackBatchInput = z.infer<typeof trackBatchSchema>;
+
+const trackBatchEnvelopeSchema = z.array(z.unknown()).min(1).max(TRACK_BATCH_MAX);
+
+/**
+ * Parses a batch event by event: a malformed event is dropped and the rest are kept, so one event
+ * an older server does not know cannot cost the impressions and actions flushed with it. Returns
+ * null when the envelope itself is invalid or no event survives.
+ */
+export function parseTrackBatch(raw: unknown): TrackBatchInput | null {
+  const envelope = trackBatchEnvelopeSchema.safeParse(raw);
+  if (!envelope.success) return null;
+  const events: TrackBatchInput = [];
+  for (const item of envelope.data) {
+    const event = trackBatchEventSchema.safeParse(item);
+    if (event.success) events.push(event.data);
+  }
+  return events.length ? events : null;
+}
 
 // `addAction` kinds that must NOT be held in the coalescing buffer — enqueueing
 // one triggers an immediate flush so a browser crash (which sendBeacon can't

@@ -496,3 +496,46 @@ describe('GET /api/v1/models/[id] — a Public training dataset', () => {
     expect(file(res, 11).metadata).toEqual({ format: 'SafeTensor', size: 'pruned', fp: 'fp16' });
   });
 });
+
+describe('GET /api/v1/models/[id] — creator avatar', () => {
+  function withUser(user: Record<string, unknown>) {
+    mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => ({
+      items: [{ ...modelItem(input.ids[0]), user: { username: 'creator', ...user } }],
+    }));
+  }
+
+  it('serves no avatar for a user with only the unrated image', async () => {
+    withUser({ image: 'unrated.png', profilePicture: null });
+    const res: any = await invoke('7');
+    expect(res.body.creator.image).toBeNull();
+  });
+
+  it('serves a rated avatar within the route level (control)', async () => {
+    withUser({
+      image: 'unrated.png',
+      profilePicture: { url: 'avatar.png', type: 'image', nsfwLevel: 4 },
+    });
+    const res: any = await invoke('7');
+    expect(res.body.creator.image).toBe('avatar.png');
+  });
+});
+
+// Folding `images` back into removeEmpty turns these red: the public docs promise `images: []`.
+describe('GET /api/v1/models/[id] — images is [] when every image is left out, never missing', () => {
+  it('sends images: [] for a version whose images were all left out', async () => {
+    mockGetModelsWithVersions.mockResolvedValue({ items: [modelItem(7)] });
+    const res = await invoke('7');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.modelVersions[0]).toHaveProperty('images', []);
+  });
+
+  it('sends images: [] for a taken-down model, whose images are withheld', async () => {
+    const item = modelItem(7);
+    item.mode = 'TakenDown' as never;
+    item.modelVersions[0].images = [{ id: 1, url: 'u', type: 'image', nsfwLevel: 1 }] as never;
+    mockGetModelsWithVersions.mockResolvedValue({ items: [item] });
+    const res = await invoke('7');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.modelVersions[0]).toHaveProperty('images', []);
+  });
+});

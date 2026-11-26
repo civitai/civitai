@@ -10,6 +10,7 @@ import {
   toolsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueDocumentsForBlockedImages } from '~/server/services/image-models-reindex.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 // entityType -> the search index that owns it. Extend as spoke apps need more entities synced.
@@ -18,6 +19,8 @@ const searchIndexes = {
   bounty: bountiesSearchIndex,
   collection: collectionsSearchIndex,
   comic: comicsSearchIndex,
+  // The moderator app syncs moderated images here.
+  image: imagesMetricsSearchIndex,
   model: modelsSearchIndex,
   tool: toolsSearchIndex,
   user: usersSearchIndex,
@@ -63,10 +66,10 @@ export default WebhookEndpoint(async (req, res) => {
   const updates = ids.map((id) => ({ id, action: queueAction }));
 
   await index.queueUpdate(updates, { reason: 'internal-api' });
-
-  // Images live in two indexes (main + metrics) — keep both in sync, matching the main app's
-  // queueImageSearchIndexUpdate.
-  if (entityType === 'image') await imagesMetricsSearchIndex.queueUpdate(updates);
+  // The moderator app's block takes an image out of search this way: the models, bounties,
+  // collections, articles and comics showing it must drop it too. Never throws.
+  if (entityType === 'image' && queueAction === SearchIndexUpdateQueueAction.Delete)
+    await queueDocumentsForBlockedImages(ids);
 
   return res.status(200).json({ ok: true, entityType, count: ids.length });
 });

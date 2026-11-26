@@ -6,6 +6,7 @@ import client from 'prom-client';
 import { type DbLogFn } from './env';
 import { limitConcurrency } from './concurrency-helpers';
 import { guardPool } from './pool-guard';
+import { markDbConnectError } from './db-errors';
 
 // Fix Dates: TIMESTAMP comes back as a UTC Date (was set per-pool-module in the app).
 types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
@@ -94,6 +95,8 @@ export type CreatePoolOptions = {
   max?: number;
   min?: number;
   idleTimeoutMillis?: number;
+  /** Bounds both a new connection's handshake and the wait for a pooled one. Default
+   * {@link DEFAULT_POOL_CONNECTION_TIMEOUT_MS}; pg's own default (0) waits forever. */
   connectionTimeoutMillis?: number;
   /** Startup `statement_timeout` (ms). Omit for PgBouncer-fronted pools, which reject it as a startup
    * param — use `perConnectionStatementTimeout` there instead. */
@@ -118,6 +121,20 @@ export type CreatePoolOptions = {
  * wiring. `getClient` (env/instance-driven, monolith-facing) and `createClients` (connection-string,
  * app-facing) both delegate here so there is exactly one pool implementation.
  */
+/**
+ * pg leaves `connectionTimeoutMillis` at 0, which waits forever: on an unreachable database or an
+ * exhausted pool every caller queues indefinitely and never errors. Matches `createKyselyClients`.
+ */
+export const DEFAULT_POOL_CONNECTION_TIMEOUT_MS = 5_000;
+/**
+ * TCP keepalive on every pool connection, so a connection whose peer vanished without a FIN (a
+ * half-open socket after a failover or a dropped route) is eventually detected instead of holding
+ * its pool slot until the process restarts. Pure transport: it never cancels a running query.
+ */
+export const POOL_KEEPALIVE_INITIAL_DELAY_MS = 10_000;
+/** How far past its own `statement_timeout` `queryWithTimeout` waits for an answer that never comes. */
+export const QUERY_DEADLINE_MARGIN_MS = 2_000;
+
 export function createPool(options: CreatePoolOptions): AugmentedPool {
   const {
     connectionString: rawUrl,
@@ -126,7 +143,7 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     max = 20,
     min = 0,
     idleTimeoutMillis = 30_000,
-    connectionTimeoutMillis = 0,
+    connectionTimeoutMillis = DEFAULT_POOL_CONNECTION_TIMEOUT_MS,
     statementTimeout,
     perConnectionStatementTimeout,
     ssl = true,
@@ -150,6 +167,8 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     idleTimeoutMillis,
     statement_timeout: statementTimeout,
     application_name: applicationName,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: POOL_KEEPALIVE_INITIAL_DELAY_MS,
   }) as AugmentedPool;
 
   // Before anything else, so every client the pool creates gets the per-client listener. Logs to the
@@ -189,7 +208,7 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
           { pool: label, result: err ? 'err' : 'ok' },
           elapsedSeconds()
         );
-        cb(err, client, done);
+        cb(err ? markDbConnectError(err) : err, client, done);
       });
     }
 
@@ -203,7 +222,8 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       },
       (e: unknown) => {
         pgPoolAcquireHistogram.observe({ pool: label, result: 'err' }, elapsedSeconds());
-        throw e;
+        // Marked so a raw socket error (ECONNREFUSED, …) reads as the DATABASE's: see db-errors.ts.
+        throw markDbConnectError(e);
       }
     );
   }) as typeof pool.connect;
@@ -273,9 +293,9 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       // cancel that never connects can't leak the slot or double-release.
       const cancelClient = new Client({
         connectionString,
-        // Bound the connect: a best-effort cancel must never hang. The pool default of 0 (unlimited)
-        // would let an unreachable DB wedge this promise forever.
-        connectionTimeoutMillis: connectionTimeoutMillis || 5000,
+        // Bound the connect: a best-effort cancel must never hang. A caller can still pass 0
+        // (unlimited) for the pool, which would let an unreachable DB wedge this promise forever.
+        connectionTimeoutMillis: connectionTimeoutMillis || DEFAULT_POOL_CONNECTION_TIMEOUT_MS,
       });
       try {
         await cancelClient.connect();
@@ -357,23 +377,51 @@ export async function queryWithTimeout<R extends QueryResultRow = any>(
   params?: ReadonlyArray<unknown>
 ): Promise<QueryResult<R>> {
   const client = await pool.connect();
-  try {
+  // A client-side deadline just past the server's own statement_timeout. It covers the whole
+  // transaction, so besides a server answer that never arrives (a half-open connection) it can also
+  // fire while a transaction-mode pooler is still queueing the BEGIN for a server connection — time
+  // the server's statement_timeout never sees. When that wait plus BEGIN/SET takes longer than the
+  // margin, the deadline can cut short a statement the server would still have allowed. On expiry the client is destroyed (released with an error), which also rejects whatever is
+  // still pending on it — it is never handed to the next caller. A timer rather than pg's
+  // `query_timeout`, so the statements keep the plain `(text, values)` call shape.
+  const deadlineMs = Number(timeoutMs) + QUERY_DEADLINE_MARGIN_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new QueryDeadlineError(deadlineMs)), deadlineMs);
+  });
+  const work = (async () => {
     await client.query('BEGIN READ ONLY');
     await client.query(`SET LOCAL statement_timeout = ${Number(timeoutMs)}`);
-    let result: QueryResult<R>;
-    if (typeof sql === 'string') {
-      result = await client.query<R>(sql, params as unknown[] | undefined);
-    } else {
-      // Prisma.Sql carries its own params in `.values`; pass as QueryConfig
-      result = await client.query<R>({ text: sql.text, values: sql.values });
-    }
+    const result =
+      typeof sql === 'string'
+        ? await client.query<R>(sql, params as unknown[] | undefined)
+        : // Prisma.Sql carries its own params in `.values`; pass as QueryConfig
+          await client.query<R>({ text: sql.text, values: sql.values });
     await client.query('COMMIT');
     return result;
+  })();
+  let broken: Error | undefined;
+  try {
+    return await Promise.race([work, deadline]);
   } catch (e) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    if (e instanceof QueryDeadlineError) {
+      broken = e;
+      work.catch(() => undefined); // settles when the destroyed connection rejects it
+    } else {
+      await client.query('ROLLBACK').catch(() => undefined);
+    }
     throw e;
   } finally {
-    client.release();
+    clearTimeout(timer);
+    client.release(broken);
+  }
+}
+
+/** `queryWithTimeout` got no answer by its client-side deadline; the connection was destroyed. */
+export class QueryDeadlineError extends Error {
+  constructor(deadlineMs: number) {
+    super(`Query deadline exceeded (${deadlineMs}ms) with no answer from the database`);
+    this.name = 'QueryDeadlineError';
   }
 }
 

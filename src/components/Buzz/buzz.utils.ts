@@ -1,9 +1,11 @@
+import { settlePaymentIntentKey, tipIntent } from '~/components/Buzz/payment-intent-keys';
 import { useRouter } from 'next/router';
 import type React from 'react';
 import { useState } from 'react';
+import { onPurchaseSuccessAction } from '~/components/Buzz/purchase-success';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -14,9 +16,6 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import dynamic from 'next/dynamic';
-
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 
 export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   const features = useFeatureFlags();
@@ -33,11 +32,7 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
         'noreferrer'
       );
     } else {
-      dialogStore.trigger({
-        id: 'buy-buzz-modal',
-        component: BuyBuzzModal,
-        props,
-      });
+      openDialog(() => import('~/components/Modals/BuyBuzzModal'), props, { id: 'buy-buzz-modal' });
     }
   };
 };
@@ -71,10 +66,12 @@ export const useBuzzTransaction = (opts?: {
   const { trackAction } = useTrackEvent();
 
   const tipUserMutation = trpc.buzz.tipUser.useMutation({
-    async onSuccess() {
+    async onSuccess(_, tip) {
+      if (tip.idempotencyKey) settlePaymentIntentKey(tipIntent(tip), tip.idempotencyKey);
       await queryUtils.buzz.getBuzzAccount.invalidate();
     },
-    onError(error) {
+    onError(error, tip) {
+      if (tip.idempotencyKey) settlePaymentIntentKey(tipIntent(tip), tip.idempotencyKey, error);
       showErrorNotification({
         title: 'Looks like there was an error sending your tip.',
         error: new Error(error.message),
@@ -109,7 +106,10 @@ export const useBuzzTransaction = (opts?: {
       onBuyBuzz({
         message: typeof message === 'function' ? message(buzzAmount - balance) : message,
         minBuzzAmount: buzzAmount - balance,
-        onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
+        onPurchaseSuccess: onPurchaseSuccessAction(
+          performTransactionOnPurchase,
+          onPerformTransaction
+        ),
         purchaseSuccessMessage,
         // At this point, because `canPurchase` is true, we can safely assume the first type is a purchasable type:
         initialBuzzType,

@@ -13,7 +13,7 @@ import {
 import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { useHotkeys } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconArrowsExchange,
   IconChevronLeft,
@@ -30,6 +30,7 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
+import { markAddAccountFlow } from '~/components/Onboarding/new-account-notice';
 import React, {
   createContext,
   forwardRef,
@@ -378,15 +379,14 @@ export function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void
   // DURABLE: an entry stays listed after its seamless-switch window lapses, so removing is the only way
   // to clear one short of signing out of every account on this browser.
   const handleRemoveAccount = (id: number, username?: string) =>
-    openConfirmModal({
+    openConfirm({
       title: 'Remove account',
-      children: (
+      message: (
         <Text size="sm">
           Remove <b>{username ?? 'this account'}</b> from this browser? You can sign back in at any
           time — this does not delete the account.
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Remove', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => removeAccount(id),
@@ -449,6 +449,7 @@ function ActionButtons({ close }: { close: () => void }) {
 
   const handleAdd = () => {
     setWaiting(true);
+    markAddAccountFlow();
     router
       .push(
         getLoginLink({

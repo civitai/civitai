@@ -1,0 +1,16 @@
+import * as z from 'zod';
+import { deleteImages } from '~/server/services/image.service';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+
+const schema = z.object({
+  imageIds: commaDelimitedNumberArray(),
+});
+
+export default WebhookEndpoint(async (req, res) => {
+  const { imageIds } = schema.parse(req.query);
+
+  await deleteImages(imageIds, { actor: { system: 'admin-delete-images' }, moderatorDelete: true });
+
+  res.status(200).json({ imageIds });
+});

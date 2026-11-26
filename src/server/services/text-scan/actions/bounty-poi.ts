@@ -16,7 +16,6 @@ import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/type
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 
 function queueBountyIndex(id: number, action: SearchIndexUpdateQueueAction) {
   return SearchIndexUpdate.queueUpdate({
@@ -90,7 +89,7 @@ export async function applyBountyPoi({
     entityType: 'Bounty',
     entityId,
     workflowId,
-  }).catch(() => null);
+  });
   return { notified: notify };
 }
 
@@ -134,7 +133,7 @@ export async function resolveBountyPoiAppeal({
       UPDATE "Bounty" b
       SET poi = FALSE,
           -- Don't republish a bounty a content wipe is holding for its payout.
-          availability = CASE WHEN ${notRemovedWithOwnerSql('b.meta')}
+          availability = CASE WHEN (b.meta ->> 'removedWithOwner') IS DISTINCT FROM 'true'
             THEN COALESCE((b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability")
             ELSE b.availability END,
           "lockedProperties" = ARRAY(

@@ -1,0 +1,19 @@
+{
+  "name": "list-anonymous-any-origin",
+  "fixture": "list-defaults-lookahead.json",
+  "request": {
+    "headers": {
+      "origin": "https://elsewhere.example.test"
+    }
+  },
+  "expect": {
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "GET",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150",
+      "etag": "\"vsdj7511jd2wl\""
+    }
+  }
+}

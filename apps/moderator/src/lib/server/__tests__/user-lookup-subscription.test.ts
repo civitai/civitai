@@ -57,7 +57,7 @@ describe('user lookup — which subscription row the panel shows', () => {
       row({ buzzType: 'yellow', status: 'canceled', currentPeriodEnd: past }),
       row({ buzzType: 'buzzPurchase', status: 'active', currentPeriodEnd: future }),
     ]);
-    const picked = await getSubscription(309009, NOW);
+    const picked = await getSubscription(990100009, NOW);
     expect(picked?.buzzType).toBe('buzzPurchase');
   });
 

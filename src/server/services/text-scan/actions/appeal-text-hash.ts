@@ -127,7 +127,7 @@ export async function settleFlagAppealsAfterModeratorLift({
             name: 'text-scan',
             message: `moderator ${label} ruling not recorded: model text unreadable`,
             modelId,
-          }).catch(() => null);
+          });
       }
 
     const model = await dbWrite.model.findUnique({
@@ -152,6 +152,6 @@ export async function settleFlagAppealsAfterModeratorLift({
       message: 'flag appeal not settled after moderator lift',
       modelId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
   }
 }

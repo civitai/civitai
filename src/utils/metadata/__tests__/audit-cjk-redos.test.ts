@@ -6,6 +6,10 @@ import {
   includesNsfw,
 } from '~/utils/metadata/audit';
 import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-perf-helpers';
+import { createProfanityFilter } from '~/libs/profanity-simple';
+
+/** The shipped lists, as the server uses with `profanity-managed-list` off. */
+const SHIPPED = createProfanityFilter();
 
 /**
  * Non-Latin (CJK) catastrophic-backtracking regression guard.
@@ -68,7 +72,7 @@ describe('audit: long non-Latin (CJK) prompts do not pin the event loop (ReDoS g
     expectSubQuadraticScaling(
       'auditPromptEnriched CJK',
       (n) => buildCjkPromptByLen(n),
-      (input) => auditPromptEnriched(input, undefined, true)
+      (input) => auditPromptEnriched(input, undefined, SHIPPED)
     );
   });
 

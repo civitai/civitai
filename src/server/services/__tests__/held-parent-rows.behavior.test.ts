@@ -1,10 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import {
-  heldCopiesSchemaSql,
-  heldStorylineCopiesSchemaSql,
-} from '~/server/services/__tests__/held-copies.fixture';
+import { heldStorylineCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -13,8 +11,8 @@ import type * as ReportService from '~/server/services/report.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
- * A held author's own rows under a deleted parent (a bounty's entries, a model's reviews); their
- * comments going with the parent; and the gates that answer a comment hidden for ToS as missing to
+ * Bounty deletes (a settled kept bounty's cleanup, its unpaid awards); a held author's comments
+ * going with their parent; and the gates that answer a comment hidden for ToS as missing to
  * members. Run on a Postgres stand-in with the real foreign keys.
  */
 
@@ -38,10 +36,9 @@ import {
   deleteResourceReview,
   deleteResourceReviews,
 } from '~/server/services/resourceReview.service';
-import { deleteImageById, deleteImages } from '~/server/services/image.service';
+import { deleteImages } from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
 import { deleteBountyById, deleteSettledKeptBounties } from '~/server/services/bounty.service';
-import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { deleteBountyEntry } from '~/server/services/bountyEntry.service';
 import { deleteArticleById } from '~/server/services/article.service';
@@ -56,6 +53,14 @@ const unpaidAwardMigration = readFileSync(
   ),
   'utf8'
 );
+// deletePost asks it whether the post holds held text.
+const postTextMigration = readFileSync(
+  path.join(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+  ),
+  'utf8'
+);
 const TOPIC_ENTITY_TABLES = {
   image: 'Image',
   post: 'Post',
@@ -67,7 +72,7 @@ const TOPIC_ENTITY_TABLES = {
 const OWNER = 1;
 const HELD = 2; // named on a pending report
 const OTHER = 3;
-const MARKED = 4; // held only by a hold marker
+const MODERATOR = 9;
 
 let db: PGlite;
 const run = (sql: Prisma.Sql) => db.query(sql.text, sql.values as unknown[]);
@@ -90,12 +95,19 @@ beforeAll(async () => {
       url text NOT NULL DEFAULT 'u', "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1, metadata jsonb,
       ingestion text NOT NULL DEFAULT 'Scanned'
     );
+    -- An image delete queues its stored file and its post's recount in the same transaction.
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'PendingDelete');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
+    );
     CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
-    CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
+      "publishedAt" timestamp, metadata jsonb);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "ResourceReview" (
       id int PRIMARY KEY, "userId" int NOT NULL,
@@ -151,19 +163,38 @@ beforeAll(async () => {
       FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ON DELETE CASCADE
     );
   `);
-  await db.exec(heldCopiesSchemaSql());
+  // The columns the review deletes return.
+  await db.exec(`
+    ALTER TABLE "ResourceReview"
+      ADD COLUMN rating int NOT NULL DEFAULT 5,
+      ADD COLUMN recommended boolean NOT NULL DEFAULT true,
+      ADD COLUMN details text,
+      ADD COLUMN exclude boolean NOT NULL DEFAULT false,
+      ADD COLUMN nsfw boolean NOT NULL DEFAULT false,
+      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false,
+      ADD COLUMN metadata jsonb,
+      ADD COLUMN "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      ADD COLUMN "updatedAt" timestamp(3) NOT NULL DEFAULT now();
+    CREATE TABLE IF NOT EXISTS "ModelVersion" (id serial PRIMARY KEY, "modelId" int);
+  `);
   await db.exec(heldStorylineCopiesSchemaSql());
+  await db.exec(imageUseTablesSql);
+  await db.exec(`CREATE TABLE "TextScanHold" (
+    id serial PRIMARY KEY, "entityType" text, "entityId" int, label text, status text,
+    "createdAt" timestamp(3) NOT NULL DEFAULT now()
+  )`);
+  await db.exec(postTextMigration);
 });
 afterAll(() => db.close());
 
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
-    TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "Post", "Image", "CsamReport",
-      "EvidenceHold", "BountyEntry", "Bounty", "Article",
-      "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward";
+    TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "PostText", "Post", "Image", "CsamReport",
+      "BountyEntry", "Bounty", "Article",
+      "BountyBenefactor", "ModActivity", "BountyUnpaidAward", "JobQueue",
+      "CsamQueueSetAside";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
-    INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
   const viaStandIn = (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
     (await run(asSql(first, values))).rows) as never;
@@ -206,7 +237,7 @@ async function seedComments(entityType: string, parentId: number, replier: numbe
   `);
 }
 
-describe("a held author's rows under a deleted parent", () => {
+describe('deleting a bounty', () => {
   const rows = async (sql: string) => (await db.query(sql)).rows;
 
   async function seedEnteredBounty(entrant: number) {
@@ -236,86 +267,7 @@ describe("a held author's rows under a deleted parent", () => {
     vi.spyOn(SearchIndexUpdate, 'queueUpdate').mockResolvedValue(undefined as never);
   });
 
-  it.each([
-    ['named on a report', HELD],
-    ['held by the marker', MARKED],
-  ])(
-    'keeps, hidden and out of search, a deleted bounty an author %s entered, with the entry',
-    async (_, entrant) => {
-      await seedEnteredBounty(entrant);
-
-      await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
-
-      expect(await keptBounty()).toEqual([
-        {
-          id: 60,
-          userId: null,
-          availability: 'Private',
-          removed: 'true',
-          before: 'Public',
-          owner: OWNER,
-        },
-      ]);
-      expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([{ id: 61 }]);
-      expect(searchDeletes()).toEqual([{ id: 60, action: 'Delete' }]);
-    }
-  );
-
-  it('keeps the first removal record when a kept bounty is deleted again', async () => {
-    await seedEnteredBounty(HELD);
-
-    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
-    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
-
-    expect(await keptBounty()).toEqual([
-      expect.objectContaining({ userId: null, before: 'Public', owner: OWNER }),
-    ]);
-  });
-
-  it('drops the copies of an author whose hold ended, and keeps those still held', async () => {
-    await db.exec(`
-      INSERT INTO "HeldResourceReview" (id, "modelId", "modelVersionId", "userId", rating,
-        recommended, exclude, nsfw, "tosViolation", "createdAt", "updatedAt")
-        SELECT u, 1, 1, u, 5, true, false, false, false, now(), now()
-        FROM unnest(ARRAY[${HELD}, ${MARKED}, ${OTHER}]) u;
-    `);
-    const left = async () => ({
-      reviews: (await rows(`SELECT "userId" FROM "HeldResourceReview" ORDER BY 1`)).map(
-        (r) => r.userId
-      ),
-    });
-
-    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 1 });
-    expect(await left()).toEqual({ reviews: [HELD, MARKED] });
-
-    await db.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold";`);
-    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 2 });
-    expect(await left()).toEqual({ reviews: [] });
-  });
-
-  it.each([
-    ['the entrant', HELD, []],
-    ['the entrant, while its owner is held', HELD, [OWNER]],
-  ])(
-    'deletes a kept bounty once %s is released, and not before',
-    async (_, entrant, heldOwners) => {
-      await seedEnteredBounty(entrant);
-      await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
-      for (const owner of heldOwners)
-        await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${owner})`);
-
-      expect(await deleteSettledKeptBounties()).toBe(0);
-      await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = ${entrant}`);
-      expect(await deleteSettledKeptBounties()).toBe(heldOwners.length ? 0 : 1);
-      expect((await rows(`SELECT id FROM "Bounty"`)).length).toBe(heldOwners.length ? 1 : 0);
-
-      await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = ANY(ARRAY[${heldOwners}]::int[])`);
-      await deleteSettledKeptBounties();
-      expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
-    }
-  );
-
-  it('deletes a bounty only an unheld user entered, with the entry (control)', async () => {
+  it('deletes an entered bounty, with the entry', async () => {
     await seedEnteredBounty(OTHER);
 
     await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
@@ -524,20 +476,12 @@ describe("a held author's comments go with their parent", () => {
   const sites: [string, string, string, number, () => Promise<unknown>, () => Promise<unknown>][] =
     [
       [
-        'deleteImageById',
-        'Image',
-        'image',
-        50,
-        imageParent,
-        () => deleteImageById({ id: 50, updatePost: false }),
-      ],
-      [
         'deleteImages',
         'Image',
         'image',
         50,
         imageParent,
-        () => deleteImages([50], false).catch(() => undefined),
+        () => deleteImages([50], { updatePosts: false, actor: { system: 'test' } }),
       ],
       [
         'deletePost',
@@ -545,7 +489,10 @@ describe("a held author's comments go with their parent", () => {
         'post',
         10,
         () => db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER})`),
-        () => deletePost({ id: 10, isModerator: true }).catch(() => undefined),
+        () =>
+          deletePost({ id: 10, isModerator: true, actor: { system: 'test' } }).catch(
+            () => undefined
+          ),
       ],
       [
         'deleteBountyById',
@@ -561,7 +508,7 @@ describe("a held author's comments go with their parent", () => {
         'bountyEntry',
         61,
         bountyEntryParent,
-        () => deleteBountyEntry({ id: 61, isModerator: true }),
+        () => deleteBountyEntry({ id: 61, userId: MODERATOR, isModerator: true }),
       ],
       [
         'deleteArticleById',
@@ -614,10 +561,30 @@ describe("a held author's comments go with their parent", () => {
     await db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER}), (11, ${OWNER})`);
     await seedComments('post', 11, HELD);
 
-    await deletePost({ id: 10, isModerator: true }).catch(() => undefined);
+    await deletePost({ id: 10, isModerator: true, actor: { system: 'test' } }).catch(
+      () => undefined
+    );
 
     expect(await rows(`SELECT id FROM "Post"`)).toEqual([{ id: 11 }]);
     expect(await commentIds()).toEqual([1, 2]);
+  });
+
+  it('refuses a post holding held text, for a moderator too, and keeps both', async () => {
+    await db.exec(`
+      INSERT INTO "Post" VALUES (10, ${OWNER});
+      INSERT INTO "PostText" ("postId", "userId", "index", content, "csamHeld", "updatedAt")
+      VALUES (10, ${OWNER}, 0, 'x', true, now());
+    `);
+
+    await expect(
+      deletePost({ id: 10, isModerator: true, actor: { system: 'test' } })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/held for review/),
+    });
+
+    expect(await rows(`SELECT id FROM "Post"`)).toEqual([{ id: 10 }]);
+    expect(await rows(`SELECT "postId" AS id FROM "PostText"`)).toEqual([{ id: 10 }]);
   });
 
   // The shop-artwork check reads these off the deleted row: missing, a blocked image reads as a
@@ -625,10 +592,13 @@ describe("a held author's comments go with their parent", () => {
   it('returns the block markers of the image it deletes', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor")
-      VALUES (50, ${OWNER}, 'Blocked', 'csam', 'tos')
+      VALUES (50, ${OWNER}, 'Blocked', 'csam', 'tos');
+      -- No open case keeps it.
+      INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (50, 'Dismissed');
     `);
 
-    expect(await deleteImageById({ id: 50, updatePost: false })).toMatchObject({
+    const [image] = await deleteImages([50], { updatePosts: false, actor: { system: 'test' } });
+    expect(image).toMatchObject({
       userId: OWNER,
       ingestion: 'Blocked',
       needsReview: 'csam',
@@ -649,6 +619,8 @@ describe('a member cannot act on a comment hidden for ToS', () => {
     vi.mocked(dbMock.dbWrite.$queryRawUnsafe).mockImplementation(
       (async (sql: string, ...params: unknown[]) => (await db.query(sql, params)).rows) as never
     );
+    // Post 11 is published and rated, so its thread is readable.
+    vi.mocked(dbMock.dbRead.post.findFirst).mockResolvedValue({ id: 11 } as never);
   });
 
   const track = new Proxy({}, { get: () => async () => undefined });
@@ -689,4 +661,55 @@ describe('a member cannot act on a comment hidden for ToS', () => {
       expect(act.service).toHaveBeenCalled();
     });
   });
+});
+
+describe("a bounty entry's images", () => {
+  const rows = async (sql: string) => (await db.query(sql)).rows;
+
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Bounty" (id, "userId") VALUES (60, ${OTHER});
+      INSERT INTO "BountyEntry" VALUES (61, ${OWNER}, 60);
+      INSERT INTO "Image" (id, "userId") VALUES (80, ${OWNER});
+      INSERT INTO "ImageConnection" VALUES (80, 61, 'BountyEntry');`);
+    // An image someone else added to the entry, as a moderator can, is not the author's to lose.
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (81, 50);
+      INSERT INTO "ImageConnection" VALUES (81, 61, 'BountyEntry');`);
+    vi.mocked(dbMock.dbRead.bountyEntry.findUniqueOrThrow).mockResolvedValue({
+      id: 61,
+      bountyId: 60,
+      userId: OWNER,
+      bounty: { complete: true },
+    } as never);
+  });
+
+  const queuedData = () =>
+    rows(
+      `SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete' ORDER BY "entityId"`
+    );
+  // A member's delete checks no award was paid on the entry first.
+  const noAward = () =>
+    vi
+      .mocked(dbMock.dbRead.$queryRaw)
+      .mockImplementationOnce((async () => [{ id: 61, awardedUnitAmount: 0 }]) as never);
+
+  it.each([
+    ['a moderator', MODERATOR, true, { cleanup: true, moderatorDelete: true }],
+    ['a member', OWNER, false, { cleanup: true }],
+    ['a moderator who wrote it', OWNER, true, { cleanup: true }],
+  ])(
+    "are queued with %s's delete, the author's own only, and left to pending-deletes",
+    async (_, userId, isModerator, queuedAs) => {
+      if (!isModerator) noAward();
+      await deleteBountyEntry({ id: 61, userId, isModerator });
+
+      expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([]);
+      expect(await queuedData()).toEqual([{ entityId: 80, data: queuedAs }]);
+      expect(await rows(`SELECT id FROM "Image" WHERE id IN (80, 81) ORDER BY id`)).toEqual([
+        { id: 80 },
+        { id: 81 },
+      ]);
+    }
+  );
 });

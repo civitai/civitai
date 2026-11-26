@@ -38,7 +38,7 @@ export type GenerationResourceBase = {
   recommendedSettings?: RecommendedSettings;
   /** Whether the current user owns the model this resource belongs to (computed by server) */
   isOwnedByUser?: boolean;
-  /** Whether this resource is private (Private availability, or unpublished with epoch details) (computed by server) */
+  /** Private or not Published (`isRestrictedGenerationResource`, computed by server) */
   isPrivate?: boolean;
   /** Whether this resource's owner can receive a creator-tip share (computed by server) */
   tipsEnabled?: boolean;

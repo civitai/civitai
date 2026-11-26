@@ -460,7 +460,9 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
           name: 's',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
     });
@@ -472,6 +474,7 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
     expect(Object.keys(result.snapshot).sort()).toEqual([
       'cost',
       'imageUrls',
+      'outputs',
       'status',
       'workflowId',
     ]);

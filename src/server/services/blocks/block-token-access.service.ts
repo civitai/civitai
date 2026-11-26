@@ -136,22 +136,6 @@ export async function assertAppBlocksEnabledForTokenUser(userId: number): Promis
   // its real machine caller, so the refusal has to live here. Mechanism + the
   // measurement against the real wasm engine: GLOBAL-EVAL SEMANTICS in
   // `app-blocks-flag.ts`. Distinct message so the two refusals stay separable.
-  //
-  // 🔴 WATCHLISTED as `block-token-subject-refusal` in
-  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
-  // runtime branch, so a bundler that drops it re-opens the exposure with the source
-  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
-  // MOVING this branch WITHIN its module is fine — the gate resolves its anchor from
-  // source at run time, so line numbers do not matter. 🔴 MOVING IT TO ANOTHER MODULE IS
-  // NOT: the watchlist entry pins `module:`, and this comment asserted the unqualified
-  // "moving is fine" right up until the function was moved HERE out of
-  // `blocks.router.ts`, at which point both anchors resolved to zero lines in the pinned
-  // module. Update `module:` in the same commit as any such move.
-  // DELETING it fails the production Docker build at
-  // `assert-compiled-branches.mjs`. And 🔴 REWORDING THE MESSAGE BELOW IS A WATCHLIST
-  // EDIT: that exact string IS this entry's anchor, so changing it makes the gate exit 2
-  // ("no line contains this anchor") — a failure that reads like gate breakage rather
-  // than like the copy change that caused it. Update the entry in the same commit.
   if (!user) {
     throw new TRPCError({
       code: 'UNAUTHORIZED',

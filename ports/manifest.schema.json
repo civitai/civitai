@@ -1,0 +1,250 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/civitai/civitai/ports/manifest.schema.json",
+  "title": "Node to Go ports manifest",
+  "description": "Every endpoint ported from the Node app to a Go service, and where each one is in its lifecycle. See ports/README.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ports"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "ports": { "type": "array", "items": { "$ref": "#/definitions/port" } }
+  },
+  "definitions": {
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "flagKey": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "service",
+        "metricEndpoint",
+        "status",
+        "routes",
+        "nodeEntry",
+        "goHandler",
+        "flags",
+        "holdout",
+        "soak",
+        "nodeDeletion"
+      ],
+      "properties": {
+        "id": {
+          "description": "tRPC: the procedure path (`image.getInfinite`). REST: method and Next route (`GET /api/v1/models/[id]`). Policy: `<area>.<decision>` (`contentPolicy.registrySubscription`).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "trpc / rest: a Node endpoint a Go service answers. policy: a decision Node code makes inside another endpoint, which a Go service answers for its callers (`routes` is then the Go service's route).",
+          "enum": ["trpc", "rest", "policy"]
+        },
+        "service": {
+          "description": "The Go service, at apps/<service>.",
+          "enum": ["feed-go", "beacon-go", "content-policy-go"]
+        },
+        "metricEndpoint": {
+          "description": "The value of the Go service's endpoint label (feed-go: `feed_endpoint`, beacon-go: `beacon_endpoint`) on this port's metrics, so the port can be joined to its parity series. The generator checks it is one of the service's `Endpoints` label values in its Go source.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "status": {
+          "description": "Lifecycle stage; the order and the gates between stages are in ports/README.md.",
+          "enum": ["shadow", "ramp", "soak", "node-fallback", "go-only"]
+        },
+        "routes": {
+          "description": "Public paths the port answers.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^/" }
+        },
+        "nodeEntry": {
+          "description": "The Node symbol that answers the endpoint. `symbol` is `default` (the default export), a top-level name, or `<name>.<property>` for a property of the object literal `<name>` is built from (a tRPC router). null only once the Node path is deleted (go-only).",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file", "symbol"],
+              "properties": {
+                "file": { "type": "string", "pattern": "^src/.+\\.tsx?$" },
+                "symbol": {
+                  "type": "string",
+                  "pattern": "^(default|[A-Za-z_$][\\w$]*(\\.[A-Za-z_$][\\w$]*)*)$"
+                }
+              }
+            }
+          ]
+        },
+        "goHandler": {
+          "description": "The Go files that implement the endpoint: the HTTP handler and the endpoint's own logic.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^apps/(feed-go|beacon-go|content-policy-go)/.+\\.go$"
+          }
+        },
+        "goRoots": {
+          "description": "Go package directories the port's Go dependencies are listed from (`go list -deps`, computed in CI). Defaults to the goHandler files' directories. Name the endpoint's own package when a goHandler file sits in a package every port shares, so the list is this endpoint's rather than the whole service's.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^apps/(feed-go|beacon-go|content-policy-go)(/[^/]+)*$"
+          }
+        },
+        "flags": {
+          "description": "Flipt keys. shadow: Node samples requests and Go compares. transport: sends a share of users to Go. probe: any other Go-side measurement flag. null when there is none.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["shadow", "transport", "probe"],
+          "properties": {
+            "shadow": { "$ref": "#/definitions/flagKey" },
+            "transport": { "$ref": "#/definitions/flagKey" },
+            "probe": { "$ref": "#/definitions/flagKey" }
+          }
+        },
+        "shadowEnv": {
+          "description": "policy only: the environment variable that turns the Node side's shadow comparison on (set: on), where a policy port has no Flipt shadow flag. Required for a policy port in shadow.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "holdout": {
+          "description": "Percent of users kept on Node during soak (they keep shadow-comparing). null outside soak.",
+          "oneOf": [{ "type": "null" }, { "type": "number", "exclusiveMinimum": 0, "maximum": 100 }]
+        },
+        "soak": {
+          "description": "The soak record. null before soak starts. signedOffBy / signedOffAt record the human sign-off that ends it.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["startedAt", "signedOffBy", "signedOffAt"],
+              "properties": {
+                "startedAt": { "$ref": "#/definitions/date" },
+                "signedOffBy": { "type": ["string", "null"], "minLength": 1 },
+                "signedOffAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/date" }] }
+              }
+            }
+          ]
+        },
+        "nodeDeletion": {
+          "description": "The human sign-off to delete the Node path, separate from the soak sign-off. null until it is given; required for go-only, allowed from node-fallback on.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["signedOffBy", "signedOffAt"],
+              "properties": {
+                "signedOffBy": { "type": "string", "minLength": 1 },
+                "signedOffAt": { "$ref": "#/definitions/date" }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "trpc" } } },
+          "then": {
+            "properties": { "id": { "pattern": "^[a-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$" } }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "rest" } } },
+          "then": {
+            "properties": { "id": { "pattern": "^(GET|POST|PUT|PATCH|DELETE) /api/\\S+$" } }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "policy" } } },
+          "then": {
+            "properties": { "id": { "pattern": "^[a-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$" } }
+          },
+          "else": { "properties": { "shadowEnv": false } }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "shadow" }, "kind": { "const": "policy" } }
+          },
+          "then": {
+            "required": ["shadowEnv"],
+            "properties": {
+              "holdout": { "type": "null" },
+              "soak": { "type": "null" },
+              "nodeDeletion": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "shadow" }, "kind": { "enum": ["trpc", "rest"] } }
+          },
+          "then": {
+            "properties": {
+              "flags": { "properties": { "shadow": { "type": "string" } } },
+              "holdout": { "type": "null" },
+              "soak": { "type": "null" },
+              "nodeDeletion": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "ramp" } } },
+          "then": {
+            "properties": {
+              "flags": {
+                "properties": { "shadow": { "type": "string" }, "transport": { "type": "string" } }
+              },
+              "holdout": { "type": "null" },
+              "soak": { "type": "null" },
+              "nodeDeletion": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "soak" } } },
+          "then": {
+            "properties": {
+              "flags": {
+                "properties": { "shadow": { "type": "string" }, "transport": { "type": "string" } }
+              },
+              "holdout": { "type": "number" },
+              "soak": { "type": "object" },
+              "nodeDeletion": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["node-fallback", "go-only"] } } },
+          "then": {
+            "properties": {
+              "holdout": { "type": "null" },
+              "soak": {
+                "type": "object",
+                "properties": {
+                  "signedOffBy": { "type": "string" },
+                  "signedOffAt": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "go-only" } } },
+          "then": {
+            "properties": { "nodeEntry": { "type": "null" }, "nodeDeletion": { "type": "object" } }
+          },
+          "else": { "properties": { "nodeEntry": { "type": "object" } } }
+        }
+      ]
+    }
+  }
+}

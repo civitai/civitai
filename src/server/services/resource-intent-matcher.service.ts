@@ -522,7 +522,7 @@ export async function findResourceIntentCandidates(
         error: error instanceof Error ? error.message : String(error),
       },
       'temp-search'
-    ).catch(() => undefined);
+    );
     return {
       entries: pool.slice(0, cap),
       insightFallback: true,

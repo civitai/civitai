@@ -53,6 +53,7 @@ const csamBaseDir = await vi.hoisted(async () => {
 // CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
 const v3 = vi.hoisted(() => ({
   comments: [] as { id: number; userId: number; content: string }[],
+  tables: {} as Record<string, Record<string, unknown>[]>,
   calls: [] as { table?: string; userId?: number; afterId?: number; take?: number }[],
 }));
 vi.mock('~/server/db/kyselyDb', () => {
@@ -78,7 +79,39 @@ vi.mock('~/server/db/kyselyDb', () => {
         .slice(0, state.take);
     },
   });
-  return { kyselyV3Read: { selectFrom: () => query({}) } };
+  // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
+  // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
+  type MainState = {
+    afterId?: number;
+    take?: number;
+    eq?: Record<string, number>;
+    pool?: 'readLong';
+  };
+  const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
+    select: () => mainQuery(table, state),
+    distinct: () => mainQuery(table, state),
+    orderBy: () => mainQuery(table, state),
+    where: (column: string, op: string, value: number) =>
+      mainQuery(
+        table,
+        op === '>'
+          ? { ...state, afterId: value }
+          : { ...state, eq: { ...state.eq, [column]: value } }
+      ),
+    limit: (take: number) => mainQuery(table, { ...state, take }),
+    execute: async () =>
+      (v3.tables[table] ?? [])
+        .filter((r) => Object.entries(state.eq ?? {}).every(([c, v]) => r[c] === v))
+        .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
+        .slice(0, state.take),
+  });
+  return {
+    kyselyV3Read: { selectFrom: () => query({}) },
+    kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
+    kyselyReadLong: {
+      selectFrom: (table: string) => mainQuery(table, { pool: 'readLong' }),
+    },
+  };
 });
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -395,7 +428,7 @@ async function zipManifest(bytes: Buffer) {
 
 const report = {
   id: 4242,
-  userId: 909090,
+  userId: 990200011,
   reportedById: 5,
   reportId: 77,
   type: 'Image',
@@ -483,6 +516,7 @@ beforeEach(() => {
   pendingUploads.clear();
   recordedArchiveCalls = [];
   v3.calls = [];
+  v3.tables = {};
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async (url: unknown) => {
@@ -928,6 +962,35 @@ describe("a report's attached text", () => {
       contextText,
     });
     expect(data.reportContext.webPageIncidents[0].additionalInfo).toContain('a & b <c> nul\uFFFD');
+  });
+
+  it('keeps text of a source this build cannot send, raw, beside the incidents it could send', async () => {
+    seedDb(1);
+    const sendable = {
+      source: 'comment',
+      id: 11,
+      postId: 100,
+      authorId: 31,
+      authorIsReportedUser: false,
+      postedAt: '2026-10-03T14:05:00.000Z',
+      text: 'sent words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+      capturedById: 5,
+    };
+    const newer = {
+      source: 'fromANewerBuild',
+      id: 7,
+      text: 'kept words',
+      capturedAt: sendable.capturedAt,
+    };
+    const contextText = [sendable, newer, newer] as unknown as CsamContextText[];
+    await archiveCsamDataForReport({ ...report, details: { contextText } } as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data.reportContext.contextText).toEqual(contextText);
+    expect(data.reportContext.webPageIncidents).toEqual(
+      contextWebPageIncidents([sendable as CsamContextText])
+    );
   });
 
   it('is left out of data.json for a report with none', async () => {

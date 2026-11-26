@@ -53,7 +53,6 @@ vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
   useModelSaleBadges: () => undefined,
 }));
 vi.mock('~/hooks/useEngagedModelMembership', () => ({ useEngagedModelsPrefetch: () => undefined }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/InView/InViewLoader', () => ({ InViewLoader: () => null }));
 vi.mock('~/components/Search/search.utils2', () => ({
   useInfiniteHitsTransformed: () => ({ hits: h.hits, showMore: () => undefined, isLastPage: true }),
@@ -81,6 +80,10 @@ vi.mock('~/components/Search/CustomSearchComponents', () => ({
 }));
 vi.mock('~/components/Search/SearchHeader', () => ({ SearchHeader: () => null }));
 vi.mock('~/components/Search/SearchLayout', () => ({ SearchLayout: () => null }));
+// /search/models' getServerSideProps pulls server modules into the browser bundle under test.
+vi.mock('~/server/utils/server-side-helpers', () => ({
+  createServerSideProps: () => async () => ({ props: {} }),
+}));
 vi.mock('~/components/Search/TimeoutLoader', () => ({ TimeoutLoader: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({

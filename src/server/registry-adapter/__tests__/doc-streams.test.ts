@@ -1,5 +1,11 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
+import {
+  composeAdapter,
+  docStreamResolvers,
+  resolveFromCatalog,
+} from '~/server/registry-adapter/doc-streams';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import type { Adapter } from '~/server/registry-adapter/protocol';
@@ -64,7 +70,9 @@ const OPTED_IN = { notes: notes(200, { registry: 'public' }), drafts: notes(50) 
 describe('resolveFromCatalog', () => {
   // The live switch ships off; these cases turn it on, and the cases below keep it off.
   const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
-  const resolve = (apps: CatalogApp[]) => resolveFromCatalog(async () => apps, SWITCH_ON);
+  // Content levels have their own cases below; these read the export ungated.
+  const resolve = (apps: CatalogApp[]) =>
+    resolveFromCatalog(async () => apps, SWITCH_ON, { requireDocLevels: false });
 
   it('🔴 with the live switch off, an approved manifest that declares registry:"public" publishes nothing', async () => {
     expect(await resolveFromCatalog(async () => [app(OPTED_IN)])(V('notes', 1))).toBeNull();
@@ -100,6 +108,8 @@ describe('resolveFromCatalog', () => {
       collection: 'notes',
       contentRating: 'pg',
       family: [V('notes', 1), V('notes', 2)],
+      // The major a write is stamped with now (`currentCollectionMajors`): the newest.
+      currentMajor: 2,
     });
   });
 
@@ -181,5 +191,79 @@ describe('composeAdapter', () => {
   it('routes each stream to its own source', async () => {
     expect((await adapter.snapshot(APPS, ctx)).cursor).toBe('entity-cursor');
     expect((await adapter.snapshot(V('notes', 2), ctx)).cursor).toBe('doc-cursor');
+  });
+});
+
+describe('🔴 registry export needs content levels (app-blocks-shared-doc-levels)', () => {
+  const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
+  const on = new Set<string>();
+  const docLevelsOn = async (appBlockId: string) => on.has(appBlockId);
+  const resolve = () =>
+    resolveFromCatalog(async () => [app(OPTED_IN)], SWITCH_ON, {
+      docLevelsOn,
+      requireDocLevels: true,
+    });
+
+  it('🔴 a caller that says nothing about levels fails closed: nothing is published', async () => {
+    on.add('ab_orbit_31');
+    expect(
+      await resolveFromCatalog(async () => [app(OPTED_IN)], SWITCH_ON)(V('notes', 1))
+    ).toBeNull();
+  });
+
+  it('with the switch on, an app whose levels flag is off publishes nothing', async () => {
+    on.clear();
+    expect(await resolve()(V('notes', 1))).toBeNull();
+  });
+
+  it('with the levels flag on, it is published, its documents gated', async () => {
+    on.add('ab_orbit_31');
+    expect(await resolve()(V('notes', 1))).toMatchObject({
+      appId: 'ab_orbit_31',
+      docLevels: true,
+    });
+  });
+
+  it('the registry process requires it (docStreamResolvers, which main.ts wires)', async () => {
+    const wired = (on: boolean) =>
+      docStreamResolvers({
+        readCatalogApps: async () => [app(OPTED_IN)],
+        readDocStreamApps: async () => [],
+        docLevelsOn: async () => on,
+        features: SWITCH_ON,
+      }).exported(V('notes', 1));
+    expect(await wired(false)).toBeNull();
+    // Positive control: the same app exports once its levels flag is on.
+    expect(await wired(true)).toMatchObject({ appId: 'ab_orbit_31', docLevels: true });
+  });
+});
+
+/**
+ * The seam `docStreamResolvers` cannot see: which reads `main.ts` hands it, and that every document
+ * feed takes its resolver from it. The `resolve:` sites are a ledger: one added or removed fails.
+ */
+describe('main.ts wires the document-stream resolvers', () => {
+  const main = readFileSync(path.resolve(__dirname, '../main.ts'), 'utf8');
+
+  it('🔴 every feed resolves through docStreamResolvers, one resolver each', () => {
+    expect([...main.matchAll(/\bresolve: ([\w.]+)/g)].map((m) => m[1]).sort()).toEqual([
+      'resolvers.exported',
+      'resolvers.level',
+      'resolvers.private',
+      'resolvers.viewer',
+    ]);
+  });
+
+  it('🔴 the export reads the public catalog; the other streams read the document-stream read', () => {
+    expect(main).toMatch(
+      /const readApps = sharedRead\(\(\) => readCatalog\(deps, \{ listings, onError \}\), pollMs \/ 2\);/
+    );
+    expect(main).toMatch(
+      /const readDocApps = sharedRead\(\(\) => readDocStreamApps\(docStreamDeps\), pollMs \/ 2\);/
+    );
+    expect(main).toMatch(/const docStreamDeps = liveDocStreamReadDeps\(\);/);
+    expect(main).toMatch(
+      /docStreamResolvers\(\{\s*readCatalogApps: readApps,\s*readDocStreamApps: readDocApps,\s*docLevelsOn: isSharedDocLevelsOn,?\s*\}\)/
+    );
   });
 });

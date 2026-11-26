@@ -19,6 +19,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   scannedAt: true,
   ingestion: true,
   blockedFor: true,
+  modelRestricted: true,
   postId: true,
   type: true,
   metadata: true,
@@ -91,6 +92,13 @@ const reviewedImageWhere = { needsReview: null, tosViolation: false } as const;
 
 const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: new Date() } });
 
+/** An ImageConnection whose Image row still exists. The table has no foreign key in production, so a
+ *  deleted image leaves its connections behind, and a read that includes `image` then fails on the
+ *  required relation. `no-unguarded-image-connection-image-read` requires it on such reads. */
+export const connectionImageExists = {
+  image: { id: { gt: 0 } },
+} satisfies Prisma.ImageConnectionWhereInput;
+
 export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,
   post: publishedPostWhere(),
@@ -125,6 +133,10 @@ export const draftImageWhere = (post: Prisma.PostWhereInput): Prisma.ImageWhereI
  * `revealCrucibleEntryPosts` can find an entered one's scheduled post.
  */
 export const CRUCIBLE_ENTRY_DRAFT_METADATA_KEY = 'crucibleEntryDraft';
+
+/** Unpublished media in a post the crucible entry modal created. */
+export const entryDraftImageWhere = (): Prisma.ImageWhereInput =>
+  draftImageWhere({ metadata: { path: [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY], equals: true } });
 
 /** One relation filter rather than an OR of two, so the planner can still semi-join on Post. */
 export const publishedOrEntryDraftImageWhere = (): Prisma.ImageWhereInput => ({

@@ -80,7 +80,7 @@ export const saveCollectionItemInputSchema = collectionItemSchema
     { error: 'Please pass a valid item type.' }
   );
 
-export const BULK_SAVE_MAX_IMAGES = 100;
+export const BULK_SAVE_MAX_ITEMS = 100;
 export type BulkSaveCollectionItemsInput = z.infer<typeof bulkSaveCollectionItemsInput>;
 export const bulkSaveCollectionItemsInput = z
   .object({
@@ -88,13 +88,31 @@ export const bulkSaveCollectionItemsInput = z
     imageIds: z.coerce
       .number()
       .array()
-      .max(BULK_SAVE_MAX_IMAGES, {
-        error: `You can add up to ${BULK_SAVE_MAX_IMAGES} images at a time`,
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} images at a time`,
       })
       .optional(),
-    articleIds: z.coerce.number().array().optional(),
-    postIds: z.coerce.number().array().optional(),
-    modelIds: z.coerce.number().array().optional(),
+    articleIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} articles at a time`,
+      })
+      .optional(),
+    postIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} posts at a time`,
+      })
+      .optional(),
+    modelIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_ITEMS, {
+        error: `You can add up to ${BULK_SAVE_MAX_ITEMS} models at a time`,
+      })
+      .optional(),
     tagId: z.coerce.number().nullish(),
   })
   .refine(
@@ -324,7 +342,12 @@ export const updateCollectionItemsStatusInput = z
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({
   collectionId: z.number(),
-  images: z.array(imageInputSchema).min(1, 'At least one image must be uploaded'),
+  images: z
+    .array(imageInputSchema)
+    .min(1, 'At least one image must be uploaded')
+    .max(BULK_SAVE_MAX_ITEMS, {
+      error: `You can upload up to ${BULK_SAVE_MAX_ITEMS} images at a time`,
+    }),
 });
 
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;
@@ -354,6 +377,8 @@ export type RemoveCollectionItemInput = z.infer<typeof removeCollectionItemInput
 export const removeCollectionItemInput = z.object({
   collectionId: z.coerce.number(),
   itemId: z.coerce.number(),
+  // Names the entity `itemId` refers to; read only when the collection itself has no type.
+  type: z.enum(CollectionType).optional(),
 });
 
 export type SetItemScoreInput = z.infer<typeof setItemScoreInput>;

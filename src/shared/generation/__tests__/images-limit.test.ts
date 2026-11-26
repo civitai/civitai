@@ -127,6 +127,7 @@ const ECOSYSTEMS_WITH_A_LIMIT: string[] = [
  */
 const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['Ace', 'txt2music', 0, 1],
+  ['Fibo2', 'img2img:edit', 1, 16],
   ['Flux2', 'img2img:edit', 1, 7],
   ['Flux2Klein_4B_base', 'img2img:edit', 1, 7],
   ['Flux2Klein_4B', 'img2img:edit', 1, 7],
@@ -145,7 +146,7 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['HappyHorse', 'img2vid:ref2vid', 1, 9],
   ['HappyHorse', 'vid2vid:edit', 1, 9],
   ['HiDream-O1', 'img2img:edit', 1, 4],
-  ['Ideogram', 'img2img:edit', 1, 4],
+  ['Ideogram', 'img2img:edit', 1, 5],
   ['Kling', 'img2vid:ref2vid', 1, 7],
   ['Kling', 'vid2vid:edit', 1, 10],
   ['Krea2', 'img2img:edit', 1, 4],
@@ -158,6 +159,7 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['LTXV25', 'img2vid', 1, 2],
   ['LTXV25', 'img2vid:first-last', 1, 2],
   ['MageFlow', 'img2img:edit', 1, 3],
+  ['MAI', 'img2img:edit', 1, 5],
   ['Ming', 'img2img:edit', 1, 3],
   ['MiniMaxH3', 'img2vid', 1, 2],
   ['MiniMaxH3', 'img2vid:first-last', 1, 2],

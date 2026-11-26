@@ -4,6 +4,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { RETRACTED_REFUSED, WITHHELD_SOURCE } from '$lib/held-media';
   import PromptSegments from '$lib/components/PromptSegments.svelte';
   import { IconChevronDown } from '@tabler/icons-svelte';
   import type { ComponentProps, Snippet } from 'svelte';
@@ -302,6 +303,7 @@
   alt?: string;
   mediaType?: ComponentProps<typeof EdgeMedia>['type'];
   nsfwLevel?: number;
+  restricted?: boolean;
 })}
   <a
     href={t.href}
@@ -311,7 +313,11 @@
     class="relative block aspect-[4/5] overflow-hidden rounded-lg border border-dark-4 bg-dark-6"
     onerrorcapture={() => (failedTiles[t.key] = true)}
   >
-    {#if failedTiles[t.key]}
+    {#if t.restricted}
+      <span class="flex size-full items-center justify-center p-2 text-center text-xs text-dark-2">
+        {RETRACTED_REFUSED}
+      </span>
+    {:else if failedTiles[t.key]}
       <span class="flex size-full items-center justify-center p-2 text-center text-xs text-dark-2">
         {t.kind === 'video' ? 'Video unavailable' : 'Image unavailable'}
       </span>
@@ -484,6 +490,7 @@
               src: source.url,
               mediaType: source.type,
               nsfwLevel: source.nsfwLevel,
+              restricted: source.restricted,
             })}
           {/if}
           {#each trigger.inputImages ?? [] as url, i (`${i}:${url}`)}
@@ -526,6 +533,8 @@
                   ? 'The source image was not loaded for this page.'
                   : 'The source image is no longer available.'}
             </p>
+          {:else if source.restricted}
+            <p class="m-0 text-dark-2">{WITHHELD_SOURCE}</p>
           {:else if !source.prompt}
             <p class="m-0 text-dark-2">The source image has no stored prompt to compare.</p>
           {/if}

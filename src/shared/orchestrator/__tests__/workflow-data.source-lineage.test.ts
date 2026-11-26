@@ -33,7 +33,7 @@ const interpolateWorkflow = () =>
         },
       ],
     },
-    { domain: { green: false } as any, nsfwEnabled: true }
+    { domain: { green: false } as any }
   );
 
 const standardWorkflow = () =>
@@ -43,7 +43,7 @@ const standardWorkflow = () =>
       metadata: { params: { workflow: 'txt2img', prompt: 'a dog' } },
       steps: [{ $type: 'textToImage', metadata: {}, output: [] }],
     },
-    { domain: { green: false } as any, nsfwEnabled: true }
+    { domain: { green: false } as any }
   );
 
 describe('WorkflowData.sourceLineageStep', () => {
@@ -71,7 +71,7 @@ describe('WorkflowData.sourceLineageStep', () => {
         metadata: { params: { workflow: 'img2img:upscale', images: [{ url: 'https://x/1.png' }] } },
         steps: [{ $type: 'comfy', metadata: { params: {}, resources: [] }, output: [] }],
       },
-      { domain: { green: false } as any, nsfwEnabled: true }
+      { domain: { green: false } as any }
     );
 
     expect(workflow.sourceLineageStep).toBeUndefined();

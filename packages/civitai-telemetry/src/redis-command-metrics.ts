@@ -28,8 +28,7 @@ import type { Gauge, Histogram } from 'prom-client';
  * Multiple bundled copies: this module can be emitted into more than one server chunk, and each copy
  * may wrap the same metric instance. So the accumulators live in a WeakMap keyed by the METRIC
  * INSTANCE, held on `globalThis` together with the gate: every copy that wraps one metric shares one
- * accumulator, and whichever copy's `collect()` runs flushes it. (Enrolled as SHARED_STATE in
- * scripts/server-graph-watchlist.mjs.)
+ * accumulator, and whichever copy's `collect()` runs flushes it.
  *
  * The flush writes into prom-client's internal per-label entry (`hashMap`: `bucketValues`, `sum`,
  * `count`), because prom-client has no weighted observe. `redis-command-metrics.test.ts` compares

@@ -7,9 +7,11 @@ import {
   shownActivity,
 } from '@civitai/shared/held-media';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import { RETRACTED_SERVED_ACTIVITY } from '@civitai/shared/retracted-media';
 import { dbWrite } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getHeldMedia } from '~/server/services/held-media.service';
+import { getRetractedMedia } from '~/server/services/retracted-media.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { SessionUser } from '~/types/session';
@@ -46,10 +48,14 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     select: { id: true },
   });
   if (!image) return void res.status(404).json({ error: 'Not on this page' });
-  // A held image is shown only from storage, any other only from the CDN.
-  const media = await getHeldMedia(imageId, dbWrite);
-  if ((rendition === 'original') !== !!media)
+  // A held image is shown only from storage. Any other is shown from the CDN, or from storage through
+  // the retracted-media route when it is blocked.
+  const held = await getHeldMedia(imageId, dbWrite);
+  const retracted = held ? null : await getRetractedMedia(imageId, { csamReview: true }, dbWrite);
+  const media = held ?? (typeof retracted === 'string' ? null : retracted);
+  if (rendition === 'original' ? !media : !!held)
     return void res.status(409).json({ error: 'Not shown that way' });
+  const servedActivity = held ? SERVED_ACTIVITY : RETRACTED_SERVED_ACTIVITY;
 
   const activity = shownActivity(action, rendition);
   if (rendition === 'cdn-450') {
@@ -63,7 +69,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     SELECT ${user.id}::int, 'image', ${activity}::text, ${imageId}::int
     WHERE EXISTS (
       SELECT 1 FROM "ModActivity"
-      WHERE activity = ${SERVED_ACTIVITY}::text AND "entityType" = 'image'
+      WHERE activity = ${servedActivity}::text AND "entityType" = 'image'
         AND "entityId" = ${imageId}::int AND "userId" = ${user.id}::int
         AND "createdAt" >= (now() AT TIME ZONE 'UTC') - CASE WHEN ${
           media?.type === 'video'

@@ -84,7 +84,11 @@ import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { OffDomainTrainingDataNotice } from '~/components/Model/ModelVersions/OffDomainTrainingDataNotice';
+import { useRedHref } from '~/hooks/useRedHref';
+import type { OffDomainTrainingData } from '~/server/services/training-data-restricted.service';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { DetailsAccordion } from '~/components/DetailsAccordion/DetailsAccordion';
 import {
   ModelBadge,
   PageGroup,
@@ -146,14 +150,13 @@ import {
   getEffectiveCommercialUse,
   getDisplayedBaseModelLicense,
   getEffectiveDifferentLicense,
-  getRestrictedNsfwLevelsForBaseModel,
   hasAdditionalLicensePermissions,
   isNonCommercialBaseModel,
   NOT_COMMERCIALLY_AVAILABLE_LABEL,
   notCommerciallyAvailableMessage,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelGroup, isMatureRestricted } from '~/shared/constants/basemodel.constants';
 import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -167,6 +170,7 @@ import {
   AppealCategory,
   Availability,
   CollectionType,
+  LicensingFeeType,
   ModelEngagementType,
   ModelFileVisibility,
   ModelModifier,
@@ -294,6 +298,7 @@ function ModelVersionDetailsContent({
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
+  const redHref = useRedHref();
 
   // Group files by variant for the download dropdown
   const groupedFiles = useMemo(
@@ -576,8 +581,7 @@ function ModelVersionDetailsContent({
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
   // Both are derived per displayed version rather than stored on the model.
-  const baseModelRestrictsMature =
-    getRestrictedNsfwLevelsForBaseModel(version.baseModel).length > 0;
+  const baseModelRestrictsMature = isMatureRestricted(version.baseModel, 'images');
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
@@ -1201,27 +1205,16 @@ function ModelVersionDetailsContent({
             baseModel={version.baseModel}
             usageControl={version.usageControl}
           />
+          <OffDomainTrainingDataNotice
+            stub={
+              (version as { offDomainTrainingData?: OffDomainTrainingData | null })
+                .offDomainTrainingData
+            }
+            href={redHref()}
+          />
           <BaseModelWarningAlert baseModel={version.baseModel} />
 
-          <Accordion
-            variant="separated"
-            multiple
-            onChange={setDetailAccordions}
-            value={detailAccordions}
-            styles={(theme) => ({
-              content: { padding: 0 },
-              label: { padding: 0 },
-              item: {
-                overflow: 'hidden',
-                borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-                boxShadow: theme.shadows.sm,
-              },
-              control: {
-                padding: theme.spacing.sm,
-                gap: theme.spacing.md,
-              },
-            })}
-          >
+          <DetailsAccordion multiple onChange={setDetailAccordions} value={detailAccordions}>
             {model.meta?.showcaseCollectionId && collection && (
               <Accordion.Item value="collection-showcase" className="group">
                 {/* The follow/edit action sits BESIDE the control, not inside it: the control is a
@@ -1246,7 +1239,7 @@ function ModelVersionDetailsContent({
                       </Link>
                       <Text size="xs" c="dimmed">
                         Collection
-                        {collection.itemCount > 0
+                        {collection.itemCount
                           ? ` - ${collection.itemCount.toLocaleString()} items`
                           : ''}
                       </Text>
@@ -1588,45 +1581,47 @@ function ModelVersionDetailsContent({
                       )}
                     </PageGroup>
                   </div>
-                  {/* Generation License Fee */}
-                  {!isNonCommercial && Number(version.licensingFee ?? 0) > 0 && (
-                    <div className={classes.detailRow}>
-                      <span className={classes.detailLabel}>Generation License Fee</span>
-                      <Group gap={4} wrap="nowrap">
-                        <CurrencyIcon currency="BUZZ" size={16} />
-                        <Text size="sm">
-                          {formatLicensingFee(Number(version.licensingFee), version.baseModel)}
-                        </Text>
-                        <Popover
-                          width={260}
-                          shadow="md"
-                          withArrow
-                          position="top"
-                          opened={feeInfoOpened}
-                          onChange={feeInfoHandlers.close}
-                        >
-                          <Popover.Target>
-                            <ActionIcon
-                              size="xs"
-                              variant="subtle"
-                              color="gray"
-                              onClick={feeInfoHandlers.toggle}
-                              aria-label="License fee info"
-                            >
-                              <IconInfoSquareRounded size={18} />
-                            </ActionIcon>
-                          </Popover.Target>
-                          <Popover.Dropdown>
-                            <Text size="xs">
-                              The creator has issued a license fee. This amount is added on top of
-                              the standard generation cost for each image generated on Civitai with
-                              this resource.
-                            </Text>
-                          </Popover.Dropdown>
-                        </Popover>
-                      </Group>
-                    </div>
-                  )}
+                  {/* A percent fee is not Buzz per image, so this row would misstate it. */}
+                  {!isNonCommercial &&
+                    version.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
+                    Number(version.licensingFee ?? 0) > 0 && (
+                      <div className={classes.detailRow}>
+                        <span className={classes.detailLabel}>Generation License Fee</span>
+                        <Group gap={4} wrap="nowrap">
+                          <CurrencyIcon currency="BUZZ" size={16} />
+                          <Text size="sm">
+                            {formatLicensingFee(Number(version.licensingFee), version.baseModel)}
+                          </Text>
+                          <Popover
+                            width={260}
+                            shadow="md"
+                            withArrow
+                            position="top"
+                            opened={feeInfoOpened}
+                            onChange={feeInfoHandlers.close}
+                          >
+                            <Popover.Target>
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color="gray"
+                                onClick={feeInfoHandlers.toggle}
+                                aria-label="License fee info"
+                              >
+                                <IconInfoSquareRounded size={18} />
+                              </ActionIcon>
+                            </Popover.Target>
+                            <Popover.Dropdown>
+                              <Text size="xs">
+                                The creator has issued a license fee. This amount is added on top of
+                                the standard generation cost for each image generated on Civitai
+                                with this resource.
+                              </Text>
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Group>
+                      </div>
+                    )}
                   {/* Reviews */}
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Reviews</span>
@@ -1835,7 +1830,7 @@ function ModelVersionDetailsContent({
                 </Accordion.Panel>
               </Accordion.Item>
             )}
-          </Accordion>
+          </DetailsAccordion>
 
           {/* Resource Review - shown after model details for users who downloaded */}
           {!model.locked && alreadyDownloaded && (

@@ -20,6 +20,7 @@ import {
   sanitizeImageUploadRelayProducer,
   type ImageUploadRelayProducer,
 } from '~/utils/image-upload-relay-producer';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // FALLBACK upload path, for clients that cannot reach the storage host directly.
 //
@@ -83,7 +84,7 @@ export const config = {
  *     /api/v1/image-upload/relay       matched     -> truncation warning
  *     /api/trpc/audit.probe            matched     -> truncation warning (*)
  *     /api/blocks/submit-version       NOT matched -> none
- *     /api/mod/clavata-image-process   NOT matched -> none
+ *     /api/mod/clavata-image-process   NOT matched -> none   (since deleted)
  *
  * (*) Matched when measured. `/api/trpc` has since left the matcher (#7128), so it is no
  * longer truncated at 10 MiB; its own 17mb `sizeLimit` is its only body limit now.
@@ -314,7 +315,10 @@ export async function authorizeRelayRequest(
     return { outcome: 'forbidden_origin' };
   }
 
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: { scope: TokenScope.MediaWrite }, insufficient: 'refuse' }
+  );
   if (session === false) return { outcome: 'unauthorized' };
   const userId = session?.user?.id;
   if (!userId) {
@@ -389,7 +393,7 @@ async function runRelay(
       // individual rescues behind a number that moved. Contained: the
       // bytes are already stored, so a telemetry failure must not fail the route.
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 'image-upload-relayed',
           userId,
           bytes: body.length,

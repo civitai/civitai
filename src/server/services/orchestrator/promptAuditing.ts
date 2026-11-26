@@ -1,5 +1,8 @@
 import { randomUUID } from 'crypto';
+import { getProfanityFilter } from '~/libs/profanity-simple';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { constants } from '~/server/common/constants';
+import { env } from '~/env/server';
 import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -9,11 +12,13 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
   attachPromptOrigin,
+  type AppPromptOrigin,
   type PromptOrigin,
 } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
-import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import {
   auditPromptEnriched,
   isBlankAuditInput,
@@ -71,10 +76,6 @@ const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
 
-// The 503 when the prompt check itself could not run (see auditPromptServer).
-const PROMPT_CHECK_UNAVAILABLE_MESSAGE =
-  'The prompt check is temporarily unavailable. Please try again in a moment.';
-
 // Shown for a regex refusal that names neither a trigger nor a reason (see classifyPromptServer).
 const UNSPECIFIED_REGEX_REFUSAL = 'Prompt failed the content audit';
 
@@ -130,8 +131,14 @@ async function reauditSeededRow(row: {
       stripBenignPhrases(normalizeText(row.prompt), BlocklistType.PromptBenignPhrase),
       stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
     ]);
-    // Profanity on, so a soft block recorded on the green domain re-audits as one.
-    const { success, triggers } = auditPromptEnriched(prompt ?? row.prompt, negative, true);
+    // Profanity on, so a soft block recorded on the green domain re-audits as one. The shipped
+    // list, whatever the gate uses now: these rows were recorded against it, and a soft block that
+    // re-audits clean becomes a hard one below.
+    const { success, triggers } = auditPromptEnriched(
+      prompt ?? row.prompt,
+      negative,
+      getProfanityFilter()
+    );
     if (success || triggers.length === 0) return { hardBlock: !overLengthShape };
     if (isSoftBlock(triggers)) return { hardBlock: false };
     return { hardBlock: true, evidence: triggers[0] };
@@ -227,7 +234,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
   // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
   // The deadline only BOUNDS a silent half-open (which would otherwise park each
-  // awaited read ~11min): it rejects at ~2s, preserving the same fail-closed
+  // awaited read ~11min): it rejects at REDIS_SYS_READ_TIMEOUT_MS, preserving the same fail-closed
   // direction. See STEP-6 report's promptAuditing note.
   const exists = await withSysReadDeadline(sysRedis.exists(key));
 
@@ -318,7 +325,12 @@ export interface AuditPromptOptions {
   // deadline and no verdict. Absent ⇒ `other`, so a caller that declares nothing can never inflate
   // the `generate` population. See `~/server/prom/external-moderation.metrics`.
   moderationSource?: ExternalModerationSource;
+  /** An App Block submit: recorded on a stored block's origin so moderators see it came from an app. */
+  appOrigin?: AppPromptOrigin;
 }
+
+/** The `cause` of `auditPromptServer`'s refusal. */
+export type PromptRefusalCause = { softBlock?: boolean; blockedFor: string[] };
 
 export type PromptClassificationOutcome = 'pass' | 'soft' | 'hard';
 export type PromptClassificationSource = 'regex' | 'external';
@@ -347,6 +359,8 @@ export interface PromptClassification {
    * The external classifier's failure message when it threw. It fails OPEN — the verdict is then
    * computed as though it had not flagged — so this is the only trace that it did not actually
    * clear the text. Reporting it is the caller's job; this function records nothing.
+   * `auditPromptServer` refuses (503) any verdict carrying it that would otherwise let a submit through
+   * (unless PROMPT_CHECK_FAIL_CLOSED is off).
    */
   externalError: { message: string } | null;
 }
@@ -420,7 +434,13 @@ export async function classifyPromptServer(
   // 🔴 The green blocklist (`blocked-words.json`) is the ONLY list in this audit that
   // varies by domain, and it is not profanity in the ordinary sense — "breasts" blocks
   // on .com and passes on .red. Everything else below runs identically everywhere.
-  const checkProfanity = isGreen;
+  //
+  // With `profanity-managed-list` on, the gate stops running the profanity list and the
+  // orchestrator's rating decides. Off, the gate checks the shipped list; the flag is the rollback.
+  const profanity =
+    isGreen && !(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))
+      ? getProfanityFilter()
+      : undefined;
 
   // Moderator-managed benign phrases (proper nouns / technical terms that
   // coincidentally contain a detection token) are blanked before auditing, so the
@@ -442,7 +462,7 @@ export async function classifyPromptServer(
     triggers,
     success,
     blockedFor: regexBlockedFor,
-  } = auditPromptEnriched(auditedPrompt ?? prompt, auditedNegativePrompt, checkProfanity);
+  } = auditPromptEnriched(auditedPrompt ?? prompt, auditedNegativePrompt, profanity);
 
   let softRegexTriggers: PromptTrigger[] | null = null;
 
@@ -566,6 +586,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     orchestratorToken,
     acknowledgedSoftBlock,
     moderationSource,
+    appOrigin,
   } = options;
 
   // Skip auditing only when there is nothing to audit — the prompt AND the negative prompt both
@@ -596,7 +617,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       userId,
       message: (e as Error)?.message,
     }).catch(() => undefined);
-    throw throwServiceUnavailableError(PROMPT_CHECK_UNAVAILABLE_MESSAGE, e);
+    throw new PromptCheckUnavailableError(e);
   }
 
   // The classifier fails open on an external-moderation error and leaves reporting it to us.
@@ -606,6 +627,26 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       type: 'error',
       message: verdict.externalError.message,
     });
+  }
+
+  // 🔴 FAIL CLOSED when the external classifier could not answer. Whatever this audit would let
+  // through — a pass, or a soft block the user acknowledged — has then been checked by the word
+  // lists alone. It is refused as a retry-able 503: never submitted, never counted toward the
+  // user's blocks. A hard block, or an unacknowledged soft one, keeps its own refusal below.
+  // Not reached when the classifier is not configured (that returns "not flagged", no error).
+  // PROMPT_CHECK_FAIL_CLOSED=off restores the previous pass-through.
+  if (
+    env.PROMPT_CHECK_FAIL_CLOSED &&
+    verdict.externalError &&
+    (verdict.outcome === 'pass' || (verdict.outcome === 'soft' && acknowledgedSoftBlock))
+  ) {
+    logToAxiom({
+      name: 'prompt-check-unavailable',
+      type: 'error',
+      userId,
+      message: verdict.externalError.message,
+    }).catch(() => undefined);
+    throw new PromptCheckUnavailableError();
   }
 
   if (verdict.outcome === 'pass') return;
@@ -705,7 +746,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       remixOfId: remixOfId ?? null,
       inputImages,
       inputVideo,
-      origin: { incomplete: true },
+      origin: appOrigin ? { incomplete: true, app: appOrigin } : { incomplete: true },
       time: new Date().toISOString(),
     };
 
@@ -756,8 +797,12 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     }
   }
 
-  // Flag rides `cause`; trpc.ts's errorFormatter lifts it onto data.softBlock.
-  throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
+  // Flags ride `cause`; trpc.ts's errorFormatter lifts only `softBlock` onto data. `blockedFor` lets
+  // App Blocks rebuild the message without the account-status tail.
+  throw throwBadRequestError(message, {
+    ...(softBlock ? { softBlock: true } : {}),
+    blockedFor: error.blockedFor,
+  } satisfies PromptRefusalCause);
 }
 
 /**

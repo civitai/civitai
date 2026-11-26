@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -15,6 +16,10 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustCachesForPosts: (postIds: number[]) => bustCachesForPosts(postIds),
 }));
+vi.mock('~/shared/constants/basemodel.constants', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  matureRestrictedBaseModels: () => ['Restricted'],
+}));
 
 const { reconcileRestrictedImages } = await import('~/server/jobs/reconcile-restricted-images');
 
@@ -26,18 +31,16 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TABLE "RestrictedBaseModels" ("baseModel" text PRIMARY KEY);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "baseModel" text NOT NULL);
     CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
-    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, "modelRestricted" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, "modelRestricted" boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4);
 
-    INSERT INTO "RestrictedBaseModels" VALUES ('Restricted');
     INSERT INTO "ModelVersion" VALUES (${RESTRICTED_VERSION}, 'Restricted'), (${OTHER_VERSION}, 'Open');
     INSERT INTO "Image" VALUES
-      (1, 7, false), (2, 7, false), -- two images of one post
-      (3, NULL, false),             -- postless
-      (4, 8, true),                 -- already restricted
-      (5, 9, false);                -- made with an open base model
+      (1, 7, false, 4), (2, 7, false, 1), -- two images of one post, one R and one PG
+      (3, NULL, false, 4),                -- postless
+      (4, 8, true, 4),                    -- already restricted
+      (5, 9, false, 4);                   -- made with an open base model
     INSERT INTO "ImageResourceNew" VALUES
       (1, ${RESTRICTED_VERSION}), (2, ${RESTRICTED_VERSION}), (3, ${RESTRICTED_VERSION}),
       (4, ${RESTRICTED_VERSION}), (5, ${OTHER_VERSION}),
@@ -65,6 +68,15 @@ describe('reconcile-restricted-images chunk statement', () => {
 
     expect(result.flagged).toBe(3);
     expect(bustCachesForPosts.mock.calls).toEqual([[[7]]]);
+    // Of the three, the PG image is restricted but not hidden.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Restricted images reindexed',
+        images: 3,
+        matureImages: 2,
+      }),
+      'webhooks'
+    );
     const { rows } = await db.query<{ id: number }>(
       `SELECT id FROM "Image" WHERE "modelRestricted" ORDER BY id`
     );

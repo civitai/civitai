@@ -264,6 +264,8 @@ export type AppealCoverImage = {
   acceptableMinor?: boolean;
   /** Names what the tile is when the set is not one entity's gallery, e.g. a profile's avatar. */
   caption?: string;
+  /** Withheld from this moderator (`withheldCoverImages`): `url` is empty. */
+  restricted?: boolean;
 };
 
 export type MinorFlagAppealRow = {
@@ -279,6 +281,11 @@ export type MinorFlagAppealRow = {
   poi: boolean;
   /** The settings the owner asked to have unlocked, on a lock review; null on a flag appeal. */
   lockReview: string[] | null;
+  /** A dispute of the civitai.com listing check's lock: what its automatic re-check found ('upheld',
+   *  'needs-moderator', 'unavailable'), or 'pending' before it ran. Null on any other request. */
+  comFaceDispute: string | null;
+  /** The source of a system rating verdict that landed under the listing check's lock, if any. */
+  comFaceLaterVerdict: string | null;
   lockedProperties: string[];
   textScanFlags: unknown;
   latestScan: LatestScan | null;
@@ -555,6 +562,10 @@ export async function getMinorFlagAppealsForReview({
              m."sfwName", m."sfwCoverImageId",
              m.status::text AS status, m.minor, m.poi, m.type::text AS "modelType",
              CASE WHEN ${isLockReviewSql} THEN a.context->'locks' END AS "lockReview",
+             CASE WHEN ${isLockReviewSql} AND a.context->>'dispute' = 'comFaceIntent'
+               THEN COALESCE(a.context->>'autoReview', 'pending') END AS "comFaceDispute",
+             CASE WHEN ${isLockReviewSql} AND m.meta->'systemNsfwLock'->>'source' = 'com-face-intent'
+               THEN m.meta->'comFaceIntent'->'laterVerdict'->>'source' END AS "comFaceLaterVerdict",
              COALESCE(m."lockedProperties", '{}') AS "lockedProperties",
              m."createdAt" AS "modelCreatedAt",
              m.meta->'textScanFlags' AS "textScanFlags",
@@ -1185,6 +1196,13 @@ function needsReviewKeyedCtes(
   const matches = matchLabels(use, flag);
   if (matches.minor) {
     ctes.push(minorSrcCte, matchCandidatesCte);
+    if (search && 'modelOrUserId' in search)
+      // minor_src has no index, so the per-candidate EXISTS below reads this id-filtered copy.
+      ctes.push(sql`
+      searched_seeds AS MATERIALIZED (
+        SELECT hash, "userId" FROM minor_src
+        WHERE "minorModelId" = ${search.modelOrUserId} OR "userId" = ${search.modelOrUserId}
+      )`);
     ctes.push(sql`
       matched AS (
         SELECT c."modelId", c."uploadedAt" AS at,
@@ -1208,10 +1226,9 @@ function needsReviewKeyedCtes(
               userId: 'c.userId',
               username: 'u.username',
             },
-            (id) => sql`EXISTS (
-              SELECT 1 FROM minor_src s3
+            () => sql`EXISTS (
+              SELECT 1 FROM searched_seeds s3
               WHERE s3.hash = c.hash AND s3."userId" <> c."userId"
-                AND (s3."minorModelId" = ${id} OR s3."userId" = ${id})
             )`
           )}
       )`);
@@ -1467,13 +1484,20 @@ export async function getHeldDetectionModelCount() {
 }
 
 export type MinorHashMatchDetail = {
+  modelCoverId: number | null;
   modelCoverUrl: string | null;
   modelCoverType: string | null;
+  modelCoverRestricted: boolean | null;
   modelCreatedAt: Date | null;
   uploaderModelCount: number;
   uploaderJoinedAt: Date | null;
+  minorModelCoverId: number | null;
   minorModelCoverUrl: string | null;
+  /** Set by `withheldHashDetail` when a cover is withheld from this moderator. */
+  modelCoverWithheld?: boolean;
+  minorModelCoverWithheld?: boolean;
   minorModelCoverType: string | null;
+  minorModelCoverRestricted: boolean | null;
   minorModelStatus: string | null;
   /** `TakenDown` sits on top of `status`, so a taken-down seed can still read Published. */
   minorModelMode: string | null;
@@ -1503,8 +1527,14 @@ export async function getMinorHashMatchDetail({
 }) {
   // Every seed-side id is cast rather than left to inference: a null bind reaches Postgres untyped,
   // and `col = $1` with no type to resolve against fails.
-  const cover = (id: number | null, field: 'url' | 'type') => sql`
-    (SELECT i.${sql.raw(`"${field}"`)}::text
+  const cover = (id: number | null, column: 'id' | 'url' | 'type' | 'modelRestricted') => sql`
+    (SELECT ${
+      column === 'modelRestricted'
+        ? sql`i."modelRestricted"`
+        : column === 'id'
+        ? sql`i.id`
+        : sql`i.${sql.ref(column)}::text`
+    }
      FROM "ModelVersion" mv
      JOIN "Post" p ON p."modelVersionId" = mv.id
      JOIN "Image" i ON i."postId" = p.id
@@ -1515,14 +1545,18 @@ export async function getMinorHashMatchDetail({
 
   const result = await sql<MinorHashMatchDetail>`
     SELECT
+      ${cover(modelId, 'id')} AS "modelCoverId",
       ${cover(modelId, 'url')} AS "modelCoverUrl",
       ${cover(modelId, 'type')} AS "modelCoverType",
+      ${cover(modelId, 'modelRestricted')} AS "modelCoverRestricted",
       m."createdAt" AS "modelCreatedAt",
       (SELECT count(*)::int FROM "Model" om WHERE om."userId" = m."userId" AND om.status <> 'Deleted')
         AS "uploaderModelCount",
       u."createdAt" AS "uploaderJoinedAt",
+      ${cover(minorModelId, 'id')} AS "minorModelCoverId",
       ${cover(minorModelId, 'url')} AS "minorModelCoverUrl",
       ${cover(minorModelId, 'type')} AS "minorModelCoverType",
+      ${cover(minorModelId, 'modelRestricted')} AS "minorModelCoverRestricted",
       mm.status::text AS "minorModelStatus",
       mm.mode::text AS "minorModelMode",
       mm.meta->>'unpublishedAt' AS "minorModelUnpublishedAt",
@@ -1765,10 +1799,7 @@ export async function getModelFlagDetail({
       ) f ON TRUE
       LEFT JOIN LATERAL (
         SELECT count(*) FILTER (WHERE o.status::text = 'Published')::int AS "uploaderPublished",
-               count(*) FILTER (
-                 WHERE o.status::text = 'UnpublishedViolation'
-                   AND o.meta ->> 'removedWithOwner' IS DISTINCT FROM 'true'
-               )::int AS "uploaderModUnpublished",
+               count(*) FILTER (WHERE o.status::text = 'UnpublishedViolation')::int AS "uploaderModUnpublished",
                count(*) FILTER (WHERE o.id <> m.id AND ${revertedSql})::int AS "revertedCount",
                to_char(max(${revertedAtSql}) FILTER (WHERE o.id <> m.id) AT TIME ZONE 'UTC',
                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "revertedLastAt"

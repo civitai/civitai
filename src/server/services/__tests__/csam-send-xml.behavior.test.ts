@@ -190,7 +190,9 @@ function expectSentDetailsChecked() {
   const sent = fileDetailsSent().map(({ reportId, fileId, ...details }) => details);
   expect(sent.length).toBeGreaterThan(0);
   expect(checked).toEqual(expect.arrayContaining(sent));
-  expect(checked).toHaveLength(sent.length);
+  // A file with a view record is checked in both variants it may be sent with.
+  expect(checked.length).toBeGreaterThanOrEqual(sent.length);
+  expect(checked.length).toBeLessThanOrEqual(sent.length * 2);
 }
 
 async function zipOf(names: string[]) {
@@ -387,6 +389,23 @@ describe('a file name and location holding markup', () => {
     expectSentDetailsChecked();
   });
 
+  it('is sent, with a view record, in a variant checked before the CyberTip opens', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      imageRow(501, {
+        name: `photo ${markup}.png`,
+        url: 'https://image.civitai.com/fixture/501.png',
+      }),
+    ]);
+    await db.pg.query(
+      `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
+       VALUES (10, 'image', 'reportMedia:select:original', 501, CURRENT_TIMESTAMP - interval '1 second')`
+    );
+    await processCsamReport(report('Image', {}, [{ id: 501 }]));
+
+    expect(fileDetailsSent()[0]?.fileViewedByEsp).toBe(false);
+    expectSentDetailsChecked();
+  });
+
   it('is sent escaped on a training data report', async () => {
     serveTrainingData(await zipOf([`td ${markup}.png`]));
 
@@ -434,13 +453,17 @@ describe('XML NCMEC would refuse', () => {
     expect(uploadFile).not.toHaveBeenCalled();
     expect(markedSent()).toBe(false);
     expect(lines('send-xml')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1, hoursPending: 1 }),
+      expect.objectContaining({ type: 'error', reportId: 1, payload: { hoursPending: 1 } }),
     ]);
+    // Axiom monitors match top-level name + subType on csam-report lines: keep both out of payload.
     expect(lines('send-decision-needed')).toEqual([
       expect.objectContaining({
+        name: 'csam-report',
+        subType: 'send-decision-needed',
         type: 'error',
         reportId: 1,
         message: expect.stringContaining('would not be well-formed XML'),
+        payload: { hoursPending: 1 },
       }),
     ]);
   });

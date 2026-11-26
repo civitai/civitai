@@ -50,7 +50,8 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   ImageGuard2.BlurToggle = function BlurToggle() {
     return <span data-testid="blur-toggle" />;
   };
-  return { ImageGuard2 };
+  const ImageGuardContent = ({ children }: any) => <>{children(true)}</>;
+  return { ImageGuard2, ImageGuardContent };
 });
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -100,5 +101,35 @@ describe('a hat on a post page image', () => {
     expectOverhangVisible(h);
     expect(rect(media).top - rect(h).top).toBeGreaterThanOrEqual(34);
     expect(rect(media).left - rect(h).left).toBeGreaterThanOrEqual(24);
+  });
+});
+
+describe('a ?text= link on the post page', () => {
+  // 21 images, then a text after the last: past the 20 items the page shows before Load more.
+  const images = Array.from({ length: 21 }, (_, i) => ({ ...image(i + 1), index: i }));
+  // No words: the block draws its placeholder, so the page's rich-text renderer stays out of this.
+  const late = { id: 7, postId: 100, index: 20, nsfwLevel: 1, content: '' };
+  const block = () => document.querySelector('[data-text-id="7"]');
+
+  test('shows a text past the fold, scrolls to it and outlines it', async () => {
+    const scrolled: Element[] = [];
+    const spy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this);
+      });
+    renderWithProviders(
+      <PostImages postId={100} images={images as any} texts={[late]} linkedTextId={7} />
+    );
+    await vi.waitFor(() => expect(block()).not.toBeNull());
+    expect(scrolled).toEqual([block()]);
+    expect(getComputedStyle(block()!).outlineStyle).toBe('solid');
+    spy.mockRestore();
+  });
+
+  test('without the link that text waits behind Load more', async () => {
+    renderWithProviders(<PostImages postId={100} images={images as any} texts={[late]} />);
+    await expect.element(page.getByText(/Load 2 more items/)).toBeVisible();
+    expect(block()).toBeNull();
   });
 });

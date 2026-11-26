@@ -8,6 +8,13 @@ import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLe
 import type * as HiddenPreferencesModule from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 
+const mocks = vi.hoisted(() => ({
+  dismiss: vi.fn<(input: unknown) => Promise<{ dismissed: boolean }>>(async () => ({
+    dismissed: true,
+  })),
+  refetchPair: vi.fn(async () => ({ data: undefined as unknown })),
+}));
+
 // Crucible 1 has nothing left for this judge; crucible 2 has a pair.
 const EMPTY_CRUCIBLE_ID = 1;
 const crucibleFixture = (id: number) => ({
@@ -51,8 +58,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           isFetching: false,
           isPlaceholderData: false,
           error: null,
-          refetch: vi.fn(),
+          refetch: mocks.refetchPair,
         }),
+      },
+      'crucible.dismissJudgingPair': {
+        useMutation: () => ({ mutateAsync: mocks.dismiss, isPending: false }),
       },
     }),
   };
@@ -65,8 +75,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({}),
 }));
-
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, username: 'judge' }) }));
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelModule>()),
@@ -90,8 +98,19 @@ vi.mock('~/components/Crucible/CrucibleJudgingDoneState', () => ({
 }));
 
 vi.mock('~/components/Crucible/CrucibleJudgingUI', () => ({
-  CrucibleJudgingUI: ({ pair }: { pair: { left: { id: number } } | null }) => (
-    <div data-testid="arena">pair {pair?.left.id}</div>
+  CrucibleJudgingUI: ({
+    pair,
+    onDismiss,
+  }: {
+    pair: { left: { id: number } } | null;
+    onDismiss?: () => void;
+  }) => (
+    <div data-testid="arena">
+      pair {pair?.left.id}
+      <button type="button" data-testid="stub-dismiss" onClick={onDismiss}>
+        dismiss
+      </button>
+    </div>
   ),
 }));
 
@@ -102,7 +121,9 @@ describe('crucible judge page', () => {
   // only the id prop changes. Without a remount, the caught-up state of the crucible just finished
   // carried into the next one.
   test('moving from a finished crucible to another shows the new pair, not the done state', async () => {
-    const screen = await renderWithProviders(<CrucibleJudgePage id={EMPTY_CRUCIBLE_ID} />);
+    const screen = await renderWithProviders(<CrucibleJudgePage id={EMPTY_CRUCIBLE_ID} />, {
+      user: { id: 1, username: 'judge' },
+    });
     await expect.element(page.getByTestId('done-state')).toBeVisible();
 
     await screen.rerender(<CrucibleJudgePage id={2} />);
@@ -110,5 +131,51 @@ describe('crucible judge page', () => {
     // Polled as text so a regression fails naming the stale screen, not on a locator timeout.
     await expect.poll(() => page.getByTestId('done-state').query()?.textContent ?? null).toBeNull();
     await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
+  });
+
+  test("Don't show again dismisses the pair on screen, then loads the next one", async () => {
+    mocks.dismiss.mockClear();
+    mocks.refetchPair.mockClear();
+    await renderWithProviders(<CrucibleJudgePage id={2} />, { user: { id: 1, username: 'judge' } });
+    await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
+
+    // A DOM click: the first-visit briefing covers the arena, and this pins the page's handler.
+    document.querySelector<HTMLButtonElement>('[data-testid="stub-dismiss"]')?.click();
+
+    await expect
+      .poll(() => mocks.dismiss.mock.calls)
+      .toEqual([[{ crucibleId: 2, entryIds: [10, 11] }]]);
+    await expect.poll(() => mocks.refetchPair.mock.calls.length).toBe(1);
+    // Let the refetch settle and React commit before asserting what did not render.
+    await mocks.refetchPair.mock.results[0]?.value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      page.getByTestId('done-state').query(),
+      'done state with a next pair to load'
+    ).toBeNull();
+  });
+
+  test("Don't show again on the last pair shows the done state", async () => {
+    mocks.refetchPair.mockClear();
+    mocks.refetchPair.mockResolvedValueOnce({ data: null });
+    await renderWithProviders(<CrucibleJudgePage id={2} />, { user: { id: 1, username: 'judge' } });
+    await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
+
+    document.querySelector<HTMLButtonElement>('[data-testid="stub-dismiss"]')?.click();
+
+    await expect.poll(() => page.getByTestId('done-state').query() !== null).toBe(true);
+  });
+
+  test("a double click on Don't show again dismisses once", async () => {
+    mocks.dismiss.mockClear();
+    await renderWithProviders(<CrucibleJudgePage id={2} />, { user: { id: 1, username: 'judge' } });
+    await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
+
+    const button = document.querySelector<HTMLButtonElement>('[data-testid="stub-dismiss"]')!;
+    button.click();
+    button.click();
+
+    await expect.poll(() => mocks.refetchPair.mock.calls.length).toBeGreaterThan(0);
+    expect(mocks.dismiss).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,0 +1,75 @@
+{
+  "name": "followed-no-follows",
+  "description": "Followed creators only, for a viewer who follows no one: `1 = 0`, an empty answer.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": [],
+    "serveInputFollowed": true
+  },
+  "request": {
+    "input": "{\"json\":{\"followed\":\"true\",\"sort\":\"Newest\",\"limit\":2,\"browsingLevel\":31}}",
+    "headers": {
+      "host": "blue.example.test"
+    },
+    "session": {
+      "userId": 1001
+    }
+  },
+  "redis": {
+    "session:data2:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWraXNNb2RlcmF0b3LCqGJhbm5lZEF0wKR0aWVywA=="
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[{\"id\":703,\"name\":\"BlockedName\"}]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [
+      {
+        "cursor": null,
+        "bound": null,
+        "rows": [],
+        "followedNone": true
+      }
+    ],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": [],
+    "userFollows": [],
+    "followsRead": 1
+  },
+  "expect": {
+    "envelope": {
+      "json": {
+        "items": [],
+        "nextCursor": null
+      },
+      "meta": {
+        "values": {
+          "nextCursor": [
+            "undefined"
+          ]
+        },
+        "v": 1
+      }
+    },
+    "writes": {}
+  }
+}

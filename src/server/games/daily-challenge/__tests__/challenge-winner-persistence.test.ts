@@ -22,11 +22,7 @@ dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 //        it. The stored row keeps the original place; returning `null` let the caller pay the
 //        freshly-picked place under a brand-new externalTransactionId — a second prize.
 
-const {
-  mockLogToAxiom,
-  mockRecordDivergence,
-  mockRecordUnresolved,
-} = vi.hoisted(() => ({
+const { mockLogToAxiom, mockRecordDivergence, mockRecordUnresolved } = vi.hoisted(() => ({
   mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockRecordDivergence: vi.fn(),
   mockRecordUnresolved: vi.fn(),
@@ -127,21 +123,13 @@ describe('createChallengeWinner (P0-b)', () => {
     );
   });
 
-  it('logs a warning and increments the divergence metric when the stored place differs', async () => {
+  it('increments the divergence metric when the stored place differs', async () => {
     mockCreate.mockRejectedValue(p2002());
     mockFindUnique.mockResolvedValue({ id: 5, place: 3, buzzAwarded: 100, pointsAwarded: 2 });
 
     await createChallengeWinner(INPUT);
 
     expect(mockRecordDivergence).toHaveBeenCalledWith({ field: 'both' });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'challenge-winner-place-divergence',
-        storedPlace: 3,
-        attemptedPlace: 1,
-      })
-    );
   });
 
   it('labels a place-only divergence as place', async () => {
@@ -166,17 +154,9 @@ describe('createChallengeWinner (P0-b)', () => {
     await createChallengeWinner(INPUT);
 
     expect(mockRecordDivergence).toHaveBeenCalledWith({ field: 'prize' });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'challenge-winner-place-divergence',
-        storedBuzzAwarded: 250,
-        attemptedBuzzAwarded: 500,
-      })
-    );
   });
 
-  it('an identical duplicate stays info-level and does not touch the divergence metric', async () => {
+  it('an identical duplicate does not touch the divergence metric', async () => {
     mockCreate.mockRejectedValue(p2002());
     mockFindUnique.mockResolvedValue({ id: 5, place: 1, buzzAwarded: 500, pointsAwarded: 10 });
 
@@ -189,9 +169,6 @@ describe('createChallengeWinner (P0-b)', () => {
     });
 
     expect(mockRecordDivergence).not.toHaveBeenCalled();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'info', name: 'challenge-winner-duplicate' })
-    );
   });
 
   // THE remaining mint path. Returning `null` makes `reconcileWinnerToPersisted` pass the entry
@@ -200,17 +177,11 @@ describe('createChallengeWinner (P0-b)', () => {
   // only unique constraint — `id Int @id @default(autoincrement())` is one too — so a sequence left
   // behind by a restore or a manual insert raises P2002 on `id`, and the (challengeId, userId)
   // re-read then correctly finds nothing.
-  it('returns null, warns, and RECORDS the unresolved conflict — the mint path is not silent', async () => {
+  it('returns null and RECORDS the unresolved conflict — the mint path is not silent', async () => {
     mockCreate.mockRejectedValue(p2002());
     mockFindUnique.mockResolvedValue(null);
 
     await expect(createChallengeWinner(INPUT)).resolves.toBeNull();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'challenge-winner-conflict-unresolved',
-      })
-    );
     // Without this the counter suite reads exactly 0 in the one case where money may have moved
     // twice — an Axiom log is not a metric and nothing can alert on its absence.
     expect(mockRecordUnresolved).toHaveBeenCalledTimes(1);

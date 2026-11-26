@@ -101,7 +101,10 @@ describe('toggleReaction event points', () => {
     expect(awardEventPoints).not.toHaveBeenCalled();
   });
 
-  it("removes when the deleted reaction was the actor's last on the image", async () => {
+  // Decision (forward only): an un-react keeps the points the first reaction earned, even the actor's
+  // last reaction on the image, so the dedupe mark stays and a re-react earns nothing. A moderator's
+  // bulk erasure still removes them (user-reaction-erasure.service.test.ts).
+  it("sends no removal when the deleted reaction was the actor's last on the image", async () => {
     imageReactionId.mockResolvedValue({ id: 1 });
     db.imageReaction.deleteMany.mockResolvedValue({ count: 1 });
     db.imageReaction.count.mockResolvedValue(0);
@@ -109,10 +112,7 @@ describe('toggleReaction event points', () => {
     expect(await toggleReaction(like)).toBe('removed');
     await settle();
 
-    expect(removeEventPoints).toHaveBeenCalledTimes(1);
-    expect(removeEventPoints).toHaveBeenCalledWith([
-      expect.objectContaining({ type: 'reaction', sourceId: `ImageReaction:7:${USER}` }),
-    ]);
+    expect(removeEventPoints).not.toHaveBeenCalled();
   });
 
   it('sends nothing for a delete that matched no row', async () => {

@@ -9,6 +9,7 @@ import { routing } from '~/components/Search/useSearchState';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
+import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -22,6 +23,7 @@ import { SEARCH_HITS_PER_PAGE } from '~/components/Search/search.constants';
 import { searchBoxFor } from '~/components/Search/CustomSearchComponents';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
+import { trackSearchPage } from '~/utils/feed-events';
 import * as z from 'zod';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -44,10 +46,17 @@ const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets:
 // used to render the banner (the swallowed error never reaches
 // `useInstantSearch().status`).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
-  createResilientSearchClient(withSemanticArticleSearch(withSemanticImageSearch(meilisearch)), {
-    onError: () => searchAvailability.setUnavailable(true),
-    onSuccess: () => searchAvailability.setUnavailable(false),
-  })
+  createResilientSearchClient(
+    withSemanticComicSearch(withSemanticArticleSearch(withSemanticImageSearch(meilisearch))),
+    {
+      onError: () => searchAvailability.setUnavailable(true),
+      onSuccess: () => {
+        searchAvailability.setUnavailable(false);
+        searchAvailability.setRefusedQuery(null);
+      },
+      onRefused: (query) => searchAvailability.setRefusedQuery(query ?? null),
+    }
+  )
 );
 
 // #region [ImageGuardContext]
@@ -125,11 +134,7 @@ export function SearchLayout({
   const searchQuery = instantSearchQuery || urlQuery;
 
   useEffect(() => {
-    if (!parsedQuery) return;
-
-    const { query, sortBy: index, ...filters } = parsedQuery;
-
-    if (query && index) trackSearch({ query, index, filters });
+    if (parsedQuery) trackSearchPage(indexName, parsedQuery, trackSearch);
   }, [parsedQuery]);
 
   // Callback for InstantSearch state changes
@@ -138,8 +143,15 @@ export function SearchLayout({
   }, []);
 
   // The search pages refuse only these two, as they always have; the feed refuses more.
-  const { refusal, profanityMatches } = useSearchRefusal(searchQuery, parsedQuery?.sortBy);
-  const shownRefusal = refusal === 'illegal' || refusal === 'profanity' ? refusal : undefined;
+  const { refusal } = useSearchRefusal(searchQuery, parsedQuery?.sortBy, 'siteSearch');
+  const refusedQuery = useSearchAvailabilityStore((state) => state.refusedQuery);
+  const shownRefusal =
+    refusal === 'illegal' || refusal === 'profanity'
+      ? refusal
+      : !!searchQuery && refusedQuery?.trim() === searchQuery.trim()
+      ? // The server refused it: profanity, or a semantic page refused by any check.
+        'policy'
+      : undefined;
   const isSearchUnavailable = useSearchAvailabilityStore((state) => state.unavailable);
 
   return (
@@ -163,7 +175,7 @@ export function SearchLayout({
           {shownRefusal ? (
             <SearchLayout.Root>
               <SearchLayout.Content>
-                <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />
+                <SearchRefusalNotice refusal={shownRefusal} />
               </SearchLayout.Content>
             </SearchLayout.Root>
           ) : (

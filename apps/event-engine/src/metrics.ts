@@ -131,36 +131,33 @@ export const metricBatcherMetrics = {
   }),
 };
 
-// Index Update Queue Metrics
-export const indexQueueMetrics = {
-  batchesFlushed: new Counter({
-    name: 'mew_index_batches_flushed_total',
-    help: 'Total number of index update batches flushed',
-    labelNames: ['entity_type'],
+// Optional secondary ClickHouse destination for metric events (off by default).
+export const secondaryTeeMetrics = {
+  rowsSent: new Counter({
+    name: 'mew_metric_secondary_rows_sent_total',
+    help: 'Metric event rows inserted into the secondary ClickHouse destination',
     registers: [register],
   }),
   batchesFailed: new Counter({
-    name: 'mew_index_batches_failed_total',
-    help: 'Total number of failed index update batches',
+    name: 'mew_metric_secondary_batches_failed_total',
+    help: 'Failed secondary insert attempts (each failed batch is retried with backoff until sent or dropped)',
     registers: [register],
   }),
-  updatesProcessed: new Counter({
-    name: 'mew_index_updates_processed_total',
-    help: 'Total number of index updates processed',
-    labelNames: ['entity_type'],
+  batchesDropped: new Counter({
+    name: 'mew_metric_secondary_batches_dropped_total',
+    help: 'Batches the secondary destination never received: overflow (queue bound hit, oldest dropped) or shutdown (unsent when the drain timed out)',
+    labelNames: ['reason'],
     registers: [register],
   }),
-  queueSize: new Gauge({
-    name: 'mew_index_queue_size',
-    help: 'Current number of entities in index update queue',
-    labelNames: ['entity_type'],
+  rowsDropped: new Counter({
+    name: 'mew_metric_secondary_rows_dropped_total',
+    help: 'Rows in the dropped secondary batches, by reason',
+    labelNames: ['reason'],
     registers: [register],
   }),
-  batchFlushDuration: new Histogram({
-    name: 'mew_index_batch_flush_duration_seconds',
-    help: 'Duration of index batch flush operations',
-    labelNames: ['entity_type'],
-    buckets: [0.1, 0.5, 1, 2, 5, 10],
+  queueRows: new Gauge({
+    name: 'mew_metric_secondary_queue_rows',
+    help: 'Rows held for the secondary destination: queued plus the chunk in flight',
     registers: [register],
   }),
 };

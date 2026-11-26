@@ -115,5 +115,5 @@ function reportUnavailable(error: unknown, outcome: string) {
     name: 'metric-excluded-users-unavailable',
     message: `Exclusion list unavailable, ${outcome}`,
     details: { error: (error as Error)?.message },
-  }).catch(() => undefined);
+  });
 }

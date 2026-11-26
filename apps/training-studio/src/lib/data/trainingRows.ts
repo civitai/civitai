@@ -1,3 +1,4 @@
+import { Air, type KohyaTrainingInput } from '@civitai/orchestration-client';
 import type {
   AiToolkitTrainingInput,
   Workflow,
@@ -19,6 +20,9 @@ import {
   versionSuffix,
   type Media,
 } from './trainingModels';
+import type { Callbackless } from '$lib/workflow-redaction';
+
+type FetchedWorkflow = Callbackless<Workflow>;
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
@@ -128,7 +132,7 @@ export function canDeleteRun(row: Pick<TrainingRow, 'state' | 'hasModel'>): bool
   return (row.state === 'ready' || ENDED_UNTRAINED.has(row.state)) && !row.hasModel;
 }
 
-function workflowHasModel(w: Workflow, meta: TrainingStudioMeta): boolean {
+function workflowHasModel(w: FetchedWorkflow, meta: TrainingStudioMeta): boolean {
   return (
     typeof meta.modelId === 'number' ||
     (w.tags ?? []).some((t) => t.startsWith('modelVersion:')) ||
@@ -168,6 +172,8 @@ export interface TrainingStudioMeta {
   /** Dataset images the upload scan rated R or above, stamped at submit. A positive count lets "train
    *  further" skip re-rating the dataset; 0 or absent is re-checked. */
   matureCount?: number;
+  /** See `CLIP_SKIP_AS_SENT` in `@civitai/shared/training-kohya-replay`. */
+  clipSkipAsSent?: true;
 }
 
 const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
@@ -181,33 +187,41 @@ const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
   expired: 'failed',
 };
 
-/** The training step's input as we read it back: the SDK's ai-toolkit shape, so a field the
- *  orchestrator renames or retypes fails typecheck here rather than drifting silently, plus the
- *  ecosystem-specific and per-item fields the generic type leaves out. Read defensively — an older
- *  or foreign (main-app) workflow may not carry all of them. */
-type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
-  /** Base checkpoint AIR, when the run pinned one. */
-  model?: string;
-  modelVariant?: string;
-  version?: string;
-  resolution?: number | null;
-  /** SD-family only. */
-  minSnrGamma?: number | null;
-  /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
-  samples?: { prompts?: string[]; sourceImages?: string[] };
-  /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
-   *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
-  trainingData?: {
-    type?: string;
-    items?: Array<{ air?: string; caption?: string; path?: string }>;
+/** Missing fields are valid when reading older or foreign workflows. */
+type TrainingStepInput = Partial<
+  Omit<AiToolkitTrainingInput, 'engine' | 'optimizerType' | 'lrScheduler'>
+> &
+  Partial<
+    Omit<
+      KohyaTrainingInput,
+      'engine' | 'trainingData' | 'samples' | 'optimizerType' | 'lrScheduler'
+    >
+  > & {
+    engine?: string;
+    optimizerType?: AiToolkitTrainingInput['optimizerType'] | KohyaTrainingInput['optimizerType'];
+    lrScheduler?: AiToolkitTrainingInput['lrScheduler'] | KohyaTrainingInput['lrScheduler'];
+    /** Base checkpoint AIR, when the run pinned one. */
+    model?: string;
+    modelVariant?: string;
+    version?: string;
+    resolution?: number | null;
+    /** SD-family only. */
+    minSnrGamma?: number | null;
+    /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
+    samples?: { prompts?: string[]; sourceImages?: string[]; negativePrompt?: string | null };
+    /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
+     *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
+    trainingData?: {
+      type?: string;
+      items?: Array<{ air?: string; caption?: string; path?: string }>;
+    };
+    /** An edit LoRA: `trainingData.items` are before/after pairs placed by `path`. */
+    isEditTraining?: boolean;
+    /** Legacy `imageResourceTraining` runs: the zip dataset's image count. */
+    trainingDataImagesCount?: number;
+    /** Legacy `imageResourceTraining` runs: the sample prompts as submitted. */
+    samplePrompts?: string[];
   };
-  /** An edit LoRA: `trainingData.items` are before/after pairs placed by `path`. */
-  isEditTraining?: boolean;
-  /** Legacy `imageResourceTraining` runs: the zip dataset's image count. */
-  trainingDataImagesCount?: number;
-  /** Legacy `imageResourceTraining` runs: the sample prompts as submitted. */
-  samplePrompts?: string[];
-};
 /** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
  *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
  *  `url` is a signed download link. Shared with train-core so "does this epoch have usable weights,
@@ -286,7 +300,7 @@ function reviewedState(
  * own `TrainingStudioMeta` when present — existing (main-app-created) runs carry no metadata, so the step is
  * the source. `state` is undefined for a status we can't map; callers drop the workflow.
  */
-function resolveWorkflow(w: Workflow) {
+function resolveWorkflow(w: FetchedWorkflow) {
   const meta = (w.metadata ?? {}) as TrainingStudioMeta;
   // `status` is typed non-null but the orchestrator can omit it on a run mid-transition (the main app's
   // read paths guard `!workflow.status`), so an unmapped status yields no state and the caller drops it.
@@ -294,8 +308,20 @@ function resolveWorkflow(w: Workflow) {
     w.steps?.find((s) => (s as { $type?: string }).$type === 'training') ??
     w.steps?.find((s) => (s as { $type?: string }).$type === 'imageResourceTraining') ??
     w.steps?.[0];
-  const input = ((step as { input?: TrainingStepInput } | undefined)?.input ??
+  const rawInput = ((step as { input?: TrainingStepInput } | undefined)?.input ??
     {}) as TrainingStepInput;
+  const input: TrainingStepInput =
+    rawInput.engine === 'kohya'
+      ? {
+          ...rawInput,
+          ecosystem: rawInput.model ? Air.parseSafe(rawInput.model)?.ecosystem : undefined,
+          epochs: rawInput.maxTrainEpochs,
+          batchSize: rawInput.trainBatchSize,
+          lr: rawInput.unetLR,
+          textEncoderLr: rawInput.textEncoderLR,
+          shuffleTokens: rawInput.shuffleCaption,
+        }
+      : rawInput;
   const output = ((step as { output?: TrainingStepOutput } | undefined)?.output ??
     {}) as TrainingStepOutput;
   const state: RunState | undefined = meta.published
@@ -386,7 +412,7 @@ function completedEpochCount(epochs: TrainingStepOutput['epochs']): number {
 }
 
 /** Map one orchestrator workflow to a My-trainings row. Returns null for a workflow we can't place. */
-export function workflowToRow(w: Workflow): TrainingRow | null {
+export function workflowToRow(w: FetchedWorkflow): TrainingRow | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
   const {
     meta,
@@ -481,6 +507,8 @@ export interface DatasetItem {
  *  keys (a main-app kohya run's `unetLR`, `maxTrainEpochs`, `clipSkip`, …) aren't dropped. */
 const SETTINGS_EXCLUDED_INPUT_KEYS = new Set([
   'trainingData',
+  // A blob reference to another run's weights.
+  'continueFrom',
   'samples',
   'samplePrompts',
   'trace',
@@ -511,6 +539,7 @@ export interface TrainingSettingsExport {
   sourceEpoch?: number;
   imageCount: number;
   samplePrompts: string[];
+  negativePrompt?: string;
   /** The training step's input minus `SETTINGS_EXCLUDED_INPUT_KEYS`, with `samples` reduced to its
    *  generation settings (`cfgScale`, `strength`, …). Keys are the orchestrator's own names (`lr`,
    *  `optimizerType`, …), not the form's. `defaultSteps` and `maxBatchSize` are the orchestrator's
@@ -577,8 +606,10 @@ export interface TrainingDetail {
   sourceWorkflowId?: string;
   sourceEpoch?: number;
   /** The run's model on Civitai — draft or published (see TrainingStudioMeta.modelId); drives the
-   *  model-page link. */
+   *  model-page link. `modelVersionId` is the run's own version (on a model the run was added to, not
+   *  the first); for a draft made before versions carried the link, it can be another version. */
   modelId?: number;
+  modelVersionId?: number;
   settings: TrainingSettingsExport;
 }
 
@@ -587,7 +618,7 @@ export const editPairCount = (dataset: DatasetItem[]): number =>
   dataset.filter((i) => i.path?.startsWith('main/')).length;
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
-export function workflowToDetail(w: Workflow): TrainingDetail | null {
+export function workflowToDetail(w: FetchedWorkflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
   const { meta, input, state, output, media, base, code, name, progress, startedAt, completedAt } =
     resolveWorkflow(w);
@@ -693,6 +724,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
       (typeof meta.imageCount === 'number' ? meta.imageCount : 0) ||
       (typeof input.trainingDataImagesCount === 'number' ? input.trainingDataImagesCount : 0),
     samplePrompts: prompts,
+    ...(input.samples?.negativePrompt ? { negativePrompt: input.samples.negativePrompt } : {}),
     training,
   };
 
@@ -722,6 +754,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     sourceWorkflowId,
     sourceEpoch,
     modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
+    modelVersionId: typeof meta.modelVersionId === 'number' ? meta.modelVersionId : undefined,
     settings,
   };
 }
@@ -801,7 +834,7 @@ export function estimateArchiveTokenLength(part: ArchivePart): number {
  *  `ARCHIVE_TOKEN_BUDGET` and `MAX_ARCHIVE_ENTRIES` allow. Weights and samples are separate archives
  *  so the file a user can't regenerate never shares a URL budget with dozens of images. Legacy runs
  *  whose epochs carry only signed URLs (no blob ids) yield no parts. */
-export function epochArchiveParts(w: Workflow, kind: ArchiveKind): ArchivePart[] {
+export function epochArchiveParts(w: FetchedWorkflow, kind: ArchiveKind): ArchivePart[] {
   const { output, name, base } = resolveWorkflow(w);
   // Flat names (`<run>-<base>-epoch-03.safetensors`, `…-epoch-03-sample-2.png`): the orchestrator
   // strips path components from entry names.

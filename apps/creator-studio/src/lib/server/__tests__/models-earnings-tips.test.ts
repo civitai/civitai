@@ -20,7 +20,11 @@ vi.mock('$lib/server/clickhouse', () => ({
       if (!/FROM orchestration\.resourceCompensations/.test(sql)) return [];
       if (!/GROUP BY modelVersionId, accountType, source/.test(sql))
         throw new Error(`fake ClickHouse expects the per-source earnings read: ${sql.slice(0, 120)}`);
-      return state.earnRows.map((r) => ({
+      // Honour the one source predicate the earnings reads carry, as ClickHouse would.
+      const rows = /source NOT IN \('licenseFeeMarkup'\)/.test(sql)
+        ? state.earnRows.filter((r) => r.source !== 'licenseFeeMarkup')
+        : state.earnRows;
+      return rows.map((r) => ({
         modelVersionId: '101',
         accountType: 'Yellow',
         source: r.source,
@@ -130,5 +134,30 @@ describe('tips are their own channel, as on the main dashboard (#5582)', () => {
     expect(state.cacheNames).toContain('analytics:model-versions:v5');
     expect(state.cacheNames).not.toContain('models:performance:v4');
     expect(state.cacheNames).not.toContain('analytics:model-versions:v4');
+  });
+});
+
+// The payout job never pays the licence-fee markup, so an earnings page that counted it would show the
+// licensor money they are never sent.
+describe('the licence-fee markup is not shown as earnings', () => {
+  beforeEach(() => {
+    state.earnRows = [
+      { source: 'compensation', cur: 10, prev: 1 },
+      { source: 'tip', cur: 20, prev: 2 },
+      { source: 'licenseFee', cur: 40, prev: 4 },
+      { source: 'compensation_recovered_20260507', cur: 80, prev: 8 },
+      { source: 'licenseFeeMarkup', cur: 1024, prev: 512 },
+    ];
+  });
+
+  it('leaves it out of the per-model analytics table', async () => {
+    const [row] = await getModelPerformance({ userId: 42, ...range });
+    expect(split(row)).toEqual(EXPECTED);
+  });
+
+  it('leaves it out of the per-version table on a model page', async () => {
+    const result = await getModelVersionAnalytics({ userId: 42, modelId: 7, ...range });
+    if (!result) throw new Error('fake Postgres should resolve the model as the caller’s');
+    expect(split(result.versions[0])).toEqual(EXPECTED);
   });
 });

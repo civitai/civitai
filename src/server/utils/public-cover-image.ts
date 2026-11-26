@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { isCoverCore } from '~/server/common/image-visibility';
 import { Flags } from '~/shared/utils/flags';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -37,13 +38,9 @@ export function isPublicCoverImage(
     !!image?.url &&
     image.ingestion === ImageIngestionStatus.Scanned &&
     image.scannedAt != null &&
-    image.tosViolation === false &&
-    image.needsReview === null &&
+    isCoverCore(image, 'strict') &&
     image.blockedFor === null &&
     image.poi === false &&
-    image.minor === false &&
-    image.acceptableMinor === false &&
-    image.nsfwLevel > 0 &&
     Flags.hasFlag(browsingLevel, image.nsfwLevel) &&
     (image.type === MediaType.image || image.type === MediaType.video)
   );
@@ -75,7 +72,9 @@ export async function getCoverBrowsingLevels(
 ) {
   // Loaded on demand: the model service's import graph is large.
   const { getHeldLevelsByPost } = await import('~/server/services/model.service');
-  const held = await getHeldLevelsByPost(covers.map((cover) => cover?.postId).filter(isDefined));
+  const held = await getHeldLevelsByPost(covers.map((cover) => cover?.postId).filter(isDefined), {
+    withOwners: false,
+  });
   return (cover: Pick<PublicCoverImage, 'postId'> | null | undefined) => {
     const hold = cover?.postId ? held.get(cover.postId) : undefined;
     return hold ? Flags.intersection(browsingLevel, hold.level) : browsingLevel;

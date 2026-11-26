@@ -5,6 +5,7 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { isImageReviewed } from '~/server/common/image-visibility';
+import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
   holdPlacementEscrow,
@@ -157,12 +158,13 @@ type PromotedPostImage = {
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null;
-  scanFailureClass: string | null;
+  scanJobs: unknown;
   needsReview: string | null;
   minor: boolean;
   acceptableMinor: boolean;
   poi: boolean;
   tosViolation: boolean;
+  blockedFor: string | null;
 };
 
 async function loadPromotedPost(postId: number) {
@@ -175,8 +177,8 @@ async function loadPromotedPost(postId: number) {
   const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
     SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
            i.metadata->>'nsfwLevelReason' AS "nsfwLevelReason",
-           i."scanJobs"->'error'->>'failureClass' AS "scanFailureClass",
-           i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"
+           i."scanJobs",
+           i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation", i."blockedFor"
     FROM "Image" i
     WHERE i."postId" = ${postId}
   `;
@@ -221,6 +223,7 @@ async function assertGalleryPromotable({
     images.some(
       (image) =>
         !isImageReviewed(image) ||
+        hasBlockMarker(image) ||
         image.needsReview ||
         image.minor ||
         image.acceptableMinor ||
@@ -454,7 +457,7 @@ async function createPromotionPlacement({
         message: 'compensating settle failed; escrow may be held for a rejected promotion',
         placementId: placement.id,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }

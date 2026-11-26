@@ -1,56 +1,20 @@
-import nodemailer from 'nodemailer';
+// ~/env/server also loads the dev .env files before @civitai/email's lazy first read of
+// process.env.
+import {
+  isEmailConfigured as isTransportConfigured,
+  sendEmail as sendWithTransport,
+  setEmailSendRecorder,
+  type SendEmailInput,
+} from '@civitai/email';
 import { env } from '~/env/server';
-import { removeTags } from '~/utils/string-helpers';
+import { recordEmailSend } from '~/server/email/send-tracking';
 
-const shouldConnect =
-  !env.IS_BUILD &&
-  env.EMAIL_HOST &&
-  env.EMAIL_PORT &&
-  env.EMAIL_USER &&
-  env.EMAIL_PASS &&
-  env.EMAIL_FROM;
-const client = shouldConnect
-  ? nodemailer.createTransport({
-      pool: true,
-      maxConnections: 30, // default 5
-      maxMessages: 600, // default 100
-      host: env.EMAIL_HOST,
-      port: env.EMAIL_PORT,
-      secure: env.EMAIL_SECURE,
-      auth: {
-        user: env.EMAIL_USER,
-        pass: env.EMAIL_PASS,
-      },
-    })
-  : null;
+// Every send through this app writes one emailEvents `send` row (send-tracking.ts).
+setEmailSendRecorder(recordEmailSend);
 
-export const isEmailConfigured = () => !!client;
+export const isEmailConfigured = () => !env.IS_BUILD && isTransportConfigured();
 
-export async function sendEmail({
-  to,
-  cc,
-  from,
-  text,
-  ...data
-}: {
-  to: string | string[] | null;
-  cc?: string | string[] | null;
-  from?: string;
-  subject: string;
-  text?: string;
-  html: string;
-  headers?: Record<string, string>;
-}) {
-  if (!client || !to) return;
-  const info = await client.sendMail({
-    to: Array.isArray(to) ? to.join(', ') : to,
-    ...(cc ? { cc: Array.isArray(cc) ? cc.join(', ') : cc } : {}),
-    from: from ?? env.EMAIL_FROM,
-    text: text ?? removeTags(data.html),
-    ...data,
-  });
-  const failed = info.rejected.filter(Boolean);
-  if (failed.length) {
-    throw new Error(`Email(s) (${failed.join(', ')}) could not be sent`);
-  }
+export async function sendEmail(input: SendEmailInput): Promise<void> {
+  if (env.IS_BUILD) return;
+  await sendWithTransport(input);
 }

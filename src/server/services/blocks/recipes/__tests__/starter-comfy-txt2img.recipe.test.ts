@@ -131,7 +131,7 @@ describe('recipe.buildStep', () => {
   const build = (p: StarterComfyParams): CustomComfyStepInput =>
     starterComfyTxt2imgRecipe.buildStep(p, {});
 
-  it('emits ONLY the three huggingface AIRs (no LoRA) + the binary trace', () => {
+  it('emits ONLY the three base-weight AIRs (no LoRA) + the binary trace', () => {
     const step = build(params('a lake', 1));
     expect(step.trace).toBe('binary');
     expect(step.resources).toEqual([ZIMAGE_DIFFUSION_AIR, ZIMAGE_CLIP_AIR, ZIMAGE_VAE_AIR]);

@@ -4,6 +4,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { Tracker } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { createCallerFactory } from '~/server/trpc';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -24,12 +25,17 @@ import type { SessionUser } from '~/types/session';
 const createCaller = createCallerFactory(appRouter);
 
 type RequestContext = Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject'> & {
-  tokenScope?: number;
+  tokenScope?: bigint;
 };
 
-export function createPlannerCaller(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
+export function createPlannerCaller(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  sessionUser: SessionUser
+) {
   const requestContext = ((req as NextApiRequest & { context?: RequestContext }).context ??
     {}) as RequestContext;
+  const user = withModeratorRightsFor(sessionUser, requestContext) ?? sessionUser;
   const track = new Tracker(req, res, { user });
   track.setProvenance({ subject: requestContext.subject, apiKeyId: requestContext.apiKeyId });
 

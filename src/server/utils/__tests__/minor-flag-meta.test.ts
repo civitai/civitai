@@ -101,6 +101,18 @@ describe('stripMinorHashMeta', () => {
     ).toEqual({});
   });
 
+  it('hides the nsfw lock backfill record', () => {
+    expect(
+      stripMinorHashMeta({
+        nsfwLockBackfill: {
+          at: '2026-11-25T00:00:00Z',
+          bucket: 'scan-locks',
+          priorLockedProperties: ['nsfw'],
+        },
+      })
+    ).toEqual({});
+  });
+
   it('hides a restricted-verdict lead and its rulings from every client', () => {
     expect(
       stripMinorHashMeta({
@@ -359,17 +371,20 @@ describe('server-only keys', () => {
   const meta = {
     trainingStudioWorkflowId: 'wf',
     restoreCannotPromote: true,
+    comFaceIntentRelockSuppressed: { textHash: 'h', at: 'x' },
     commentsLocked: true,
   } as ModelMeta;
 
-  it('strips the cannotPromote restore marker from client meta, moderators included', () => {
+  // An owner who could send the suppression marker would stop the intent re-lock on their own text.
+  it('strips the cannotPromote restore marker and the intent relock suppression from client meta', () => {
     expect(stripServerOwnedMeta(meta)).toEqual({ commentsLocked: true });
   });
 
-  it('carries the restore marker across a wholesale meta write', () => {
+  it('carries the restore marker and the intent relock suppression across a wholesale meta write', () => {
     expect(pickServerOwnedMeta(meta)).toEqual({
       trainingStudioWorkflowId: 'wf',
       restoreCannotPromote: true,
+      comFaceIntentRelockSuppressed: { textHash: 'h', at: 'x' },
     });
   });
 });

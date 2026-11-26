@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import {
@@ -47,7 +48,10 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
-vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
+vi.mock('../mod-activity', () => ({
+  insertModActivity: vi.fn(async () => 1),
+  recordModActivity: vi.fn(async () => undefined),
+}));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const { blockImage } = await import('../image-moderation.service');
@@ -83,6 +87,7 @@ CREATE TABLE "Appeal" (
 const APPEALED = 41;
 const FLAGGED = 42;
 const DECIDED = 43;
+const CSAM_BLOCKED = 44;
 
 let db: PGlite;
 
@@ -147,5 +152,78 @@ describe('blocking an image that is under appeal', () => {
     await blockImage({ imageId: DECIDED, userId: 2 });
 
     expect(await imageRow(DECIDED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
+  });
+
+  it('never gives an image holding a CSAM block the appeal flag', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES ($1, 10, NULL, 'CSAM', 'Blocked', 32)`,
+      [CSAM_BLOCKED]
+    );
+    await db.query(
+      `INSERT INTO "Appeal" ("userId", "entityType", "entityId", "status") VALUES (10, 'Image', $1, 'Pending')`,
+      [CSAM_BLOCKED]
+    );
+    await blockImage({ imageId: CSAM_BLOCKED, userId: 2 });
+
+    const { needsReview, blockedFor } = (
+      await db.query<{ needsReview: string | null; blockedFor: string | null }>(
+        `SELECT "needsReview", "blockedFor" FROM "Image" WHERE "id" = $1`,
+        [CSAM_BLOCKED]
+      )
+    ).rows[0];
+    // Control: the block kept the CSAM reason.
+    expect(blockedFor).toBe('CSAM');
+    expect(needsReview).toBeNull();
+  });
+});
+
+// The main app's kept-delete hide marks the image (metadata.keptHide); its release lifts the hide only
+// while the marker is there. The table's trigger drops it from any write naming a block column.
+describe('removing an image a kept delete hid', () => {
+  const KEPT = 45;
+  const marker = async () =>
+    (
+      await db.query<{ marker: string | null; ingestion: string }>(
+        `SELECT "metadata"->>'keptHide' AS marker, "ingestion" FROM "Image" WHERE "id" = $1`,
+        [KEPT]
+      )
+    ).rows[0];
+  beforeEach(async () => {
+    // Read by a report verdict's already-removed check.
+    await db.exec(`
+      CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+      CREATE TABLE "ModerationRuleVersion" ("ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
+      CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3));
+    `);
+    await db.exec(
+      readFileSync(
+        `${__dirname}/../../../../../../packages/civitai-db-schema/prisma/migrations/20271203120000_image_kept_hide_marker_drop/migration.sql`,
+        'utf8'
+      )
+    );
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "blockedFor", "ingestion", "nsfwLevel", "metadata") VALUES
+        ($1, 11, 'moderated', 'Blocked', 32, '{"keptHide": "h1"}')`,
+      [KEPT]
+    );
+  });
+
+  it.each([
+    ['a report verdict', { skipModeratorRemoved: true }],
+    ['a direct remove', {}],
+  ])('blocks it for real on %s, which drops the marker', async (_, options) => {
+    const result = await blockImage({ imageId: KEPT, userId: 2, ...options });
+
+    expect(result.alreadyRemoved).toBeUndefined();
+    expect(await marker()).toEqual({ marker: null, ingestion: 'Blocked' });
+  });
+
+  it('control: a report verdict leaves a moderator-removed image without the marker as it is', async () => {
+    await db.query(`UPDATE "Image" SET "metadata" = '{}' WHERE "id" = $1`, [KEPT]);
+
+    const result = await blockImage({ imageId: KEPT, userId: 2, skipModeratorRemoved: true });
+
+    expect(result.alreadyRemoved).toBe(true);
   });
 });

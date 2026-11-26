@@ -90,6 +90,35 @@ describe('getImagesAsPostsInfiniteHandler event decorations', () => {
   );
 });
 
+describe('getImagesAsPostsInfiniteHandler on a narrow-scope key', () => {
+  it.each([
+    [false, 'a session', session, true],
+    [true, 'a session', session, true],
+    [false, 'a scoped token', scopedKey, false],
+    [true, 'a scoped token', scopedKey, false],
+  ])(
+    'gives every fetch, the page loop included, owner and moderator views only on a full credential (index feed: %s, %s)',
+    async (imageIndexFeed, _label, credential, elevated) => {
+      await getImagesAsPostsInfiniteHandler({
+        input,
+        ctx: {
+          user: moderator,
+          ...credential,
+          features: { imageIndexFeed },
+          req: { headers: {} },
+        } as never,
+      });
+      const calls = fetches.mock.calls.map(
+        (c) =>
+          (c as unknown as [{ postIds?: number[]; asModerator?: boolean; asOwner?: boolean }])[0]
+      );
+      expect(calls.some((c) => !c.postIds)).toBe(true);
+      for (const call of calls)
+        expect(call).toMatchObject({ asModerator: elevated, asOwner: elevated });
+    }
+  );
+});
+
 /**
  * Naming the viewer is safe only while this route caches nothing per URL: `edgeCacheIt` sets an
  * edge TTL even for a signed-in caller, which would serve one viewer's preview hats to everyone.
@@ -104,6 +133,7 @@ describe('image.getImagesAsPostsInfinite stays per-viewer', () => {
     expect(end).toBeGreaterThan(start);
     const route = router.slice(start, end);
     expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
-    expect(route).not.toMatch(/\.use\(/);
+    // noEdgeCacheWhen only ever lowers the edge TTL; any other middleware here needs a look.
+    expect(route.replace(/\.use\(noEdgeCacheWhen\(\w+\)\)/, '')).not.toMatch(/\.use\(/);
   });
 });

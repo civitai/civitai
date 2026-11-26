@@ -5,8 +5,9 @@ import type { ComponentProps } from 'react';
 import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { storefrontSectionId, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
+import { serviceHref, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -64,14 +65,20 @@ export const ShopRow = ({
 };
 
 // Same grid and column math as ShopRow, one row, so a service card sits level with the
-// cosmetic cards. The button goes to the storefront Services section, where Request lives.
+// cosmetic cards.
 export const ServicesRow = ({
   offerings,
-  href,
+  sellerId,
+  sellerUsername,
 }: {
-  offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & { id: number })[];
-  href: string;
+  offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & {
+    id: number;
+    slotsOpen?: number | null;
+  })[];
+  sellerId: number;
+  sellerUsername: string;
 }) => {
+  const features = useFeatureFlags();
   const [columns, setColumns] = useState(1);
   const gridRef = useResizeObserver<HTMLDivElement>((entry) => {
     setColumns(getShopRowColumns(entry.contentRect.width));
@@ -90,11 +97,14 @@ export const ServicesRow = ({
         <div key={offering.id} style={{ margin: 8 }}>
           <ServiceOfferingCard
             offering={offering}
-            footer={
-              <Button component={Link} href={href} color="yellow" size="xs" mt="sm" fullWidth>
-                View service
-              </Button>
-            }
+            sellerId={sellerId}
+            sellerUsername={sellerUsername}
+            slotsOpen={offering.slotsOpen}
+            href={serviceHref({
+              username: sellerUsername,
+              offering,
+              next: features.creatorServicesNext,
+            })}
           />
         </div>
       ))}
@@ -160,10 +170,12 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
               {shop && hasCosmetics && (
                 <ShopRow featured={shop.featured} cosmetics={shop.cosmetics} />
               )}
+              {showServices && <ServiceHappyLine counts={offerings} />}
               {showServices && (
                 <ServicesRow
                   offerings={offerings}
-                  href={`/user/${user.username}/shop#${storefrontSectionId('services')}`}
+                  sellerId={user.id}
+                  sellerUsername={user.username ?? ''}
                 />
               )}
             </Stack>

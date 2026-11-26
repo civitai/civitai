@@ -1,9 +1,11 @@
 import { truncate } from 'lodash-es';
+import { sql } from 'kysely';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { postTextPendingCsamHoldText } from '~/server/services/storyline-visibility.sql';
 import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -38,6 +40,14 @@ export const commentDetailFetcher = createDetailFetcher({
     const rows = await kyselyRead
       .selectFrom('CommentV3')
       .select(['id', 'legacyV1Id', 'entityType', 'content', 'userId'])
+      // A comment on a refused or held text keeps its words out of the preview.
+      .select(
+        sql<boolean>`EXISTS (SELECT 1 FROM "PostText" ht
+          WHERE "CommentV3"."entityType" = 'postText' AND ht.id = "CommentV3"."entityId"
+            AND (ht.refused OR ht."csamHeld" OR ${sql.raw(postTextPendingCsamHoldText('ht'))}))`.as(
+          'onHiddenText'
+        )
+      )
       .where((eb) =>
         eb.or([
           ...(ids.length ? [eb('id', 'in', ids)] : []),
@@ -56,6 +66,7 @@ export const commentDetailFetcher = createDetailFetcher({
       .where('tosViolation', '=', false)
       .where('hidden', '=', false)
       .where('deletedAt', 'is', null)
+      .where(sql`"entityType"::text`, '<>', 'featurePage')
       .execute();
     if (!rows.length) return;
     const users = await db.user.findMany({
@@ -74,7 +85,8 @@ export const commentDetailFetcher = createDetailFetcher({
             : undefined)
         : rows.find((r) => r.id === n.details.commentId);
       if (!comment) continue;
-      n.details.content = truncate(removeTags(comment.content ?? ''), { length: 150 });
+      if (!comment.onHiddenText)
+        n.details.content = truncate(removeTags(comment.content ?? ''), { length: 150 });
       n.details.actor = users.find((u) => u.id === comment.userId);
     }
   },

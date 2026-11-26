@@ -15,7 +15,7 @@ import {
   type BodyImageGuard,
 } from '~/components/RichTextEditor/GuardedBodyMedia';
 import { extractCloudflareUuid } from '~/utils/article-helpers';
-import { parseImageWidth } from '~/shared/tiptap/image-width';
+import { parseImageAlign, parseImageWidth } from '~/shared/tiptap/image-width';
 import classes from './RichTextEditorComponent.module.scss';
 import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
@@ -52,7 +52,8 @@ const CivitaiEmbedBlock = dynamic(() =>
   import('~/components/CivitaiEmbed/CivitaiEmbedBlock').then((m) => m.CivitaiEmbedBlock)
 );
 
-const extensions = [
+/** Must cover every node and mark in `tiptapExtensions`; RenderRichText.browser.test.tsx pins it. */
+export const renderExtensions = [
   StarterKit.configure({ heading: false }),
   CustomHeading,
   TextStyleKit,
@@ -116,12 +117,17 @@ export function RenderRichText({
   const guardNsfwLevel = imageGuard?.nsfwLevel;
   const memoized = useMemo(() => {
     // Content images are linked by Cloudflare uuid: a media node's url is one, an img's src holds one.
-    const guard = (urlKey: string, size: unknown, media: React.ReactElement) => (
+    const guard = (
+      urlKey: string,
+      { size, align }: { size?: unknown; align?: unknown },
+      media: React.ReactElement
+    ) => (
       <GuardedBodyMedia
         linked={imagesByUrl.get(urlKey)}
         urlKey={urlKey}
         fallbackNsfwLevel={guardNsfwLevel ?? 0}
         size={parseImageWidth(size)}
+        align={parseImageAlign(align)}
       >
         {media}
       </GuardedBodyMedia>
@@ -129,7 +135,7 @@ export function RenderRichText({
     try {
       const el = renderToReactElement({
         content: groupSpoilerRuns(rewriteLinkMarks(content, toCurrentDomain)) as typeof content,
-        extensions,
+        extensions: renderExtensions,
         options: {
           nodeMapping: {
             media: ({ node }) => {
@@ -137,16 +143,16 @@ export function RenderRichText({
               if (guardNsfwLevel === undefined) return <EdgeMediaComponent {...attrs} />;
               return guard(
                 attrs.url ?? '',
-                attrs.size,
-                <EdgeMediaComponent {...attrs} size={null} />
+                attrs,
+                <EdgeMediaComponent {...attrs} size={null} align={null} />
               );
             },
             ...(guardNsfwLevel !== undefined && {
               image: ({ node }) => {
-                const { src, alt, title, size } = node.attrs as Record<string, string | null>;
+                const { src, alt, title } = node.attrs as Record<string, string | null>;
                 return guard(
                   extractCloudflareUuid(src ?? '') ?? src ?? '',
-                  size,
+                  node.attrs,
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={src ?? undefined} alt={alt ?? undefined} title={title ?? undefined} />
                 );
@@ -190,7 +196,9 @@ export function RenderRichText({
             ),
             spoilerRun: ({ children }) => <SpoilerText>{children}</SpoilerText>,
             spoilerBlock: ({ children }) => <SpoilerBlock>{children}</SpoilerBlock>,
-            civitaiEmbed: ({ node }) => <CivitaiEmbedBlock items={node.attrs.items} />,
+            civitaiEmbed: ({ node }) => (
+              <CivitaiEmbedBlock items={node.attrs.items} display={node.attrs.display} />
+            ),
             embed: ({ node }) => {
               const src = node.attrs.src as string | null;
               const provider = isAllowedPlayerUrl(src);
@@ -217,10 +225,11 @@ export function RenderRichText({
       // alone can't distinguish "rendered empty" from "threw".
       return { ok: true as const, el };
     } catch {
-      // A node or mark type outside `extensions` throws while the doc is built, before
+      // A node or mark type outside `renderExtensions` throws while the doc is built, before
       // `nodeMapping` is ever consulted — so an extra mapping entry cannot absorb it, and
-      // with no ErrorBoundary in the tree it blanks the whole page. `extensions` is kept in
-      // sync with `tiptapExtensions` by hand, so treat drift as reachable.
+      // with no ErrorBoundary in the tree it blanks the whole page. The schema test keeps stored
+      // node types out of here; a throw inside a `nodeMapping` entry still lands here, and the
+      // fallback does not apply `imageGuard`.
       return { ok: false as const };
     }
   }, [content, allowed, toCurrentDomain, host, imagesByUrl, guardNsfwLevel]);

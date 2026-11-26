@@ -26,16 +26,18 @@ const { trap } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/clickhouse/client', () => trap('clickhouse'));
 
-// The full dependency check. Mocked to report every dependency failing: readyz must still be 200.
+// The full dependency check, mocked where it lives (the /api/health route re-exports it from here,
+// so either import path reaches this mock). It reports every dependency failing: readyz must
+// still be 200, and must never call it.
 const { runHealthChecks } = vi.hoisted(() => ({
   runHealthChecks: vi.fn(async () => ({
     healthy: false,
     results: { write: { healthy: false }, read: { healthy: false }, redis: { healthy: false } },
   })),
 }));
-vi.mock('~/pages/api/health', () => ({
+vi.mock('~/server/health/dependency-checks', () => ({
   runHealthChecks,
-  runHealthChecksReusingCleanRun: runHealthChecks,
+  getLastProbeRunStartedAt: () => -Infinity,
 }));
 
 // warmup.ts imports instrumentationRegistry, which the global prom mock does not export

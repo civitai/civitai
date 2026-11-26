@@ -7,6 +7,7 @@ import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-hel
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * A notification id as it actually travels. The column is 64-bit, and the notifications service
@@ -69,5 +70,6 @@ export default AuthedEndpoint(
       return handleEndpointError(res, error);
     }
   },
-  ['POST']
+  ['POST'],
+  { scope: { scope: TokenScope.NotificationsRead } }
 );

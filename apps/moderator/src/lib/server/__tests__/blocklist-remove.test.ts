@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as WordRules from '@civitai/mod-utils/profanity/word-rules';
 
 /**
  * Four properties of the blocklist writers, none of them visible from the page:
@@ -165,6 +166,20 @@ vi.mock('../redis', () => ({
 }));
 vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
 
+// The floor rule must be decided by `managedProfanityEntries` alone: this override makes it refuse a
+// full list, and the test that sets it goes red if this caller writes the rule out inline again.
+const managedRule = vi.hoisted(() => ({ refuseAll: false }));
+vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
+  const original = await importOriginal<typeof WordRules>();
+  return {
+    ...original,
+    managedProfanityEntries: (entries: readonly string[]) => {
+      const result = original.managedProfanityEntries(entries);
+      return managedRule.refuseAll ? { ...result, enforced: false } : result;
+    },
+  };
+});
+
 const recordModActivitySpy = vi.fn();
 vi.mock('../mod-activity', () => ({
   recordModActivity: (...args: unknown[]) => recordModActivitySpy(...args),
@@ -173,8 +188,23 @@ vi.mock('../mod-activity', () => ({
 /** The moderator making the edit. Attribution is the whole point, so it is never a default. */
 const MOD_ID = 77;
 
-const { removeBlocklistItems, upsertBlocklist, getBlocklistDTO, BlocklistRowMismatchError } =
-  await import('../blocklist.service');
+const {
+  removeBlocklistItems,
+  upsertBlocklist,
+  getBlocklistDTO,
+  BlocklistRowMismatchError,
+  BlocklistNotSeededError,
+  BlocklistBelowFloorError,
+} = await import('../blocklist.service');
+const { MIN_MANAGED_PROFANITY_ENTRIES } = await import('@civitai/mod-utils/profanity/word-rules');
+
+/** `count` distinct synthetic profanity entries the main app would use (letters only, 4+). */
+const profanityEntries = (count: number) =>
+  Array.from(
+    { length: count },
+    (_, i) => `zorb${String.fromCharCode(97 + (i % 26))}${'q'.repeat(Math.floor(i / 26))}`
+  );
+const { logToAxiom } = await import('../axiom');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -418,6 +448,142 @@ describe('upsertBlocklist', () => {
       type: 'UsernameExact',
       data: ['scammer', 'phisher', 'spammer'],
     });
+  });
+
+  // A one-entry ProfanityWord row would replace the whole shipped list, and the seed only
+  // inserts when no row exists, so it would never repair it.
+  it('refuses to create the ProfanityWord row, which only the seed may create', async () => {
+    await expect(
+      upsertBlocklist({ userId: MOD_ID, type: 'ProfanityWord', blocklist: ['zorblat'] })
+    ).rejects.toBeInstanceOf(BlocklistNotSeededError);
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('adds to the ProfanityWord row once it exists, and logs the entries', async () => {
+    rows[12] = { type: 'ProfanityWord', data: ['zorblat'] };
+    const { count } = await upsertBlocklist({
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      blocklist: ['Quaxle'],
+    });
+    expect(count).toBe(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'profanity-word-list-change',
+        payload: {
+          userId: MOD_ID,
+          rowId: 12,
+          activity: 'add',
+          entries: ['quaxle'],
+          countDelta: 1,
+        },
+      })
+    );
+  });
+
+  it('logs only the ProfanityWord entries a remove actually dropped', async () => {
+    rows[12] = {
+      type: 'ProfanityWord',
+      data: [...profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES), 'quaxle'],
+    };
+    await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: ['Quaxle', 'never-there'],
+    });
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          activity: 'remove',
+          entries: ['quaxle'],
+          countDelta: -1,
+        }),
+      })
+    );
+  });
+
+  it('removes ProfanityWord entries down to the floor', async () => {
+    rows[12] = { type: 'ProfanityWord', data: profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES + 1) };
+    const { count } = await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: [rows[12].data[0]],
+    });
+    expect(count).toBe(1);
+    expect(rows[12].data).toHaveLength(MIN_MANAGED_PROFANITY_ENTRIES);
+  });
+
+  // Below the floor the main app ignores the row, so the edit would silently do the opposite of
+  // what the moderator wanted. Unusable entries do not count toward it.
+  it('refuses a ProfanityWord removal that would leave fewer usable entries than the floor', async () => {
+    const data = [...profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES), 'ab'];
+    rows[12] = { type: 'ProfanityWord', data };
+    await expect(
+      removeBlocklistItems({ id: 12, userId: MOD_ID, type: 'ProfanityWord', items: [data[0]] })
+    ).rejects.toBeInstanceOf(BlocklistBelowFloorError);
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(rows[12].data).toEqual(data);
+  });
+
+  it('a removal that keeps the count is allowed', async () => {
+    const entries = profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES - 1);
+    const data = [...entries, `(${entries[0]})`];
+    rows[12] = { type: 'ProfanityWord', data };
+    const { count } = await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: [data.at(-1)!],
+    });
+    expect(count).toBe(1);
+  });
+
+  it('a removal that lowers the count below the floor is refused', async () => {
+    const entries = profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES);
+    const data = [...entries, `(${entries[0]})`];
+    rows[12] = { type: 'ProfanityWord', data };
+    await expect(
+      removeBlocklistItems({ id: 12, userId: MOD_ID, type: 'ProfanityWord', items: [entries[1]] })
+    ).rejects.toBeInstanceOf(BlocklistBelowFloorError);
+    expect(rows[12].data).toEqual(data);
+  });
+
+  it('decides the floor through managedProfanityEntries', async () => {
+    const data = profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES + 5);
+    rows[12] = { type: 'ProfanityWord', data };
+    managedRule.refuseAll = true;
+    try {
+      await expect(
+        removeBlocklistItems({ id: 12, userId: MOD_ID, type: 'ProfanityWord', items: [data[0]] })
+      ).rejects.toBeInstanceOf(BlocklistBelowFloorError);
+    } finally {
+      managedRule.refuseAll = false;
+    }
+  });
+
+  it('removes an unusable ProfanityWord entry from a list already below the floor', async () => {
+    rows[12] = { type: 'ProfanityWord', data: ['zorblat', 'ab'] };
+    const { count } = await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: ['ab'],
+    });
+    expect(count).toBe(1);
+    expect(rows[12].data).toEqual(['zorblat']);
+  });
+
+  it('does not log edits to other lists', async () => {
+    await removeBlocklistItems({
+      id: 1,
+      userId: MOD_ID,
+      type: 'EmailDomain',
+      items: ['spam.example'],
+    });
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });
 

@@ -10,6 +10,7 @@ import {
   SAVE_BYTES_WINDOW_MS,
   SAVE_IMAGE_MAX_CONCURRENT,
 } from '~/components/AppBlocks/saveImageDownload';
+import { buildFbx, buildGlb, concatBytes } from '~/components/AppBlocks/__tests__/model3dFixtures';
 
 /**
  * App Blocks SHARED (cross-user / app-global) storage bridge — host side (Phase 2b).
@@ -70,10 +71,6 @@ const mocks = vi.hoisted(() => ({
   storageInvalidate: vi.fn(),
 }));
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // Partial mock: keep the REAL origin allowlist + filename sanitizer + request
 // parser (the security-critical pure logic), stub ONLY the top-frame blob
 // download so the SAVE_IMAGE tests never hit the network.
@@ -128,6 +125,7 @@ vi.mock('~/utils/trpc', () => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: mocks.getImagesByIds }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       storage: {
@@ -537,6 +535,68 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       mocks.saveBytesDownload.mock.calls[0];
     expect(savedBytes).toBe(bytes);
     expect([savedType, savedName]).toEqual(['application/zip', 'dataset.zip']);
+    replies.stop();
+  });
+
+  // A page block hands a generated 3D model to the viewer. Content-classified
+  // like every bytes save; the name the block sends never decides the type.
+  test.each([
+    [
+      'GLB',
+      () => buildGlb({ binBytes: 64 }),
+      'turnaround.png',
+      'model/gltf-binary',
+      'turnaround.glb',
+    ],
+    ['FBX', () => buildFbx(), 'turnaround.txt', 'model/x-fbx', 'turnaround.fbx'],
+  ] as const)(
+    'SAVE_IMAGE bytes variant: a binary %s model downloads under its own extension',
+    async (_kind, build, sentName, wantType, wantName) => {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+      const bytes = build().slice().buffer;
+
+      postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_model', bytes, filename: sentName });
+
+      await vi.waitFor(() => {
+        const r = replies.last('SAVE_IMAGE_RESULT');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({ requestId: 'rq_save_model', ok: true });
+      });
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+      const [savedBytes, { type: savedType, filename: savedName }] =
+        mocks.saveBytesDownload.mock.calls[0];
+      expect(savedBytes).toBe(bytes);
+      expect([savedType, savedName]).toEqual([wantType, wantName]);
+      replies.stop();
+    }
+  );
+
+  test('SAVE_IMAGE bytes variant: a GLB with bytes past its declared length is refused (no download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    // A valid GLB with a second file riding after it: its chunks still tile the declared length,
+    // so only the declared-length-equals-buffer check refuses it.
+    const glb = concatBytes(buildGlb({ binBytes: 64 }), new Uint8Array(PNG_BYTES()));
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bad_glb',
+      bytes: glb.buffer,
+      filename: 'turnaround.glb',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_bad_glb',
+        ok: false,
+        error: 'file type is not allowed',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
     replies.stop();
   });
 

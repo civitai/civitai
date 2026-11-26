@@ -54,6 +54,7 @@ function mountShelf(share: Share, username?: string) {
     earned: EARNED,
     activity: { milestones: [], closestNext: null },
     secrets: [],
+    reveals: [],
     share: { shareable: [], hiddenOnProfile: [], secret: [], ...share },
   } as unknown as Journey;
   container = document.createElement('div');
@@ -113,7 +114,7 @@ describe('share buttons on the journey shelf', () => {
     ]);
   });
 
-  // Decided with Justin: a shared special keeps its secret. The share text is posted for strangers,
+  // A shared special keeps its secret. The share text is posted for strangers,
   // so it must not carry the name the card masks.
   it('keeps a special achievement secret in the share text', () => {
     const [link] = shareLinks(['hidden:vwjxua'], 'maker', ['hidden:vwjxua']);

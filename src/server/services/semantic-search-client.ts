@@ -1,16 +1,24 @@
+import { trace } from '@opentelemetry/api';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+
+/** One creator's hits shown on a page at most, so a prolific creator cannot fill it. */
+export const MAX_HITS_PER_USER = 3;
 
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
-// Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
-const MAX_HYDRATION_BATCH = 100;
+// The search service's page maximum (a larger `limit` is an error, not a short page), and so the
+// most candidates hydrated per round: each round is one id-list query on the page's fetch path.
+export const MAX_CANDIDATE_LIMIT = 100;
 // The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
 // and payload indexes are on disk), then well under 1 s.
 const SEARCH_SERVICE_TIMEOUT_MS = 20_000;
+// Above the search service's own orchestrator wait, so a slow image embed is not paid twice.
+const SIMILAR_IMAGE_TIMEOUT_MS = 35_000;
 
 /**
  * The viewer's content gate, which every query carries. Challenges and crucibles rate the entity
@@ -32,16 +40,24 @@ export type ViewerGate =
 const GATE_KIND = {
   images: 'level',
   articles: 'level',
+  models: 'level',
   comics: 'level',
   models3d: 'level',
   storylines: 'level',
+  collections: 'level',
+  bounties: 'level',
+  videos: 'level',
   challenges: 'challenge',
   crucibles: 'crucible',
 } as const satisfies Record<string, ViewerGate['kind']>;
 
 export type SearchCollection = keyof typeof GATE_KIND;
 
-export type SearchQuery = { text: string } | { similarTo: number };
+/** `spellcheck: false`: the service searches the text as typed, without its spelling correction. */
+export type SearchQuery =
+  | { text: string; spellcheck?: false }
+  | { similarTo: number }
+  | { imageUrl: string };
 
 export type QdrantCondition = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
@@ -54,9 +70,14 @@ export type CandidateFilter = {
   excludedTagIds?: number[];
   userIds?: number[];
   excludedUserIds?: number[];
+  // Only these points: the viewer's own short list, so the ranking is within it.
+  ids?: number[];
   excludedIds?: number[];
   // Payload key → the point matches any of the values.
   anyOf?: Record<string, PayloadValue[] | undefined>;
+  // A full-text payload index on `key` holds every word of `text` (Qdrant's text match), or, with
+  // `orAnyOf`, the keyword field `orAnyOf.key` holds any of its values.
+  allWords?: { key: string; text: string; orAnyOf?: { key: string; values: string[] } };
   range?: { key: string; gte?: string | number; lte?: string | number };
   mustNot?: QdrantCondition[];
 };
@@ -82,6 +103,9 @@ function gateConditions(collection: SearchCollection, gate: ViewerGate | undefin
   const levels = { any: gate.nsfwLevels };
   const must: QdrantCondition[] = [{ key: 'nsfwLevel', match: levels }];
   const must_not: QdrantCondition[] = [];
+  // A 3D model is embedded from its thumbnail, rated apart from the model. A point without the
+  // field matches nothing, so one written before it existed is never served.
+  if (collection === 'models3d') must.push({ key: 'thumbnailNsfwLevel', match: levels });
 
   if (gate.kind === 'challenge') {
     if (!gate.domainBuzzType) refuse(collection, 'no domain currency');
@@ -111,6 +135,16 @@ export function buildQdrantFilter(collection: SearchCollection, f: CandidateFilt
   const { must, must_not } = gateConditions(collection, f.gate);
   for (const tagId of f.tagIds ?? []) must.push({ key: 'tagIds', match: { value: tagId } });
   if (f.userIds?.length) must.push({ key: 'userId', match: { any: f.userIds } });
+  if (f.ids?.length) must.push({ has_id: f.ids });
+  if (f.allWords?.text.trim()) {
+    const words = { key: f.allWords.key, match: { text: f.allWords.text } };
+    const orAnyOf = f.allWords.orAnyOf;
+    must.push(
+      orAnyOf?.values.length
+        ? { should: [words, { key: orAnyOf.key, match: { any: orAnyOf.values } }] }
+        : words
+    );
+  }
   for (const [key, values] of Object.entries(f.anyOf ?? {}))
     if (values?.length) must.push({ key, match: { any: values } });
   if (f.range && (f.range.gte !== undefined || f.range.lte !== undefined))
@@ -125,27 +159,75 @@ export function buildQdrantFilter(collection: SearchCollection, f: CandidateFilt
   return { must, must_not };
 }
 
-/** Ranked ids, and the query as the service's spelling correction rewrote it, if it did. */
+const GUARD_OUTCOMES = ['pass', 'flag', 'unknown', 'unavailable', 'mismatch', 'error'] as const;
+/** `none`: no guard ran on the text, a word refusal ended the search or the query was by image. */
+export type GuardOutcome = (typeof GUARD_OUTCOMES)[number] | 'none';
+
+/** The search service's query-guard verdict. Server-only: never part of a response to the browser. */
+export type GuardRead = {
+  outcome: GuardOutcome;
+  rules: string[];
+  mode: string;
+  version: string | null;
+  /** Set only when the service refused the text (it served no hits for it). */
+  refused?: true;
+};
+
+export const GUARD_NONE: GuardRead = { outcome: 'none', rules: [], mode: '', version: null };
+export const GUARD_UNKNOWN: GuardRead = { outcome: 'unknown', rules: [], mode: '', version: null };
+
+/** A service without the full guard result (missing, or `refused` alone) reads as `unknown`. */
+export function readGuard(raw: unknown): GuardRead {
+  if (!raw || typeof raw !== 'object') return GUARD_UNKNOWN;
+  const g = raw as Record<string, unknown>;
+  if (!GUARD_OUTCOMES.includes(g.outcome as never)) return GUARD_UNKNOWN;
+  return {
+    outcome: g.outcome as GuardOutcome,
+    rules: Array.isArray(g.rules) ? g.rules.filter((r): r is string => typeof r === 'string') : [],
+    mode: typeof g.mode === 'string' ? g.mode : '',
+    version: typeof g.version === 'string' ? g.version : null,
+    ...(g.refused === true ? { refused: true as const } : {}),
+  };
+}
+
+/** Who the search is for, from the session: never from request input. */
+export type SearchViewer = { isModerator: boolean };
+
+/**
+ * Ranked ids, the query as the service's spelling correction rewrote it (if it did), and the
+ * guard's verdict on the text. `cacheHit` is set by the candidate cache.
+ */
 export type CandidateSource = (args: {
   query: SearchQuery;
   filter: CandidateFilter;
   offset: number;
   limit: number;
+  viewer: SearchViewer;
   // newest: the service orders its best matches by date and pages within them. Text queries only.
   sort?: 'relevance' | 'newest';
-}) => Promise<{ ids: number[]; correctedQuery?: string }>;
+}) => Promise<{ ids: number[]; correctedQuery?: string; guard?: GuardRead; cacheHit?: boolean }>;
 
-async function searchServiceRequest<T>(path: string, body: unknown, notFound: string): Promise<T> {
+export function searchServiceUrl(path: string) {
   if (!env.SEARCH_SERVICE_URL)
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Semantic search is not set up' });
-  const res = await fetch(`${env.SEARCH_SERVICE_URL.replace(/\/+$/, '')}${path}`, {
+  return `${env.SEARCH_SERVICE_URL.replace(/\/+$/, '')}${path}`;
+}
+
+export const searchServiceAuth = (): Record<string, string> =>
+  env.SEARCH_SERVICE_TOKEN ? { authorization: `Bearer ${env.SEARCH_SERVICE_TOKEN}` } : {};
+
+async function searchServiceRequest<T>(
+  path: string,
+  body: unknown,
+  notFound: string,
+  headers: Record<string, string> = {},
+  timeoutMs = SEARCH_SERVICE_TIMEOUT_MS
+): Promise<T> {
+  const res = await fetch(searchServiceUrl(path), {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(env.SEARCH_SERVICE_TOKEN ? { authorization: `Bearer ${env.SEARCH_SERVICE_TOKEN}` } : {}),
-    },
+    headers: { 'content-type': 'application/json', ...searchServiceAuth(), ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(SEARCH_SERVICE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   }).catch((err) => {
     throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Search is unavailable', cause: err });
   });
@@ -156,17 +238,26 @@ async function searchServiceRequest<T>(path: string, body: unknown, notFound: st
   return (await res.json()) as T;
 }
 
+/** The OTEL traceId, so the service's guard log line joins the semanticSearchAudit row. */
+function requestIdHeader(): Record<string, string> {
+  const traceId = trace.getActiveSpan()?.spanContext().traceId;
+  return traceId ? { 'x-request-id': traceId } : {};
+}
+
 /**
  * The cluster search service: text through `/v1/search` (embedding and spelling correction are
  * its job), "more like this" through its read-only Qdrant pass-through. Ids only, never payload:
- * the index lags Postgres, so hydration decides what is shown.
+ * the index lags Postgres, so hydration decides what is shown. `limit` is at most
+ * MAX_CANDIDATE_LIMIT; the candidate cache in front of it pages larger ranges in blocks of that size.
  */
 export function searchServiceSource(
   collection: SearchCollection,
   { notFoundMessage = 'Not found' }: { notFoundMessage?: string } = {}
 ): CandidateSource {
-  return async ({ query, filter, offset, limit, sort }) => {
+  return async ({ query, filter, offset, limit, viewer, sort }) => {
     const qdrantFilter = buildQdrantFilter(collection, filter);
+    const audit = await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_AUDIT);
+    const headers = audit ? requestIdHeader() : {};
     if ('similarTo' in query) {
       // The source is always its own best match.
       qdrantFilter.must_not.push({ has_id: [query.similarTo] });
@@ -182,33 +273,271 @@ export function searchServiceSource(
           params: { quantization: { rescore: true, oversampling: 2 } },
           with_payload: false,
         },
-        notFoundMessage
+        notFoundMessage,
+        headers
       );
-      return { ids: result.points.map((p) => Number(p.id)) };
+      return { ids: result.points.map((p) => Number(p.id)), guard: GUARD_NONE };
+    }
+    if ('imageUrl' in query) {
+      // The caller has scanned and rated the image (the search upload gate) before sending it.
+      const { hits } = await searchServiceRequest<{ hits: { id: number | string }[] }>(
+        '/v1/similar',
+        {
+          collection,
+          image_url: query.imageUrl,
+          filter: qdrantFilter,
+          offset,
+          limit,
+          ...(audit ? { browsing_levels: filter.gate.nsfwLevels } : {}),
+        },
+        notFoundMessage,
+        headers,
+        SIMILAR_IMAGE_TIMEOUT_MS
+      );
+      return { ids: hits.map((h) => Number(h.id)), guard: GUARD_NONE };
     }
 
-    const { corrected, changes, hits } = await searchServiceRequest<{
+    const { corrected, changes, hits, guard } = await searchServiceRequest<{
       corrected: string;
       changes: unknown[];
       hits: { id: number | string }[];
+      guard?: unknown;
     }>(
       '/v1/search',
       {
         collection,
         query: query.text,
+        ...(query.spellcheck === false ? { spellcheck: false } : {}),
         filter: qdrantFilter,
         offset,
         limit,
         // Only when asked: a relevance search sends the request it always has.
         ...(sort === 'newest' ? { sort } : {}),
+        ...(audit
+          ? { browsing_levels: filter.gate.nsfwLevels, viewer_is_moderator: viewer.isModerator }
+          : {}),
       },
-      notFoundMessage
+      notFoundMessage,
+      headers
     );
     return {
       ids: hits.map((h) => Number(h.id)),
       correctedQuery: changes.length ? corrected : undefined,
+      guard: readGuard(guard),
     };
   };
+}
+
+// Cap on the matches ranked ahead of the rest of a text search.
+const MAX_FIRST_MATCHES = 200;
+
+/**
+ * Text candidates with the points `narrow` admits first (in their own similarity order), then the
+ * rest of the semantic ranking without them. The matches are fetched once per source and reused
+ * for every later block, so make one per request.
+ */
+function withMatchesFirst(
+  source: CandidateSource,
+  narrow: (filter: CandidateFilter, text: string) => CandidateFilter
+): CandidateSource {
+  let matches: ReturnType<CandidateSource> | undefined;
+  return async (args) => {
+    if (!('text' in args.query) || !args.query.text.trim()) return source(args);
+    matches ??= source({
+      ...args,
+      filter: narrow(args.filter, args.query.text),
+      offset: 0,
+      limit: MAX_FIRST_MATCHES,
+    });
+    const first = await matches;
+    const rest = (offset: number, limit: number) =>
+      source({
+        ...args,
+        filter: { ...args.filter, excludedIds: [...(args.filter.excludedIds ?? []), ...first.ids] },
+        offset,
+        limit,
+      });
+    if (args.offset >= first.ids.length) return rest(args.offset - first.ids.length, args.limit);
+    const head = first.ids.slice(args.offset, args.offset + args.limit);
+    const tail = head.length < args.limit ? await rest(0, args.limit - head.length) : undefined;
+    return { ...first, ids: [...head, ...(tail?.ids ?? [])] };
+  };
+}
+
+// How many of the closest "more like this" matches a preferred tag can reorder.
+export const PREFER_WINDOW = 500;
+
+/**
+ * The first `total` ids, one block at a time: a range read at once takes a bulkhead slot per block,
+ * and SEMANTIC_SEARCH_CONCURRENCY slots per pod is fewer than a window's blocks.
+ */
+async function readInOrder(
+  source: CandidateSource,
+  args: Parameters<CandidateSource>[0],
+  total: number
+) {
+  let read: Awaited<ReturnType<CandidateSource>> = { ids: [] };
+  const ids: number[] = [];
+  while (ids.length < total) {
+    const limit = Math.min(MAX_CANDIDATE_LIMIT, total - ids.length);
+    read = await source({ ...args, offset: ids.length, limit });
+    ids.push(...read.ids);
+    // A short block is the end of the ranking.
+    if (read.ids.length < limit) break;
+  }
+  return { ...read, ids };
+}
+
+/**
+ * "More like this" with the images carrying `tagId` among the closest `PREFER_WINDOW` first (in
+ * similarity order), then the plain ranking without them. A tagged image outside the window is
+ * never pulled in, so the boost reorders the neighbourhood and never widens it. Later pages reuse
+ * the plain ranking's blocks. Matches are fetched once per source, so make one per request.
+ */
+export function withPreferredTagFirst(
+  source: CandidateSource,
+  tagId: number,
+  window = PREFER_WINDOW
+): CandidateSource {
+  let split:
+    | Promise<{
+        matches: number[];
+        others: number[];
+        size: number;
+        plain: Awaited<ReturnType<CandidateSource>>;
+      }>
+    | undefined;
+  return async (args) => {
+    if (!('similarTo' in args.query)) return source(args);
+    split ??= (async () => {
+      const first = await readInOrder(source, args, window);
+      const plain = first.ids;
+      if (!plain.length) return { matches: [], others: [], size: 0, plain: first };
+      const { ids } = await readInOrder(
+        source,
+        {
+          ...args,
+          filter: {
+            ...args.filter,
+            ids: plain,
+            tagIds: [...new Set([...(args.filter.tagIds ?? []), tagId])],
+          },
+        },
+        plain.length
+      );
+      const matched = new Set(ids);
+      // In similarity order, whatever order the matches query returned them in.
+      const matches = plain.filter((id) => matched.has(id));
+      const others = plain.filter((id) => !matched.has(id));
+      return { matches, others, size: plain.length, plain: first };
+    })();
+    const { matches, others, size, plain } = await split;
+    if (!matches.length) return source(args);
+    const head = [...matches, ...others].slice(args.offset, args.offset + args.limit);
+    const past = Math.max(0, args.offset - size);
+    const tail =
+      head.length < args.limit && size === window
+        ? await source({ ...args, offset: window + past, limit: args.limit - head.length })
+        : undefined;
+    return { ...plain, ...tail, ids: [...head, ...(tail?.ids ?? [])] };
+  };
+}
+
+/**
+ * The query's possible keyword values: the whole query and each word, lowercased, as tags are
+ * stored. A multi-word tag matches only as the whole query.
+ */
+export function queryKeywords(text: string) {
+  const whole = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return [...new Set([whole.join(' '), ...whole])].filter(Boolean);
+}
+
+/**
+ * The points holding every query word in `key` first. Embeddings rank meaning, so a query that is a
+ * model's name, or a word of it, otherwise loses to look-alike names and spellings. With
+ * `orKeywordKey`, so does a point whose keyword field holds the query or one of its words.
+ */
+export function withWordMatchesFirst(
+  source: CandidateSource,
+  key: string,
+  orKeywordKey?: string
+): CandidateSource {
+  return withMatchesFirst(source, (filter, text) => ({
+    ...filter,
+    allWords: {
+      key,
+      text,
+      ...(orKeywordKey && { orAnyOf: { key: orKeywordKey, values: queryKeywords(text) } }),
+    },
+  }));
+}
+
+/**
+ * The points carrying `tagId` first. A rare term embeds as its nearest common concept (a tiefling
+ * as horns), so the images tagged with it lose to unrelated ones that share that concept.
+ */
+export function withTagMatchesFirst(source: CandidateSource, tagId: number): CandidateSource {
+  return withMatchesFirst(source, (filter) => ({
+    ...filter,
+    tagIds: [...new Set([...(filter.tagIds ?? []), tagId])],
+  }));
+}
+
+/** The viewer's hidden users, those they blocked and those who blocked them: never candidates. */
+export function viewerExcludedUserIds(hidden: {
+  hiddenUsers: { id: number }[];
+  blockedUsers: { id: number }[];
+  blockedByUsers: { id: number }[];
+}) {
+  return [
+    ...new Set(
+      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
+    ),
+  ];
+}
+
+/**
+ * Candidates for a text query, with the service's spelling correction audited as well: the service
+ * embeds its correction, not the text the caller audited. `audit` returns a truthy refusal; a
+ * refused correction ends the search, and `state.refused` tells the caller to return nothing.
+ */
+export function auditedTextCandidates({
+  source,
+  text,
+  filter,
+  viewer,
+  audit,
+  spellcheck,
+}: {
+  source: CandidateSource;
+  text: string;
+  filter: CandidateFilter;
+  viewer: SearchViewer;
+  audit: (correction: string) => Promise<unknown>;
+  spellcheck?: false;
+}) {
+  const query: SearchQuery = spellcheck === false ? { text, spellcheck } : { text };
+  const state = {
+    correctedQuery: undefined as string | undefined,
+    refused: false,
+    returned: 0,
+    // The first call's: every call of one search carries the same query.
+    first: undefined as { ids: number[]; guard?: GuardRead; cacheHit?: boolean } | undefined,
+  };
+  let audited = false;
+  const candidates = async (offset: number, limit: number) => {
+    const result = await source({ query, filter, offset, limit, viewer });
+    state.first ??= { ids: result.ids, guard: result.guard, cacheHit: result.cacheHit };
+    if (!audited && result.correctedQuery !== undefined) {
+      audited = true;
+      state.refused = result.correctedQuery !== text && !!(await audit(result.correctedQuery));
+    }
+    if (state.refused) return [];
+    state.correctedQuery ??= result.correctedQuery;
+    state.returned += result.ids.length;
+    return result.ids;
+  };
+  return { candidates, state };
 }
 
 export type Hydrate<T extends { id: number }> = (ids: number[]) => Promise<T[]>;
@@ -239,7 +568,7 @@ export async function collectPage<T extends { id: number }>({
   for (let round = 0; round < MAX_HYDRATION_ROUNDS && items.length < limit; round++) {
     const batchSize = Math.min(
       (limit - items.length) * CANDIDATE_MULTIPLIER,
-      MAX_HYDRATION_BATCH,
+      MAX_CANDIDATE_LIMIT,
       MAX_CANDIDATE_OFFSET - position
     );
     if (batchSize <= 0) {

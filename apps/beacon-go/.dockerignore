@@ -1,0 +1,4 @@
+testdata
+ci
+*.md
+.env*

@@ -19,7 +19,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import {
   Form,
@@ -67,6 +67,7 @@ import type {
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import { changedCosmeticId } from '~/components/Modals/profile-cosmetic-ids';
+import { useResetBaseline } from '~/components/Modals/useResetBaseline';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import type { UserWithProfile } from '~/types/router';
 
@@ -161,9 +162,6 @@ export default function UserProfileEditModal() {
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
-
-  // Keep track of old data to compare and make only the necessary requests
-  const previousData = useRef<FormDataSchema>();
 
   const { data: leaderboards = [], isLoading: loadingLeaderboards } =
     trpc.leaderboard.getLeaderboards.useQuery(undefined, {
@@ -360,72 +358,68 @@ export default function UserProfileEditModal() {
 
   const publicSettings = user?.publicSettings as UserPublicSettingsSchema;
 
-  useEffect(() => {
-    if (user && user?.profile) {
-      const equippedCosmetics = owned
-        .filter((c) => !!c.equippedAt)
-        .map(({ cosmetic, data, ...rest }) => ({ ...rest, ...cosmetic }));
-      const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
-      const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
-      const selectedProfileDecoration = equippedCosmetics.find(
-        (c) => c.type === CosmeticType.ProfileDecoration
-      );
-      const selectedProfileBackground = equippedCosmetics.find(
-        (c) => c.type === CosmeticType.ProfileBackground
-      );
-      const selectedCardDecoration = equippedCosmetics.find(
-        (c) => c.type === CosmeticType.CardDecoration
-      );
-      const formData = {
-        ...user.profile,
-        // `profile.bio`/`message`/`coverImage` are resolved for the current domain, so
-        // editing them on civitai.com would write the SFW copy back over the default.
-        // The editor always works on the two stored variants.
-        bio: user.profile.defaultBio,
-        message: user.profile.defaultMessage,
-        // TODO: Fix typing at some point :grimacing:.
-        coverImage: user.profile.defaultCoverImage as unknown as FormDataSchema['coverImage'],
-        sfwCoverImage: user.profile.sfwCoverImage as unknown as FormDataSchema['sfwCoverImage'],
-        // A showcase stored before `userProfile.update` was bounded can be longer than the
-        // limit; sent back whole it would fail validation on every save, silently when the
-        // Showcase section is hidden. Trimmed the way `addEntityToShowcase` trims.
-        showcaseItems: user.profile.showcaseItems?.slice(0, constants.profile.showcaseItemsLimit),
-        profileImage: user?.image,
-        socialLinks: (user?.links ?? [])
-          .filter((link) => link.type === LinkType.Social)
-          .map((link) => ({
-            id: link.id,
-            url: link.url,
-            type: link.type,
-          })),
-        sponsorshipLinks: (user?.links ?? [])
-          .filter((link) => link.type === LinkType.Sponsorship)
-          .map((link) => ({
-            id: link.id,
-            url: link.url,
-            type: link.type,
-          })),
-        nameplateId: selectedNameplate?.id ?? null,
-        badge: selectedBadge ?? null,
-        profileDecoration: selectedProfileDecoration ?? null,
-        profileBackground: selectedProfileBackground ?? null,
-        cardDecoration: selectedCardDecoration ?? null,
-        leaderboardShowcase: user?.leaderboardShowcase ?? null,
-        profilePicture: user.profilePicture
-          ? (user.profilePicture as FormDataSchema['profilePicture'])
-          : user.image
-          ? { url: user.image, type: 'image' as const }
-          : null,
-        creatorCardStatsPreferences:
-          publicSettings?.creatorCardStatsPreferences ?? creatorCardStatsDefaults,
-        privacySettings: user.profile.privacySettings as PrivacySettingsSchema,
-      };
-
-      if (!previousData.current) previousData.current = formData;
-
-      form.reset(formData);
-    }
-  }, [user]);
+  const formData = useMemo(() => {
+    if (!user?.profile) return undefined;
+    const equippedCosmetics = owned
+      .filter((c) => !!c.equippedAt)
+      .map(({ cosmetic, data, ...rest }) => ({ ...rest, ...cosmetic }));
+    const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
+    const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
+    const selectedProfileDecoration = equippedCosmetics.find(
+      (c) => c.type === CosmeticType.ProfileDecoration
+    );
+    const selectedProfileBackground = equippedCosmetics.find(
+      (c) => c.type === CosmeticType.ProfileBackground
+    );
+    const selectedCardDecoration = equippedCosmetics.find(
+      (c) => c.type === CosmeticType.CardDecoration
+    );
+    return {
+      ...user.profile,
+      // `profile.bio`/`message`/`coverImage` are resolved for the current domain, so
+      // editing them on civitai.com would write the SFW copy back over the default.
+      // The editor always works on the two stored variants.
+      bio: user.profile.defaultBio,
+      message: user.profile.defaultMessage,
+      // TODO: Fix typing at some point :grimacing:.
+      coverImage: user.profile.defaultCoverImage as unknown as FormDataSchema['coverImage'],
+      sfwCoverImage: user.profile.sfwCoverImage as unknown as FormDataSchema['sfwCoverImage'],
+      // A showcase stored before `userProfile.update` was bounded can be longer than the
+      // limit; sent back whole it would fail validation on every save, silently when the
+      // Showcase section is hidden. Trimmed the way `addEntityToShowcase` trims.
+      showcaseItems: user.profile.showcaseItems?.slice(0, constants.profile.showcaseItemsLimit),
+      profileImage: user?.image,
+      socialLinks: (user?.links ?? [])
+        .filter((link) => link.type === LinkType.Social)
+        .map((link) => ({
+          id: link.id,
+          url: link.url,
+          type: link.type,
+        })),
+      sponsorshipLinks: (user?.links ?? [])
+        .filter((link) => link.type === LinkType.Sponsorship)
+        .map((link) => ({
+          id: link.id,
+          url: link.url,
+          type: link.type,
+        })),
+      nameplateId: selectedNameplate?.id ?? null,
+      badge: selectedBadge ?? null,
+      profileDecoration: selectedProfileDecoration ?? null,
+      profileBackground: selectedProfileBackground ?? null,
+      cardDecoration: selectedCardDecoration ?? null,
+      leaderboardShowcase: user?.leaderboardShowcase ?? null,
+      profilePicture: user.profilePicture
+        ? (user.profilePicture as FormDataSchema['profilePicture'])
+        : user.image
+        ? { url: user.image, type: 'image' as const }
+        : null,
+      creatorCardStatsPreferences:
+        publicSettings?.creatorCardStatsPreferences ?? creatorCardStatsDefaults,
+      privacySettings: user.profile.privacySettings as PrivacySettingsSchema,
+    };
+  }, [user, owned, publicSettings]);
+  const previousData = useResetBaseline<FormDataSchema>(formData, form.reset);
 
   const handleClose = () => dialog.onClose();
   const handleSubmit = (data: FormDataSchema) => {
@@ -667,6 +661,7 @@ export default function UserProfileEditModal() {
                 <HighlightedBadgesInput
                   badges={allBadges}
                   value={highlightedBadgeIds}
+                  hiddenIds={hiddenBadgeIds}
                   onChange={(nextHighlighted) =>
                     form.setValue('privacySettings', {
                       ...privacySettings,

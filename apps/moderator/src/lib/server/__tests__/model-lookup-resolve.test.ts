@@ -117,12 +117,12 @@ describe('resolveModelRefLive', () => {
   });
 
   it('falls back to the VERSION when a bare id is not a model', async () => {
-    rows.version = { id: 3367012, modelId: 2971194 };
+    rows.version = { id: 990200017, modelId: 990200016 };
 
-    await expect(resolveModelRefLive('3367012')).resolves.toEqual({
-      modelId: 2971194,
-      versionId: 3367012,
-      resolvedFromVersion: 3367012,
+    await expect(resolveModelRefLive('990200017')).resolves.toEqual({
+      modelId: 990200016,
+      versionId: 990200017,
+      resolvedFromVersion: 990200017,
       alsoAVersion: null,
     });
   });

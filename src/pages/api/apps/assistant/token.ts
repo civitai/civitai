@@ -5,6 +5,7 @@ import {
   mintAppAssistantToken,
 } from '~/server/services/app-assistant/app-assistant.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 
@@ -19,8 +20,9 @@ import { requireFullScopeSession } from '~/server/utils/require-full-scope-sessi
  * POST must be JSON so a cross-origin form cannot send it without a CORS preflight.
  */
 export default AuthedEndpoint(
-  async (req, res, user) => {
+  async (req, res, user, session) => {
     if (!requireFullScopeSession(req, res)) return;
+    if (refuseWhileImpersonating(session, res)) return;
     const refusal = await getAppAssistantRefusal({ user, req });
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json'))
@@ -31,7 +33,7 @@ export default AuthedEndpoint(
     res.setHeader('Cache-Control', 'no-store');
     try {
       if (req.method === 'POST') await enableAppAssistant(user.id);
-      const minted = await mintAppAssistantToken(user.id, purpose);
+      const minted = await mintAppAssistantToken(user.id, purpose, session.impersonatedBy ?? null);
       if (!minted)
         return res
           .status(403)
@@ -42,7 +44,7 @@ export default AuthedEndpoint(
         type: 'app-assistant.token.failed',
         message: `App Assistant token mint failed for user ${user.id}`,
         error: safeError(err),
-      }).catch(() => undefined);
+      });
       return res.status(503).json({ error: 'Could not start an App Assistant session right now' });
     }
   },

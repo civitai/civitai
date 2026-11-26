@@ -1,0 +1,40 @@
+import { Prisma } from '@prisma/client';
+import { heldImageKnownSql } from '@civitai/shared/held-media';
+import { RETRACTED_MEDIA_READ_TIMEOUT_MS } from '@civitai/shared/retracted-media';
+import { moderatorMediaWhereSql, moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
+import { dbWrite } from '~/server/db/client';
+
+export type RetractedMedia = {
+  url: string;
+  type: string;
+  mimeType: string | null;
+  /** Held media (`heldImageSql`), so its serve is recorded as a held view. */
+  held: boolean;
+};
+
+/**
+ * The image's storage key and type while this moderator may see it here; `null` otherwise, so an
+ * image they may not see is answered exactly as a missing one. A moderator without `csamReview` is
+ * refused what `moderatorWithheldSql` withholds, the moderator app's rule. Read on the primary: a
+ * flag or report the replica has not seen yet would otherwise be missed. A read past its timeout
+ * refuses.
+ */
+export async function getRetractedMedia(
+  imageId: number,
+  { csamReview, cdnLeg = false }: { csamReview: boolean; cdnLeg?: boolean },
+  db = dbWrite
+): Promise<RetractedMedia | null> {
+  const [row] = await db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`);
+    return tx.$queryRaw<(RetractedMedia & { withheld: boolean })[]>`
+      SELECT i.url, i.type::text AS type, i."mimeType",
+        ${Prisma.raw(moderatorWithheldSql('i', { csamReview }))} AS withheld,
+        ${Prisma.raw(heldImageKnownSql('i'))} AS held
+      FROM "Image" i
+      WHERE i.id = ${imageId}
+        AND ${Prisma.raw(moderatorMediaWhereSql('i', { cdnLeg, csamReview, heldLeg: false }))}
+    `;
+  });
+  if (!row || row.withheld) return null;
+  return { url: row.url, type: row.type, mimeType: row.mimeType, held: row.held };
+}

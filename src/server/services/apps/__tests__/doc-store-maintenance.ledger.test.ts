@@ -10,11 +10,12 @@ import { importersOf } from './import-ledger';
  * object, never on the store the block-token routes hold. These cases pin who may obtain it, by
  * parsing every import in src; they fail when the set grows OR shrinks.
  */
-describe('document-store maintenance is reachable from its four callers only', () => {
-  it('only the publish-request decision path, the sweep job, the purge module and the schema-migration run import the maintenance instance', () => {
+describe('document-store maintenance is reachable from its five callers only', () => {
+  it('only the publish-request decision path, the sweep job, the purge module, the schema-migration run and the mark migration import the maintenance instance', () => {
     expect(importersOf('server/services/apps/doc-store-maintenance.instance')).toEqual([
       'server/jobs/sweep-review-storage.ts',
       'server/services/apps/doc-store-purge.ts',
+      'server/services/apps/storage-mark-migration.service.ts',
       'server/services/apps/storage-migration-run.service.ts',
       'server/services/blocks/publish-request.service.ts',
     ]);
@@ -37,11 +38,14 @@ describe('document-store maintenance is reachable from its four callers only', (
     ]);
   });
 
-  it('the maintenance object is exactly the five maintenance operations; the viewer store has none', () => {
+  it('the maintenance object is exactly the eight maintenance operations; the viewer store has none', () => {
     const MAINTENANCE = [
+      'expireMaintDumps',
+      'listMaintRuns',
       'listReviewAppIds',
       'migrateDocuments',
       'purgeApp',
+      'purgeDump',
       'purgeReview',
       'wipeAccount',
     ];

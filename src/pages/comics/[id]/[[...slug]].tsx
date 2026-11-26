@@ -13,7 +13,6 @@ import {
 } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useMediaQuery } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowLeft,
   IconBan,
@@ -94,6 +93,7 @@ import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import styles from '../Comics.module.scss';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
@@ -323,8 +323,10 @@ function ChapterListItem({
       </div>
       {showDownload && (
         <ChapterDownloadButton
+          projectId={project.id}
           projectName={project.name}
           projectUserId={project.user.id}
+          writer={project.user.username}
           chapter={ch}
         />
       )}
@@ -549,9 +551,9 @@ function ComicOverview({ project }: { project: Project }) {
                         color="red"
                         loading={deleteProject.isPending}
                         onClick={() =>
-                          openConfirmModal({
+                          openConfirm({
                             title: 'Delete comic',
-                            children:
+                            message:
                               'Are you sure you want to delete this comic? This action cannot be undone.',
                             labels: { confirm: 'Delete', cancel: 'Cancel' },
                             confirmProps: { color: 'red' },
@@ -582,11 +584,11 @@ function ComicOverview({ project }: { project: Project }) {
                         leftSection={<IconBan size={14} stroke={1.5} />}
                         color={project.tosViolation ? 'green' : 'red'}
                         onClick={() =>
-                          openConfirmModal({
+                          openConfirm({
                             title: project.tosViolation
                               ? 'Remove TOS Violation Flag'
                               : 'Flag as TOS Violation',
-                            children: project.tosViolation
+                            message: project.tosViolation
                               ? 'This will remove the TOS violation flag and make the comic visible again.'
                               : 'This will flag the comic as a TOS violation and hide it from public listings. The creator will be notified.',
                             labels: {
@@ -883,6 +885,12 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     projectName: project.name,
     chapterName: exportChapterName,
     panels: exportPanels,
+    comicInfo: {
+      projectId: project.id,
+      writer: project.user.username,
+      chapterPosition: activeChapter?.position ?? 0,
+      chapterNsfwLevel: activeChapter?.nsfwLevel ?? 0,
+    },
   });
 
   // Pages mode: compute page spreads (pairs of panels)
@@ -1246,6 +1254,12 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                           projectName={project.name}
                           chapterName={activeChapter.name}
                           panels={activeChapter.panels}
+                          comicInfo={{
+                            projectId: project.id,
+                            writer: project.user.username,
+                            chapterPosition: activeChapter.position,
+                            chapterNsfwLevel: activeChapter.nsfwLevel,
+                          }}
                         />
                       )}
                     {currentUser && currentUser.id !== project.user.id && (
@@ -1284,9 +1298,9 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                             leftSection={<IconBan size={14} stroke={1.5} />}
                             color="red"
                             onClick={() =>
-                              openConfirmModal({
+                              openConfirm({
                                 title: 'Unpublish Chapter',
-                                children:
+                                message:
                                   'This will unpublish the chapter and revert it to draft. The creator will be notified.',
                                 labels: { confirm: 'Unpublish', cancel: 'Cancel' },
                                 confirmProps: { color: 'red' },
@@ -1371,9 +1385,9 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                             leftSection={<IconBan size={14} stroke={1.5} />}
                             color="red"
                             onClick={() =>
-                              openConfirmModal({
+                              openConfirm({
                                 title: 'Unpublish Chapter',
-                                children:
+                                message:
                                   'This will unpublish the chapter and revert it to draft. The creator will be notified.',
                                 labels: { confirm: 'Unpublish', cancel: 'Cancel' },
                                 confirmProps: { color: 'red' },

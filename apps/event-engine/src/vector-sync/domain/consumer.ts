@@ -1,12 +1,13 @@
 import http from 'http';
 import { Kafka, type Consumer } from 'kafkajs';
 import { assertVectorSyncConfig, config, domainEmbedEnabled } from '@/config';
-import { createGuardedPgPool } from '@/utils/pg-pool-guard';
+import { vectorPgPool } from '../pg';
 import { logger } from '@/utils/logger';
 import { Embedder } from '../embedder';
-import { serveMetrics } from '../metrics';
+import { serveMetrics, vectorSyncMetrics } from '../metrics';
 import { connectorBlock } from '../sync';
 import { DomainSyncQueue } from './queue';
+import { startRefreshers } from './refresh';
 import type { Domain, DomainRef } from './sync';
 
 /** The domain rows one message touches. */
@@ -23,6 +24,38 @@ export const routeByTopic =
     });
 
 /**
+ * The configured topics that exist. Subscribing to one that does not makes kafkajs throw and the
+ * process exit, taking every lane down with it; a missing one is left out instead, and its lane
+ * keeps its refresh walk. A topic created later is picked up at the next restart.
+ */
+export async function existingTopics(listTopics: () => Promise<string[]>, topics: string[]) {
+  const known = new Set(await listTopics());
+  const present = topics.filter((t) => known.has(t));
+  const missing = topics.filter((t) => !known.has(t));
+  return { present, missing };
+}
+
+/**
+ * Subscribes `consumer` to the configured topics that exist and gauges each missing one. Throws when
+ * none exist, since a consumer with no topics would sit idle and look healthy.
+ */
+export async function subscribeExisting(
+  consumer: Pick<Consumer, 'subscribe'>,
+  listTopics: () => Promise<string[]>,
+  topics: string[],
+  log: string
+) {
+  const { present, missing } = await existingTopics(listTopics, topics);
+  for (const topic of topics)
+    vectorSyncMetrics.missingTopics.set({ topic }, missing.includes(topic) ? 1 : 0);
+  if (missing.length)
+    logger.error({ missing }, `${log}: topics missing from Kafka; not subscribed until a restart`);
+  if (!present.length) throw new Error(`${log}: none of its topics exist (${missing.join(', ')})`);
+  await consumer.subscribe({ topics: present, fromBeginning: false });
+  return present;
+}
+
+/**
  * Runs one consumer process over `domains`: a queue with a lane each, an embed gate per lane,
  * a health endpoint and a graceful shutdown. `log` prefixes the process's own lines.
  */
@@ -35,13 +68,9 @@ export async function runSyncConsumer(opts: {
   route: Route;
 }) {
   assertVectorSyncConfig();
-  const { log, domains, topics } = opts;
+  const { log, domains } = opts;
   const vs = config.vectorSync;
-  const pg = createGuardedPgPool(
-    { connectionString: config.postgres.connectionString, max: vs.pgPoolMax },
-    log,
-    (message, err) => logger.error({ err }, message)
-  );
+  const pg = vectorPgPool(log);
   const lanes = [];
   for (const domain of domains) {
     const store = domain.store();
@@ -51,7 +80,12 @@ export async function runSyncConsumer(opts: {
       logger.warn(`${domain.name}-sync: embedding is off (VECTOR_SYNC_EMBED_ENABLED or its own)`);
     lanes.push({
       domain,
-      deps: { pg, store, embedder: enabled ? Embedder.fromConfig('normal') : null },
+      deps: {
+        pg,
+        store,
+        embedder: enabled ? Embedder.fromConfig('normal') : null,
+        rejected: enabled ? await domain.rejected?.() : undefined,
+      },
     });
   }
 
@@ -78,6 +112,8 @@ export async function runSyncConsumer(opts: {
     );
   await checkGates();
   const gate = setInterval(() => void checkGates(), 60_000);
+
+  const refreshers = startRefreshers(domains, queue, pg);
 
   let stopping = false;
   const timer = setInterval(() => {
@@ -112,8 +148,15 @@ export async function runSyncConsumer(opts: {
     })
     .listen(config.app.healthCheckPort);
 
+  const admin = kafka.admin();
+  await admin.connect();
   await consumer.connect();
-  await consumer.subscribe({ topics, fromBeginning: false });
+  const topics = await subscribeExisting(
+    consumer,
+    () => admin.listTopics(),
+    opts.topics,
+    log
+  ).finally(() => admin.disconnect().catch(() => undefined));
   logger.info({ topics, group: opts.groupId }, `${log}: consuming`);
   await consumer.run({
     autoCommit: false,
@@ -157,6 +200,7 @@ export async function runSyncConsumer(opts: {
     logger.info({ signal }, `${log}: shutting down`);
     clearInterval(timer);
     clearInterval(gate);
+    for (const r of refreshers) clearInterval(r);
     try {
       consumer.pause(topics.map((topic) => ({ topic })));
       await queue.flush();

@@ -1,16 +1,26 @@
+import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
+import { scanKeepsRowSql } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
+import {
+  CSAM_HOLD_POST_UNPUBLISH_REASON as HOLD_POST_REASON,
+  EVIDENCE_VERIFIED_KEY as VERIFIED_KEY,
+  heldUrlSql,
+  imageCoveredText,
+  MATURE_UNDERAGE_REASON as MATURE_UNDERAGE,
+  ownerHeldText,
+  ownerReportedText,
+} from '@civitai/shared/held-url';
 import { CloudflarePurgeBusyError, purgeUrlsOrThrow } from '~/server/cloudflare/client';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
 import { keyIn, keyIssueRecords } from '~/server/services/image-url-ownership';
-import { holdMarkerSql } from '~/server/services/legal-hold.service';
 import {
   HELD_BACK,
   IMAGE_CACHER_WAIT_MS,
@@ -42,12 +52,12 @@ export function strongestAccess(values: CdnAccess[]): CdnAccess {
 }
 
 /** `Post.metadata.unpublishedReason` written by a csam-hold removal of a post. */
-export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
+export const CSAM_HOLD_POST_UNPUBLISH_REASON = HOLD_POST_REASON;
 /**
  * Written by a csam-hold removal of a model and by ordinary moderation alike; both are held until a
  * verified report covers the image.
  */
-export const MATURE_UNDERAGE_REASON: UnpublishReason = 'mature-underage';
+export const MATURE_UNDERAGE_REASON: UnpublishReason = MATURE_UNDERAGE;
 
 export type PostAccessFacts = {
   ownerId: number;
@@ -56,8 +66,13 @@ export type PostAccessFacts = {
   stamped: boolean;
   /** `metadata.unpublishedBy`, as text. */
   unpublishedBy: string | null;
-  /** `metadata.unpublishedReason` is set. Only a moderator post unpublish writes it on a Post. */
+  /**
+   * `metadata.unpublishedReason` is set: a moderator post unpublish, or a delete a case keeps
+   * (`pendingDelete`).
+   */
   moderatorReason: boolean;
+  /** Unpublished by a delete its open case keeps: nobody has decided anything yet. */
+  pendingDelete: boolean;
   versionStatus: string | null;
   modelStatus: string | null;
 };
@@ -70,8 +85,10 @@ export type ImageAccessFacts = {
   blockedAt: Date | null;
   /** Latest `MODERATOR_TAKEDOWN_ACTIVITIES` row on this image. */
   lastTakedownActivityAt: Date | null;
-  /** A CSAM review flag or an evidence hold. Caps its url at `deny`. */
+  /** A CSAM review flag or an owner on an unfiled CSAM report, among others. Caps its url at `deny`. */
   held: boolean;
+  /** `scanKeepsRowSql` holds for the row. */
+  keptRow: boolean;
   post: PostAccessFacts | null;
 };
 
@@ -81,20 +98,27 @@ export type ImageAccessFacts = {
  */
 export type ModeratorDeleteFacts = { ownerId: number | null; held: boolean };
 
-export type UrlAccessFacts = { images: ImageAccessFacts[]; deletes: ModeratorDeleteFacts[] };
+export type UrlAccessFacts = {
+  images: ImageAccessFacts[];
+  deletes: ModeratorDeleteFacts[];
+  /** `heldUrlSql` for the url; true when it could not be read. Adds to the rows' own `held`. */
+  sqlHeld?: boolean;
+};
 
 function desiredPostAccess(post: PostAccessFacts | null): CdnAccess {
   if (!post || !post.unpublished || !post.stamped) return 'allow';
+  const violation =
+    post.versionStatus === ModelStatus.UnpublishedViolation ||
+    post.modelStatus === ModelStatus.UnpublishedViolation;
+  // Kept by a delete its case still holds, whoever deleted it: denied, not taken down, unless a
+  // moderator took down its version or model.
+  if (post.pendingDelete) return violation ? 'retract' : 'deny';
   // The owner unpublishing their own post or model is not a takedown, even if a moderator later
   // marks the model as a violation or an earlier moderator unpublish left its reason behind.
   if (post.unpublishedBy === null || post.unpublishedBy === String(post.ownerId)) return 'allow';
   if (post.moderatorReason) return 'retract';
   // Only a moderator can set this status: the unpublish services refuse a reason from anyone else.
-  if (
-    post.versionStatus === ModelStatus.UnpublishedViolation ||
-    post.modelStatus === ModelStatus.UnpublishedViolation
-  )
-    return 'retract';
+  if (violation) return 'retract';
   // Someone other than the owner, with no violation: the ban cascade. Reversible on purpose.
   return 'deny';
 }
@@ -113,6 +137,8 @@ export function desiredImageAccess(image: ImageAccessFacts): CdnAccess {
       !!image.lastTakedownActivityAt &&
       image.lastTakedownActivityAt.getTime() >= image.blockedAt.getTime();
     access = human ? 'retract' : 'deny';
+  } else if (image.ingestion !== 'Scanned' && image.keptRow) {
+    access = 'deny';
   }
   return strongestAccess([access, desiredPostAccess(image.post)]);
 }
@@ -123,13 +149,13 @@ export function desiredImageAccess(image: ImageAccessFacts): CdnAccess {
  * evidence: it stops serving and nothing destructive runs until the hold ends), and when the rows
  * belong to more than one owner, since a retraction deletes what every owner of the url serves.
  */
-export function desiredUrlAccess({ images, deletes }: UrlAccessFacts): CdnAccess {
+export function desiredUrlAccess({ images, deletes, sqlHeld }: UrlAccessFacts): CdnAccess {
   const access = strongestAccess([
     ...images.map(desiredImageAccess),
     ...deletes.map((): CdnAccess => 'retract'),
   ]);
   if (access !== 'retract') return access;
-  const held = images.some((x) => x.held) || deletes.some((x) => x.held);
+  const held = images.some((x) => x.held) || deletes.some((x) => x.held) || sqlHeld === true;
   const owners = new Set([...images.map((x) => x.ownerId), ...deletes.map((x) => x.ownerId)]);
   return held || owners.size > 1 ? 'deny' : 'retract';
 }
@@ -292,12 +318,14 @@ type FactsRow = {
   lastTakedownActivityAt: Date | null;
   userId: number;
   csamReview: boolean;
+  keptRow: boolean;
   postId: number | null;
   postOwnerId: number | null;
   postUnpublished: boolean | null;
   postStamped: boolean | null;
   postUnpublishedBy: string | null;
   postModeratorReason: boolean | null;
+  postPendingDelete: boolean | null;
   postCsamHoldRemoved: boolean | null;
   matureUnderageUnpublish: boolean | null;
   versionStatus: string | null;
@@ -396,14 +424,14 @@ export async function recordShopTakedownArtwork(shopItemId: number): Promise<Sho
   `;
   result.queued = proven.length;
   if (result.unproven || result.otherOwner || result.inUse)
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'shop-takedown-artwork-left-serving',
       message: 'takedown artwork referred to a moderator',
       shopItemId,
       ...result,
       lookupFailed,
-    }).catch(() => undefined);
+    });
   if (lookupFailed) throw new Error(`artwork ownership lookup failed for ${lookupFailed} key(s)`);
   return result;
 }
@@ -417,6 +445,7 @@ async function loadFacts(urls: string[]) {
       SELECT
         i.id, i.url, i."userId", i.ingestion::text AS ingestion, i."blockedFor",
         i."needsReview" IS NOT DISTINCT FROM 'csam' AS "csamReview",
+        ${scanKeepsRowSql('i')} AS "keptRow",
         q."createdAt" AS "blockedAt",
         ma."lastActedAt" AS "lastTakedownActivityAt",
         p.id AS "postId",
@@ -425,6 +454,7 @@ async function loadFacts(urls: string[]) {
         p.metadata ? 'unpublishedAt' AS "postStamped",
         p.metadata->>'unpublishedBy' AS "postUnpublishedBy",
         p.metadata ? 'unpublishedReason' AS "postModeratorReason",
+        p.metadata->>'unpublishedReason' = ${POST_PENDING_DELETE_REASON} AS "postPendingDelete",
         p.metadata->>'unpublishedReason' = ${CSAM_HOLD_POST_UNPUBLISH_REASON} AS "postCsamHoldRemoved",
         (mv.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}
           OR mo.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}) AS "matureUnderageUnpublish",
@@ -453,7 +483,7 @@ async function loadFacts(urls: string[]) {
       SELECT url, "userId" FROM "ImageCdnShopTakedown" WHERE url = ANY(${urls})
     `,
   ]);
-  const [holds, covered] = await Promise.all([
+  const [holds, coverage, sqlHeld] = await Promise.all([
     ownerHolds([
       ...rows.map((r) => r.userId),
       ...[...deleteRows, ...shopRows].flatMap((r) => (r.userId === null ? [] : [r.userId])),
@@ -464,7 +494,9 @@ async function loadFacts(urls: string[]) {
         r.userId === null ? [] : [{ imageId: r.imageId, userId: r.userId }]
       ),
     ]),
+    heldUrls(urls),
   ]);
+  const { covered } = coverage;
   const entry = (url: string) => {
     let facts = byUrl.get(url);
     if (!facts) byUrl.set(url, (facts = { images: [], deletes: [] }));
@@ -477,6 +509,7 @@ async function loadFacts(urls: string[]) {
       blockedFor: row.blockedFor,
       blockedAt: row.blockedAt,
       lastTakedownActivityAt: row.lastTakedownActivityAt,
+      keptRow: row.keptRow,
       held:
         row.csamReview ||
         holds.held(row.userId) ||
@@ -493,6 +526,7 @@ async function loadFacts(urls: string[]) {
               stamped: !!row.postStamped,
               unpublishedBy: row.postUnpublishedBy,
               moderatorReason: !!row.postModeratorReason,
+              pendingDelete: !!row.postPendingDelete,
               versionStatus: row.versionStatus,
               modelStatus: row.modelStatus,
             },
@@ -513,7 +547,42 @@ async function loadFacts(urls: string[]) {
       ownerId: row.userId,
       held: row.userId === null || holds.held(row.userId) || holds.reported(row.userId),
     });
+  // Shadow read: the predicate only ever adds a hold here, until the two are shown to agree. A hold
+  // leg added to the rows above belongs in heldUrlSql too, or every url it holds logs a parity line.
+  const compare = sqlHeld.ok && !holds.failed && !coverage.failed;
+  for (const [url, facts] of byUrl) {
+    facts.sqlHeld = sqlHeld.held(url);
+    if (!compare) continue;
+    const tsHeld = facts.images.some((x) => x.held) || facts.deletes.some((x) => x.held);
+    if (tsHeld !== facts.sqlHeld)
+      logToAxiom({
+        type: 'error',
+        name: 'cdn-access-held-parity',
+        message: 'held differs between loadFacts and heldUrlSql',
+        payload: { urlHash: createHash('sha256').update(url).digest('hex').slice(0, 16), tsHeld },
+      });
+  }
   return byUrl;
+}
+
+/** `heldUrlSql` per url. A failed read holds every url and logs one line. */
+async function heldUrls(urls: string[]): Promise<{ ok: boolean; held: (url: string) => boolean }> {
+  try {
+    const rows = await dbWrite.$queryRaw<{ url: string; held: boolean }[]>`
+      SELECT u."url", ${Prisma.raw(heldUrlSql('u."url"'))} AS held
+      FROM unnest(${urls}::text[]) AS u("url")
+    `;
+    const held = new Set(rows.filter((r) => r.held !== false).map((r) => r.url));
+    return { ok: true, held: (url) => held.has(url) };
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'cdn-access-held-predicate-failed',
+      message: 'heldUrlSql lookup failed; treating every url as held',
+      error: safeError(error),
+    });
+    return { ok: false, held: () => true };
+  }
 }
 
 async function loadState(urls: string[]) {
@@ -524,21 +593,8 @@ async function loadState(urls: string[]) {
   return new Map(rows.map((r) => [r.url, r]));
 }
 
-/**
- * The `CsamReport.details` key written once a sent report's evidence copy has been verified. Absent
- * until that verification exists; `archivedAt` alone does not confirm a verified copy.
- */
-export const EVIDENCE_VERIFIED_KEY = 'evidenceVerifiedAt';
-
-/** SQL: report `c` has a verified evidence copy. */
-function evidenceVerifiedSql(c: Prisma.Sql) {
-  return Prisma.sql`COALESCE((${c}.details->>${EVIDENCE_VERIFIED_KEY}) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T', false)`;
-}
-
-/** SQL: report `c` names user `userId`, as its subject or its secondary user. */
-function reportNamesSql(userId: Prisma.Sql) {
-  return Prisma.sql`(c."userId" = ${userId} OR c.details->>'secondaryUserId' = (${userId})::text)`;
-}
+/** The `CsamReport.details` key written once a sent report's evidence copy has been verified. */
+export const EVIDENCE_VERIFIED_KEY = VERIFIED_KEY;
 
 /**
  * Which images a sent report with a verified evidence copy covers: it names the image's owner and
@@ -547,48 +603,36 @@ function reportNamesSql(userId: Prisma.Sql) {
  */
 async function reportCoverage(
   images: { imageId: number; userId: number }[]
-): Promise<(imageId: number, userId: number) => boolean> {
+): Promise<{ failed: boolean; covered: (imageId: number, userId: number) => boolean }> {
   const none = () => false;
-  if (!images.length) return none;
+  if (!images.length) return { failed: false, covered: none };
   try {
     const rows = await dbWrite.$queryRaw<{ imageId: number; userId: number }[]>`
       SELECT x."imageId", x."userId"
       FROM unnest(${images.map((x) => x.imageId)}::int[], ${images.map((x) => x.userId)}::int[])
         AS x("imageId", "userId")
-      WHERE EXISTS (
-        SELECT 1 FROM "CsamReport" c
-        WHERE ${reportNamesSql(Prisma.sql`x."userId"`)}
-          AND c."reportSentAt" IS NOT NULL AND ${evidenceVerifiedSql(Prisma.sql`c`)}
-          AND c.images @> jsonb_build_array(jsonb_build_object('id', x."imageId"))
-      )
+      WHERE ${Prisma.raw(imageCoveredText('x."imageId"', 'x."userId"'))}
     `;
     const keys = new Set(rows.map((r) => `${r.imageId}:${r.userId}`));
-    return (imageId, userId) => keys.has(`${imageId}:${userId}`);
+    return { failed: false, covered: (imageId, userId) => keys.has(`${imageId}:${userId}`) };
   } catch (error) {
     logToAxiom({
       type: 'error',
       name: 'cdn-access-coverage-lookup',
       message: 'report coverage lookup failed; treating every image as uncovered',
       error: safeError(error),
-    }).catch(() => undefined);
-    return none;
+    });
+    return { failed: true, covered: none };
   }
 }
 
-/**
- * The hold lookup names the marker view: a database without it fails the lookup, which holds
- * everyone.
- */
-const NAME_MARKER_VIEW = true;
-
 type OwnerHolds = {
-  /**
-   * Has an active hold marker, or is named on a CSAM report that is unsent, or sent without a
-   * verified evidence copy.
-   */
+  /** Named on a CSAM report that is unsent, or sent without a verified evidence copy. */
   held: (userId: number) => boolean;
   /** Named on any CSAM report. */
   reported: (userId: number) => boolean;
+  /** The lookup failed, so `held` and `reported` hold everyone. */
+  failed: boolean;
 };
 
 /**
@@ -598,39 +642,45 @@ type OwnerHolds = {
 async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   const ids = [...new Set(userIds)];
   const none = () => false;
-  if (!ids.length) return { held: none, reported: none };
+  if (!ids.length) return { held: none, reported: none, failed: false };
   try {
     const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; reported: boolean }[]>`
       SELECT u.id,
-        ${holdMarkerSql(Prisma.sql`u.id`, NAME_MARKER_VIEW)} OR EXISTS (
-          SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
-            AND (c."reportSentAt" IS NULL OR NOT ${evidenceVerifiedSql(Prisma.sql`c`)})
-        ) AS held,
-        EXISTS (SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}) AS reported
+        ${Prisma.raw(ownerHeldText('u."id"'))} AS held,
+        ${Prisma.raw(ownerReportedText('u."id"'))} AS reported
       FROM unnest(${ids}::int[]) AS u(id)
     `;
     const set = (key: 'held' | 'reported') => {
       const s = new Set(rows.filter((r) => r[key]).map((r) => r.id));
       return (userId: number) => s.has(userId);
     };
-    return { held: set('held'), reported: set('reported') };
+    return { held: set('held'), reported: set('reported'), failed: false };
   } catch (error) {
     logToAxiom({
       type: 'error',
       name: 'cdn-access-hold-lookup',
-      message: 'evidence hold lookup failed; treating every owner as held',
+      message: 'owner report lookup failed; treating every owner as held',
       error: safeError(error),
-    }).catch(() => undefined);
-    return { held: () => true, reported: () => true };
+    });
+    return { held: () => true, reported: () => true, failed: true };
   }
 }
 
 /** The call that moves `current` to `desired`, or null when nothing needs to change. */
 export function plannedCall(
   desired: CdnAccess,
-  current: StateRow['state'] | undefined
+  current: StateRow['state'] | undefined,
+  { takedown = false }: { takedown?: boolean } = {}
 ): CdnCall | null {
-  if (desired === 'retract') return current === 'Retracted' ? null : 'retract';
+  if (desired === 'retract') {
+    if (current === 'Retracted') return null;
+    // 🔴 A deny is never upgraded on its own: the hold that capped it may sit on a row since deleted,
+    // which nothing here can see any more. Only a moderator delete or shop takedown on the url, or
+    // this path's own deferral of a retraction past its per-run cap, retracts a denied url. Do not
+    // restore the automatic upgrade.
+    if (current === 'Denied' && !takedown) return null;
+    return 'retract';
+  }
   if (desired === 'deny') return current ? null : 'deny';
   return current ? 'allow' : null;
 }
@@ -640,10 +690,17 @@ export function plannedCall(
  * through the normal path, which invalidates on its own; whatever was asserted earlier stays until
  * the reconciler drops it.
  */
-function callFor(url: string, facts: UrlAccessFacts | undefined, current: StateRow | undefined) {
+function callFor(
+  url: string,
+  facts: UrlAccessFacts | undefined,
+  current: StateRow | undefined,
+  { deferred = false }: { deferred?: boolean } = {}
+) {
   if (!cdnImageKey(url)) return null;
   if (!facts || (!facts.images.length && !facts.deletes.length)) return null;
-  return plannedCall(desiredUrlAccess(facts), current?.state);
+  return plannedCall(desiredUrlAccess(facts), current?.state, {
+    takedown: facts.deletes.length > 0 || deferred,
+  });
 }
 
 async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim: UrlClaim) {
@@ -655,7 +712,10 @@ async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim
   const state = call === 'retract' ? 'Retracted' : 'Denied';
   await dbWrite.$executeRaw`
     INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt", "lastAssertedAt")
-    VALUES (${url}, ${state}, now(), ${call === 'retract' ? new Date() : null}, now())
+    -- Both stamps from one expression, so an outright retraction has them equal; an upgrade keeps the
+    -- earlier deny time on conflict. The retracted-media reads tell the two apart by that equality.
+    VALUES (${url}, ${state}, timezone('UTC', now()),
+      CASE WHEN ${call === 'retract'}::boolean THEN timezone('UTC', now()) END, now())
     ON CONFLICT (url) DO UPDATE SET
       state = EXCLUDED.state,
       "retractedAt" = COALESCE(EXCLUDED."retractedAt", "ImageCdnAccess"."retractedAt"),
@@ -796,14 +856,14 @@ export async function sendTakedownPersistOrRetry(
     imageIds = uniq([...imageIds, ...found.imageIds]);
     await sendTakedownPersist(url, options, found.images);
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'takedown-persist-failed',
       message: 'takedown persist failed; queued for retry',
       imageIds,
       imageKey: url,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
     await queueTakedownPersistRetry({ imageId: imageIds[0], url, ...options });
   }
 }
@@ -818,12 +878,12 @@ async function logRevivedRetries(imageIds: number[]) {
       AND data->>'gaveUpAt' IS NOT NULL
   `.catch(() => []);
   if (revived.length)
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'takedown-persist-retry-revived',
       message: 'a new takedown event restarted retries that had run out of attempts',
       imageIds: revived.map((r) => r.entityId),
-    }).catch(() => undefined);
+    });
 }
 
 /**
@@ -877,14 +937,14 @@ export async function queueTakedownPersistRetry({
     `;
     return true;
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'takedown-persist-retry-not-queued',
       message: 'takedown persist retry was not queued',
       imageId,
       imageKey: data.url,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
     return false;
   }
 }
@@ -1125,7 +1185,7 @@ async function retryTakedownPersist(
       if (gaveUp) totals.gaveUp++;
       else if (error instanceof CloudflarePurgeBusyError) totals.throttled++;
       else if (!(error instanceof RetractionNotDoneError)) totals.failed++;
-      await logToAxiom({
+      logToAxiom({
         type: gaveUp ? 'error' : 'warning',
         name: gaveUp ? 'takedown-persist-retry-exhausted' : 'takedown-persist-retry-failed',
         message: gaveUp
@@ -1135,7 +1195,7 @@ async function retryTakedownPersist(
         imageKey: url,
         attempts,
         error: safeError(error),
-      }).catch(() => undefined);
+      });
       await dbWrite.$executeRaw`
         UPDATE "JobQueue" SET data = ${JSON.stringify(next)}::jsonb WHERE ${matchRow}
       `;
@@ -1198,14 +1258,14 @@ export async function persistDeletedTakedowns(
       } catch (error) {
         // Per row at warn: the retry is the remedy, and an outage would otherwise be one error per
         // image. The budget running out is reported once, below.
-        await logToAxiom({
+        logToAxiom({
           type: 'warning',
           name: 'takedown-persist-failed',
           message: 'takedown persist failed; queued for retry',
           imageIds: [id],
           imageKey: url,
           error: safeError(error),
-        }).catch(() => undefined);
+        });
       }
       totals.queued++;
       const written = await queueTakedownPersistRetry({
@@ -1220,13 +1280,13 @@ export async function persistDeletedTakedowns(
     DELETE_PERSIST_CONCURRENCY
   );
   if (totals.notAttempted)
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'takedown-persist-budget-spent',
       message: 'takedown persist budget ran out; the rest were queued for retry without an attempt',
       notAttempted: totals.notAttempted,
       budgetMs,
-    }).catch(() => undefined);
+    });
   return { ...totals, unqueued };
 }
 
@@ -1247,6 +1307,8 @@ type QueueRow = {
     urls?: string[];
     seq?: string;
     deferred?: string | null;
+    /** Url → when (database clock) the per-run cap deferred its retraction; see `pacedUrls`. */
+    pacedUrls?: Record<string, string>;
     retractFailures?: RetractFailures;
   } | null;
 };
@@ -1270,6 +1332,23 @@ const RETRACT_FAILING_ALERT_MS = 60 * 60 * 1000;
 const IS_DEFERRED = Prisma.raw(
   `COALESCE(data ? 'deferred' AND data->'deferred' IS NOT DISTINCT FROM data->'seq', false)`
 );
+
+/** Text keeps the microseconds a JS Date drops, so a marker and a read compare exactly. */
+async function dbClock() {
+  const [row] = await dbWrite.$queryRaw<{ at: string }[]>`SELECT clock_timestamp()::text AS at`;
+  return row.at;
+}
+
+/**
+ * A row's `pacedUrls` with each url stamped by the read that deferred it, not by this write: a
+ * read that saw a hold after the deferral, but before this write, must still win.
+ */
+const pacedWith = (paced: [url: string, at: string][]) => Prisma.sql`
+  COALESCE(data->'pacedUrls', '{}'::jsonb) || COALESCE((
+    SELECT jsonb_object_agg(x.url, x.at::timestamptz)
+    FROM unnest(${paced.map(([url]) => url)}::text[], ${paced.map(([, at]) => at)}::text[])
+      AS x(url, at)
+  ), '{}'::jsonb)`;
 
 /**
  * Drains `CdnAccessSync`. Each url's desired state is recomputed from the current rows, so the queue
@@ -1339,11 +1418,13 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     `;
   }
 
+  const readAt = await dbClock();
   const [facts, state] = await Promise.all([loadFacts(urls), loadState(urls)]);
 
   const pending = new Set<string>();
-  // Retractions past this run's cap: denied for now, and retracted by a later run.
-  const deferred = new Set<string>();
+  // Retractions past this run's cap, with the read that deferred each: denied for now, and
+  // retracted by a later run.
+  const deferred = new Map<string, string>();
   const maxRetracts = env.CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN;
   let retracts = 0;
   let calls = 0;
@@ -1351,12 +1432,51 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // After a 429 or a timeout the rest of the run's retractions wait for the next run; denies and
   // lifts still go.
   const gate = newRetractionGate();
+  const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
+  // A row deferred before per-url markers existed carries none. Each of its urls that still wants a
+  // retraction is taken as this path's own pacing, once, and written as a marker, so a later read
+  // that sees a hold drops it as it would any other. Remove once a deploy-time count finds no such row.
+  for (const [i, q] of queue.entries()) {
+    if (!q.data || !('deferred' in q.data) || 'pacedUrls' in q.data) continue;
+    const legacy = urlsByRow[i].filter((url) => {
+      const f = facts.get(url);
+      return !!f && desiredUrlAccess(f) === 'retract';
+    });
+    const [converted] = await dbWrite.$queryRaw<{ data: QueueRow['data'] }[]>`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(data, '{pacedUrls}', COALESCE((
+        SELECT jsonb_object_agg(u, ${readAt}::timestamptz) FROM unnest(${legacy}::text[]) u
+      ), '{}'::jsonb))
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+        -- Re-queued since the read: left for the next run, which reads facts after the re-queue.
+        AND data IS NOT DISTINCT FROM ${JSON.stringify(q.data)}::jsonb
+      RETURNING data
+    `;
+    if (converted) q.data = converted.data;
+  }
+
+  // Urls whose retraction this path itself deferred past the cap, re-queued since or not: their deny
+  // is this path's own pacing, so they may still upgrade. Kept per url, not per row: a post row can
+  // also cover a url denied by a hold, and that deny must never upgrade on its own.
+  const pacedUrls = new Set(queue.flatMap((q) => Object.keys(q.data?.pacedUrls ?? {})));
   const plannedCall = new Map(
-    urls.map((url) => [url, callFor(url, facts.get(url), state.get(url))])
+    urls.map((url) => [
+      url,
+      callFor(url, facts.get(url), state.get(url), { deferred: pacedUrls.has(url) }),
+    ])
   );
   const planned = urls.filter((url) => plannedCall.get(url));
+  // Url → the read showing it no longer wants a retraction (a hold caps it, or it was lifted). Only a
+  // marker written before that read is removed: one an overlapping run wrote since rests on a newer
+  // read. A retracted url keeps its marker, inert: only a lift moves it on, and that clears it.
+  const unpaceAt = new Map<string, string>();
+  for (const url of urls) {
+    const f = facts.get(url);
+    if (!f || desiredUrlAccess(f) !== 'retract') unpaceAt.set(url, readAt);
+  }
   // The cap goes to the oldest deferral first, then to new rows in queue order; the rest are denied.
-  const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
   const wantsRetract = planned.filter((url) => plannedCall.get(url) === 'retract');
   const mayRetract = new Set(
     [
@@ -1373,11 +1493,15 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       let call: CdnCall | null = null;
       try {
         const result = await withUrlClaim(url, async (claim) => {
+          const freshAt = await dbClock();
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
-          call = callFor(url, fresh.get(url), freshState.get(url));
+          const f = fresh.get(url);
+          if (!f || desiredUrlAccess(f) !== 'retract') unpaceAt.set(url, freshAt);
+          else unpaceAt.delete(url);
+          call = callFor(url, f, freshState.get(url), { deferred: pacedUrls.has(url) });
           if (!call) return;
           if (call === 'retract' && !mayRetract.has(url)) {
-            deferred.add(url);
+            deferred.set(url, freshAt);
             if (freshState.get(url)?.state === 'Denied') return;
             call = 'deny';
           }
@@ -1408,7 +1532,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           imageKey: url,
           call,
           error: safeError(error),
-        }).catch(() => undefined);
+        });
       }
     }),
     CALL_CONCURRENCY
@@ -1433,6 +1557,11 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   }
 
   const settled = (url: string) => !pending.has(url) && !deferred.has(url);
+  const pacedIn = (urls: string[]) =>
+    urls.flatMap((url): [string, string][] => {
+      const at = deferred.get(url);
+      return at ? [[url, at]] : [];
+    });
   const done = queue.filter((_, i) => urlsByRow[i].every(settled));
   // A row keeps its first-deferral time, even after a re-queue, so the oldest deferral goes first.
   const rotate = queue.filter(
@@ -1463,7 +1592,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       SET "createdAt" = CASE WHEN data ? 'deferred' THEN "createdAt" ELSE now() END,
           data = (COALESCE(data, '{}'::jsonb) - ${
             failuresNext.get(q) === null ? 'retractFailures' : ''
-          }::text) || jsonb_build_object('deferred', data->'seq')
+          }::text) || jsonb_build_object('deferred', data->'seq', 'pacedUrls', ${pacedWith(
+      pacedIn(urlsByRow[queue.indexOf(q)])
+    )})
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
@@ -1516,12 +1647,38 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       entityId: q.entityId,
       failures: next.count,
       since: next.since,
-    }).catch(() => undefined);
+    });
   }
 
   // A re-queued row still carries its first-deferral time, so its wait counts from the re-queue.
   const waitedSince = (q: QueueRow) =>
     q.data && 'deferred' in q.data && q.data.seq ? new Date(q.data.seq) : q.createdAt;
+  // The rotation skips a row with a url still pending, a row already deferred, and one a trigger
+  // re-queued mid-run; each must still record what this run deferred.
+  for (const [i, q] of queue.entries()) {
+    const paced = pacedIn(urlsByRow[i]);
+    if (removed.has(q) || !paced.length) continue;
+    await dbWrite.$executeRaw`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(COALESCE(data, '{}'::jsonb), '{pacedUrls}', ${pacedWith(paced)})
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+    `;
+  }
+  const unpace = [...unpaceAt].filter(([url]) => !deferred.has(url));
+  if (unpace.length)
+    await dbWrite.$executeRaw`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(data, '{pacedUrls}', (data->'pacedUrls') - ARRAY(
+        SELECT x.url
+        FROM unnest(${unpace.map(([url]) => url)}::text[], ${unpace.map(([, at]) => at)}::text[])
+          AS x(url, at)
+        WHERE (data->'pacedUrls'->>x.url)::timestamptz < x.at::timestamptz))
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND data ? 'pacedUrls' AND data->'pacedUrls' ?| ${unpace.map(([url]) => url)}::text[]
+    `;
+
   const oldest = earliest(queue.filter((q) => !q.deferred).map(waitedSince));
   if (failed && oldest && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
     logToAxiom({
@@ -1530,7 +1687,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       message: 'takedown CDN queue has rows older than 15 minutes',
       oldest: oldest.toISOString(),
       failed,
-    }).catch(() => undefined);
+    });
 
   const oldestDeferred = earliest(
     queue.filter((q) => q.data && 'deferred' in q.data).map((q) => q.createdAt)
@@ -1542,7 +1699,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       message: 'takedown CDN queue has a retraction deferred for over 24 hours',
       oldest: oldestDeferred.toISOString(),
       deferredInBatch: waitingTake,
-    }).catch(() => undefined);
+    });
 
   if (denyFailed || liftFailed)
     logToAxiom({
@@ -1551,7 +1708,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       message: 'takedown CDN deny or lift calls failed; will retry',
       denyFailed,
       liftFailed,
-    }).catch(() => undefined);
+    });
 
   if (retracts || deferred.size)
     logToAxiom({
@@ -1561,7 +1718,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       retracts,
       deferred: deferred.size,
       maxRetracts,
-    }).catch(() => undefined);
+    });
 
   return {
     queued: queue.length,
@@ -1612,8 +1769,8 @@ async function syncQueued(url: string) {
 }
 
 /**
- * Daily pass over every url this path has denied: re-asserts a deny before it can expire, upgrades a
- * deny to a retraction once a hold is released or a late activity row lands, lifts a deny the queue
+ * Daily pass over every url this path has denied: re-asserts a deny before it can expire, retracts a
+ * denied url only on a moderator delete or shop takedown (`plannedCall`), lifts a deny the queue
  * missed, and forgets urls with no image rows and no moderator delete left (their deletion
  * invalidated on its own).
  */
@@ -1712,7 +1869,7 @@ export async function reconcileCdnAccess({
             imageKey: row.url,
             call: attempted,
             error: safeError(error),
-          }).catch(() => undefined);
+          });
         }
       }),
       CALL_CONCURRENCY

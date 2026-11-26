@@ -21,6 +21,8 @@ import {
   updateOauthClientSchema,
 } from '~/server/schema/oauth-client.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isAppAssistantClientId } from '@civitai/auth/app-assistant-client';
+import { isSelfOnlyClientId } from '@civitai/auth/self-only-client';
 import {
   APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
   isAppBlockOauthClientId,
@@ -46,6 +48,37 @@ function rejectAppBlockClient(clientId: string): void {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'App clients are managed by the Civitai Apps platform and cannot be modified here',
+    });
+  }
+}
+
+/**
+ * App Assistant's per-user client (`appassist-<userId>`, see `@civitai/auth/app-assistant-client`)
+ * is created and kept in shape by `enableAppAssistant` alone. Its owner may not edit it here: a
+ * rename would put any name on the consent screen, a redirect URI would make the client usable in
+ * an interactive authorization, and wider scopes would let it ask for more than App Assistant
+ * needs. Deleting an OPEN one stays allowed (it turns App Assistant off; re-enabling recreates it);
+ * a disabled one is refused, see rejectDeletingDisabledSelfOnlyClient.
+ */
+function rejectAppAssistantClient(clientId: string): void {
+  if (isAppAssistantClientId(clientId)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'The App Assistant app is managed by Civitai and cannot be modified here',
+    });
+  }
+}
+
+/**
+ * A disabled self-only client (App Assistant, dev tunnel) cannot be deleted by its owner: deleting
+ * would let the next App Assistant enable or dev-tunnel mint recreate it open, undoing the disable.
+ * An open one deletes as before.
+ */
+function rejectDeletingDisabledSelfOnlyClient(client: { id: string; accessMode: string }): void {
+  if (isSelfOnlyClientId(client.id) && client.accessMode === 'disabled') {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This app is disabled and cannot be removed here',
     });
   }
 }
@@ -100,13 +133,13 @@ export const oauthClientRouter = router({
         },
       });
       if (!client) throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
-      return client;
+      return { ...client, allowedScopes: Number(client.allowedScopes) };
     }),
 
   // Get all clients owned by the current user
   getAll: protectedProcedure.meta({ requiredScope: TokenScope.UserRead }).query(async ({ ctx }) => {
     if (ctx.user.id === constants.system.user.id) return [];
-    return dbRead.oauthClient.findMany({
+    const clients = await dbRead.oauthClient.findMany({
       where: { userId: ctx.user.id },
       select: {
         id: true,
@@ -124,6 +157,7 @@ export const oauthClientRouter = router({
       },
       orderBy: { createdAt: 'desc' },
     });
+    return clients.map((client) => ({ ...client, allowedScopes: Number(client.allowedScopes) }));
   }),
 
   // MODERATOR-ONLY global OAuth-client search (App-Blocks external-submit mod picker).
@@ -192,7 +226,8 @@ export const oauthClientRouter = router({
         nextCursor = nextItem?.id;
       }
 
-      return { items: rows, nextCursor };
+      const items = rows.map((row) => ({ ...row, allowedScopes: Number(row.allowedScopes) }));
+      return { items, nextCursor };
     }),
 
   // Register a new OAuth client
@@ -247,6 +282,7 @@ export const oauthClientRouter = router({
     .input(updateOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
+      rejectAppAssistantClient(input.id);
       const client = await findOwnedClient(ctx.user.id, { id: input.id });
       // An app that skips the consent screen keeps only https, non-loopback redirects.
       const refused =
@@ -275,7 +311,7 @@ export const oauthClientRouter = router({
             };
       const result = await dbWrite.oauthClient.update({ where: { id }, data });
       logOAuthEvent({ type: 'client.updated', userId: ctx.user.id, clientId: id });
-      return result;
+      return result && { ...result, allowedScopes: Number(result.allowedScopes) };
     }),
 
   // Rotate client secret
@@ -284,6 +320,7 @@ export const oauthClientRouter = router({
     .input(rotateOauthClientSecretSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
+      rejectAppAssistantClient(input.id);
       await findOwnedClient(ctx.user.id, { id: input.id, isConfidential: true });
 
       const newSecret = generateKey(48);
@@ -311,7 +348,7 @@ export const oauthClientRouter = router({
             message: 'rotate-token-expiry-failed',
             clientId: input.id,
             error: error.message,
-          }).catch(() => undefined)
+          })
         );
       await revokeLinksOfRevokedCredentials([credential]);
 
@@ -324,7 +361,8 @@ export const oauthClientRouter = router({
     .input(deleteOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      await findOwnedClient(ctx.user.id, { id: input.id });
+      const owned = await findOwnedClient(ctx.user.id, { id: input.id });
+      rejectDeletingDisabledSelfOnlyClient(owned);
 
       // Collect every user who holds a token under this client BEFORE the
       // cascade wipes the rows — we need their ids to expire the orchestrator's

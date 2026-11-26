@@ -1,10 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { publishOrphanedDraftSql } from '~/pages/api/admin/temp/republish-orphaned-drafts';
+import { publishOrphanedDraftSql } from '~/server/api-routes/admin/temp/republish-orphaned-drafts';
 
 /**
  * The endpoint picks its candidates on the replica, so its publish re-checks each on the primary: a
- * model published, deleted or kept by a content wipe since then stays as it is.
+ * model published or deleted since then stays as it is.
  */
 
 let db: PGlite;
@@ -23,7 +23,6 @@ beforeEach(async () => {
     TRUNCATE "Model";
     INSERT INTO "Model" (id, status, "deletedAt", meta) VALUES
       (1, 'Draft', NULL, '{}'),
-      (2, 'Draft', NULL, '{"removedWithOwner": true, "statusBeforeRemoval": "Draft"}'),
       (3, 'Published', NULL, '{}'),
       (4, 'Draft', now(), '{}');
   `);
@@ -35,7 +34,7 @@ const publish = async (id: number) => {
 };
 
 describe('publishing an orphaned draft', () => {
-  it('publishes an undeleted draft with no record (control)', async () => {
+  it('publishes an undeleted draft (control)', async () => {
     expect(await publish(1)).toBe(1);
     expect((await db.query(`SELECT status FROM "Model" WHERE id = 1`)).rows).toEqual([
       { status: 'Published' },
@@ -43,7 +42,6 @@ describe('publishing an orphaned draft', () => {
   });
 
   it.each([
-    ['a content wipe kept since', 2],
     ['already published', 3],
     ['deleted', 4],
   ])('leaves a model %s as it is', async (_, id) => {

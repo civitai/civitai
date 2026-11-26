@@ -3,6 +3,8 @@ import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CollectionsInfinite } from '~/components/Collections/Infinite/CollectionsInfinite';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { useCollectionQueryParams } from '~/components/Collections/collection.utils';
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -42,6 +44,11 @@ function UserCollectionsPage() {
   const router = useRouter();
   const { set, ...queryFilters } = useCollectionQueryParams();
   const sort = queryFilters.sort ?? constants.collectionFilterDefaults.sort;
+  // The header bar's search of this creator's collections (pageSearch).
+  const features = useFeatureFlags();
+  const pageSearchText = useFeedSearchQuery();
+  // The collections query takes at most 100 characters.
+  const searchText = features.pageSearch ? pageSearchText?.slice(0, 100) : undefined;
 
   const username = (router.query.username as string) ?? '';
   const { data: user, isLoading } = trpc.userProfile.get.useQuery(
@@ -81,7 +88,9 @@ function UserCollectionsPage() {
                 onChange={(x) => set({ sort: x as CollectionSort })}
               />
             </Group>
-            <CollectionsInfinite filters={{ ...queryFilters, sort, userId: user.id }} />
+            <CollectionsInfinite
+              filters={{ ...queryFilters, sort, userId: user.id, query: searchText }}
+            />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

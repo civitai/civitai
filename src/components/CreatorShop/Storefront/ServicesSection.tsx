@@ -1,18 +1,19 @@
-import { Button, Group, Stack } from '@mantine/core';
+import { Button, Stack } from '@mantine/core';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { openDealsOnOffering } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
-import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { ServiceSlotsBadge } from '~/components/CreatorShop/Services/ServiceSlotsBadge';
-import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
-import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
+import {
+  sectionIcons,
+  servicePageHref,
+  storefrontSectionId,
+} from '~/components/CreatorShop/section-meta';
 import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCardAnchor';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ServicesSection({
   ownerUserId,
@@ -25,6 +26,7 @@ export function ServicesSection({
   shopPublished: boolean;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { offerings } = useQueryShopServices(ownerUserId, ownerUserId > 0);
   const isOwner = !!currentUser && currentUser.id === ownerUserId;
   // The seller's own open deals: the same list as Incoming requests on the manage page.
@@ -49,9 +51,9 @@ export function ServicesSection({
         title="Services"
         subtitle="Commission this creator. Your Buzz is held in escrow and only released when the work is done."
       />
+      <ServiceHappyLine counts={offerings} />
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
         {offerings.map((offering) => {
-          const full = offering.slotsOpen === 0;
           const openDeal = isOwner
             ? openDealsOnOffering(openDeals, offering.id, allOpenDealsLoaded)
             : undefined;
@@ -59,51 +61,26 @@ export function ServicesSection({
             <ServiceCardAnchor key={offering.id} offeringId={offering.id}>
               <ServiceOfferingCard
                 offering={offering}
-                footer={
-                  <Group justify="space-between" mt="sm">
-                    <ServiceSlotsBadge slotsOpen={offering.slotsOpen} />
-                    {isOwner && (
-                      <Group gap={4} ml="auto">
-                        <Button component={NextLink} href={manageHref} size="xs" variant="default">
-                          Manage
-                        </Button>
-                        {openDeal && (
-                          <Button
-                            component={NextLink}
-                            href={
-                              openDeal.dealId ? `/services/deals/${openDeal.dealId}` : manageHref
-                            }
-                            size="xs"
-                            color="yellow"
-                          >
-                            {openDeal.label}
-                          </Button>
-                        )}
-                      </Group>
-                    )}
-                    {!isOwner && (
-                      <Group gap={4} ml="auto">
-                        <ReportServiceButton offeringId={offering.id} />
-                        {shopPublished && (
-                          <LoginRedirect reason="perform-action">
-                            <Button
-                              color="yellow"
-                              size="xs"
-                              disabled={full}
-                              onClick={() =>
-                                dialogStore.trigger({
-                                  component: ServiceRequestModal,
-                                  props: { offering, sellerUsername: username },
-                                })
-                              }
-                            >
-                              Request
-                            </Button>
-                          </LoginRedirect>
-                        )}
-                      </Group>
-                    )}
-                  </Group>
+                sellerId={ownerUserId}
+                sellerUsername={username}
+                slotsOpen={offering.slotsOpen}
+                href={
+                  features.creatorServicesNext
+                    ? servicePageHref(offering.id, offering.title)
+                    : undefined
+                }
+                canRequest={shopPublished}
+                extra={
+                  openDeal && (
+                    <Button
+                      component={NextLink}
+                      href={openDeal.dealId ? `/services/deals/${openDeal.dealId}` : manageHref}
+                      color="yellow"
+                      fullWidth
+                    >
+                      {openDeal.label}
+                    </Button>
+                  )
                 }
               />
             </ServiceCardAnchor>

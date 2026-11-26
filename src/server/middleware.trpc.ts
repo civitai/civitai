@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import superjson from 'superjson';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
@@ -6,7 +7,6 @@ import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sAddCappedWithExpireGe, sAddWithExpireGe } from '~/server/redis/atomic';
-import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
@@ -15,9 +15,8 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { isUsageLimitRef, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { middleware } from '~/server/trpc';
 import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
-import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
+import { type InFlightLimit, withInFlightLimit } from '~/server/utils/in-flight-limit';
 import type { RateLimit } from '~/server/utils/rate-limit-window';
-import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -161,7 +160,7 @@ export type RateLimitOptions = {
  */
 export function rateLimit<TInput = any>(
   rateLimits?: RateLimit | RateLimit[] | UsageLimitRef,
-  condition?: (input: TInput) => boolean,
+  condition?: (input: TInput, ctx: Context) => boolean,
   options?: RateLimitOptions
 ) {
   const rules: RateLimit[] | UsageLimitRef = isUsageLimitRef(rateLimits)
@@ -173,7 +172,7 @@ export function rateLimit<TInput = any>(
     : [rateLimits];
 
   return middleware(async ({ ctx, input, next, path }) => {
-    if (condition && !condition(input as TInput)) return await next();
+    if (condition && !condition(input as TInput, ctx)) return await next();
 
     // options.sharedKey lets multiple procedures share one quota; otherwise key on the tRPC path.
     const recordAttempt = await claimRateLimitAttempt({
@@ -185,12 +184,18 @@ export function rateLimit<TInput = any>(
       req: ctx.req,
     });
 
-    // When onlyCountSuccess is set, defer recording until the procedure succeeds
-    // so failed calls don't burn a slot.
+    // When onlyCountSuccess is set, a call that does not succeed releases its slot. The slot is
+    // held while the procedure runs, so a concurrent call at the limit is refused meanwhile.
     if (options?.onlyCountSuccess) {
-      const result = await next();
-      if (result.ok) await recordAttempt();
-      return result;
+      let succeeded = false;
+      try {
+        const result = await next();
+        succeeded = result.ok;
+        if (succeeded) await recordAttempt();
+        return result;
+      } finally {
+        if (!succeeded) await recordAttempt.refund();
+      }
     }
 
     await recordAttempt();
@@ -198,53 +203,16 @@ export function rateLimit<TInput = any>(
   });
 }
 
-export type InFlightLimit = {
-  /** Procedures given the same bucket share one per-user limit. */
-  bucket: string;
-  limit: number;
-  /** A request still running after this stops counting against the limit. */
-  ttlMs: number;
-  /** A store slower than this is treated as failed, so a stalled Redis cannot stall the request. */
-  acquireTimeoutMs: number;
-  errorMessage: string;
-};
-const ACQUIRE_TIMED_OUT: ConcurrencySlot = { acquired: false, reason: 'unavailable' };
+export type { InFlightLimit } from '~/server/utils/in-flight-limit';
+
 /**
  * Caps a user's concurrent requests (`rateLimit` caps rate). Admits when the store fails or takes
- * longer than `acquireTimeoutMs`.
+ * longer than `acquireTimeoutMs`. The body is `withInFlightLimit`.
  */
-export function inFlightLimit({
-  bucket,
-  limit,
-  ttlMs,
-  acquireTimeoutMs,
-  errorMessage,
-}: InFlightLimit) {
+export function inFlightLimit(options: InFlightLimit) {
   return middleware(async ({ ctx, next }) => {
     if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-
-    const key = `${REDIS_KEYS.TRPC.IN_FLIGHT}:${bucket}:${ctx.user.id}`;
-    const acquiring = acquireConcurrencySlot(key, limit, ttlMs);
-    const slot = await withTimeoutFallback(acquiring, acquireTimeoutMs, ACQUIRE_TIMED_OUT, () => {
-      // A slot granted after we stopped waiting would otherwise count until its TTL.
-      void acquiring.then((late) => (late.acquired ? late.release() : undefined));
-    });
-    if (!slot.acquired) {
-      if (slot.reason === 'full')
-        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: errorMessage });
-      logSysRedisFailOpen('read-degraded', 'middleware.trpc.inFlightLimit', slot.error, {
-        bucket,
-        userId: ctx.user.id,
-      });
-      return await next();
-    }
-
-    try {
-      return await next();
-    } finally {
-      // Not awaited: the work is done, and a stalled store must not hold the response.
-      void slot.release();
-    }
+    return await withInFlightLimit({ ...options, userId: ctx.user.id }, () => next());
   });
 }
 
@@ -325,14 +293,14 @@ async function recordTaggedUrl(
         // Only a URL in the client's own form reaches this point, so `url` is one the site requests.
         { name: 'edge-cache-tag-cap', type: 'warn', tag, cap: edgeTagSetCap(tag), path, url },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     });
     return Math.min(...recorded);
   } catch (error) {
     logToAxiom(
       { name: 'edge-cache-record-failed', type: 'error', message: (error as Error).message, tags },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return 0;
   }
 }
@@ -350,11 +318,13 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     if (!!ctx.req?.query?.batch) {
       const message = `Content not cached: ${path}`;
       if (!isProd) console.log(message);
-      else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod').catch();
+      else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod');
       return await next();
     }
     if (!isProd) return await next();
-    let reqTTL = ctx.cache.skip ? 0 : (ttl as number);
+    // A verified crawler's answer can differ from a signed-out visitor's at the same URL.
+    const crawler = requestVerifiedCrawler(ctx.req) !== null;
+    let reqTTL = ctx.cache.skip || crawler ? 0 : (ttl as number);
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
@@ -375,7 +345,7 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     // so, so it was accidental rather than chosen.) Reintroducing an `expireAt` guard
     // here — `if (ctx.cache?.skip && !expireAt)` — is caught by
     // `middleware.trpc.edge-cache-precedence.test.ts`.
-    if (ctx.cache?.skip) reqTTL = 0;
+    if (ctx.cache?.skip || crawler) reqTTL = 0;
     if (result.ok && ctx.cache?.canCache) {
       const cacheTags = tags?.(input).map((x) => slugit(x));
       if (cacheTags && ctx.req?.url && reqTTL > 0) {
@@ -408,10 +378,22 @@ export function purgeOnSuccess(tags: string[]) {
         logToAxiom(
           { name: 'edge-purge-failed', type: 'error', message: error.message, tags, path },
           'civitai-prod'
-        ).catch(() => undefined)
+        )
       );
 
     return result;
+  });
+}
+
+/** `noEdgeCache` for the inputs `when` matches. It mutates `ctx.cache` in place, which the response headers read. */
+export function noEdgeCacheWhen(when: (input: Record<string, unknown>) => boolean) {
+  return middleware(async ({ next, ctx, getRawInput }) => {
+    const input = await getRawInput();
+    if (ctx.cache && input && typeof input === 'object' && when(input as Record<string, unknown>)) {
+      ctx.cache.edgeTTL = 0;
+      ctx.cache.browserTTL = 0;
+    }
+    return next();
   });
 }
 

@@ -4,7 +4,9 @@ import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { eventTurfTopic, turfKeys, type TurfCounts } from '~/server/events/turf/turf-map';
 import type { FeedSticker } from '~/server/events/turf/turf.service';
 import { logToAxiom } from '~/server/logging/client';
-import { sysRedis } from '~/server/redis/client';
+import { redis as clusterRedis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
+import { MAX_TURF_IMAGES_PER_MARK } from '~/server/schema/turf.schema';
 import { signalClient } from '~/utils/signal-client';
 
 // Live turf counts on feed cards and image pages: a client marks the images it has on screen, and
@@ -15,11 +17,10 @@ import { signalClient } from '~/utils/signal-client';
 // images can never crowd out hat and team totals.
 export const TURF_WATCH_TTL_MS = 90_000;
 export const MAX_TURF_WATCHED = 20_000;
-export const MAX_TURF_IMAGES_PER_MARK = 50;
 const PUSH_CONCURRENCY = 20;
 
 export type TurfWatchRedis = Pick<
-  typeof sysRedis,
+  typeof clusterRedis,
   'zRemRangeByScore' | 'zCard' | 'zmScore' | 'zAdd' | 'pExpireAt'
 >;
 
@@ -30,7 +31,7 @@ export type TurfWatchRedis = Pick<
 export async function markTurfWatched(
   event: { name: string; endsAt: Date },
   imageIds: number[],
-  { redis = sysRedis as TurfWatchRedis, now = Date.now() } = {}
+  { redis = clusterRedis as TurfWatchRedis, now = Date.now() } = {}
 ) {
   if (!(await isEventPointsEnabled().catch(() => false))) return 0;
   if (now > event.endsAt.getTime()) return 0;
@@ -40,8 +41,13 @@ export async function markTurfWatched(
     .map(String);
   if (!ids.length) return 0;
   const key = turfKeys(event.name).watch;
-  await redis.zRemRangeByScore(key, '-inf', now);
-  const [size, scores] = await Promise.all([redis.zCard(key), redis.zmScore(key, ids)]);
+  // A request path: each cache-cluster call is bounded, and throws on a failure or timeout.
+  const call = <T>(op: () => Promise<T>) => boundedClusterCall('markTurfWatched', op);
+  await call(() => redis.zRemRangeByScore(key, '-inf', now));
+  const [size, scores] = await Promise.all([
+    call(() => redis.zCard(key)),
+    call(() => redis.zmScore(key, ids)),
+  ]);
   // Marked images always refresh; new ones only while there is room.
   let room = Math.max(0, MAX_TURF_WATCHED - Number(size));
   const marked = ids.filter((_, i) => scores[i] != null || room-- > 0);
@@ -52,15 +58,17 @@ export async function markTurfWatched(
       event: event.name,
       message: 'turf interest set at its cap, images refused',
       refused: ids.length - marked.length,
-    }).catch(() => undefined);
+    });
   if (!marked.length) return 0;
   const lapse = now + TURF_WATCH_TTL_MS;
   await Promise.all([
-    redis.zAdd(
-      key,
-      marked.map((value) => ({ score: lapse, value }))
+    call(() =>
+      redis.zAdd(
+        key,
+        marked.map((value) => ({ score: lapse, value }))
+      )
     ),
-    redis.pExpireAt(key, event.endsAt.getTime() + TURF_WATCH_TTL_MS),
+    call(() => redis.pExpireAt(key, event.endsAt.getTime() + TURF_WATCH_TTL_MS)),
   ]);
   return marked.length;
 }
@@ -81,7 +89,7 @@ export async function pushTurfCounts(
   event: string,
   changes: TurfPush[],
   {
-    redis = sysRedis as Pick<typeof sysRedis, 'zmScore'>,
+    redis = clusterRedis as Pick<typeof clusterRedis, 'zmScore'>,
     send = (args: Parameters<typeof signalClient.topicSend>[0]) => signalClient.topicSend(args),
     now = Date.now(),
   } = {}
@@ -107,15 +115,10 @@ export async function pushTurfCounts(
       );
       failed += results.filter((r) => r.status === 'rejected').length;
     }
-    if (failed)
-      void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed }).catch(
-        () => undefined
-      );
+    if (failed) void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed });
     return watched.length - failed;
   } catch (error) {
-    void logToAxiom({ type: 'error', name: 'event-turf-watch', fn: 'push', event, error }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'event-turf-watch', fn: 'push', event, error });
     return 0;
   }
 }

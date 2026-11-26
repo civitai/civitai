@@ -35,6 +35,7 @@ const journey = (earned: Earned[]) =>
     earned,
     activity: { milestones: [], closestNext: null },
     secrets: [],
+    reveals: [],
     share: { shareable: [], hiddenOnProfile: [] },
   } as unknown as Journey);
 

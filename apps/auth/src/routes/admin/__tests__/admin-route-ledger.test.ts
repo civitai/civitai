@@ -51,6 +51,7 @@ const PUBLIC_ACTION_ROUTES = ['/invite', '/login', '/login/oauth/authorize', '/l
 
 const ADMIN_ACTION_ROUTES = [
   '/admin/access',
+  '/admin/access/[id]',
   '/admin/membership',
   '/admin/roles',
   '/admin/roles/[role]',
@@ -68,6 +69,7 @@ const ADMIN_ACTION_ROUTES = [
  */
 const ENDPOINT_ROUTES = [
   '/.well-known/jwks.json',
+  '/.well-known/oauth-authorization-server',
   '/.well-known/openid-configuration',
   '/api/auth/accounts',
   '/api/auth/dev/login',

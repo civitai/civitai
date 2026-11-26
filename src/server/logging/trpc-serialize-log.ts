@@ -392,7 +392,7 @@ function emit(payload: SerializeLogPayload): void {
       if (payload.droppedSinceLastLog > 0) body.droppedSinceLastLog = payload.droppedSinceLastLog;
 
       const { logToAxiom } = await import('~/server/logging/client');
-      await logToAxiom(body);
+      logToAxiom(body);
     } catch {
       // Logging failure must never surface.
     }

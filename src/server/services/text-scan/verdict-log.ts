@@ -43,7 +43,7 @@ export function logScanVerdict({ tags, ...verdict }: ScanVerdict) {
     ...verdict,
     // One string field, so a new label can't add an Axiom column.
     tags: tags?.join(','),
-  }).catch(() => undefined);
+  });
 }
 
 /** `acted` here means the verdict reached the entity's adapter, which may still decline to apply it. */

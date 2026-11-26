@@ -66,6 +66,9 @@ beforeEach(() => {
 
 const reviewRead = (user: object) =>
   getCollectionItemsByCollectionId({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     input: {
       collectionId: 7,
       limit: 10,

@@ -29,6 +29,15 @@ import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
+/**
+ * A challenge or event cover. The edit views send a cover the editor may not see back with only
+ * its id (and an empty url); resolveCoverImageId keeps the stored cover for it.
+ */
+export const challengeCoverInputSchema = z.union([
+  imageReferenceInputSchema,
+  imageReferenceInputSchema.extend({ id: z.number().int().positive(), url: z.literal('') }),
+]);
+
 // Lives here rather than in the service util that derives it: the util and the client-side card
 // helpers both need it, and services depend on schema, never the reverse.
 export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered' | 'hosting';
@@ -42,6 +51,8 @@ export type ChallengeCoverImage = {
   width: number | null;
   height: number | null;
   type: MediaType;
+  /** Set by the edit reads (moderator, and the creator's own), which keep a cover restricted by its base model. */
+  restricted?: boolean;
 };
 
 // Sort options for challenges
@@ -169,6 +180,16 @@ export const challengeMetadataSchema = z.object({
   // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
   // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.
   migratedAt: z.string().optional(),
+  // The daily's plan (daily-plan.ts), written at creation and by the reschedule route; compared by
+  // planIsCurrent (daily-reschedule.ts) to skip rows already on their date's plan.
+  dailyPlan: z
+    .object({
+      setKey: z.string(),
+      source: z.enum(['schedule', 'rotation']),
+      judgeName: z.string(),
+      occasion: z.string().optional(),
+    })
+    .optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),
@@ -376,6 +397,7 @@ export const getInfiniteChallengesSchema = z.object({
 export type GetChallengeWinnersInput = z.infer<typeof getChallengeWinnersSchema>;
 export const getChallengeWinnersSchema = z.object({
   challengeId: z.number(),
+  browsingLevel: z.number().optional(),
 });
 
 // Query schema for user entry count
@@ -473,7 +495,7 @@ export const upsertChallengeBaseSchema = z.object({
   theme: z.string().min(1),
   themeElements: z.array(z.string()).optional(),
   invitation: z.string().optional(),
-  coverImage: imageReferenceInputSchema,
+  coverImage: challengeCoverInputSchema,
   nsfwLevel: z.number().min(1).max(32).default(1),
   allowedNsfwLevel: z.number().min(1).max(63).default(sfwBrowsingLevelsFlag),
   modelVersionIds: z.array(z.number()).default([]),
@@ -522,7 +544,7 @@ export const userChallengeUpsertBaseSchema = z.object({
   theme: z.string().trim().min(1).max(100),
   themeElements: z.array(z.string().max(100)).max(20).optional(),
   invitation: z.string().max(300).optional(),
-  coverImage: imageReferenceInputSchema,
+  coverImage: challengeCoverInputSchema,
   // Capped at the browsable-levels flag (31): 32 is NsfwLevel.Blocked, and accepting it would
   // let a user create a Blocked-level challenge whose collection admits Blocked images.
   allowedNsfwLevel: z.number().min(1).max(allBrowsingLevelsFlag).default(sfwBrowsingLevelsFlag),
@@ -723,7 +745,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   endDate: z.date(),
   active: z.boolean().default(true),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
-  coverImage: imageReferenceInputSchema.nullable().optional(),
+  coverImage: challengeCoverInputSchema.nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(

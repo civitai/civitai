@@ -649,12 +649,6 @@ describe('preview attribution', () => {
     await caller().purgeAccount({ userId: TARGET, reason: 'account terminated' });
     expect(previewLines()).toHaveLength(0);
   });
-
-  it('a logging failure never fails the read', async () => {
-    mockLogToAxiom.mockRejectedValueOnce(new Error('log store down'));
-    const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
-    expect(out.apps[0].rowCount).toBe(3);
-  });
 });
 
 // ── 1c. THE INPUT BOUNDARY THE ERASURE REDUCTION RESTS ON ────────────────────
@@ -1024,9 +1018,16 @@ describe('audit record', () => {
     // `before`-only row this service claims to have eliminated.
     mockPool.connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
 
-    await expect(
-      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
-    ).rejects.toThrow(/timeout exceeded/);
+    // Reaches the caller as a retryable 503 (an unreachable database is mapped by publicProcedure),
+    // with the service's own wrapper still the cause.
+    const err = (await caller()
+      .purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+      .then(
+        () => undefined,
+        (e: unknown) => e
+      )) as { code?: string; cause?: unknown } | undefined;
+    expect(err?.code).toBe('SERVICE_UNAVAILABLE');
+    expect(String((err?.cause as Error | undefined)?.message)).toMatch(/timeout exceeded/);
 
     const created = mockDbWrite.appListingModerationEvent.create.mock.calls[0][0] as any;
 

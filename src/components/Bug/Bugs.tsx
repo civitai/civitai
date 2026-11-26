@@ -18,7 +18,7 @@ import {
 } from '@mantine/core';
 import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard, useDebouncedValue, useLocalStorage } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   IconAlertCircle,
   IconCircleCheck,
@@ -162,10 +162,9 @@ const BugItem = ({
   useEffect(() => setLocalCount(item.reportCount), [item.reportCount]);
 
   const handleDelete = (id: number) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete bug',
-      children: 'Are you sure you want to delete this bug entry?',
-      centered: true,
+      message: 'Are you sure you want to delete this bug entry?',
       labels: { confirm: 'Delete', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {

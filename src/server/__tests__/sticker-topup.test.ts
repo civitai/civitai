@@ -437,50 +437,6 @@ describe('purchaseStickerUses', () => {
     expect(createBuzzTransaction).toHaveBeenCalled();
   });
 
-  // Both failures co-occur precisely during a multi-service incident: the
-  // logger awaits its ingest with no internal guard, so a degraded Axiom hands
-  // back a rejecting promise inside the very catch that exists to keep the
-  // payout reachable.
-  it('survives a rejecting logger inside the bookkeeping catch', async () => {
-    // Kills the `await logToAxiom(...)` mutant: an awaited rejection escapes
-    // the catch block and rejects the whole call. It does NOT kill a deleted
-    // `.catch()` — vitest absorbs the rejection that would end the process
-    // under Node — which is what the sibling test below is for.
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => unhandled.push(reason);
-    process.on('unhandledRejection', onUnhandled);
-    try {
-      findHoldings
-        .mockResolvedValueOnce([{ remaining: 0 }])
-        .mockRejectedValueOnce(new Error('pool timeout'));
-      logToAxiom.mockRejectedValue(new Error('axiom down'));
-
-      await expect(call({ quantity: 10 })).resolves.toBeTruthy();
-      expect(createBuzzTransaction).toHaveBeenCalled();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off('unhandledRejection', onUnhandled);
-    }
-  });
-
-  // The observable seam is whether a handler is ATTACHED, which this code owns
-  // — not whether the process survives, which belongs to Node and the harness.
-  // Asserts shape, not absorption: absorption is a language guarantee once
-  // `.catch` is attached, so that is the right place to stop.
-  it('attaches a handler to the logger it calls from a catch block', async () => {
-    const axiomCatch = vi.fn(() => undefined);
-    logToAxiom.mockReturnValue({ catch: axiomCatch });
-    findHoldings
-      .mockResolvedValueOnce([{ remaining: 0 }])
-      .mockRejectedValueOnce(new Error('pool timeout'));
-
-    await call({ quantity: 10 });
-
-    expect(logToAxiom).toHaveBeenCalled();
-    expect(axiomCatch).toHaveBeenCalled();
-  });
-
   it('still pays the creator when the post-grant balance read throws', async () => {
     findHoldings
       .mockResolvedValueOnce([{ remaining: 0 }])

@@ -3,6 +3,34 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
+
+/**
+ * The post's author, on a live storyline chapter or a draft started from the storyline flow: who may
+ * write a caption or a text item on it. Read from the primary.
+ */
+export async function assertChapterPostAuthor({
+  postId,
+  postUserId,
+  userId,
+  what,
+}: {
+  postId: number;
+  postUserId: number;
+  userId: number;
+  /** Ends "Only the post author can …". */
+  what: string;
+}) {
+  if (postUserId !== userId) throw throwAuthorizationError(`Only the post author can ${what}`);
+  const [chapter, pending] = await Promise.all([
+    dbWrite.storylineChapter.findFirst({
+      where: { postId, removedAt: null },
+      select: { id: true },
+    }),
+    dbWrite.storylinePendingChapter.findUnique({ where: { postId }, select: { postId: true } }),
+  ]);
+  if (!chapter && !pending) throw throwNotFoundError('Only for storyline chapters');
+}
 
 /**
  * Sets the caption the post's author wrote on one image of a storyline chapter, or of a draft
@@ -25,19 +53,12 @@ export async function setStorylineImageCaption({
     select: { postId: true, post: { select: { userId: true } } },
   });
   if (!image?.postId || !image.post) throw throwNotFoundError('Image not found');
-  if (image.post.userId !== userId)
-    throw throwAuthorizationError('Only the post author can caption its images');
-  const [chapter, pending] = await Promise.all([
-    dbWrite.storylineChapter.findFirst({
-      where: { postId: image.postId, removedAt: null },
-      select: { id: true },
-    }),
-    dbWrite.storylinePendingChapter.findUnique({
-      where: { postId: image.postId },
-      select: { postId: true },
-    }),
-  ]);
-  if (!chapter && !pending) throw throwNotFoundError('Captions are only for storyline chapters');
+  await assertChapterPostAuthor({
+    postId: image.postId,
+    postUserId: image.post.userId,
+    userId,
+    what: 'caption its images',
+  });
 
   const text = content.trim();
   if (!text) {
@@ -84,13 +105,20 @@ export async function getPostImageCaptions({
   });
 }
 
-/** An unscanned caption (nsfwLevel 0) is shown to every reader. */
+/**
+ * An unscanned caption (nsfwLevel 0) is shown to every reader; with `failClosed` (text items, which
+ * an edit resets to 0) it is shown to none.
+ */
 export function isImageCaptionShown(
   caption: { refused: boolean; nsfwLevel: number },
-  { browsingLevel, maxNsfwLevel }: { browsingLevel: number; maxNsfwLevel: number }
+  {
+    browsingLevel,
+    maxNsfwLevel,
+    failClosed = false,
+  }: { browsingLevel: number; maxNsfwLevel: number; failClosed?: boolean }
 ) {
   if (caption.refused) return false;
-  if (!caption.nsfwLevel) return true;
+  if (!caption.nsfwLevel) return !failClosed;
   return (
     (caption.nsfwLevel & browsingLevel) !== 0 &&
     getHighestBrowsingLevelBit(caption.nsfwLevel) <= maxNsfwLevel
@@ -136,6 +164,7 @@ export async function getStorylineImageCaptions({
           { tags: { none: { tagId: { in: hiddenTagIds }, disabled: false } } },
           ...(viewerId != null ? [{ userId: viewerId }] : []),
         ],
+        AND: [imageNotRestrictedWhere()],
       },
     },
     select: {

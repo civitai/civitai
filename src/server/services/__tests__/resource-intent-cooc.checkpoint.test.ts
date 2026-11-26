@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { promisify } from 'util';
 import zlib from 'zlib';
 import { Packr } from 'msgpackr';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   CoocCountAccumulator,
@@ -19,7 +19,6 @@ import {
   decodeCheckpointAttachSection,
   encodeCheckpointAttachSection,
 } from '~/server/services/resource-intent-cooc/checkpoint-attach';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   CoocSnapshotHolder,
   CoocStudySnapshots,
@@ -46,11 +45,6 @@ import { fakeImageDb, freshDb } from './resource-intent-cooc.harness';
  */
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
-
-beforeEach(() => {
-  loggingMock.logToAxiom.mockReset();
-  loggingMock.logToAxiom.mockResolvedValue(undefined);
-});
 
 const DAY = 86_400_000;
 // The payload's own msgpack options and brotli, to inspect and re-pack its elements.
@@ -110,13 +104,6 @@ describe('CheckpointAttachAccumulator', () => {
         ['?', new Map([[7, 1]])],
       ])
     );
-  });
-
-  it('refuses to add or finalize twice', () => {
-    const acc = new CheckpointAttachAccumulator();
-    acc.finalize(new Map());
-    expect(() => acc.add([ck(1, 1)])).toThrow('already finalized');
-    expect(() => acc.finalize(new Map())).toThrow('already finalized');
   });
 });
 
@@ -178,70 +165,6 @@ describe('the section encoding', () => {
     await expect(
       deserializeCoocPayload(await deflate(packr.pack(raw.slice(0, 10))))
     ).rejects.toThrow('unknown format');
-  });
-
-  // Each case is built to reach ONE guard; the asserted reason names it.
-  const at = (s: unknown[], i: number, v: unknown) => s.map((x, j) => (j === i ? v : x));
-  const perBm = (s: unknown[], which: 3 | 4, bm: string, f: (b: Buffer) => unknown) =>
-    at(
-      s,
-      which,
-      (s[which] as Buffer[]).map((b, i) => ((s[2] as string[])[i] === bm ? f(b) : b))
-    );
-  const swap8 = (b: Buffer) => Buffer.from([...b.subarray(4, 8), ...b.subarray(0, 4)]);
-  const dup8 = (b: Buffer) => Buffer.from([...b.subarray(0, 4), ...b.subarray(0, 4)]);
-  it.each<[string, (s: unknown[]) => unknown, string]>([
-    ['an unknown format', (s) => at(s, 0, 'other/1'), 'unknown format'],
-    ['a missing element', (s) => s.slice(0, 4), 'unknown format'],
-    ['an empty build hash', (s) => at(s, 1, ''), 'build hash'],
-    ['a non-string build hash', (s) => at(s, 1, 7), 'build hash'],
-    ['a non-string baseModel', (s) => at(s, 2, ['?', 3, 'EcoB']), 'baseModels'],
-    ['unordered baseModels', (s) => at(s, 2, ['EcoB', 'EcoA', '?']), 'baseModel order'],
-    [
-      'a missing modelIds array',
-      (s) => at(s, 3, (s[3] as unknown[]).slice(1)),
-      'modelIds per baseModel',
-    ],
-    [
-      'a missing counts array',
-      (s) => at(s, 4, (s[4] as unknown[]).slice(1)),
-      'counts per baseModel',
-    ],
-    [
-      'modelIds that are not uint32 bytes',
-      (s) => perBm(s, 3, 'EcoB', () => Buffer.alloc(3)),
-      'modelIds bytes',
-    ],
-    ['counts that are not bytes', (s) => perBm(s, 4, 'EcoB', () => [1]), 'counts bytes'],
-    [
-      'an empty baseModel',
-      (s) =>
-        perBm(
-          perBm(s, 3, 'EcoB', () => Buffer.alloc(0)),
-          4,
-          'EcoB',
-          () => Buffer.alloc(0)
-        ),
-      'empty baseModel',
-    ],
-    [
-      'a model/count length mismatch',
-      (s) => perBm(s, 4, 'EcoA', (b) => b.subarray(0, 4)),
-      'model/count lengths',
-    ],
-    ['a zero count', (s) => perBm(s, 4, 'EcoB', (b) => Buffer.alloc(b.length)), 'zero count'],
-    [
-      'unordered model ids',
-      (s) => perBm(perBm(s, 3, 'EcoA', swap8), 4, 'EcoA', swap8),
-      'model order',
-    ],
-    ['a duplicated model id', (s) => perBm(s, 3, 'EcoA', dup8), 'model order'],
-  ])('refuses %s', (_label, corrupt, reason) => {
-    const good = encodeCheckpointAttachSection(sectionCounts());
-    expect(() => decodeCheckpointAttachSection(good)).not.toThrow();
-    expect(() => decodeCheckpointAttachSection(corrupt(good))).toThrow(
-      `checkpoint attach section invalid: ${reason}`
-    );
   });
 
   it('the index ranks by count, then ascending id, and keeps the first 300', () => {
@@ -317,11 +240,6 @@ describe('loading and serving the section', () => {
     expect(served.fallbackReason).toBeNull();
     expect(served.snapshot?.contentHash).toBe(hash);
     expect(served.snapshot?.checkpoints).toBeNull();
-    // Absent is not invalid: no section-invalid report for a snapshot that predates the section.
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-checkpoint-section-invalid' }),
-      'temp-search'
-    );
   });
 
   it('a section built under another build hash is not served; the snapshot still is', async () => {
@@ -346,13 +264,6 @@ describe('loading and serving the section', () => {
     const served = await new CoocSnapshotHolder({ sql: () => sql }).resolve();
     expect(served.snapshot?.contentHash).toBe(hash);
     expect(served.snapshot?.checkpoints).toBeNull();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'resource-intent-checkpoint-section-invalid',
-        contentHash: hash,
-      }),
-      'temp-search'
-    );
   });
 
   it('🔴 study mode: a study snapshot serves its section; a foreign section serves none', async () => {

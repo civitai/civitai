@@ -63,9 +63,9 @@ import {
  * cannot hide one.
  *
  * ── WHY THIS FILE LIVES HERE ────────────────────────────────────────────────
- * `no-lint-rules-script-drift` scans only `src/server/services/__tests__` for
- * only this `no-*.test.ts` name shape. A guard of this class parked beside the
- * module it protects is invisible to that ratchet and is not run by the fast
+ * `docs/dev/convention-guards.md` lists only `src/server/services/__tests__` guards
+ * of this `no-*.test.ts` name shape. A guard of this class parked beside the
+ * module it protects is missing from that list and is not run by the fast
  * `pnpm run test:lint-rules` selector — it would surface only in a full unit
  * suite, minutes later, in a file nobody was looking at.
  */
@@ -183,11 +183,13 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const rel = (f: string) => path.relative(SRC, f).split(path.sep).join('/');
 const sourceFiles = walk(SRC);
+const corpus = sourceFiles.map((f) => ({
+  file: rel(f),
+  code: blankComments(readFileSync(f, 'utf8')),
+}));
 
 /** `<file, comment-blanked source>` for every file that names the claim at all. */
-const scanned = sourceFiles
-  .map((f) => ({ file: rel(f), code: blankComments(readFileSync(f, 'utf8')) }))
-  .filter((f) => f.code.includes(CLAIM));
+const scanned = corpus.filter((f) => f.code.includes(CLAIM));
 
 /**
  * Remove every ALLOWED occurrence from a file, preserving offsets, and return
@@ -235,8 +237,8 @@ function perCallBudgetSites(code: string): string[] {
   return sites;
 }
 
-const callSitesByFile = sourceFiles
-  .map((f) => ({ file: rel(f), sites: perCallBudgetSites(blankComments(readFileSync(f, 'utf8'))) }))
+const callSitesByFile = corpus
+  .map((f) => ({ file: f.file, sites: perCallBudgetSites(f.code) }))
   .filter((f) => f.sites.length > 0);
 
 describe('the instrument itself', () => {
@@ -563,8 +565,7 @@ describe('every submit gate is routed through one helper', () => {
     }
 
     // Every OTHER production file is free of them — the grants have no second reader.
-    const readers = sourceFiles
-      .map((f) => ({ file: rel(f), code: blankComments(readFileSync(f, 'utf8')) }))
+    const readers = corpus
       .filter((f) =>
         /blockTrainingRunCeiling\(|blockConfirmedStepCeiling\(|blockQuoteGrantRefusal\(/.test(
           f.code

@@ -9,6 +9,8 @@ import type * as TrpcModule from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 import type * as AddonsModule from '~/providers/BrowsingSettingsAddonsProvider';
+import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
+import type * as EdgeMediaModule from '~/components/EdgeMedia/EdgeMedia';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { NsfwLevel } from '~/server/common/enums';
@@ -31,6 +33,7 @@ const mocks = vi.hoisted(() => {
     image: [
       { id: 7, name: 'Safe image', nsfwLevel: 1, url: 'safe-image.jpg' },
       { id: 8, name: 'Spicy image', nsfwLevel: 16, url: 'mature-image.jpg' },
+      { id: 9, name: 'Safe video', nsfwLevel: 1, url: 'safe-video.mp4', type: 'video' },
     ],
   };
   const state = {
@@ -136,6 +139,34 @@ vi.mock('~/hooks/useInView', () => ({
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useImagesContext: () => ({ getImages: () => [] }),
+}));
+vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutedDialogLinkModule>()),
+  RoutedDialogLink: ({
+    children,
+    state,
+  }: {
+    children: React.ReactNode;
+    state: { imageId: number };
+  }) => (
+    <a data-testid="open-image" href={`/images/${state.imageId}`}>
+      {children}
+    </a>
+  ),
+}));
+vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
+  ...(await importOriginal<typeof EdgeMediaModule>()),
+  EdgeMedia2: ({
+    src,
+    type,
+    html5Controls,
+  }: {
+    src: string;
+    type: string;
+    html5Controls?: boolean;
+  }) =>
+    type === 'video' ? <video src={src} controls={html5Controls} /> : <img src={src} alt="" />,
 }));
 // Stand-in cards that show media only when the browsing level covers it. The real cards blur via
 // ImageGuard2's blurLevels instead, so these prove Show raises the level for one card, not that
@@ -169,6 +200,27 @@ vi.mock('~/components/Cards/ImageCard', async () => {
       return <div data-testid="image-card">{useMedia(data.nsfwLevel, data.url)}</div>;
     },
   };
+});
+
+// The full-width view's guard, gated on the browsing level the same way as the stand-in cards.
+vi.mock('~/components/ImageGuard/ImageGuard2', async () => {
+  const { useBrowsingLevelDebounced } = await import(
+    '~/components/BrowsingLevel/BrowsingLevelProvider'
+  );
+  function ImageGuard2({
+    image,
+    children,
+  }: {
+    image: { nsfwLevel: number };
+    children: (show: boolean) => React.ReactElement;
+  }) {
+    const level = useBrowsingLevelDebounced();
+    return children(Flags.intersects(image.nsfwLevel, level));
+  }
+  ImageGuard2.BlurToggle = function BlurToggle() {
+    return null;
+  };
+  return { ImageGuard2 };
 });
 
 const { RenderRichText } = await import('~/components/RichTextEditor/RenderRichText');
@@ -343,5 +395,82 @@ describe('Civitai cards in an article', () => {
     const tile = host().querySelector('[data-testid="civitai-embed-unavailable"]');
     expect(tile?.textContent).toContain('This model is not available');
     expect(tile?.querySelector('a')?.getAttribute('href')).toBe('/models/3');
+  });
+});
+
+// Built as JSON, not parsed from HTML: an article page renders from its stored contentJson.
+const fullEmbed = (...ids: number[]) => ({
+  type: 'doc',
+  content: [
+    {
+      type: 'civitaiEmbed',
+      attrs: { items: ids.map((id) => ({ type: 'image', id })), display: 'full' },
+    },
+  ],
+});
+
+describe('a full-width image in an article', () => {
+  test('stored JSON with display full renders the full view, linked to the image', async () => {
+    renderArticle(fullEmbed(7));
+
+    await expect.element(page.getByTestId('civitai-embed-full')).toBeInTheDocument();
+    expect(page.getByTestId('image-card').elements()).toHaveLength(0);
+    expect(host().querySelector('[data-testid="open-image"]')?.getAttribute('href')).toBe(
+      '/images/7'
+    );
+    expect(host().querySelector('img')?.getAttribute('src')).toBe('safe-image.jpg');
+  });
+
+  test('a video plays with native controls, outside the link', async () => {
+    renderArticle(fullEmbed(9));
+
+    await expect.element(page.getByTestId('civitai-embed-full')).toBeInTheDocument();
+    const video = host().querySelector('video');
+    expect(video?.controls).toBe(true);
+    expect(video?.closest('a')).toBeNull();
+    expect(host().querySelector('[data-testid="open-image"]')?.getAttribute('href')).toBe(
+      '/images/9'
+    );
+  });
+
+  test('a mature image gets the card placeholder, and Show reveals it full width', async () => {
+    renderArticle(fullEmbed(8));
+
+    await settled();
+    expect(host().innerHTML).not.toContain('mature-image.jpg');
+    expect(page.getByTestId('civitai-embed-full').elements()).toHaveLength(0);
+
+    await userEvent.click(page.getByRole('button', { name: 'Show' }));
+    await expect.element(page.getByTestId('civitai-embed-full')).toBeInTheDocument();
+    await vi.waitFor(() => expect(host().innerHTML).toContain('mature-image.jpg'));
+  });
+
+  test('with mature content off, a mature image is only the hidden tile', async () => {
+    mocks.state.showNsfw = false;
+    renderArticle(fullEmbed(8));
+
+    await settled();
+    expect(host().textContent).toContain('Mature content hidden');
+    expect(host().innerHTML).not.toContain('mature-image.jpg');
+    expect(page.getByTestId('civitai-embed-full').elements()).toHaveLength(0);
+  });
+
+  test('display full on a model has no effect', async () => {
+    renderArticle({
+      type: 'doc',
+      content: [
+        { type: 'civitaiEmbed', attrs: { items: [{ type: 'model', id: 1 }], display: 'full' } },
+      ],
+    });
+
+    await expect.element(page.getByTestId('model-card')).toBeInTheDocument();
+    expect(page.getByTestId('civitai-embed-full').elements()).toHaveLength(0);
+  });
+
+  test('display full on more than one item has no effect', async () => {
+    renderArticle(fullEmbed(7, 9));
+
+    await vi.waitFor(() => expect(page.getByTestId('image-card').elements()).toHaveLength(2));
+    expect(page.getByTestId('civitai-embed-full').elements()).toHaveLength(0);
   });
 });

@@ -118,6 +118,17 @@ export function isTrainerBlobFileName(fileName: string) {
   return trainerBlobFileName.test(fileName);
 }
 
+/** What the file editor shows: the rename, else the download name in place of a trainer blob id. */
+export function editorFileName(file: {
+  name: string;
+  overrideName?: string | null;
+  downloadName?: string | null;
+}) {
+  if (file.overrideName) return file.overrideName;
+  if (file.downloadName && isTrainerBlobFileName(file.name)) return file.downloadName;
+  return file.name;
+}
+
 export function isGenericFileName(fileName: string) {
   const dot = fileName.lastIndexOf('.');
   const basename = (dot > 0 ? fileName.slice(0, dot) : fileName)

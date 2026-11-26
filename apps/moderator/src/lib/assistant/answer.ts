@@ -1,3 +1,4 @@
+import { escapeHtml } from '@civitai/shared/html-escape';
 import type { TurnSource } from './types';
 
 // The assistant's answer as the moderator reads it. Client-safe and dependency-free: the answer is
@@ -16,14 +17,6 @@ export function unverifiedCitations(answer: string, known: Iterable<string>): st
   const set = new Set(known);
   return citationsIn(answer).filter((ref) => !set.has(ref));
 }
-
-const escapeHtml = (text: string) =>
-  text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 
 /** Only app-relative paths become links. A source's `href` is built server-side, but this is the last
  *  place an attacker-shaped value could reach an attribute, so it is checked here too. */

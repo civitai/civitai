@@ -30,6 +30,8 @@ export type ModelPreviewImage = {
   /** Tagged as depicting a minor, or as a minor in an acceptable context: the evidence a minor flag
    *  is judged on. */
   minor: boolean;
+  /** Withheld from this moderator (`withheldPreviewImages`): no key, no flags. */
+  restricted?: boolean;
   acceptableMinor: boolean;
 };
 
@@ -45,6 +47,8 @@ export type ModelPreviewFile = {
   pickleScan: string;
   virusScan: string;
   visibility: string;
+  /** Bytes deleted, row kept. */
+  purged: boolean;
 };
 
 export type ModelPreviewVersion = {
@@ -128,6 +132,7 @@ export async function getModelPreview(
         'mf.pickleScanResult',
         'mf.virusScanResult',
         'mf.visibility',
+        'mf.dataPurged',
       ])
       .where('mv.modelId', '=', modelId)
       .where('mf.replacedAt', 'is', null)
@@ -151,6 +156,7 @@ export async function getModelPreview(
       pickleScan: f.pickleScanResult,
       virusScan: f.virusScanResult,
       visibility: f.visibility,
+      purged: f.dataPurged,
     });
     filesByVersion.set(f.modelVersionId, list);
   }

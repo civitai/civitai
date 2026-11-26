@@ -129,7 +129,7 @@ SharedWorker TypeScript scripts not compiled (Turbopack) — **FIXED via prebuil
 
 🔧 **Open decisions (team's call)**
 - **typed-scss-modules → loose ambient types** — lose per-class CSS typing across the codebase. Ratify or find an alternative (e.g. a Turbopack-compatible typing approach).
-- **Source maps vs. image size** — the small 1.15 GB image was with browser source maps OFF; they're ON now for error reporting (re-inflates the image via `.next/static` maps). Pick one: small image *or* source-map-backed error logging.
+- **Source maps vs. image size** — decided 2026-11-17: no maps. Browser and server maps are off (`productionBrowserSourceMaps: false`) and `applySourceMaps` is deleted, so client error stacks are logged raw.
 - **`middleware` → `proxy`** rename (Next 16 deprecation; still works, just warns).
 - **React 18 → 19** (deferred; known follow-up).
 
@@ -140,7 +140,7 @@ SharedWorker TypeScript scripts not compiled (Turbopack) — **FIXED via prebuil
 1. Run the built app (dev server or the standalone build) and click through it — especially the components with CSS changes and Civitai Link.
 2. Visually verify the 8 CSS files (e.g. via the `component-preview` skill, dark + light).
 3. Run the Playwright suite.
-4. Decide the source-maps-vs-image-size and typed-scss-modules questions.
+4. Decide the typed-scss-modules question (source maps: decided, see above).
 5. Do the `middleware` → `proxy` rename to clear the deprecation.
 6. Commit + open PR.
 

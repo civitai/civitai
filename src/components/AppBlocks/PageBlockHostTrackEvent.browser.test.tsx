@@ -11,8 +11,6 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
  * nothing.
  */
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),

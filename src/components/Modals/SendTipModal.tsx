@@ -1,4 +1,9 @@
 import {
+  paymentIntentKey,
+  settlePaymentIntentKey,
+  tipIntent,
+} from '~/components/Buzz/payment-intent-keys';
+import {
   Badge,
   Button,
   Chip,
@@ -21,7 +26,9 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Form, InputChipGroup, InputNumber, InputTextArea, useForm } from '~/libs/form';
+import { InputChipGroup, InputNumber, InputTextArea } from '~/libs/form/basic-inputs';
+import { Form } from '~/libs/form/components/Form';
+import { useForm } from '~/libs/form/hooks/useForm';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -107,12 +114,14 @@ export function SendTipModal({
   });
 
   const tipUserMutation = trpc.buzz.tipUser.useMutation({
-    async onSuccess() {
+    async onSuccess(_, tip) {
+      if (tip.idempotencyKey) settlePaymentIntentKey(tipIntent(tip), tip.idempotencyKey);
       setLoading(false);
       handleClose();
       await queryUtils.buzz.getBuzzAccount.invalidate();
     },
-    onError(error) {
+    onError(error, tip) {
+      if (tip.idempotencyKey) settlePaymentIntentKey(tipIntent(tip), tip.idempotencyKey, error);
       showErrorNotification({
         title: 'Unable to send tip',
         error: new Error(error.message),
@@ -131,7 +140,7 @@ export function SendTipModal({
         details: { toUserId, entityType, entityId, amount: amountToSend },
       }).catch(() => undefined);
 
-      return tipUserMutation.mutate({
+      const tip = {
         toAccountId: toUserId,
         amount: amountToSend,
         description: description || null,
@@ -140,7 +149,10 @@ export function SendTipModal({
         // Ensures we don't transfer between different account types
         fromAccountType: selectedCurrencyType,
         toAccountType: selectedCurrencyType,
-      });
+      };
+      // Held across a failure that may have moved the Buzz, so sending the same tip again is
+      // deduplicated by the server instead of sent twice.
+      return tipUserMutation.mutate({ ...tip, idempotencyKey: paymentIntentKey(tipIntent(tip)) });
     };
 
     conditionalPerformTransaction(amountToSend, performTransaction);

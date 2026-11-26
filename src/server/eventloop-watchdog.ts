@@ -377,8 +377,8 @@ async function captureWedge(wedgeStartMs) {
     // unrecoverable one. The harvester needs no new permission to do this.
     //
     // UNCOMPRESSED and named cpu-*: the harvester matches *.cpuprofile, gzips during
-    // transfer itself, and keys the object by image SHA so the profile can be paired
-    // with its source maps. A .gz here would simply never be collected.
+    // transfer itself, and keys the object by image SHA. A .gz here would simply never be
+    // collected.
     const name =
       'cpu-wedge-' + wedgeMs + 'ms-' + capCfg.pod + '-' +
       new Date().toISOString().replace(/[:.]/g, '-') + '.cpuprofile';
@@ -460,8 +460,18 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 
-const { sab, thresholdMs, port, token, previousToken, heartbeatIntervalMs, pollMs, cap, starvedRatio } =
-  workerData;
+const {
+  sab,
+  thresholdMs,
+  port,
+  token,
+  previousToken,
+  probeToken,
+  heartbeatIntervalMs,
+  pollMs,
+  cap,
+  starvedRatio,
+} = workerData;
 const beat = new BigInt64Array(sab);
 
 const BUCKETS = [1, 2, 5, 10, 30, 60, 120, 300, 600];
@@ -643,10 +653,11 @@ function render() {
     out.push('# TYPE ' + name + ' gauge');
     out.push(name + ' ' + value);
   }
-  out.push('# HELP civitai_app_watchdog_token_match_total Scrapes of this port authenticated by the webhook token, by which configured value matched. Counts the scrape being served.');
+  out.push('# HELP civitai_app_watchdog_token_match_total Scrapes of this port authenticated by a configured token, by which value matched (slot=current|previous for the webhook token, probe for PROBE_TOKEN). Counts the scrape being served.');
   out.push('# TYPE civitai_app_watchdog_token_match_total counter');
   out.push('civitai_app_watchdog_token_match_total{slot="current"} ' + tokenMatches.current);
   out.push('civitai_app_watchdog_token_match_total{slot="previous"} ' + tokenMatches.previous);
+  out.push('civitai_app_watchdog_token_match_total{slot="probe"} ' + tokenMatches.probe);
   gauge('civitai_app_watchdog_up', 'Event-loop watchdog worker is running and serving. Absence of this series is the signal that the watchdog is not running.', 1);
   gauge('civitai_app_watchdog_heartbeat_age_ms', 'Milliseconds since the main thread last wrote the shared-memory heartbeat. Grows without bound while the loop is wedged.', age);
   gauge('civitai_app_watchdog_wedged', 'Whether the main-thread event loop is currently considered wedged (1) or not (0).', wedged);
@@ -722,14 +733,17 @@ function sameToken(given, expected) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// WEBHOOK_TOKEN_PREVIOUS is accepted too, as the main app's WebhookEndpoint does. Matches are
-// counted by slot here because this port is outside the registry that counts the app's matches.
-const tokenMatches = { current: 0, previous: 0 };
+// WEBHOOK_TOKEN_PREVIOUS and PROBE_TOKEN are accepted too, as the main app's /api/metrics does.
+// Matches are counted by slot here because this port is outside the registry that counts the app's
+// matches.
+const tokenMatches = { current: 0, previous: 0, probe: 0 };
 
 function slotOf(given) {
   if (sameToken(given, token)) return 'current';
   const previous = typeof previousToken === 'string' ? previousToken : '';
   if (previous.trim() !== '' && sameToken(given, previous)) return 'previous';
+  const probe = typeof probeToken === 'string' ? probeToken : '';
+  if (probe.trim() !== '' && sameToken(given, probe)) return 'probe';
   return undefined;
 }
 
@@ -922,6 +936,7 @@ export function registerEventLoopWatchdog(): void {
         // Bearer or ?token=, as /api/metrics. The worker refuses to serve with an empty token.
         token: process.env.WEBHOOK_TOKEN ?? '',
         previousToken: process.env.WEBHOOK_TOKEN_PREVIOUS ?? '',
+        probeToken: process.env.PROBE_TOKEN ?? '',
         heartbeatIntervalMs,
         pollMs: Math.min(DEFAULT_POLL_MS, heartbeatIntervalMs),
         // Resolved on the MAIN thread at spawn, so a bad config is a boot-time fact

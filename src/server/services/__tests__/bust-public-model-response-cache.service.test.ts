@@ -81,8 +81,8 @@ const mockDbWrite = dbMock.dbWrite;
 const mockRedisDel = redisMock.redis.del;
 
 const keysFor = (id: number) => [
-  `packed:caches:public-model-response:${id}:${allBrowsingLevelsFlag}`,
-  `packed:caches:public-model-response:${id}:${sfwBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${allBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${sfwBrowsingLevelsFlag}`,
 ];
 
 beforeEach(() => {
@@ -102,10 +102,6 @@ describe('bustPublicModelResponseCache', () => {
     expect(mockRedisDel).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).toHaveBeenCalledWith([...keysFor(1), ...keysFor(2)]);
   });
-
-  // NB: the IS_DATAPACKET gate (PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) is captured
-  // ONCE at module load, so the disabled-path no-op isn't runtime-toggleable here
-  // — it's covered by code review (env.IS_DATAPACKET=true on Datapacket only).
 
   it('is a no-op for an empty id array (no redis call)', async () => {
     await bustPublicModelResponseCache([]);

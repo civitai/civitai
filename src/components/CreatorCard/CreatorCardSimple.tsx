@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { creatorCardSectionStyle } from '~/components/CreatorCard/section-style';
 import { uniqBy } from 'lodash-es';
 import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
@@ -51,6 +52,7 @@ const CreatorCardSimpleContent = ({
   statDisplayOverwrite,
   subText,
   actions,
+  footer,
   ...cardProps
 }: CreatorCardSimpleProps) => {
   const theme = useMantineTheme();
@@ -152,6 +154,8 @@ const CreatorCardSimpleContent = ({
                 left: 0,
                 width: '100%',
                 height: '100%',
+                // Decorative: out of hit-testing so no <video> sits under the name or buttons.
+                pointerEvents: 'none',
               },
             }}
             contain
@@ -249,14 +253,22 @@ const CreatorCardSimpleContent = ({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py={5}
         >
           <Group gap={4}>
             <DomainLinkIcons links={creator.links} size={32} iconSize={20} />
           </Group>
+        </Card.Section>
+      ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={creatorCardSectionStyle(theme, colorScheme)}
+          py="xs"
+        >
+          {footer}
         </Card.Section>
       ) : null}
     </ElementInView>
@@ -270,6 +282,8 @@ export type CreatorCardSimpleProps = {
   useEquippedCosmetics?: boolean;
   statDisplayOverwrite?: string[];
   actions?: (creator: UserCreator) => React.ReactElement;
+  /** Extra content in its own section under a divider, below the links. Nothing renders without it. */
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 type CreatorStats = NonNullable<UserCreator['stats']>;

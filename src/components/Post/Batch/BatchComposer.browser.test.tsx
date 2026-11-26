@@ -58,9 +58,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ batchPostScheduling: true, postPlanner: false }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 7, username: 'tester', muted: false, isModerator: false }),
-}));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelModule>()),
   useBrowsingLevelDebounced: () => 1,
@@ -147,7 +144,8 @@ async function uploadPosts(count: number, opts: { strict?: boolean } = {}) {
       </StrictMode>
     ) : (
       <BatchComposer />
-    )
+    ),
+    { user: { id: 7, username: 'tester', muted: false, isModerator: false } }
   );
   const files = Array.from(
     { length: count },

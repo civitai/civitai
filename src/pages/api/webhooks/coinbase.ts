@@ -16,7 +16,7 @@ export const config = {
 
 const log = async (data: MixedObject) => {
   try {
-    await logToAxiom({ name: 'coinbase-webhook', type: 'error', ...data }, 'webhooks');
+    logToAxiom({ name: 'coinbase-webhook', type: 'error', ...data }, 'webhooks');
   } catch (error) {
     console.error('Failed to log to Axiom:', error);
   }

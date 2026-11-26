@@ -26,6 +26,9 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: async () => 'owner-token',
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: vi.fn(async () => new Map([[VERSION_ID, { canGenerate: true }]])),
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));
@@ -89,7 +92,7 @@ const PUBLIC_FILE = {
 
 type Caller = { user?: Record<string, unknown>; context?: Record<string, unknown> };
 
-const bearer = (tokenScope: number | undefined, subject: 'apiKey' | 'oauth' = 'oauth') => ({
+const bearer = (tokenScope: bigint | undefined, subject: 'apiKey' | 'oauth' = 'oauth') => ({
   apiKeyId: 6,
   apiKeyType: subject === 'oauth' ? 'Access' : 'User',
   subject: { type: subject, id: subject === 'oauth' ? 'client-abc' : 6 },
@@ -198,6 +201,34 @@ describe('mini/[id] epoch arm, a bearer without a download scope', () => {
   });
 });
 
+describe('mini/[id] epoch arm, X-Expires', () => {
+  it('ends when the re-signed url stops being usable', async () => {
+    const exp = Date.now() + 30 * 60_000;
+    const soon = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=f&exp=${new Date(
+      exp
+    ).toISOString()}`;
+    h.refreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: soon }]);
+    const { body, headers } = await request(
+      { user: { id: OWNER_ID }, context: bearer(TokenScope.ModelsRead, 'apiKey') },
+      [BLOB_FILE]
+    );
+    expect(body.downloadUrls).toEqual([soon]);
+    expect(new Map(headers).get('X-Expires')).toBe(new Date(exp - 5 * 60_000).toISOString());
+  });
+
+  it('is at most an hour out for a url signed far ahead', async () => {
+    const before = Date.now();
+    const { body, headers } = await request(
+      { user: { id: OWNER_ID }, context: bearer(TokenScope.ModelsRead, 'apiKey') },
+      [BLOB_FILE]
+    );
+    expect(body.downloadUrls).toEqual([FRESH]);
+    const expires = Date.parse(String(new Map(headers).get('X-Expires'))) - before;
+    expect(expires).toBeGreaterThanOrEqual(60 * 60_000);
+    expect(expires).toBeLessThanOrEqual(60 * 60_000 + 1000);
+  });
+});
+
 describe('mini/[id], a moderator', () => {
   it('with a scoped key is not classed as a moderator; with a full personal key it is', async () => {
     const moderator = { id: 1, isModerator: true };
@@ -247,6 +278,7 @@ describe('mini/[id]?modelFileId= for a file the caller may not see', () => {
   );
 
   it('still serves a visible file by id', async () => {
+    h.variants['mini-epoch-caller-gate'] = 'log';
     const { status, body } = await ask({ user: { id: STRANGER_ID } }, PUBLIC_FILE.id);
     expect(status).toBe(200);
     expect(JSON.stringify(body)).toContain(PUBLIC_FILE.hashes.SHA256);
@@ -382,19 +414,6 @@ describe('mini/[id]?modelFileId= by an owner whose credential lacks the scope', 
   });
 });
 
-describe('mini/[id], the primary file hidden from the caller', () => {
-  it('log: the caller line names it as its own reason', async () => {
-    h.variants['mini-epoch-caller-gate'] = 'log';
-    await request({}, [TRAINING_FILE]);
-    await request({ user: { id: OWNER_ID } }, [TRAINING_FILE]);
-    const picks = (loggingMock.logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
-      .map(([entry]) => entry)
-      .filter((entry) => entry?.name === 'mini-epoch-caller')
-      .map((entry) => entry.pick);
-    expect(picks).toEqual(['hidden-primary', 'primary']);
-  });
-});
-
 describe('mini/[id], the system account', () => {
   const system = { id: -1, username: 'civitai', isModerator: true };
 
@@ -405,6 +424,8 @@ describe('mini/[id], the system account', () => {
   });
 
   it('gets no moderation block by a key the scope gate refuses under enforce', async () => {
+    // The caller gate is off here: under it this Private version refuses the key outright.
+    h.variants['mini-epoch-caller-gate'] = null;
     const refused = await request(
       { user: system, context: bearer(TokenScope.UserRead, 'apiKey') },
       [PUBLIC_FILE]
@@ -418,5 +439,37 @@ describe('mini/[id], the system account', () => {
       [PUBLIC_FILE]
     );
     expect(allowed.body).toHaveProperty('moderation');
+  });
+});
+
+describe('mini/[id] ?epoch=, a credential the scope gate refuses', () => {
+  const EARLY =
+    'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000005.safetensors';
+  const twoEpochs = {
+    ...TRAINING_FILE,
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: {
+        epochs: [
+          { epoch_number: 5, model_url: EARLY },
+          { epoch_number: 10, model_url: STORED },
+        ],
+      },
+    },
+  };
+
+  it.each([null, 'log'])('caller gate %s: the owner does not pick the epoch', async (epochMode) => {
+    h.variants = { 'mini-epoch-caller-gate': epochMode, 'download-scope-gate': 'enforce' };
+    const refused: Caller = { user: { id: OWNER_ID }, context: bearer(TokenScope.UserRead) };
+    const unnamed = await request(refused, [twoEpochs]);
+    expect(unnamed.body.downloadUrls).toEqual([STORED]);
+    expect(await request(refused, [twoEpochs], { epoch: '5' })).toEqual(unnamed);
+    // Control: a key with a download scope picks it.
+    const { body } = await request(
+      { user: { id: OWNER_ID }, context: bearer(TokenScope.ModelsRead, 'apiKey') },
+      [twoEpochs],
+      { epoch: '5' }
+    );
+    expect(body.downloadUrls).toEqual([EARLY]);
   });
 });

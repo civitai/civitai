@@ -118,8 +118,9 @@ const schema = z.object({
   AXIOM_EXTRA_DATASTREAMS: z.string().optional(),
   PODNAME: z.string().optional(),
   LOG_ERRORS_TO_STDOUT: booleanString.default(false),
-  // Off-switch for the non-blocking Axiom dual-write. `true` makes `logToAxiom` wait for the
-  // dual-write's outcome again, bounded by the 2 s budget, as it did before. Unset = do not wait.
+  // `true` makes the promise `logToAxiom` returns settle only after the dual-write's outcome,
+  // bounded by the 2 s budget. Unset = it settles once the stderr line is written. It only
+  // affects a caller that awaits the call.
   AXIOM_AWAIT_UPLOADS: booleanString.default(false),
 });
 

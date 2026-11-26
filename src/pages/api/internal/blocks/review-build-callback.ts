@@ -26,6 +26,10 @@ import {
 } from '~/server/services/blocks/publish-request.service';
 import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
 import {
+  evaluateReviewBootCheck,
+  syncBootCheckHold,
+} from '~/server/services/blocks/review-boot-check.service';
+import {
   BUILD_STEP_LABELS,
   isBuildPipelineStep,
 } from '~/shared/constants/app-block-build.constants';
@@ -57,6 +61,10 @@ export const config = {
 };
 
 const MAX_BODY_BYTES = 8 * 1024;
+
+/** The recorded reason on a passed review build in a build-only environment (PR previews). */
+export const REVIEW_BUILD_ONLY_PASSED =
+  'review build passed; this environment builds review previews but does not serve them';
 
 async function readRawBody(req: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -374,6 +382,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       'preview-failed',
       {
         ...baseDetail,
+        // A failure is never a build-only pass, whatever an earlier run of this sha recorded.
+        buildOnly: undefined,
         // A direct build may have published its meta to the shared server before it failed:
         // record that, so a different-sha rebuild and a teardown unpublish it the shared way.
         ...(directPublish ? { sharedServer: true } : {}),
@@ -421,6 +431,42 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res
       .status(200)
       .json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
+    return;
+  }
+
+  // BUILD-ONLY environment (APPS_REVIEW_BUILD_ONLY, PR previews): the build passed and is recorded;
+  // nothing is deployed. No apply Job (it would land in the production apps namespace) and no
+  // `preview-deploying`, which would hold a build slot until it went stale. The row ends
+  // `preview-failed` with `buildOnly: true`, so nothing reads it as a live preview.
+  if (env.APPS_REVIEW_BUILD_ONLY) {
+    await markReviewPreviewState(
+      body.publishRequestId,
+      'preview-failed',
+      // sharedServer: false — nothing was published, so a teardown must not unpublish.
+      { ...baseDetail, sharedServer: false, buildOnly: true, error: REVIEW_BUILD_ONLY_PASSED },
+      { requireActivePreview: true }
+    );
+    // The replay mark guards an apply Job, and there is none here: free it, or a same-sha
+    // rebuild within its TTL would have its own success swallowed as a duplicate and keep its
+    // slot until stale.
+    await clearReviewApplyMark(body.publishRequestId, body.sha);
+    await recordBuildAttempt({
+      mode: 'review',
+      status: 'succeeded',
+      publishRequestId: body.publishRequestId,
+      slug: body.slug,
+      sha: body.sha,
+      runId: signals.runId,
+      failedStep: signals.failedStep,
+    });
+    recordAppBlockBuildOutcome({
+      mode: 'review',
+      outcome: 'succeeded',
+      failedStep: 'none',
+      failureClass: 'none',
+    });
+    reviewBuildSettled(body.publishRequestId, false);
+    res.status(200).json({ ok: true, applied: false, buildOnly: true });
     return;
   }
 
@@ -592,13 +638,40 @@ async function settlePublishedReview(
   const reachable = host
     ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
     : true;
-  if (reachable) {
+  const boot = reachable
+    ? await evaluateReviewBootCheck({
+        publishRequestId: args.publishRequestId,
+        slug: args.slug,
+        host,
+        url: args.baseDetail.url,
+      })
+    : null;
+  // Only the build whose guarded write matched (it owns the active preview) may move the hold.
+  const syncHold = async (marked: number) => {
+    if (boot && marked > 0)
+      await syncBootCheckHold(args.publishRequestId, boot, { expectedSha: args.sha });
+  };
+  if (reachable && boot && !boot.live) {
+    // The app never sent BLOCK_READY. Not an apply failure (the deploy worked) and not counted
+    // as one; the replay mark is freed so a same-sha rebuild is not swallowed as a duplicate.
+    await clearReviewApplyMark(args.publishRequestId, args.sha);
+    const marked = await markReviewPreviewState(
+      args.publishRequestId,
+      'preview-failed',
+      { ...args.baseDetail, bootCheck: boot.bootCheck, error: boot.error },
+      guard
+    );
+    await syncHold(marked);
+    if (marked === 0) await unpublishOrphan();
+    await settled(args.publishRequestId, false);
+  } else if (reachable) {
     const marked = await markReviewPreviewState(
       args.publishRequestId,
       'preview-live',
-      args.baseDetail,
+      boot ? { ...args.baseDetail, bootCheck: boot.bootCheck } : args.baseDetail,
       guard
     );
+    await syncHold(marked);
     // Live only if THIS preview was still the active one: a torn-down or superseded preview
     // (the guard matched no row) must not start an agent review, and is unpublished.
     if (marked === 0) await unpublishOrphan();

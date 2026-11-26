@@ -14,7 +14,7 @@ type Handler = {
   handler: (input: { modelVersionId: number }, ctx: { actor: { id: number } }) => Promise<unknown>;
 };
 const findMany = dbMock.dbRead.modelFile.findMany;
-const resolve = (await import('../../../pages/api/mod/training-data/resolve'))
+const resolve = (await import('../../../server/api-routes/mod/training-data/resolve'))
   .default as unknown as Handler;
 const actor = { actor: { id: 99 } };
 
@@ -42,6 +42,22 @@ describe('trainingData.resolve', () => {
         url: EPOCH_URL,
         metadata: { selectedEpochUrl: EPOCH_URL, trainingResults: { workflowId: 'wf-studio' } },
         ...studioModel,
+      }),
+    ]);
+
+    await expect(resolve.handler({ modelVersionId: 3407557 }, actor)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: expect.stringContaining('Training Studio'),
+    });
+    expect(resolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses the row on a version added from a run to a model that never came from the Studio', async () => {
+    findMany.mockResolvedValue([
+      row({
+        url: EPOCH_URL,
+        metadata: { selectedEpochUrl: EPOCH_URL },
+        modelVersion: { meta: { trainingStudioWorkflowId: 'wf-added' }, model: { meta: null } },
       }),
     ]);
 

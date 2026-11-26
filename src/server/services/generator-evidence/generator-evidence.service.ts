@@ -42,8 +42,6 @@ import {
   isGeneratorEvidenceDetails,
 } from '~/server/services/generator-evidence/evidence-meta';
 
-export const GENERATOR_EVIDENCE_HOLD_REASON = 'generator evidence preserved for a CSAM report';
-
 type TriggerRow = {
   prompt?: unknown;
   negativePrompt?: unknown;
@@ -305,25 +303,6 @@ export async function preserveGeneratorEvidence(
   const counts: Record<string, number> = {};
   for (const job of stored)
     for (const blob of job.blobs) counts[blob.status] = (counts[blob.status] ?? 0) + 1;
-
-  const holdExists = await dbWrite.evidenceHold.findFirst({
-    where: {
-      userId: input.userId,
-      role: 'manual',
-      reason: GENERATOR_EVIDENCE_HOLD_REASON,
-      releasedAt: null,
-    },
-    select: { id: true },
-  });
-  if (!holdExists)
-    await dbWrite.evidenceHold.create({
-      data: {
-        userId: input.userId,
-        role: 'manual',
-        reason: GENERATOR_EVIDENCE_HOLD_REASON,
-        createdById: input.moderatorId,
-      },
-    });
 
   const details: GeneratorEvidenceDetails = {
     generatedImages: stored,

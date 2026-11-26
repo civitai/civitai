@@ -1,18 +1,24 @@
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { TokenScope } from '@civitai/auth/token-scope';
+import { banDisabledMarkKey } from '@civitai/auth/ban-disabled-mark';
+import { isSelfOnlyClientId } from '@civitai/auth/self-only-client';
+import { getRedis } from '$lib/server/redis';
 import { db } from '$lib/server/db/db';
 import type { AccessMode } from '$lib/server/oauth/access';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '$lib/server/oauth/block-guard';
-import { isSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
+import { firstNonSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
 import {
   SYSTEM_APP_SCOPE_OPTIONS,
   SYSTEM_USER_ID,
+  createServiceClient,
   createSystemClient,
   moveClientToSystem,
   parseSystemClientInput,
+  rotateServiceSecret,
 } from '$lib/server/oauth/system-clients';
+import { SERVICE_GRANT } from '$lib/server/oauth/constants';
 
 // OAuth apps, for staff. System apps (owned by the civitai system account) are listed with their settings:
 // login gating (accessMode), skipping the consent screen (skipConsent) and their own token limit
@@ -41,13 +47,17 @@ const COLUMNS = [
 export const load: PageServerLoad = async ({ url }) => {
   const q = (url.searchParams.get('q') ?? '').trim();
 
-  const system = await db
+  const systemRows = await db
     .selectFrom('OauthClient')
-    .select(COLUMNS)
+    .select([...COLUMNS, 'grants'])
     .where('userId', '=', SYSTEM_USER_ID)
     .where('id', 'not like', `${APP_BLOCK_OAUTH_CLIENT_ID_PREFIX}%`)
     .orderBy('name', 'asc')
     .execute();
+  const system = systemRows.map(({ grants, ...c }) => ({
+    ...c,
+    isService: grants.length === 1 && grants[0] === SERVICE_GRANT,
+  }));
 
   // Search the other apps by name or id — escape LIKE wildcards so they're matched literally.
   const term = `%${q.replace(/[\\%_]/g, '\\$&')}%`;
@@ -84,9 +94,11 @@ async function updateClient(
   action: string,
   id: string,
   values: { accessMode?: AccessMode; skipConsent?: boolean; tokenRateLimit?: number | null },
-  scope: ClientScope = 'any'
+  scope: ClientScope = 'any',
+  redirectUris?: string[]
 ) {
   let query = db.updateTable('OauthClient').set(values).where('id', '=', id);
+  if (redirectUris) query = query.where('redirectUris', '=', redirectUris);
   if (scope !== 'any') query = query.where('userId', '=', SYSTEM_USER_ID);
   if (scope === 'confidential-system') query = query.where('isConfidential', '=', true);
   const updated = await query.returning('id').executeTakeFirst();
@@ -102,6 +114,23 @@ export const actions: Actions = {
     if (!id) return fail(400, { action: 'setMode', error: 'Missing client id.' });
     if (!isAccessMode(accessMode)) {
       return fail(400, { action: 'setMode', id, error: 'Invalid access mode.' });
+    }
+    // A staff decision replaces a ban's: for a self-only client (the only kind a ban marks), drop
+    // the ban-disabled mark first, so the owner's next App Assistant enable or dev-tunnel mint
+    // cannot re-open what staff set. Not cleared means not saved. Other clients never touch Redis.
+    if (isSelfOnlyClientId(id)) {
+      const cacheDown = fail(503, {
+        action: 'setMode',
+        id,
+        error: 'Could not save right now (cache unavailable). Try again.',
+      });
+      const redis = getRedis();
+      if (!redis) return cacheDown;
+      try {
+        await redis.del(banDisabledMarkKey(id));
+      } catch {
+        return cacheDown;
+      }
     }
     const missing = await updateClient('setMode', id, { accessMode });
     if (missing) return missing;
@@ -121,6 +150,7 @@ export const actions: Actions = {
     const skipConsent = value === 'true';
     // Turning it off is always allowed; turning it on needs a confidential app with only https, non-loopback
     // redirect URIs.
+    let checkedUris: string[] | undefined;
     if (skipConsent) {
       const client = await db
         .selectFrom('OauthClient')
@@ -128,7 +158,7 @@ export const actions: Actions = {
         .where('id', '=', id)
         .where('userId', '=', SYSTEM_USER_ID)
         .executeTakeFirst();
-      const refused = client?.redirectUris.find((uri) => !isSkipConsentRedirectUri(uri));
+      const refused = client && firstNonSkipConsentRedirectUri(client.redirectUris);
       if (refused) {
         return fail(400, {
           action: 'setSkipConsent',
@@ -136,9 +166,11 @@ export const actions: Actions = {
           error: `Skipping consent needs every redirect URI to be https and not localhost. Remove ${refused} first.`,
         });
       }
+      // Turned on only while the URIs are the ones just checked, so an edit landing meanwhile cannot slip one in.
+      checkedUris = client?.redirectUris;
     }
     const scope = skipConsent ? 'confidential-system' : 'system';
-    const missing = await updateClient('setSkipConsent', id, { skipConsent }, scope);
+    const missing = await updateClient('setSkipConsent', id, { skipConsent }, scope, checkedUris);
     if (missing) return missing;
     logOAuthEvent({
       type: 'client.updated',
@@ -208,6 +240,50 @@ export const actions: Actions = {
       });
     }
     return { action: 'moveToSystem', success: true, id, clientSecret: moved.clientSecret };
+  },
+
+  // Register a service client (a system app that gets resource tokens as itself). Secret shown once.
+  createServiceClient: async ({ request, locals }) => {
+    const name = String((await request.formData()).get('name') ?? '').trim();
+    if (!name || name.length > 100) {
+      return fail(400, {
+        action: 'createServiceClient',
+        error: 'Enter a name of up to 100 characters.',
+      });
+    }
+    let created: Awaited<ReturnType<typeof createServiceClient>>;
+    try {
+      created = await createServiceClient(name, locals.user!.id);
+    } catch {
+      return fail(500, { action: 'createServiceClient', error: NO_SYSTEM_ACCOUNT });
+    }
+    return {
+      action: 'createServiceClient',
+      success: true,
+      id: created.clientId,
+      clientSecret: created.clientSecret,
+      name,
+    };
+  },
+
+  // A new secret for a service client, shown once. Its live tokens stay valid: disable it to end them.
+  rotateServiceSecret: async ({ request, locals }) => {
+    const id = String((await request.formData()).get('id') ?? '');
+    if (!id) return fail(400, { action: 'rotateServiceSecret', error: 'Missing client id.' });
+    const rotated = await rotateServiceSecret(id, locals.user!.id);
+    if (!rotated) {
+      return fail(404, {
+        action: 'rotateServiceSecret',
+        id,
+        error: 'That is not a service client, or it no longer exists.',
+      });
+    }
+    return {
+      action: 'rotateServiceSecret',
+      success: true,
+      id,
+      clientSecret: rotated.clientSecret,
+    };
   },
 
   // Register a new system app. The secret is returned once, for the page to show.

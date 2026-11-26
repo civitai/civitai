@@ -149,7 +149,7 @@ export async function resolveIntentItem(
       type: 'error',
       message: 'failed to resolve item',
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return null;
   }
 }
@@ -224,7 +224,7 @@ async function deleteStagedObjects(staged: Pick<StagedIntentMedia, 'key'>[]): Pr
       type: 'error',
       message: 'failed to delete staged objects',
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return false;
   }
 }
@@ -514,7 +514,7 @@ export async function publishIntent({
     : [];
 
   const detail = description ? plainTextToPostHtml(description) : null;
-  const { createImage } = await import('~/server/services/image.service');
+  const { createImage, deleteImages } = await import('~/server/services/image.service');
   const imageIds: number[] = [];
   let post: { id: number };
   try {
@@ -579,10 +579,12 @@ export async function publishIntent({
       return created;
     });
   } catch (err) {
-    if (imageIds.length)
-      await dbWrite.image
-        .deleteMany({ where: { id: { in: imageIds }, userId, postId: null } })
-        .catch(() => null);
+    // The files stay: the share is retried with the same upload keys.
+    await deleteImages(imageIds, {
+      actor: { id: userId },
+      onlyWhere: Prisma.sql`"postId" IS NULL`,
+      keepStoredFiles: true,
+    }).catch(() => null);
     throw err;
   }
 
@@ -604,7 +606,7 @@ export async function publishIntent({
         message: 'publish effects failed',
         postId: post.id,
         error: err instanceof Error ? err.message : String(err),
-      }).catch(() => null)
+      })
     );
   }
 

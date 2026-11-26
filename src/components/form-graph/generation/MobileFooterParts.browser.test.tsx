@@ -1,6 +1,7 @@
 import { Alert, Button } from '@mantine/core';
-import { ModalsProvider } from '@mantine/modals';
-import { describe, expect, test, vi } from 'vitest';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
@@ -21,6 +22,9 @@ vi.mock('~/hooks/useMobileGenerator', async (importOriginal) => ({
   useMobileGenerator: () => true,
   useGeneratorLayout: () => 'mobile',
 }));
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('QuantityPicker', () => {
   test("offers the tier's quantities in its steps and reports the one picked", async () => {
@@ -136,12 +140,13 @@ describe('FooterStrips', () => {
 describe('TitleRowReset', () => {
   const renderReset = (onReset: () => void) =>
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <MobileGeneratorSlots>
           <RenderTitleActions />
           <TitleRowReset onReset={onReset} />
         </MobileGeneratorSlots>
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
 
   test('asks before resetting, and Cancel keeps the form', async () => {

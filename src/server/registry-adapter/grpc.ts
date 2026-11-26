@@ -1,15 +1,24 @@
 /**
- * The gRPC binding of the source protocol (spec/registry.md @ 2709083, "Bindings" → "gRPC"):
- * `service Source { rpc Subscribe(SubscribeRequest) returns (stream Event); }`, with the spec's
- * messages verbatim ({@link SOURCE_PROTO}). The subscription itself is the shared core
- * (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
+ * The gRPC binding of the registry protocol (the registry spec, "Bindings" → "gRPC"):
+ * `package registry.v1; service Registry { rpc Subscribe(SubscribeRequest) returns (stream Event); }`,
+ * with the spec's messages verbatim ({@link REGISTRY_PROTO}). The subscription itself is the shared
+ * core (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
  *
- *   - The spec's proto block declares no `package`, so the method is `/Source/Subscribe`, the
- *     path a stub generated from that block calls.
+ *   - The method is `/registry.v1.Registry/Subscribe` ({@link SUBSCRIBE_PATH}), the path the spec
+ *     names and a stub generated from its proto block calls. The earlier spec's
+ *     `/Source/Subscribe` is not served (UNIMPLEMENTED).
  *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
  *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
- *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
- *     sends them empty, which is absent on the wire.
+ *     `Event.meta` are bytes too (a JSON object; empty is none). This source sets no
+ *     `Entity.meta`, so it is sent empty, which is absent on the wire; `Event.meta` is a `live` or
+ *     `progress` event's `meta` (`EventMeta`) when it has one, as the HTTP binding's `meta` field.
+ *   - A shared-collection LEVEL subscription (`level-feed.ts`) is refused here as `bad_request`:
+ *     its entities' `key`, `seq`, `version`, `createdAt` and `updatedAt` have no field in
+ *     `Entity`, so this binding could serve only half of each. The subscriber is told its binding
+ *     (`createSubscriber(adapter, { binding: 'grpc' })`) and the level feed refuses on it.
+ *     The private feed's `Entity.key` and `Entity.seq` have no field here.
+ *   - `SubscribeRequest.meta` is read as the HTTP binding's `meta` parameter is
+ *     (`protocol.ts`), into the call's origin (`request-origin.ts`).
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
  *     the error's name, and no `domain` (the spec defines none), in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
@@ -17,6 +26,8 @@
  *     the call is anonymous. `invalid_token` is UNAUTHENTICATED with an `ErrorInfo` reason
  *     `invalid_token`, before the stream or at the token's expiry / revocation after it; a user
  *     whose ratings changed mid-stream gets OUT_OF_RANGE / `cursor_expired`.
+ *   - A subscription over a cap on open subscriptions (`limits.ts`) is UNAVAILABLE /
+ *     `unavailable`, before the stream.
  *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended at once with
  *     an RST_STREAM that clients read as `RESOURCE_EXHAUSTED`, the status of `slow_consumer`
  *     (a status in trailers would queue behind what it never reads; `resetSlowConsumer`).
@@ -27,7 +38,7 @@
  * experimental connection injector and everything else to `node:http`, for nothing an ingress
  * needs: it routes by port anyway, and gRPC needs an h2c backend where SSE needs HTTP/1.1.
  *
- * The messages are parsed from the inline {@link SOURCE_PROTO} text with `protobufjs` at
+ * The messages are parsed from the inline {@link REGISTRY_PROTO} text with `protobufjs` at
  * startup, so the bundle (`scripts/build-registry-adapter.mjs`) loads no `.proto` file at
  * runtime; `@grpc/grpc-js` and `protobufjs` stay external, like every root dependency.
  */
@@ -43,8 +54,29 @@ import {
   watchPrincipal,
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
-import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
-import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
+import type {
+  Adapter,
+  ErrorCode,
+  EventMeta,
+  RequestMeta,
+  StreamEvent,
+} from '~/server/registry-adapter/protocol';
+import {
+  ProtocolError,
+  jsonObjectOrUndefined,
+  subscribeRequest,
+} from '~/server/registry-adapter/protocol';
+import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
+import { decidePrincipal } from '~/server/registry-adapter/policy-enforce';
+import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
+import {
+  clientAddress,
+  peerAddress,
+  regionRestricted,
+  subscriptionRegionLine,
+} from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
   SLOW_CONSUMER_MS,
@@ -53,10 +85,12 @@ import {
 } from '~/server/registry-adapter/subscription';
 
 /** The spec's proto block, unchanged but for the `syntax` line it needs to parse. */
-export const SOURCE_PROTO = `
+export const REGISTRY_PROTO = `
 syntax = "proto3";
 
-service Source {
+package registry.v1;
+
+service Registry {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
 }
 
@@ -65,6 +99,7 @@ message SubscribeRequest {
   string cursor = 2;          // empty: from the beginning
   repeated string urns = 3;   // empty: every entity
   string filter = 4;          // a JSON Schema, as JSON; empty: no filter
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Entity {
@@ -112,7 +147,7 @@ message ErrorInfo {
 }
 `;
 
-export const SUBSCRIBE_PATH = '/Source/Subscribe';
+export const SUBSCRIBE_PATH = '/registry.v1.Registry/Subscribe';
 const ERROR_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.ErrorInfo';
 export const GRPC_KEEPALIVE_MS = 15_000;
 const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
@@ -120,7 +155,6 @@ const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
 /** The spec's Errors table. */
 export const GRPC_STATUS: Record<ErrorCode, grpc.status> = {
   bad_request: grpc.status.INVALID_ARGUMENT,
-  unknown_schema: grpc.status.NOT_FOUND,
   cursor_expired: grpc.status.OUT_OF_RANGE,
   slow_consumer: grpc.status.RESOURCE_EXHAUSTED,
   unavailable: grpc.status.UNAVAILABLE,
@@ -135,12 +169,12 @@ function loadTypes() {
     if (!json?.nested) throw new Error(`registry-adapter: protobufjs has no ${file}`);
     root.addJSON(json.nested);
   }
-  protobuf.parse(SOURCE_PROTO, root, { keepCase: true });
+  protobuf.parse(REGISTRY_PROTO, root, { keepCase: true });
   protobuf.parse(ERROR_DETAILS_PROTO, root, { keepCase: true });
   root.resolveAll();
   return {
-    request: root.lookupType('SubscribeRequest'),
-    event: root.lookupType('Event'),
+    request: root.lookupType('registry.v1.SubscribeRequest'),
+    event: root.lookupType('registry.v1.Event'),
     status: root.lookupType('google.rpc.Status'),
     errorInfo: root.lookupType('google.rpc.ErrorInfo'),
   };
@@ -193,6 +227,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
       kind = { end: {} };
       break;
   }
+  if ((e.type === 'live' || e.type === 'progress') && e.meta) kind.meta = jsonBytes(e.meta);
   return Buffer.from(types.event.encode(types.event.fromObject(kind)).finish());
 }
 
@@ -205,7 +240,14 @@ type WireEvent = {
   delete?: { urn?: string; cursor?: string };
   live?: { cursor?: string };
   progress?: { cursor?: string };
+  meta?: Uint8Array;
 };
+
+/** `Event.meta` as a consumer reads it: a JSON object, or nothing when empty or not an object. */
+function eventMeta(bytes: Uint8Array | undefined): { meta?: EventMeta } {
+  const meta = jsonObjectOrUndefined(fromJsonBytes(bytes));
+  return meta ? { meta } : {};
+}
 
 /** One event off the wire, as a consumer reads it; `null` for a kind this source never sends. */
 export function decodeEvent(buf: Uint8Array): StreamEvent | null {
@@ -230,9 +272,9 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
     case 'delete':
       return { type: 'delete', urn: w.delete?.urn ?? '', cursor: w.delete?.cursor ?? '' };
     case 'live':
-      return { type: 'live', cursor: w.live?.cursor ?? '' };
+      return { type: 'live', cursor: w.live?.cursor ?? '', ...eventMeta(w.meta) };
     case 'progress':
-      return { type: 'progress', cursor: w.progress?.cursor ?? '' };
+      return { type: 'progress', cursor: w.progress?.cursor ?? '', ...eventMeta(w.meta) };
     case 'end':
       return { type: 'end' };
     default:
@@ -240,9 +282,16 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
   }
 }
 
-export type WireRequest = { schema: string; cursor: string; urns: string[]; filter: string };
+export type WireRequest = {
+  schema: string;
+  cursor: string;
+  urns: string[];
+  filter: string;
+  meta?: Uint8Array;
+};
 
-export const SOURCE_SERVICE: grpc.ServiceDefinition = {
+/** `registry.v1.Registry`, the spec's service. */
+export const REGISTRY_SERVICE: grpc.ServiceDefinition = {
   Subscribe: {
     path: SUBSCRIBE_PATH,
     requestStream: false,
@@ -376,6 +425,19 @@ function openCall(
   };
 }
 
+/**
+ * A call's origin (`request-origin.ts`): its string metadata as headers (the last value of each,
+ * as `authorizationOf` reads it), its request's `meta` and its peer's address.
+ */
+function originOf(call: Call, meta: RequestMeta | undefined): RequestOrigin {
+  const headers: Record<string, string> = {};
+  for (const [name, values] of Object.entries(call.metadata.toJSON())) {
+    const strings = values.filter((v): v is string => typeof v === 'string');
+    if (strings.length > 0) headers[name] = strings[strings.length - 1];
+  }
+  return { headers, meta, remoteAddress: peerAddress(call.getPeer()) };
+}
+
 /** The `authorization` metadata of a call: its last string value. */
 function authorizationOf(call: Call): string | undefined {
   const values = call.metadata
@@ -393,19 +455,30 @@ export function createGrpcServer(
     verifyToken?: VerifyToken;
     resource?: ResourceConfig;
     tokenRecheckMs?: number;
+    /** As for HTTP: the caps (`limits.ts`), the same limiter as the HTTP binding's. */
+    limiter?: SubscriptionLimiter;
+    /** As for HTTP: the site's region rule unless replaced. */
+    regionRestricted?: (origin: RequestOrigin) => boolean;
+    /** As for HTTP: called with one line per subscription once its token is accepted. */
+    onRegion?: (line: string) => void;
+    /** As for HTTP: the content-policy shadow comparison (`policy-shadow.ts`). */
+    policyShadow?: PolicyShadow;
+    /** As for HTTP: content-policy enforcement (`policy-enforce.ts`). */
+    policyEnforce?: PolicyEnforcer;
   } = {}
 ): grpc.Server {
-  const subscribe = createSubscriber(adapter);
+  const subscribe = createSubscriber(adapter, { binding: 'grpc' });
   const metadataUrl = resourceMetadataUrl(opts.resource);
   const server = new grpc.Server({
     'grpc.keepalive_time_ms': GRPC_KEEPALIVE_MS,
     'grpc.keepalive_timeout_ms': GRPC_KEEPALIVE_TIMEOUT_MS,
   });
-  server.addService(SOURCE_SERVICE, {
+  server.addService(REGISTRY_SERVICE, {
     Subscribe: (call: Call) => {
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {
         let unwatch: (() => void) | undefined;
+        let slot: SubscriptionSlot | undefined;
         try {
           const r = call.request;
           const request = subscribeRequest({
@@ -413,8 +486,22 @@ export function createGrpcServer(
             cursor: r.cursor,
             urns: r.urns,
             filter: r.filter,
+            meta: r.meta,
           });
-          const principal = await authenticate(authorizationOf(call), opts.verifyToken);
+          const origin = originOf(call, request.meta);
+          // The total and per-address caps before the token is verified; per token once it is.
+          slot = opts.limiter?.acquire(clientAddress(origin));
+          const restricted = opts.regionRestricted ?? regionRestricted;
+          const authenticated = await authenticate(authorizationOf(call), opts.verifyToken, {
+            regionRestricted: () => restricted(origin),
+          });
+          slot?.claim(authenticated.subject);
+          const principal = await decidePrincipal(opts, {
+            origin,
+            principal: authenticated,
+            held: restricted(origin),
+          });
+          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted, principal));
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),
@@ -442,6 +529,7 @@ export function createGrpcServer(
           call.emit('error', status);
         } finally {
           unwatch?.();
+          slot?.release();
         }
       };
       void run();

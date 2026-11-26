@@ -18,11 +18,7 @@ import {
   snapToInterval,
 } from '../types/image-feed-types';
 import { chunk } from '../utils/basic';
-import {
-  NSFW_RESTRICTED_BASE_MODELS,
-  NSFW_RESTRICTED_LEVELS,
-  FEED_REDIS_KEYS,
-} from '../constants/feed.constants';
+import { FEED_REDIS_KEYS } from '../constants/feed.constants';
 
 // ============================================================================
 // Schema Definition
@@ -175,7 +171,7 @@ async function createDocuments(
         i."height",
         i."hash",
         i."hideMeta",
-        GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
+        image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") as "sortAt",
         i."type",
         i."userId",
         i."needsReview",
@@ -538,18 +534,6 @@ async function queryDocuments(
 
   filters.push(`(${nsfwFilters.join(' OR ')})`);
   console.log('[ImageFeed:queryDocuments] NSFW filter added');
-
-  // NSFW License Restrictions Filter
-  // Filter out images with R/X/XXX NSFW levels that use restricted base models
-  if (NSFW_RESTRICTED_BASE_MODELS.length > 0) {
-    const restrictedBaseModelsQuoted = NSFW_RESTRICTED_BASE_MODELS.map((bm: string) => `'${bm}'`);
-
-    // Exclude images that have BOTH restricted NSFW levels AND restricted base models
-    filters.push(
-      `NOT (${nsfwLevelField} IN [${NSFW_RESTRICTED_LEVELS.join(',')}] AND baseModel IN [${restrictedBaseModelsQuoted.join(',')}])`
-    );
-    console.log('[ImageFeed:queryDocuments] NSFW restricted base models filter added');
-  }
 
   console.log('[ImageFeed:queryDocuments] Step 4: Content filters (model versions, remixes, tags, etc.)...');
 
@@ -1061,7 +1045,6 @@ async function populateDocuments(
   const shouldFetchTags = includeTags || includeTagIds;
 
   // Fetch data in parallel with proper typing for conditional fetches
-  type ProfilePictureData = Awaited<ReturnType<typeof ctx.cache.fetch<'profilePictures'>>>;
   type UserCosmeticData = Awaited<ReturnType<typeof ctx.cache.fetch<'userCosmetics'>>>;
   type ImageTagIdsData = Awaited<ReturnType<typeof ctx.cache.fetch<'imageTagIds'>>>;
   type TagDataType = Awaited<ReturnType<typeof ctx.cache.fetch<'tagData'>>>;
@@ -1072,7 +1055,6 @@ async function populateDocuments(
   const [
     metricsData,
     usersData,
-    profilePicturesData,
     userCosmeticsData,
     imageCosmeticsData,
     imageMetaData,
@@ -1082,9 +1064,6 @@ async function populateDocuments(
   ] = await Promise.all([
     ctx.metric.fetch(imageIds),
     ctx.cache.fetch('userData', userIds),
-    include.includes('profilePictures')
-      ? ctx.cache.fetch('profilePictures', userIds)
-      : (Promise.resolve({}) as Promise<ProfilePictureData>),
     include.includes('cosmetics')
       ? ctx.cache.fetch('userCosmetics', userIds)
       : (Promise.resolve({}) as Promise<UserCosmeticData>),
@@ -1164,7 +1143,6 @@ async function populateDocuments(
       image: userData.image ?? null,
       deletedAt: userData.deletedAt ?? null,
       cosmetics: userCosmeticsArray,
-      profilePicture: profilePicturesData[doc.userId] ?? null,
     };
 
     // Reactions

@@ -24,7 +24,6 @@ const step = (
 const workflow = (steps: Array<Record<string, unknown>>) =>
   new WorkflowData({ id: 'wf-1', allowMatureContent: true, metadata: {}, steps } as any, {
     domain: { green: false } as any,
-    nsfwEnabled: true,
   });
 
 const preprocess = (status = 'succeeded') =>

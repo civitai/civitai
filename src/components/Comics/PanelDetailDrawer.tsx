@@ -15,7 +15,7 @@ import {
 import clsx from 'clsx';
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -27,6 +27,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
+import { isImportedPanel } from '~/components/Comics/panel-source';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 interface PanelDetailDrawerProps {
@@ -357,13 +358,7 @@ export function PanelDetailDrawer({
               {(() => {
                 const meta = detailPanel.metadata as Record<string, any> | null;
 
-                // Imported panels: no metadata at all (createPanelFromImage), or
-                // metadata with sourceImageUrl but no generation flags (enhancePanel without prompt)
-                const isImported =
-                  !detailPanel.prompt &&
-                  (!meta || (meta.sourceImageUrl && meta.enhanceEnabled === undefined));
-
-                if (isImported) {
+                if (isImportedPanel(detailPanel.prompt, meta)) {
                   return (
                     <div>
                       <div className={styles.detailSectionTitle}>Settings</div>
@@ -397,7 +392,7 @@ export function PanelDetailDrawer({
                             : 'Previous image referenced'}
                         </span>
                       )}
-                      {meta.sourceImageUrl && (
+                      {meta.hasSourceImage && (
                         <span className={styles.detailCharacterPill}>Enhanced from image</span>
                       )}
                     </div>
@@ -457,9 +452,9 @@ export function PanelDetailDrawer({
                 <button
                   className={styles.dangerBtn}
                   onClick={() => {
-                    openConfirmModal({
+                    openConfirm({
                       title: 'Delete Panel',
-                      children: <Text size="sm">Are you sure you want to delete this panel?</Text>,
+                      message: <Text size="sm">Are you sure you want to delete this panel?</Text>,
                       labels: { confirm: 'Delete', cancel: 'Cancel' },
                       confirmProps: { color: 'red' },
                       onConfirm: () => onDelete(detailPanel.id),

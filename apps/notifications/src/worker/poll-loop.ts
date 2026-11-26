@@ -267,9 +267,7 @@ export const handleDebounce = async (
 // Exported for behavioral unit tests. Export-for-test only — logic unchanged.
 export const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => {
   if (row.category === 'Other')
-    logToAxiom({ type: 'warning', message: 'Missing category', data: { type: row.type } }).catch(
-      () => {}
-    );
+    logToAxiom({ type: 'warning', message: 'Missing category', data: { type: row.type } });
 
   const client = await notifDbWrite().connect();
   // pg drops its own error handler from a checked-out client — the consumer owns it. This connection is
@@ -367,7 +365,7 @@ function logBulkRow(row: PendingReturnRow, start: number, delivered: number | nu
       delivered,
       ms: Date.now() - start,
     },
-  }).catch(() => {});
+  });
 }
 
 /**

@@ -6,7 +6,7 @@ A high-performance microservice that consumes database events from Kafka (via De
 
 - **Factory-based Handler System**: DRY patterns for creating event handlers
 - **Worker Pool Processing**: Parallel event processing with `workerpool`
-- **Batch Operations**: Efficient batching for ClickHouse inserts and Meilisearch updates
+- **Batch Operations**: Efficient batching for ClickHouse inserts
 - **Real-time Cache Updates**: Immediate Redis cache updates for metrics
 - **Real-time Signals**: Broadcasts metric deltas via Signals API for live UI updates
 - **Automatic Retries**: Exponential backoff for failed events
@@ -21,7 +21,6 @@ A high-performance microservice that consumes database events from Kafka (via De
 - **Worker Pool**: Multi-threaded processing with `workerpool`
 - **Batch Processing**:
   - ClickHouse: 30-second batched metric event inserts
-  - Meilisearch: 5-minute batched index updates
   - Redis: Real-time cache increments
   - Signals: Real-time metric delta broadcasts
 
@@ -196,15 +195,6 @@ The service exposes comprehensive Prometheus metrics at `/metrics`. All metrics 
 - `mew_metric_batch_flush_duration_seconds` - Duration of batch flush operations (histogram)
   - Buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5]
 
-#### Index Update Metrics
-
-- `mew_index_batches_flushed_total{entity_type}` - Total index batches flushed (counter)
-- `mew_index_batches_failed_total` - Total failed index batches (counter)
-- `mew_index_updates_processed_total{entity_type}` - Total index updates processed (counter)
-- `mew_index_queue_size{entity_type}` - Current entities in index update queue (gauge)
-- `mew_index_batch_flush_duration_seconds{entity_type}` - Duration of index flush operations (histogram)
-  - Buckets: [0.1, 0.5, 1, 2, 5, 10]
-
 #### Signals Metrics
 
 - `mew_signals_sent_total` - Total metric delta signals sent (counter)
@@ -284,15 +274,8 @@ KAFKA_BROKERS=localhost:9092
 # Optional
 WORKER_POOL_SIZE=10  # Defaults to 10
 BATCH_INSERT_INTERVAL=30  # ClickHouse batch interval (seconds)
-INDEX_UPDATE_INTERVAL=300  # Meilisearch update interval (seconds)
 HEALTH_CHECK_PORT=3000  # Health check server port
 METRIC_EXCLUSION_REFRESH_MS=300000  # Re-read interval for the reaction-farm exclusion list; floored at 1000
-
-# Meilisearch (if using search index updates)
-MEILISEARCH_IMAGE_INDEX_URL=http://localhost:7700
-MEILISEARCH_MODEL_INDEX_URL=http://localhost:7700
-MEILISEARCH_POST_INDEX_URL=http://localhost:7700
-MEILISEARCH_API_KEY=your-api-key
 
 # Signals API (optional - for real-time metric broadcasts)
 SIGNALS_API_URL=http://signals-service.internal
@@ -326,7 +309,6 @@ docker-compose down -v
 7. Updates are batched and written to:
    - ClickHouse (entity metric events) - 30s batches
    - Redis (metric caches) - immediate
-   - Meilisearch (search indexes) - 5min batches
    - Signals API (metric deltas) - immediate broadcast
 
 ## Adding New Handlers

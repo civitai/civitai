@@ -43,20 +43,18 @@ describe('allow and deny', () => {
 
   it('passes the input fields through unchanged', async () => {
     const input = hookInputJson({
-      op: 'increment',
+      op: 'delete',
       after: null,
-      tally: { kind: 'counter', name: 'likes', by: 5 },
       from: 'importer-app',
     });
     const { result } = await run(
-      'export default function check(i) { return { allow: false, reason: JSON.stringify([i.op, i.key, i.after, i.tally, i.doc.counters, i.viewer.userId, i.app.blockId, i.from]) }; }',
+      'export default function check(i) { return { allow: false, reason: JSON.stringify([i.op, i.key, i.after, i.tally, i.doc.version, i.viewer.userId, i.app.blockId, i.from]) }; }',
       { input }
     );
     expect(result).toEqual({
       allow: false,
       cause: 'denied',
-      reason:
-        '["increment","key-7f3a",null,{"kind":"counter","name":"likes","by":5},{"likes":3},4242,"app-storage-demo","importer-app"]',
+      reason: '["delete","key-7f3a",null,null,4,4242,"app-storage-demo","importer-app"]',
     });
   });
 });

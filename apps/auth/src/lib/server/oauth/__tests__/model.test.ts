@@ -76,6 +76,7 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 
 import { oauthModel, resolveClientLite } from '../model';
 import { invalidateDomainCache } from '../first-party';
+import { register } from '$lib/server/metrics';
 
 const baseClient = {
   id: 'pub-1',
@@ -210,13 +211,13 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
 });
 
 describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (parity)', () => {
-  const UserRead = 1;
-  const VaultWrite = 1 << 24;
+  const UserRead = 1n;
+  const VaultWrite = 1n << 24n;
 
   it('forces UserRead into the granted scope even if not requested', async () => {
     const granted = await oauthModel.validateScope(
       { id: 1 } as any,
-      { allowedScopes: 33554431 } as any,
+      { allowedScopes: 33554431n } as any,
       ['0'] // requested nothing
     );
     expect(granted).toEqual([String(UserRead)]);
@@ -231,6 +232,15 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
     expect(granted).toEqual([String(VaultWrite | UserRead)]);
   });
 
+  it('grants AppsRead and AppDataRead (bits 31, 32) within the client allowlist', async () => {
+    const granted = await oauthModel.validateScope(
+      { id: 1 } as any,
+      { allowedScopes: 6442450945n } as any,
+      ['6442450944']
+    );
+    expect(granted).toEqual(['6442450945']);
+  });
+
   it('rejects a scope outside the client allowlist', async () => {
     const granted = await oauthModel.validateScope(
       { id: 1 } as any,
@@ -242,9 +252,9 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
 });
 
 describe('oauthModel — client_credentials (the client acting as itself)', () => {
-  const UserRead = 1;
-  const AIServicesWrite = 1 << 15;
-  const Catalog = 1 << 28;
+  const UserRead = 1n;
+  const AIServicesWrite = 1n << 15n;
+  const Catalog = 1n << 28n;
   const ceiling = { allowedScopes: UserRead | AIServicesWrite | Catalog } as any;
   const ccClient = {
     userId: 9,
@@ -442,7 +452,7 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
       grants: ['authorization_code'],
       redirectUris: [TRUSTED_REDIRECT],
     });
-    const client = await resolveClientLite('pub-1', TRUSTED_REDIRECT);
+    const client = await resolveClientLite('pub-1', TRUSTED_REDIRECT, 'authorize');
     expect(client?.isFirstParty).toBe(false);
   });
 
@@ -450,7 +460,7 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
     invalidateDomainCache(); // force a fresh registry read for this test
     h.selectResults.push(undefined); // no OauthClient row → falls through to origin synthesis
     h.selectResults.push({ domain: 'civitai.red', includeSubdomains: false }); // TrustedSpokeDomain registry
-    const client = await resolveClientLite('firstparty-civitai_red', TRUSTED_REDIRECT);
+    const client = await resolveClientLite('firstparty-civitai_red', TRUSTED_REDIRECT, 'authorize');
     expect(client?.isFirstParty).toBe(true);
     expect(client?.skipConsent).toBe(true);
   });
@@ -464,7 +474,7 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
       [{ skipConsent: true, isConfidential: true, userId: 7 }, false], // flag left on an app no longer system
     ] as const) {
       h.selectResults.push({ ...row, ...flags });
-      const client = await resolveClientLite('sys-1', TRUSTED_REDIRECT);
+      const client = await resolveClientLite('sys-1', TRUSTED_REDIRECT, 'authorize');
       expect(client?.skipConsent).toBe(skips);
     }
   });
@@ -482,7 +492,8 @@ describe('first-party resolution requires an https redirect_uri', () => {
     trustModerator();
     const client = await resolveClientLite(
       MOD_ID,
-      'https://moderator.civitai.com/api/auth/callback'
+      'https://moderator.civitai.com/api/auth/callback',
+      'authorize'
     );
     expect(client?.isFirstParty).toBe(true);
   });
@@ -490,7 +501,7 @@ describe('first-party resolution requires an https redirect_uri', () => {
   it('refuses http:// on the same trusted host', async () => {
     trustModerator();
     expect(
-      await resolveClientLite(MOD_ID, 'http://moderator.civitai.com/api/auth/callback')
+      await resolveClientLite(MOD_ID, 'http://moderator.civitai.com/api/auth/callback', 'authorize')
     ).toBeUndefined();
   });
 
@@ -547,5 +558,60 @@ describe('the remix apps client (civitai-remix-apps)', () => {
     expect(await oauthModel.getClient('civitai-remix-apps', 'guess', request)).toMatchObject({
       id: 'civitai-remix-apps',
     });
+  });
+});
+
+describe('each call site counts under its own use label', () => {
+  const MOD_ORIGIN = 'https://moderator.civitai.com';
+  const MOD_ID = 'firstparty-moderator_civitai_com';
+  const count = async (use: string) => {
+    const metric = (await register.getMetricsAsJSON()).find(
+      (m) => m.name === 'hub_first_party_origin_total'
+    );
+    const v = metric?.values.find(
+      (s) => s.labels?.entry === 'moderator.civitai.com' && s.labels?.use === use
+    );
+    return v?.value ?? 0;
+  };
+  const trustModerator = () => {
+    invalidateDomainCache();
+    h.selectResults.length = 0;
+    h.selectResults.push(undefined); // no OauthClient row
+    h.selectResults.push({ domain: 'moderator.civitai.com', includeSubdomains: false });
+  };
+
+  it("getClient counts under 'authorize_client'", async () => {
+    trustModerator();
+    const before = await count('authorize_client');
+    const request: any = {
+      headers: {},
+      query: { response_type: 'code', redirect_uri: `${MOD_ORIGIN}/api/auth/callback` },
+    };
+    expect(await oauthModel.getClient(MOD_ID, null, request)).toBeTruthy();
+    expect(await count('authorize_client')).toBe(before + 1);
+  });
+
+  it("getAuthorizationCode counts under 'code_exchange'", async () => {
+    trustModerator();
+    const before = await count('code_exchange');
+    const prev = h.state.redis;
+    h.state.redis = {
+      packed: {
+        hGet: () =>
+          Promise.resolve({
+            clientId: MOD_ID,
+            userId: 7,
+            scope: '1',
+            redirectUri: `${MOD_ORIGIN}/api/auth/callback`,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+      },
+    };
+    try {
+      expect(await oauthModel.getAuthorizationCode('c')).toBeTruthy();
+    } finally {
+      h.state.redis = prev;
+    }
+    expect(await count('code_exchange')).toBe(before + 1);
   });
 });

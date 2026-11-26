@@ -18,6 +18,7 @@ type ImageRow = {
   ingestion: string;
   blockedFor?: string | null;
   nsfwLevelLocked?: boolean;
+  modelRestricted?: boolean;
 };
 
 const images: Record<string, ImageRow> = {
@@ -32,7 +33,18 @@ const images: Record<string, ImageRow> = {
     ingestion: 'Pending',
     nsfwLevelLocked: true,
   },
+  'mature level under a restricting model': {
+    nsfwLevel: NsfwLevel.R,
+    ingestion: 'Scanned',
+    modelRestricted: true,
+  },
+  'SFW level under a restricting model': {
+    nsfwLevel: NsfwLevel.PG,
+    ingestion: 'Scanned',
+    modelRestricted: true,
+  },
 };
+const shown = ['scanned', 'pending with a moderator rating', 'SFW level under a restricting model'];
 const names = Object.keys(images);
 
 beforeAll(async () => {
@@ -44,7 +56,8 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, hash text, "nsfwLevel" int NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL, "blockedFor" text,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb,
+      "userId" int, "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Challenge" (id int PRIMARY KEY, "collectionId" int);
     CREATE TABLE "CollectionItem" ("collectionId" int, "imageId" int, note text);
@@ -59,8 +72,8 @@ beforeAll(async () => {
     const img = images[name];
     await pg.db.query(`INSERT INTO "User" VALUES ($1, $2)`, [id, `user${id}`]);
     await pg.db.query(
-      `INSERT INTO "Image" (id, url, hash, "nsfwLevel", ingestion, "blockedFor", "nsfwLevelLocked")
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO "Image" (id, url, hash, "nsfwLevel", ingestion, "blockedFor", "nsfwLevelLocked", "userId", "modelRestricted")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         100 + id,
         `url-${id}`,
@@ -69,6 +82,8 @@ beforeAll(async () => {
         img.ingestion,
         img.blockedFor ?? null,
         img.nsfwLevelLocked ?? false,
+        id,
+        img.modelRestricted ?? false,
       ]
     );
     await pg.db.query(`INSERT INTO "ChallengeWinner" VALUES ($1, $2, $1, $3, $1, 0, 0, NULL)`, [
@@ -95,7 +110,7 @@ describe('getChallengeWinners — winner images', () => {
     return winners.find((w) => w.place === names.indexOf(name) + 1)!;
   };
 
-  it.each(['scanned', 'pending with a moderator rating'])('returns a %s image', async (name) => {
+  it.each(shown)('returns a %s image', async (name) => {
     const id = names.indexOf(name) + 1;
     expect(await imageOf(name)).toMatchObject({
       imageId: 100 + id,
@@ -104,7 +119,7 @@ describe('getChallengeWinners — winner images', () => {
     });
   });
 
-  it.each(names.filter((n) => n !== 'scanned' && n !== 'pending with a moderator rating'))(
+  it.each(names.filter((n) => !shown.includes(n)))(
     'withholds an image with a %s and keeps the winner',
     async (name) => {
       const id = names.indexOf(name) + 1;

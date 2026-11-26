@@ -26,6 +26,16 @@ const procedures = Object.fromEntries(
 );
 
 const GATED = ['request', 'accept', 'requestRevision'];
+// Gated too, but on the review card rather than the deal view's actions.
+const REVIEW_GATED = [
+  'review',
+  'editReview',
+  'replyToReview',
+  'reviewAttachableFinals',
+  'attachReviewImage',
+];
+// Moderation of a published review outlasts the flag.
+const MODERATOR = ['hideReview'];
 const UNGATED = [
   'listMine',
   'get',
@@ -33,6 +43,7 @@ const UNGATED = [
   'decline',
   'acceptDelivery',
   'cancelLate',
+  'cancelAndRefund',
   'requestCancellation',
   'respondCancellation',
   'openDispute',
@@ -40,10 +51,17 @@ const UNGATED = [
 
 describe('creator service deal flag gates', () => {
   it('names every procedure exactly once in one list or the other', () => {
-    expect(Object.keys(procedures).sort()).toEqual([...GATED, ...UNGATED].sort());
+    expect(Object.keys(procedures).sort()).toEqual(
+      [...GATED, ...REVIEW_GATED, ...UNGATED, ...MODERATOR].sort()
+    );
   });
 
-  it.each(GATED)('gates %s behind the flag', (name) => {
+  it.each(MODERATOR)('leaves %s to moderators, with the flag off too', (name) => {
+    expect(procedures[name]).toMatch(/^\w+: moderatorProcedure\b/);
+    expect(procedures[name]).not.toMatch(/\bgated\b/);
+  });
+
+  it.each([...GATED, ...REVIEW_GATED])('gates %s behind the flag', (name) => {
     expect(procedures[name]).toMatch(/^\w+: gated\b/);
   });
 

@@ -176,8 +176,9 @@ describe('the provisioned-dataset guard on the Axiom dual-write', () => {
 
     await logToAxiom(ERR, ABSENT_A);
 
-    expect(seen).toHaveLength(1);
-    expect(seen[0][1]).toBe(ABSENT_A);
+    const events = seen.filter(([body]) => JSON.parse(body).name === ERR.name);
+    expect(events).toHaveLength(1);
+    expect(events[0][1]).toBe(ABSENT_A);
   });
 
   it('a skip is NOT counted as an ingest failure — the wedged-ingest counter must stay clean', async () => {

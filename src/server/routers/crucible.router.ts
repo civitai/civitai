@@ -10,6 +10,7 @@ import {
   getJudgeEligibilityHandler,
   createCrucibleHandler,
   createEntryPostHandler,
+  dismissJudgingPairHandler,
   getCrucibleByIdHandler,
   getCrucibleEntriesHandler,
   getFeaturedCrucibleHandler,
@@ -56,6 +57,7 @@ import {
   submitEntrySchema,
   submitVoteSchema,
   toggleCrucibleFollowSchema,
+  dismissJudgingPairSchema,
 } from '~/server/schema/crucible.schema';
 import { getFollowedCrucibleIds } from '~/server/services/crucible-engagement.service';
 import { getCrucibleEventTags, setCrucibleEventTags } from '~/server/services/crucible.service';
@@ -146,6 +148,12 @@ export const crucibleRouter = router({
     .use(rateLimit({ limit: 60, period: 60 }))
     .input(submitVoteSchema)
     .mutation(submitVoteHandler),
+
+  dismissJudgingPair: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .input(dismissJudgingPairSchema)
+    .mutation(dismissJudgingPairHandler),
 
   cancel: guardedProcedure
     .use(isFlagProtected('crucible'))

@@ -6,6 +6,7 @@ import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { BankBuzzInput, WithdrawCashInput } from '~/server/schema/creator-program.schema';
 import type { CompensationPool } from '~/types/router';
 import { handleTRPCError, trpc } from '~/utils/trpc';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 
 export const useCreatorProgramRequirements = () => {
   const currentUser = useCurrentUser();
@@ -196,13 +197,17 @@ export const useCreatorProgramMutate = () => {
     return joinCreatorsProgramMutation.mutateAsync();
   };
 
-  const handleBankBuzz = async (input: BankBuzzInput) => {
-    return bankBuzzMutation.mutateAsync(input);
-  };
+  // One key per deposit or withdrawal (its amount and currency), held across a failure that may
+  // have moved the Buzz, so trying again is the same action, made once.
+  const handleBankBuzz = async (input: Omit<BankBuzzInput, 'idempotencyKey'>) =>
+    withPaymentIntentKey(submissionIntent('creator-bank', input), (idempotencyKey) =>
+      bankBuzzMutation.mutateAsync({ ...input, idempotencyKey })
+    );
 
-  const handleWithdrawCash = async (input: WithdrawCashInput) => {
-    return withdrawCashMutation.mutateAsync(input);
-  };
+  const handleWithdrawCash = async (input: Omit<WithdrawCashInput, 'idempotencyKey'>) =>
+    withPaymentIntentKey(submissionIntent('creator-cash-withdrawal', input), (idempotencyKey) =>
+      withdrawCashMutation.mutateAsync({ ...input, idempotencyKey })
+    );
 
   const handleExtractBuzz = async () => {
     return extractBuzzMutation.mutateAsync();

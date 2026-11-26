@@ -9,7 +9,7 @@ import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvid
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 
 // Server render only: the bug was a server-drawn .com href that hydration never corrected.
-const viewing = vi.hoisted(() => ({ host: 'civitai.red' }));
+const viewing = vi.hoisted(() => ({ host: 'civitai.red', blurNsfw: false }));
 
 vi.mock('~/providers/AppProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof AppProvider>()),
@@ -35,7 +35,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 
 vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowserSettingsProvider>()),
-  useBrowsingSettings: () => false,
+  useBrowsingSettings: () => viewing.blurNsfw,
 }));
 
 vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
@@ -45,6 +45,9 @@ vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
 
 const { RenderRichText } = await import('~/components/RichTextEditor/RenderRichText');
 const { RenderHtml } = await import('~/components/RenderHtml/RenderHtml');
+const { blockedWords } = await import('@civitai/mod-utils/profanity/lists');
+const { cleanWord, isUsableBlockedEntry } = await import('@civitai/mod-utils/profanity/word-rules');
+const { getProfanityFilter } = await import('~/libs/profanity-simple');
 const { CustomMarkdown } = await import('~/components/Markdown/CustomMarkdown');
 const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
 
@@ -165,5 +168,62 @@ describe('announcement action buttons', () => {
     expect(buttonHref('https://t.me/SomeGroup', 'civitai.red')).toBe(
       '/leaving?url=https://t.me/SomeGroup'
     );
+  });
+});
+
+// A shipped entry read at runtime, never written down: this repository is public. Assertions on it
+// are booleans, so a failure does not print it.
+const SHIPPED = blockedWords
+  .map(cleanWord)
+  .find(
+    (word) =>
+      isUsableBlockedEntry(word) &&
+      /^[a-z]+$/.test(word) &&
+      getProfanityFilter().clean(word) !== word
+  ) as string;
+
+// Lives here for the stubs above.
+describe('RenderHtml comment masking, server render', () => {
+  const comment = (maskedHtml?: string | null) =>
+    createElement(RenderHtml, {
+      html: '<p>a zorblat here</p>',
+      maskedHtml,
+      withProfanityFilter: true,
+    });
+
+  it("shows the server's masked copy when it sent one, and the text as written when it says clean", () => {
+    viewing.blurNsfw = true;
+    try {
+      const masked = render(comment('<p>a ******* here</p>'));
+      expect(masked).toContain('a ******* here');
+      expect(masked).not.toContain('zorblat');
+      expect(render(comment(null))).toContain('a zorblat here');
+    } finally {
+      viewing.blurNsfw = false;
+    }
+  });
+
+  it('with no masked copy from the server, masks in the browser with the shipped list', () => {
+    const shipped = (maskedHtml?: string | null) =>
+      createElement(RenderHtml, {
+        html: `<p>a ${SHIPPED} here</p>`,
+        maskedHtml,
+        withProfanityFilter: true,
+      });
+    expect(typeof SHIPPED).toBe('string');
+    // Control: shown as written to a viewer with masking off.
+    expect(render(shipped()).includes(SHIPPED), 'masking off').toBe(true);
+    viewing.blurNsfw = true;
+    try {
+      expect(render(shipped()).includes(SHIPPED), 'no server copy').toBe(false);
+      // The server said clean (the managed list dropped it): shown as written.
+      expect(render(shipped(null)).includes(SHIPPED), 'server says clean').toBe(true);
+    } finally {
+      viewing.blurNsfw = false;
+    }
+  });
+
+  it('shows the text as written to a viewer with masking off, whatever the server sent', () => {
+    expect(render(comment('<p>a ******* here</p>'))).toContain('a zorblat here');
   });
 });

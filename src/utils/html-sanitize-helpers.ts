@@ -1,4 +1,5 @@
 import { decode } from 'he';
+import { WITHHELD_HREF_ATTRIBUTE } from '~/shared/constants/withheld-media.constants';
 import type { Transformer } from 'sanitize-html';
 import sanitize from 'sanitize-html';
 import { removeTags } from '~/utils/string-helpers';
@@ -8,7 +9,7 @@ import {
   isAllowedPlayerUrl,
   isEmbedPlayerHost,
 } from '~/shared/utils/embed-providers';
-import { IMAGE_WIDTHS } from '~/shared/tiptap/image-width';
+import { IMAGE_ALIGNS, IMAGE_WIDTHS } from '~/shared/tiptap/image-width';
 
 const DEFAULT_ALLOWED_TAGS = [
   'p',
@@ -62,6 +63,7 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
 // The article editor's per-image size. sanitize-html blanks any value off this list, so a
 // stored `data-width` can't carry CSS.
 const IMAGE_WIDTH_ATTRIBUTE = { name: 'data-width', multiple: false, values: [...IMAGE_WIDTHS] };
+const IMAGE_ALIGN_ATTRIBUTE = { name: 'data-align', multiple: false, values: [...IMAGE_ALIGNS] };
 // `style` is allowed on these tags only because `allowedStyles` limits it to text-align left|center|right.
 const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3'];
 const TEXT_ALIGN_STYLES = Object.fromEntries(
@@ -69,8 +71,16 @@ const TEXT_ALIGN_STYLES = Object.fromEntries(
 );
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
-  a: ['rel', 'href', 'target', 'data-entity', 'data-id', 'data-version-id'],
-  img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE],
+  a: [
+    'rel',
+    'href',
+    'target',
+    'data-entity',
+    'data-id',
+    'data-version-id',
+    WITHHELD_HREF_ATTRIBUTE,
+  ],
+  img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE, IMAGE_ALIGN_ATTRIBUTE],
   iframe: [
     'src',
     'width',
@@ -90,12 +100,25 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   // `data-id` is load-bearing for blurbs: it is the only thing tying a stored blurb back to its
   // row, and every host body passes through here on save. Drop it and the fan-out has nothing
   // left to find — the words stay and silently stop updating.
-  div: ['data-youtube-video', 'data-type', 'data-id', 'data-provider'],
+  div: [
+    'data-youtube-video',
+    'data-type',
+    'data-id',
+    'data-provider',
+    { name: 'data-display', multiple: false, values: ['full'] },
+  ],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
   ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
   '*': ['id'],
-  'edge-media': ['url', 'type', 'filename', 'className', IMAGE_WIDTH_ATTRIBUTE],
+  'edge-media': [
+    'url',
+    'type',
+    'filename',
+    'className',
+    IMAGE_WIDTH_ATTRIBUTE,
+    IMAGE_ALIGN_ATTRIBUTE,
+  ],
 };
 
 // What may appear INSIDE a blurb.
@@ -287,8 +310,13 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
         : supplied
         ? (supplied as Transformer)(tagName, attribs)
         : { tagName, attribs };
-    const next = applied.attribs ?? {};
-    if (allowBlurbs || !isBlurbAttribs(next)) return applied;
+    const { 'data-display': display, ...others } = applied.attribs ?? {};
+    // Only a full-width embed carries `data-display`; on any other div it is dropped.
+    const next =
+      display !== undefined && applied.attribs?.['data-type'] === 'civitaiEmbed'
+        ? { ...others, 'data-display': display }
+        : others;
+    if (allowBlurbs || !isBlurbAttribs(next)) return { ...applied, attribs: next };
     const { 'data-type': _type, 'data-id': _id, ...rest } = next;
     return { ...applied, attribs: rest };
   };
@@ -302,6 +330,9 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       (exclusiveFilter?.(frame) ?? false),
     transformTags: {
       a: function (tagName, { href, ...attr }) {
+        // The edit form's stand-in for an href it may not show; the article save restores it.
+        if (!href && /^\d+$/.test(attr[WITHHELD_HREF_ATTRIBUTE] ?? ''))
+          return { tagName: 'a', attribs: { ...attr, rel: 'ugc' } };
         if (!href) return { tagName: 'span', attribs: {} };
         const updatedHref = href.startsWith('http') ? href : `http://${href}`;
         const hrefDomain = isValidURL(updatedHref) ? new URL(updatedHref).hostname : undefined;
@@ -385,6 +416,9 @@ export function removeSpoilers(html: string) {
   return sanitize(html, {
     allowedTags: false,
     allowedAttributes: false,
+    // Only silences the per-call warning that script and style pass through; output is unchanged.
+    // The result is NOT sanitised: callers must strip its tags or render it through RenderHtml.
+    allowVulnerableTags: true,
     // Normalised so the strip stays broader than the editor and renderer, which match exactly.
     exclusiveFilter: (frame) => frame.attribs['data-type']?.trim().toLowerCase() === 'spoiler',
   });

@@ -5,7 +5,11 @@ import type * as PlacementModeration from '~/server/services/placement-moderatio
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import {
+  createLuaRedis,
+  hashTicketFrom,
+  type LuaRedis,
+} from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { eventSeasonKeys } from '~/server/events/points/keys';
 import { turfConfigKey } from '~/server/events/turf/config';
@@ -69,6 +73,7 @@ const {
   syncTurfImages,
   turfCreditedByTeam,
 } = await import('~/server/events/turf/turf.service');
+const { readMyTurfPage } = await import('~/server/events/turf/turf-feed');
 
 const OWNER = 7;
 const keys = turfKeys('e');
@@ -171,16 +176,17 @@ beforeEach(async () => {
   dbMock.dbRead.eventTurfStock.findUnique.mockResolvedValue(null as never);
   redisMock.sysRedis.get.mockImplementation((async (key: string) =>
     key === turfConfigKey('e') ? override : null) as never);
-  redisMock.sysRedis.hmGet.mockImplementation((async (key: string, fields: string[]) =>
-    key === teamBase
-      ? fields.map((field) => POINTS[field as keyof typeof POINTS] ?? null)
-      : fields.map(() => null)) as never);
-  redisMock.sysRedis.eval.mockImplementation(redis.eval as never);
-  redisMock.sysRedis.incr.mockImplementation((async () => (clock += 1)) as never);
-  redisMock.sysRedis.hGetAll.mockImplementation(
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (key: string, fields: string[]) =>
+      key === teamBase
+        ? fields.map((field) => POINTS[field as keyof typeof POINTS] ?? null)
+        : fields.map(() => null)) as never);
+  redisMock.redis.eval.mockImplementation(redis.eval as never);
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(redis, () => (clock += 1)) as never);
+  redisMock.redis.hGetAll.mockImplementation(
     (async (key: string) => redis.hash(key) ?? {}) as never
   );
-  redisMock.sysRedis.xAdd.mockResolvedValue('0-1' as never);
+  redisMock.redis.xAdd.mockResolvedValue('0-1' as never);
 });
 
 const newImage = async () => {
@@ -301,14 +307,16 @@ describe('Hat Turf sticker lifetime', () => {
     let fakeNow = Date.now();
     const spy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
     // A minute reading the counts snapshot before the first batch, a minute more to its ticket.
-    redisMock.sysRedis.hGetAll.mockImplementation((async (key: string) => {
+    redisMock.redis.hGetAll.mockImplementation((async (key: string) => {
       fakeNow += 60_000;
       return redis.hash(key) ?? {};
     }) as never);
-    redisMock.sysRedis.incr.mockImplementation((async () => {
-      fakeNow += 60_000;
-      return (clock += 1);
-    }) as never);
+    redisMock.redis.hIncrBy.mockImplementation(
+      hashTicketFrom(redis, () => {
+        fakeNow += 60_000;
+        return (clock += 1);
+      }) as never
+    );
     try {
       await reconcileTurf((await getTurfEvent('e', now))!, now);
     } finally {
@@ -379,6 +387,74 @@ describe('Hat Turf sticker lifetime', () => {
     expect((await rowsOf(image))[0].createdAt).toEqual(placedAt);
     // The bucket opened full at 50 (the mocked transaction does not roll back), and none was spent.
     expect(await stockOf(4)).toBe(50);
+  });
+});
+
+describe("Hat Turf: the viewer's expired hats", () => {
+  const VIEWER = 4;
+  const expiredPage = async (now: Date, cursor?: string, limit = 10, sort?: 'most' | 'fewest') =>
+    readMyTurfPage({
+      event: (await getTurfEvent('e', now))!,
+      userId: VIEWER,
+      sort,
+      cursor,
+      limit,
+      expired: true,
+      now,
+    });
+
+  it('lists own hats past their lifetime, most recently expired first, and nothing else', async () => {
+    override = ttl();
+    const now = later();
+    const [older, newer, live, removed, others] = [
+      await newImage(),
+      await newImage(),
+      await newImage(),
+      await newImage(),
+      await newImage(),
+    ];
+    await sticker(older, VIEWER, hoursBefore(now, 60));
+    await sticker(newer, VIEWER, hoursBefore(now, 50));
+    await sticker(live, VIEWER, hoursBefore(now, 1));
+    await sticker(removed, VIEWER, hoursBefore(now, 50), hoursBefore(now, 49));
+    await sticker(others, 5, hoursBefore(now, 50));
+    expect((await expiredPage(now)).ids).toEqual([newer, older]);
+    // An expired hat has no rank: a Hat Turf sort leaves the order as it is.
+    expect((await expiredPage(now, undefined, 10, 'fewest')).ids).toEqual([newer, older]);
+    const first = await expiredPage(now, undefined, 1);
+    expect(first.ids).toEqual([newer]);
+    expect((await expiredPage(now, first.nextCursor, 1)).ids).toEqual([older]);
+  });
+
+  it('a hat at exactly its lifetime is on the expired list and off the live one', async () => {
+    override = ttl();
+    const now = later();
+    const image = await newImage();
+    await sticker(image, VIEWER, hoursBefore(now, 48));
+    expect((await expiredPage(now)).ids).toEqual([image]);
+    const live = await readMyTurfPage({
+      event: (await getTurfEvent('e', now))!,
+      userId: VIEWER,
+      limit: 10,
+      now,
+    });
+    expect(live.ids).toEqual([]);
+  });
+
+  it('placing the hat again takes the image off the list', async () => {
+    override = ttl();
+    const now = later();
+    const image = await newImage();
+    await sticker(image, VIEWER, hoursBefore(now, 50));
+    expect((await expiredPage(now)).ids).toEqual([image]);
+    await place(VIEWER, image, now);
+    expect((await expiredPage(now)).ids).toEqual([]);
+  });
+
+  it('with no lifetime configured, lists nothing', async () => {
+    const now = later();
+    await sticker(await newImage(), VIEWER, hoursBefore(now, 500));
+    expect((await expiredPage(now)).ids).toEqual([]);
   });
 });
 

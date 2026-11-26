@@ -15,7 +15,7 @@ import '~/__tests__/mocks/db.mock';
  */
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 vi.mock('~/server/db/appdataDb', () => ({
   appdataDb: {

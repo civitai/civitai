@@ -12,18 +12,29 @@ export async function getEligibleModels(
 ): Promise<EligibleModel[]> {
   if (!versionIds.length) return [];
 
-  const [versions, imageCache] = await Promise.all([
+  const [versions, cached] = await Promise.all([
     dbRead.modelVersion.findMany({
       where: { id: { in: versionIds } },
       select: {
         id: true,
         name: true,
         baseModel: true,
-        model: { select: { id: true, name: true } },
+        model: { select: { id: true, name: true, minor: true, sfwOnly: true } },
       },
     }),
     imagesForModelVersionsCache.fetch(versionIds),
   ]);
+  // Challenge cards are shared between viewers, so no one is exempt from the hold.
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  const imageCache = await holdShowcaseImages(
+    cached,
+    new Map(
+      versions.map(
+        (v) =>
+          [v.id, { modelId: v.model.id, minor: v.model.minor, sfwOnly: v.model.sfwOnly }] as const
+      )
+    )
+  );
 
   return versions.map((v) => {
     const images = imageCache[v.id]?.images ?? [];

@@ -67,7 +67,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ storylines: true, canWrite: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/hooks/useCatchNavigation', () => ({ useCatchNavigation: () => undefined }));
 vi.mock('~/components/Tours/ToursProvider', () => ({
   useTourContext: () => ({ runTour: vi.fn(), running: false }),
@@ -128,13 +127,13 @@ beforeEach(() => {
 describe('the publish button of a storyline post', () => {
   test('a draft of chapter 1 says "Publish chapter 1"', async () => {
     mocks.pending = link();
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await expect.element(page.getByRole('button', { name: 'Publish chapter 1' })).toBeEnabled();
   });
 
   test('an ordinary post still says "Publish"', async () => {
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
 
     await expect.element(page.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled();
     expect(page.getByRole('button', { name: 'Publish chapter 1' }).elements()).toHaveLength(0);
@@ -144,7 +143,7 @@ describe('the publish button of a storyline post', () => {
 describe('after publishing a storyline post', () => {
   async function publishWith(storyline: unknown) {
     mocks.pending = link();
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
     await page.getByRole('button', { name: 'Publish chapter 1' }).click();
 
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
@@ -204,7 +203,7 @@ describe('after publishing a storyline post', () => {
 
   test('an ordinary publish shows no storyline message', async () => {
     mocks.pending = null;
-    renderWithProviders(<PostEditSidebar post={post} />);
+    renderWithProviders(<PostEditSidebar post={post} />, { user: { id: 1 } });
     await page.getByRole('button', { name: 'Publish', exact: true }).click();
     const [, options] = mocks.mutate.mock.calls[0]!;
     await options.onSuccess(undefined, { id: 41, publishedAt: new Date() });

@@ -136,6 +136,17 @@ describe('triggerOrigin', () => {
     expect(triggerOrigin(remix('edited')).incomplete).toBe(false);
   });
 
+  it('labels an App Block prompt as submitted by the app, never typed', () => {
+    const view = triggerOrigin({
+      prompt: 'p',
+      origin: { incomplete: true, app: { appBlockId: 'apb_1', stepType: 'videoGen' } },
+    });
+    expect(view).toMatchObject({
+      kind: 'app',
+      label: 'Submitted by an App Block (apb_1 · videoGen)',
+    });
+  });
+
   it('ignores a legacy id that is null or zero', () => {
     expect(triggerOrigin({ prompt: 'p', remixOfId: null }).kind).toBe('unrecorded');
     expect(triggerOrigin({ prompt: 'p', remixOfId: 0 }).kind).toBe('unrecorded');
@@ -144,6 +155,14 @@ describe('triggerOrigin', () => {
 });
 
 describe('originSummary', () => {
+  it('counts App Block prompts apart from typed ones', () => {
+    const app = { prompt: 'p', origin: { app: { appBlockId: 'apb_1', stepType: 'textToImage' } } };
+    const summary = originSummary([app, typed]);
+    expect(summary.chip).toBe('1 App Block · 1 typed');
+    expect(summary.verdict).toMatch(/1 of 2 blocked prompts were submitted by an App Block/);
+    expect(summary.verdict).toMatch(/1 typed/);
+  });
+
   it('is empty for no prompt triggers', () => {
     expect(originSummary([])).toEqual({ verdict: null, chip: '' });
     expect(originSummary([{ text: 'x' }])).toEqual({ verdict: null, chip: '' });

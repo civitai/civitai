@@ -1,6 +1,22 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import type * as BlockedImageHash from '~/server/services/blocked-image-hash';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
+
+const { getIsImageBlocked, canCheckBlockedImageHash } = vi.hoisted(() => ({
+  getIsImageBlocked: vi.fn<(hash: bigint) => Promise<boolean>>(),
+  canCheckBlockedImageHash: vi.fn<() => boolean>(),
+}));
+vi.mock('~/server/services/blocked-image-hash', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockedImageHash>()),
+  getIsImageBlocked,
+  canCheckBlockedImageHash,
+}));
 
 const findMany = dbMock.dbRead.image.findMany;
 const { getMyImages } = await import('~/server/services/image.service');
@@ -16,6 +32,7 @@ describe('getMyImages — published only', () => {
   it('lists published media only, by default', async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -31,6 +48,7 @@ describe('getMyImages — published only', () => {
   it("also lists unpublished media from the crucible entry modal's drafts, still only the caller's own", async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -51,5 +69,191 @@ describe('getMyImages — published only', () => {
         ],
       },
     });
+  });
+});
+
+describe('getMyImages — entry drafts whose scan failed', () => {
+  const failedUpload = { id: 900, ingestion: 'Error' };
+  const listed = { id: 800, ingestion: 'Scanned' };
+  const errorQueryOf = () =>
+    findMany.mock.calls.map(([args]) => args).find((args) => args.where.ingestion === 'Error');
+
+  const blockedHashes = getIsImageBlocked;
+
+  beforeEach(() => {
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error' ? [failedUpload] : [listed]
+    );
+    blockedHashes.mockReset();
+    blockedHashes.mockResolvedValue(false);
+    canCheckBlockedImageHash.mockReset();
+    canCheckBlockedImageHash.mockReturnValue(true);
+  });
+
+  const listForEntry = (cursor?: number) =>
+    getMyImages({
+      userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
+      mediaTypes: [MediaType.video],
+      limit: 10,
+      publishedOnly: true,
+      includeEntryDrafts: true,
+      cursor,
+    });
+
+  it('lists an upload whose scan failed, newest first, so the modal can say so', async () => {
+    const { items } = await listForEntry();
+    expect(items.map((x) => x.id)).toEqual([900, 800]);
+    expect(items[0].ingestion).toBe('Error');
+  });
+
+  it("only from the caller's own unpublished entry-draft posts, not a failed image on a normal post", async () => {
+    await listForEntry();
+    expect(errorQueryOf()?.where).toMatchObject({
+      userId: 42,
+      type: { in: [MediaType.video] },
+      needsReview: null,
+      tosViolation: false,
+      post: { publishedAt: null, metadata: { path: ['crucibleEntryDraft'], equals: true } },
+      createdAt: { gte: expect.any(Date) },
+    });
+    const since = errorQueryOf()!.where.createdAt.gte as Date;
+    const days = (Date.now() - since.getTime()) / 86_400_000;
+    expect(days).toBeGreaterThan(6.99);
+    expect(days).toBeLessThan(7.01);
+  });
+
+  it('holds them to a SFW-capped request too, unrated ones included', async () => {
+    await getMyImages({
+      userId: 42,
+      servableLevels: sfwBrowsingLevelsFlag,
+      mediaTypes: [MediaType.video],
+      limit: 10,
+      publishedOnly: true,
+      includeEntryDrafts: true,
+    });
+    expect(errorQueryOf()?.where.AND).toContainEqual({
+      nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] },
+    });
+  });
+
+  it('adds them to the first page only, so paging never repeats one', async () => {
+    const { items } = await listForEntry(800);
+    expect(items.map((x) => x.id)).toEqual([800]);
+    expect(errorQueryOf()).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves callers that list unpublished media too without them', async () => {
+    await getMyImages({
+      userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
+      mediaTypes: [MediaType.image],
+      limit: 10,
+      publishedOnly: false,
+      includeEntryDrafts: true,
+    });
+    expect(errorQueryOf()).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves other published-only callers without failed uploads', async () => {
+    await getMyImages({
+      userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
+      mediaTypes: [MediaType.image],
+      limit: 10,
+      publishedOnly: true,
+    });
+    expect(errorQueryOf()).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('only lists failed uploads the caller owns', async () => {
+    await listForEntry();
+    for (const [args] of findMany.mock.calls) expect(args.where.userId).toBe(42);
+  });
+
+  it('leaves out a failed upload that a block reason was written on', async () => {
+    const rows = [
+      { id: 904, ingestion: 'Error', blockedFor: 'reason' },
+      { id: 905, ingestion: 'Error', blockedFor: null },
+    ];
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error'
+        ? rows
+            .filter((row) => !('blockedFor' in where) || row.blockedFor === where.blockedFor)
+            .map(({ blockedFor: _blockedFor, ...row }) => row)
+        : [listed]
+    );
+    const { items } = await listForEntry();
+    expect(items.map((x) => x.id)).toEqual([905, 800]);
+  });
+
+  it('leaves out a failed upload rated Blocked, even with no block reason written', async () => {
+    await listForEntry();
+    expect(errorQueryOf()?.where).toMatchObject({ nsfwLevel: { not: NsfwLevel.Blocked } });
+  });
+
+  it('pages by the main listing alone: failed uploads never move the cursor', async () => {
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error'
+        ? [
+            { id: 950, ingestion: 'Error' },
+            { id: 10, ingestion: 'Error' },
+          ]
+        : [{ id: 900 }, { id: 800 }, { id: 700 }]
+    );
+    const { items, nextCursor } = await getMyImages({
+      userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
+      mediaTypes: [MediaType.video],
+      limit: 2,
+      publishedOnly: true,
+      includeEntryDrafts: true,
+    });
+    expect(nextCursor).toBe(700);
+    expect(items.map((x) => x.id)).toEqual([950, 900, 800, 10]);
+  });
+
+  it('leaves out a failed upload on a blocked hash, and never returns the hash', async () => {
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error'
+        ? [
+            { id: 901, ingestion: 'Error', pHash: BigInt(7) },
+            { id: 902, ingestion: 'Error', pHash: BigInt(8) },
+            { id: 903, ingestion: 'Error', pHash: null },
+          ]
+        : [listed]
+    );
+    blockedHashes.mockImplementation(async (hash) => hash === BigInt(7));
+    const { items } = await listForEntry();
+    expect(items.map((x) => x.id)).toEqual([903, 902, 800]);
+    expect(blockedHashes.mock.calls.map(([hash]) => hash)).toEqual([BigInt(7), BigInt(8)]);
+    for (const item of items) expect(item).not.toHaveProperty('pHash');
+  });
+
+  it('leaves out a hashed failed upload when the blocklist cannot be read here', async () => {
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error'
+        ? [
+            { id: 901, ingestion: 'Error', pHash: BigInt(7) },
+            { id: 903, ingestion: 'Error', pHash: null },
+          ]
+        : [listed]
+    );
+    canCheckBlockedImageHash.mockReturnValue(false);
+    const { items } = await listForEntry();
+    expect(items.map((x) => x.id)).toEqual([903, 800]);
+    expect(blockedHashes).not.toHaveBeenCalled();
+  });
+
+  it('lists none when the blocked-hash lookup fails', async () => {
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error' ? [{ id: 901, ingestion: 'Error', pHash: BigInt(7) }] : [listed]
+    );
+    blockedHashes.mockRejectedValue(new Error('timeout'));
+    const { items } = await listForEntry();
+    expect(items.map((x) => x.id)).toEqual([800]);
   });
 });

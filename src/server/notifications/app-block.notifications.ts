@@ -34,20 +34,47 @@ export type AppBlockModerationNotificationDetails = {
   version?: string | null;
   /** The moderator's rejection reason (reject only; approve carries none). */
   reason?: string | null;
+  /** Approve only: the manifest declares a page, so `/apps/run/<slug>` can resolve. */
+  hasPage?: boolean;
+  /** Approve only: a mature (r/x) app, whose run page 404s off the red host the email links to. */
+  mature?: boolean;
+  /**
+   * Approve only: the SUBMITTER could open run pages when it was sent. The run page 404s for a
+   * viewer outside its two flags (`canOpenAppRunPages`), and the submitter may be outside them.
+   */
+  canOpenRunPage?: boolean;
 };
 
 /**
- * Both submitter notifications point the developer at their submissions view — state C of
- * `/apps/build`, which is the table `/apps/mine` used to be. Repointed with the rest of the
- * `/apps/build` consolidation; see the access-narrowing note on `OWNER_SUBMISSIONS_URL` in
- * `./app-listing.notifications`, which applies verbatim to these two.
+ * The rejected notification (and an approved one that cannot link to its run page; see
+ * `approvedAppUrl`) points the developer at their submissions view — state C of `/apps/build`, which is the table `/apps/mine` used to be.
+ * Repointed with the rest of the `/apps/build` consolidation; see the access-narrowing note on
+ * `OWNER_SUBMISSIONS_URL` in `./app-listing.notifications`, which applies verbatim here.
  */
 const SUBMITTER_SUBMISSIONS_URL = MY_APPS_HREF;
 
-/** `Your app block "Name"` when a name is present, else a terse `Your app block`. */
-function blockLabel(details: AppBlockModerationNotificationDetails): string {
+/**
+ * The approved app's full-page run route. The run page 404s for an app that declares no page, for
+ * a mature app on the primary host the email links to, and for a viewer outside the run-page
+ * flags, so only a notification that says `hasPage: true`, `canOpenRunPage: true` and not
+ * `mature: true` links there. Anything else falls back to the submissions view: no slug, no page,
+ * a mature app, a submitter who cannot open run pages, or an older notification that predates
+ * either field.
+ */
+export function approvedAppUrl(details: AppBlockModerationNotificationDetails): string {
+  const slug = typeof details.slug === 'string' ? details.slug.trim() : '';
+  return slug &&
+    details.hasPage === true &&
+    details.canOpenRunPage === true &&
+    details.mature !== true
+    ? `/apps/run/${encodeURIComponent(slug)}`
+    : SUBMITTER_SUBMISSIONS_URL;
+}
+
+/** `Your app "Name"` when a name is present, else a terse `Your app`. Users know these as apps. */
+function appLabel(details: AppBlockModerationNotificationDetails): string {
   const name = details.name?.trim();
-  return name ? `Your app block "${name}"` : 'Your app block';
+  return name ? `Your app "${name}"` : 'Your app';
 }
 
 /** Append ": <reason>" only when a non-empty reason is present, else a period. */
@@ -58,25 +85,30 @@ function withReason(base: string, reason?: string | null): string {
 
 export const appBlockNotifications = createNotificationProcessor({
   'app-block-approved': {
-    displayName: 'App block approved',
+    displayName: 'App approved',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppBlockModerationNotificationDetails;
+      const url = approvedAppUrl(details);
       return {
-        message: `${blockLabel(details)} was approved and is being built and deployed.`,
-        url: SUBMITTER_SUBMISSIONS_URL,
+        message: `${appLabel(details)} was approved and will be live in a few minutes.`,
+        url,
+        // Only the run page is "your app"; the submissions-view fallback keeps the default label.
+        emailButtonLabel: url === SUBMITTER_SUBMISSIONS_URL ? undefined : 'Open your app',
       };
     },
   },
   'app-block-rejected': {
-    displayName: 'App block not approved',
+    displayName: 'App not approved',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppBlockModerationNotificationDetails;
       return {
-        message: withReason(`${blockLabel(details)} was not approved`, details.reason),
+        message: withReason(`${appLabel(details)} was not approved`, details.reason),
         url: SUBMITTER_SUBMISSIONS_URL,
       };
     },

@@ -1,4 +1,6 @@
+import { sql } from 'kysely';
 import { db } from '$lib/server/db/db';
+import { scopeFromColumn } from './scope';
 
 /**
  * The scope `userId` has already granted `clientId`: the remembered consent combined with every live
@@ -9,7 +11,7 @@ export async function getGrantedScope(
   userId: number,
   clientId: string,
   now: Date = new Date()
-): Promise<number | null> {
+): Promise<bigint | null> {
   const [consent, refresh] = await Promise.all([
     db
       .selectFrom('OauthConsent')
@@ -19,7 +21,10 @@ export async function getGrantedScope(
       .executeTakeFirst(),
     db
       .selectFrom('ApiKey')
-      .select((eb) => eb.fn<number | null>('bit_or', ['tokenScope']).as('scope'))
+      // The wide column where it is set, else the 32-bit one (rows written before the wide column).
+      .select(
+        sql<string | number | null>`bit_or(coalesce("tokenScopeWide", "tokenScope"))`.as('scope')
+      )
       .where('userId', '=', userId)
       .where('clientId', '=', clientId)
       .where('type', '=', 'Refresh')
@@ -27,7 +32,8 @@ export async function getGrantedScope(
       .executeTakeFirst(),
   ]);
 
-  const refreshScope = refresh?.scope ?? null;
+  const refreshScope = refresh?.scope == null ? null : scopeFromColumn(refresh.scope);
   if (!consent && refreshScope == null) return null;
-  return (consent?.scope ?? 0) | (refreshScope ?? 0);
+  const consentScope = consent?.scope == null ? 0n : scopeFromColumn(consent.scope);
+  return consentScope | (refreshScope ?? 0n);
 }

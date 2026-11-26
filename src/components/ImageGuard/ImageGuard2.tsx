@@ -6,9 +6,8 @@ import Router from 'next/router';
 import React, { createContext, useCallback, useContext, useMemo } from 'react';
 import { create } from 'zustand';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
@@ -172,6 +171,7 @@ export function ImageGuard2({
 function ImageGuardContentInner({
   show,
   explain,
+  explainLabel = 'This image is rated',
   browsingLevel,
   tosViolation,
   children,
@@ -179,6 +179,7 @@ function ImageGuardContentInner({
 }: {
   show: boolean;
   explain?: boolean;
+  explainLabel?: string;
   browsingLevel: number;
   tosViolation?: boolean;
   children: React.ReactNode;
@@ -194,7 +195,7 @@ function ImageGuardContentInner({
               style={{ transform: 'translate(-50%, -60%)' }}
             >
               <Text size="sm" className="shadow-black/50 text-shadow-sm">
-                This image is rated
+                {explainLabel}
               </Text>
               <Badge
                 color="red"
@@ -382,18 +383,15 @@ function toggleShow({
 
   // handle limited toggles for unauthenticated users
   if (!isAuthed && hasHitLimit) {
-    dialogStore.trigger({
+    openConfirm({
+      message: (
+        <Text size="sm" fw={500} style={{ flex: 1 }}>
+          Login now to continue viewing mature content and unblur everything.
+        </Text>
+      ),
+      onConfirm: () => Router.push(`/login?returnUrl=${Router.asPath}&reason=blur-toggle`),
+      labels: { cancel: 'Cancel', confirm: 'Continue' },
       id: 'limited-toggle-modal',
-      component: ConfirmDialog,
-      props: {
-        message: (
-          <Text size="sm" fw={500} style={{ flex: 1 }}>
-            Login now to continue viewing mature content and unblur everything.
-          </Text>
-        ),
-        onConfirm: () => Router.push(`/login?returnUrl=${Router.asPath}&reason=blur-toggle`),
-        labels: { cancel: 'Cancel', confirm: 'Continue' },
-      },
     });
   }
 
@@ -414,10 +412,13 @@ export function ImageGuardContent({
   image,
   children,
   explain = true,
+  explainLabel,
   ...connectProps
 }: {
   image: ImageProps;
   explain?: boolean;
+  /** The line above the rating badge on a blurred item. */
+  explainLabel?: string;
   children: (show: boolean) => React.ReactElement | null;
 } & ConnectProps) {
   const state = useImageGuard({ image, ...connectProps });
@@ -429,6 +430,7 @@ export function ImageGuardContent({
       browsingLevel={browsingLevel}
       tosViolation={tosViolation}
       explain={explain}
+      explainLabel={explainLabel}
     >
       {children(show)}
     </ImageGuardContentInner>

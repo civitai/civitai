@@ -89,6 +89,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'sampleShadow',
   'quoteEntities',
   'composeEntities',
+  'composeComFaceIntent',
   'scanTexts',
   'quoteTexts',
   'literalModelRules',
@@ -217,6 +218,8 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       .optional()
       .transform((note) => note?.trim() || undefined),
     baseId: z.number().int().positive().nullable().optional(),
+    /** A rollback: the intent key then refuses revoked text even for a holder. */
+    restore: z.literal(true).optional(),
     createdById: moderatorId.optional(),
   }),
   z.object({
@@ -325,6 +328,10 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     action: z.literal('composeEntities'),
     entityType,
     entityIds: z.array(z.number().int().positive()).min(1).max(50),
+  }),
+  z.object({
+    action: z.literal('composeComFaceIntent'),
+    modelIds: z.array(z.number().int().positive()).min(1).max(50),
   }),
   z
     .object({
@@ -821,6 +828,39 @@ async function composeEntities(entityType: TextScanEntityType, entityIds: number
   return { entityType, results };
 }
 
+async function composeComFaceIntent(modelIds: number[]) {
+  const { comFaceIntentFields, getOwnTriggerWords } = await import(
+    '~/server/services/model-com-face-intent.service'
+  );
+  const models = await dbRead.model.findMany({
+    where: { id: { in: modelIds }, deletedAt: null },
+    select: { id: true, name: true, description: true, userId: true },
+  });
+  const byId = new Map(models.map((model) => [model.id, model]));
+  const results = await Promise.all(
+    modelIds.map(async (entityId) => {
+      const model = byId.get(entityId);
+      if (!model) return { entityId, ok: false as const, error: 'entity not found' };
+      const triggerWords = await getOwnTriggerWords({
+        modelId: model.id,
+        userId: model.userId,
+        db: dbRead,
+      });
+      return {
+        entityId,
+        ok: true as const,
+        fields: comFaceIntentFields({
+          name: model.name,
+          description: model.description,
+          triggerWords,
+        }),
+        userId: model.userId,
+      };
+    })
+  );
+  return { results };
+}
+
 type ShadowSampleInput = Omit<Extract<TextScanHarnessInput, { action: 'sampleShadow' }>, 'action'>;
 
 type ShadowRow = {
@@ -1104,6 +1144,9 @@ export async function runTextScanHarnessAction(
 
     case 'composeEntities':
       return { kind: 'json', body: await composeEntities(input.entityType, input.entityIds) };
+
+    case 'composeComFaceIntent':
+      return { kind: 'json', body: await composeComFaceIntent(input.modelIds) };
 
     case 'scanTexts': {
       const profile = requireProfile(input.entityType);

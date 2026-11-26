@@ -19,15 +19,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const live = vi.hoisted(() => ({
   store: undefined as unknown,
-  /** Legal-hold answers by user id; absent = not held, `null` = the hold could not be read. */
-  holds: new Map<number, boolean | null>(),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => live.store,
-}));
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  isAccountUnderLegalHold: async (id: number) => (live.holds.has(id) ? live.holds.get(id) : false),
 }));
 vi.mock('../job', () => ({
   createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({ name, cron, fn }),
@@ -58,9 +52,8 @@ const PAST_GRACE = at(-(7 * DAY + HOUR));
 const OPTED_IN = 8_101;
 const OPTED_OUT = 8_202;
 const RESTORED = 8_303;
-const HELD = 8_404;
 const LIVE_USER = 8_505;
-const ALL = [OPTED_IN, OPTED_OUT, RESTORED, HELD, LIVE_USER];
+const ALL = [OPTED_IN, OPTED_OUT, RESTORED, LIVE_USER];
 
 type UserRow = { deletedAt: Date | null; meta: Record<string, unknown> };
 const REQUESTED = { appDataRemoval: 'requested' };
@@ -146,7 +139,6 @@ beforeEach(async () => {
   // Earlier cases leave data in their own apps; every user starts each case with only this
   // case's two apps, so a wipe's namespaces are exactly those.
   for (const uid of ALL) await maint.wipeAccount(uid);
-  live.holds.clear();
   keyValues.clear();
   await primary.exec('DELETE FROM "User"');
   await replica.exec('DELETE FROM "User"');
@@ -157,9 +149,7 @@ beforeEach(async () => {
   await setUser(OPTED_OUT, { deletedAt: PAST_GRACE, meta: {} });
   // Restored before the job ran: `restoreUser` cleared deletedAt and dropped the request.
   await setUser(RESTORED, { deletedAt: null, meta: {} });
-  await setUser(HELD, { deletedAt: PAST_GRACE, meta: { ...REQUESTED } });
   await setUser(LIVE_USER, { deletedAt: null, meta: {} });
-  live.holds.set(HELD, true);
 
   dbMock.dbWrite.$queryRaw.mockImplementation(
     async (strings: TemplateStringsArray, ...values: unknown[]) =>
@@ -210,15 +200,13 @@ describe('removeDeletedAccountAppData', () => {
 
     const out = await removeDeletedAccountAppData({ store: maint, now: NOW });
 
-    expect(out).toMatchObject({ scanned: 2, wiped: 1, held: 1, failed: 0 });
+    expect(out).toMatchObject({ scanned: 1, wiped: 1, failed: 0 });
     expect(await docsOf(OPTED_IN)).toBe(0);
-    // Box left off, restored, held, never deleted: every document stays.
-    for (const uid of [OPTED_OUT, RESTORED, HELD, LIVE_USER]) {
+    // Box left off, restored, never deleted: every document stays.
+    for (const uid of [OPTED_OUT, RESTORED, LIVE_USER]) {
       expect({ uid, docs: await docsOf(uid) }).toEqual({ uid, docs: 4 });
     }
-    // The request is done; the held one is kept for a later run.
     expect(await markerOf(OPTED_IN)).toBeNull();
-    expect(await markerOf(HELD)).toBe('requested');
   });
 
   it('is idempotent: a second run wipes nothing more', async () => {
@@ -226,7 +214,6 @@ describe('removeDeletedAccountAppData', () => {
     const out = await removeDeletedAccountAppData({ store: maint, now: NOW });
     expect(out).toMatchObject({ wiped: 0, failed: 0 });
     expect(await docsOf(OPTED_OUT)).toBe(4);
-    expect(await docsOf(HELD)).toBe(4);
   });
 
   it('re-checks the account on the primary: one restored after the replica last saw it is not wiped', async () => {
@@ -284,43 +271,18 @@ describe('removeDeletedAccountAppData', () => {
     expect(await docsOf(IN_GRACE)).toBe(4);
   });
 
-  it('a legal hold placed during the grace stops the wipe after the grace ends', async () => {
-    const IN_GRACE = 8_727;
-    await seedDocs([IN_GRACE]);
-    await setUser(IN_GRACE, { deletedAt: at(-DAY), meta: { ...REQUESTED } });
-    live.holds.set(IN_GRACE, true);
-
-    const out = await removeDeletedAccountAppData({ store: maint, now: at(10 * DAY) });
-    expect(out.held).toBeGreaterThanOrEqual(1);
-    expect(await docsOf(IN_GRACE)).toBe(4);
-    expect(await markerOf(IN_GRACE)).toBe('requested');
-  });
-
-  it('a hold that cannot be read counts as held: nothing is wiped and the request is kept', async () => {
-    live.holds.set(OPTED_IN, null);
-
-    const out = await removeDeletedAccountAppData({ store: maint, now: NOW });
-
-    expect(out).toMatchObject({ wiped: 0, held: 2, failed: 0 });
-    expect(await docsOf(OPTED_IN)).toBe(4);
-    expect(await markerOf(OPTED_IN)).toBe('requested');
-  });
-
-  it('does not stall behind held or failing accounts: a later account is still reached', async () => {
-    // Three held and two failing accounts are the oldest deletions; LATER is the newest.
-    const H = [8_811, 8_812, 8_813];
-    const F = [8_821, 8_822];
+  it('does not stall behind failing accounts: a later account is still reached', async () => {
+    // Five failing accounts are the oldest deletions; LATER is the newest.
+    const F = [8_821, 8_822, 8_823, 8_824, 8_825];
     const LATER = 8_831;
-    await seedDocs([...H, ...F, LATER]);
+    await seedDocs([...F, LATER]);
     let minutes = 0;
-    for (const id of [...H, ...F, LATER]) {
+    for (const id of [...F, LATER]) {
       minutes += 1;
       await setUser(id, { deletedAt: at(-(30 * DAY) + minutes * 60_000), meta: { ...REQUESTED } });
     }
-    for (const id of H) live.holds.set(id, true);
-    // The fixture's own two requested accounts are out of the way.
+    // The fixture's own requested account is out of the way.
     await setUser(OPTED_IN, { deletedAt: PAST_GRACE, meta: {} });
-    await setUser(HELD, { deletedAt: PAST_GRACE, meta: {} });
     const failing = storeFailingFor(new Set(F));
 
     // At most 2 wipe attempts and 4 accounts looked at per run: the five accounts in front of
@@ -331,56 +293,42 @@ describe('removeDeletedAccountAppData', () => {
 
     expect(await docsOf(LATER)).toBe(0);
     expect(await markerOf(LATER)).toBeNull();
-    // The held and failing accounts keep their data and their requests.
-    for (const id of [...H, ...F]) {
+    // The failing accounts keep their data and their requests.
+    for (const id of F) {
       expect({ id, docs: await docsOf(id), marker: await markerOf(id) }).toEqual({
         id,
         docs: 4,
         marker: 'requested',
       });
     }
-
-    // They are retried, not dropped: once a hold is released, a later run reaches it.
-    live.holds.delete(H[0]);
-    for (let run = 0; run < 4; run += 1) {
-      await removeDeletedAccountAppData({ store: failing, now: NOW, batch: 2, scan: 4 });
-    }
-    expect(await docsOf(H[0])).toBe(0);
-    expect(await markerOf(H[0])).toBeNull();
   });
 
-  for (const change of ['restored', 'held'] as const) {
-    it(`stops mid-wipe, before the next namespace, when the account is ${change} during the wipe`, async () => {
-      let calls = 0;
-      const racing: DocStoreMaintenance = {
-        ...maint,
-        wipeAccount: (uid, opts) =>
-          maint.wipeAccount(uid, {
-            ...opts,
-            proceed: async () => {
-              calls += 1;
-              // After the first namespace is wiped, before the second.
-              if (calls === 2 && uid === OPTED_IN) {
-                if (change === 'restored') {
-                  await writeUser(primary, OPTED_IN, { deletedAt: null, meta: {} });
-                } else {
-                  live.holds.set(OPTED_IN, true);
-                }
-              }
-              return (await opts?.proceed?.()) ?? true;
-            },
-          }),
-      };
+  it('stops mid-wipe, before the next namespace, when the account is restored during the wipe', async () => {
+    let calls = 0;
+    const racing: DocStoreMaintenance = {
+      ...maint,
+      wipeAccount: (uid, opts) =>
+        maint.wipeAccount(uid, {
+          ...opts,
+          proceed: async () => {
+            calls += 1;
+            // After the first namespace is wiped, before the second.
+            if (calls === 2 && uid === OPTED_IN) {
+              await writeUser(primary, OPTED_IN, { deletedAt: null, meta: {} });
+            }
+            return (await opts?.proceed?.()) ?? true;
+          },
+        }),
+    };
 
-      const out = await removeDeletedAccountAppData({ store: racing, now: NOW });
+    const out = await removeDeletedAccountAppData({ store: racing, now: NOW });
 
-      expect(calls).toBeGreaterThanOrEqual(2);
-      expect(out).toMatchObject({ wiped: 0, stopped: 1 });
-      // One app's two documents went; the other app's two stay.
-      expect(await docsOf(OPTED_IN)).toBe(2);
-      expect(await markerOf(OPTED_IN)).toBe(change === 'held' ? 'requested' : null);
-    });
-  }
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(out).toMatchObject({ wiped: 0, stopped: 1 });
+    // One app's two documents went; the other app's two stay.
+    expect(await docsOf(OPTED_IN)).toBe(2);
+    expect(await markerOf(OPTED_IN)).toBeNull();
+  });
 
   it('never writes an account that is live again: a restore after the last check keeps the job off its row', async () => {
     // The wipe is done and passed its last check; the account comes back before the marker is
@@ -436,7 +384,7 @@ describe('the job before its worklist index is applied', () => {
   it('runs once the index is there', async () => {
     await replica.exec(INDEX_DDL);
 
-    expect(await runJob()).toMatchObject({ scanned: 2, wiped: 1, held: 1 });
+    expect(await runJob()).toMatchObject({ scanned: 1, wiped: 1 });
     expect(worklistReads()).toBeGreaterThan(0);
     expect(await docsOf(OPTED_IN)).toBe(0);
   });

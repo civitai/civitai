@@ -352,6 +352,8 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // this file's docblock calls the easy one to ship unnoticed.
       'gated-images',
       'generation-resources',
+      // `v1/blocks/generation-samplers.ts` takes no parameters, so no `:seg` position.
+      'generation-samplers',
       'get',
       'goods',
       'images',
@@ -362,6 +364,8 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // mine, sub-listings, upsert: v1/blocks/sub-listings/*.ts
       'mine',
       'models',
+      // `moderation` / `reports`: v1/blocks/moderation/reports.ts, the report moderation API.
+      'moderation',
       'poll',
       'purchase',
       // `v1/blocks/workflows/query.ts` — the app-subqueue read. The cursor and
@@ -369,6 +373,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'query',
       'quota',
       'report',
+      'reports',
       // `v1/blocks/resource-intent.ts` — the Jev resource-intent primitive. The
       // prompt and every parameter ride the POST body, so there is no `:seg`
       // position to lose. Added deliberately with the route.
@@ -409,6 +414,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'v1',
       'vote',
       'withdraw',
+      'workflow-media',
       'workflows',
     ]);
   });

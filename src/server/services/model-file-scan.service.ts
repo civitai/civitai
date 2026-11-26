@@ -8,7 +8,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   deleteFilesForModelVersionCache,
@@ -55,6 +55,7 @@ import {
   trainingDataObjectUnchanged,
   uncountUnconfirmedResubmit,
 } from '~/server/services/training-data-scan.service';
+import { extractionRating, writeTrainingDataRating } from '~/server/services/training-data-rating';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -86,6 +87,8 @@ export type ScanOutcome = {
   /** The stored url a Training Data blob scan copied. Only an outcome naming the file's current url
    *  may write a Training Data file. */
   trainingDataUrl?: string;
+  /** An uploaded Training Data zip's rating, from the workflow's archiveExtraction step. */
+  trainingDataRating?: { nsfwLevel: number | undefined; fullyRated: boolean };
 };
 
 const exitCodeToScanResult = (exitCode: number | null | undefined): ScanResultCode => {
@@ -204,7 +207,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         modelVersionId: outcome.modelVersionId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -223,7 +226,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         modelVersionId: outcome.modelVersionId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -242,7 +245,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         fileId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -308,6 +311,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     data,
     select: { pickleScanResult: true, virusScanResult: true },
   });
+  if (isTrainingData && outcome.trainingDataRating)
+    await writeTrainingDataRating(dbWrite, {
+      fileId,
+      url: file.url,
+      rating: outcome.trainingDataRating,
+    });
   const failedScan = ranScan && hasFailedScan(written);
   const coverageMoved =
     ranScan &&
@@ -409,7 +418,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
             fileId,
           },
           'webhooks'
-        ).catch(() => null)
+        )
       );
     }
   }
@@ -452,7 +461,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           fileId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   }
 
@@ -471,7 +480,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           error: err instanceof Error ? err.message : String(err),
         },
         'webhooks'
-      ).catch();
+      );
     });
   }
 
@@ -499,7 +508,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           modelVersionId,
         },
         'webhooks'
-      ).catch(() => undefined)
+      )
     );
   }
 
@@ -525,7 +534,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           modelVersionId,
         },
         'webhooks'
-      ).catch(() => undefined)
+      )
     );
 }
 
@@ -571,9 +580,7 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
     },
   });
   const log = (type: 'info' | 'warning', fields: Record<string, unknown>) =>
-    logToAxiom({ type, name: 'scan-only-rescan', fileId, ...fields }, 'webhooks').catch(
-      () => undefined
-    );
+    logToAxiom({ type, name: 'scan-only-rescan', fileId, ...fields }, 'webhooks');
   if (!file || file.type === 'Training Data') return void log('warning', { skipped: 'file' });
 
   const verdict = outcome.pickleScan && pickleVerdictFor(outcome.pickleScan, file);
@@ -661,10 +668,11 @@ type FailedScanFile = {
 // Logged, not thrown, so the retry bump already written stands.
 async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
   try {
-    const prefix = REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
+    // A lost marker costs one more bust.
+    const prefix = REDIS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
     const [bustVersion, bustFile] = await Promise.all([
-      sysRedis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
-      sysRedis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
+      redis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
+      redis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
     ]);
     await Promise.all([
       bustVersion && bustOrchestratorModelCache(modelVersionId),
@@ -687,7 +695,7 @@ async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile)
         fileId: file.id,
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -723,6 +731,7 @@ async function notifyHashFix(modelVersionId: number, fileId: number) {
 
 type ModelClamScanStep = {
   $type: 'modelClamScan';
+  status?: string;
   output?: {
     exitCode?: number | null;
     output?: string | null;
@@ -964,7 +973,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
           duplicate: true,
         },
         'webhooks'
-      ).catch();
+      );
       return;
     }
 
@@ -982,7 +991,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
             workflowId: event.workflowId,
           },
           'webhooks'
-        ).catch(() => undefined)
+        )
       );
       throw error;
     }
@@ -1008,6 +1017,13 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       ? (data.metadata?.url as string | undefined)
       : undefined;
 
+  const steps = (data.steps ?? []) as unknown as ModelScanStep[];
+  // A failed workflow keeps the result of a step that finished: a zip's rating step failing must not
+  // discard its virus verdict, it only leaves the zip unrated.
+  const finished = (step: { status?: string } | undefined) =>
+    event.status === 'succeeded' || step?.status === 'succeeded';
+  const clamScan = steps.find((x) => x.$type === 'modelClamScan') as ModelClamScanStep | undefined;
+
   if (event.status !== 'succeeded') {
     logToAxiom(
       {
@@ -1019,13 +1035,13 @@ async function handleScanWorkflow(event: WorkflowEvent) {
         status: event.status,
       },
       'webhooks'
-    ).catch();
-    await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
-    return;
+    );
+    if (!trainingDataUrl || !finished(clamScan)) {
+      await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
+      return;
+    }
   }
 
-  const steps = (data.steps ?? []) as unknown as ModelScanStep[];
-  const clamScan = steps.find((x) => x.$type === 'modelClamScan') as ModelClamScanStep | undefined;
   const pickleScan = steps.find((x) => x.$type === 'modelPickleScan') as
     | ModelPickleScanStep
     | undefined;
@@ -1038,10 +1054,27 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     fileId,
     modelVersionId,
     trainingDataUrl,
-    rawScanResult: { source: 'orchestrator', workflowId: event.workflowId, steps },
+    // Counts only: an extraction lists up to TRAINING_DATA_MAX_RATED_ENTRIES entries, too many to
+    // store on every scan result.
+    rawScanResult: {
+      source: 'orchestrator',
+      workflowId: event.workflowId,
+      steps: steps.map((step) => {
+        const output = (step as { output?: { entries?: unknown[]; rejected?: unknown[] } }).output;
+        return (step as { $type: string }).$type === 'archiveExtraction' && output
+          ? {
+              ...step,
+              output: {
+                entries: output.entries?.length ?? 0,
+                rejected: output.rejected?.length ?? 0,
+              },
+            }
+          : step;
+      }),
+    },
   };
 
-  if (clamScan?.output) {
+  if (clamScan?.output && finished(clamScan)) {
     const derived = deriveClamScanResult(clamScan.output);
     // A zip's scan that read no files has not cleared it.
     const readNothing =
@@ -1097,10 +1130,21 @@ async function handleScanWorkflow(event: WorkflowEvent) {
           workflowId: event.workflowId,
         },
         'webhooks'
-      ).catch();
+      );
       return;
     }
   }
+
+  const extraction = steps.find((x) => (x as { $type?: string }).$type === 'archiveExtraction') as
+    | { status?: string; output?: Parameters<typeof extractionRating>[0] }
+    | undefined;
+  if (
+    trainingDataUrl &&
+    outcome.virusScan?.result === ScanResultCode.Success &&
+    extraction?.output &&
+    finished(extraction)
+  )
+    outcome.trainingDataRating = await extractionRating(extraction.output, event.workflowId);
 
   if (pickleScan?.output) {
     const pickleOut = pickleScan.output;
@@ -1167,7 +1211,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       workflowId: event.workflowId,
     },
     'webhooks'
-  ).catch();
+  );
 }
 
 // -----------------------------------------------------------------------------

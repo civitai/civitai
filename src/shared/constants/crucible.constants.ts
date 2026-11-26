@@ -22,6 +22,20 @@ export const CRUCIBLE_ENTRY_WARNING_PERCENT = { min: 10, max: 50, default: 20 } 
 export const CRUCIBLE_ENTRY_CUTOFF_PERCENT = { min: 0, max: 40, default: 10 } as const;
 export const CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE =
   'Entries must close later than the late-entry warning starts';
+/**
+ * What a moderator can fix on a running crucible besides its name, description and images: none
+ * of these moves Buzz or prices the setup fee, and the server checks each so no entry already in
+ * becomes invalid. Duration is not here: it prices the setup fee, and every entry's post is
+ * scheduled to publish at the current end.
+ */
+export const CRUCIBLE_MODERATOR_RUNNING_FIELDS = [
+  'maxTotalEntries',
+  'entryLimit',
+  'entryWarningPercent',
+  'entryCutoffPercent',
+  'allowedResources',
+  'allowedBaseModels',
+] as const;
 export const CRUCIBLE_ENTRIES_CLOSED_MESSAGE =
   'Entries are closed. This crucible stops taking entries near the end so every entry has time to be judged.';
 
@@ -115,6 +129,15 @@ export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
 
 export { hasCrucibleStarted } from '@civitai/shared/crucible';
 
+/** Finalized, or past its end time even before the job finalizes it. */
+export const crucibleHasEnded = ({
+  status,
+  endAt,
+}: {
+  status: CrucibleStatus;
+  endAt: Date | string | null;
+}) => crucibleRankingsAreFinal(status) || (!!endAt && new Date(endAt) <= new Date());
+
 /**
  * Media types entries may be. Audio is excluded: judging is a side-by-side visual comparison.
  */
@@ -151,11 +174,31 @@ export const crucibleSupportsVideoSettings = (contentType: MediaType) =>
   contentType === MediaType.video;
 
 /**
+ * Slack over `maxClipSeconds`: container padding makes a 30s video generated on Civitai measure
+ * up to 30.418s, so without it an on-site clip fails a limit of its own length.
+ */
+export const CRUCIBLE_CLIP_LENGTH_TOLERANCE_SECONDS = 0.5;
+
+/**
  * Whether a clip may be entered. A crucible with no `maxClipSeconds` takes any length, and a
  * video whose duration was never recorded is accepted rather than blocked on missing metadata.
  */
 export const clipLengthAllowed = (durationSeconds: number | null, maxClipSeconds: number | null) =>
-  maxClipSeconds == null || durationSeconds == null || durationSeconds <= maxClipSeconds;
+  maxClipSeconds == null ||
+  durationSeconds == null ||
+  durationSeconds <= maxClipSeconds + CRUCIBLE_CLIP_LENGTH_TOLERANCE_SECONDS;
+
+/**
+ * The whole seconds to show beside "max <limit>": an allowed clip never reads as over the limit, a
+ * rejected one never as equal to it. Whole, because `formatDuration` rounds seconds without
+ * carrying: 59.6 would print "00:60".
+ */
+export const clipDisplaySeconds = (durationSeconds: number, maxClipSeconds: number | null) =>
+  !clipLengthAllowed(durationSeconds, maxClipSeconds)
+    ? Math.ceil(durationSeconds)
+    : maxClipSeconds == null
+    ? Math.round(durationSeconds)
+    : Math.min(Math.round(durationSeconds), maxClipSeconds);
 
 /**
  * `timeupdate` fires about every 250ms during playback. A gap larger than this is a seek or a

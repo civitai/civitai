@@ -20,6 +20,13 @@ const h = vi.hoisted(() => ({
   list: vi.fn(),
   start: vi.fn(),
 }));
+// Not in `h`, whose mocks the first test counts.
+const u = vi.hoisted(() => ({
+  submit: vi.fn(),
+  review: vi.fn(),
+  clear: vi.fn(),
+  validate: vi.fn(),
+}));
 
 vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Registry>()),
@@ -28,6 +35,10 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
   orderRemixApps: h.order,
   deleteRemixApp: h.remove,
   listRemixAppsForAdmin: h.list,
+  submitUserRemixApp: u.submit,
+  reviewUserRemixApp: u.review,
+  clearRemixMinorThemed: u.clear,
+  validateUserRemixApp: u.validate,
 }));
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RunService>()),
@@ -148,6 +159,15 @@ describe('remixApp.admin', () => {
     expect(h.save).not.toHaveBeenCalled();
   });
 
+  it('refuses a user app spec, which only submit writes', async () => {
+    const { engine } = restyle.spec as { engine: unknown };
+    const spec = { icon: 'sparkles', engine, source: 'export default 1' };
+    await expect(as(moderator).save({ ...restyle, spec } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(h.save).not.toHaveBeenCalled();
+  });
+
   it('test-runs any app, disabled ones too, and passes no quote until one is confirmed', async () => {
     await as(moderator).testStart(tap());
     expect(h.start).toHaveBeenLastCalledWith(
@@ -156,5 +176,110 @@ describe('remixApp.admin', () => {
     expect(h.start.mock.lastCall![0].quote).toBeUndefined();
     await as(moderator).testStart({ ...tap(), quote: 30 });
     expect(h.start).toHaveBeenLastCalledWith(expect.objectContaining({ quote: 30 }));
+  });
+});
+
+describe('user app code: submit and review', () => {
+  const flags = (more: object) => ({ trpcFlagGuardPerRequest: true, remixApps: true, ...more });
+  const submission = () => ({
+    name: 'probe',
+    title: 'Probe',
+    icon: 'sparkles' as const,
+    source: 'export default 1',
+  });
+  const decision = () => ({
+    slug: 'u88-probe',
+    sha256: 'a'.repeat(64),
+    seenReview: 'submitted' as const,
+    decision: 'approved' as const,
+  });
+
+  it('lists user apps only with remixAppsUserCode on', async () => {
+    h.list.mockResolvedValue([
+      { slug: 'restyle', input: {} },
+      { slug: 'u88-probe', user: {} },
+      // A user row whose manifest no longer validates carries no `user`.
+      { slug: 'u88-broken', invalid: ['remix: Required'] },
+    ]);
+    expect(await as(moderator).list()).toEqual([{ slug: 'restyle', input: {} }]);
+    // POSITIVE CONTROL: with the flag, the user apps are listed too.
+    expect(await as(moderator, flags({ remixAppsUserCode: true })).list()).toHaveLength(3);
+  });
+
+  it('submits only with remixAppsUserCode and remixAppBuilder both on, always as the caller', async () => {
+    for (const features of [flags({ remixAppsUserCode: true }), flags({ remixAppBuilder: true })])
+      await expect(
+        remixAppRouter.createCaller(ctx(moderator, features)).submit(submission())
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.submit).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: with both on it reaches the service, and an authorId in the input is dropped.
+    const both = flags({ remixAppsUserCode: true, remixAppBuilder: true });
+    await remixAppRouter
+      .createCaller(ctx(moderator, both))
+      .submit({ ...submission(), authorId: 1 } as never);
+    expect(u.submit).toHaveBeenCalledWith(expect.objectContaining({ authorId: moderator.id }));
+    await remixAppRouter
+      .createCaller(ctx(moderator, both))
+      .submit({ ...submission(), reviewLog: [], minorThemed: null, review: 'approved' } as never);
+    const sent = u.submit.mock.calls.at(-1)![0] as object;
+    for (const key of ['reviewLog', 'minorThemed', 'review']) expect(sent).not.toHaveProperty(key);
+  });
+
+  it('reviews only as a moderator with remixAppsUserCode on', async () => {
+    await expect(as(moderator).review(decision())).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(user, on).review(decision())).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.review).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: a moderator with the flag reaches the service, named as the reviewer.
+    await as(moderator, on).review(decision());
+    expect(u.review).toHaveBeenCalledWith(expect.objectContaining({ moderatorId: moderator.id }));
+  });
+
+  it('dry-runs a user app only as a moderator with remixAppsUserCode on', async () => {
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(moderator).validate({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(as(user, on).validate({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(u.validate).not.toHaveBeenCalled();
+    // POSITIVE CONTROL: a moderator with the flag reaches the service.
+    await as(moderator, on).validate({ slug: 'u88-probe' });
+    expect(u.validate).toHaveBeenCalledWith('u88-probe');
+  });
+
+  it('clears a minor-themed mark only as a moderator with remixAppsUserCode on', async () => {
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(moderator).clearMinorThemed({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(as(user, on).clearMinorThemed({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(u.clear).not.toHaveBeenCalled();
+    await as(moderator, on).clearMinorThemed({ slug: 'u88-probe' });
+    expect(u.clear).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
+  });
+
+  it("toggles or deletes a user app's row only with remixAppsUserCode on, as a named moderator", async () => {
+    await expect(
+      as(moderator).setEnabled({ slug: 'u88-probe', enabled: false })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(as(moderator).delete({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(h.setEnabled).not.toHaveBeenCalled();
+    expect(h.remove).not.toHaveBeenCalled();
+
+    const on = flags({ remixAppsUserCode: true });
+    await as(moderator, on).setEnabled({ slug: 'u88-probe', enabled: false });
+    expect(h.setEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'u88-probe', moderatorId: moderator.id })
+    );
+    await as(moderator, on).delete({ slug: 'u88-probe' });
+    expect(h.remove).toHaveBeenCalledWith({ slug: 'u88-probe' });
   });
 });

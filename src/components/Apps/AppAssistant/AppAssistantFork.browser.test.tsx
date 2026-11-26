@@ -1,7 +1,8 @@
 import Router from 'next/router';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type { Sandbox, SandboxSeed } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -213,15 +214,19 @@ afterEach(() => {
 
 async function mount() {
   await renderWithProviders(
-    <ModalsProvider>
+    <>
       <AppAssistantWorkspace canPreview sandboxUrl={BASE} />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
   await expect.element(page.getByTestId('chat')).toBeInTheDocument();
 }
 
 const switcher = () => page.getByRole('button', { name: /^Switch app:/ });
 const problem = () => page.getByTestId('app-fork-problem');
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('a fresh fork', () => {
   test('creates the app WITH the seed, opens a new chat, and shows the Set up card', async () => {

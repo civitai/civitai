@@ -8,6 +8,7 @@ import {
 } from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { isTrainingStudioAllowed } from '$lib/server/flipt';
+import { EMBED_FORWARDED_PATHS, mainAppAllowsEmbed } from '$lib/server/main-app-access';
 
 // Local UI preview without OAuth: ON by default in `vite dev` so the flow is viewable without an auth
 // hub; opt out with TRAINING_STUDIO_DEV_LOGIN=0 to exercise the real login against a local hub. `dev`
@@ -18,7 +19,7 @@ const DEV_USER = { id: 0, username: 'dev-preview' } as unknown as SessionUser;
 // AUTH ADAPTER — read the Cookie header → ask the shared spoke guard → act. The guard's decision logic is
 // framework-agnostic (@civitai/auth `createSpokeGuard`); only this hook is SvelteKit-specific.
 //
-//   login     → no valid session → redirect to the hub login, returning here afterward
+//   login     → no valid session → redirect to this app's /api/auth/authorize, returning here afterward
 //   forbidden → signed in but fails `require` → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated user → populate locals.user and continue
 //
@@ -85,7 +86,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   // Closed-beta gate (Flipt): a signed-in user outside the segment can't use the app. Moderators always
   // pass (the fallback when the flag is absent), so the beta ships dark until the segment is configured.
-  if (!(await isTrainingStudioAllowed(result.user))) {
+  // A request the main app's embed forwarded is allowed for anyone that app lets use the embed.
+  const cookie = event.request.headers.get('cookie') ?? '';
+  if (
+    !(await isTrainingStudioAllowed(result.user)) &&
+    !(
+      EMBED_FORWARDED_PATHS.has(event.url.pathname) &&
+      (await mainAppAllowsEmbed(cookie, result.user.id))
+    )
+  ) {
     return withSetCookies(closedBetaPage(), result.setCookies);
   }
 

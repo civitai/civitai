@@ -1,10 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import loadCustomRoutes from 'next/dist/lib/load-custom-routes';
 import { getContentType } from 'next/dist/server/serve-static';
-import { buildCustomRoute } from 'next/dist/server/lib/router-utils/filesystem';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { routerPathname } from '~/server/middleware/__tests__/next-proxy-matcher';
+import { loadNextConfigHeaders } from '~/__tests__/next-config-headers';
 import {
   isStaticAssetRuleCacheControl,
   privatizeStaticAssetPageRender,
@@ -29,26 +27,15 @@ import { fileHashWorkerUrl } from '~/hooks/useFileHash';
 const SHORT_LIVED = 'public, max-age=60, s-maxage=300, stale-while-revalidate=300';
 const LONG_LIVED = 'public, max-age=3600, s-maxage=14400, stale-while-revalidate=3600';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyConfig = any;
-
 async function loadConfig(nodeEnv: string) {
-  vi.resetModules();
-  vi.stubEnv('NODE_ENV', nodeEnv);
-  const nextConfig = (await import('../../next.config.mjs')).default as AnyConfig;
-  const { headers } = await loadCustomRoutes(nextConfig);
-  const routes = headers.map((rule) => buildCustomRoute('header', rule));
+  const config = await loadNextConfigHeaders(nodeEnv);
   return {
-    i18n: nextConfig.i18n,
+    i18n: config.i18n,
     /** The Cache-Control Next's custom headers give `url`; undefined if no rule sets one. */
     cacheControl(url: string) {
-      const pathname = routerPathname(url, { i18n: nextConfig.i18n });
       let value: string | undefined;
-      for (const route of routes) {
-        if (route.match(pathname) === false) continue;
-        for (const header of route.headers) {
-          if (header.key.toLowerCase() === 'cache-control') value = header.value;
-        }
+      for (const header of config.matchedHeaders(url)) {
+        if (header.key.toLowerCase() === 'cache-control') value = header.value;
       }
       return value;
     },

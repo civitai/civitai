@@ -72,11 +72,11 @@ async function checkChallengeHealth() {
   // still the likeliest explanation for an empty schedule, so it goes to Axiom to be findable.
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
     log('Challenge platform disabled, skipping health check');
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'challenge-health-check',
       message: 'Skipped: CHALLENGE_PLATFORM_ENABLED is off',
-    }).catch(() => null);
+    });
     return { skipped: true as const };
   }
 
@@ -106,7 +106,7 @@ async function checkChallengeHealth() {
 
   log(`Challenge pipeline unhealthy: ${failures.length} condition(s)`);
 
-  await logToAxiom({
+  logToAxiom({
     type: 'warning',
     name: 'challenge-health-check',
     details: {
@@ -116,7 +116,7 @@ async function checkChallengeHealth() {
       lastActivatedAt: health.lastActivatedAt?.toISOString() ?? null,
     },
     message: failures.join(' | '),
-  }).catch(() => null);
+  });
 
   await notifyModAlert(
     `🚨 Daily challenge pipeline — ${failures.length} check(s) failing`,

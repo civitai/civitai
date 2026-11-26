@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
@@ -27,5 +28,6 @@ export default AuthedEndpoint(
       return;
     }
   },
-  ['GET']
+  ['GET'],
+  { scope: { scope: TokenScope.VaultRead } }
 );

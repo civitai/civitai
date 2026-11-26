@@ -128,7 +128,10 @@ export async function checkGenerationFetch({
   principal: GenerationFetchPrincipal | ProviderFetchPrincipal | null;
   /** Provider principal only: the download route's file selectors. */
   selectors?: GenerationFetchSelectors;
-  /** Share the version and file reads across a link's GETs (see `gateReads`). Mint reads fresh. */
+  /**
+   * Share the version and file reads across a link's GETs and mini's provider mints (see
+   * `gateReads`). Other mints read fresh.
+   */
   cacheReads?: boolean;
 }): Promise<GenerationFetchResult> {
   const { kyselyRead } = await loadKyselyDb();
@@ -158,7 +161,6 @@ export async function checkGenerationFetch({
     )
       return refuse('not-found');
     const flags = await read('flags', () => readModeratorFlags(kyselyRead, modelVersionId));
-    if (flags.removedWithOwner) return refuse('not-found');
     if (flags.inReview) return refuse('in-review');
     allFiles = true;
   } else {

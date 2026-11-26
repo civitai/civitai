@@ -20,13 +20,14 @@ const eventLabel: Record<ServiceDealEventType, string> = {
   CancellationRequested: 'Asked to cancel',
   CancellationAccepted: 'Agreed to cancel',
   CancellationDeclined: 'Refused to cancel',
-  Cancelled: 'Deal cancelled',
+  Cancelled: 'Deal canceled',
   Disputed: 'Opened a dispute',
   DisputeResolved: 'Dispute resolved',
   DeadlineExtended: 'Deadline extended',
   Held: 'Buzz held in escrow',
   Released: 'Buzz released to the seller',
   Refunded: 'Buzz refunded to the buyer',
+  ReviewedHappy: 'Left a happy review',
 };
 
 type DealEvent = ServiceDealView['events'][number];

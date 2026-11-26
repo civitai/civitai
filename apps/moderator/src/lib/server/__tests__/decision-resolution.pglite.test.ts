@@ -227,7 +227,7 @@ describe('the resolved ruling', () => {
     await recordResolution(
       ruling({
         ruling: 'resolved',
-        answer: { text: ANSWER, source: { ticketId: '73618', conversationId: '150003911207' } },
+        answer: { text: ANSWER, source: { ticketId: '990200000', conversationId: '990000000001' } },
       }),
       k
     );
@@ -241,7 +241,7 @@ describe('the resolved ruling', () => {
     expect(g?.ruling).toBe('resolved');
     expect(await resolutionAnswer(g!.id, k)).toEqual({
       text: ANSWER,
-      source: { ticketId: '73618', conversationId: '150003911207' },
+      source: { ticketId: '990200000', conversationId: '990000000001' },
     });
     expect((await allRows(pg))[0].apply_state).toBe('n/a');
   });

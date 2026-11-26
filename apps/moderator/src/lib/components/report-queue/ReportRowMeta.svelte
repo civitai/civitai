@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AgentBadge from '$lib/components/AgentBadge.svelte';
   import type { Snippet } from 'svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, num } from '$lib/format';
@@ -22,6 +23,7 @@
       details: unknown;
       reportedByUsername: string | null;
       alsoReportedByCount: number | null;
+      agentFiled?: boolean;
     };
     children?: Snippet;
   } = $props();
@@ -39,6 +41,7 @@
     {:else}
       —
     {/if}
+    {#if report.agentFiled}<AgentBadge />{/if}
     <!-- Everyone else who filed the same report, folded in beside the filer. -->
     {#if report.alsoReportedByCount}
       <span

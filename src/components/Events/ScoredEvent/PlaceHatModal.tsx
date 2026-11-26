@@ -125,6 +125,7 @@ export default function PlaceHatModal({
         claimKey: hat.claimKey,
       });
       await utils.event.getMyHats.invalidate({ event });
+      await utils.event.getMyHatPlacementStats.invalidate({ event });
       dialog.onClose();
     } catch {
       // The equip hook shows the error.

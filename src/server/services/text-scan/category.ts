@@ -78,7 +78,13 @@ type TextCategoryWorkflowMetadata = {
   categories?: string[];
 };
 
-// Separate workflow, not a scan step: the scan request must stay byte-identical.
+export type TextCategorySubmitOutcome = 'submitted' | 'no-categories' | 'empty' | 'failed';
+
+/**
+ * A separate workflow, not a scan step: the scan request must stay byte-identical. Returns the outcome
+ * for an orchestrator rejection or an empty category list (both logged). Callers still need to catch a
+ * thrown error from the category lookup or the transport.
+ */
 export async function submitTextCategoryScan({
   entityType,
   entityId,
@@ -95,12 +101,15 @@ export async function submitTextCategoryScan({
   model: string;
   maxInputChars: number;
   scanCallbackUrl: string;
-}) {
+}): Promise<TextCategorySubmitOutcome> {
   const names = (await getPickableCategories(hook)).map((c) => c.name);
-  if (!names.length) return log('warning', 'no categories to offer', { entityType, entityId });
+  if (!names.length) {
+    await log('warning', 'no categories to offer', { entityType, entityId });
+    return 'no-categories';
+  }
   // One segment: the opening suffices and cost stays flat.
   const [user] = segmentUserText(subject, { budget: maxInputChars, maxSegments: 1 }).segments;
-  if (!user?.trim()) return;
+  if (!user?.trim()) return 'empty';
 
   const metadata: TextCategoryWorkflowMetadata = {
     entityType,
@@ -141,12 +150,15 @@ export async function submitTextCategoryScan({
       ],
     },
   });
-  if (!data?.id)
+  if (!data?.id) {
     await log('error', 'submit failed', {
       entityType,
       entityId,
       error: error instanceof Error ? error.message : error,
     });
+    return 'failed';
+  }
+  return 'submitted';
 }
 
 /** Logs and returns on every failure: there is no record or retry for it to leave in a bad state. */
@@ -184,15 +196,45 @@ export async function handleTextCategoryCallback(event: { workflowId: string; st
       await write(entityId, null);
       await log('info', `${message}; category cleared`, { ...ctx, ...extra });
     };
-    if (event.status !== 'succeeded') return clear(`workflow ${event.status}`);
+    const step = (data.steps ?? []).find((s) => s?.$type === 'chatCompletion');
+    const output = (step as ChatCompletionStepLike | undefined)?.output;
+    const choice = output?.choices?.[0];
+    const finishReason = choice?.finishReason ?? choice?.finish_reason ?? null;
+    // What the orchestrator says about the step, never the text sent or the answer's prose.
+    if (event.status !== 'succeeded')
+      return clear(`workflow ${event.status}`, {
+        payload: {
+          workflowStatus: data.status,
+          stepStatus: step?.status,
+          retries: step?.retries,
+          startedAt: step?.startedAt,
+          completedAt: step?.completedAt,
+          warnings: step?.warnings,
+          finishReason,
+        },
+      });
     if (subject.notPublic) return clear('subject not public');
 
-    const steps = (data.steps ?? []) as ChatCompletionStepLike[];
-    const name = parseTextCategoryStep(
-      steps.find((s) => s?.$type === 'chatCompletion'),
-      categories
-    );
-    if (!name) return clear('unusable output');
+    const name = parseTextCategoryStep(step as ChatCompletionStepLike | undefined, categories);
+    if (!name) {
+      const answer = (output?.parsed ?? tryParseJson(choice?.message?.content ?? '')) as
+        | { category?: unknown }
+        | undefined;
+      return clear('unusable output', {
+        payload: {
+          finishReason,
+          contentLength: choice?.message?.content?.length ?? 0,
+          parsed: output?.parsed != null,
+          // An off-list name is short; anything longer may be prose, so only its length is logged.
+          answer:
+            typeof answer?.category !== 'string'
+              ? typeof answer
+              : answer.category.length <= 40
+              ? answer.category
+              : `${answer.category.length} chars`,
+        },
+      });
+    }
 
     const tag = (await getPickableCategories(profile.category)).find((t) => t.name === name);
     if (!tag) return clear('category no longer offered', { name });

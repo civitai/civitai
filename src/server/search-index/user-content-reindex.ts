@@ -72,13 +72,13 @@ export async function queueOwnedContentUpdate(userId: number) {
           });
         }
       } catch (error) {
-        await logToAxiom({
+        logToAxiom({
           type: 'error',
           name: 'owned-content-search-index',
           message: (error as Error).message,
           indexName,
           userId,
-        }).catch(() => undefined);
+        });
       }
     })
   );

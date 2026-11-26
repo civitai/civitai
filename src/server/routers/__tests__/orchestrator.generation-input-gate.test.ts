@@ -127,6 +127,35 @@ describe('orchestrator generation inputs', () => {
     expect(h.imageUpload).not.toHaveBeenCalled();
   });
 
+  // The kill switch is applied inside `submitPresetImageGen` from the user it is handed: a free,
+  // non-moderator caller must arrive as one, or a forced tier or moderator flag is a bypass.
+  it('iterateGenerate submits as the signed-in user, for the generation kill switch', async () => {
+    h.assertInputs.mockResolvedValue(undefined);
+    await orchestratorRouter
+      .createCaller({
+        user: {
+          id: USER_ID,
+          onboarding: OnboardingSteps.Buzz,
+          emailVerified: new Date('2020-01-01'),
+          muted: false,
+          bannedAt: null,
+          showNsfw: false,
+          tier: 'free',
+          isModerator: false,
+        },
+        ip: '1.2.3.4',
+        features: {},
+        acceptableOrigin: true,
+        tokenScope: TokenScope.Full,
+        apiKeyId: null,
+        track: {},
+      } as never)
+      .iterateGenerate({ prompt: 'a cat' });
+    expect(h.submitPresetImageGen).toHaveBeenCalledTimes(1);
+    const [[args]] = h.submitPresetImageGen.mock.calls as unknown as [[{ user: unknown }]];
+    expect(args.user).toMatchObject({ id: USER_ID, tier: 'free', isModerator: false });
+  });
+
   it('POSITIVE CONTROL: each route proceeds when the check passes', async () => {
     h.assertInputs.mockResolvedValue(undefined);
     await caller().imageUpload({ sourceImage: REF });

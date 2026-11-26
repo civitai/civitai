@@ -54,6 +54,59 @@ describe('getEntitiesCoverImageHandler', () => {
     });
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
   });
+
+  const fullKey = { ...scopedKey, tokenScope: TokenScope.Full };
+  const oauthToken = {
+    apiKeyId: 9,
+    subject: { type: 'oauth', id: 'app' },
+    tokenScope: TokenScope.Full,
+  };
+  it.each([
+    ['a moderator on a session', moderator, {}, moderator],
+    ['a moderator on a full-access key', moderator, fullKey, moderator],
+    ['a moderator on a scoped key', moderator, scopedKey, undefined],
+    ['a moderator on an app token', moderator, oauthToken, undefined],
+    ['an owner on a scoped key', { id: 6, isModerator: false }, scopedKey, undefined],
+  ])('resolves covers for %s as the right viewer', async (_label, user, credential, viewer) => {
+    await getEntitiesCoverImageHandler({
+      input: { entities: [{ entityType: 'Image', entityId: 1 }] },
+      ctx: { user, ...credential } as never,
+    });
+    expect(covers).toHaveBeenLastCalledWith(expect.objectContaining({ viewer }));
+  });
+
+  it.each([
+    ['a moderator with the grant on a session', moderator, { csamReports: true }, {}, true],
+    [
+      'a moderator with the grant on a full-access key',
+      moderator,
+      { csamReports: true },
+      fullKey,
+      true,
+    ],
+    [
+      'a moderator with the grant on a scoped key',
+      moderator,
+      { csamReports: true },
+      scopedKey,
+      false,
+    ],
+    [
+      'a moderator with the grant on an app token',
+      moderator,
+      { csamReports: true },
+      oauthToken,
+      false,
+    ],
+    ['a moderator without the grant', moderator, { csamReports: false }, {}, false],
+    ['a non-moderator with the grant', { id: 6 }, { csamReports: true }, {}, false],
+  ])('decides report-listed covers for %s', async (_label, user, features, credential, sees) => {
+    await getEntitiesCoverImageHandler({
+      input: { entities: [{ entityType: 'Bounty', entityId: 1 }] },
+      ctx: { user, features, ...credential } as never,
+    });
+    expect(covers).toHaveBeenLastCalledWith(expect.objectContaining({ seesReportListed: sees }));
+  });
 });
 
 describe('getEntitiesCoverImageHandler on a capped site', () => {

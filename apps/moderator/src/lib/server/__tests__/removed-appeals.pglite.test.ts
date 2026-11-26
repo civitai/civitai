@@ -51,7 +51,6 @@ CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "bloc
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "reason" TEXT NOT NULL);
 CREATE TABLE "UserReport" ("userId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 CREATE TABLE "CsamReport" ("id" INTEGER PRIMARY KEY, "userId" INTEGER, "images" JSONB NOT NULL DEFAULT '[]');
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER,
@@ -155,7 +154,6 @@ describe('getRemovedAppeals', () => {
       INSERT INTO "CsamReport" ("id", "userId", "images") VALUES
         (1, 21, '[]'), (2, NULL, '[{"id": 504}]'), (3, NULL, '[505]');
       INSERT INTO "Image" ("id", "userId", "blockedFor") VALUES (900, 23, 'CSAM'), (901, 26, 'moderated');
-      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (27);
       INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId", "entityRemovedAt") VALUES
         (21, 21, 'Image', 501, '2026-09-21'),
         (22, 22, 'Image', 502, '2026-09-21'),
@@ -163,7 +161,6 @@ describe('getRemovedAppeals', () => {
         (24, 24, 'Image', 504, '2026-09-21'),
         (25, 25, 'Image', 505, '2026-09-21'),
         (26, 26, 'Image', 506, '2026-09-21'),
-        (27, 27, 'Image', 507, '2026-09-21'),
         (28, 28, 'Model', 504, '2026-09-21');
     `);
 
@@ -172,12 +169,40 @@ describe('getRemovedAppeals', () => {
     expect(items.map((i) => i.id)).toEqual([12, 11, 26, 28]);
     expect(await countRemovedAppeals()).toBe(4);
   });
+
+  it("leaves out an appeal on a restricted image itself, and serves no row's media", async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "blockedFor") VALUES (910, 29, 'CSAM');
+      INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId", "entityRemovedAt") VALUES
+        (29, 29, 'Image', 910, '2026-09-21');
+    `);
+
+    const { items } = await getRemovedAppeals({ limit: 20 });
+
+    expect(items.map((i) => i.id)).toEqual([12, 11]);
+    // The page draws text only: no field a tile or a link could load the image from.
+    for (const item of items)
+      expect(Object.keys(item).sort()).toEqual(
+        [
+          'appealMessage',
+          'createdAt',
+          'entityId',
+          'entityRemovedAt',
+          'entityType',
+          'hasFee',
+          'history',
+          'id',
+          'userId',
+          'username',
+        ].sort()
+      );
+  });
 });
 
 describe('resolveRemovedAppeal', () => {
   // The same answer as an appeal another moderator decided, so an id posted by hand learns nothing.
   it('decides nothing on an appeal the list leaves out', async () => {
-    await db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (1)`);
+    await db.exec(`INSERT INTO "CsamReport" ("id", "userId") VALUES (1, 1)`);
 
     const closed = await resolveRemovedAppeal({
       appealId: 11,

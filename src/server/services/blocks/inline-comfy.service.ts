@@ -7,7 +7,6 @@ import { getResourceData } from '~/server/services/generation/generation.service
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { AIR_URN_PREFIX } from '~/server/services/blocks/steps';
-import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import type { ComfyGraph } from '~/server/services/blocks/recipes';
 import { INLINE_NODE_REFUSED_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
@@ -153,15 +152,11 @@ export const INLINE_NODEPACKS_ENABLED = false;
  * denylist — an unrecognised source is a resource class nobody has reasoned
  * about, and the fail-closed answer is to reject it.
  *
- * `civitai` carries civitai entitlement and is gated below. `huggingface` is the
- * public-weights source both shipped recipes already pin (see the `staticAirs`
- * in `recipes/seamless-pano.recipe.ts`), so it is exempt-by-construction: there
- * is no civitai entitlement to check on a public HF repo.
+ * `civitai` carries civitai entitlement and is gated below. Hugging Face is not
+ * allowed: its weights carry no base model (see `app-step-resources`).
  */
 export const INLINE_ALLOWED_AIR_SOURCES: ReadonlySet<string> = new Set(
-  INLINE_NODEPACKS_ENABLED
-    ? ['civitai', 'huggingface', 'comfyregistry']
-    : ['civitai', 'huggingface']
+  INLINE_NODEPACKS_ENABLED ? ['civitai', 'comfyregistry'] : ['civitai']
 );
 
 /**
@@ -461,7 +456,7 @@ const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const FILE_LIKE_RE = /[./\\[\]]/;
 // The worker stages inputs under extensionless names built from blob keys, which the
 // source gate does not resolve. A media input takes only an AIR or a URL.
-const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
+export const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
   'image',
   'audio',
   'video',
@@ -501,9 +496,14 @@ function literalLoaderInputRefusal(name: string, value: unknown): string | null 
 
 type RefusedInlineNode = { nodeId: string; classType: string; reason: string };
 
-/** ComfyUI reads every array input as a link (`[nodeId, slot]`), so this does too. */
+/** A link to another node's output: `[nodeId, slot]`. Any other array is a value, checked as one. */
 function isLinkedInput(value: unknown): boolean {
-  return Array.isArray(value);
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    (typeof value[0] === 'string' || typeof value[0] === 'number') &&
+    Number.isInteger(value[1])
+  );
 }
 
 function findRefusedInlineNodes(graph: ComfyGraph): RefusedInlineNode[] {
@@ -671,8 +671,7 @@ type ParsedInlineAir = {
 /**
  * STRICT AIR reader: `urn:air:<ecosystem>:<type>:<source>:<id>[@<version>]`.
  * All four segments REQUIRED. Case-insensitive on structure; `type` and `source`
- * are lowercased after extraction, `id`/`version` keep their case (a
- * huggingface id is case-sensitive, e.g. `black-forest-labs/FLUX.1-dev`).
+ * are lowercased after extraction, `id`/`version` keep their case.
  *
  * 🔴 WHY THIS IS NOT `Air.parseSafe` FROM `@civitai/orchestration-client`, EVEN THOUGH THAT
  * EXISTS AND `shared/utils/air.ts` WRAPS IT. That parser is a LENIENT READER for
@@ -738,8 +737,9 @@ function parseInlineAir(raw: string): ParsedInlineAir {
 
   if (source !== 'civitai') return { raw: trimmed, source, type };
 
-  const version = rawVersion;
-  if (!version || !/^\d+$/.test(version) || Number(version) <= 0) {
+  // `+<fileId>` picks one file of a version that holds several (`stringifyAIR`).
+  const version = rawVersion?.match(/^(\d+)(?:\+\d+)?$/)?.[1];
+  if (!version || Number(version) <= 0) {
     throw badRequest(
       `civitai resource AIR must name a model VERSION id: '${trimmed.slice(0, 200)}' ` +
         '— without one there is no version to check entitlement against'
@@ -798,7 +798,6 @@ export async function assertViewerEntitledToInlineResources(opts: {
     if (rawSeen.has(key)) throw badRequest(`duplicate resource declared: '${p.raw.slice(0, 200)}'`);
     rawSeen.add(key);
   }
-  assertNoRestrictedBaseModels({ airs: opts.airs });
 
   const versionIds = parsed
     .map((p) => p.versionId)
@@ -810,7 +809,6 @@ export async function assertViewerEntitledToInlineResources(opts: {
     generation: true,
   });
   const byId = new Map(resources.map((r) => [r.id, r]));
-  assertNoRestrictedBaseModels({ baseModels: resources.map((r) => r.baseModel) });
 
   for (const id of versionIds) {
     const resource = byId.get(id);
@@ -840,12 +838,10 @@ export async function assertViewerEntitledToInlineResources(opts: {
     }
   }
 
-  // Private / epoch resources require an active subscription. Ported from the
-  // onsite belt; NOT covered by `getResourceData`.
-  const hasPrivateOrEpoch = resources.some(
-    (r) => r.availability === Availability.Private || !!r.epochDetails
-  );
-  if (hasPrivateOrEpoch && !opts.user.isModerator) {
+  // Private resources require an active subscription; epochs need only ownership. Mirrors
+  // the onsite belt; NOT covered by `getResourceData`.
+  const hasPrivate = resources.some((r) => r.availability === Availability.Private);
+  if (hasPrivate && !opts.user.isModerator) {
     const subscription = await getHighestTierSubscription(opts.user.id);
     if (!subscription) {
       throw new TRPCError({

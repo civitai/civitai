@@ -1,10 +1,13 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
+import type { SemanticModelSearchRequest } from '~/server/schema/semantic-model-search.schema';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import type { BaseDataTypeMap } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -35,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { pageRefusal } from '~/components/Search/search-refusal';
 
 export const modelQueryParamSchema = z
   .object({
@@ -311,21 +315,84 @@ export const useQueryModels = (
     });
   }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
-  const { items, loadingPreferences } = useApplyHiddenPreferences({
-    type: 'models',
-    data: flatData,
-    showHidden: !!_filters.hidden,
-    showImageless:
-      (_filters.status ?? []).includes(ModelStatus.Draft) ||
-      _filters.pending ||
-      _filters.availability === Availability.Private,
+  const { items, loadingPreferences } = useModelFeedItems(data?.pages, _filters, {
     isRefetching: rest.isRefetching,
     hiddenTags: excludedTagIds,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
 };
+
+/**
+ * The models feed answered by the semantic search: the feed's own filters and the viewer's add-ons,
+ * as useQueryModels sends them, with the query. Idle without a query.
+ */
+export const useSemanticModelFeed = (
+  filters: Partial<Omit<GetAllModelsInput, 'page'>>,
+  query: string | undefined
+) => {
+  const currentUser = useCurrentUser();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const browsingLevel = useBrowsingLevelDebounced();
+  const excludedTagIds = [
+    ...(filters.excludedTagIds ?? []),
+    ...(isViewerUsername(currentUser, filters.username)
+      ? []
+      : browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ];
+  const { asTyped } = useSearchAsTyped(query);
+  const { cursor, ids, modelVersionIds, query: _feedQuery, limit, ...feedFilters } = filters;
+  const input: SemanticModelSearchRequest = {
+    ...feedFilters,
+    query: query ?? '',
+    ...spellcheckFor(asTyped),
+    browsingLevel,
+    excludedTagIds,
+    disablePoi: browsingSettingsAddons.settings.disablePoi ? true : undefined,
+    disableMinor: browsingSettingsAddons.settings.disableMinor ? true : undefined,
+  };
+  const { data, ...rest } = trpc.semanticModelSearch.search.useInfiniteQuery(input, {
+    enabled: !!query,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    ...withPlaceholderData({ keepPreviousData: true }),
+    // The feed's retry banner drives every attempt; a failure never falls back to the keyword feed.
+    retry: 0,
+    trpc: { context: { skipBatch: true }, abortOnUnmount: true },
+  });
+  const { items, loadingPreferences } = useModelFeedItems(data?.pages, filters, {
+    isRefetching: rest.isRefetching,
+    hiddenTags: excludedTagIds,
+  });
+  return {
+    ...rest,
+    models: items,
+    isLoading: rest.isLoading || loadingPreferences,
+    serverRefusal: pageRefusal(data?.pages[0], rest.isPlaceholderData),
+    correctedQuery: data?.pages[0]?.correctedQuery,
+    // Identifies the search, so the feed can scroll to the top when it changes.
+    searchKey: query ? JSON.stringify(input) : undefined,
+  };
+};
+
+/** A models feed's pages, with the viewer's hidden models, users and tags applied as the feed does. */
+function useModelFeedItems<TItem extends BaseDataTypeMap['models'][number]>(
+  pages: ({ items: TItem[] } | undefined)[] | undefined,
+  filters: Partial<Omit<GetAllModelsInput, 'page'>>,
+  { isRefetching, hiddenTags }: { isRefetching: boolean; hiddenTags: number[] }
+) {
+  const flatData = useMemo(() => pages?.flatMap((x) => (!!x ? x.items : [])), [pages]);
+  return useApplyHiddenPreferences({
+    type: 'models',
+    data: flatData,
+    showHidden: !!filters.hidden,
+    showImageless:
+      (filters.status ?? []).includes(ModelStatus.Draft) ||
+      filters.pending ||
+      filters.availability === Availability.Private,
+    isRefetching,
+    hiddenTags,
+  });
+}
 
 export const useToggleCheckpointCoverageMutation = () => {
   const queryUtils = trpc.useUtils();

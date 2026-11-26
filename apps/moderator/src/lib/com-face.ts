@@ -1,7 +1,14 @@
 import { NsfwLevel } from '@civitai/shared';
 import type { MediaType } from '$lib/media/edge-url';
 
-export type ComFaceCover = { id: number; url: string; type: MediaType; nsfwLevel: number };
+export type ComFaceCover = {
+  id: number;
+  url: string;
+  type: MediaType;
+  nsfwLevel: number;
+  /** Withheld from this moderator (`withheldCoverImages`): `url` is empty. */
+  restricted?: true;
+};
 
 /** A model's civitai.com face: its `.com` title and cover, and the model's page on civitai.com.
  *  `coverPicked` with no `cover` means the picked image is gone. */

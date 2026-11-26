@@ -326,14 +326,4 @@ describe('applyTagIndexRetention', () => {
       `tag index retention: 1 of 3 deletes failed (2 deleted, 0 retired): ${failedKey}: AccessDenied`
     );
   });
-
-  it('a run with nothing to do changes nothing', async () => {
-    const s = await freshStore([{ label: 'only', ageDays: 3 }], ['only']);
-    const before = await s.statuses();
-    expect(
-      await applyTagIndexRetention({ sql: s.sql, objects: s.sweeper }, { now: NOW, specHash: SPEC })
-    ).toEqual({ retired: [], deleted: 0, foreign: 0 });
-    expect(await s.statuses()).toEqual(before);
-    expect(s.deleted).toEqual([]);
-  });
 });

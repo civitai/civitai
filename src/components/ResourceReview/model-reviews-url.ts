@@ -115,6 +115,21 @@ export function parseReviewsFilter(value: QueryValue): ReviewsFilter | undefined
   return raw !== undefined && REVIEWS_FILTERS.includes(raw) ? (raw as ReviewsFilter) : undefined;
 }
 
+/** Thumbs-up-only reviewers sit under the last loaded page of written reviews, in the views that include thumbs-up. */
+export function shouldShowRecommendedBy({
+  filter,
+  modelVersionId,
+  listLoaded,
+  hasMoreWritten,
+}: {
+  filter: ReviewsFilter | undefined;
+  modelVersionId: number | undefined;
+  listLoaded: boolean;
+  hasMoreWritten: boolean;
+}) {
+  return !!modelVersionId && listLoaded && !hasMoreWritten && (!filter || filter === 'up');
+}
+
 export function getReviewsFilterInput(filter: ReviewsFilter | undefined) {
   if (filter === 'images') return { hasImages: true };
   if (filter === 'up') return { recommended: true };

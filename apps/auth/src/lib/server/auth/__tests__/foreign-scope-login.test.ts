@@ -24,8 +24,13 @@ const h = vi.hoisted(() => ({
   getOrCreateDeviceId: vi.fn(() => 'device-xyz'),
   issuePendingAuthz: vi.fn(async () => true),
   isFirstPartyOrigin: vi.fn(async () => true),
+  userRows: [] as Record<string, unknown>[],
 }));
 
+// The "User" rows the account checks read; none, for an ordinary account.
+vi.mock('$lib/server/db/db', async () => ({
+  db: (await import('../../../../test/kysely-fake')).createKyselyFake({ User: h.userRows }),
+}));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   isSecureCookie: () => false,
@@ -77,6 +82,7 @@ const GREEN = spokeLanding('https://civitai.com');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.userRows.length = 0;
   h.issuePendingAuthz.mockResolvedValue(true);
   h.isFirstPartyOrigin.mockResolvedValue(true);
 });
@@ -108,7 +114,12 @@ describe('a login bound for a spoke OUTSIDE the hub cookie scope', () => {
       returnUrl: RED,
     });
 
-    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100, undefined);
+    // No family is minted, but the prior session's family seeds the list's record, so a sign-out forgets
+    // the list.
+    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100, {
+      family: undefined,
+      proofFamily: 'j',
+    });
   });
 
   it('falls back to the session cookie when the hand-off could not be stored', async () => {
@@ -143,9 +154,9 @@ describe('a login bound for a spoke OUTSIDE the hub cookie scope', () => {
 });
 
 describe('the hand-off requires the spoke AUTHORIZE LANDING, not just a foreign first-party url', () => {
-  // A createSpokeGuard app sends the raw current page URL as returnUrl. If such an app is ever on a foreign
-  // registrable domain — a TrustedSpokeDomain row, no code change — handing off would give it no cookie, its
-  // guard would bounce back to /login with the same returnUrl, and the login would loop forever with no error.
+  // An app that sends the raw current page URL to /login as returnUrl, on a foreign registrable domain (a
+  // TrustedSpokeDomain row, no code change), would get no cookie from a hand-off, bounce back to /login with
+  // the same returnUrl, and loop forever with no error.
   // Only the /api/auth/authorize landing produces the second hop where the pending record is consumed.
   it.each([
     ['a bare page url on a foreign first-party host', 'https://civitai.red/models/123'],
@@ -245,6 +256,35 @@ describe('the hand-off fires ONLY for a genuine account switch', () => {
     await establishSession(cookies, user(200), { returnUrl: RED });
 
     expect(h.issuePendingAuthz).toHaveBeenCalledWith(expect.anything(), 200, 'civitai.red');
+    expect(cookies._store.get('civ-token')).toBe('green-session-for-100');
+  });
+});
+
+// The hand-off mints nothing, so the sign-in check must come before it.
+describe('a cross-scope login to a memorialized account', () => {
+  const crossScopeLogin = async (flags: number) => {
+    h.userRows.push({ id: 200, username: 'u200', flags });
+    h.verifyToken.mockResolvedValue({ sub: '100', jti: 'j' });
+    const cookies = makeCookies({ 'civ-token': 'green-session-for-100' });
+    const outcome = await establishSession(cookies, user(200), { returnUrl: RED }).then(
+      () => 'signed-in',
+      (e: { status?: number }) => e.status
+    );
+    return { outcome, cookies };
+  };
+
+  it('hands off for an ordinary account (positive control)', async () => {
+    const { outcome } = await crossScopeLogin(0);
+    expect(outcome).toBe('signed-in');
+    expect(h.issuePendingAuthz).toHaveBeenCalledWith(expect.anything(), 200, 'civitai.red');
+    expect(h.mintSessionToken).not.toHaveBeenCalled();
+  });
+
+  it('is refused with a 403 and issues no hand-off', async () => {
+    const { outcome, cookies } = await crossScopeLogin(4);
+    expect(outcome).toBe(403);
+    expect(h.issuePendingAuthz).not.toHaveBeenCalled();
+    expect(h.linkAccount).not.toHaveBeenCalled();
     expect(cookies._store.get('civ-token')).toBe('green-session-for-100');
   });
 });

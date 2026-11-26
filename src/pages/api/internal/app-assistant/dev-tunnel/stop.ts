@@ -7,6 +7,7 @@ import { readRunnerRequest } from '~/server/services/app-assistant/runner-reques
 import {
   cancelDevTunnelStart,
   stopOwnDevTunnel,
+  stopOwnDevTunnelForUserBlock,
 } from '~/server/services/blocks/dev-tunnel.service';
 
 /**
@@ -21,6 +22,12 @@ import {
  *                          on (it timed out, or its reply ended) and so has no `sessionId` of:
  *                          closes what that start opened, whether it is still running
  *                          (`cancelDevTunnelStart`), has finished, or never came
+ *   { grant, blockId }     the grant's user's session for the app `blockId`, whichever transport
+ *                          and whichever run opened it (a direct preview is closed this way; its
+ *                          preview id is then revoked at the sandbox service)
+ *   { grant, blockId, transport: "direct" }
+ *                          the same, but only a direct session: a tunnel session for the app is
+ *                          left alone and answered `{ stopped: false }`, as if there were none
  *
  * Only the grant's user's own tunnel is closed (`stopOwnDevTunnel` checks the owner, as
  * `stopDevTunnel` does). Unlike `start` and `keepalive`, no feature gate is re-judged: closing only
@@ -38,6 +45,11 @@ import {
 const body = z.union([
   z.object({ grant: z.string().min(1).max(4096), sessionId: z.string().min(1).max(128) }),
   z.object({ grant: z.string().min(1).max(4096), clientKey: z.string().min(1).max(128) }),
+  z.object({
+    grant: z.string().min(1).max(4096),
+    blockId: z.string().min(1).max(64),
+    transport: z.literal('direct').optional(),
+  }),
 ]);
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -45,7 +57,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     req,
     res,
     body,
-    'Expected { grant, sessionId } or { grant, clientKey }'
+    'Expected { grant, sessionId }, { grant, clientKey } or { grant, blockId }'
   );
   if (!request) return;
   const { grant } = request;
@@ -57,16 +69,22 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       userId: grant.userId,
       ...('sessionId' in target
         ? { sessionId: target.sessionId }
-        : { clientKey: target.clientKey }),
+        : 'clientKey' in target
+        ? { clientKey: target.clientKey }
+        : { blockId: target.blockId }),
       grantId: grant.grantId,
       ...extra,
-    }).catch(() => undefined);
+    });
 
   try {
     const outcome =
       'sessionId' in target
         ? await stopOwnDevTunnel(grant.userId, target.sessionId)
-        : await cancelDevTunnelStart(grant.userId, target.clientKey);
+        : 'clientKey' in target
+        ? await cancelDevTunnelStart(grant.userId, target.clientKey)
+        : await stopOwnDevTunnelForUserBlock(grant.userId, target.blockId, {
+            transport: 'transport' in target ? target.transport : undefined,
+          });
     if (outcome === 'unavailable')
       return res
         .status(503)

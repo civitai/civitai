@@ -54,7 +54,6 @@ const m = vi.hoisted(() => ({
 // ('missing IsClientContext'). `renderWithProviders` supplies Mantine + a QueryClient
 // only, so the hook is stubbed here rather than the whole app shell being mounted.
 // `true` is the post-mount value, which is the state every assertion below is about.
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => m.user,
@@ -350,7 +349,9 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
       <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
     );
     // The retained grant for THIS app still renders, and the other app's still does not leak.
-    await expect.element(page.getByText('See your username and account status')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('See your username and account status'))
+      .toBeInTheDocument();
     expect(page.getByText('See your Buzz balance').elements()).toHaveLength(0);
     // 🔴 WHICH ASSERTION KILLS THE MUTANT — MEASURED, NOT ASSUMED. Reverting the guard to bare
     // `isError` fails this test on the GRANT-BADGE WAIT above, with

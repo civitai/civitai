@@ -10,12 +10,14 @@ describe('freshdeskTicketUrl', () => {
 
   it('falls back to the default domain when none is configured', () => {
     delete process.env.FRESHDESK_DOMAIN;
-    expect(freshdeskTicketUrl('18234')).toBe('https://civitai.freshdesk.com/a/tickets/18234');
+    expect(freshdeskTicketUrl('990100000')).toBe(
+      'https://civitai.freshdesk.com/a/tickets/990100000'
+    );
   });
 
   it('uses the configured domain', () => {
     process.env.FRESHDESK_DOMAIN = 'help.example.test';
-    expect(freshdeskTicketUrl(18234)).toBe('https://help.example.test/a/tickets/18234');
+    expect(freshdeskTicketUrl(990100000)).toBe('https://help.example.test/a/tickets/990100000');
   });
 
   it('takes an explicit domain over the configured one', () => {

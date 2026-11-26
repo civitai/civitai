@@ -14,7 +14,6 @@ import {
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertCircle,
   IconArrowLeft,
@@ -55,6 +54,7 @@ import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
 import {
   COMIC_MODEL_MAX_IMAGES,
   type BulkPanelItem,
+  notifyIfReferenceImagesSkipped,
 } from '~/components/Comics/comic-project-constants';
 import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
 import { PanelDetailDrawer } from '~/components/Comics/PanelDetailDrawer';
@@ -77,6 +77,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { ComicChapterStatus, ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -528,7 +529,8 @@ function ProjectWorkspace() {
   };
 
   const createPanelMutation = trpc.comics.createPanel.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closePanelModal();
       setPrompt('');
       setRegeneratingPanelId(null);
@@ -539,7 +541,8 @@ function ProjectWorkspace() {
   });
 
   const enhancePanelMutation = trpc.comics.enhancePanel.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closePanelModal();
       setPrompt('');
       setInsertAtPosition(null);
@@ -701,6 +704,7 @@ function ProjectWorkspace() {
 
   const smartCreateMutation = trpc.comics.smartCreateChapter.useMutation({
     onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closeSmartModal();
       goToChapter(data.position);
       invalidateProjectQueries();
@@ -709,7 +713,8 @@ function ProjectWorkspace() {
   });
 
   const bulkCreateMutation = trpc.comics.bulkCreatePanels.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closePanelModal();
       setInsertAtPosition(null);
       invalidateProjectQueries();
@@ -987,9 +992,9 @@ function ProjectWorkspace() {
 
   const handleDeleteChapter = (chapterPosition: number, chapterName: string) => {
     if (!project || project.chapters.length <= 1) return;
-    openConfirmModal({
+    openConfirm({
       title: 'Delete Chapter',
-      children: (
+      message: (
         <Text size="sm">
           Are you sure you want to delete &quot;{chapterName}&quot;? All panels in this chapter will
           be permanently deleted.
@@ -1012,10 +1017,10 @@ function ProjectWorkspace() {
       currentStatus === ComicChapterStatus.Published ||
       currentStatus === ComicChapterStatus.Scheduled
     ) {
-      openConfirmModal({
+      openConfirm({
         title:
           currentStatus === ComicChapterStatus.Scheduled ? 'Cancel Schedule' : 'Unpublish Chapter',
-        children: (
+        message: (
           <Text size="sm">
             {currentStatus === ComicChapterStatus.Scheduled
               ? 'This will cancel the scheduled publish and revert the chapter to draft.'
@@ -1101,9 +1106,9 @@ function ProjectWorkspace() {
   };
 
   const handleDeleteReferencePermanently = (referenceId: number, referenceName: string) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete Reference Permanently',
-      children: (
+      message: (
         <Text size="sm">
           This will permanently delete &quot;{referenceName}&quot; from ALL your projects. This
           cannot be undone. Existing panels will be preserved but unlinked.
@@ -1682,9 +1687,9 @@ function ProjectWorkspace() {
                                       }
                                       onClick={(e: React.MouseEvent) => {
                                         e.stopPropagation();
-                                        openConfirmModal({
+                                        openConfirm({
                                           title: 'Duplicate chapter',
-                                          children: `This will create a copy of "${chapter.name}" with all its panels. Continue?`,
+                                          message: `This will create a copy of "${chapter.name}" with all its panels. Continue?`,
                                           labels: { confirm: 'Duplicate', cancel: 'Cancel' },
                                           onConfirm: () =>
                                             duplicateChapterMutation.mutate({
@@ -1991,9 +1996,9 @@ function ProjectWorkspace() {
                           onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
                           onRegenerate={() => handleRegenerate(panel as any)}
                           onDuplicate={() =>
-                            openConfirmModal({
+                            openConfirm({
                               title: 'Duplicate panel',
-                              children: 'This will create a copy of this panel. Continue?',
+                              message: 'This will create a copy of this panel. Continue?',
                               labels: { confirm: 'Duplicate', cancel: 'Cancel' },
                               onConfirm: () => duplicatePanelMutation.mutate({ panelId: panel.id }),
                             })
@@ -2055,9 +2060,9 @@ function ProjectWorkspace() {
         onRegenerate={handleDrawerRegenerate}
         onInsertAfter={handleDrawerInsertAfter}
         onDuplicate={(panelId) =>
-          openConfirmModal({
+          openConfirm({
             title: 'Duplicate panel',
-            children: 'This will create a copy of this panel. Continue?',
+            message: 'This will create a copy of this panel. Continue?',
             labels: { confirm: 'Duplicate', cancel: 'Cancel' },
             onConfirm: () => duplicatePanelMutation.mutate({ panelId }),
           })

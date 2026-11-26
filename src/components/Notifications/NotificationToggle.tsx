@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
+import { notificationSettingGroups } from '~/server/notifications/utils.notifications';
 import {
   useNotificationSettings,
   useToggleNotificationSetting,
@@ -22,7 +22,7 @@ export function NotificationToggle({
   const updateNotificationSettingMutation = useToggleNotificationSetting();
 
   const notification = useMemo(() => {
-    return Object.values(notificationCategoryTypes)
+    return Object.values(notificationSettingGroups)
       .flat()
       .find((x) => x.type === type);
   }, [type]);

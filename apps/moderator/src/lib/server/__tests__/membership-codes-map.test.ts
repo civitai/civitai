@@ -37,7 +37,7 @@ const { membershipCodeStatus } = await import('$lib/membership-code');
 
 describe('listSupportMembershipCodes row shape', () => {
   it('maps a row to what the panel reads', async () => {
-    const [mapped] = await listSupportMembershipCodes(8675309);
+    const [mapped] = await listSupportMembershipCodes(990100034);
     expect(mapped).toEqual({
       code: 'MB-ABCD-EF12',
       months: 2,
@@ -52,7 +52,7 @@ describe('listSupportMembershipCodes row shape', () => {
   });
 
   it('a revoked code reads as revoked, not expired', async () => {
-    const [mapped] = await listSupportMembershipCodes(8675309);
+    const [mapped] = await listSupportMembershipCodes(990100034);
     expect(
       membershipCodeStatus({
         redeemedAt: null,

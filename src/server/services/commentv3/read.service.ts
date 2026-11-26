@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { sql } from 'kysely';
 import type { RawBuilder } from 'kysely';
 import { constants } from '~/server/common/constants';
@@ -5,6 +6,7 @@ import { ThreadSort } from '~/server/common/enums';
 import type { kyselyV3Read } from '~/server/db/kyselyDb';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { maskProfanityInHtml, type MaskedText } from '~/server/services/profanity-mask.service';
 
 /**
  * Comment reads on CommentV3 for the v3 comment suite (`docs/plans/comments-v3-article-flip.md`).
@@ -42,6 +44,11 @@ export type CommentV3Item = {
   replyToId: number | null;
   depth: number;
   content: string;
+  /**
+   * `content` with profanity masked, or null when it is clean. See `MaskedText`. Absent only when
+   * masking failed after a write was saved.
+   */
+  maskedContent?: MaskedText;
   createdAt: Date;
   updatedAt: Date;
   pinnedAt: Date | null;
@@ -97,7 +104,7 @@ const PINNED_AT = sql`(CASE WHEN c."deletedAt" IS NULL THEN c."pinnedAt" END)`;
 
 const COLUMNS = sql`c.id, c."parentId", c."replyToId", c.depth, c.content, c."createdAt", c."updatedAt",
   ${PINNED_AT} AS "pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
-  u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage"`;
+  u.username, u."deletedAt" AS "userDeletedAt", ${sql.raw(fallbackUserImageColumn)} AS "userImage"`;
 
 /** Whether a row's ToS state and author let this viewer see it. `alias` names the CommentV3 row. */
 const allowedTo = (v: CommentV3Viewer, alias: string) => {
@@ -230,14 +237,18 @@ async function decorate(
   const myReactions = new Map<number, ReviewReactions[]>();
   for (const r of mine.rows)
     myReactions.set(r.commentId, [...(myReactions.get(r.commentId) ?? []), r.reaction]);
+  const masked = await maskProfanityInHtml(
+    rows.map((r) => (r.deletedAt === null ? r.content : ''))
+  );
 
-  return rows.map((r) => ({
+  return rows.map((r, i) => ({
     id: r.id,
     deleted: r.deletedAt !== null,
     parentId: r.parentId,
     replyToId: r.replyToId,
     depth: r.depth,
     content: r.deletedAt === null ? r.content : '',
+    maskedContent: masked[i],
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     pinnedAt: r.pinnedAt,

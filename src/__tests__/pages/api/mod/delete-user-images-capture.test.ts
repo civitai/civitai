@@ -4,10 +4,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
-import type * as LegalHold from '~/server/services/legal-hold.service';
 import '~/__tests__/mocks/logging.mock';
 
-/** A moderator's delete of every image of an account keeps each feedback capture its state keeps. */
+/** A moderator's delete of every image of an account refuses the feedback capture account. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -17,10 +16,6 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof EndpointHelpers>()),
   ModEndpoint: (handler: unknown) => handler,
 }));
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHold>()),
-  assertAccountNotUnderLegalHold: vi.fn(async () => ({ markerView: true })),
-}));
 vi.mock('~/server/services/image.service', () => ({
   deleteImages: vi.fn(async (ids: number[], _posts: boolean, opts?: { onlyWhere?: Prisma.Sql }) => {
     const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
@@ -29,7 +24,7 @@ vi.mock('~/server/services/image.service', () => ({
   }),
 }));
 
-import deleteUserImages from '~/pages/api/mod/delete-user-images';
+import deleteUserImages from '~/server/api-routes/mod/delete-user-images';
 
 const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 
@@ -40,12 +35,14 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
     );
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
-    CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text,
       "blockedFor" text, minor boolean NOT NULL DEFAULT false
+    );
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
   `);
 });

@@ -90,6 +90,31 @@ export function importersOf(module: string, name?: string): string[] {
   return [...new Set(files)].sort();
 }
 
+/**
+ * The files that RE-EXPORT from `module` (`export { … } from` or `export * from`), with the names
+ * each passes on (`'all'` for `export *`), sorted by file. A re-export hands the module's bindings
+ * to every importer of the re-exporting file, so a ledger of importers alone can be walked around.
+ */
+export function reExportsOf(module: string): { file: string; names: string[] | 'all' }[] {
+  const out: { file: string; names: string[] | 'all' }[] = [];
+  for (const file of walk(SRC, [])) {
+    for (const stmt of parsed(file).statements) {
+      if (!ts.isExportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
+      if (!ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+      if (resolveSpec(file, stmt.moduleSpecifier.text) !== module) continue;
+      const clause = stmt.exportClause;
+      out.push({
+        file: path.relative(SRC, file).split(path.sep).join('/'),
+        names:
+          clause && ts.isNamedExports(clause)
+            ? clause.elements.map((e) => e.propertyName?.text ?? e.name.text)
+            : 'all',
+      });
+    }
+  }
+  return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
 const parsedFiles = new Map<string, ts.SourceFile>();
 function parsed(file: string): ts.SourceFile {
   let src = parsedFiles.get(file);

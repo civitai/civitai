@@ -1,4 +1,5 @@
 import type { CardProps } from '@mantine/core';
+import { creatorCardSectionStyle } from '~/components/CreatorCard/section-style';
 import { Card, Group, Stack, useMantineTheme, useComputedColorScheme } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconShoppingBag } from '@tabler/icons-react';
@@ -26,6 +27,7 @@ export function CreatorCard({
   withActions = true,
   tipsEnabled = true,
   subText,
+  footer,
   ...cardProps
 }: Props) {
   const { data } = trpc.user.getCreator.useQuery(
@@ -73,7 +75,7 @@ export function CreatorCard({
             />
             {withActions && (
               <Group gap={8} wrap="nowrap">
-                {tipsEnabled && (
+                {tipsEnabled && !isMemorializedCreator(creator) && (
                   <TipBuzzButton
                     toUserId={creator.id}
                     entityId={tipBuzzEntityId}
@@ -82,7 +84,9 @@ export function CreatorCard({
                     size="compact-xs"
                   />
                 )}
-                <ChatUserButton user={creator} label="" size="compact-xs" />
+                {!isMemorializedCreator(creator) && (
+                  <ChatUserButton user={creator} label="" size="compact-xs" />
+                )}
                 <FollowUserButton userId={creator.id} size="compact-xs" />
               </Group>
             )}
@@ -104,14 +108,22 @@ export function CreatorCard({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py={5}
         >
           <Group gap={4}>
             <DomainLinkIcons links={creator.links} size={32} iconSize={20} />
           </Group>
+        </Card.Section>
+      ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={creatorCardSectionStyle(theme, colorScheme)}
+          py="xs"
+        >
+          {footer}
         </Card.Section>
       ) : null}
     </Card>
@@ -153,7 +165,7 @@ export const CreatorCardV2 = ({
                     </LegacyActionIcon>
                   </Tooltip>
                 )}
-                {tipsEnabled && (
+                {tipsEnabled && !isMemorializedCreator(creator) && (
                   <TipBuzzButton
                     toUserId={creator.id}
                     size="xs"
@@ -167,16 +179,18 @@ export const CreatorCardV2 = ({
                     h={32}
                   />
                 )}
-                <ChatUserButton
-                  user={creator}
-                  size="xs"
-                  label=""
-                  radius="xl"
-                  color="gray"
-                  variant="filled"
-                  w={32}
-                  h={32}
-                />
+                {!isMemorializedCreator(creator) && (
+                  <ChatUserButton
+                    user={creator}
+                    size="xs"
+                    label=""
+                    radius="xl"
+                    color="gray"
+                    variant="filled"
+                    w={32}
+                    h={32}
+                  />
+                )}
                 <FollowUserButton
                   userId={creator.id}
                   size="xs"
@@ -192,6 +206,9 @@ export const CreatorCardV2 = ({
   );
 };
 
+const isMemorializedCreator = (creator: object) =>
+  'memorialized' in creator && creator.memorialized === true;
+
 type Props = {
   user: { id: number } & Partial<UserWithCosmetics>;
   tipBuzzEntityId?: number;
@@ -199,6 +216,7 @@ type Props = {
   withActions?: boolean;
   tipsEnabled?: boolean;
   subText?: React.ReactNode;
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 export type CreatorCardPropsV2 = Omit<CreatorCardSimpleProps, 'actions'> & {

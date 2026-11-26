@@ -2,7 +2,8 @@
   import type { ReportActionGrants } from '$lib/report-queue';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import ImageEvidence from '$lib/components/report-queue/ImageEvidence.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -37,14 +38,19 @@
 
 {#snippet media(img: Img)}
   <figure class="m-0 flex flex-col gap-1">
+    {#if img.restricted}
+      <!-- Withheld: no tile and no link to the image. -->
+      <div class="max-w-md rounded-md bg-muted p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
+    {:else}
     <a
       href={entityUrl(civitaiUrl, 'image', img.id)}
       target="_blank"
       rel="noreferrer"
       class="block max-w-md overflow-hidden rounded-md bg-muted"
     >
-      <EdgeMedia src={img.url} type={img.type} width={450} class="max-h-112 max-w-full object-contain" />
+      <CdnOrRetractedMedia item={img} class="max-h-112 max-w-full object-contain" />
     </a>
+    {/if}
     <figcaption class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <Badge variant="secondary">rated {getBrowsingLevelLabel(img.nsfwLevel)}</Badge>
       <ImageFlagBadges
@@ -110,6 +116,8 @@
         {#each evidence.body?.segments ?? [] as seg, i (i)}
           {#if seg.kind === 'text'}
             <p class="m-0 whitespace-pre-wrap wrap-break-word">{seg.text}</p>
+          {:else if seg.kind === 'withheld'}
+            <p class="m-0 rounded-md border border-dashed p-2 text-xs text-dark-2">{RETRACTED_REFUSED}</p>
           {:else if seg.kind === 'media'}
             {@const img = byUrl.get(seg.url)}
             {#if img}

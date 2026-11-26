@@ -31,8 +31,6 @@ function logSignalsFailSoft(reason: string, err: unknown, extra?: Record<string,
     subtype: 'token-mint-degraded',
     reason,
     fn: 'getAccessToken',
-  }).catch(() => {
-    /* fail-soft logger never blocks the request */
   });
 }
 

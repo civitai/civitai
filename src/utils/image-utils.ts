@@ -2,11 +2,11 @@ import { NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { TagType } from '~/shared/utils/prisma/enums';
 
+import { maxUpscaleSize } from '~/server/common/constants';
 import {
-  isNsfwLevelRestrictedForBaseModel,
-  getRestrictedNsfwLevelsForBaseModel,
-  maxUpscaleSize,
-} from '~/server/common/constants';
+  isMatureRestricted,
+  MATURE_RESTRICTED_LEVELS,
+} from '~/shared/constants/basemodel.constants';
 import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
 
 export function hasImageLicenseViolation(image: {
@@ -15,10 +15,11 @@ export function hasImageLicenseViolation(image: {
 }) {
   const { nsfwLevel, resourceHelper } = image;
 
-  const restrictedResources = resourceHelper.filter((resource) => {
-    if (!resource.modelVersionBaseModel) return false;
-    return isNsfwLevelRestrictedForBaseModel(resource.modelVersionBaseModel, nsfwLevel);
-  });
+  const restrictedResources = MATURE_RESTRICTED_LEVELS.includes(nsfwLevel)
+    ? resourceHelper.filter((resource) =>
+        isMatureRestricted(resource.modelVersionBaseModel, 'images')
+      )
+    : [];
 
   if (restrictedResources.length > 0) {
     return {
@@ -27,7 +28,7 @@ export function hasImageLicenseViolation(image: {
       restrictedResources: restrictedResources.map((r) => ({
         modelName: r.modelName,
         baseModel: r.modelVersionBaseModel,
-        restrictedLevels: getRestrictedNsfwLevelsForBaseModel(r.modelVersionBaseModel || ''),
+        restrictedLevels: MATURE_RESTRICTED_LEVELS,
       })),
     };
   }

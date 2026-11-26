@@ -60,7 +60,11 @@ export async function runnerSourceSaveRoute(req: AxiomAPIRequest, res: NextApiRe
         .status(subject.refusal.status)
         .json({ error: subject.refusal.error, code: subject.refusal.code });
     const answer = sourceSaveAnswer(
-      await saveAssistantSourceFromSandbox({ userId: grant.userId, app: body.app })
+      await saveAssistantSourceFromSandbox({
+        userId: grant.userId,
+        app: body.app,
+        impersonatedBy: null,
+      })
     );
     return res.status(answer.status).json(answer.json);
   } catch (err) {
@@ -70,7 +74,7 @@ export async function runnerSourceSaveRoute(req: AxiomAPIRequest, res: NextApiRe
       userId: grant.userId,
       app: body.app,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: 'Could not save the app right now', code: 'unavailable' });
   }
 }

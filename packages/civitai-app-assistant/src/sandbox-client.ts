@@ -14,7 +14,15 @@ export interface Sandbox {
   lastActivityAt: string | null;
   /** When an idle, suspended sandbox is deleted. */
   expiresAt: string | null;
+  /**
+   * The id its live preview is served under (32 lowercase hex), which changes when a preview
+   * session ends. `null` or absent when the service has not given it one (yet).
+   */
+  previewId?: string | null;
 }
+
+/** A sandbox preview id: 32 lowercase hex. */
+export const PREVIEW_ID = /^[0-9a-f]{32}$/;
 
 export type SandboxErrorKind =
   | 'limit'
@@ -32,7 +40,12 @@ export class SandboxApiError extends Error {
     readonly status: number,
     readonly kind: SandboxErrorKind,
     /** The service's machine-readable `code`, when it sent one (`already_exists`, `seed_*`). */
-    readonly code: string | null = null
+    readonly code: string | null = null,
+    /**
+     * The answer's other fields, when it sent any: app hibernate's refusals carry them
+     * (`sleeping_limit`: `limit` and `oldest`; `kept_apps`: `kept`).
+     */
+    readonly details: Readonly<Record<string, unknown>> | null = null
   ) {
     super(message);
     this.name = 'SandboxApiError';
@@ -47,6 +60,11 @@ export interface SandboxSeed {
   url: string;
   sha256: string;
   bytes: number;
+  /**
+   * A wake (app hibernate): civitai's one-time wake ticket, which the service redeems for the
+   * app's `.env*` files. Required for a seed from the app archive store, refused on any other.
+   */
+  ticket?: string;
 }
 
 /** What the service reports about a seed it unpacked. */
@@ -119,9 +137,19 @@ export interface SandboxClient {
     seed?: SandboxSeed
   ): Promise<{ sandbox: Sandbox; created: boolean; seed?: SandboxSeedResult }>;
   suspend(name: string): Promise<Sandbox>;
+  /**
+   * App hibernate: puts the app to sleep (archived, then removed; it can be woken later). The
+   * service answers once the archive has started; the app leaves the list when it is done.
+   */
+  hibernate(name: string): Promise<void>;
   remove(name: string): Promise<void>;
   /** The app `app` in sandbox `name`, as a zip (`appExportPath`). */
   exportApp(name: string, app: string): Promise<Blob>;
+  /**
+   * Gives sandbox `name` a new preview id and answers it, so the next preview session opens under
+   * an id no ended session used. Optional: only the server runner's direct preview calls it.
+   */
+  rotatePreviewId?(name: string): Promise<string>;
 }
 
 export interface SandboxClientOptions {
@@ -194,7 +222,9 @@ export function createSandboxClient({
     const message =
       typeof data?.error === 'string' ? data.error : `Sandbox service error (${res.status})`;
     const code = typeof data?.code === 'string' ? data.code : null;
-    return new SandboxApiError(message, res.status, errorKind(res.status, message), code);
+    const rest = Object.entries(data ?? {}).filter(([key]) => key !== 'error' && key !== 'code');
+    const details = rest.length > 0 ? Object.fromEntries(rest) : null;
+    return new SandboxApiError(message, res.status, errorKind(res.status, message), code, details);
   }
 
   async function send(method: string, path: string, body?: unknown) {
@@ -236,6 +266,9 @@ export function createSandboxClient({
     async suspend(name) {
       return (await send('POST', itemPath(name, '/suspend'))).data as unknown as Sandbox;
     },
+    async hibernate(name) {
+      await send('POST', itemPath(name, '/hibernate'));
+    },
     async remove(name) {
       await send('DELETE', itemPath(name));
     },
@@ -244,6 +277,13 @@ export function createSandboxClient({
       const res = await request('GET', appExportPath(name, app));
       if (!res.ok) throw await failure(res);
       return res.blob();
+    },
+    async rotatePreviewId(name) {
+      const { data } = await send('POST', itemPath(name, '/preview-id'));
+      const previewId = data?.previewId;
+      if (typeof previewId !== 'string' || !PREVIEW_ID.test(previewId))
+        throw new SandboxApiError('The sandbox service answered oddly', 502, 'unavailable');
+      return previewId;
     },
   };
 }

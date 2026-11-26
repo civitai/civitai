@@ -1,12 +1,17 @@
 /**
- * The one implementation of `Subscribe` (spec/registry.md @ 2709083, "Subscribe"), shared by
+ * The one implementation of `Subscribe` (the registry spec, "Subscribe"), shared by
  * both bindings: `serve.ts` (HTTP/SSE) and `grpc.ts` (gRPC) only translate a request in and
  * events and errors out, so the two cannot drift.
  *
  * In order, for one request:
- *   1. the filter is compiled (`bad_request` for one that is not a schema);
- *   2. a schema this source can never serve is answered `end` first (rule 4), before any cursor
- *      state is read or written (`Adapter.serves`: `end` means never);
+ *   1. a request this source can never serve anything for is answered `end` first (rule 4),
+ *      before its filter is compiled and before any cursor state is read or written: a schema
+ *      it has no source for (`Adapter.serves`: `end` means never), or `urns` none of which is of
+ *      its namespace ({@link servesAnyUrn});
+ *   2. the filter is compiled (`bad_request` for one that is not a schema, or one this source
+ *      will not evaluate: rule 6, a filter is applied in full or refused, never ignored, except
+ *      that a `pattern` is best-effort on very long values and bodies, see
+ *      `FILTER_PATTERN_MAX_INPUT_LENGTH` and `FILTER_PATTERN_BODY_BUDGET` in `filter-pattern.ts`);
  *   3. a resume's cursor is checked against the request and the token's subject (rule 2, the
  *      auth extension; {@link unbindCursor}), then by the adapter, which for a document, app,
  *      release or schema stream also checks the token's audience, all before `live`, so a refused cursor is
@@ -14,7 +19,9 @@
  *   4. a snapshot (no cursor) is sent with empty cursors, since a snapshot cannot be continued
  *      (rule 2), then `live`, then each change, and a `progress` whenever the position moves
  *      with nothing sent for it (rule 9): a change of another URN, a change the filter excluded,
- *      or the adapter's own `progress`.
+ *      or the adapter's own `progress`. An adapter's `meta` (`EventMeta`) is passed on as it gave
+ *      it: on `live` (`Changes.liveMeta`), and on its own `progress`, which is then sent even when
+ *      the cursor has not moved, since the meta is news the consumer has not had.
  * An error is thrown; each binding sends it as its own status, or as an error event once the
  * stream has started.
  */
@@ -22,9 +29,16 @@ import type { EventEmitter } from 'node:events';
 import type { Principal } from '~/server/registry-adapter/auth';
 import { ANONYMOUS_PRINCIPAL } from '~/server/registry-adapter/auth';
 import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
-import type { Adapter, StreamEvent, SubscribeRequest } from '~/server/registry-adapter/protocol';
-import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
+import type {
+  Adapter,
+  AdapterContext,
+  EventMeta,
+  StreamEvent,
+  SubscribeRequest,
+} from '~/server/registry-adapter/protocol';
+import { ProtocolError, StreamEnd, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
+import { urnNamespace } from '~/server/registry-adapter/urn';
 
 /** Where a subscription's events go: one binding's open stream. */
 export type EventSink = {
@@ -127,7 +141,23 @@ export function drained(
   });
 }
 
-export function createSubscriber(adapter: Adapter) {
+/**
+ * Whether a request's `urns` leave this source anything to serve: no `urns` (every entity), or at
+ * least one of the adapter's namespace. Rule 4 answers `end` for `urns` outside the registry's
+ * namespaces, since only its origin ever sends a namespace's entities (rule 3). A request naming
+ * some URNs of this namespace and some of another is served: rule 5 streams "a snapshot of those
+ * that exist", the foreign ones never do here, and rule 4 forbids `end` for a request this source
+ * may serve later, which the in-namespace URNs are.
+ */
+export function servesAnyUrn(urns: readonly string[], namespace: string): boolean {
+  return urns.length === 0 || urns.some((urn) => urnNamespace(urn) === namespace);
+}
+
+export function createSubscriber(
+  adapter: Adapter,
+  /** The binding this subscriber serves (`AdapterContext.binding`); absent is HTTP. */
+  opts: { binding?: AdapterContext['binding'] } = {}
+) {
   const compileFilter = createFilterCompiler();
 
   return async function subscribe(
@@ -136,10 +166,23 @@ export function createSubscriber(adapter: Adapter) {
     principal: Principal = ANONYMOUS_PRINCIPAL
   ): Promise<void> {
     const { signal } = sink;
+    // Before the filter: a request that can never be served is `end` whatever its filter, and
+    // neither check reads any state.
+    if (!adapter.serves(req.schema)) return sink.send({ type: 'end' });
+    if (!servesAnyUrn(req.urns, adapter.namespace)) return sink.send({ type: 'end' });
     const filter = compileFilter(req.filter);
     const matches = filter ?? (() => true);
-    const ctx = { signal, audience: principal.audience };
-    if (!adapter.serves(req.schema)) return sink.send({ type: 'end' });
+    const reader =
+      principal.subject !== null && principal.token !== null
+        ? { subject: principal.subject, ...principal.token }
+        : null;
+    const ctx = {
+      signal,
+      audience: principal.audience,
+      reader,
+      ...(req.meta ? { meta: req.meta } : {}),
+      ...(opts.binding ? { binding: opts.binding } : {}),
+    };
 
     const binding = requestBinding(req, principal.subject);
     const bind = (cursor: string) => bindCursor(cursor, binding);
@@ -152,8 +195,19 @@ export function createSubscriber(adapter: Adapter) {
     // the consumer's cursor keeps up with the position.
     const held = filter && position === undefined ? new Set<string>() : null;
 
+    // An adapter that ends the stream on purpose before anything is sent (`StreamEnd`) is answered
+    // with that `end` alone, its meta included.
+    const ended = (err: unknown) => {
+      if (err instanceof StreamEnd) return sink.send({ type: 'end', meta: err.meta });
+      throw err;
+    };
     if (position === undefined) {
-      const snapshot = await adapter.snapshot(req.schema, ctx);
+      let snapshot: Awaited<ReturnType<Adapter['snapshot']>>;
+      try {
+        snapshot = await adapter.snapshot(req.schema, ctx);
+      } catch (err) {
+        return ended(err);
+      }
       for await (const entity of snapshot.entities) {
         if (signal.aborted) return;
         if (wanted(entity.urn) && matches(entity.body)) {
@@ -165,24 +219,37 @@ export function createSubscriber(adapter: Adapter) {
     }
     // The cursor is checked before `live`: one the source cannot resume from rejects here, and
     // on a resume nothing has been sent yet, so it is answered with its own status.
-    const changes = await adapter.changes(req.schema, position, ctx);
+    let changes: Awaited<ReturnType<Adapter['changes']>>;
+    try {
+      changes = await adapter.changes(req.schema, position, ctx);
+    } catch (err) {
+      return ended(err);
+    }
     if (signal.aborted) return;
     let reported = bind(position);
-    await sink.send({ type: 'live', cursor: reported });
+    await sink.send({
+      type: 'live',
+      cursor: reported,
+      ...(changes.liveMeta ? { meta: changes.liveMeta } : {}),
+    });
 
     // A change this request does not carry (another URN) still moves the position; so does an
     // adapter's own `progress`. Either is reported only when the cursor differs from the last
-    // one the consumer was sent.
-    const progress = async (cursor: string) => {
+    // one the consumer was sent, or when the adapter's `progress` carries `meta`.
+    const progress = async (cursor: string, meta?: EventMeta) => {
       const next = bind(cursor);
-      if (next === reported) return;
+      if (next === reported && meta === undefined) return;
       reported = next;
-      await sink.send({ type: 'progress', cursor: next });
+      await sink.send({ type: 'progress', cursor: next, ...(meta ? { meta } : {}) });
     };
     for await (const change of changes) {
       if (signal.aborted) return;
+      if ('end' in change) {
+        // The adapter ended the stream on purpose, with its reason.
+        return sink.send({ type: 'end', meta: change.end });
+      }
       if ('progress' in change) {
-        await progress(change.progress);
+        await progress(change.progress, change.meta);
       } else if ('upsert' in change) {
         const { urn } = change.upsert;
         if (!wanted(urn)) {

@@ -1,0 +1,211 @@
+import { json } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
+import { logToAxiom } from '$lib/server/axiom';
+import { retryPendingConversions } from '$lib/server/conversion/convert';
+import { runLabelPass } from '$lib/server/conversion/label-pass';
+import { verdictLabelConfig } from '$lib/server/conversion/verdict-labels';
+import { TICK_CONVERSION_RETRY } from '$lib/server/conversion/config';
+import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
+import { db } from '$lib/server/db';
+import { TICK_PURCHASE_RETRY } from '$lib/server/shop/config';
+import { getMainAppPort } from '$lib/server/shop/main-app';
+import { retryPendingPurchases } from '$lib/server/shop/purchase';
+import { settleHiddenChecks } from '$lib/server/hidden/settle';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { isJobRequest } from '$lib/server/jobs-auth';
+import { metrics, type TickFailureStep } from '$lib/server/metrics';
+import {
+  applyPendingResolutions,
+  closeModeratorRuledItems,
+  closeUnservableItems,
+  escalateExpired,
+  type MovedItem,
+} from '$lib/server/queue/queue.service';
+import { settleFinalItems } from '$lib/server/progression/progression';
+import { announceMoves } from '$lib/server/live/announce';
+import { queueDeps } from '$lib/server/queue/runtime';
+import { resetDeps } from '$lib/server/smites/runtime';
+import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
+import { tagReviewPort, yesNoConfig } from '$lib/server/yesno/runtime';
+import { closeStrandedYesNo } from '$lib/server/yesno/sweep';
+import {
+  closeIneligibleReviews,
+  expireBeyondCap,
+  sweepMissingReviews,
+} from '$lib/server/inquisitor/review.service';
+import { skillChecks } from '$lib/server/skill-check/runtime';
+import { runTagReview } from '$lib/server/yesno/tag-review';
+import { writeBackTagReviews } from '$lib/server/yesno/tag-writeback';
+import type { RequestHandler } from './$types';
+
+async function settle<T>(step: string, run: () => Promise<T>) {
+  try {
+    return { ok: true as const, value: await run() };
+  } catch (error) {
+    console.error(`knights: ${step} failed`, error);
+    return { ok: false as const };
+  }
+}
+
+export const POST: RequestHandler = async ({ request }) => {
+  if (!isJobRequest(request)) return new Response(null, { status: 401 });
+
+  // `escalated`, `toInquisitor`, `extended`, `expired` (items closed undecided) and `rerated` go straight into the response.
+  const moved: MovedItem[] = [];
+  const collect = (items: MovedItem[]) => moved.push(...items);
+  const escalation = await settle('escalation', () =>
+    escalateExpired(db, { now: new Date(), moved: collect })
+  );
+  const writeBacks = await settle('rating write-back', () =>
+    applyPendingResolutions(db, queueDeps)
+  );
+  const moderatorRuled = await settle('moderator-ruled sweep', () =>
+    closeModeratorRuledItems(db, { now: new Date(), mirror: queueDeps.mirrorXp, moved: collect })
+  );
+  // Before the settle step, which pays out (nothing) the votes these closes leave inconclusive.
+  const unservable = await settle('unservable sweep', () =>
+    closeUnservableItems(db, { now: new Date(), moved: collect })
+  );
+  const reviews = await settle('inquisitor review sweep', async () =>
+    (await queueDeps.inquisitorQueue?.())
+      ? {
+          opened: await sweepMissingReviews(db, { now: new Date() }),
+          closed: await closeIneligibleReviews(db, { now: new Date() }),
+          expired: await expireBeyondCap(db, {
+            now: new Date(),
+            maxOpen: (await skillChecks()).maxOpen,
+          }),
+        }
+      : { opened: 0, closed: 0, expired: 0 }
+  );
+  const progression = await settle('progression', () =>
+    settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
+  );
+  await announceMoves(db, moved);
+  const hidden = await settle('hidden checks', async () =>
+    settleHiddenChecks(db, {
+      now: new Date(),
+      settings: await hiddenSettings(),
+      mirrorXp: queueDeps.mirrorXp,
+      ...resetDeps,
+    })
+  );
+  const yesNo = await settle('yes/no sweep', async () =>
+    closeStrandedYesNo(db, {
+      now: new Date(),
+      maxAgeDays: (await yesNoConfig()).maxAgeDays,
+      mirror: queueDeps.mirrorXp,
+    })
+  );
+  // Moderator tag review: ends the episodes moderators ruled (always), then creates items while the switch is on.
+  const tagReview = await settle('tag review', async () =>
+    runTagReview(db, { now: new Date(), enabled: (await yesNoConfig()).tagReview })
+  );
+  // Paladin consensus on a flagged tag, written back through the moderator app's own Keep/Remove.
+  const tagWriteBack = await settle('tag review write-back', async () =>
+    writeBackTagReviews(db, tagReviewPort(), {
+      now: new Date(),
+      enabled: (await yesNoConfig()).tagReview,
+    })
+  );
+  // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
+  // One read for both steps, so a reset the first leaves due is not lapsed by the second.
+  const acolyteSmites = (await resetDeps.acolyteSmites?.()) ?? true;
+  const resets = await settle('career resets', () =>
+    resetPendingPlayers(db, { ...resetDeps, acolyteSmites: () => acolyteSmites })
+  );
+  const smites = await settle('smite expiry', () =>
+    expireSmites(db, new Date(), { holdAcolyteWrongAnswer: !acolyteSmites })
+  );
+  const conversions = await settle('conversion retries', async () => {
+    if (!(await conversionEnabled())) return { retried: 0, paid: 0, failed: 0 };
+    if (!buzzConfigured()) {
+      logToAxiom({
+        type: 'warning',
+        name: 'knights-conversion-retries-skipped',
+        message: 'BUZZ_ENDPOINT is not configured; unconfirmed conversions were not retried',
+      });
+      return { retried: 0, paid: 0, failed: 0 };
+    }
+    return retryPendingConversions(db, getBuzzPort(), {
+      now: new Date(),
+      log: logToAxiom,
+      ...TICK_CONVERSION_RETRY,
+    });
+  });
+  // Membership purchases the main app never confirmed. Not behind the Buzz kill switch: they never touch Buzz.
+  const purchases = await settle('shop purchase retries', () =>
+    retryPendingPurchases(db, getMainAppPort(), {
+      now: new Date(),
+      log: logToAxiom,
+      ...TICK_PURCHASE_RETRY,
+    })
+  );
+  const labels = await settle('label write-back', () =>
+    runLabelPass(db, { now: new Date(), log: logToAxiom, verdict: verdictLabelConfig(env) })
+  );
+  // Only a step that throws fails the tick (a 500 pages). Items that failed inside a step are retried by the next tick, so
+  // they are counted and logged instead: one bad item would otherwise page for hours and hide a real tick outage.
+  if (
+    !escalation.ok ||
+    !writeBacks.ok ||
+    !moderatorRuled.ok ||
+    !unservable.ok ||
+    !reviews.ok ||
+    !progression.ok ||
+    !hidden.ok ||
+    !yesNo.ok ||
+    !tagReview.ok ||
+    !tagWriteBack.ok ||
+    !smites.ok ||
+    !resets.ok ||
+    !conversions.ok ||
+    !purchases.ok ||
+    !labels.ok
+  ) {
+    return json({ error: 'job failed' }, { status: 500 });
+  }
+  const itemFailures: Record<TickFailureStep, number> = {
+    writeback: writeBacks.value.failed ?? 0,
+    moderator_ruled: moderatorRuled.value.failed,
+    payout: progression.value.failed,
+    yesno: yesNo.value.failed + tagReview.value.failed,
+    reset: resets.value.failed,
+    buzz_grant: conversions.value.failed,
+    tag_writeback: tagWriteBack.value.failed + tagWriteBack.value.exhausted,
+  };
+  const failing = Object.entries(itemFailures).filter(([, count]) => count > 0);
+  if (failing.length > 0) {
+    for (const [step, count] of failing) metrics.tickItemFailures(step as TickFailureStep, count);
+    logToAxiom({
+      type: 'warning',
+      name: 'knights-tick-item-failures',
+      message: 'Some items failed in the tick; the next tick retries them',
+      details: Object.fromEntries(failing),
+    });
+  }
+  return json({
+    ...escalation.value,
+    ...writeBacks.value,
+    moderatorRuled: moderatorRuled.value.closed,
+    unservable: unservable.value.unservable,
+    publishesAfterExpiry: unservable.value.publishesAfterExpiry,
+    unpublishedDrafts: unservable.value.unpublishedDrafts,
+    imageUnservable: unservable.value.imageUnservable,
+    settledVotes: progression.value.votes,
+    hiddenChecksGraded: hidden.value.graded,
+    yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,
+    tagReviewCreated: tagReview.value.created,
+    tagReviewRuled: tagReview.value.ruled,
+    tagReviewWrittenBack: tagWriteBack.value.applied,
+    tagReviewWaiting: tagWriteBack.value.waiting,
+    expiredSmites: smites.value,
+    resets: resets.value.due,
+    conversionsRetried: conversions.value.retried,
+    purchasesRetried: purchases.value.retried,
+    reviewsOpened: reviews.value.opened,
+    reviewsClosed: reviews.value.closed,
+    reviewsExpired: reviews.value.expired,
+    labels: labels.value,
+  });
+};

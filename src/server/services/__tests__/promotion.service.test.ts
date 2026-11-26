@@ -321,10 +321,31 @@ describe('createGalleryPromotion', () => {
       'an errored scan only Knights rated',
       { ingestion: 'Error', nsfwLevelLocked: true, nsfwLevelReason: 'Knights Vote' },
     ],
+    ['case 1', { ingestion: 'Error', nsfwLevelLocked: true, blockedFor: 'moderated' }],
   ])('refuses a post with an image that is %s', async (_label, change) => {
     postImages = [cleanImage(11), { ...cleanImage(12), ...change }];
     await expect(buy()).rejects.toThrow('cannot be promoted');
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
+
+  it('case 2', async () => {
+    // Hands back only the columns the image query names, as the database does.
+    const marked = {
+      ...cleanImage(12),
+      ingestion: 'Error',
+      nsfwLevelLocked: true,
+      blockedFor: 'moderated',
+    };
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const text = strings.join('');
+      if (text.includes('ImageResourceNew')) return [{ modelVersionId: HOST_VERSION }];
+      const named = (key: string) =>
+        text.includes(`"${key}"`) || text.includes(`i.${key}`) || text.includes(`AS ${key}`);
+      return [cleanImage(11), marked].map((row) =>
+        Object.fromEntries(Object.entries(row).filter(([key]) => named(key)))
+      );
+    }) as never);
+    await expect(buy()).rejects.toThrow('cannot be promoted');
   });
 
   // The host-hidden-tag refusal is judged at purchase and accept, never while the run serves, so it

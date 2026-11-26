@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import type { ReviewTier } from '@civitai/shared/review-batch';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -24,11 +25,16 @@ type ModActivityInsert = {
   entityId: number | null;
   activity: string;
   credential?: 'sheet' | 'web';
+  /** The review batch a view was served from, by its hash: the id itself is the link's secret. */
+  review?: { batchHash: string; tier: ReviewTier; declared: boolean };
 };
 
 /** The same row, throwing when it is not written: for a caller that must not go on without it. */
-export async function insertModActivity(input: ModActivityInsert): Promise<void> {
-  const row = await dbWrite
+export async function insertModActivity(
+  input: ModActivityInsert,
+  db: Kysely<DB> = dbWrite
+): Promise<number> {
+  const row = await db
     .insertInto('ModActivity')
     .values({
       userId: input.userId,
@@ -37,11 +43,29 @@ export async function insertModActivity(input: ModActivityInsert): Promise<void>
       activity: input.activity,
       // Named only when set, so no other writer depends on the column.
       ...(input.credential ? { credential: input.credential } : {}),
+      ...(input.review
+        ? {
+            reviewBatchId: input.review.batchHash,
+            reviewTier: input.review.tier,
+            declaredSuspect: input.review.declared,
+          }
+        : {}),
     })
     .onConflict((oc) => oc.doNothing())
     .returning('id')
     .executeTakeFirst();
   if (!row) throw new Error(`ModActivity ${input.activity} row was not written`);
+  return row.id;
+}
+
+/** Read from the primary, so a row just written is seen. */
+export async function modActivityRowExists(id: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('ModActivity')
+    .select('id')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return !!row;
 }
 
 /**

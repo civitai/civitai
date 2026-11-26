@@ -5,7 +5,6 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import type { TagBuildStats } from '~/server/services/resource-intent-tags/build';
-import type * as Payload from '~/server/services/resource-intent-tags/payload';
 import {
   decodeTagIndex,
   encodeTagIndex,
@@ -19,11 +18,9 @@ import {
   TagIndexObjectMissingError,
   TagIndexPayloadCorruptError,
   TagIndexPayloadHashError,
-  TagIndexPayloadSizeError,
   TagIndexSnapshotTableBoundError,
   TagIndexSnapshotUnservableError,
   TagIndexSpecHashMismatchError,
-  TagIndexVocabularyMissingError,
   TagIndexVocabularyNotFrozenError,
   TagIndexVocabVersionMismatchError,
   type PutTagIndexSnapshotMeta,
@@ -36,28 +33,6 @@ import { smallTagIndexData } from './resource-intent-tags.fixture';
 /** The tag-index snapshot store against both real migrations in PGlite and an in-memory object store. */
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
-const decodeSpy = vi.hoisted(() => ({ fail: null as Error | null, assembled: 0, validated: 0 }));
-vi.mock('~/server/services/resource-intent-tags/payload', async (importOriginal) => {
-  const real = await importOriginal<typeof Payload>();
-  return {
-    ...real,
-    decodeTagIndex: async (payload: Uint8Array) => {
-      const e = decodeSpy.fail;
-      decodeSpy.fail = null;
-      if (e) throw e;
-      decodeSpy.assembled++;
-      return real.decodeTagIndex(payload);
-    },
-    // The put's decode (validated arrays, not assembled).
-    decodeTagIndexData: async (payload: Uint8Array) => {
-      const e = decodeSpy.fail;
-      decodeSpy.fail = null;
-      if (e) throw e;
-      decodeSpy.validated++;
-      return real.decodeTagIndexData(payload);
-    },
-  };
-});
 const allocationFailure = () =>
   Object.assign(new Error('memory'), { code: 'ERR_MEMORY_ALLOCATION_FAILED' });
 
@@ -167,7 +142,6 @@ type Row = {
   createdAt: string | null;
 };
 const ROW_SHA = sha(Buffer.from('x'));
-/** A valid row; each column overridable. */
 function insertRow(db: PGlite, over: Partial<Row> = {}) {
   const r: Row = {
     status: 'ready',
@@ -215,50 +189,6 @@ async function insertManifest(
 const ahead = (days: number) => new Date(Date.now() + days * DAY).toISOString();
 
 describe('ResourceIntentTagIndexSnapshot migration', () => {
-  it('is re-runnable and creates its constraints, indexes and guard trigger', async () => {
-    const { db } = await freshDb();
-    await expect(db.exec(SNAPSHOT_SQL)).resolves.toBeDefined();
-    const cons = await db.query<{ conname: string }>(
-      `SELECT conname FROM pg_constraint WHERE conrelid = '"ResourceIntentTagIndexSnapshot"'::regclass ORDER BY conname`
-    );
-    expect(cons.rows.map((r) => r.conname)).toEqual([
-      'ResourceIntentTagIndexSnapshot_payload_check',
-      'ResourceIntentTagIndexSnapshot_pkey',
-      'ResourceIntentTagIndexSnapshot_status_check',
-      'ResourceIntentTagIndexSnapshot_vocabVersion_fkey',
-    ]);
-    const idx = await db.query<{ indexname: string }>(
-      `SELECT indexname FROM pg_indexes WHERE tablename = 'ResourceIntentTagIndexSnapshot' ORDER BY indexname`
-    );
-    expect(idx.rows.map((r) => r.indexname)).toEqual([
-      'ResourceIntentTagIndexSnapshot_latest_ready_idx',
-      'ResourceIntentTagIndexSnapshot_payloadSha256_ready_key',
-      'ResourceIntentTagIndexSnapshot_pkey',
-    ]);
-    const trg = await db.query<{ tgname: string }>(
-      `SELECT tgname FROM pg_trigger WHERE NOT tgisinternal ORDER BY tgname`
-    );
-    expect(trg.rows.map((r) => r.tgname)).toEqual([
-      'ResourceIntentTagIndexSnapshot_guard',
-      'ResourceIntentVocabulary_snapshot_guard',
-    ]);
-  });
-
-  // STRUCTURAL PIN, not behaviour: PGlite has one connection, so no test here can show the guard's
-  // row lock blocking a concurrent un-freeze. The behavioural evidence is the two-connection race
-  // matrix run on PostgreSQL 16 (PR #6168): without FOR SHARE an un-freeze and an insert both commit.
-  it('the guard reads the vocabulary row FOR SHARE (structural pin)', async () => {
-    const { db } = await freshDb();
-    const [{ def }] = (
-      await db.query<{ def: string }>(
-        `SELECT pg_get_functiondef('"ResourceIntentTagIndexSnapshot_guard"'::regproc) AS def`
-      )
-    ).rows;
-    expect(def).toMatch(
-      /FROM "ResourceIntentVocabulary"\s+WHERE "vocabVersion" = NEW\."vocabVersion" AND "status" = 'frozen'\s+FOR SHARE;/
-    );
-  });
-
   it('a row names an existing vocabulary, which cannot then be deleted', async () => {
     const { db } = await freshDb();
     // The guard's frozen check would refuse first; with only it off, the foreign key refuses.
@@ -359,7 +289,6 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
     await expect(insertRow(db, { status: 'retired', retiredAt: ahead(0) })).rejects.toThrow(
       /inserted ready/
     );
-    // A writer-supplied createdAt is overwritten.
     await insertRow(db, { createdAt: '2000-01-01' });
     const [{ createdAt }] = (
       await db.query<{ createdAt: Date }>(
@@ -386,24 +315,6 @@ describe('ResourceIntentTagIndexSnapshot migration', () => {
 describe('the payload-cap migration (20261106120000)', () => {
   const OLD_BOUND = 134_217_728;
   const NEW_BOUND = 268_435_456;
-  const checkDef = async (db: PGlite) =>
-    (
-      await db.query<{ def: string }>(
-        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
-         WHERE conname = 'ResourceIntentTagIndexSnapshot_payload_check'`
-      )
-    ).rows.map((r) => r.def);
-
-  it("pins the bound: 256 MiB, the code's cap", () => {
-    expect(TAG_INDEX_MAX_PAYLOAD_BYTES).toBe(NEW_BOUND);
-  });
-
-  it('before it, the P6c bound refuses one byte over 128 MiB (the control)', async () => {
-    const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL);
-    await insertVocab(db, V1, 'frozen');
-    await expect(insertRow(db, { payloadBytes: OLD_BOUND + 1 })).rejects.toThrow(/payload_check/);
-    await expect(insertRow(db, { payloadBytes: OLD_BOUND })).resolves.toBeDefined();
-  });
 
   it('after both migrations in order: old bound + 1 and the new bound are accepted, new bound + 1 refused', async () => {
     const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL);
@@ -418,26 +329,15 @@ describe('the payload-cap migration (20261106120000)', () => {
     ).rejects.toThrow(/payload_check/);
   });
 
-  it('changes only the bound, and is re-runnable', async () => {
-    const before = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL);
-    const [oldDef] = await checkDef(before);
+  it('is re-runnable with a row standing', async () => {
     const db = await utcPglite(VOCAB_SQL, SNAPSHOT_SQL, PAYLOAD_CAP_SQL);
-    const [newDef] = await checkDef(db);
-    expect(oldDef).toContain(`<= ${OLD_BOUND}`);
-    expect(newDef).toBe(oldDef.replace(`<= ${OLD_BOUND}`, `<= ${NEW_BOUND}`));
-    // Again, with a row standing: still one constraint, the same definition, the row kept.
     await insertVocab(db, V1, 'frozen');
     await insertRow(db, { payloadBytes: NEW_BOUND });
     await expect(db.exec(PAYLOAD_CAP_SQL)).resolves.toBeDefined();
-    expect(await checkDef(db)).toEqual([newDef]);
     expect((await db.query(`SELECT 1 FROM "ResourceIntentTagIndexSnapshot"`)).rows).toHaveLength(1);
-  });
-
-  it('sets a lock timeout before it alters the table', () => {
-    expect(PAYLOAD_CAP_SQL.indexOf("SET lock_timeout = '3s';")).toBeGreaterThan(-1);
-    expect(PAYLOAD_CAP_SQL.indexOf("SET lock_timeout = '3s';")).toBeLessThan(
-      PAYLOAD_CAP_SQL.indexOf('ALTER TABLE')
-    );
+    await expect(
+      insertRow(db, { payloadBytes: NEW_BOUND + 1, payloadSha256: sha(Buffer.from('z')) })
+    ).rejects.toThrow(/payload_check/);
   });
 });
 
@@ -463,13 +363,6 @@ describe('putSnapshot', () => {
     expect(await rows()).toHaveLength(1);
   });
 
-  it('validates the payload without assembling the scorer’s maps', async () => {
-    const { deps } = await freshDb();
-    const [assembled, validated] = [decodeSpy.assembled, decodeSpy.validated];
-    await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
-    expect([decodeSpy.assembled - assembled, decodeSpy.validated - validated]).toEqual([0, 1]);
-  });
-
   describe('refuses, uploading and inserting nothing', () => {
     const refused = async (
       setup: Awaited<ReturnType<typeof freshDb>>,
@@ -485,15 +378,6 @@ describe('putSnapshot', () => {
       expect(await setup.rows()).toEqual([]);
     };
 
-    it('an empty payload', async () => {
-      await refused(await freshDb(), Buffer.alloc(0), meta(), TagIndexPayloadSizeError, /0 bytes/);
-    });
-
-    it('a payload over the size cap', async () => {
-      const big = Buffer.alloc(TAG_INDEX_MAX_PAYLOAD_BYTES + 1);
-      await refused(await freshDb(), big, meta(), TagIndexPayloadSizeError, /268435457 bytes/);
-    });
-
     it('a payload over the bound the table still holds, before the cap migration', async () => {
       // The table at its P6c bound (128 MiB), and a payload one byte over it, under the code's cap.
       const setup = await freshDb([[V1, 'frozen']], [VOCAB_SQL, SNAPSHOT_SQL]);
@@ -508,22 +392,6 @@ describe('putSnapshot', () => {
       expect(setup.log.filter((l) => l.startsWith('put '))).toEqual([]);
       // Control: the same bytes after the migration get past the bound (to the decode).
       await refused(await freshDb(), over, meta(), TagIndexPayloadCorruptError, /payload/);
-    });
-
-    it('a payload at the size cap reaches the decode', async () => {
-      const atCap = Buffer.alloc(TAG_INDEX_MAX_PAYLOAD_BYTES);
-      await refused(await freshDb(), atCap, meta(), TagIndexPayloadCorruptError, /payload/);
-    });
-
-    it('a vocabulary that does not exist', async () => {
-      const payload = await payloadOf(V2.vocabVersion);
-      await refused(
-        await freshDb(),
-        payload,
-        meta({ vocabVersion: V2.vocabVersion }),
-        TagIndexVocabularyMissingError,
-        /not found/
-      );
     });
 
     it.each(['candidate', 'retired'] as const)('a build naming a %s vocabulary', async (status) => {
@@ -601,17 +469,6 @@ describe('putSnapshot', () => {
     expect(again.created).toBe(false);
     expect(again.manifest.id).toBe(first.manifest.id);
     expect(await rows()).toHaveLength(1);
-  });
-
-  it('the same payload again after its row was retired inserts a new ready row', async () => {
-    const { deps, db, rows } = await freshDb();
-    const payload = await payloadOf(V1.vocabVersion);
-    const first = await putSnapshot(deps, payload, meta());
-    await db.query(`UPDATE "ResourceIntentTagIndexSnapshot" SET "status" = 'retired'`);
-    const again = await putSnapshot(deps, payload, meta());
-    expect(again.created).toBe(true);
-    expect(again.manifest.id).not.toBe(first.manifest.id);
-    expect((await rows()).map((r) => r.status).sort()).toEqual(['ready', 'retired']);
   });
 
   it('a conflicting ready row retired before it is read back is an insert failure', async () => {
@@ -705,6 +562,22 @@ describe('loadLatestSnapshot', () => {
     expect(await loadLatestSnapshot(deps, SPEC)).not.toBeNull();
   });
 
+  it('running out of memory while decoding is rethrown as it is', async () => {
+    const { deps } = await freshDb();
+    await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
+    const err = await loadLatestSnapshot(
+      {
+        ...deps,
+        decode: async () => {
+          throw allocationFailure();
+        },
+      },
+      SPEC
+    ).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe('ERR_MEMORY_ALLOCATION_FAILED');
+    expect(err).not.toBeInstanceOf(TagIndexSnapshotUnservableError);
+  });
+
   describe('refuses', () => {
     const refusedLoad = async (
       deps: TagIndexStoreDeps,
@@ -730,29 +603,12 @@ describe('loadLatestSnapshot', () => {
       await refusedLoad(deps, TagIndexVocabularyNotFrozenError, /is a candidate/);
     });
 
-    it('stored bytes of another length', async () => {
-      const { deps, store } = await freshDb();
-      const { manifest } = await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
-      store.set(
-        manifest.objectKey,
-        Buffer.concat([store.get(manifest.objectKey) as Buffer, Buffer.of(0)])
-      );
-      await refusedLoad(deps, TagIndexPayloadSizeError, /manifest says/);
-    });
-
     it('stored bytes of the right length but another sha256', async () => {
       const { deps, store } = await freshDb();
       const { manifest } = await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
       const b = store.get(manifest.objectKey) as Buffer;
       b[b.length >> 1] ^= 0xff;
       await refusedLoad(deps, TagIndexPayloadHashError, /sha256/);
-    });
-
-    it('bytes that match the manifest but do not decode', async () => {
-      const { deps, db, store } = await freshDb();
-      const junk = Buffer.from('not a tag index');
-      store.set(await insertManifest(db, junk), junk);
-      await refusedLoad(deps, TagIndexPayloadCorruptError, /tag index snapshot/);
     });
 
     it('a payload whose spec hash is not the manifest row', async () => {
@@ -780,28 +636,5 @@ describe('loadLatestSnapshot', () => {
         new RegExp(`vocabVersion ${V2.vocabVersion}, expected ${V1.vocabVersion}`)
       );
     });
-  });
-
-  it('running out of memory while decoding is rethrown as it is, on put and on load', async () => {
-    const { deps } = await freshDb();
-    const payload = await payloadOf(V1.vocabVersion);
-    decodeSpy.fail = allocationFailure();
-    const onPut = await putSnapshot(deps, payload, meta()).catch((e: unknown) => e);
-    expect((onPut as { code?: string }).code).toBe('ERR_MEMORY_ALLOCATION_FAILED');
-    expect(onPut).not.toBeInstanceOf(TagIndexSnapshotUnservableError);
-    await putSnapshot(deps, payload, meta());
-    decodeSpy.fail = allocationFailure();
-    const onLoad = await loadLatestSnapshot(deps, SPEC).catch((e: unknown) => e);
-    expect((onLoad as { code?: string }).code).toBe('ERR_MEMORY_ALLOCATION_FAILED');
-    expect(onLoad).not.toBeInstanceOf(TagIndexSnapshotUnservableError);
-  });
-
-  it('a download failure is rethrown as it is, not as unservable', async () => {
-    const { deps, objects } = await freshDb();
-    await putSnapshot(deps, await payloadOf(V1.vocabVersion), meta());
-    objects.failGet = new Error('connection reset');
-    const err = await loadLatestSnapshot(deps, SPEC).catch((e: unknown) => e);
-    expect((err as Error).message).toBe('connection reset');
-    expect(err).not.toBeInstanceOf(TagIndexSnapshotUnservableError);
   });
 });

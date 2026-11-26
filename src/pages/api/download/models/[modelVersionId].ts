@@ -68,8 +68,6 @@ function logSplitQueryRepair(req: NextApiRequest) {
     type: 'info',
     message: 'split-query-repaired',
     keys: Object.keys(req.query),
-  }).catch(() => {
-    // swallow logging failure
   });
 }
 
@@ -83,8 +81,6 @@ function logSchemaRejection(error: z.ZodError, repaired: boolean) {
     // A rejection AFTER a repair is a different bug from one the repair never saw.
     repaired,
     sampleRate: SCHEMA_REJECTION_SAMPLE_RATE,
-  }).catch(() => {
-    // swallow logging failure
   });
 }
 
@@ -230,7 +226,10 @@ export function createModelDownloadHandler(
         }
 
         // Check if user is blacklisted
-        const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+        const session = await getApiAuthSession(
+          { req, res },
+          { whenBanned: 'anonymous', scope: 'selfGated' }
+        );
         const credential = await checkDownloadCredential(req, session?.user, {
           route,
           requiredScope: TokenScope.ModelsRead,
@@ -421,8 +420,6 @@ export function createModelDownloadHandler(
           message: err.message,
           stack: err.stack,
           query: loggableQuery,
-        }).catch(() => {
-          // swallow logging failure
         });
         if (res.headersSent) return;
         // 🔴 civitai#3845 TIER 1. This was `errorResponse(500, err.message)` on a

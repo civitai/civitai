@@ -116,6 +116,7 @@ const ACTOR = {
   appId: 'appblk-alpha',
   appBlockId: 'apb_alpha',
   browsingLevel: 1,
+  outputCeiling: { maxBrowsingLevel: 31, serving: false },
 };
 
 beforeEach(() => {

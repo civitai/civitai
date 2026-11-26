@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -10,6 +11,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * GET /api/v1/blocks/me
@@ -151,11 +153,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   //   there as the wrong direction. (b) The gate's two messages are deliberately distinct
   //   so an OPERATOR can separate them in a log; a third-party block iframe has no use for
   //   "the subject could not be resolved" and it is not ours to disclose. So both refusals
-  //   render as one literal here while staying separable at the throw site. 🔴 The
-  //   unhydratable-subject message is additionally a compiled-branch watchlist ANCHOR that
-  //   must stay unique app-wide — re-spelling it here to win message parity would break
-  //   that guard. The parity test therefore compares STATUS on this branch, not text, and
-  //   says so.
+  //   render as one literal here while staying separable at the throw site. The parity
+  //   test therefore compares STATUS on this branch, not text, and says so.
   //   The SPELLING is the siblings' (`<binding> as TRPCError`, then
   //   `typeof trpcError?.code === 'string'`), deliberately, so a future `@trpc/server` shape
   //   change is greppable across all of them at once rather than across three phrasings.
@@ -198,8 +197,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // uniformly limited". Fail-open on a redis incident, by construction inside the helper.
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'me',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 

@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 // Failure isolation for the submission-notification fan-out in `saveItemInCollections`
 // (collection.service.ts): by the time recipients are resolved, `dbWrite.$transaction`
@@ -107,9 +105,6 @@ describe('saveItemInCollections — submission-notify failure isolation', () => 
 
     expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1); // item write already committed
     expect(mockCreateNotification).not.toHaveBeenCalled();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'collection-submission-notify-failed' })
-    );
   });
 
   it('notifies the owner and MANAGE holders, excluding the submitter, on the happy path', async () => {

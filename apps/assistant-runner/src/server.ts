@@ -4,9 +4,11 @@ import { configureChat } from '@civitai/components-chat/core';
 import { buildApp, loggerOptions } from './app';
 import { CivitaiCovers, runnerCoverEstimator } from './app-assistant/cover';
 import { CivitaiAppActivity } from './app-assistant/app-activity';
+import { CivitaiSleepingApps } from './app-assistant/sleeping-apps';
 import { CivitaiSourceSaves } from './app-assistant/source-save';
 import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
+import { CivitaiTurnReports } from './app-assistant/turn-report';
 import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
@@ -74,6 +76,7 @@ let models: ModelProvider = unconfiguredModel;
 let store: ConversationStore = unconfiguredStore;
 let tools: ToolProvider = unconfiguredTools;
 let previews: PreviewRestarter | undefined;
+let turnReports: CivitaiTurnReports | undefined;
 const civitai = config.civitai;
 if (civitai) {
   const credentials = new RunCredentials(
@@ -123,6 +126,13 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
+  // App hibernate: the user's sleeping apps and the seed to wake one, which civitai reads and mints
+  // as a run's user, by its grant (nothing while the `app-hibernate` flag is off for them).
+  const sleepingApps = new CivitaiSleepingApps({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
@@ -136,9 +146,18 @@ if (civitai) {
         appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
         appActivity: (runId, signal) => appActivity.forRun(() => grants.forRun(runId), signal),
         sourceSaves: (runId) => sourceSaves.forRun(() => grants.forRun(runId)),
+        sleepingApps: (runId, signal) => sleepingApps.forRun(() => grants.forRun(runId), signal),
         log,
       })
     : noTools;
+  // Each finished turn, reported to civitai for its session tracing (a no-op there while its
+  // `app-assistant-tracing` flag is off): best-effort, in the background, never in a reply's way.
+  turnReports = new CivitaiTurnReports({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    grantFor: (runId) => grants.forRun(runId),
+    log,
+  });
   // The page's Restart preview: the request's own preview grant, for that request only.
   if (civitai.sandboxUrl)
     previews = new PreviewRestarter({
@@ -163,6 +182,7 @@ const runner = new Runner({
   // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
   ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
   defaultModel: APP_ASSISTANT_DEFAULT_MODEL,
+  ...(turnReports ? { turnEnded: turnReports.turnEnded } : {}),
 });
 
 // Without civitai's public key every run-API request is refused (401), so nothing reaches the

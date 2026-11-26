@@ -20,7 +20,8 @@ export function StorylineCaptionSlot({
   const currentUser = useCurrentUser();
   const { inStoryline } = usePostStorylineMode(post);
   const { id, url, type, metadata } = image;
-  if (!inStoryline || id <= 0 || currentUser?.id !== post.user.id) return null;
+  // A blocked image has no media to caption.
+  if (!inStoryline || id <= 0 || url === null || currentUser?.id !== post.user.id) return null;
 
   return (
     <StorylineImageCaptionBox

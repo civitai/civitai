@@ -200,7 +200,7 @@ describe('updateUserProfile — the creator-card stats preferences statement', (
 
 describe('updateUserProfile — a new cover image', () => {
   it('creates the cover row from client columns only', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(USER_ID)] as never);
     await updateUserProfile({
       userId: USER_ID,
       coverImage: {
@@ -265,11 +265,11 @@ describe('updateUserProfile — a new cover image', () => {
     beforeEach(() => {
       mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
     });
-    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+    afterEach(() => redisMock.redis.mGet.mockReset());
 
     for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
       it(`refuses ${slot} before writing`, async () => {
-        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+        redisMock.redis.mGet.mockResolvedValue([String(OTHER)] as never);
 
         await expect(
           updateUserProfile({
@@ -284,11 +284,73 @@ describe('updateUserProfile — a new cover image', () => {
       });
 
       it(`writes ${slot} when that user saved it for the profile`, async () => {
-        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+        redisMock.redis.mGet.mockResolvedValue([String(OTHER)] as never);
 
         await updateUserProfile({ userId: USER_ID, sessionUserId: OTHER, [slot]: cover });
         expect(tx.userProfile.update).toHaveBeenCalled();
       });
     }
+  });
+});
+
+describe('updateUserProfile — a stored cover whose block refuses its owner the media', () => {
+  const save = (asModerator = false) =>
+    updateUserProfile({
+      userId: USER_ID,
+      sessionUserId: USER_ID,
+      asModerator,
+      bio: 'new bio',
+      // What the edit form sends back for a cover its read withheld.
+      coverImage: null,
+      sfwCoverImage: null,
+    } as never);
+  const written = () => (tx.userProfile.update.mock.calls[0] as any[])[0].data;
+
+  it.each(['tos', 'moderated'])('is kept by a bio-only save (blocked for %s)', async (reason) => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      coverImage: { ingestion: 'Blocked', blockedFor: reason },
+      sfwCoverImage: { ingestion: 'Blocked', blockedFor: reason },
+    } as never);
+    await save();
+
+    expect(written().coverImage).toBeUndefined();
+    expect(written().sfwCoverImage).toBeUndefined();
+    expect(written().bio).toBe('new bio');
+  });
+
+  it('is cleared by a moderator, whose read showed it', async () => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      coverImage: { ingestion: 'Blocked', blockedFor: 'tos' },
+      sfwCoverImage: null,
+    } as never);
+    await save(true);
+
+    expect(written().coverImage).toEqual({ disconnect: true });
+  });
+
+  it('is cleared when the cover was one the owner could see (control)', async () => {
+    mockDb.userProfile.findUnique.mockResolvedValue({
+      coverImage: { ingestion: 'Scanned', blockedFor: null },
+      sfwCoverImage: { ingestion: 'Blocked', blockedFor: 'AiNotVerified' },
+    } as never);
+    await save();
+
+    expect(written().coverImage).toEqual({ disconnect: true });
+    expect(written().sfwCoverImage).toEqual({ disconnect: true });
+  });
+});
+
+describe('updateUserProfile — links', () => {
+  it('updates an existing link only on the profile being saved', async () => {
+    await updateUserProfile({
+      userId: USER_ID,
+      socialLinks: [{ id: 990300001, url: 'https://example.invalid/a', type: 'Social' }],
+    } as never);
+
+    expect(tx.userLink.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.userLink.updateMany).toHaveBeenCalledWith({
+      where: { id: 990300001, userId: USER_ID },
+      data: expect.objectContaining({ userId: USER_ID, url: 'https://example.invalid/a' }),
+    });
   });
 });

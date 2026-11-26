@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTicketWriter, type WriteDeps } from '../tickets/write';
+import { createTicketWriter, type FileBugResult, type WriteDeps } from '../tickets/write';
 import type { WriteResult } from '../freshdesk-write.service';
 
-const FIELDS = { tags: ['a', 'sent-to-support'], group_id: 154000246097 };
+const FIELDS = { tags: ['a', 'sent-to-support'], group_id: 990000000003 };
 const ok: WriteResult = { status: 'ok' };
 const boom: WriteResult = { status: 'error', httpStatus: 500, certain: false, message: 'down' };
 const refused: WriteResult = {
@@ -19,6 +19,7 @@ function setup(
     note: WriteResult;
     status: WriteResult;
     escalate: WriteResult;
+    fileBug: FileBugResult;
   }> = {}
 ) {
   const calls: string[] = [];
@@ -27,6 +28,12 @@ function setup(
     note: vi.fn(async () => (calls.push('note'), over.note ?? ok)),
     status: vi.fn(async () => (calls.push('status'), over.status ?? ok)),
     escalate: vi.fn(async () => (calls.push('escalate'), over.escalate ?? ok)),
+    fileBug: vi.fn(
+      async () => (
+        calls.push('fileBug'),
+        over.fileBug ?? { status: 'ok' as const, feedbackId: 41, hqUrl: null }
+      )
+    ),
     record: vi.fn(async () => {}),
   };
   return { calls, deps, writer: createTicketWriter(deps) };
@@ -160,5 +167,119 @@ describe('escalate', () => {
 
     const unsure = await setup({ escalate: boom }).writer.escalate('9', FIELDS, null, mod);
     expect((unsure as { message: string }).message).toMatch(/may or may not have been sent/);
+  });
+});
+
+describe('privacy', () => {
+  const ACK = '<p>ack</p>';
+  const ticket = { tags: ['Free User'], createdAt: '2026-11-01T10:00:00Z' };
+
+  it('notes BEFORE the PUT, tags and sets Waiting on Dev, then sends the acknowledgment once', async () => {
+    const { calls, deps, writer } = setup();
+    const res = await writer.privacy('9', ticket, null, ACK, mod);
+    expect(res).toEqual({ ok: true, statusChanged: true, movedTo: 'legal' });
+    // A Freshdesk rule sets a Waiting-on-Dev ticket to Pending on a private note, so the note must come first.
+    expect(calls).toEqual(['note', 'escalate', 'reply']);
+    expect(deps.escalate).toHaveBeenCalledWith('9', {
+      tags: ['Free User', 'privacy-request'],
+      status: 7,
+    });
+    expect(deps.reply).toHaveBeenCalledWith('9', ACK);
+    expect(deps.record).toHaveBeenCalledWith(7, 9, 'ticketPrivacy');
+    expect(vi.mocked(deps.note).mock.calls[0][1]).toContain('Received: 2026-11-01T10:00:00Z');
+  });
+
+  it('re-routes an already tagged ticket without a second acknowledgment', async () => {
+    const { calls, deps, writer } = setup();
+    await writer.privacy('9', { ...ticket, tags: ['Privacy-Request'] }, null, ACK, mod);
+    expect(calls).toEqual(['note', 'escalate']);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.escalate).toHaveBeenCalledWith('9', { tags: ['Privacy-Request'], status: 7 });
+  });
+
+  it('never sends a status that resolves or closes, nor a priority', async () => {
+    const { deps, writer } = setup();
+    await writer.privacy('9', ticket, null, ACK, mod);
+    const fields = vi.mocked(deps.escalate).mock.calls[0][1];
+    expect([4, 5]).not.toContain(fields.status);
+    expect(Object.keys(fields).sort()).toEqual(['status', 'tags']);
+  });
+
+  it('sends no acknowledgment when the PUT failed, and says so', async () => {
+    const { deps, writer } = setup({ escalate: refused });
+    const res = await writer.privacy('9', ticket, null, ACK, mod);
+    expect((res as { message: string }).message).toMatch(/NOT sent to Legal/);
+    expect(deps.reply).not.toHaveBeenCalled();
+    // The note written before the PUT said it was sent; the ticket is corrected.
+    expect(vi.mocked(deps.note).mock.calls.at(-1)?.[1]).toBe(
+      'The hand-off to Legal above did NOT go through.'
+    );
+    const unsure = setup({ escalate: boom });
+    await unsure.writer.privacy('9', ticket, null, ACK, mod);
+    expect(vi.mocked(unsure.deps.note).mock.calls.at(-1)?.[1]).toMatch(/may or may not/);
+  });
+
+  it('reports a failed acknowledgment after a landed PUT as a warning that says whether it went', async () => {
+    const certain = await setup({ reply: refused }).writer.privacy('9', ticket, null, ACK, mod);
+    expect(certain).toMatchObject({ ok: true, movedTo: 'legal' });
+    expect((certain as { warning: string }).warning).toMatch(/acknowledgment was NOT sent/);
+    const unsure = await setup({ reply: boom }).writer.privacy('9', ticket, null, ACK, mod);
+    expect((unsure as { warning: string }).warning).toMatch(/may or may not have been sent/);
+  });
+});
+
+describe('modLead', () => {
+  const URL = 'https://mod.example/tickets/moderation?ticket=9';
+
+  it('tags and sets Waiting on Mod Lead, then notes the moderator id and the moderator-app link', async () => {
+    const { calls, deps, writer } = setup();
+    const res = await writer.modLead('9', ['a'], 'Repeat appeal', URL, mod);
+    expect(res).toEqual({ ok: true, statusChanged: true });
+    expect(calls).toEqual(['escalate', 'note']);
+    expect(deps.escalate).toHaveBeenCalledWith('9', { tags: ['a', 'mod-lead-review'], status: 8 });
+    expect(deps.note).toHaveBeenCalledWith(
+      '9',
+      `Sent to the mod lead by alice (user 7) from the moderator app.\nModerator app: ${URL}\nReason: Repeat appeal`
+    );
+    expect(deps.record).toHaveBeenCalledWith(7, 9, 'ticketModLead');
+    expect(deps.reply).not.toHaveBeenCalled();
+  });
+});
+
+describe('fileBug', () => {
+  it('files the report, then notes the report id on the ticket; the ticket itself is untouched', async () => {
+    const { calls, deps, writer } = setup({
+      fileBug: { status: 'ok', feedbackId: 41, hqUrl: 'https://hq.example/t/x' },
+    });
+    const res = await writer.fileBug('9', 'Buttons overlap', mod);
+    expect(res).toEqual({ ok: true, statusChanged: false, feedbackId: 41 });
+    expect(calls).toEqual(['fileBug', 'note']);
+    expect(deps.note).toHaveBeenCalledWith(
+      '9',
+      'Filed as bug report #41 by alice (user 7) from the moderator app.\nHQ: https://hq.example/t/x'
+    );
+    expect(deps.escalate).not.toHaveBeenCalled();
+    expect(deps.status).not.toHaveBeenCalled();
+  });
+
+  it('warns when the report was saved but did not reach HQ, so the moderator is not told it is queued', async () => {
+    const res = await setup({
+      fileBug: { status: 'ok', feedbackId: 41, hqUrl: null },
+    }).writer.fileBug('9', 'x', mod);
+    expect(res).toMatchObject({ ok: true, feedbackId: 41 });
+    expect((res as { warning?: string }).warning).toContain(
+      'Bug report #41 was saved, but it did NOT reach the dev queue in HQ'
+    );
+  });
+
+  it('separates a certain refusal from a lost response', async () => {
+    const no = await setup({
+      fileBug: { status: 'error', message: 'forbidden', certain: true },
+    }).writer.fileBug('9', 'x', mod);
+    expect((no as { message: string }).message).toMatch(/NOT filed/);
+    const maybe = await setup({
+      fileBug: { status: 'error', message: 'timeout', certain: false },
+    }).writer.fileBug('9', 'x', mod);
+    expect((maybe as { message: string }).message).toMatch(/may or may not have been filed/);
   });
 });

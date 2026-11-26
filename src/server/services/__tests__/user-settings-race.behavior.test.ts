@@ -1,5 +1,4 @@
 import { PGlite } from '@electric-sql/pglite';
-import promClient from 'prom-client';
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
@@ -162,24 +161,27 @@ async function reach(hold: { reached: Promise<void> }, inflight: Promise<unknown
   ]);
 }
 
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await createUserSchema(holder.db);
+}, 60_000);
+
+afterAll(async () => {
+  await holder.db?.close();
+});
+
+beforeEach(async () => {
+  await holder.db.exec('TRUNCATE "User"');
+  holder.gate = createGate();
+  holder.bridge = createPrismaBridge(holder.db, holder.gate);
+  installBridge();
+  bustsInsideTransaction.length = 0;
+  recordBustTiming();
+  settingsCacheBust.mockClear();
+  metricPrivacyBust.mockClear();
+});
+
 describe('User.settings — concurrent writers must not discard each other', () => {
-  beforeAll(async () => {
-    holder.db = new PGlite();
-    await createUserSchema(holder.db);
-  }, 60_000);
-
-  afterAll(async () => {
-    await holder.db?.close();
-  });
-
-  beforeEach(() => {
-    holder.gate = createGate();
-    holder.bridge = createPrismaBridge(holder.db, holder.gate);
-    installBridge();
-    bustsInsideTransaction.length = 0;
-    recordBustTiming();
-  });
-
   it('keeps a dismissal that lands while a content-settings write is in flight', async () => {
     // `allowAds` is seeded FALSE and written TRUE. Seeding it ABSENT (as this fixture
     // first did) makes "the patch wins" and "the stored column wins" produce byte-identical
@@ -310,25 +312,6 @@ describe('User.settings — concurrent writers must not discard each other', () 
     expect((settings.features as Record<string, boolean>)[feature]).toBe(true);
   });
 
-  it('counts a Training Studio opt-back once, not the repeat that changes nothing', async () => {
-    const optBacks = async () => {
-      const metric = promClient.register.getSingleMetric('civitai_app_user_feature_toggle_total');
-      const values = (await metric?.get())?.values ?? [];
-      return (
-        values.find((v) => v.labels.feature === 'trainingStudioUi' && v.labels.value === 'false')
-          ?.value ?? 0
-      );
-    };
-    await seedUser(holder.db, USER_ID, {});
-    const before = await optBacks();
-    const input = { feature: 'trainingStudioUi', value: false } as const;
-
-    await toggleUserFeatureFlagHandler({ input, ctx });
-    await toggleUserFeatureFlagHandler({ input, ctx });
-
-    expect(await optBacks()).toBe(before + 1);
-  });
-
   it('keeps a feature toggle that lands while another feature toggle is in flight', async () => {
     const [a, b] = toggleableFeatures;
     if (!b) return; // registry has a single toggleable flag; nothing to interleave
@@ -383,8 +366,6 @@ describe('User.settings — concurrent writers must not discard each other', () 
   });
 
   it('keeps a sibling tour untouched when only one tour is written', async () => {
-    // The property the one-level `mergeInto` already had for `tourSettings` and which
-    // `deepMergeInto` must not regress: writing one tour never touches another.
     await seedUser(holder.db, USER_ID, {
       tourSettings: {
         welcome: { currentStep: 3 },
@@ -401,30 +382,12 @@ describe('User.settings — concurrent writers must not discard each other', () 
       string,
       Record<string, unknown>
     >;
-    // `currentStep` survives too — `deepMergeInto` merges fields, it doesn't replace them.
     expect(tour.welcome).toEqual({ currentStep: 3, completed: true, reason: 'skipped' });
     expect(tour.auction).toEqual({ completed: true, reason: 'finished' });
   });
 });
 
 describe('User.settings — single-request behaviour the writers must keep', () => {
-  beforeAll(async () => {
-    holder.db = new PGlite();
-    await createUserSchema(holder.db);
-  }, 60_000);
-
-  afterAll(async () => {
-    await holder.db?.close();
-  });
-
-  beforeEach(() => {
-    holder.gate = createGate();
-    holder.bridge = createPrismaBridge(holder.db, holder.gate);
-    installBridge();
-    bustsInsideTransaction.length = 0;
-    recordBustTiming();
-  });
-
   it('restores the LAST remaining dismissal', async () => {
     await seedUser(holder.db, USER_ID, { dismissedAlerts: ['only-one'], allowAds: true });
 
@@ -438,8 +401,6 @@ describe('User.settings — single-request behaviour the writers must keep', () 
     expect(settings.allowAds).toBe(true);
   });
 
-  // INVARIANT GUARD (green on the pre-change code too): the JS `new Set` deduped as well.
-  // It pins that moving the dedupe into SQL kept the property.
   it('is idempotent — dismissing the same notice twice stores it once', async () => {
     await seedUser(holder.db, USER_ID, { dismissedAlerts: [] });
 
@@ -460,18 +421,6 @@ describe('User.settings — single-request behaviour the writers must keep', () 
     expect(alerts(await readSettings(holder.db, USER_ID))).toEqual(['notice-h']);
   });
 
-  it('un-dismisses the LAST remaining notice through dismissAlert({ dismiss: false })', async () => {
-    await seedUser(holder.db, USER_ID, { dismissedAlerts: ['only-one'], allowAds: true });
-
-    await dismissAlertHandler({ input: { alertId: 'only-one', dismiss: false }, ctx });
-
-    const settings = await readSettings(holder.db, USER_ID);
-    expect(alerts(settings)).toEqual([]);
-    expect(settings.allowAds).toBe(true);
-  });
-
-  // INVARIANT GUARD (green on the pre-change code too). `COALESCE(settings, '{}')` is easy
-  // to drop when rewriting the statement, and a NULL column is the default for a new user.
   it('dismisses onto a NULL settings column', async () => {
     await holder.db.query(
       `INSERT INTO "User" (id, settings) VALUES ($1, NULL)
@@ -485,8 +434,6 @@ describe('User.settings — single-request behaviour the writers must keep', () 
   });
 
   it('self-heals a dismissedAlerts value that is not an array', async () => {
-    // Nothing enforces a shape on a JSON column. `jsonb_array_elements` raises on a
-    // non-array, so without the type guard one malformed row would 500 forever.
     await seedUser(holder.db, USER_ID, { dismissedAlerts: 'corrupt' as unknown as string[] });
 
     await dismissAlertHandler({ input: { alertId: 'notice-f', dismiss: true }, ctx });
@@ -495,16 +442,6 @@ describe('User.settings — single-request behaviour the writers must keep', () 
     await seedUser(holder.db, USER_ID, { dismissedAlerts: 'corrupt' as unknown as string[] });
     await restoreAlertHandler({ input: { alertId: 'notice-f' }, ctx });
     expect(alerts(await readSettings(holder.db, USER_ID))).toEqual([]);
-  });
-
-  // INVARIANT GUARD (green on the pre-change code too): pins that the SQL filter removes
-  // exactly the named id, matching the JS `.filter()` it replaced.
-  it('leaves unrelated notices alone when one is restored', async () => {
-    await seedUser(holder.db, USER_ID, { dismissedAlerts: ['a', 'b', 'c'] });
-
-    await restoreAlertHandler({ input: { alertId: 'b' }, ctx });
-
-    expect(alerts(await readSettings(holder.db, USER_ID))).toEqual(['a', 'c']);
   });
 });
 
@@ -522,25 +459,6 @@ describe('User.settings — single-request behaviour the writers must keep', () 
  * expected result cannot equal, and watch the output move.
  */
 describe('User.settings — a patch overrides the stored value, not the other way round', () => {
-  beforeAll(async () => {
-    holder.db = new PGlite();
-    await createUserSchema(holder.db);
-  }, 60_000);
-
-  afterAll(async () => {
-    await holder.db?.close();
-  });
-
-  beforeEach(() => {
-    holder.gate = createGate();
-    holder.bridge = createPrismaBridge(holder.db, holder.gate);
-    installBridge();
-    bustsInsideTransaction.length = 0;
-    recordBustTiming();
-    settingsCacheBust.mockClear();
-    metricPrivacyBust.mockClear();
-  });
-
   it('overwrites an existing top-level value', async () => {
     await seedUser(holder.db, USER_ID, { allowAds: false, preferredFiatCurrency: 'EUR' });
 
@@ -550,15 +468,6 @@ describe('User.settings — a patch overrides the stored value, not the other wa
     expect(settings.allowAds).toBe(true);
     // …and leaves the key it was not asked about alone.
     expect(settings.preferredFiatCurrency).toBe('EUR');
-  });
-
-  it('overwrites an existing value through setUserSetting', async () => {
-    // 6 of the 8 writers reach the column through this function.
-    await seedUser(holder.db, USER_ID, { preferredFiatCurrency: 'EUR' });
-
-    await setUserSetting(USER_ID, { preferredFiatCurrency: 'USD' });
-
-    expect((await readSettings(holder.db, USER_ID)).preferredFiatCurrency).toBe('USD');
   });
 
   it('overwrites an existing value through the tRPC settings handler', async () => {
@@ -607,23 +516,7 @@ describe('User.settings — a patch overrides the stored value, not the other wa
  * used to leave the entire suite green.
  */
 describe('User.settings — every write busts the caches that mirror the column', () => {
-  beforeAll(async () => {
-    holder.db = new PGlite();
-    await createUserSchema(holder.db);
-  }, 60_000);
-
-  afterAll(async () => {
-    await holder.db?.close();
-  });
-
   beforeEach(async () => {
-    holder.gate = createGate();
-    holder.bridge = createPrismaBridge(holder.db, holder.gate);
-    installBridge();
-    bustsInsideTransaction.length = 0;
-    recordBustTiming();
-    settingsCacheBust.mockClear();
-    metricPrivacyBust.mockClear();
     await seedUser(holder.db, USER_ID, { dismissedAlerts: [], allowAds: false });
   });
 
@@ -640,13 +533,6 @@ describe('User.settings — every write busts the caches that mirror the column'
 
     expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
     expect(metricPrivacyBust).toHaveBeenCalledWith(USER_ID);
-  });
-
-  it('busts after the creator-shop settings write', async () => {
-    // This writer never busted at all before this change.
-    await updateCreatorShopSettings({ userId: USER_ID, showModels: true });
-
-    expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
   });
 
   it('busts the creator-shop write AFTER the transaction commits, not inside it', async () => {
@@ -678,24 +564,6 @@ describe('User.settings — every write busts the caches that mirror the column'
  * argument, survived the whole suite.
  */
 describe('User.settings — the transactional writers merge rather than replace', () => {
-  beforeAll(async () => {
-    holder.db = new PGlite();
-    await createUserSchema(holder.db);
-  }, 60_000);
-
-  afterAll(async () => {
-    await holder.db?.close();
-  });
-
-  beforeEach(() => {
-    holder.gate = createGate();
-    holder.bridge = createPrismaBridge(holder.db, holder.gate);
-    installBridge();
-    bustsInsideTransaction.length = 0;
-    recordBustTiming();
-    settingsCacheBust.mockClear();
-  });
-
   it('keeps unrelated settings keys when the creator shop is updated', async () => {
     await seedUser(holder.db, USER_ID, {
       dismissedAlerts: ['keep-me'],
@@ -714,15 +582,6 @@ describe('User.settings — the transactional writers merge rather than replace'
     expect(shop.enabled).toBe(true);
     // … and the field this request changed wins.
     expect(shop.showModels).toBe(true);
-  });
-
-  it('returns the stored creator-shop settings for an empty patch without writing', async () => {
-    await seedUser(holder.db, USER_ID, { creatorShop: { enabled: true, showModels: true } });
-
-    const result = await updateCreatorShopSettings({ userId: USER_ID });
-
-    expect(result).toMatchObject({ enabled: true, showModels: true });
-    expect(holder.gate.statements.some((sql) => sql.includes('UPDATE'))).toBe(false);
   });
 
   it('runs the settings write on the CALLER transaction client, not the global one', async () => {

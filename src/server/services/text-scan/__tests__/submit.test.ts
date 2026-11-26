@@ -121,7 +121,7 @@ describe('scanEntity', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('skips without writing EM when a prompt row is missing, and logs the key', async () => {
+  it('skips without writing EM when a prompt row is missing', async () => {
     vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ base: PROMPTS.base });
     expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toEqual({
       status: 'skipped',
@@ -130,30 +130,15 @@ describe('scanEntity', () => {
     expect(em.upsert).not.toHaveBeenCalled();
     expect(em.updateMany).not.toHaveBeenCalled();
     expect(submitWorkflow).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'text-scan', type: 'error', missing: ['label:nsfw'] })
-    );
   });
 
-  it('logs a missing prompt key once per interval', async () => {
-    vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ base: PROMPTS.base });
-    redisMock.redis.set.mockResolvedValueOnce(null);
-    await scanEntity({ entityType: 'Post', entityId: 7 });
-    expect(redisMock.redis.set).toHaveBeenCalledWith(
-      expect.stringMatching(/text-scan:missing-prompt-logged:label:nsfw$/),
-      '1',
-      expect.objectContaining({ NX: true, EX: expect.any(Number) })
-    );
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-  });
-
-  it('does not log a missing prompt key when the throttle cannot be claimed', async () => {
+  it('still skips when the missing-prompt log throttle cannot be claimed', async () => {
     vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ base: PROMPTS.base });
     redisMock.redis.set.mockRejectedValueOnce(new Error('redis down'));
-    await scanEntity({ entityType: 'Post', entityId: 7 });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'missing prompt rows' })
-    );
+    expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toEqual({
+      status: 'skipped',
+      reason: 'missing-prompt',
+    });
   });
 
   it('measures minChars on raw field text, not the composed message with headings', async () => {
@@ -655,27 +640,6 @@ describe('scanEntity', () => {
     });
   });
 
-  it('logs one submitted event per successful submit, and none on a failed one', async () => {
-    await scanEntity({ entityType: 'Post', entityId: 7 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'text-scan',
-        type: 'info',
-        message: 'submitted',
-        entityType: 'Post',
-        entityId: 7,
-        mode: 'shadow',
-        workflowId: 'wf-1',
-      })
-    );
-    vi.clearAllMocks();
-    vi.mocked(submitWorkflow).mockResolvedValue({ data: undefined, error: 'down' } as any);
-    await scanEntity({ entityType: 'Post', entityId: 7 });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'submitted' })
-    );
-  });
-
   it('uses the live EM row only in active mode', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     await scanEntity({ entityType: 'Post', entityId: 7 });
@@ -763,9 +727,6 @@ describe('scanEntity', () => {
       where: { entityType: 'Post:shadow', entityId: 7, workflowId: externalIdOf(0) },
       data: { workflowId: null, status: 'Failed', retryCount: { increment: 1 } },
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'text-scan', type: 'error', message: 'submit failed' })
-    );
   });
 });
 

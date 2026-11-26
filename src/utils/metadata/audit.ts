@@ -21,7 +21,6 @@ import {
   templates,
 } from '@civitai/mod-utils/prompt-audit/lists/ages';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
-import { createProfanityFilter } from '~/libs/profanity-simple';
 import { AuditTimer, type AuditTimerOptions } from '~/utils/metadata/audit-slow-log';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
@@ -141,6 +140,15 @@ export interface PromptTrigger extends Omit<PromptTriggerMatch, 'category'> {
 const SOFT_BLOCK_CATEGORIES = new Set<PromptTriggerCategory>(['nsfw_blocklist', 'profanity']);
 
 /**
+ * The profanity check, passed in rather than imported: this module runs in the browser, and the
+ * filter carries the block list. Server callers pass `getServerProfanityFilter()`'s filter;
+ * undefined skips the check.
+ */
+export type ProfanityMatcher = {
+  analyze(text: string): { isProfane: boolean; matches: string[]; matchedWords: string[] };
+};
+
+/**
  * `nsfw_blocklist` is NOT one severity — the same flat list holds `rape` and
  * `daughter`. Severity is per matched WORD and defaults to hard, so adding a term
  * to the main blocklist can never accidentally make it overridable.
@@ -210,6 +218,11 @@ export function isBlankAuditInput(prompt?: string | null, negativePrompt?: strin
   return !prompt?.trim() && !negativePrompt?.trim();
 }
 
+export type AuditPromptOptions = AuditTimerOptions & {
+  /** Audit the input as nsfw, as `includesInappropriate`'s `nsfw` argument does. */
+  nsfw?: boolean;
+};
+
 /**
  * Enriched version of auditPrompt that returns structured trigger data alongside blockedFor.
  * Used server-side for UserBan records, moderator UI, and the false-positive allowlist system.
@@ -223,10 +236,10 @@ export function isBlankAuditInput(prompt?: string | null, negativePrompt?: strin
 export const auditPromptEnriched = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean,
-  options?: AuditTimerOptions
+  profanity?: ProfanityMatcher,
+  options?: AuditPromptOptions
 ): EnrichedAuditResult => {
-  const result = auditFirstBlock(prompt, negativePrompt, checkProfanity, options);
+  const result = auditFirstBlock(prompt, negativePrompt, profanity, options);
   // Evidence is collected only for a block, not on the passing path.
   const [first] = result.triggers;
   if (
@@ -244,8 +257,8 @@ export const auditPromptEnriched = (
 const auditFirstBlock = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean,
-  options?: AuditTimerOptions
+  profanity?: ProfanityMatcher,
+  options?: AuditPromptOptions
 ): EnrichedAuditResult => {
   if (isBlankAuditInput(prompt, negativePrompt))
     return { blockedFor: [], triggers: [], success: true };
@@ -348,7 +361,7 @@ const auditFirstBlock = (
 
   // 3. Inappropriate content check (with matched word capture)
   const inappropriateResult = timer.time('inappropriate', () =>
-    includesInappropriateEnriched({ prompt, negativePrompt })
+    includesInappropriateEnriched({ prompt, negativePrompt }, options?.nsfw)
   );
   if (inappropriateResult) {
     const message =
@@ -409,15 +422,14 @@ const auditFirstBlock = (
     };
   }
 
-  // 5. Profanity check (green domain only)
-  if (checkProfanity) {
+  // 5. Profanity, with the filter the caller passes; none skips it.
+  if (profanity) {
     const profanityResults = timer.time('profanity', () => {
-      const profanityFilter = createProfanityFilter();
       // Strip Danbooru rating/score/source tags first, for the same reason
       // `includesMinorAge` does: they are metadata, not language. `rating_explicit` is
       // how a booru labels an image, and obscenity matches inside it — so the tag alone
       // refused prompts whose images the SFW domain publishes.
-      return profanityFilter.analyze(prompt.replace(falsePositiveTagPattern, ' '));
+      return profanity.analyze(prompt.replace(falsePositiveTagPattern, ' '));
     });
     if (profanityResults.isProfane) {
       timer.finish(prompt, negativePrompt);
@@ -527,15 +539,10 @@ function collectTriggerMatches(
 export const auditPrompt = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean,
+  profanity?: ProfanityMatcher,
   options?: AuditTimerOptions
 ): { blockedFor: string[]; success: boolean } => {
-  const { blockedFor, success } = auditPromptEnriched(
-    prompt,
-    negativePrompt,
-    checkProfanity,
-    options
-  );
+  const { blockedFor, success } = auditPromptEnriched(prompt, negativePrompt, profanity, options);
   return { blockedFor, success };
 };
 
@@ -876,6 +883,12 @@ function inPromptEdit(prompt: string, { regex }: Checkable) {
   return wrapped;
 }
 
+/** How POI names are matched; shared with the search query rules that add to them. */
+export const poiCheckOptions: Parameters<typeof checkable>[1] = {
+  leet: false,
+  preprocessor: (word) => word.replace(/[^\w\s\|\:\[\],]/g, ''),
+};
+
 const words = {
   nsfw: checkable(nsfwWords),
   young: {
@@ -886,10 +899,7 @@ const words = {
       pluralize: true,
     }),
   },
-  poi: checkable(poiWords, {
-    leet: false,
-    preprocessor: (word) => word.replace(/[^\w\s\|\:\[\],]/g, ''),
-  }),
+  poi: checkable(poiWords, poiCheckOptions),
   tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),
 };
 
@@ -975,10 +985,6 @@ export function includesInappropriate(
   const harmfulCombo = includesHarmfulCombinations(input.prompt);
   if (harmfulCombo) return harmfulCombo;
 
-  // 🔴 This makes the nsfw word list load-bearing for more than nsfw: the POI and minor checks
-  // below run only if it matches (callers that pass no `nsfw` argument — every search gate —
-  // depend entirely on it). So anything that can suppress a term on that list turns off two
-  // other checks for that input, not just its own.
   if (!nsfw && !includesNsfw(input.prompt)) return false;
 
   // Check for harmful combinations first
@@ -1353,7 +1359,7 @@ export function debugAuditPrompt(prompt: string, negativePrompt?: string): Debug
   }
 
   // Determine if this would block
-  const auditResult = auditPromptEnriched(prompt, negativePrompt, false);
+  const auditResult = auditPromptEnriched(prompt, negativePrompt);
 
   return {
     normalizedPrompt,

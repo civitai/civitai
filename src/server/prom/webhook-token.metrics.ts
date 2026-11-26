@@ -6,7 +6,8 @@ import { matchWebhookToken, type TokenMatchSlot } from '~/server/utils/webhook-t
 
 // Which token slot authenticated each request, so a change of value can be watched: the `current`
 // series rises as callers move over, and `previous` falling to 0 is what retiring
-// WEBHOOK_TOKEN_PREVIOUS is gated on. `probe` is PROBE_TOKEN, which only the health routes accept.
+// WEBHOOK_TOKEN_PREVIOUS is gated on. `probe` is PROBE_TOKEN, which only the health and metrics routes
+// accept.
 //
 // Labels: `slot`, `route` (from `reconstructApiRoute`: params collapsed, no query string) and
 // `caller` (the user-agent's client family, from a fixed list; see `callerFamily`). Only a request
@@ -26,7 +27,7 @@ export const webhookTokenMatchCounter: client.Counter<string> =
   globalThis.__civitaiWebhookTokenMatchCounter ??
   (globalThis.__civitaiWebhookTokenMatchCounter = new client.Counter({
     name: 'civitai_webhook_token_match_total',
-    help: 'Requests authenticated by a configured token, by which value matched (slot=current|previous for the webhook token, probe for PROBE_TOKEN on the health routes), normalized route and user-agent client family (caller). UNSAMPLED.',
+    help: 'Requests authenticated by a configured token, by which value matched (slot=current|previous for the webhook token, probe for PROBE_TOKEN on the health and metrics routes), normalized route and user-agent client family (caller). UNSAMPLED.',
     labelNames: ['slot', 'route', 'caller'],
   }));
 
@@ -35,6 +36,7 @@ export const webhookTokenMatchCounter: client.Counter<string> =
 const CALLER_PREFIXES: ReadonlyArray<readonly [prefix: string, family: string]> = [
   ['kube-probe/', 'kube-probe'],
   ['prometheus/', 'prometheus'],
+  ['civitai-warmup', 'civitai-warmup'],
   ['undici', 'node'],
   ['node', 'node'],
   ['axios/', 'node'],
@@ -96,7 +98,7 @@ export function recordWebhookTokenMatch(
       slot,
       route,
       userAgent: req.headers?.['user-agent'],
-    }).catch(() => undefined);
+    });
   } catch {
     /* never throw from telemetry */
   }

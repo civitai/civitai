@@ -2,17 +2,14 @@
 // edits as ready pairs, generating an after image, and suggesting an instruction. Like
 // orchestrator-core, each takes an already-built client, so the shell's routes and the web
 // component share them. Generation and suggestion are charged to the caller's token.
-import {
-  getWorkflow,
-  submitWorkflow,
-  type WorkflowStepTemplate,
-} from '@civitai/orchestration-client';
+import { submitWorkflow, type WorkflowStepTemplate } from '@civitai/orchestration-client';
 import { CIVITAI_TAG } from '$lib/data/trainingRows';
 import {
   describeSubmitError,
   isUsableBlob,
   MAX_GENERATION_ITEMS,
   queryRecentWorkflows,
+  readWorkflow,
   resolveCurrencies,
   TERMINAL_STATUSES,
   WHATIF_CURRENCIES,
@@ -43,6 +40,25 @@ const ORCHESTRATOR_BLOB_PATH = '/v2/consumer/blobs/';
 // The generator tags every workflow with its workflow key; an image edit is this one.
 const EDIT_WORKFLOW_TAG = 'img2img:edit';
 
+// A starting image is an image blob; anything else named there (weights) is never served as one.
+const IMAGE_BLOB = /\/v2\/consumer\/blobs\/[^/?#]+\.(png|jpe?g|webp)(\?|#|$)/i;
+
+/** The starting images of an image-edit workflow: what the edit-pair picker previews from it. */
+export function editSourceAirs(workflow: {
+  tags?: string[] | null;
+  steps?: unknown[] | null;
+}): string[] {
+  if (!workflow.tags?.includes(EDIT_WORKFLOW_TAG)) return [];
+  return ((workflow.steps ?? []) as RawImageGenStep[]).flatMap((step) =>
+    step.$type === 'imageGen' && Array.isArray(step.input?.images)
+      ? step.input.images.filter(
+          (i): i is string =>
+            typeof i === 'string' && i.includes(ORCHESTRATOR_BLOB_PATH) && IMAGE_BLOB.test(i)
+        )
+      : []
+  );
+}
+
 /** The caller's recent single-image edits, one item per result. Edits from several input images
  *  are left out — a pair has one starting image — and so are inputs that aren't the caller's
  *  orchestrator blobs (a site image remixed in), whose bytes the Studio can't read. */
@@ -66,7 +82,7 @@ export async function listEditGenerations(
       const inputs = step.input?.images;
       if (!Array.isArray(inputs) || inputs.length !== 1 || typeof inputs[0] !== 'string') continue;
       const sourceUrl = inputs[0];
-      if (!sourceUrl.includes(ORCHESTRATOR_BLOB_PATH)) continue;
+      if (!IMAGE_BLOB.test(sourceUrl)) continue;
       const prompt = [step.input?.prompt, params?.prompt].find(
         (p): p is string => typeof p === 'string' && p.trim().length > 0
       );
@@ -129,7 +145,7 @@ async function submit(
 }
 
 async function readStep(client: OrchestratorClient, workflowId: string) {
-  const { data, error } = await getWorkflow({ client, path: { workflowId } });
+  const { data, error } = await readWorkflow(client, workflowId);
   if (!data) throw new Error(`poll failed: ${error?.detail ?? 'no data returned'}`);
   const step = data.steps?.[0] as { status?: string; output?: unknown } | undefined;
   return { done: TERMINAL_STATUSES.has(data.status), step };

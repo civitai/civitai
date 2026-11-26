@@ -20,6 +20,7 @@ export type DealAction =
   | 'acceptDelivery'
   | 'requestRevision'
   | 'cancelLate'
+  | 'cancelAndRefund'
   | 'requestCancellation'
   | 'respondCancellation'
   | 'openDispute';
@@ -50,7 +51,13 @@ export type DealTimingFields = {
   settledAt: Date | null;
 };
 
-const PRIMARY: DealAction[] = ['accept', 'acceptDelivery', 'respondCancellation', 'cancelLate'];
+const PRIMARY: DealAction[] = [
+  'accept',
+  'acceptDelivery',
+  'respondCancellation',
+  'cancelAndRefund',
+  'cancelLate',
+];
 
 /**
  * Behind `gated` on the router: the `creatorServices` flag, and `guardedProcedure`, which refuses a
@@ -140,10 +147,12 @@ export function dealActions(
   {
     gatedAllowed = true,
     offeringTakenDown = false,
+    sellerUnavailable = false,
   }: {
     gatedAllowed?: boolean;
     /** A moderator took the offering down: a pending request can be declined, never accepted. */
     offeringTakenDown?: boolean;
+    sellerUnavailable?: boolean;
   } = {}
 ) {
   const role = dealViewerRole(deal, viewerId);
@@ -159,7 +168,8 @@ export function dealActions(
       case 'Accepted':
       case 'InRevision': {
         const lateFrom = dealDeadlines(deal).lateCancelFrom;
-        if (lateFrom && lateFrom <= now) actions.push('cancelLate');
+        if (sellerUnavailable) actions.push('cancelAndRefund');
+        else if (lateFrom && lateFrom <= now) actions.push('cancelLate');
         actions.push('requestCancellation');
         break;
       }

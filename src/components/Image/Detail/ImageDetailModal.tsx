@@ -12,6 +12,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { StorylineModeProvider } from '~/components/Storyline/StorylineModeProvider';
 import { removeEmpty } from '../../../utils/object-helpers';
 import type { ImageGetInfinite } from '~/types/router';
+import type { DetailText } from '~/components/Image/Detail/detail-items';
 
 export default function ImageDetailModal({
   imageId,
@@ -21,8 +22,11 @@ export default function ImageDetailModal({
   hideReactions,
   filters,
   collectionId,
+  texts,
 }: {
   imageId: number;
+  /** The post's storyline text items, from a post page that has them. */
+  texts?: DetailText[];
   filters?: Record<string, unknown>;
   images?: ImageGetInfinite;
   postTail?: PostTailDescriptor;
@@ -81,11 +85,13 @@ export default function ImageDetailModal({
       fullScreen
     >
       <StorylineModeProvider>
-        {(storylineImages, modeKey) => (
+        {(storylineImages, modeKey, storylineTexts) => (
           <ImageDetailProvider
             key={modeKey}
             imageId={imageId}
             filters={queryFilters}
+            texts={storylineTexts?.texts ?? texts}
+            postOrder={storylineTexts?.postOrder}
             images={storylineImages ?? (images ? seededImages : undefined)}
             hideReactionCount={hideReactionCount}
             hideReactions={hideReactions}

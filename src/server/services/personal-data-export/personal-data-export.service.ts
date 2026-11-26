@@ -10,7 +10,6 @@ import {
   personalDataExportRefusedEmail,
 } from '~/server/email/templates/personalDataExport.email';
 import { logToAxiom } from '~/server/logging/client';
-import { accountHoldSql, getAccountLegalHold } from '~/server/services/legal-hold.service';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import {
@@ -125,7 +124,7 @@ function alertFailed(exportId: number, attempts: number, error: string) {
     name: LOG,
     message: `ALERT: personal data export ${exportId} failed after ${attempts} attempt(s)`,
     details: { exportId, attempts, alert: true, error },
-  }).catch(() => undefined);
+  });
 }
 
 /** Builds abandoned mid-run (a crash, an eviction) go back to queued or to failed. */
@@ -153,7 +152,19 @@ export async function claimNextExport(): Promise<ExportRow | null> {
   return row ?? null;
 }
 
-// Export-only, on top of getAccountLegalHold's legs; not part of the delete-path hold.
+/**
+ * A CSAM report that still names the user as subject or secondary user: not yet sent, not yet
+ * archived, or sent within the year.
+ */
+function reportHoldSql(userId: Prisma.Sql) {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "CsamReport" cr
+    WHERE (cr."userId" = ${userId} OR cr.details ->> 'secondaryUserId' = (${userId})::text)
+      AND (cr."reportSentAt" IS NULL OR cr."archivedAt" IS NULL
+        OR cr."reportSentAt" > now() - interval '1 year')
+  )`;
+}
+
 function reviewHoldSql(userId: Prisma.Sql) {
   return Prisma.sql`EXISTS (
     SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
@@ -163,33 +174,30 @@ function reviewHoldSql(userId: Prisma.Sql) {
   )`;
 }
 
-/**
- * Returns the account's legal-hold reasons, if any: `legs` (`['unconfirmed']` when they cannot be
- * read) and `markerView` (for `accountHoldSql`).
- */
-export async function exportHoldReasons(
-  userId: number
-): Promise<{ legs: string[]; markerView: boolean }> {
+/** The account's export hold reasons, if any: `legs` (`['unconfirmed']` when they cannot be read). */
+export async function exportHoldReasons(userId: number): Promise<{ legs: string[] }> {
   try {
-    const hold = await getAccountLegalHold(userId);
-    const [safety] = await dbWrite.$queryRaw<{ present: unknown; review: unknown }[]>(
-      Prisma.sql`SELECT EXISTS (
+    const [safety] = await dbWrite.$queryRaw<
+      { report: unknown; present: unknown; review: unknown }[]
+    >(
+      Prisma.sql`SELECT ${reportHoldSql(Prisma.sql`${userId}::int`)} AS report, EXISTS (
         SELECT 1 FROM "Image" WHERE "Image"."userId" = ${userId}::int AND ${Prisma.raw(
         IMAGE_SAFETY_CONDITION
       )}
       ) AS present, ${reviewHoldSql(Prisma.sql`${userId}::int`)} AS review`
     );
-    const legs: string[] = [...hold.legs];
+    const legs: string[] = [];
+    if (safety?.report !== false) legs.push('report');
     if (safety?.present !== false) legs.push('safety-content');
     if (safety?.review !== false) legs.push('review');
-    return { legs, markerView: hold.markerView };
+    return { legs };
   } catch (e) {
     logToAxiom({
       type: 'error',
       name: LOG,
       message: `hold check failed: ${errorMessage(e)}`,
-    }).catch(() => undefined);
-    return { legs: ['unconfirmed'], markerView: true };
+    });
+    return { legs: ['unconfirmed'] };
   }
 }
 
@@ -374,7 +382,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       name: LOG,
       message: `build failed: ${errorMessage(e)}`,
       details: { exportId: row.id, attempt: row.attempts, next: status },
-    }).catch(() => undefined);
+    });
     return status;
   }
 
@@ -410,7 +418,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       name: LOG,
       message: 'built after the row stopped building; not recorded or emailed',
       details: { exportId: row.id },
-    }).catch(() => undefined);
+    });
     return 'failed' as const;
   }
   if (errors.length)
@@ -419,7 +427,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       name: LOG,
       message: 'built with unavailable sources',
       details: { exportId: row.id, errors },
-    }).catch(() => undefined);
+    });
 
   await emailRequester(row, user, { archiveKey, modNotesKey }, deps.bucket);
   return status;
@@ -479,7 +487,7 @@ async function sendLegalNotice(row: LegalNoticeRow, failuresSoFar: number) {
         alert: failures >= LEGAL_NOTICE_ALERT_AFTER,
         error: errorMessage(e),
       },
-    }).catch(() => undefined);
+    });
     return false;
   }
   // Sent: mark it, so no later tick sends it again. If this write fails, a later tick resends.
@@ -492,7 +500,7 @@ async function sendLegalNotice(row: LegalNoticeRow, failuresSoFar: number) {
       name: LOG,
       message: `Legal notice sent but not marked: ${errorMessage(e)}`,
       details: { exportId: row.id },
-    }).catch(() => undefined)
+    })
   );
   return true;
 }
@@ -568,7 +576,7 @@ async function refuseHeld(
       queuedAt: row.createdAt,
       at: from.status === 'built' ? 'release' : 'build',
     },
-  }).catch(() => undefined);
+  });
 
   await sendLegalNotice(row, 0);
   // The requester is told the same thing whether or not the Legal notice has gone yet.
@@ -585,7 +593,7 @@ async function refuseHeld(
       name: LOG,
       message: `held notice to the requester failed: ${errorMessage(e)}`,
       details: { exportId: row.id },
-    }).catch(() => undefined);
+    });
   }
   return 'held' as const;
 }
@@ -656,7 +664,7 @@ async function emailRequester(
       name: LOG,
       message: `requester email failed: ${errorMessage(e)}`,
       details: { exportId: row.id, error: errorMessage(e) },
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -705,7 +713,7 @@ export async function releaseExport({
   if (now.getTime() - row.builtAt.getTime() > RELEASE_WINDOW_SECONDS * 1000)
     return { ok: false, reason: 'expired' };
 
-  const { legs: holdReasons, markerView } = await exportHoldReasons(row.userId);
+  const { legs: holdReasons } = await exportHoldReasons(row.userId);
   // A hold that could not be READ is not a hold: refuse this press, write nothing, let it be retried.
   if (holdReasons.includes('unconfirmed')) return { ok: false, reason: 'unconfirmed' };
   if (holdReasons.length) {
@@ -756,12 +764,12 @@ export async function releaseExport({
     SET status = 'released', "releasedAt" = ${now}, "releasedById" = ${actorId}, "holdReasons" = '{}',
         error = NULL
     WHERE id = ${row.id} AND status = 'built'
-      AND NOT ${accountHoldSql(Prisma.sql`${row.userId}::int`, markerView)}
       AND NOT EXISTS (
         SELECT 1 FROM "Image" WHERE "Image"."userId" = ${row.userId}::int
           AND ${Prisma.raw(IMAGE_SAFETY_CONDITION)}
       )
       AND NOT ${reviewHoldSql(Prisma.sql`${row.userId}::int`)}
+      AND NOT ${reportHoldSql(Prisma.sql`${row.userId}::int`)}
   `;
   if (claimed !== 1) return { ok: false, reason: 'not-releasable' };
 
@@ -787,7 +795,7 @@ export async function releaseExport({
       name: LOG,
       message: `release email failed: ${errorMessage(e)}`,
       details: { exportId: row.id, error: errorMessage(e) },
-    }).catch(() => undefined);
+    });
     throw e;
   }
   // Sent. A failure from here on must not put the row back, or a second press would send again.
@@ -798,7 +806,7 @@ export async function releaseExport({
       type: 'error',
       name: LOG,
       message: `release recorded without expiry: ${errorMessage(e)}`,
-    }).catch(() => undefined)
+    })
   );
   return { ok: true, userId: row.userId, expiresAt: link.expiresAt };
 }
@@ -834,7 +842,7 @@ export async function runPersonalDataExports({
       type: 'error',
       name: LOG,
       message: `Legal notice retry failed: ${errorMessage(e)}`,
-    }).catch(() => undefined)
+    })
   );
   let deps: Awaited<ReturnType<typeof resolveExportDeps>>;
   try {
@@ -846,7 +854,7 @@ export async function runPersonalDataExports({
       type: 'error',
       name: LOG,
       message: `deps failed, ${queued} export(s) waiting: ${safeErrorLabel(e)}`,
-    }).catch(() => undefined);
+    });
     return { built: 0, skipped: 'deps-failed' as const };
   }
   if ('missing' in deps) {
@@ -858,7 +866,7 @@ export async function runPersonalDataExports({
         type: 'error',
         name: LOG,
         message: `not configured, ${queued[0].n} export(s) waiting: ${deps.missing.join(', ')}`,
-      }).catch(() => undefined);
+      });
     return { built: 0, skipped: 'unconfigured' as const };
   }
   let built = 0;
@@ -875,7 +883,7 @@ export async function runPersonalDataExports({
         name: LOG,
         message: errorMessage(e),
         details: { exportId: row.id },
-      }).catch(() => undefined);
+      });
     }
     built++;
   }

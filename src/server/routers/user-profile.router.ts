@@ -1,18 +1,14 @@
-import {
-  guardedProcedure,
-  isFlagProtected,
-  protectedProcedure,
-  publicProcedure,
-  router,
-} from '~/server/trpc';
+import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/server/trpc';
 import {
   addEntityToShowcaseHandler,
+  addToShowcaseSectionHandler,
   getUserContentOverviewHandler,
   getUserProfileHandler,
   setShowcaseSectionsHandler,
   updateUserProfileHandler,
 } from '~/server/controllers/user-profile.controller';
 import {
+  addToShowcaseSectionSchema,
   getUserProfileSchema,
   setShowcaseSectionsSchema,
   showcaseItemSchema,
@@ -33,13 +29,18 @@ export const userProfileRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(userProfileUpdateSchema)
     .mutation(updateUserProfileHandler),
-  addEntityToShowcase: protectedProcedure
+  addEntityToShowcase: guardedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(showcaseItemSchema)
     .mutation(addEntityToShowcaseHandler),
-  setShowcaseSections: protectedProcedure
+  setShowcaseSections: guardedProcedure
     .use(isFlagProtected('profileShowcases'))
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setShowcaseSectionsSchema)
     .mutation(setShowcaseSectionsHandler),
+  addToShowcaseSection: guardedProcedure
+    .use(isFlagProtected('profileShowcases'))
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(addToShowcaseSectionSchema)
+    .mutation(addToShowcaseSectionHandler),
 });

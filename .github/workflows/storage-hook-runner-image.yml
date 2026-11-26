@@ -1,0 +1,171 @@
+name: Storage hook runner image
+
+# Builds apps/storage-hook-runner/Dockerfile the way the release build does (repo root as the
+# context), without pushing it, then runs it the way the deployment does and checks it serves.
+# The release image is built in-cluster from a `storage-hook-runner-vX.Y.Z` tag
+# (scripts/release-app.mjs, `pnpm release:storage-hook-runner`), so without this job the first
+# build of a broken Dockerfile is the release.
+#
+# The app's behaviour is covered by its own vitest suites (apps.yml). This job covers only what
+# the suites cannot see: the image. It runs the container with a read-only root filesystem, as
+# uid/gid 1001, with every capability dropped, a 2-CPU quota and no network, and requires /readyz to answer
+# 200 (a ready worker AND the served route's built-in self-test passing, so the QuickJS WASM loads
+# from the shipped node_modules), /healthz 200, the metrics port to serve the runner's metrics,
+# and the pool to size itself from the CPU quota (2 workers). It boots once per RUNNER_MODE.
+#
+# The paths are what the image packaging reads: the Dockerfile and the app (its own tsconfig,
+# no root one), the manifests and lockfile the filtered install resolves, the patches the root
+# package.json declares, the workspace packages the Dockerfile copies, and .dockerignore.
+#
+# ── NOT ON PULL REQUESTS OR PUSHES: THE 2-HOUR MAIN BATCH ────────────────────────────────
+#
+# Across 36 recent runs of the two image builds on PRs and `main` neither caught anything, so they
+# run only on a dispatch: the 2-hour main batch (lint.yml's `batch-suites` job dispatches this
+# workflow with `batch: true` when a path below changed since the last green batch; a red run turns
+# the `Batch suites (main batch)` commit status red, which opens a CI-watch item naming the commit
+# range, and nothing bisects it automatically), a hand dispatch
+# (`gh workflow run storage-hook-runner-image.yml -R civitai/civitai --ref <branch>`), or the `full-ci`
+# label's dispatcher on a draft PR.
+#
+# The pull_request trigger stays, with a job that skips on it, ONLY so the paths list keeps one
+# copy here: the batch and the `full-ci` dispatcher read `on.pull_request.paths`. A skipped job
+# starts no runner.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/storage-hook-runner/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'patches/**'
+      - '.dockerignore'
+      - '.github/workflows/storage-hook-runner-image.yml'
+  workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.
+      batch:
+        description: Set by the main batch. Leave unset.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A PR push cancels its PR's in-flight run; on `main` the group queues instead, for the reason in
+# lint.yml's `concurrency` comment.
+concurrency:
+  group: storage-hook-runner-image-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  image:
+    name: Storage hook runner image build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # Not pushed anywhere. BuildKit (the default builder) is needed for the cache mounts.
+      - name: Build
+        run: docker build -f apps/storage-hook-runner/Dockerfile -t storage-hook-runner:ci .
+
+      # What the deployment relies on: the image's user is uid 1001 (the pod pins runAsUser 1001,
+      # because the Dockerfile's USER is the NAME `nodeapp`, which runAsNonRoot cannot verify),
+      # the request (8080) and metrics (9091) ports, and the command.
+      - name: Image user, ports and command
+        run: |
+          set -euo pipefail
+          config=$(docker image inspect storage-hook-runner:ci --format '{{json .Config}}')
+          echo "$config" | jq '{User, ExposedPorts, Cmd, WorkingDir}'
+          docker image ls storage-hook-runner:ci --format 'size: {{.Size}}'
+          [ "$(echo "$config" | jq -r .User)" = "nodeapp" ]
+          # uid AND gid 1001 (the Dockerfile's `adduser -G nodejs`), and the shipped files owned by
+          # them (COPY --chown nodeapp:nodejs).
+          docker run --rm --entrypoint id storage-hook-runner:ci
+          [ "$(docker run --rm --entrypoint id storage-hook-runner:ci -u)" = "1001" ]
+          [ "$(docker run --rm --entrypoint id storage-hook-runner:ci -g)" = "1001" ]
+          [ "$(docker run --rm --entrypoint stat storage-hook-runner:ci -c '%u:%g' /app/dist/server.js)" = "1001:1001" ]
+          [ "$(docker run --rm --entrypoint stat storage-hook-runner:ci -c '%u:%g' /app/node_modules)" = "1001:1001" ]
+          [ "$(echo "$config" | jq -c '.ExposedPorts | keys')" = '["8080/tcp","9091/tcp"]' ]
+          [ "$(echo "$config" | jq -c .Cmd)" = '["node","dist/server.js"]' ]
+          [ "$(echo "$config" | jq -r .WorkingDir)" = "/app" ]
+
+      # With no secret the runner must refuse to start, naming the variable: proves the CMD runs
+      # the bundle and that a missing secret is a crash, not a runner that answers unsigned.
+      - name: Refuses to start without a secret
+        run: |
+          # The step shell runs with -e; a failing command substitution must not end it here.
+          set -uo pipefail
+          rc=0
+          out=$(timeout 60 docker run --rm storage-hook-runner:ci 2>&1) || rc=$?
+          echo "$out" | tail -20
+          echo "exit: $rc"
+          [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || exit 1
+          grep -q 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars' <<<"$out"
+
+      # A process serves one signed route, chosen by RUNNER_MODE; with none it must refuse to start.
+      - name: Refuses to start without a RUNNER_MODE
+        run: |
+          set -uo pipefail
+          rc=0
+          out=$(timeout 60 docker run --rm -e STORAGE_HOOK_RUNNER_SECRET="$(openssl rand -hex 32)" \
+            storage-hook-runner:ci 2>&1) || rc=$?
+          echo "$out" | tail -20
+          echo "exit: $rc"
+          [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || exit 1
+          grep -q 'RUNNER_MODE must be check or remix' <<<"$out"
+
+      # Run as the pod does: read-only root filesystem, uid/gid 1001, no capabilities, no
+      # privilege escalation, a 2-CPU quota, and NO network (--network none: the pod's policy
+      # denies all egress, and the runner must need none). The probes run inside the container
+      # over loopback with busybox wget. /readyz is 200 only once a worker is ready and the served
+      # route's self-test answers correctly. Once per RUNNER_MODE: an unsigned call to the served
+      # route is refused 401, and the other route is not served (404).
+      - name: Serves under the deployment's security context, with no network
+        run: |
+          set -euo pipefail
+          for mode in check remix; do
+            echo "::group::RUNNER_MODE=$mode"
+            if [ "$mode" = check ]; then served=/v1/check other=/v1/remix/replay
+            else served=/v1/remix/replay other=/v1/check; fi
+            secret=$(openssl rand -hex 32)
+            docker run -d --name shr --read-only --user 1001:1001 --cap-drop ALL \
+              --security-opt no-new-privileges --cpus 2 --network none \
+              -e STORAGE_HOOK_RUNNER_SECRET="$secret" -e RUNNER_MODE="$mode" storage-hook-runner:ci
+            get() { docker exec shr wget -q -T 5 -O- "$@"; }
+            ready=0
+            for _ in $(seq 1 60); do
+              if get http://127.0.0.1:8080/readyz >/dev/null 2>&1; then ready=1; break; fi
+              sleep 1
+            done
+            docker logs shr 2>&1 | tail -20
+            docker inspect shr --format 'network={{.HostConfig.NetworkMode}} readonly={{.HostConfig.ReadonlyRootfs}} user={{.Config.User}} capdrop={{.HostConfig.CapDrop}}'
+            [ "$ready" = 1 ] || { echo "/readyz never answered 200 in mode $mode"; exit 1; }
+            get http://127.0.0.1:8080/readyz
+            echo
+            get http://127.0.0.1:8080/healthz >/dev/null
+            # Captured, never piped into `grep -q`: grep exits at the first match, the writer then
+            # dies of SIGPIPE, and with pipefail the step fails with 141 depending on timing.
+            metrics=$(get http://127.0.0.1:9091/metrics)
+            grep -q '^storage_hook_runner_pool_workers' <<<"$metrics"
+            # The pool sized itself from the cgroup CPU quota (--cpus 2), not the runner's cores.
+            logs=$(docker logs shr 2>&1)
+            grep -q "(metrics 9091), 2 workers, mode $mode" <<<"$logs"
+            # Unsigned posts (busybox wget exits non-zero on an error status and names it).
+            post() {
+              docker exec shr wget -q -T 5 -O- --header 'content-type: application/json' \
+                --post-data '{}' "http://127.0.0.1:8080$1" 2>&1 || true
+            }
+            out=$(post "$served")
+            echo "unsigned $served: $out"
+            grep -q ' 401 ' <<<"$out"
+            out=$(post "$other")
+            echo "unsigned $other: $out"
+            grep -q ' 404 ' <<<"$out"
+            docker rm -f shr >/dev/null
+            echo "::endgroup::"
+          done

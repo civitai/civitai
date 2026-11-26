@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
+  import { page } from '$app/state';
   import { SYNC_PARAM } from '@civitai/auth/client';
   import { buildWordmarkSvg, buildBadgeSvg, getHoliday } from '@civitai/brand';
   import {
@@ -11,6 +12,7 @@
     IconMail,
   } from '@tabler/icons-svelte';
   import type { PageData, ActionData } from './$types';
+  import { providerStartHref } from './provider-href';
   import {
     decideAfterGrace,
     probeTurnstile,
@@ -18,6 +20,20 @@
   } from './turnstile-availability';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  const retryIn = (seconds: unknown) =>
+    typeof seconds !== 'number' || seconds <= 60
+      ? 'in a minute'
+      : `in ${Math.ceil(seconds / 60)} minutes`;
+
+  // The method this browser last signed in with goes first, marked "Last used".
+  const providers = $derived(
+    data.lastMethod
+      ? [...data.providers].sort(
+          (a, b) => Number(b.id === data.lastMethod) - Number(a.id === data.lastMethod)
+        )
+      : data.providers
+  );
 
   // Tracks the in-flight magic-link request so the button can show a pending state.
   let submitting = $state(false);
@@ -248,7 +264,7 @@
     const params = new URLSearchParams({ returnUrl: data.returnUrl });
     if (data.sync) params.set(SYNC_PARAM, data.sync);
     if (data.prompt) params.set('prompt', data.prompt);
-    return `/login/${providerId}?${params.toString()}`;
+    return providerStartHref(page.url.origin, providerId, params);
   };
 
   // Cloudflare Turnstile auto-renders any `.cf-turnstile` element once its script loads and injects
@@ -346,11 +362,12 @@
 
       {#if data.providers.length > 0}
         <div class="socials">
-          {#each data.providers as provider (provider.id)}
+          {#each providers as provider (provider.id)}
             {@const meta = providerMeta[provider.id]}
             <a class="social {meta?.cls ?? ''}" href={href(provider.id)}>
               {#if meta}{@const Icon = meta.Icon}<Icon size={20} stroke={2} />{/if}
               <span>{provider.name}</span>
+              {#if provider.id === data.lastMethod}<span class="last-used">Last used</span>{/if}
             </a>
           {/each}
         </div>
@@ -359,6 +376,11 @@
       {#if data.emailEnabled}
         {#if data.providers.length > 0}
           <div class="divider"><span>Or continue with Email</span></div>
+        {/if}
+        {#if data.lastMethod === 'email' && !form?.sent}
+          <p class="last-used-email">
+            <span class="last-used">Last used</span> You last signed in with email.
+          </p>
         {/if}
 
         {#if form?.sent}
@@ -465,7 +487,7 @@
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
             {#if form?.rateLimited}
-              <p class="error">Too many attempts. Please wait a few minutes and try again.</p>
+              <p class="error">Too many attempts. Try again {retryIn(form.retryAfter)}.</p>
             {/if}
             <!-- "try again" only where a retry can work — a rejected (expired/reused) token, not a
                  check that cannot run. Dropping the second term re-invites a doomed retry. -->
@@ -587,6 +609,27 @@
   }
   .social.email:hover {
     background: color-mix(in srgb, #666, white 10%);
+  }
+  .last-used {
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .last-used-email {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.6rem;
+    color: #9aa0a6;
+    font-size: 0.85rem;
+  }
+  .last-used-email .last-used {
+    background: #2a2d34;
   }
   .social:disabled {
     opacity: 0.6;

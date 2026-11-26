@@ -63,6 +63,7 @@ const READERS: Array<[string, (viewer: Viewer) => Promise<unknown>]> = [
         type: 'Bounty',
         userId: userFor(viewer)?.id,
         isModerator: viewer === 'moderator',
+        seesReportListed: false,
       }),
   ],
 ];
@@ -77,9 +78,11 @@ describe.each(READERS)('%s applies the blockedFor rule', (_name, read) => {
     expect(text).toContain('(i."blockedFor" IS NULL)');
   });
 
-  it("hides other users' blocked images from a signed-in viewer, but not their own", async () => {
+  it('hides blocked images from a signed-in viewer, leaving their own only where the owner rule allows', async () => {
     const { text, values } = await captureQuery(() => read('other'));
-    expect(text).toContain('(i."blockedFor" IS NULL OR i."userId" = ?)');
+    expect(text).toMatch(
+      /\(i\."blockedFor" IS NULL OR \(i\."userId" = \? AND \(CASE\s+WHEN "i"\."blockedFor" IS NOT NULL/
+    );
     expect(values).toContain(VIEWER_ID);
   });
 

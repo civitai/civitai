@@ -15,8 +15,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app';
 import { AppAssistantTools } from '../app-assistant/provider';
 import { RunCredentials } from '../credentials';
+import { createPool } from '../core/pg-pool';
 import { RunGrants } from '../grants';
-import type { ModelProvider, ToolContext } from '../core/interfaces';
+import type { ModelProvider, ToolContext, TurnEnded } from '../core/interfaces';
 import { TokenMinter } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
@@ -273,6 +274,9 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return scripted;
     },
   };
+  /** Every finished pass `turnEnded` was told of, in order; it throws while `turnReportThrows.on`. */
+  const turnReports: TurnEnded[] = [];
+  const turnReportThrows = { on: false };
   const deps: RunnerDeps = {
     models,
     // A rebuild (`reopenTools`, with the reply's progress) waits on `rebuildGate.hold` while one is set.
@@ -312,11 +316,17 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     stopGraceMs: 20_000,
     // A start naming it follows the page's default: its chat is not saved as having picked it.
     defaultModel: 'echo',
+    turnEnded: (turn) => {
+      turnReports.push(turn);
+      if (turnReportThrows.on) throw new Error('the turn report broke');
+    },
   };
 
   beforeAll(async () => {
     db = await freshDatabase('runner');
-    grantsPool = new pg.Pool({ connectionString: db.url, max: 4 });
+    // Guarded: pool.end() resolves before its sockets close, so the forced drop below can still
+    // reach a closing idle client with FATAL 57P01; unguarded, that is an uncaught exception.
+    grantsPool = createPool({ connectionString: db.url, max: 4 }, 'runner-grants-test');
     grants = new RunGrants(grantsPool);
     await grants.init();
     deps.grants = grants;
@@ -457,6 +467,128 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(head!.turns[0]!.assistant!.messages).toEqual(ended(entries).messages);
   });
 
+  it('tells turnEnded of each finished turn once, with its run, model, end and messages', async () => {
+    const user = 'u-turn-report';
+    const before = Date.now();
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-turn-report', model: 'tools' })
+    );
+    expect(start.status).toBe(201);
+    const runId = start.body!.runId as string;
+    const entries = await events(runId, user);
+    expect(ended(entries).status).toBe('done');
+
+    const reported = turnReports.filter((turn) => turn.runId === runId);
+    expect(reported).toHaveLength(1);
+    const [turn] = reported;
+    expect(turn).toMatchObject({
+      userId: user,
+      conversationId: 'c-turn-report',
+      seq: 1,
+      model: 'tools',
+      status: 'done',
+      earlier: [],
+    });
+    expect(turn!.messages).toEqual(ended(entries).messages);
+    expect(
+      turn!.messages.flatMap((message) =>
+        message.role === 'assistant' && Array.isArray(message.content)
+          ? message.content.flatMap((part) => (part.type === 'tool-call' ? [part.toolName] : []))
+          : []
+      )
+    ).toEqual(['record']);
+    expect(turn!.startedAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(turn!.endedAt.getTime()).toBeGreaterThanOrEqual(turn!.startedAt.getTime());
+  });
+
+  it('a turnEnded that throws changes nothing about how the reply ends or what the head keeps', async () => {
+    const user = 'u-turn-report-throws';
+    turnReportThrows.on = true;
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-turn-report-throws', model: 'tools' })
+      );
+      expect(start.status).toBe(201);
+      const runId = start.body!.runId as string;
+      const entries = await events(runId, user);
+      expect(ended(entries).status).toBe('done');
+      expect(turnReports.filter((turn) => turn.runId === runId)).toHaveLength(1);
+      const head = await store.load(user, 'c-turn-report-throws');
+      expect(head!.turns[0]!.assistant).toMatchObject({ status: 'done' });
+      // The workflow itself ends SUCCESS with its output (what a later retry carries on from), not
+      // ERROR: the throw never reaches the reply's own workflow.
+      const result = await DBOS.retrieveWorkflow<{ status: string }>(runId).getResult();
+      expect(result).toMatchObject({ status: 'done' });
+      expect(await DBOS.getWorkflowStatus(runId)).toMatchObject({ status: 'SUCCESS' });
+    } finally {
+      turnReportThrows.on = false;
+    }
+  });
+
+  it('a pass that never asked the model (stopped by key before it started) is not reported as a turn', async () => {
+    const user = 'u-turn-report-unstarted';
+    const key = randomUUID();
+    await post('/runs/stop', as(user), {
+      v: 1,
+      idempotencyKey: key,
+      conversationId: 'c-tr-unstarted',
+    });
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-tr-unstarted', model: 'tools', key })
+    );
+    const runId = start.body!.runId as string;
+    expect(ended(await events(runId, user)).status).toBe('stopped');
+    await DBOS.retrieveWorkflow(runId).getResult();
+    expect(turnReports.filter((turn) => turn.runId === runId)).toEqual([]);
+  });
+
+  it('a malformed earlier turn never fails the run through its report: the workflow still ends SUCCESS', async () => {
+    const user = 'u-turn-report-malformed';
+    const conversationId = 'c-tr-malformed';
+    // A saved first turn with no `user`: the chat package's reader (`turnFrom`) throws on it.
+    await store.update(
+      user,
+      conversationId,
+      () =>
+        ({
+          v: 2,
+          app: 'chat-cvt',
+          conversationId,
+          title: 'broken',
+          titleSource: 'first-message',
+          createdAt: '2026-11-20T00:00:00.000Z',
+          updatedAt: '2026-11-20T00:00:00.000Z',
+          turns: [
+            {
+              seq: 1,
+              createdAt: '2026-11-20T00:00:00.000Z',
+              assistant: { messages: [], status: 'done' },
+            },
+          ],
+        } as never)
+    );
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId, model: 'tools', seq: 2 })
+    );
+    expect(start.status).toBe(201);
+    const runId = start.body!.runId as string;
+    await events(runId, user);
+    // The reply's own outcome is the model's business; what matters is that the report did not
+    // turn it into a workflow failure after its end was journaled. The report could not be built
+    // (reading the earlier turns throws), so none was sent for this run.
+    await DBOS.retrieveWorkflow(runId).getResult();
+    expect(await DBOS.getWorkflowStatus(runId)).toMatchObject({ status: 'SUCCESS' });
+    expect(turnReports.filter((turn) => turn.runId === runId)).toEqual([]);
+  });
+
   it('resumes the event stream after Last-Event-ID', async () => {
     const user = 'u-resume';
     const start = await post(
@@ -564,7 +696,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
   it('runs a tool call only once the head save recording its start has landed', async () => {
     const user = 'u-gated';
     const recordsBefore = calls.record;
-    let release: () => void = () => {};
+    let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => (release = resolve));
     const real = deps.store;
     deps.store = {

@@ -1,7 +1,6 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { isModerator } from '~/server/routers/base.router';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { generateReferralCode } from '~/server/utils/referral-code';
 
 export const getUserReferralCodes = async ({
@@ -28,6 +27,8 @@ export const getUserReferralCodes = async ({
   });
 };
 
+const REFERRAL_CODE_NOT_FOUND = 'Referral code not found';
+
 export const upsertUserReferralCode = async ({
   id,
   note,
@@ -42,14 +43,21 @@ export const upsertUserReferralCode = async ({
   isModerator?: boolean;
 }) => {
   if (id) {
-    return await dbWrite.userReferralCode.update({
-      where: { id },
-      data: {
-        userId,
-        note,
-        code: isModerator && code ? code : undefined,
-      },
-    });
+    const where = { id, ...(isModerator ? {} : { userId }) };
+    // Never writes userId: an update must not move a code to another account, a moderator's included.
+    const data = { note, code: isModerator && code ? code : undefined };
+    // Prisma answers count 0, without querying, when no field is set; look the row up instead.
+    if (data.note === undefined && data.code === undefined) {
+      // primary: same view of the row as the scoped write below
+      const row = await dbWrite.userReferralCode.findFirst({ where });
+      if (!row) throw throwNotFoundError(REFERRAL_CODE_NOT_FOUND);
+      return row;
+    }
+    const { count } = await dbWrite.userReferralCode.updateMany({ where, data });
+    // Same answer for a missing id and someone else's, so the error does not reveal which ids exist.
+    if (!count) throw throwNotFoundError(REFERRAL_CODE_NOT_FOUND);
+    // primary: read-your-write of the row just updated
+    return await dbWrite.userReferralCode.findUniqueOrThrow({ where: { id } });
   } else {
     const findArgs = { where: { id: userId } } as const;
     const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() => {
@@ -98,17 +106,11 @@ export const deleteUserReferralCode = async ({
   userId: number;
   isModerator?: boolean;
 }) => {
-  const referralCodeFindArgs = { where: { id } } as const;
-  const userReferralCode = await dbRead.userReferralCode
-    .findUniqueOrThrow(referralCodeFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'userReferralCode', caller: 'deleteUserReferralCode' });
-      return dbWrite.userReferralCode.findUniqueOrThrow(referralCodeFindArgs);
-    });
-
-  if (userReferralCode.userId !== userId && !isModerator) {
-    throw throwBadRequestError('You do not have permission to delete this referral code');
-  }
-
-  return await dbWrite.userReferralCode.update({ where: { id }, data: { deletedAt: new Date() } });
+  const { count } = await dbWrite.userReferralCode.updateMany({
+    where: { id, deletedAt: null, ...(isModerator ? {} : { userId }) },
+    data: { deletedAt: new Date() },
+  });
+  if (!count) throw throwNotFoundError(REFERRAL_CODE_NOT_FOUND);
+  // primary: read-your-write of the row just updated
+  return await dbWrite.userReferralCode.findUniqueOrThrow({ where: { id } });
 };

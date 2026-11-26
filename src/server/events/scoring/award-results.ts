@@ -39,6 +39,9 @@ export const flagRaceConfigSchema = z.object({
       on: z.boolean(),
       // The Collection the home block shows. Only the swap writes to it.
       homeCollectionId: z.number().int().positive(),
+      // Every day's flags, kept: each swap adds the flags not in it yet and removes none. Only the swap
+      // writes to it.
+      allTimeCollectionId: z.number().int().positive().optional(),
       size: z.number().int().min(1).max(10).default(10),
       // The pot per distinct participant: the step whose `from` is latest at or before the flag's cut
       // applies, read once at its freeze, so a new step never reprices a frozen flag.
@@ -78,11 +81,20 @@ export async function readFlagRaceConfig(event: string): Promise<FlagRaceConfig>
   }
   const parsed = flagRaceConfigSchema.safeParse(json);
   if (parsed.success) return parsed.data;
-  logToAxiom({ type: 'error', name: 'flag-race-config-invalid', event, raw }).catch(() => null);
+  logToAxiom({ type: 'error', name: 'flag-race-config-invalid', event, raw });
   return OFF;
 }
 
-type FreezeEvent = {
+/**
+ * The flagRace key's whole JSON, for a reader with its own schema over one field. Throws when the value
+ * is not JSON, so that reader can retry rather than read the field as absent.
+ */
+export async function readFlagRaceJson(event: string): Promise<unknown> {
+  const raw = await sysRedis.get(flagRaceConfigKey(event));
+  return raw ? JSON.parse(raw) : undefined;
+}
+
+export type FreezeEvent = {
   name: string;
   startDate: Date;
   endDate: Date;
@@ -164,26 +176,4 @@ export async function loadAwardResults(
     WHERE event = ${event.name} AND "voidedAt" IS NULL AND team IS NOT NULL AND points > 0
   `;
   return rows.map((r) => ({ team: r.team, points: r.points, at: r.at, reason: r.sourceId }));
-}
-
-/**
- * The settle's freeze step. A failure is logged and skipped: nothing is lost, the next settle freezes
- * it, and the award still counts from its own date.
- */
-export async function freezeEventAwards(event: FreezeEvent, now = new Date()) {
-  try {
-    const config = await readFlagRaceConfig(event.name);
-    const places = await freezeCruciblePlacements(event, config);
-    if (!config.flags) return places;
-    const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
-    return places + (await freezeFlagDays(event, config.flags, now));
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'event-award-freeze-failed',
-      event: event.name,
-      error,
-    }).catch(() => null);
-    return 0;
-  }
 }

@@ -1,7 +1,7 @@
 /**
- * The HTTP binding of the source protocol (spec/registry.md @ 2709083, "Bindings" → "HTTP"):
- * `GET /subscribe?schema=&cursor=&urn=&filter=` streaming `text/event-stream`, plus `/healthz`
- * for a process supervisor. Everything between request and events is the shared core
+ * The HTTP binding of the registry protocol (the registry spec, "Bindings" → "HTTP"):
+ * `GET /subscribe?schema=&cursor=&urn=&filter=&meta=` streaming `text/event-stream`, plus
+ * `/healthz` for a process supervisor. Everything between request and events is the shared core
  * (`subscription.ts`); this file only maps the request in and the events and errors out.
  *
  *   - Each event is an SSE event of its type; one with a cursor field also carries it as the SSE
@@ -15,6 +15,7 @@
  *     traffic.
  *   - A consumer that keeps the socket's buffer full for {@link SLOW_CONSUMER_MS} is ended with
  *     `slow_consumer`.
+ *   - A subscription over a cap on open subscriptions (`limits.ts`) is 503 `unavailable`.
  *   - Auth (`auth.ts`): the token is the `Authorization: Bearer` header; without one the request
  *     is anonymous. `invalid_token` before the stream is 401 with its JSON body and a
  *     `WWW-Authenticate: Bearer error=…` header; after, an `error` event, at the token's expiry or
@@ -36,8 +37,18 @@ import {
   watchPrincipal,
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
+import { decidePrincipal } from '~/server/registry-adapter/policy-enforce';
+import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
+import {
+  clientAddress,
+  regionRestricted,
+  subscriptionRegionLine,
+} from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
   SLOW_CONSUMER_MS,
@@ -112,7 +123,12 @@ function sendError(
  */
 function openStream(
   res: ServerResponse,
-  slowConsumerMs: number
+  slowConsumerMs: number,
+  /**
+   * The subscription carries a token. Its stream belongs to that one consumer (auth extension,
+   * relay rule 2), so no cache on the way may store or share it.
+   */
+  authorized: boolean
 ): { sink: EventSink; stop: () => void } {
   const abort = new AbortController();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -137,7 +153,8 @@ function openStream(
       if (!started) {
         res.writeHead(200, {
           'content-type': 'text/event-stream',
-          'cache-control': 'no-cache',
+          'cache-control': authorized ? 'private, no-store' : 'no-cache',
+          ...(authorized ? { vary: 'Authorization' } : {}),
           ...CORS,
         });
         started = true;
@@ -185,6 +202,31 @@ export type ServeOptions = {
   resource?: ResourceConfig;
   /** How often an open stream's token is re-verified (`auth.ts`). */
   tokenRecheckMs?: number;
+  /**
+   * The caps on open subscriptions (`limits.ts`), shared with the gRPC binding. Without it, none.
+   */
+  limiter?: SubscriptionLimiter;
+  /**
+   * Whether a request is held to SFW content (a region the site restricts or blocks, or no
+   * region at all): the site's own rule (`request-origin.ts`) unless replaced.
+   */
+  regionRestricted?: (origin: RequestOrigin) => boolean;
+  /**
+   * Called with one line per subscription once its token is accepted: its region decision
+   * (`regionLine`).
+   */
+  onRegion?: (line: string) => void;
+  /**
+   * Compares each subscription's decision with the content-policy service's, without waiting for
+   * it and without changing it (`policy-shadow.ts`). Without it, nothing is compared.
+   */
+  policyShadow?: PolicyShadow;
+  /**
+   * Decides each signed-in subscription's audience from the content-policy service, falling back
+   * to this source's own on any failure (`policy-enforce.ts`). Set, it replaces `policyShadow`
+   * (it runs the same comparison). Without it, nothing is enforced.
+   */
+  policyEnforce?: PolicyEnforcer;
 };
 
 export function handleRequest(
@@ -204,15 +246,43 @@ export function handleRequest(
     }
     let stream: ReturnType<typeof openStream> | undefined;
     let unwatch: (() => void) | undefined;
+    let slot: SubscriptionSlot | undefined;
     try {
       const request = subscribeRequest({
         schema: url.searchParams.get('schema'),
         cursor: resumeCursor(req, url.searchParams),
         urns: url.searchParams.getAll('urn'),
         filter: url.searchParams.get('filter'),
+        meta: url.searchParams.get('meta'),
       });
-      const principal = await authenticate(lastHeader(req.headers.authorization), opts.verifyToken);
-      const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
+      const origin: RequestOrigin = {
+        headers: req.headers,
+        meta: request.meta,
+        // Optional: a request handed to `handleRequest` directly need not carry a socket.
+        remoteAddress: req.socket?.remoteAddress,
+      };
+      // The total and per-address caps before the token is verified; per token once it is.
+      slot = opts.limiter?.acquire(clientAddress(origin));
+      const restricted = opts.regionRestricted ?? regionRestricted;
+      const authenticated = await authenticate(
+        lastHeader(req.headers.authorization),
+        opts.verifyToken,
+        {
+          regionRestricted: () => restricted(origin),
+        }
+      );
+      slot?.claim(authenticated.subject);
+      const principal = await decidePrincipal(opts, {
+        origin,
+        principal: authenticated,
+        held: restricted(origin),
+      });
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted, principal));
+      const open = openStream(
+        res,
+        opts.slowConsumerMs ?? SLOW_CONSUMER_MS,
+        principal.subject !== null
+      );
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).
       unwatch = watchPrincipal(
@@ -229,11 +299,37 @@ export function handleRequest(
       sendError(res, err, opts.onError, metadataUrl);
     } finally {
       unwatch?.();
+      slot?.release();
     }
   };
 }
 
-export function createRegistryServer(adapter: Adapter, opts: ServeOptions = {}): Server {
+/**
+ * How long an idle keep-alive connection is held open, in ms. Above the 90 s a reverse proxy in
+ * front holds its idle upstream connections: were it shorter (Node's default is 5 s), the proxy
+ * could reuse a socket this server had just closed and answer 502.
+ */
+export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 100_000;
+
+/**
+ * `KEEP_ALIVE_TIMEOUT` in ms (same env var as `scripts/trpc-server/server.cjs`). An unset, zero,
+ * negative or non-numeric value is the default above, never Node's 5 s.
+ */
+export function keepAliveTimeoutFromEnv(env: Record<string, string | undefined>): number {
+  const ms = parseInt(env.KEEP_ALIVE_TIMEOUT ?? '', 10);
+  if (Number.isNaN(ms) || !Number.isFinite(ms) || ms <= 0) return DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  return ms;
+}
+
+export function createRegistryServer(
+  adapter: Adapter,
+  opts: ServeOptions & { keepAliveTimeoutMs?: number } = {}
+): Server {
   const handle = handleRequest(adapter, opts);
-  return createServer((req, res) => void handle(req, res));
+  const server = createServer((req, res) => void handle(req, res));
+  server.keepAliveTimeout = opts.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  // Strictly above keepAliveTimeout, so a request arriving on a connection about to idle out
+  // is not cut off by the headers timeout first.
+  server.headersTimeout = server.keepAliveTimeout + 1000;
+  return server;
 }

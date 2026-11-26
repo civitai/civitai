@@ -10,6 +10,7 @@ import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-user
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate } from './job';
+import { getPausedNotificationTypes } from './paused-notification-types';
 import type {
   NotificationSingleRow,
   NotificationPendingRow,
@@ -33,11 +34,13 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
     // behaved before; one that silently never fires is worse. Read once per run, not per
     // processor, and passed in because the processor files cannot import it.
     const excludedUserIds = await getMetricExcludedUserIds();
+    const pausedTypes = await getPausedNotificationTypes();
 
     // Run batches
     for (const batch of notificationBatches) {
       e.checkIfCanceled();
       const promises = batch.map(({ prepareQuery, key, category }) => async () => {
+        if (pausedTypes.has(key)) return;
         try {
           e.checkIfCanceled();
           log('sending', key, 'notifications');
@@ -88,7 +91,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                     message: `Missing key for: ${key}`,
                   },
                   'notifications'
-                ).catch();
+                );
                 continue;
               }
               if (!pendingData.hasOwnProperty(r.key)) {
@@ -129,7 +132,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
               cause: error.cause,
             },
             'notifications'
-          ).catch();
+          );
         }
       });
 
@@ -150,6 +153,6 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
         cause: error.cause,
       },
       'notifications'
-    ).catch();
+    );
   }
 });

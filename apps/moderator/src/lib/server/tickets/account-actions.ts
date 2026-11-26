@@ -44,6 +44,8 @@ async function readLinkedUser(
       message: `Could not check the ticket (${res.reason}) — nothing was changed.`,
     };
   const { routesTo, routed } = await resolveTicketView(ticketId, res.ticket);
+  // Legal's tickets are no moderator's to act on: the account is never touched from one.
+  if (routesTo === 'legal') return { status: 'refused', code: 409, message: notShown };
   const userId = await linkedCivitaiUserId(res.ticket, routed);
   const panel = visibility({
     view: routesTo,

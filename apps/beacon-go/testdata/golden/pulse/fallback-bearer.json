@@ -1,0 +1,38 @@
+{
+  "name": "fallback-bearer",
+  "endpoint": "pulse",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/pulse",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7",
+      "authorization": "Bearer some-api-key"
+    },
+    "body": "{\"type\":\"ImageView\",\"entityType\":\"Image\",\"entityId\":123,\"ads\":\"Served\",\"nsfw\":false,\"nsfwLevel\":1,\"browsingLevel\":31}"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "bearer-token",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization, Cookie",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "max-age=0, private, no-cache"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "views",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"ImageView\",\"entityType\":\"Image\",\"entityId\":123,\"ads\":\"Served\",\"nsfw\":false,\"nsfwLevel\":1,\"browsingLevel\":31}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/pulse\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\",\"authorization\":\"present\"},\"body\":\"{\\\"type\\\":\\\"ImageView\\\",\\\"entityType\\\":\\\"Image\\\",\\\"entityId\\\":123,\\\"ads\\\":\\\"Served\\\",\\\"nsfw\\\":false,\\\"nsfwLevel\\\":1,\\\"browsingLevel\\\":31}\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization, Cookie\",\"cache-control\":\"max-age=0, private, no-cache\"},\"body\":\"\",\"writes\":[{\"table\":\"views\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"ImageView\\\",\\\"entityType\\\":\\\"Image\\\",\\\"entityId\\\":123,\\\"ads\\\":\\\"Served\\\",\\\"nsfw\\\":false,\\\"nsfwLevel\\\":1,\\\"browsingLevel\\\":31}\"}]}}"
+}

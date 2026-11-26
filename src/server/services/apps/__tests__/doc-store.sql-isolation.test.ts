@@ -6,6 +6,7 @@ import {
   APPDATA_TABLES,
   isAccountWipeStatement,
   isAppPurgeStatement,
+  isRaterLookupStatement,
   isReviewMaintenanceStatement,
   scanStatement,
 } from './doc-store.sql-scan';
@@ -56,7 +57,7 @@ describe('scanner controls', () => {
       `SELECT 1 FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2`,
       `UPDATE appdata.usage_app u SET bytes = 1 WHERE u.app_id = $1 AND u.ns = $2`,
       `DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.key = $3`,
-      `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll) VALUES ($1, $2, $3)`,
+      `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll) VALUES ($1, $2, $3)`,
       `INSERT INTO appdata.usage_user AS u (app_id, ns, user_id) SELECT $1, $2, $3::int`,
       `BEGIN; SELECT set_config('appdata.app_id', 'x', true), set_config('appdata.ns', 'prod', true)`,
       // Review maintenance: keyed on the request; the usage_app-only listing need not be.
@@ -71,6 +72,11 @@ describe('scanner controls', () => {
       `SELECT pu.ns FROM appdata.usage_app pu WHERE pu.app_id = $1 AND pu.ns > $2::text`,
       `SELECT pd.ns FROM appdata.doc pd WHERE pd.app_id = $1 AND pd.ns > $2::text`,
       `BEGIN; SELECT set_config('appdata.app_purge_id', 'ab_X', true)`,
+      // Rater lookup: one shared doc by its rating id, read only.
+      `SELECT rl.key FROM appdata.doc rl WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`,
+      `BEGIN; SELECT set_config('appdata.rater_lookup_id', '7', true)`,
+      // The rating-id sequence, named only as nextval's argument.
+      `UPDATE appdata.doc d SET rating_id = nextval('appdata.doc_rating_id_seq')::int WHERE d.app_id = $1 AND d.ns = $2`,
     ]) {
       expect({ ok, v: scanStatement(ok) }).toEqual({ ok, v: [] });
     }
@@ -78,6 +84,18 @@ describe('scanner controls', () => {
 
   it('fails each way a statement can lose its isolation', () => {
     const bad: [string, RegExp][] = [
+      // Rater lookup: read only, `doc` only, shared rows only; the sequence only inside nextval.
+      [
+        `UPDATE appdata.doc rl SET level = 1 WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`,
+        /rater-lookup statement on appdata\.doc is not a SELECT/,
+      ],
+      [
+        `SELECT 1 FROM appdata.doc_mark rl WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`,
+        /rater-lookup statement reads appdata\.doc_mark/,
+      ],
+      [`SELECT rl.key FROM appdata.doc rl WHERE rl.rating_id = $1::int`, /lacks rl\.scope_uid = 0/],
+      [`SELECT last_value FROM appdata.doc_rating_id_seq`, /named outside nextval/],
+      [`SELECT nextval('appdata.other_seq')`, /unknown appdata sequence other_seq/],
       [`SELECT 1 FROM appdata.doc d WHERE d.ns = $2`, /lacks d\.app_id = \$1/],
       [`SELECT 1 FROM appdata.doc d WHERE d.app_id = $1`, /lacks d\.ns = \$2/],
       [`SELECT 1 FROM appdata.doc d WHERE d.app_id = $12 AND d.ns = $2`, /lacks d\.app_id = \$1/],
@@ -117,7 +135,18 @@ describe('scanner controls', () => {
         `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.ns LIKE 'rev:%' RETURNING 1) SELECT 1`,
         /lacks u\.app_id = \$1/,
       ],
-      [`SELECT t.key FROM appdata.doc_tally t WHERE t.ns LIKE 'rev:%'`, /lacks t\.app_id = \$1/],
+      [`SELECT tb.key FROM appdata.doc_tomb tb WHERE tb.ns LIKE 'rev:%'`, /lacks tb\.app_id = \$1/],
+      // The tables removed with marks, counters and their tallies (docs/app-storage-generic-core.md,
+      // rollout step 5) are still in the schema until the hand-applied cleanup drops them, but no
+      // statement may name them.
+      [
+        `SELECT t.count FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2`,
+        /retired appdata relation doc_tally/,
+      ],
+      [
+        `INSERT INTO appdata.mark_head AS mh (app_id, ns, last_mark_seq) VALUES ($1, $2, 1)`,
+        /retired appdata relation mark_head/,
+      ],
       [
         `UPDATE appdata.doc d SET version = 1 WHERE d.app_id = $1 AND d.ns LIKE 'rev:%'`,
         /is not a SELECT or DELETE/,
@@ -160,11 +189,12 @@ describe('doc-store.ts SQL', () => {
   it('finds the statements (positive control: the extractor sees the module SQL)', () => {
     const refs = literals.flatMap((l) => [
       ...l.text.matchAll(
-        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b/g
+        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|maint_run|usage_app|usage_user)\b/g
       ),
     ]);
     expect(literals.length).toBeGreaterThanOrEqual(25);
-    // Every table is touched somewhere, so a table cannot drop out of the scan unnoticed.
+    // Every table is touched somewhere, so a table cannot drop out of the scan unnoticed; and
+    // neither retired table (`doc_tally`, `mark_head`) is named at all.
     expect(new Set(refs.map((r) => r[1]))).toEqual(new Set(APPDATA_TABLES));
   });
 
@@ -209,13 +239,15 @@ describe('review maintenance and account-wipe enumeration are confined to their 
       ? n.head.text + n.templateSpans.map((sp) => sp.literal.text).join('')
       : null;
 
-  it('every maintenance-shaped statement is one of the eight in SQL_REVIEW_PURGE / SQL_REVIEW_APP_IDS', () => {
+  it('every maintenance-shaped statement is one of the nine in SQL_REVIEW_PURGE / SQL_REVIEW_APP_IDS', () => {
     const maint = collect((n) => {
       const t = literalText(n);
       return t !== null && /appdata\./.test(t) && isReviewMaintenanceStatement(t);
     });
     expect(maint.map((n) => owner(n, 'variable')).sort()).toEqual([
       'SQL_REVIEW_APP_IDS',
+      // One delete per appdata table the store names (the maintenance runs' `maint_run`
+      // included; the retired `doc_tally` and `mark_head` are not deleted from any more).
       ...Array(7).fill('SQL_REVIEW_PURGE'),
     ]);
   });
@@ -259,6 +291,10 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
       'server/services/apps/doc-store.ts',
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+      // The mark sequence's table gets the same review-maintenance read and delete policies.
+      'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
+      // So does the maintenance-run table.
+      'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     ]);
   });
 
@@ -269,6 +305,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     });
     expect(wipe.map((n) => owner(n, 'variable'))).toEqual([
       'SQL_ACCOUNT_NAMESPACES',
+      // The maintenance runs that name the user (a report-only user's purged report).
+      'SQL_ACCOUNT_DUMP_NAMESPACES',
       'SQL_VIEWER_PROD_USAGE',
     ]);
   });
@@ -289,7 +327,12 @@ describe('review maintenance and account-wipe enumeration are confined to their 
         ts.isIdentifier(n.expression) &&
         n.expression.text === 'accountWipeTx'
     );
-    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces', 'listViewerUsage']);
+    // The enumeration opens two: the documents and marks, then the maintenance runs.
+    expect(calls.map(nearestFn)).toEqual([
+      'listAccountNamespaces',
+      'listAccountNamespaces',
+      'listViewerUsage',
+    ]);
   });
 
   it('every app-purge-shaped statement is SQL_APP_NAMESPACES', () => {
@@ -317,6 +360,33 @@ describe('review maintenance and account-wipe enumeration are confined to their 
         n.expression.text === 'appPurgeTx'
     );
     expect(calls.map(nearestFn)).toEqual(['listAppNamespaces']);
+  });
+
+  it('every rater-lookup-shaped statement is SQL_RATER_LOOKUP', () => {
+    const lookup = collect((n) => {
+      const t = literalText(n);
+      return t !== null && /appdata\./.test(t) && isRaterLookupStatement(t);
+    });
+    expect(lookup.map((n) => owner(n, 'variable'))).toEqual(['SQL_RATER_LOOKUP']);
+  });
+
+  it('the rater-lookup setting is set in exactly one place, `raterLookupTx`, which only the rater’s lookup and readiness check call', () => {
+    const nearestFn = (n: ts.Node) => {
+      for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+        if ((ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name)
+          return p.name.text;
+      }
+      return null;
+    };
+    const setting = collect((n) => (literalText(n) ?? '').includes('appdata.rater_lookup_id'));
+    expect(setting.map(nearestFn)).toEqual(['raterLookupTx']);
+    const calls = collect(
+      (n) =>
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === 'raterLookupTx'
+    );
+    expect(calls.map(nearestFn).sort()).toEqual(['findByRatingId', 'ready']);
   });
 
   it('no other server code mentions the app-purge setting (only the store, its migration and tests)', () => {
@@ -362,6 +432,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
       'server/services/apps/doc-store.ts',
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+      // The maintenance runs' wipe read: the runs that name the user.
+      'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     ]);
   });
 });
@@ -376,29 +448,49 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/routers/__tests__/app-listings.router.doc-store-usage.test.ts',
     // The user-storage router suite resets the tables and reads back what an empty removed.
     'server/routers/__tests__/app-storage.router.test.ts',
+    // The maintenance router suite reads back the copies a mark migration wrote.
+    'server/routers/__tests__/apps-mod-doc-store-maintenance.router.test.ts',
     // The moderator router suite resets the tables and pins report times between cases.
     'server/routers/__tests__/apps-mod-doc-store.router.test.ts',
     // The account-wipe seam: reads the wiped account's and a bystander's rows back.
     'server/services/__tests__/user-remove-all-content.doc-store.test.ts',
+    // Reads back the rating and rating id the rater service stored.
+    'server/services/apps/__tests__/doc-rater.service.pglite.test.ts',
     // The route suite reads the rows a request wrote, to assert the namespace it landed in.
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
-    // The tally-operator suite compares the rows the old routes and the PATCH operators write.
-    'server/services/apps/__tests__/doc-store-api.tally-operators.test.ts',
+    // The permission-hooks suite rates a document Blocked and reads back what a hooked write left.
+    'server/services/apps/__tests__/doc-store-api.hooks.test.ts',
+    // The unchanged-writes suite reads back the row, seq and rating an unchanged put must not move.
+    'server/services/apps/__tests__/doc-store-api.unchanged-writes.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
+    // The report API suite reads back the report rows a report wrote.
+    'server/services/apps/__tests__/doc-store-report-api.test.ts',
     // Reads every column that can hold a user id, to prove an account wipe left none.
     'server/services/apps/__tests__/doc-store.account-wipe.test.ts',
     // Counts an app's rows in every table, to prove an app purge left none and touched no other app.
     'server/services/apps/__tests__/doc-store.app-purge.test.ts',
     'server/services/apps/__tests__/doc-store.functional.ts',
+    // Sets documents' rating columns directly (no rater yet) and reads back what a write stored.
+    'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
+    // Seeds the run records the removed rollout step 4 tooling wrote (no store op writes them now),
+    // ages them for the retention, and reads back what an account wipe left in them.
+    'server/services/apps/__tests__/doc-store.maint-runs.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
+    // Reads back the rating columns and rating id the rater stored, and seeds a moderator override.
+    'server/services/apps/__tests__/doc-store.rater.pglite.test.ts',
+    // Reads back the record_id the column default gave each write, and seeds rows with none for
+    // the backfill.
+    'server/services/apps/__tests__/doc-store.record-id.pglite.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
     // Reads back the schema major each write stamped, and probes the catalog for the column.
     'server/services/apps/__tests__/doc-store.schema-major.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
+    // Reads back the seq and record id each write stored, and the tombstone a delete wrote.
+    'server/services/apps/__tests__/doc-store.write-seq.pglite.test.ts',
     'server/services/apps/doc-store.ts',
     'server/services/apps/migrations/20261013120000_appdata_document_store.down.sql',
     'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
@@ -412,9 +504,31 @@ describe('only the doc-store module touches the appdata tables', () => {
     // The nullable schema_major column on doc, and its rollback (DDL only).
     'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.down.sql',
     'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.sql',
+    // The content-level columns on doc, and their rollback (DDL only).
+    'server/services/apps/migrations/20261116120000_appdata_doc_levels.down.sql',
+    'server/services/apps/migrations/20261116120000_appdata_doc_levels.sql',
+    // The rater's rating id, its sequence and lookup policy, their rollback, and the lookup index.
+    'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.down.sql',
+    'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.sql',
+    'server/services/apps/migrations/20261118120100_appdata_doc_rating_id_idx.sql',
+    // The record_id column on doc and its rollback (DDL only), its batched backfill (a data
+    // script run by hand), and its unique index (DDL only).
+    'server/services/apps/migrations/20261119120000_appdata_doc_record_id.down.sql',
+    'server/services/apps/migrations/20261119120000_appdata_doc_record_id.sql',
+    'server/services/apps/migrations/20261119120100_appdata_doc_record_id_backfill.sql',
+    'server/services/apps/migrations/20261119120200_appdata_doc_record_id_unique.sql',
+    // The mark sequence's table and its column on doc_tally, and their rollback
+    // (DDL and policies only).
+    'server/services/apps/migrations/20261122120000_appdata_mark_head.down.sql',
+    'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
+    // The maintenance-run table and its rollback (DDL and policies only).
+    'server/services/apps/migrations/20261123120000_appdata_maint_run.down.sql',
+    'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
+    // Sets an item's rating columns directly (no rater yet) for the card-path cases.
+    'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
   const PATTERN =
-    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
+    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|maint_run|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
 
   function walk(dir: string, out: string[]) {
     for (const name of readdirSync(dir)) {

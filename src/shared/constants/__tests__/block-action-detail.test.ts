@@ -137,6 +137,15 @@ describe('describeBlockAction', () => {
     });
   });
 
+  it('names a limit change, including to and from no limit', () => {
+    expect(describeBlockAction({ action: 'limit.change', previousLimit: 1000, limit: 2500 })).toBe(
+      "You changed this app's daily Buzz limit from 1,000 Buzz to 2,500 Buzz"
+    );
+    expect(describeBlockAction({ action: 'limit.change', previousLimit: null, limit: 750 })).toBe(
+      "You changed this app's daily Buzz limit from no limit to 750 Buzz"
+    );
+  });
+
   it('unknown / forward-compat action code renders a safe generic line', () => {
     expect(describeBlockAction({ action: 'future.something' })).toBe('Performed an app action');
   });

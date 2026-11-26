@@ -4,13 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 
-const { mintMock, consentMock, refusalMock, userRefusalMock, featuresMock } = vi.hoisted(() => ({
-  mintMock: vi.fn(),
-  consentMock: vi.fn(),
-  refusalMock: vi.fn(),
-  userRefusalMock: vi.fn(),
-  featuresMock: vi.fn(),
-}));
+const { mintMock, consentMock, refusalMock, userRefusalMock, featuresMock, session } = vi.hoisted(
+  () => ({
+    session: { impersonatedBy: undefined as number | undefined },
+    mintMock: vi.fn(),
+    consentMock: vi.fn(),
+    refusalMock: vi.fn(),
+    userRefusalMock: vi.fn(),
+    featuresMock: vi.fn(),
+  })
+);
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOriginal) => ({
@@ -25,9 +28,9 @@ vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOr
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   AuthedEndpoint:
-    (handler: (req: NextApiRequest, res: NextApiResponse, user: unknown) => unknown) =>
+    (handler: (req: NextApiRequest, res: NextApiResponse, user: unknown, s: unknown) => unknown) =>
     (req: NextApiRequest, res: NextApiResponse) =>
-      handler(req, res, { id: 42 }),
+      handler(req, res, { id: 42 }, { user: { id: 42 }, ...session }),
 }));
 vi.mock('~/server/utils/require-full-scope-session', () => ({
   requireFullScopeSession: () => true,
@@ -113,7 +116,7 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     });
     expect(status).toBe(200);
     expect(json).toEqual({ token: 'minted-chat-token', expiresAt: '2099-01-01T00:00:00Z' });
-    expect(mintMock).toHaveBeenCalledWith(42, 'chat');
+    expect(mintMock).toHaveBeenCalledWith(42, 'chat', null);
     expect(userRefusalMock).toHaveBeenCalledWith(42, { remoteRunner: true });
     expect(headers.get('cache-control')).toBe('no-store');
   });
@@ -239,7 +242,7 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
       body: { grant: preview, purpose: 'sandbox' },
     });
     expect(sandbox.status).toBe(200);
-    expect(mintMock).toHaveBeenLastCalledWith(42, 'sandbox');
+    expect(mintMock).toHaveBeenLastCalledWith(42, 'sandbox', null);
     const run = await call(mintRoute, {
       headers: asRunner,
       body: { grant: await grantFor(), purpose: 'chat' },
@@ -265,7 +268,7 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
           expiresAt: '2099-01-01T00:00:00Z',
         });
         expect(userRefusalMock).toHaveBeenCalledWith(42, { remoteRunner: true });
-        expect(mintMock).toHaveBeenCalledWith(42, purpose);
+        expect(mintMock).toHaveBeenCalledWith(42, purpose, null);
       }
     );
 
@@ -374,6 +377,20 @@ describe('GET /api/apps/assistant/run-grant', () => {
     expect(Date.parse(json!.expiresAt as string) - Date.now()).toBeGreaterThan(7700 * 1000);
   });
 
+  it('refuses an impersonation, signing no grant', async () => {
+    session.impersonatedBy = 3;
+    try {
+      const { status, json } = await call(grantRoute, { method: 'GET', query });
+      expect(status).toBe(403);
+      expect(json).toMatchObject({ error: 'impersonation_refused' });
+      expect(json).not.toHaveProperty('grant');
+    } finally {
+      session.impersonatedBy = undefined;
+    }
+    // Control: the same request without the impersonation is granted.
+    expect((await call(grantRoute, { method: 'GET', query })).status).toBe(200);
+  });
+
   it('refuses while the server runner is off for the user, signing nothing', async () => {
     featuresMock.mockResolvedValue({ appAssistantRemoteRunner: false });
     const { status, json } = await call(grantRoute, { method: 'GET', query });
@@ -409,7 +426,7 @@ describe('GET /api/apps/assistant/run-grant', () => {
     expect(consentMock).not.toHaveBeenCalled();
   });
 
-  it('signs a seven-minute preview grant for purpose=preview, never with subagents', async () => {
+  it('signs a nine-minute preview grant for purpose=preview, never with subagents', async () => {
     featuresMock.mockResolvedValue({ appAssistantRemoteRunner: true, appAssistantSubagents: true });
     const preview = {
       conversationId: 'preview:my-shop',
@@ -431,7 +448,7 @@ describe('GET /api/apps/assistant/run-grant', () => {
       use: 'preview',
     });
     expect(claims).not.toHaveProperty('subagents');
-    expect((claims.exp as number) - (claims.iat as number)).toBe(420);
+    expect((claims.exp as number) - (claims.iat as number)).toBe(540);
     // The runner's internal endpoints read it as any run grant (the runner decides what it is for).
     expect(await verifyRunGrant(token)).toMatchObject({
       userId: 42,

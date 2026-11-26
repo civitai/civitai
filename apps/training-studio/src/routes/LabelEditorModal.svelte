@@ -5,8 +5,10 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
   import type { LabelType } from '$lib/data/trainingModels';
-  import { canAutoLabelImage, captionTriggerHit, withTags, type Img } from './trainingFlow';
+  import { canAutoLabelImage, captionTriggerHit, repeatsOf, withTags, type Img } from './trainingFlow';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import TagEditor from './TagEditor.svelte';
+  import RepeatsStepper from './RepeatsStepper.svelte';
 
   // `editing` is the flow's own image proxy, so mutating its tags/caption here applies live to the grid.
   // `onRelabel` runs the auto-label driver (owned by the parent); `tagVocab` is this dataset's tags for
@@ -20,6 +22,7 @@
     onRelabel,
     position,
     onStep,
+    repeatsEnabled = false,
   }: {
     open: boolean;
     editing: Img | undefined;
@@ -31,6 +34,8 @@
     /** Where `editing` sits in the grid's sequence; `index` is -1 when it isn't in it. */
     position: { index: number; total: number };
     onStep: (delta: -1 | 1) => void;
+    /** The selected models can train per-image repeats: show the Repeats row. */
+    repeatsEnabled?: boolean;
   } = $props();
 
   let newTag = $state('');
@@ -67,8 +72,10 @@
   const suggestions = $derived.by(() => {
     if (!editing) return [];
     const q = newTag.trim().toLowerCase();
-    const have = editing.tags;
-    return tagVocab.filter((t) => !have.includes(t) && (q === '' || t.toLowerCase().includes(q))).slice(0, 8);
+    const have = new Set(editing.tags.map((t) => t.toLowerCase()));
+    return tagVocab
+      .filter((t) => !have.has(t.toLowerCase()) && (q === '' || t.toLowerCase().includes(q)))
+      .slice(0, 8);
   });
 
   // Focus the primary field (tag input / caption textarea) on open — this is a correction surface, the
@@ -81,6 +88,13 @@
 <!-- The preview adapts to the media: an image, a playable <video>, or an <audio> player for audio clips —
      so captioning an audio/video dataset lets you actually see/hear what you're labeling. -->
 {#snippet mediaPreview(img: Img, cls: string)}
+  <div class="relative">
+    {@render media(img, cls)}
+    <RatingBadge level={img.nsfwLevel} class="absolute left-1.5 top-1.5" />
+  </div>
+{/snippet}
+
+{#snippet media(img: Img, cls: string)}
   {#if img.mediaType === 'audio'}
     <div
       class="flex flex-col items-center justify-center gap-3 rounded border border-dark-4 bg-dark-7 p-4 {cls}"
@@ -209,6 +223,18 @@
           {/if}
         {/key}
       </div>
+      {#if repeatsEnabled}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-dark-4 pt-3">
+          <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Repeats</span>
+          <RepeatsStepper
+            label="Repeats for {editing.name}"
+            bind:value={() => repeatsOf(editing!), (v) => (editing!.repeats = v > 1 ? v : undefined)}
+          />
+          <span class="text-xs text-dark-2">
+            Train this image more often than the rest. Total steps stay the same.
+          </span>
+        </div>
+      {/if}
     {/if}
   </Dialog.Content>
 </Dialog.Root>

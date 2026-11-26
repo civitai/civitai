@@ -3,6 +3,8 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import {
   getTextScanMode,
   getTextScanWebSearchMode,
+  isTextScanModeReachable,
+  isTextScanWebSearchModeReachable,
   TEXT_SCAN_ENTITY_TYPES,
   TEXT_SCAN_WEB_SEARCH_ENTITY_TYPES,
   textScanEmEntityType,
@@ -15,20 +17,26 @@ import type { TextScanEntityType } from '~/server/services/text-scan/types';
 
 export const TEXT_SCAN_RETRY_CONTENT = 'text-scan';
 
+/**
+ * Only a callback spends a failed row's retry budget, so a scan that can never submit would be
+ * reselected on every run, crowding out the rows behind it.
+ */
+export async function spendTextScanRetry(entityType: TextScanEntityType, entityId: number) {
+  await dbWrite.entityModeration.updateMany({
+    where: {
+      entityType: { in: [entityType, textScanEmEntityType(entityType, 'shadow')] },
+      entityId,
+      status: { not: 'Succeeded' },
+    },
+    data: { retryCount: { increment: 1 } },
+  });
+}
+
 // Only the retry cron calls an adapter's submit, and it has already bumped the row it resubmits.
 export async function submitViaTextScan(entityType: TextScanEntityType, entityId: number) {
   const result = await scanEntity({ entityType, entityId, fromRetry: true });
-  // Only a callback spends a failed row's retry budget, so a scan that can never submit would be
-  // reselected on every run, crowding out the rows behind it.
   if (result.status === 'skipped' && result.reason === 'missing-prompt')
-    await dbWrite.entityModeration.updateMany({
-      where: {
-        entityType: { in: [entityType, textScanEmEntityType(entityType, 'shadow')] },
-        entityId,
-        status: { not: 'Succeeded' },
-      },
-      data: { retryCount: { increment: 1 } },
-    });
+    await spendTextScanRetry(entityType, entityId);
   return toSubmittedWorkflow(result);
 }
 
@@ -36,6 +44,7 @@ export function createTextScanShadowAdapter(entityType: TextScanEntityType): Mod
   return {
     ...createTextScanAdapter(entityType, {}),
     isEnabled: async ({ entityId }) => (await getTextScanMode(entityType, entityId)) === 'shadow',
+    isDarkForAll: async () => !(await isTextScanModeReachable(entityType, 'shadow')),
   };
 }
 
@@ -62,6 +71,7 @@ export function textScanWebSearchAdapters() {
             ),
           isEnabled: async ({ entityId }) =>
             (await getTextScanWebSearchMode(entityType, entityId)) === mode,
+          isDarkForAll: async () => !(await isTextScanWebSearchModeReachable(entityType, mode)),
         },
       ])
     )
@@ -90,6 +100,7 @@ export function createTextScanAdapter(
     },
     submit: ({ entityId }) => submitViaTextScan(entityType, entityId),
     isEnabled: async ({ entityId }) => (await getTextScanMode(entityType, entityId)) === 'active',
+    isDarkForAll: async () => !(await isTextScanModeReachable(entityType, 'active')),
     ...hooks,
   };
 }

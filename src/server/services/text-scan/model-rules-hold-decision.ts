@@ -486,7 +486,7 @@ export async function decideModelRulesHoldBatch({
           holdId: hold.holdId,
           errorName: error instanceof Error ? error.name : typeof error,
           errorCode: (error as { code?: unknown } | null | undefined)?.code,
-        }).catch(() => null);
+        });
       results.push({
         holdId: hold.holdId,
         ok: false,

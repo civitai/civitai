@@ -37,12 +37,17 @@ export function getBankingChangeNoticeHtml(username: string) {
 }
 
 export const bankingChangeNoticeEmail = createEmail({
+  template: 'bankingChangeNotice',
+  mailClass: 'transactional',
   header: ({ to }: BankingChangeNoticeData) => ({
     subject: BANKING_CHANGE_NOTICE_SUBJECT,
     to,
   }),
   html({ username }: BankingChangeNoticeData) {
     return simpleEmailWithTemplate({
+      icon: '🏦',
+      accent: 'blue',
+      eyebrow: 'Creator earnings',
       header: BANKING_CHANGE_NOTICE_SUBJECT,
       body: getBankingChangeNoticeHtml(username),
     });

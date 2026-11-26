@@ -18,9 +18,12 @@ import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
-
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
-const buzzService = () => import('~/server/services/buzz.service');
+// Not buzz.service: it reaches this module back through its imports (docs/dev/import-cycles.md).
+import {
+  createBuzzTransactionMany,
+  getMultipliersForUser,
+  getTransactionByExternalId,
+} from '~/server/services/buzz-payout';
 
 // Retry budget for the batch `process` (cron) path — can afford to block.
 const BATCH_RETRY_COUNT = 5;
@@ -47,7 +50,7 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
     type: 'error',
     event: JSON.stringify(event),
     ...data,
-  }).catch(() => null);
+  });
 };
 
 // Lua script for atomic on-demand reward processing.
@@ -181,7 +184,7 @@ export function createBuzzEvent<T>({
     // Display rather than money, but `getMultipliersForUser` can return a non-finite product, and
     // an advertised award of `Infinity` is still a bug. Not a complete census of readers: `claimBuzz`
     // is a fourth, in buzz.service.ts, and it pays.
-    const { rewardsMultiplier } = await (await buzzService()).getMultipliersForUser(userId);
+    const { rewardsMultiplier } = await getMultipliersForUser(userId);
     const multiplier = clampRewardMultiplier(rewardsMultiplier);
     if (multiplier !== 1) {
       data.awardAmount = Math.ceil(multiplier * data.awardAmount);
@@ -242,7 +245,6 @@ export function createBuzzEvent<T>({
       : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`;
 
   const sendAward = async (events: BuzzEventLog[]) => {
-    const { createBuzzTransactionMany } = await buzzService();
     return await withRetries(() =>
       createBuzzTransactionMany(
         events
@@ -331,9 +333,7 @@ export function createBuzzEvent<T>({
     const resolved = await (async () => {
       const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
       if (!definedKey) return null;
-      const { rewardsMultiplier } = await (
-        await buzzService()
-      ).getMultipliersForUser(definedKey.toUserId);
+      const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
       const transactionDetails = buzzEvent.getTransactionDetails
         ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
         : undefined;
@@ -346,7 +346,7 @@ export function createBuzzEvent<T>({
         rewardType: type,
         error: (error as Error)?.message,
         stack: (error as Error)?.stack,
-      }).catch(() => null);
+      });
       rewardFailedCounter?.inc?.();
       return null;
     });
@@ -487,9 +487,7 @@ export function createBuzzEvent<T>({
     dedup: { hashField: string; cacheKey: string }
   ) => {
     try {
-      const paid = await (
-        await buzzService()
-      ).getTransactionByExternalId(externalTransactionIdFor(event), {
+      const paid = await getTransactionByExternalId(externalTransactionIdFor(event), {
         timeoutMs: LEDGER_LOOKUP_TIMEOUT_MS,
         retries: 0,
       });
@@ -641,7 +639,9 @@ export function createBuzzEvent<T>({
               event.awardAmount = config.awardAmount;
             }
           }
-          await updateBuzzEvents(chunk);
+          // Only the rows put back to pending: an unqualified row was already written above, and
+          // writing it again raises its version past the one its reward chose for it.
+          await updateBuzzEvents(chunk.filter((event) => event.status === 'pending'));
         }
 
         // Then throw the error
@@ -804,10 +804,12 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
       name: 'buzz-rewards',
       type: 'error',
       message: 'Buzz event multiplier fell outside the ClickHouse column range and was coerced',
-      clampedEvents: clamped,
-      batchSize: events.length,
-      clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
-    }).catch(() => null);
+      payload: {
+        clampedEvents: clamped,
+        batchSize: events.length,
+        clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
+      },
+    });
   }
 
   return rows;

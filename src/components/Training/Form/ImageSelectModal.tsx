@@ -28,7 +28,8 @@ import {
 } from '@tabler/icons-react';
 import type { FetchNextPageOptions } from '@tanstack/react-query';
 import { groupBy } from 'lodash-es';
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useStore } from 'zustand';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -86,6 +87,7 @@ import styles from '~/components/Search/SearchLayout.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { createSelectionContext, createSelectionStore } from '~/store/createSelectionStore';
 
 // const take = 20;
 
@@ -96,6 +98,8 @@ export type SelectedImage = {
   meta?: Record<string, unknown>;
   /** Generator selections only — lets the server verify what the job was made from. */
   generationWorkflowId?: string;
+  /** Uploaded selections only: the image row. */
+  imageId?: number;
 };
 
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
@@ -106,17 +110,44 @@ type TrainedData = Omit<RecentTrainingData[number], 'metadata' | 'modelVersion'>
   };
 };
 
-const ImageSelectContext = createContext<{
-  selected: SelectedImage[];
-  setSelected: React.Dispatch<React.SetStateAction<SelectedImage[]>>;
-  importedUrls: string[];
-} | null>(null);
+type GridItem =
+  | { type: 'generation'; img: TrainingGenerationBlob }
+  | { type: 'uploaded'; img: UploadedImage }
+  | { type: 'training'; img: TrainedData };
 
-const useImageSelectContext = () => {
-  const context = useContext(ImageSelectContext);
-  if (!context) throw new Error('missing ImageSelectContext');
-  return context;
-};
+const getItemKey = (item: GridItem) =>
+  item.type === 'training' ? `${item.img.modelVersion.id}` : item.img.url;
+
+function getItemDate(item: GridItem) {
+  if (item.type !== 'generation') return item.img.createdAt;
+  return item.img.step.completedAt ? new Date(item.img.step.completedAt) : undefined;
+}
+
+function toSelectedImage(item: GridItem): SelectedImage {
+  switch (item.type) {
+    case 'generation':
+      return {
+        url: item.img.url,
+        label: ((item.img.step.params as any)?.prompt as string) ?? '',
+        type: item.img.type,
+        meta: getStepMeta(item.img.step),
+        generationWorkflowId: item.img.workflowId,
+      };
+    case 'uploaded':
+      return {
+        url: item.img.url,
+        label: item.img.meta?.prompt ?? '',
+        type: item.img.type,
+        meta: (item.img.meta as Record<string, unknown> | null) ?? undefined,
+        imageId: item.img.id,
+      };
+    case 'training':
+      return { url: getItemKey(item), label: '', type: MediaType.image };
+  }
+}
+
+const { SelectionProvider, useActions, useIsSelected, useRegisterOrder } =
+  createSelectionContext<GridItem>();
 
 export type ImageSelectModalProps = {
   title?: React.ReactNode;
@@ -139,7 +170,8 @@ export default function ImageSelectModal({
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
 
-  const [selected, setSelected] = useState<SelectedImage[]>([]);
+  const [selection] = useState(() => createSelectionStore<GridItem>({ getKey: getItemKey }));
+  const selectedCount = useStore(selection.store, (state) => Object.keys(state.selected).length);
   const [selectTrainingFilters, setSelectTrainingFilters] = useState<ImageSelectTrainingFilter>({
     hasLabels: null,
     labelType: null,
@@ -231,6 +263,14 @@ export default function ImageSelectModal({
     [dataTraining]
   );
 
+  const gridItems = useMemo((): GridItem[] => {
+    if (selectSource === 'generation')
+      return generatedMedia.map((img) => ({ type: 'generation', img }));
+    if (selectSource === 'uploaded') return uploadedMedia.map((img) => ({ type: 'uploaded', img }));
+    if (selectSource === 'training') return trainingFiles.map((img) => ({ type: 'training', img }));
+    return [];
+  }, [selectSource, generatedMedia, uploadedMedia, trainingFiles]);
+
   let isLoading: boolean;
   let isFetchingNext: boolean;
   let hasNextPage: boolean;
@@ -259,7 +299,7 @@ export default function ImageSelectModal({
   }
 
   function handleSelect() {
-    onSelect(selected);
+    onSelect(selection.actions.getSelected().map(toSelectedImage));
     dialog.onClose();
   }
 
@@ -269,7 +309,7 @@ export default function ImageSelectModal({
 
   return (
     <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
-      <ImageSelectContext.Provider value={{ selected, setSelected, importedUrls }}>
+      <SelectionProvider store={selection}>
         <div className="flex size-full max-h-full max-w-full flex-col bg-gray-0 dark:bg-dark-7">
           <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3  dark:bg-dark-7">
             <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
@@ -284,10 +324,10 @@ export default function ImageSelectModal({
 
             <Group justify="space-between">
               <Group>
-                <Button onClick={handleSelect} disabled={!selected.length}>{`Import${
-                  selected.length > 0 ? ` (${selected.length})` : ''
+                <Button onClick={handleSelect} disabled={!selectedCount}>{`Import${
+                  selectedCount > 0 ? ` (${selectedCount})` : ''
                 }`}</Button>
-                <Button variant="light" onClick={() => setSelected([])} disabled={!selected.length}>
+                <Button variant="light" onClick={selection.actions.clear} disabled={!selectedCount}>
                   Deselect All
                 </Button>
               </Group>
@@ -323,15 +363,11 @@ export default function ImageSelectModal({
             </div>
           ) : (
             <div className="flex flex-col gap-3 p-3">
-              {selectSource === 'generation' ? (
-                <ImageGrid data={generatedMedia} type={selectSource} />
-              ) : selectSource === 'uploaded' ? (
-                <ImageGrid data={uploadedMedia} type={selectSource} />
-              ) : selectSource === 'training' ? (
-                <ImageGrid data={trainingFiles} type={selectSource} />
-              ) : (
-                <></>
-              )}
+              <ImageGrid
+                items={gridItems}
+                importedUrls={importedUrls}
+                isTraining={selectSource === 'training'}
+              />
               {hasNextPage && (
                 <InViewLoader
                   loadFn={fetchNextPage}
@@ -345,97 +381,62 @@ export default function ImageSelectModal({
             </div>
           )}
         </div>
-      </ImageSelectContext.Provider>
+      </SelectionProvider>
     </Modal>
   );
 }
 
 const ImageGrid = ({
-  type,
-  data,
-}:
-  | { type: 'generation'; data: TrainingGenerationBlob[] }
-  | { type: 'uploaded'; data: UploadedImage[] }
-  | { type: 'training'; data: TrainedData[] }) => {
-  if (!data || !data.length)
-    return <NoContent message={`No ${type === 'training' ? 'datasets' : 'assets'} found`} />;
+  items,
+  importedUrls,
+  isTraining,
+}: {
+  items: GridItem[];
+  importedUrls: string[];
+  isTraining: boolean;
+}) => {
+  const isSelectable = (item: GridItem) => !importedUrls.includes(getItemKey(item));
 
-  const grouped =
-    type === 'generation'
-      ? groupBy(data, (img) => {
-          const completed = img.step.completedAt ? new Date(img.step.completedAt) : undefined;
-          return completed
-            ? completed.toLocaleString(undefined, {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })
-            : 'Unknown Date';
-        })
-      : type === 'uploaded'
-      ? groupBy(data, ({ createdAt }) =>
-          !!createdAt
-            ? createdAt.toLocaleString(undefined, {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })
-            : 'Unknown Date'
-        )
-      : groupBy(data, ({ createdAt }) =>
-          !!createdAt
-            ? createdAt.toLocaleString(undefined, {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })
-            : 'Unknown Date'
-        );
+  const grouped = useMemo(
+    () =>
+      groupBy(items, (item) => {
+        const date = getItemDate(item);
+        return date
+          ? date.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+          : 'Unknown Date';
+      }),
+    [items]
+  );
+
+  useRegisterOrder('images', Object.values(grouped).flat().filter(isSelectable));
+
+  if (!items.length)
+    return <NoContent message={`No ${isTraining ? 'datasets' : 'assets'} found`} />;
 
   return (
     <Stack>
-      {Object.entries(grouped).map(([date, imgs], index) => (
+      {Object.entries(grouped).map(([date, groupItems], index) => (
         <Stack key={index}>
           <Title order={4} className="mb-2">
-            {/*{type === 'generation'*/}
-            {/*  ? formatDate(*/}
-            {/*      new Date(*/}
-            {/*        Math.max(*/}
-            {/*          ...imgs*/}
-            {/*            .map((i: GennedMedia) =>*/}
-            {/*              i.completed ? new Date(i.completed).getTime() : null*/}
-            {/*            )*/}
-            {/*            .filter(isDefined)*/}
-            {/*        )*/}
-            {/*      ),*/}
-            {/*      'MMM D, YYYY h:mm:ss A'*/}
-            {/*    )*/}
-            {/*  : date}*/}
             {date}
           </Title>
           <div
             className={clsx('p-2', styles.grid)}
             style={
-              type === 'training'
-                ? { gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }
-                : {}
+              isTraining ? { gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' } : {}
             }
           >
-            {type === 'generation'
-              ? imgs.map((img: TrainingGenerationBlob) => (
-                  <ImageGridMedia
-                    key={`${img.workflowId}_${img.stepName}_${img.id}`}
-                    type={type}
-                    img={img}
-                  />
-                ))
-              : type === 'uploaded'
-              ? imgs.map((img: UploadedImage) => (
-                  <ImageGridMedia key={img.id} type={type} img={img} />
-                ))
-              : imgs.map((img: TrainedData) => (
-                  <ImageGridMedia key={img.id} type={type} img={img} />
-                ))}
+            {groupItems.map((item) => (
+              <ImageGridMedia
+                key={
+                  item.type === 'generation'
+                    ? `${item.img.workflowId}_${item.img.stepName}_${item.img.id}`
+                    : item.img.id
+                }
+                item={item}
+                selectable={isSelectable(item)}
+              />
+            ))}
           </div>
         </Stack>
       ))}
@@ -443,53 +444,16 @@ const ImageGrid = ({
   );
 };
 
-const ImageGridMedia = ({
-  type,
-  img,
-}:
-  | { type: 'generation'; img: TrainingGenerationBlob }
-  | { type: 'uploaded'; img: UploadedImage }
-  | { type: 'training'; img: TrainedData }) => {
-  const { selected, setSelected, importedUrls } = useImageSelectContext();
+const ImageGridMedia = ({ item, selectable }: { item: GridItem; selectable: boolean }) => {
+  const { type, img } = item;
+  const { select } = useActions();
+  const isSelected = useIsSelected(item);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
-  const compareKey = type === 'training' ? `${img.modelVersion.id}` : img.url;
-
-  const selectable = !importedUrls.includes(compareKey);
-  const isSelected = selected.map((s) => s.url).includes(compareKey);
-
-  const onChange = () => {
+  const onChange = (e: React.MouseEvent) => {
     if (!selectable) return;
-    setSelected((prev) => {
-      if (!isSelected) {
-        // Build meta for generation images using getStepMeta pattern
-        let meta: Record<string, unknown> | undefined;
-        if (type === 'generation') {
-          meta = getStepMeta(img.step);
-        } else if (type === 'uploaded' && img.meta) {
-          meta = img.meta as Record<string, unknown>;
-        }
-
-        return [
-          ...prev,
-          {
-            url: compareKey,
-            label:
-              type === 'generation'
-                ? ((img.step.params as any)?.prompt as string) ?? ''
-                : type === 'uploaded'
-                ? img.meta?.prompt ?? ''
-                : '',
-            type: type === 'training' ? 'image' : img.type,
-            meta,
-            generationWorkflowId: type === 'generation' ? img.workflowId : undefined,
-          },
-        ];
-      } else {
-        return prev.filter((x) => x.url !== compareKey);
-      }
-    });
+    select(item, { shiftKey: e.shiftKey, checked: !isSelected });
   };
 
   if (type === 'training') {

@@ -27,7 +27,6 @@ import {
   IconPhoto,
 } from '@tabler/icons-react';
 import { capitalize, truncate } from 'lodash-es';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import type { CSSProperties } from 'react';
@@ -68,7 +67,7 @@ import { CollectionCollaboratorsSummary } from '~/components/Collections/Collect
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
@@ -94,6 +93,13 @@ import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingContro
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
+import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
+import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
+import {
+  FlagRowProviders,
+  useCollectionFlagRace,
+  useFlagRow,
+} from '~/components/HatTurf/FlagRace/FlagRowProviders';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
@@ -120,10 +126,6 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import classes from './Collection.module.scss';
 import { isViewer } from '~/utils/is-viewer';
-
-const AddUserContentModal = dynamic(() =>
-  import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
-);
 
 const ModelCollection = ({
   collection,
@@ -251,6 +253,7 @@ const ImageCollection = ({
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
+  const flagRow = useFlagRow(useCollectionFlagRace(collection.id), { past: true });
 
   const [toolSearchOpened, setToolSearchOpened] = useState(false);
 
@@ -329,6 +332,12 @@ const ImageCollection = ({
     >
       <Stack gap="xs">
         <IsClient>
+          {flagRow && (
+            <Group justify="space-between" gap="xs">
+              <FlagRaceHeader summary={flagRow.summary} />
+              <FlagEnterButton event={flagRow.event} />
+            </Group>
+          )}
           {!isContestCollection && (
             <>
               <Group justify="flex-end" gap={4}>
@@ -390,12 +399,14 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite
-              filters={filters}
-              disableStoreFilters
-              collectionId={collection.id}
-              hideHatTurf={collectionHidesHatTurf(collection)}
-            />
+            <FlagRowProviders row={flagRow}>
+              <ImagesInfinite
+                filters={filters}
+                disableStoreFilters
+                collectionId={collection.id}
+                hideHatTurf={collectionHidesHatTurf(collection)}
+              />
+            </FlagRowProviders>
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -848,12 +859,14 @@ export function Collection({
                                     ) {
                                       router.push(`/posts/create?collectionId=${collection.id}`);
                                     } else {
-                                      dialogStore.trigger({
-                                        component: AddUserContentModal,
-                                        props: {
+                                      openDialog(
+                                        () =>
+                                          import('~/components/Collections/AddUserContentModal'),
+                                        'AddUserContentModal',
+                                        {
                                           collectionId: collection.id,
-                                        },
-                                      });
+                                        }
+                                      );
                                     }
                                   }}
                                 >
@@ -883,10 +896,11 @@ export function Collection({
                                   ) {
                                     router.push(`/posts/create?collectionId=${collection.id}`);
                                   } else {
-                                    dialogStore.trigger({
-                                      component: AddUserContentModal,
-                                      props: { collectionId: collection.id },
-                                    });
+                                    openDialog(
+                                      () => import('~/components/Collections/AddUserContentModal'),
+                                      'AddUserContentModal',
+                                      { collectionId: collection.id }
+                                    );
                                   }
                                 }}
                               >
@@ -907,12 +921,14 @@ export function Collection({
                                     if (!!metadata.existingEntriesDisabled) {
                                       router.push(`/posts/create?collectionId=${collection.id}`);
                                     } else {
-                                      dialogStore.trigger({
-                                        component: AddUserContentModal,
-                                        props: {
+                                      openDialog(
+                                        () =>
+                                          import('~/components/Collections/AddUserContentModal'),
+                                        'AddUserContentModal',
+                                        {
                                           collectionId: collection.id,
-                                        },
-                                      });
+                                        }
+                                      );
                                     }
                                   }}
                                 >

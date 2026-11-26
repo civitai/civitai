@@ -14,7 +14,16 @@ import { EntityType } from '~/shared/utils/prisma/enums';
 // Never scanned by Clavata, so there is nothing to cut over.
 export type CutoverEntityType = Exclude<
   TextScanEntityType,
-  'Challenge' | 'Crucible' | 'Storyline' | 'ImageCaption' | 'ModelRules'
+  | 'Challenge'
+  | 'Crucible'
+  | 'Storyline'
+  | 'ImageCaption'
+  | 'ServiceOffering'
+  | 'PostText'
+  | 'ModelRules'
+  | 'AppDoc'
+  | 'ServiceDealReview'
+  | 'ServiceDealReviewReply'
 >;
 
 type ClavataTarget = {
@@ -195,12 +204,12 @@ export async function disableClavataFor(
 
   await sysRedis.sAdd(REDIS_SYS_KEYS.TEXT_SCAN.CLAVATA_CUTOVER, target.clavataKey);
   if (unmoderatedOverride)
-    await logToAxiom({
+    logToAxiom({
       name: 'text-scan-clavata-cutover',
       type: 'warning',
       message: 'Chat cut over without an active text-scan check',
       entityType,
-    }).catch(() => null);
+    });
 
   const drain = target.jobQueueEntityType
     ? await drainModerationQueue(target.jobQueueEntityType)

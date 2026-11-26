@@ -92,6 +92,14 @@ export const updateResourceReviewSchema = z.object({
 
 const REVIEW_PAGE_SIZE_MAX = 50;
 
+export type GetRecommendedByInput = z.infer<typeof getRecommendedBySchema>;
+export const getRecommendedBySchema = z.object({
+  modelId: numericString(),
+  modelVersionId: numericString(),
+  limit: z.coerce.number().int().min(1).max(50).default(24),
+  cursor: z.coerce.number().int().min(1).max(200).default(1),
+});
+
 export type GetResourceReviewPagedInput = z.infer<typeof getResourceReviewPagedSchema>;
 export const getResourceReviewPagedSchema = paginationSchema
   .extend({

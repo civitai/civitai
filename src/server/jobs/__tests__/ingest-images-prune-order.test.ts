@@ -67,7 +67,12 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: mockLimitConcurrency }));
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({
-  env: { IMAGE_SCANNING_MAX_PER_RUN: 10, IMAGE_SCANNING_RETRY_DELAY: 5, DATABASE_IS_PROD: true },
+  env: {
+    IMAGE_SCANNING_MAX_PER_RUN: 10,
+    IMAGE_SCANNING_RETRY_MAX_PER_RUN: 200,
+    IMAGE_SCANNING_RETRY_DELAY: 5,
+    DATABASE_IS_PROD: true,
+  },
 }));
 
 import { ingestImages } from '~/server/jobs/image-ingestion';

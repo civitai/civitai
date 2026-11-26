@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // deleteImages deletes the Image rows first (RETURNING), busts caches in a Promise.all, then
 // deletes the S3 objects. A batch whose images all have `postId IS NULL` yields an empty id list,
@@ -66,6 +68,14 @@ vi.mock('~/server/services/image.service', async (importOriginal) => {
     },
   };
 });
+const queueModels = vi.hoisted(() => vi.fn(async (_items: { id: number }[]) => undefined));
+vi.mock('~/server/search-index/models.search-index', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    modelsSearchIndex: { ...(actual.modelsSearchIndex as object), queueUpdate: queueModels },
+  };
+});
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustCacheTag: vi.fn(async () => undefined),
@@ -75,7 +85,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({ insert: async () => undefined }),
 }));
 
-const { bustCachesForPosts } = await import('../post.service');
+const { bustCachesForPosts, refreshShowcasesForUserModels } = await import('../post.service');
 
 describe('bustCachesForPosts', () => {
   beforeEach(() => {
@@ -116,11 +126,64 @@ describe('bustCachesForPosts and the version showcase', () => {
     expect(refreshShowcase).toHaveBeenCalledWith([77]);
   });
 
+  it("queues the model's search document when the post is the model owner's", async () => {
+    mockQueryRaw.mockResolvedValueOnce([post(true), post(true)] as never);
+
+    await bustCachesForPosts([1, 2]);
+
+    expect(queueModels).toHaveBeenCalledWith([
+      { id: 7, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  });
+
   it("leaves the showcase alone for someone else's post on the version", async () => {
     mockQueryRaw.mockResolvedValueOnce([post(false)] as never);
 
     await bustCachesForPosts([1]);
 
+    expect(refreshShowcase).not.toHaveBeenCalled();
+    expect(queueModels).not.toHaveBeenCalled();
+  });
+
+  // Featured community images are always someone else's posts, which the owner-showcase branch
+  // returns early for: the version showcase bust has to run before that.
+  it("still refreshes the version showcases holding someone else's post", async () => {
+    mockQueryRaw.mockResolvedValueOnce([post(false)] as never);
+
+    await bustCachesForPosts([1]);
+
+    const reads = showcaseQueries(dbMock.dbRead.$queryRaw);
+    expect(reads).toHaveLength(1);
+    expect(reads[0].values).toEqual([1]);
+  });
+});
+
+describe('refreshShowcasesForUserModels', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.model.findMany.mockResolvedValue([]);
+  });
+
+  it("refreshes and queues all of an account's models, in bounded chunks", async () => {
+    const rows = Array.from({ length: 1200 }, (_, i) => ({
+      modelId: i + 1,
+      modelVersionId: (i + 1) * 10,
+    }));
+    mockQueryRaw.mockResolvedValueOnce(rows as never);
+
+    await refreshShowcasesForUserModels(42);
+
+    const queued = queueModels.mock.calls.map(([items]) => items.length);
+    expect(queued).toEqual([500, 500, 200]);
+    expect(refreshShowcase.mock.calls.map(([ids]) => ids.length)).toEqual([500, 500, 200]);
+  });
+
+  it('queues nothing for an account with no models', async () => {
+    mockQueryRaw.mockResolvedValueOnce([] as never);
+
+    await refreshShowcasesForUserModels(42);
+
+    expect(queueModels).not.toHaveBeenCalled();
     expect(refreshShowcase).not.toHaveBeenCalled();
   });
 });

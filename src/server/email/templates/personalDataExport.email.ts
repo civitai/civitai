@@ -23,9 +23,14 @@ export function personalDataExportReadyHtml({ username, link, takenAt }: Omit<Re
 
 /** To the account owner, on release: the cover note and the archive link. */
 export const personalDataExportReadyEmail = createEmail({
+  template: 'personalDataExportReady',
+  mailClass: 'transactional',
   header: ({ to }: ReadyData) => ({ subject: COVER_NOTE_SUBJECT, to }),
   html: (data: ReadyData) =>
     simpleEmailWithTemplate({
+      icon: '📦',
+      accent: 'blue',
+      eyebrow: 'Your data',
       header: COVER_NOTE_SUBJECT,
       body: personalDataExportReadyHtml(data),
     }),
@@ -49,6 +54,8 @@ type BuiltData = {
 
 /** To the staff member who queued the export: the archive is built, here is a link. */
 export const personalDataExportBuiltEmail = createEmail({
+  template: 'personalDataExportBuilt',
+  mailClass: 'transactional',
   header: ({ to, exportId }: BuiltData) => ({
     subject: `Personal data export #${exportId} is ready`,
     to,
@@ -70,6 +77,9 @@ export const personalDataExportBuiltEmail = createEmail({
       '<p>Nothing has been sent to the account owner. Release it from the Data Exports page once it has been reviewed.</p>',
     ];
     return simpleEmailWithTemplate({
+      icon: '📦',
+      accent: 'gray',
+      eyebrow: 'Staff: data export',
       header: `Personal data export #${exportId}`,
       body: parts.join(''),
     });
@@ -92,12 +102,17 @@ type HeldData = { to: string; exportId: number };
  * Legal notice may have landed, so it says "being routed", which is true either way.
  */
 export const personalDataExportHeldEmail = createEmail({
+  template: 'personalDataExportHeld',
+  mailClass: 'transactional',
   header: ({ to, exportId }: HeldData) => ({
     subject: `Personal data export #${exportId}: held, being routed to Legal`,
     to,
   }),
   html: ({ exportId }: HeldData) =>
     simpleEmailWithTemplate({
+      icon: '⏸️',
+      accent: 'gray',
+      eyebrow: 'Staff: data export',
       header: `Personal data export #${exportId}`,
       body: '<p>Held, being routed to Legal.</p>',
     }),
@@ -109,6 +124,8 @@ type RefusedData = { to: string; subject: string; lines: string[] };
 
 /** To Legal's intake, for a held account: the key=value lines its sweep reads, and nothing else. */
 export const personalDataExportRefusedEmail = createEmail({
+  template: 'personalDataExportRefused',
+  mailClass: 'transactional',
   header: ({ to, subject }: RefusedData) => ({ subject, to }),
   html: ({ lines }: RefusedData) => `<pre>${lines.map((l) => escapeHtml(l)).join('\n')}</pre>`,
   text: ({ lines }: RefusedData) => lines.join('\n'),

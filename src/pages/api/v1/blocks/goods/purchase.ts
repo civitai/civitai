@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -12,8 +13,8 @@ import {
   purchaseBlockGood,
   resolveBlockGoodForPurchase,
 } from '~/server/services/blocks/block-goods.service';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import {
-  BLOCK_GOOD_CAP_PER_DAY,
   checkBlockGoodRateLimit,
   claimGoodIdempotency,
   computeGoodPurchaseFingerprint,
@@ -27,6 +28,7 @@ import {
   BLOCK_GOOD_MAX_PRICE_BUZZ,
 } from '~/shared/constants/block-goods.constants';
 import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotency';
+import { appRateLimitBody, appRateLimitMeta, utcDayReset } from '~/server/utils/app-rate-limit';
 
 /**
  * POST /api/v1/blocks/goods/purchase
@@ -50,7 +52,7 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
  * purchase — PER KIND, via `maxPriceBuzzForKind`, so an `app_unlock` is bounded at
  * BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ and an ordinary good at the general
  * BLOCK_GOOD_MAX_PRICE_BUZZ — and a per-user daily ceiling
- * (BLOCK_GOOD_CAP_PER_DAY, reserve-and-refund) bounds the day across every app
+ * (the registry's `apps.goods-daily`, reserve-and-refund) bounds the day across every app
  * the viewer has installed. Over either → a clean 4xx, never a 500.
  *
  * IDEMPOTENCY, two layers.
@@ -143,27 +145,51 @@ export const baseHandler = withAxiom(async function handler(
   const attemptPurchase = async (): Promise<PurchaseOutcome> => {
     const rateLimit = await checkBlockGoodRateLimit(claims.blockInstanceId, buyerUserId);
     if (!rateLimit.allowed) {
+      recordBlockClaimsRateLimitRefusal({
+        claims,
+        surface: 'rest',
+        bucket: 'goods',
+        endpoint: 'goods_purchase',
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
       // TRANSIENT: nothing moved, so a retry once the window clears must be able
       // to execute — not cached under the idempotency key.
-      res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+      const meta = appRateLimitMeta('apps.goods-rate', rateLimit.retryAfterSeconds);
+      res.setHeader('Retry-After', String(meta.retryAfterSeconds));
       return {
         status: 429,
-        body: { error: 'Too many purchases — please retry shortly.' },
+        body: appRateLimitBody(meta, 'Too many purchases — please retry shortly.'),
         transient: true,
       };
     }
 
+    // The buyer's daily cap: the registry's `apps.goods-daily` (a KeyValue override, else the code
+    // default). Never throws; read before the reservation.
+    const dailyCap = await resolveUserAppLimit('apps.goods-daily', buyerUserId);
     let capKey: Awaited<ReturnType<typeof reserveBlockGoodSpend>>['key'];
     try {
       const reserved = await reserveBlockGoodSpend(buyerUserId, priceBuzz);
       capKey = reserved.key;
-      if (reserved.total > BLOCK_GOOD_CAP_PER_DAY) {
+      if (reserved.total > dailyCap) {
         await refundBlockGoodSpend(capKey, priceBuzz);
+        // TRANSIENT, like the rate limit: no Buzz moved and the reservation is refunded, so a
+        // retry after the UTC reset must run rather than replay this refusal.
+        const { retryAfterSeconds, resetAt } = utcDayReset();
+        const meta = appRateLimitMeta('apps.goods-daily', retryAfterSeconds, {
+          limit: dailyCap,
+          // The day's purchases before this one, which the refund just gave back.
+          used: reserved.total - Math.ceil(priceBuzz),
+          windowSeconds: 24 * 60 * 60,
+          resetAt,
+        });
+        res.setHeader('Retry-After', String(meta.retryAfterSeconds));
         return {
-          status: 400,
-          body: {
-            error: `Daily purchase limit reached (${BLOCK_GOOD_CAP_PER_DAY} Buzz). Try again tomorrow.`,
-          },
+          status: 429,
+          body: appRateLimitBody(
+            meta,
+            `Daily purchase limit reached (${dailyCap} Buzz). Try again tomorrow.`
+          ),
+          transient: true,
         };
       }
     } catch {

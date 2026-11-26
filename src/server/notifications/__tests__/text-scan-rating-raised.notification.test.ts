@@ -17,6 +17,16 @@ describe('text-scan-rating-raised', () => {
     });
   });
 
+  it('points a model owner at the civitai.com face, not a dispute: the rating is not locked', () => {
+    expect(
+      render({ entityType: 'Model', entityId: 7, level: 4, title: 'LoRA', url: '/models/7' })
+    ).toEqual({
+      message:
+        'Your model "LoRA" is now marked mature based on its text, so it lists on civitai.red. To list it on civitai.com too, add a civitai.com title and cover in its editor.',
+      url: '/models/7',
+    });
+  });
+
   it('omits a missing title', () => {
     expect(
       render({

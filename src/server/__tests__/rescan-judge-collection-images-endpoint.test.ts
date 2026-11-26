@@ -26,7 +26,8 @@ const { env } = vi.hoisted(() => ({
 vi.mock('~/env/server', () => ({ env }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 
-const handler = (await import('~/pages/api/admin/temp/rescan-judge-collection-images')).default;
+const handler = (await import('~/server/api-routes/admin/temp/rescan-judge-collection-images'))
+  .default;
 
 const JUDGE_COLLECTION = 1;
 const PLAIN_COLLECTION = 2;

@@ -21,11 +21,6 @@ const { holder, recorded } = vi.hoisted(() => ({
   recorded: [] as string[],
 }));
 
-// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-}));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({
     ...holder.maintenance,
@@ -92,6 +87,7 @@ vi.mock('~/server/services/auction.service', async (importOriginal) => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { removeAllContent } from '~/server/services/user.service';
+import { deleteImages } from '~/server/services/image.service';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 import {
@@ -133,7 +129,7 @@ beforeEach(() => {
   }
 });
 
-/** The target and the bystander each with a private doc and a shared post the other voted on. */
+/** The target and the bystander each with a private doc and a shared post the other reported. */
 async function seed() {
   const app = `ab_RMWIPE_${(appSeq += 1)}`;
   const store = createDocStore({ db: h.db });
@@ -143,7 +139,7 @@ async function seed() {
   ]) {
     await store.put(ctx(app, NS_PROD, uid), PREFS, 'theme', { uid: `u${uid}` });
     await store.put(ctx(app, NS_PROD, uid), POSTS, `post-${uid}`, { status: 'open' });
-    await store.mark(ctx(app, NS_PROD, other), POSTS, `post-${uid}`, 'vote');
+    await store.report(ctx(app, NS_PROD, other), POSTS, `post-${uid}`);
   }
   return app;
 }
@@ -176,10 +172,22 @@ async function state(app: string) {
   };
 }
 
-/** The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold. */
+/**
+ * The main-database tables the wipe deletes with raw SQL. Images go through `deleteImages`
+ * instead, the late pass naming the account.
+ */
 const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article'];
 const rawDeleted = (table: string) =>
-  dbMock.dbWrite.$executeRaw.mock.calls
+  table === 'Image'
+    ? vi
+        .mocked(deleteImages)
+        .mock.calls.some(([, opts]) =>
+          ((opts.onlyWhere as Prisma.Sql | undefined)?.values ?? []).includes(TARGET)
+        )
+    : rawStatementDeleted(table);
+const rawStatementDeleted = (table: string) =>
+  [...dbMock.dbWrite.$executeRaw.mock.calls, ...dbMock.dbWrite.$queryRaw.mock.calls]
+    .filter(([strings]) => Array.isArray(strings))
     .map(([strings, ...values]) =>
       Prisma.sql(strings as unknown as TemplateStringsArray, ...(values as never[]))
     )
@@ -249,7 +257,6 @@ describe('removeAllContent → document store', () => {
 
     await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toEqual({
       incomplete: ['doc-store'],
-      keptModelIds: [],
     });
 
     // The main-database wipe ran in full regardless.
@@ -290,7 +297,6 @@ describe('removeAllContent → document store', () => {
     };
     await expect(removeAllContent({ id: TARGET })).resolves.toEqual({
       incomplete: ['doc-store'],
-      keptModelIds: [],
     });
     expect(recorded).toEqual(['partial']);
     const line = warn.mock.calls

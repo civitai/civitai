@@ -1,4 +1,9 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
+import {
+  reportListedImageSql,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
 import { getChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
@@ -14,10 +19,13 @@ export const dailyChallengeWebhooks = createWebhookProcessor({
         SELECT
           a.id,
           a.title as name,
-          (SELECT "url" FROM "Image" WHERE "id" = a."coverId") as "coverUrl"
+          (SELECT i."url" FROM "Image" i WHERE i."id" = a."coverId" AND ${imageNotRestrictedSql()} AND ${reportListedImageSql(
+        SIGNED_OUT_REPORT_LISTED
+      )}) as "coverUrl"
         FROM "CollectionItem" ci
         JOIN "Article" a ON a.id = ci."articleId"
         WHERE ci."collectionId" = ${config.challengeCollectionId}
+        AND a.availability != 'Private'
         AND a.metadata->>'status' = 'complete'
         AND a."updatedAt" > ${lastSent}
       `;
@@ -42,10 +50,13 @@ export const dailyChallengeWebhooks = createWebhookProcessor({
         SELECT
           a.id,
           a.title as name,
-          (SELECT "url" FROM "Image" WHERE "id" = a."coverId") as "coverUrl"
+          (SELECT i."url" FROM "Image" i WHERE i."id" = a."coverId" AND ${imageNotRestrictedSql()} AND ${reportListedImageSql(
+        SIGNED_OUT_REPORT_LISTED
+      )}) as "coverUrl"
         FROM "CollectionItem" ci
         JOIN "Article" a ON a.id = ci."articleId"
         WHERE ci."collectionId" = ${config.challengeCollectionId}
+        AND a.availability != 'Private'
         AND a.metadata->>'status' = 'active'
         AND a."updatedAt" > ${lastSent}
       `;
@@ -70,10 +81,13 @@ export const dailyChallengeWebhooks = createWebhookProcessor({
         SELECT
           a.id,
           a.title as name,
-          (SELECT "url" FROM "Image" WHERE "id" = a."coverId") as "coverUrl"
+          (SELECT i."url" FROM "Image" i WHERE i."id" = a."coverId" AND ${imageNotRestrictedSql()} AND ${reportListedImageSql(
+        SIGNED_OUT_REPORT_LISTED
+      )}) as "coverUrl"
         FROM "CollectionItem" ci
         JOIN "Article" a ON a.id = ci."articleId"
         WHERE ci."collectionId" = ${config.challengeCollectionId}
+        AND a.availability != 'Private'
         AND a.metadata->>'status' = 'pending'
         AND a."updatedAt" > ${lastSent}
       `;

@@ -1,5 +1,4 @@
-import { Checkbox, Input, Stack, Switch } from '@mantine/core';
-import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { Checkbox, Stack, Switch } from '@mantine/core';
 import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
@@ -42,6 +41,7 @@ import {
   ModelCardInput,
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
+import { SegmentedEnumField, type SegmentedEnumMeta } from './inputs/SegmentedEnumField';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
 import { AvatarFormFields } from '~/components/AvatarGen/AvatarFormFields';
 import type { GenerationStore } from './store';
@@ -199,6 +199,19 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             onChange={onChange}
             meta={meta}
             error={error?.message}
+          />
+        )}
+      />
+      <Controller
+        graph={generationHub}
+        name="backgroundRemovalModel"
+        render={({ value, meta, onChange, note }) => (
+          <SegmentedEnumField
+            label="Model"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+            note={note}
           />
         )}
       />
@@ -366,6 +379,18 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <SegmentedEnumField
             label="Thinking"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="editPrecision"
+        render={({ value, meta, onChange }) => (
+          <SegmentedEnumField
+            label="Edit precision"
             value={value}
             onChange={onChange}
             options={meta.options}
@@ -636,33 +661,5 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         />
       </AccordionLayout>
     </Stack>
-  );
-}
-
-type SegmentedEnumMeta = { options: readonly { label: string; value: string }[] };
-
-function SegmentedEnumField<T extends string>({
-  label,
-  value,
-  onChange,
-  options,
-  note,
-}: {
-  label: string;
-  value: T;
-  onChange: (value: T) => void;
-  options: SegmentedEnumMeta['options'];
-  note?: React.ComponentProps<typeof FieldCorrectionNote>['note'];
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Input.Label>{label}</Input.Label>
-      <ChoiceGroup
-        value={value}
-        onChange={(v) => onChange(v as T)}
-        data={options.map((o) => ({ label: o.label, value: o.value }))}
-      />
-      <FieldCorrectionNote note={note} />
-    </div>
   );
 }

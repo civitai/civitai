@@ -192,6 +192,16 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   'storage-doc-delete',
   // Reviewed and kept: the document's open reports were dismissed (later reports re-open it).
   'storage-doc-dismiss',
+  // App Blocks DOCUMENT STORE data migration (rollout step 4 of docs/app-storage-generic-core.md;
+  // its tooling, the only writer, is removed, so no new row has these, and they stay for the
+  // history already written): a moderator moved one mark's rows of
+  // one collection into a viewer-keyed collection (`storage-mark-migration`: freeze, copy, verify),
+  // or purged every document of one collection (`storage-collection-purge`, also the mark
+  // migration's rollback). Changes no listing state; withheld from the owner's history like the
+  // other storage actions. `before` holds the op's parameters, never a document's content;
+  // `after` its outcome and counts (a purge's rows are dumped in the store, not here).
+  'storage-mark-migration',
+  'storage-collection-purge',
   // A moderator edited the listing's details or store media without holding a seat on it
   // (`app-listing-moderator-edit.ts`). Changes no `status`; owner-visible.
   // `reason` — the owner-facing sentence.   `detail` — `details` | `media`.
@@ -200,6 +210,13 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // Writes `is_official` only; no `status`.
   // `reason` — the owner-facing sentence.   `before` / `after` — { isOfficial }.
   'set-official',
+  // A moderator takedown of a connect listing cut (or tried to cut) the app's offline access
+  // (`connect-offline-takedown.ts` is the only writer). Changes no `status`. Withheld from the
+  // OWNER's history: it is operational, and `detail` carries a raw error message.
+  // `offline-cut`        — `after` = { clientId, deleted }.
+  // `offline-cut-failed` — `after` = { clientId }; `detail` = the error message.
+  'offline-cut',
+  'offline-cut-failed',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 
@@ -325,6 +342,15 @@ export const listModerationEventsSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 });
 export type ListModerationEventsInput = z.infer<typeof listModerationEventsSchema>;
+
+/**
+ * MOD retry the offline-access cut of a taken-down connect listing, after the cut that ran at
+ * takedown failed. The acting moderator is bound to `ctx.user.id` in the router.
+ */
+export const retryConnectOfflineCutSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+});
+export type RetryConnectOfflineCutInput = z.infer<typeof retryConnectOfflineCutSchema>;
 
 // ---------------------------------------------------------------------------
 // W13 post-approval listing management (Phase 1) — reset-to-pending (mod),

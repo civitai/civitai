@@ -107,7 +107,8 @@ beforeAll(async () => {
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
-      "tosViolation" boolean DEFAULT false, "needsReview" text, "nsfwLevel" int DEFAULT 1
+      "tosViolation" boolean DEFAULT false, "needsReview" text, "nsfwLevel" int DEFAULT 1,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Crucible" (
       id int PRIMARY KEY, status "CrucibleStatus", "endAt" timestamptz, "nsfwLevel" int,
@@ -305,6 +306,23 @@ describe('team points for accepted crucible entrants', () => {
       `UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL, flags = 0
        WHERE id = ${BLUE}`
     );
+  });
+
+  it.each([
+    ["keeps an award earned before the entrant's exclusion start", 1, 1000],
+    ['drops an award earned on or after it', 0, 0],
+  ])('%s', async (_, daysAhead, points) => {
+    await acceptCrucibleEntry(await enter(1));
+    const from = new Date(Date.now() + daysAhead * 86_400_000).toISOString().slice(0, 10);
+    await db.query(
+      `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints}, meta = $1::jsonb WHERE id = ${BLUE}`,
+      [JSON.stringify({ eventPointsExcludedFrom: from })]
+    );
+    try {
+      expect(await settled()).toBe(points);
+    } finally {
+      await db.query(`UPDATE "User" SET flags = 0, meta = NULL WHERE id = ${BLUE}`);
+    }
   });
 
   it('gives nothing to an entrant with no team, or one who may not earn', async () => {

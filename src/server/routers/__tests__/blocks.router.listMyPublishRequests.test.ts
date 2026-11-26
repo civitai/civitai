@@ -573,6 +573,52 @@ describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure
     expect(args.select.deployDetail).toBe(true);
     expect(args.select.reviewedAt).toBe(true); // the STRANDED-detection anchor
   });
+
+  /**
+   * 🔴 Authors should not see raw boot-check output: a pending row's review preview detail keeps
+   * only the fixed author reason. The marker is a value no constant can equal.
+   */
+  it('a pending row’s boot check reaches the author as a fixed reason, never the app’s output', async () => {
+    const MARKER = 'zq-bootcheck-marker-5e1d0a7c93';
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-p',
+        appBlockId: null,
+        slug: 'pending-app',
+        version: '1.0.0',
+        status: 'pending',
+        submittedAt: new Date('2026-01-01'),
+        reviewedAt: null,
+        rejectionReason: null,
+        approvalNotes: null,
+        deployState: 'preview-live',
+        deployDetail: JSON.stringify({
+          sha: 'b'.repeat(40),
+          bootCheck: {
+            result: 'failed',
+            ms: 4000,
+            messagesSeen: [`${MARKER}-msg`],
+            firstError: `${MARKER}-err`,
+            checkedAt: '2026-01-01T00:00:00.000Z',
+            mode: 'shadow',
+          },
+        }),
+        deployUpdatedAt: new Date('2026-01-02'),
+        fileSummary: null,
+        manifestDiffSummary: null,
+        appBlock: null,
+      },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(JSON.stringify(rows)).not.toContain(MARKER);
+    expect(JSON.parse(rows[0].deployDetail as string).bootCheck).toEqual({
+      result: 'failed',
+      mode: 'shadow',
+      reason: 'page-error',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -796,5 +842,58 @@ describe('listMyPublishRequests — the hidden-mature-rating advisory', () => {
     const rows = await caller.listMyPublishRequests();
 
     expect(rows[0].problems).toEqual([]);
+  });
+});
+
+describe('listMyPublishRequests — review holds never reach the developer', () => {
+  it('a request with an open hold returns no hold reason, label or count', async () => {
+    const holdRow = {
+      id: 7,
+      slug: 'held-app',
+      placedByLabel: 'code-check-label',
+      reason: 'security check still running',
+      clearedReason: 'override reason text',
+      // The count query reads `n`; a real value is what lets a leaked count show up below.
+      n: 2,
+    };
+    for (const c of [dbMock.dbRead, dbMock.dbWrite])
+      c.$queryRaw.mockImplementation((async (strings: unknown) =>
+        Array.isArray(strings) && strings.join('?').includes('app_publish_request_holds')
+          ? [holdRow]
+          : []) as never);
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-held',
+        appBlockId: null,
+        slug: 'held-app',
+        version: '1.0.0',
+        status: 'pending',
+        submittedAt: new Date('2026-01-01'),
+        reviewedAt: null,
+        rejectionReason: null,
+        approvalNotes: null,
+        deployState: null,
+        deployDetail: null,
+        deployUpdatedAt: null,
+        fileSummary: null,
+        manifestDiffSummary: null,
+        appBlock: null,
+      },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const body = JSON.stringify(await caller.listMyPublishRequests());
+
+    expect(body).toContain('req-held');
+    for (const secret of [
+      'code-check-label',
+      'security check still running',
+      'override reason text',
+    ])
+      expect(body).not.toContain(secret);
+    expect(body).not.toMatch(/hold/i);
+    // Under any key: no row carries the open-hold count.
+    for (const row of JSON.parse(body) as Record<string, unknown>[])
+      expect(Object.values(row)).not.toContain(2);
   });
 });

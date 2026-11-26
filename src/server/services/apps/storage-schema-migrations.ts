@@ -38,6 +38,8 @@
 // `additionalProperties` schema).
 
 import { firstSchemaFailure, jsonEqual } from '~/server/services/apps/doc-store-schema';
+import { collectSharedDataLeaves } from '~/server/services/apps/shared-data-leaves';
+import { valueContainsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import type {
   AppStorageBreakingKeyword,
   AppStorageCollectionSchema,
@@ -369,11 +371,15 @@ function opLabel(name: string, index: number): string {
  * A manifest whose `storage` does not parse yields an empty check: the manifest validator
  * reports those errors itself, and a baseline that does not parse cannot be compared (a warning
  * says so; an unparseable `history` entry is skipped).
+ *
+ * `approved` is EVERY earlier approved manifest (default: `history`), for the one rule that spans
+ * all of them: `keyedBy` ({@link keyedByChangeErrors}).
  */
 export function checkStorageMigrations(
   prev: unknown,
   next: unknown,
-  history: readonly unknown[] = []
+  history: readonly unknown[] = [],
+  approved: readonly unknown[] = history
 ): StorageMigrationCheck {
   const check: StorageMigrationCheck = {
     breaking: [],
@@ -392,6 +398,8 @@ export function checkStorageMigrations(
   }
   const prevCollections: ReadonlyMap<string, DeclaredStorageCollection> =
     before && before.errors.length === 0 ? before.collections : new Map();
+  check.errors.push(...keyedByChangeErrors(after.collections, [prev, ...approved]));
+  check.errors.push(...deprecatedPrimitiveErrors(after.collections, prev));
 
   const compare = (
     name: string,
@@ -464,6 +472,23 @@ export function checkStorageMigrations(
       }
     });
     if (plan.length > 0) check.plans.set(name, plan);
+
+    // A default is written into documents other viewers read, so it is held to the shared-data rule.
+    ops.forEach((op, i) => {
+      if (op.op !== 'default') return;
+      if (typeof op.value !== 'string' && 'overflow' in collectSharedDataLeaves(op.value)) {
+        check.errors.push(
+          `${opLabel(name, i)}.value is too large or too deeply nested to check, so it is refused`
+        );
+      } else if (valueContainsPrivateMediaUrl(op.value)) {
+        check.errors.push(
+          `${opLabel(
+            name,
+            i
+          )}.value carries an orchestrator media link, which app storage does not accept`
+        );
+      }
+    });
 
     // What a mutation op writes must be what the new schema accepts there.
     const schema = collection.schema as Node | undefined;
@@ -546,6 +571,116 @@ export class StorageMigrationRefusal extends Error {
 
 export function isStorageMigrationRefusal(err: unknown): err is StorageMigrationRefusal {
   return err instanceof StorageMigrationRefusal;
+}
+
+/**
+ * 🔴 `keyedBy` IS IMMUTABLE ONCE APPROVED: adding, removing or changing it on a collection that
+ * ANY approved manifest declared reinterprets every key stored in it (a collection dropped and
+ * declared again is the same stored key space). A schema major is the wrong tool for that; a new
+ * collection is the right one (docs/app-storage-generic-core.md, "Viewer-keyed documents").
+ *
+ * Read from each manifest's RAW declaration, not its parse: an approved manifest that no longer
+ * parses still names the key spaces its documents were written in.
+ */
+export function keyedByChangeErrors(
+  now: ReadonlyMap<string, DeclaredStorageCollection>,
+  approved: readonly unknown[]
+): string[] {
+  const declared = new Map<string, Set<string | null>>();
+  for (const manifest of approved) {
+    const raw = (manifest as { storage?: { collections?: unknown } } | null)?.storage?.collections;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    for (const [name, decl] of Object.entries(raw as Record<string, unknown>)) {
+      const keyedBy = (decl as { keyedBy?: unknown } | null)?.keyedBy;
+      let seen = declared.get(name);
+      if (!seen) declared.set(name, (seen = new Set()));
+      seen.add(typeof keyedBy === 'string' ? keyedBy : null);
+    }
+  }
+  const errors: string[] = [];
+  for (const [name, collection] of now) {
+    const want = collection.keyedBy ?? null;
+    const was = [...(declared.get(name) ?? [])].find((k) => k !== want);
+    if (was === undefined) continue;
+    const label = (k: string | null) =>
+      k === null ? 'no keyedBy' : `keyedBy ${JSON.stringify(k)}`;
+    errors.push(
+      `storage.collections.${name}: an approved version declared it with ${label(
+        was
+      )}, and keyedBy cannot be added, removed or changed on a collection once approved (it changes what every stored key means) — declare a new collection instead`
+    );
+  }
+  return errors;
+}
+
+const VIEWER_KEYED_INSTEAD =
+  'declare a viewer-keyed collection instead (keyedBy "viewer" or "parent+viewer": each viewer\'s own document is their vote or entry), and report a document through the moderation report API — see https://developer.civitai.com/apps/guide/storage';
+
+/** A raw declaration's string list (`marks`, `counters`), empty when absent or not a list. */
+function rawNames(decl: unknown, field: 'marks' | 'counters'): string[] {
+  const list = (decl as Record<string, unknown> | null)?.[field];
+  return Array.isArray(list) ? list.filter((n): n is string => typeof n === 'string') : [];
+}
+
+/**
+ * 🔴 MARKS, COUNTERS AND `write: "none"` ARE REMOVED (docs/app-storage-generic-core.md, rollout
+ * step 5; deprecated since step 3): a version may not declare one its PREVIOUS APPROVED version did
+ * not declare on that same collection. A collection may keep exactly what `prev` declared there,
+ * or less; a first version (`prev` null) may declare none of them. Only `prev` grandfathers, not
+ * older history: a collection dropped and declared again is new here.
+ *
+ * Kept declarations are INERT: the store serves no mark or counter (a declared `marks` /
+ * `counters` changes nothing), and a kept `write: "none"` is a read-only collection
+ * (`assertShareWritable`). Grandfathering stays, rather than refusing every declaration, so an
+ * approved app that still declares one can ship an unrelated fix, and a rollback to its previous
+ * approved version passes, without first having to rewrite a declaration that does nothing.
+ *
+ * `prev` is read RAW, not parsed: a baseline that no longer parses still names what its
+ * collections declared, and the parser keeps accepting these fields on replay (approved history).
+ *
+ * 🔴 ROLLBACK ASSUMPTION (docs/app-storage-generic-core.md, "Data migration" → "Rollback"): a
+ * revert re-submits the previous approved version, which this check compares with the CURRENT one.
+ * So a rollout step 4 migration version must keep the source collection's old marks (and counters,
+ * and `write: "none"`) declared until its target's switch opens: reverting to the version before it
+ * then re-declares nothing. Once the target is open there is no revert, only forward versions.
+ * There is deliberately no exemption here for a revert.
+ */
+export function deprecatedPrimitiveErrors(
+  now: ReadonlyMap<string, DeclaredStorageCollection>,
+  prev: unknown
+): string[] {
+  const raw = (prev as { storage?: { collections?: unknown } } | null)?.storage?.collections;
+  const was = isObj(raw) ? raw : {};
+  const errors: string[] = [];
+  // No previous approved version (a new app, a fork's first submit): nothing can be kept.
+  const firstVersion = prev === null || prev === undefined;
+  for (const [name, collection] of now) {
+    const before = Object.hasOwn(was, name) ? was[name] : undefined;
+    for (const field of ['marks', 'counters'] as const) {
+      const kept = new Set(rawNames(before, field));
+      const added = collection[field].filter((n) => !kept.has(n));
+      if (added.length === 0) continue;
+      const listed = added.map((n) => JSON.stringify(n)).join(', ');
+      errors.push(
+        firstVersion
+          ? `storage.collections.${name}.${field}: ${field} were removed and cannot be declared on a new app (declared: ${listed}); ${VIEWER_KEYED_INSTEAD}`
+          : `storage.collections.${name}.${field}: ${listed} ${
+              added.length === 1 ? 'is' : 'are'
+            } not declared on this collection by the previous approved version, and ${field} were removed — a collection may keep only the ${field} it already declares, which do nothing; ${VIEWER_KEYED_INSTEAD}`
+      );
+    }
+    if (
+      collection.write === 'none' &&
+      (before as { write?: unknown } | undefined)?.write !== 'none'
+    ) {
+      errors.push(
+        firstVersion
+          ? `storage.collections.${name}.write: "none" was removed and cannot be declared on a new app; ${VIEWER_KEYED_INSTEAD}`
+          : `storage.collections.${name}.write: "none" is not declared on this collection by the previous approved version, and write "none" was removed — a collection may keep it only if it already declares it, and is then read-only; ${VIEWER_KEYED_INSTEAD}`
+      );
+    }
+  }
+  return errors;
 }
 
 /** Throws {@link StorageMigrationRefusal} when the check has anything to refuse. */

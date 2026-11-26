@@ -8,6 +8,7 @@ import {
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
+  PROXY_ONLY_SEARCH_INDEXES,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
@@ -26,11 +27,13 @@ const SITE_SEARCH_INDEXES = [
 ];
 
 const grantedIndexes = (retired: readonly string[]) =>
-  SITE_SEARCH_INDEXES.filter((index) => !retired.includes(index));
+  SITE_SEARCH_INDEXES.filter(
+    (index) => !retired.includes(index) && !PROXY_ONLY_SEARCH_INDEXES.includes(index)
+  );
 
-// Every index the browser searches, less the retired ones. A token grants only what is listed
-// here, so an index missing from this list stops working in site search rather than being
-// searchable without its rules.
+// Every index the browser searches with its token, less the retired and proxy-only ones. A token
+// grants only what is listed here, so an index missing from this list stops working on the token
+// path rather than being searchable without its rules.
 export const BROWSER_SEARCH_INDEXES = grantedIndexes(RETIRED_SEARCH_INDEXES);
 
 export const SEARCH_TOKEN_TTL_MS = 60 * 60 * 1000;

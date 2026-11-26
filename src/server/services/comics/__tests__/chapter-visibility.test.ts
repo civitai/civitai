@@ -13,7 +13,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   BlockedUsers: listOf([23]),
 }));
 
-const { isComicProjectHidden, isPanelTainted } = await import(
+const { isComicProjectHidden, isPanelTainted, withholdRestrictedPanelImages } = await import(
   '~/server/services/comics/chapter-visibility'
 );
 
@@ -80,5 +80,83 @@ describe('a panel', () => {
     ['with a clean image', clean, false],
   ])('%s holds its chapter back: %s', (_, image, tainted) => {
     expect(isPanelTainted({ image })).toBe(tainted);
+  });
+});
+
+describe('an image made with a base model that restricts mature images', () => {
+  const R = 4;
+  const PG = 1;
+  const image = (nsfwLevel: number, modelRestricted = true) => ({
+    id: 1,
+    url: 'u',
+    nsfwLevel,
+    modelRestricted,
+    userId: OWNER,
+    ingestion: 'Scanned',
+    blockedFor: null as string | null,
+  });
+  const servedPanel = (img: ReturnType<typeof image>, viewerId?: number) => {
+    const chapter = {
+      panels: [{ imageUrl: 'u' as string | null, image: img as typeof img | null }],
+    };
+    withholdRestrictedPanelImages([chapter], viewerId);
+    return chapter.panels[0];
+  };
+
+  it('is withheld as a panel from a stranger, a moderator and a signed-out reader', () => {
+    for (const viewerId of [reader.id, moderator.id, undefined])
+      expect(servedPanel(image(R), viewerId)).toEqual({ imageUrl: null, image: null });
+  });
+
+  it('is served to its uploader', () => {
+    expect(servedPanel(image(R), OWNER).imageUrl).toBe('u');
+  });
+
+  it.each([
+    ['SFW with the flag', image(PG)],
+    ['mature without the flag', image(R, false)],
+    ['XXX without the flag', image(16, false)],
+  ])('is served to anyone when %s', (_, img) => {
+    expect(servedPanel(img, undefined).imageUrl).toBe('u');
+  });
+
+  it('is withheld when rated Blocked, from anyone but its uploader', () => {
+    for (const viewerId of [reader.id, undefined])
+      expect(servedPanel(image(32, false), viewerId).imageUrl).toBeNull();
+    expect(servedPanel(image(32, false), OWNER).imageUrl).toBe('u');
+  });
+});
+
+describe('a panel whose image is blocked', () => {
+  const blocked = (blockedFor: string) => ({
+    id: 1,
+    url: 'u',
+    hash: 'blur-hash' as string | null,
+    nsfwLevel: 1,
+    modelRestricted: false,
+    userId: OWNER,
+    ingestion: 'Blocked',
+    blockedFor: blockedFor as string | null,
+  });
+
+  it.each(['tos', 'moderated'])(
+    'keeps its row for its owner with no media or blur hash (%s)',
+    (blockedFor) => {
+      const panel = {
+        imageUrl: 'u' as string | null,
+        image: blocked(blockedFor) as ReturnType<typeof blocked> | null,
+      };
+      withholdRestrictedPanelImages([{ panels: [panel] }], OWNER);
+      expect(panel).toMatchObject({ imageUrl: null, image: { id: 1, blockedFor, hash: null } });
+    }
+  );
+
+  it('keeps the blur hash for a moderator on a session or full-access key', () => {
+    const panel = {
+      imageUrl: 'u' as string | null,
+      image: blocked('tos') as ReturnType<typeof blocked> | null,
+    };
+    withholdRestrictedPanelImages([{ panels: [panel] }], moderator.id, true);
+    expect(panel).toMatchObject({ imageUrl: 'u', image: { hash: 'blur-hash' } });
   });
 });

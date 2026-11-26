@@ -6,13 +6,20 @@ import { crucibleModerationAdapter } from '~/server/services/crucible-moderation
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
 import {
+  serviceDealReviewModerationAdapter,
+  serviceDealReviewReplyModerationAdapter,
+} from '~/server/services/service-deal-review-moderation.adapter';
+import { serviceOfferingModerationAdapter } from '~/server/services/service-offering-moderation.adapter';
+import {
   textScanShadowAdapters,
   textScanWebSearchAdapters,
 } from '~/server/services/text-scan/adapter';
 import {
+  appDocTextScanAdapter,
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
   imageCaptionTextScanAdapter,
+  postTextTextScanAdapter,
   postTextScanAdapter,
   retiredModelRulesAdapter,
   storylineTextScanAdapter,
@@ -40,6 +47,11 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Post: postTextScanAdapter,
   Storyline: storylineTextScanAdapter,
   ImageCaption: imageCaptionTextScanAdapter,
+  ServiceOffering: serviceOfferingModerationAdapter,
+  ServiceDealReview: serviceDealReviewModerationAdapter,
+  ServiceDealReviewReply: serviceDealReviewReplyModerationAdapter,
+  PostText: postTextTextScanAdapter,
+  AppDoc: appDocTextScanAdapter,
   ...textScanShadowAdapters(),
   ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,

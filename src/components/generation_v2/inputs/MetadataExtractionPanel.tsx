@@ -7,10 +7,7 @@
  * can render remix/workflow action buttons.
  */
 
-import {
-  CIVITAI_MEDIA_ID_MIME,
-  CIVITAI_MEDIA_TYPE_MIME,
-} from '~/components/EdgeMedia/media-drag-data';
+import { CIVITAI_MEDIA_ID_MIME, getMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { blobExtension } from '~/utils/file-utils';
 import {
@@ -68,22 +65,6 @@ function getDroppedImageUrl(event: React.DragEvent): string | undefined {
   }
 }
 
-/**
- * Try to extract a Civitai media database ID and type from the drop event's custom drag data.
- * EdgeImage/EdgeVideo set CIVITAI_MEDIA_ID_MIME and CIVITAI_MEDIA_TYPE_MIME when imageId is
- * provided, allowing drop targets to fetch stored metadata server-side.
- */
-function getDroppedMediaInfo(
-  event: React.DragEvent
-): { id: number; type: 'image' | 'video' } | undefined {
-  const raw = event.dataTransfer.getData(CIVITAI_MEDIA_ID_MIME);
-  if (!raw) return undefined;
-  const id = parseInt(raw, 10);
-  if (!Number.isFinite(id)) return undefined;
-  const type = event.dataTransfer.getData(CIVITAI_MEDIA_TYPE_MIME);
-  return { id, type: type === 'video' ? 'video' : 'image' };
-}
-
 /** Fetch a remote image and return it as a File. */
 async function fetchImageAsFile(url: string): Promise<File> {
   const res = await fetch(url);
@@ -126,7 +107,7 @@ export function MetadataExtractionPanel() {
       event.stopPropagation();
 
       // Check if this is an on-site media with a known DB id
-      const mediaInfo = getDroppedMediaInfo(event);
+      const mediaInfo = getMediaDragData(event.dataTransfer);
 
       store.clear();
       setFile(undefined);

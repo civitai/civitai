@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
+import { auditTrainingTriggerWord } from '~/utils/metadata/training-trigger-word';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
@@ -39,6 +41,7 @@ import {
   getAutoLabelWorkflow,
   getJobEstStartsHandler,
   getTrainingServiceStatus,
+  getTrainingServiceStatusState,
   submitAutoLabelWorkflow,
   setTrainingServiceStatus,
 } from '~/server/services/training.service';
@@ -96,6 +99,28 @@ export const trainingRouter = router({
     .input(createTrainingRequestDryRunSchema)
     .use(isFlagProtected('imageTraining'))
     .query(({ input }) => createTrainingRequestDryRun({ ...input })),
+
+  /**
+   * The trainer's trigger-word warning, against the server's profanity list so the browser needs
+   * no copy of it. Advisory only: the submit check (training-trigger-word-check.ts) is what enforces.
+   */
+  auditTriggerWord: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ triggerWord: z.string().max(200) }))
+    // Each answer tests a word against the list, so a person typing needs few and a script gets few.
+    .use(
+      rateLimit([
+        { limit: 10, period: 60 },
+        { limit: 100, period: 24 * 60 * 60 },
+      ])
+    )
+    .query(async ({ input, ctx }) => {
+      const profanity = ctx.features.isGreen
+        ? (await getServerProfanityFilter()).filter
+        : undefined;
+      // Severity only: naming the matched words would let one call test many against the list.
+      return { severity: auditTrainingTriggerWord(input.triggerWord, profanity).severity };
+    }),
 
   moveAsset: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
@@ -211,7 +236,13 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
-    .query(() => getTrainingServiceStatus()),
+    .query(async ({ ctx }) => {
+      const { status, known } = await getTrainingServiceStatusState();
+      // A cold pod's fail-closed fallback (status unreadable, never read) must not be cached at
+      // the edge: it would be served to everyone for the TTL after the pod recovers.
+      if (!known && ctx.cache) ctx.cache.skip = true;
+      return status;
+    }),
   /**
    * Training on/off for anyone, signed in or not: only `available`. getStatus stays behind the
    * imageTraining flag because it also carries the operator message and blocked models. Read by
@@ -220,8 +251,13 @@ export const trainingRouter = router({
   getPublicStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
-    .query(async () => {
-      const { available } = await getTrainingServiceStatus();
+    .query(async ({ ctx }) => {
+      const {
+        status: { available },
+        known,
+      } = await getTrainingServiceStatusState();
+      // As getStatus: never edge-cache the fail-closed fallback.
+      if (!known && ctx.cache) ctx.cache.skip = true;
       return { available };
     }),
   getStatusModerator: moderatorProcedure.query(() => getTrainingServiceStatus()),

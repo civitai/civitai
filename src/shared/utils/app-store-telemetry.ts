@@ -31,7 +31,12 @@ export const APP_SURFACES = [
 ] as const;
 export type AppSurface = (typeof APP_SURFACES)[number];
 
-/** The query parameter a store link carries its surface in (`/apps/run/x?src=store_card`). */
+/**
+ * The query parameter a store link carries its surface in (`/apps/run/x?src=store_card`).
+ * 🔴 HOST-OWNED: listed in `HOST_OWNED_RUN_PARAMS` (`~/shared/utils/apps-run-origin`), so it
+ * is stripped from what an embedded app sees and from share links. A new host parameter on
+ * the run URL must be added there too, or it leaks to the app by default.
+ */
 export const APP_SURFACE_PARAM = 'src';
 
 export function isAppSurface(value: unknown): value is AppSurface {

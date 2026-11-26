@@ -136,7 +136,7 @@ setReactionRepairHook(async ({ imageIds, reason }) => {
   const repairEnabled = await isFlipt(FLIPT_FEATURE_FLAGS.METRIC_REACTION_REPAIR);
   const previewOnly = reason === 'nightly-exactness' && !repairEnabled;
   const result = await repairReactionMetrics(imageIds, { dryRun: previewOnly });
-  await logToAxiom({
+  logToAxiom({
     type: 'metric-reconciliation',
     name: 'reaction-repair',
     // Alerting lives on the gauges, not here. The one condition needing a human is
@@ -146,7 +146,7 @@ setReactionRepairHook(async ({ imageIds, reason }) => {
       result.inserted
     }${result.skippedReason ? ` (${result.skippedReason})` : ''}`,
     error: JSON.stringify(result),
-  }).catch(() => undefined);
+  });
 });
 
 type NightlyExactnessSnapshot = {
@@ -196,26 +196,26 @@ async function republishNightlyExactnessGauges() {
   try {
     raw = await sysRedis.get(REDIS_SYS_KEYS.METRIC_RECONCILIATION.NIGHTLY_EXACTNESS);
   } catch (e) {
-    await logToAxiom({
+    logToAxiom({
       type: 'metric-reconciliation',
       name: 'reaction-exactness-republish',
       level: 'warn',
       message: 'could not read the nightly exactness snapshot',
       error: JSON.stringify({ error: (e as Error)?.message }),
-    }).catch(() => undefined);
+    });
     return;
   }
   if (!raw) return;
 
   const snapshot = parseSnapshot(raw);
   if (!snapshot) {
-    await logToAxiom({
+    logToAxiom({
       type: 'metric-reconciliation',
       name: 'reaction-exactness-republish',
       level: 'error',
       message: 'nightly exactness snapshot failed validation — gauges not re-published',
       error: JSON.stringify({ raw: raw.slice(0, 500) }),
-    }).catch(() => undefined);
+    });
     return;
   }
   publishNightlyExactnessGauges(snapshot);
@@ -251,7 +251,7 @@ export const reactionVolumeAuditJob = createJob(
 
     const breached = result.coverage !== null && result.coverage < COVERAGE_WARN;
     if (breached || Object.keys(result.unknownReactions).length > 0) {
-      await logToAxiom({
+      logToAxiom({
         type: 'metric-reconciliation',
         name: 'reaction-volume-audit',
         level: result.coverage !== null && result.coverage < COVERAGE_CRIT ? 'error' : 'warn',
@@ -265,7 +265,7 @@ export const reactionVolumeAuditJob = createJob(
           affectedImages: result.affectedImageIds.length,
           sampleImageIds: result.affectedImageIds.slice(0, 20),
         }),
-      }).catch(() => undefined);
+      });
 
       await requestReactionRepair({
         imageIds: result.affectedImageIds,
@@ -315,7 +315,7 @@ export const reactionExactnessAuditJob = createJob(
           level: 'warn',
           message: 'could not persist the nightly exactness snapshot',
           error: JSON.stringify({ error: (e as Error)?.message }),
-        }).catch(() => undefined)
+        })
       );
 
     if (result.missingInCh > 0) {
@@ -326,7 +326,7 @@ export const reactionExactnessAuditJob = createJob(
       });
     }
 
-    await logToAxiom({
+    logToAxiom({
       type: 'metric-reconciliation',
       name: 'reaction-exactness-audit',
       level:
@@ -337,7 +337,7 @@ export const reactionExactnessAuditJob = createJob(
         affectedImageIds: undefined,
         sampleImageIds: result.affectedImageIds.slice(0, 20),
       }),
-    }).catch(() => undefined);
+    });
 
     return { ...result, affectedImageIds: result.affectedImageIds.length };
   },

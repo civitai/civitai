@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -7,16 +8,13 @@ import {
   Group,
   Loader,
   Paper,
-  Progress,
   Stack,
   Tabs,
   Text,
-  ThemeIcon,
   Title,
 } from '@mantine/core';
-import { Menu } from '~/components/MantineOverlays';
-import { IconDots, IconEyeOff, IconLock, IconPlus } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
+import { IconDots, IconEyeOff, IconPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
@@ -25,15 +23,16 @@ import {
   useMutateMyServices,
   useQueryMyServices,
 } from '~/components/CreatorShop/Services/creator-service.util';
+import { confirmRemoveService } from '~/components/CreatorShop/Services/service-remove-confirm';
 import { PublishServiceModal } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
-import { useServerDomains } from '~/providers/AppProvider';
+import { SellGate } from '~/components/CreatorShop/Services/SellGate';
+import { useRedHref } from '~/hooks/useRedHref';
 import { useRouter } from 'next/router';
 import { useDomainColor } from '~/hooks/useDomainColor';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string }> = {
@@ -43,8 +42,27 @@ const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string 
   Removed: { color: 'red', label: 'Removed' },
 };
 
+const reviewBadge: Record<
+  NonNullable<ServiceOffering['review']>,
+  { color: string; label: string; tooltip: string }
+> = {
+  reviewing: {
+    color: 'blue',
+    label: 'Being reviewed',
+    tooltip: 'Buyers see this service once its content checks are done, usually within minutes.',
+  },
+  held: {
+    color: 'red',
+    label: 'Hidden',
+    tooltip: 'A moderator is reviewing this service. It stays hidden from buyers until then.',
+  },
+};
+
 const openForm = (offering?: ServiceOffering) =>
   dialogStore.trigger({ component: ServiceOfferingFormModal, props: { offering } });
+
+const openDuplicateForm = (copyOf: ServiceOffering) =>
+  dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });
 
 export type ShopPublishState = { onPublish: () => void; publishing: boolean };
 
@@ -64,9 +82,21 @@ export function ManageServicesPanel({
     servicesEnabled
   );
   const router = useRouter();
-  const redDomain = useServerDomains().red;
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   const [requestsTab, setRequestsTab] = useState<string | null>('open');
+
+  // A service card's Manage links here with `?edit=<id>`: open that offering's form once, and drop
+  // the param so a refresh or Back doesn't open it again.
+  const editId = Number(router.query?.edit) || undefined;
+  const openedEdit = useRef<number>();
+  useEffect(() => {
+    if (!editId || isLoading || openedEdit.current === editId) return;
+    openedEdit.current = editId;
+    const { edit: _, ...query } = router.query;
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    const target = offerings.find((offering) => offering.id === editId);
+    if (target && eligibility?.canSell) openForm(target);
+  }, [editId, isLoading, offerings, eligibility?.canSell, router]);
   const requestsStatus = requestsTab === 'closed' ? 'closed' : 'open';
 
   if (isLoading)
@@ -117,7 +147,7 @@ export function ManageServicesPanel({
           emptyText={
             requestsStatus === 'open'
               ? 'No open requests. They show up here when a buyer requests one of your services.'
-              : 'No closed requests yet. Declined, expired, cancelled and completed requests show up here.'
+              : 'No closed requests yet. Declined, expired, canceled and completed requests show up here.'
           }
         />
       </Stack>
@@ -138,7 +168,7 @@ export function ManageServicesPanel({
       )}
       {hiddenOffDomain > 0 && (
         <Text size="sm" c="dimmed">
-          <Anchor href={syncAccount(`//${redDomain}${router.asPath}`)} inherit>
+          <Anchor href={redHref()} inherit>
             {pluralize(hiddenOffDomain, 'mature service')}: manage on civitai.red
           </Anchor>
         </Text>
@@ -151,39 +181,6 @@ export function ManageServicesPanel({
         </Paper>
       )}
     </Stack>
-  );
-}
-
-function SellGate({
-  eligibility,
-}: {
-  eligibility: NonNullable<ReturnType<typeof useQueryMyServices>['eligibility']>;
-}) {
-  const { current, min } = eligibility.score;
-  return (
-    <Paper withBorder radius="md" p="md">
-      <Group wrap="nowrap" align="flex-start">
-        <ThemeIcon size={44} radius="md" variant="light" color="gray">
-          <IconLock size={22} />
-        </ThemeIcon>
-        <Stack gap={6} className="flex-1">
-          <Text fw={600}>Services unlock at Beacon ({min.toLocaleString()} Creator Score)</Text>
-          {eligibility.standingIssue ? (
-            <Text size="sm" c="dimmed">
-              {eligibility.standingIssue}
-            </Text>
-          ) : (
-            <>
-              <Text size="sm" c="dimmed">
-                Same point you can join the Creator Program. You&apos;re at{' '}
-                {Math.floor(current).toLocaleString()}.
-              </Text>
-              <Progress value={Math.min(100, (current / min) * 100)} color="yellow" size="sm" />
-            </>
-          )}
-        </Stack>
-      </Group>
-    </Paper>
   );
 }
 
@@ -202,15 +199,8 @@ function OfferingRow({
   const isActive = offering.status === ServiceOfferingStatus.Active;
 
   const confirmRemove = () =>
-    openConfirmModal({
-      title: 'Remove service',
-      children: (
-        <Text size="sm">
-          &quot;{offering.title}&quot; leaves your shop for good. Open deals are not affected.
-        </Text>
-      ),
-      labels: { confirm: 'Remove', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+    confirmRemoveService({
+      title: offering.title,
       onConfirm: () => remove.mutate({ id: offering.id }),
     });
 
@@ -218,7 +208,7 @@ function OfferingRow({
     <Paper withBorder radius="md" p="md">
       <Group justify="space-between" wrap="nowrap" gap="md">
         <Stack gap={2} className="min-w-0">
-          <Group gap="xs" wrap="nowrap">
+          <Group gap="xs">
             <Text fw={600} lineClamp={1}>
               {offering.title}
             </Text>
@@ -226,6 +216,13 @@ function OfferingRow({
               {badge.label}
             </Badge>
             <ServiceRatingBadge rating={offering.maxNsfwLevel} />
+            {offering.review && (
+              <Tooltip label={reviewBadge[offering.review].tooltip} multiline w={260} withArrow>
+                <Badge color={reviewBadge[offering.review].color} variant="outline" radius="sm">
+                  {reviewBadge[offering.review].label}
+                </Badge>
+              </Tooltip>
+            )}
           </Group>
           <Text size="sm" c="dimmed">
             ~{pluralize(offering.deliveryDays, 'day')} ·{' '}
@@ -233,7 +230,7 @@ function OfferingRow({
             {offering.maxOpenDeals ? ` · ${pluralize(offering.maxOpenDeals, 'open slot')}` : ''}
           </Text>
         </Stack>
-        <Group gap="sm" wrap="nowrap">
+        <Group gap="sm" wrap="nowrap" className="shrink-0">
           <CurrencyBadge
             currency={Currency.BUZZ}
             type={domain === 'green' ? 'green' : 'yellow'}
@@ -242,12 +239,15 @@ function OfferingRow({
           />
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
-              <Button variant="subtle" color="gray" size="compact-sm" aria-label="Service actions">
+              <ActionIcon variant="subtle" color="gray" aria-label="Service actions">
                 <IconDots size={16} />
-              </Button>
+              </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
               {canSell && <Menu.Item onClick={() => openForm(offering)}>Edit</Menu.Item>}
+              {canSell && (
+                <Menu.Item onClick={() => openDuplicateForm(offering)}>Duplicate</Menu.Item>
+              )}
               {isActive ? (
                 <Menu.Item onClick={() => setStatus.mutate({ id: offering.id, status: 'Paused' })}>
                   Pause

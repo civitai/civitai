@@ -97,6 +97,71 @@ describe('auction bid images', () => {
   });
 });
 
+describe('auction bid creator avatars', () => {
+  const CREATOR = 9;
+  const withAvatar = (nsfwLevel: number | null) => ({
+    bids: [
+      {
+        id: 1,
+        entityData: {
+          model: {
+            id: 1,
+            user: {
+              id: CREATOR,
+              image: 'unrated.png',
+              profilePicture: nsfwLevel === null ? null : { url: 'avatar.png', nsfwLevel },
+            },
+          },
+        },
+      },
+    ],
+  });
+  type Capped = { bids: { entityData?: { model?: { user?: Record<string, unknown> } } }[] };
+  const creator = (a: unknown) => (a as Capped).bids[0].entityData?.model?.user;
+  const capped = { user: { id: 6 }, features: { canViewNsfw: false } };
+
+  it('drops an avatar above the cap', () => {
+    const out = capAuctionBidImages(
+      withAvatar(NsfwLevel.X) as never,
+      bidImagesFor(capped as never)
+    );
+    expect(creator(out)?.profilePicture).toBeNull();
+  });
+
+  it('never carries the unrated image', () => {
+    const out = capAuctionBidImages(withAvatar(null) as never, bidImagesFor(capped as never));
+    expect(creator(out)?.image).toBeNull();
+  });
+
+  it('keeps an avatar inside the cap (control)', () => {
+    const out = capAuctionBidImages(
+      withAvatar(NsfwLevel.PG) as never,
+      bidImagesFor(capped as never)
+    );
+    expect(creator(out)?.profilePicture).toMatchObject({ url: 'avatar.png' });
+    expect(creator(out)).toMatchObject({ id: CREATOR });
+  });
+
+  it('the creator keeps their own avatar', () => {
+    const own = { user: { id: CREATOR }, features: { canViewNsfw: false } };
+    const out = capAuctionBidImages(withAvatar(NsfwLevel.X) as never, bidImagesFor(own as never));
+    expect(creator(out)?.profilePicture).toMatchObject({ url: 'avatar.png' });
+  });
+
+  it('a bid-change signal carries only a public avatar', () => {
+    expect(creator(publicSignalData(withAvatar(NsfwLevel.R) as never))?.profilePicture).toBeNull();
+    expect(
+      creator(publicSignalData(withAvatar(NsfwLevel.PG) as never))?.profilePicture
+    ).toMatchObject({ url: 'avatar.png' });
+  });
+
+  it('an uncapped viewer still gets no unrated avatar', () => {
+    const uncapped = { user: { id: 6 }, features: { canViewNsfw: true } };
+    const out = capAuctionBidImages(withAvatar(0) as never, bidImagesFor(uncapped as never));
+    expect(creator(out)?.profilePicture).toBeNull();
+  });
+});
+
 describe('bid-change signals', () => {
   const AUCTION = 5;
   const day = 24 * 60 * 60 * 1000;

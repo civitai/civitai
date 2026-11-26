@@ -59,6 +59,7 @@ vi.mock('~/providers/AppProvider', () => ({
   useServerDomains: () => ({ green: 'civitai.com', blue: 'civitai.red', red: 'civitai.red' }),
 }));
 vi.mock('~/hooks/useSyncAccount', () => ({ useSyncAccount: () => (url: string) => url }));
+vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/services/deals' }) }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ creatorServices: true }),
 }));

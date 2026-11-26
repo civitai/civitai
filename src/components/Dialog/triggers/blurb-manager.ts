@@ -1,13 +1,9 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type { BlurbItem } from '~/components/RichTextEditor/blurb.util';
 
-// `ssr: false` and lazy: the manager hosts a nested RichTextEditor, so a static import from the
-// editor would be a cycle.
-const BlurbManagerModal = dynamic(() => import('~/components/RichTextEditor/BlurbManagerModal'), {
-  ssr: false,
-});
-
+// Lazy so the editor never evaluates the manager, which hosts a nested RichTextEditor, at module load.
 export function openBlurbManager(props: { onInsert?: (blurb: BlurbItem) => void } = {}) {
-  dialogStore.trigger({ id: 'blurb-manager', component: BlurbManagerModal, props });
+  openDialog(() => import('~/components/RichTextEditor/BlurbManagerModal'), props, {
+    id: 'blurb-manager',
+  });
 }

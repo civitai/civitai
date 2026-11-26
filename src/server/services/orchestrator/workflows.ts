@@ -1,3 +1,4 @@
+import { withoutCallbacks } from '~/server/services/orchestrator/workflow-redaction';
 import type {
   GetWorkflowData,
   Options,
@@ -91,7 +92,7 @@ const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
 // tighten later once the healthy-tail p99 is confirmed via the latency dashboard. A fired
 // AbortSignal.timeout() surfaces a `TimeoutError`, which the existing getWorkflow catch /
 // default branch classifies via isUpstreamNetworkError → retry-able 503 (no new handling).
-const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
+export const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
 
 // Per-attempt backstop for the whatIf cost-estimate SUBMIT only (not generate). whatIf
 // (orchestrator.whatIfFromGraph) is a side-effect-free estimate that, on img2img inputs,
@@ -263,7 +264,7 @@ export async function queryWorkflows({
   }
   const { next, items = [] } = data;
 
-  return { nextCursor: next, items };
+  return { nextCursor: next, items: items.map(withoutCallbacks) };
 }
 
 export async function getWorkflow({
@@ -343,7 +344,7 @@ export async function getWorkflow({
     }
   }
 
-  return data;
+  return withoutCallbacks(data);
 }
 
 export async function submitWorkflow({
@@ -458,10 +459,11 @@ export async function submitWorkflow({
       body.allowMatureContent === false &&
       message === 'Prompt requires mature content but workflow does not allow it'
     ) {
-      // `nsfwLevel: 'pg13'` is only set for private or epoch resources (orchestration-new.service).
+      // `nsfwLevel: 'pg13'` is set for private or epoch resources, sfwOnly workflows and base models
+      // that restrict mature generation (output-restrictions.ts).
       if (body.nsfwLevel === 'pg13')
         message =
-          'The prompt has been blocked due to mature content, which private and in-training resources cannot generate';
+          'The prompt has been blocked due to mature content, which the resources or workflow in this generation cannot produce';
       else if (body.currencies?.includes('green'))
         message =
           'The prompt has been blocked due to mature content, which is not allowed on this site';
@@ -488,7 +490,7 @@ export async function submitWorkflow({
     }
   }
 
-  return result.data;
+  return withoutCallbacks(result.data);
 }
 
 type SubmitOptions = Options<SubmitWorkflowData, false>;
@@ -635,6 +637,7 @@ export async function submitWorkflowWithRetry(
       // park that is `3 x 30s` from one that is a single 95s attempt; a counter alone cannot make that
       // join. Cardinality-free (a span attribute, not a label).
       setActiveSpanAttributes({ 'orchestrator.submit.attempts': result.attempts });
+      if (result.data) result.data = withoutCallbacks(result.data);
       return result;
     }
   );
@@ -850,10 +853,13 @@ export async function updateWorkflow({
   workflowId,
   token,
   throwOnError,
+  signal,
   ...body
 }: UpdateWorkflowRequest & {
   token: string;
   workflowId: string;
+  /** Bounds the write; the read-back after it is not. */
+  signal?: AbortSignal;
   /**
    * Surface a refused update (the orchestrator's 400 for an unlock it won't charge, a 403 for
    * insufficient Buzz) as a throw. Off by default, as for `deleteWorkflow`: the generated client
@@ -863,10 +869,48 @@ export async function updateWorkflow({
 }) {
   const client = createOrchestratorClient(token);
 
-  const { error, response } = await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  const { error, response } = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body,
+    ...(signal ? { signal } : {}),
+  });
   if (throwOnError && !response?.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
+}
+
+/**
+ * The App Blocks output unlock's write: `allowMatureContent: true`, bounded by `signal`, with no
+ * read-back. Two failures are REPORTED rather than thrown, because the caller answers them
+ * differently from an error:
+ *   - `insufficient-funds`: the orchestrator's 403, it could not take the yellow charge;
+ *   - `no-response`: no HTTP response at all (the client resolves with `response: undefined` when
+ *     the fetch throws, our `signal` firing included), or a 5xx. Either way the write may have
+ *     landed or still be in flight, so the caller must not treat it as failed.
+ * Every other failure throws as `throwOrchestratorFailure` maps it.
+ */
+export async function liftWorkflowMatureRestriction({
+  token,
+  workflowId,
+  signal,
+}: {
+  token: string;
+  workflowId: string;
+  signal?: AbortSignal;
+}): Promise<{ outcome: 'lifted' | 'insufficient-funds' | 'no-response' }> {
+  const client = createOrchestratorClient(token);
+  const { error, response } = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body: { allowMatureContent: true },
+    ...(signal ? { signal } : {}),
+  });
+  if (!response || response.status >= 500) return { outcome: 'no-response' };
+  if (response.status === 403) return { outcome: 'insufficient-funds' };
+  if (!response.ok)
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
+  return { outcome: 'lifted' };
 }
 
 /**
@@ -895,7 +939,9 @@ export async function setWorkflowDownloadPriority({
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
 
   // The 200 body is the updated workflow — with `whatif`, the priced one it would become.
-  return data as (Workflow & { cost?: { fixed?: Record<string, number> | null } }) | undefined;
+  return withoutCallbacks(data) as
+    | (Workflow & { cost?: { fixed?: Record<string, number> | null } })
+    | undefined;
 }
 
 function orchestratorErrorMessage(error: unknown) {

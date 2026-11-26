@@ -11,7 +11,7 @@
  *    - vid2vid:interpolate → videoInterpolation step
  *    - vid2vid:upscale → videoUpscaler step
  *    - img2img:upscale → comfy step (img2img-upscale)
- *    - img2img:remove-background → comfy step
+ *    - img2img:remove-background → imageBackgroundRemoval step
  *    - img2img:preprocess → preprocessImage step
  *    - vid2vid:preprocess → preprocessVideo step
  *    - All other workflows → ecosystem discriminator
@@ -21,7 +21,10 @@
  */
 
 import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
+import { dbWrite } from '~/server/db/client';
 import type {
+  ImageBackgroundRemovalModel,
+  ImageBackgroundRemovalStepTemplate,
   PreprocessImageInput,
   PreprocessImageStepTemplate,
   WorkflowCost,
@@ -43,7 +46,7 @@ import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
 import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
-import { workflowOutputRestrictions } from './form-graph/output-restrictions';
+import { capsGenerationOutput, outputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -80,8 +83,9 @@ import {
   assertGenerationInputsUsable,
   generationInputUrlsIn,
 } from '~/server/services/generation-input-urls';
-import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
+import type { GenerationInputCaller } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import {
   getWorkflow,
   setWorkflowDownloadPriority,
@@ -90,7 +94,7 @@ import {
 } from '~/server/services/orchestrator/workflows';
 import {
   assertWorkflowOwner,
-  workflowOwnerId,
+  isWorkflowOwnedBy,
 } from '~/server/services/orchestrator/assert-workflow-owner';
 import {
   getAirEcosystem,
@@ -126,11 +130,16 @@ import { BlocklistType } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { toStepMetadata, asResourceValue } from '~/shared/utils/resource.utils';
+import {
+  toStepMetadata,
+  asResourceValue,
+  capsAsPrivateGeneration,
+} from '~/shared/utils/resource.utils';
 import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt, randomUUID } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
 import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
@@ -220,7 +229,7 @@ export type GenerateOptions = {
  * is for server-composed input whose urls the calling route already checked (comics, iterate).
  */
 export type GenerationInputGate =
-  | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
+  | (GenerationInputCaller & { isApiCaller: boolean })
   | 'checked-by-caller';
 
 const ecosystemOf = (data: unknown) => (data as { ecosystem?: string }).ecosystem;
@@ -568,8 +577,7 @@ async function validateRawAirResources({
     // not a fall-through — every real workflow id parses, and assertBlockWorkflowMintedForViewer
     // set that rule for request-supplied workflow ids (the orchestrator has resolved a correct
     // token to the wrong user before). The token-scoped fetch below stays the authoritative guard.
-    const claimedOwner = workflowOwnerId(resource.workflowId);
-    if (claimedOwner === null || claimedOwner !== user.id) {
+    if (!isWorkflowOwnedBy(resource.workflowId, user.id)) {
       throw throwBadRequestError(`You do not have access to epoch resource "${label}".`);
     }
     const list = byWorkflow.get(resource.workflowId) ?? [];
@@ -644,7 +652,7 @@ type ResourceValidationResult = {
  * Validates and enriches resources from generation graph output.
  *
  * Performs:
- * - Subscription validation for private/epoch resources
+ * - Subscription validation for private resources
  * - Expired epoch check
  * - canGenerate validation
  * - POI resource detection
@@ -694,14 +702,13 @@ async function validateAndEnrichResources(
       : Promise.resolve(),
   ]);
 
-  // Check for private/epoch resources requiring subscription. Raw-AIR resources
-  // ARE epoch resources — same subscription gate as the ModelVersion-backed kind.
-  const hasPrivateOrEpoch =
-    rawAirResources.length > 0 ||
-    resources.some((r) => r.availability === Availability.Private || !!r.epochDetails);
+  // Private models need a subscription; epochs (raw-AIR included) and Draft versions only need
+  // ownership, already enforced by getResourceData and validateRawAirResources.
+  const hasPrivate = resources.some((r) => r.availability === Availability.Private);
+  const isPrivateGeneration = [...resources, ...rawAirResources].some(capsAsPrivateGeneration);
 
-  if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
-    // Span localizes the gen-path park: subscription lookup for private/epoch use.
+  if (hasPrivate && user?.id && !user?.isModerator) {
+    // Span localizes the gen-path park: subscription lookup for private use.
     const subscription = await withSpan('gen:validateResources:subscription', () =>
       getHighestTierSubscription(user.id!)
     );
@@ -733,7 +740,7 @@ async function validateAndEnrichResources(
   return {
     enrichedResources,
     rawAirResources,
-    isPrivateGeneration: hasPrivateOrEpoch,
+    isPrivateGeneration,
     hasPoiResource: resources.some((r) => r.model.poi),
     // Raw-AIR epochs are not ModelVersions, so the orchestrator has no creator to tip for them.
     hasTipEligibleResource: anyTipEligible(resources),
@@ -935,7 +942,7 @@ function createVideoInterpolationInput(data: LooseGenerationData): StepInput {
  * Handle vid2vid:upscale workflow
  */
 function createVideoUpscaleInput(data: LooseGenerationData): StepInput {
-  const { video, scaleFactor } = data;
+  const { video, scaleFactor, videoUpscaler } = data;
 
   if (!video?.url) {
     throw throwBadRequestError('Video URL is required for video upscaling');
@@ -946,6 +953,7 @@ function createVideoUpscaleInput(data: LooseGenerationData): StepInput {
     input: {
       video: video.url,
       scaleFactor: scaleFactor,
+      model: videoUpscaler,
     },
   };
 }
@@ -1005,23 +1013,23 @@ async function createImageUpscaleSteps(
 /**
  * Handle img2img:remove-background workflow
  */
-async function createImageRemoveBackgroundInput(
+function createImageRemoveBackgroundInput(
   data: LooseGenerationData,
   sourceCtx?: SourceCtx
-): Promise<StepInput> {
+): StepInput {
   const sourceImage = data.images?.[0];
   if (!sourceImage?.url) {
     throw throwBadRequestError('Image URL is required for background removal');
   }
 
-  const step = await createComfyInput({
-    key: 'img2img-background-removal',
-    params: {
+  const step = {
+    $type: 'imageBackgroundRemoval',
+    input: {
       image: sourceImage.url,
-      width: sourceImage.width,
-      height: sourceImage.height,
+      format: 'png',
+      model: data.backgroundRemovalModel as ImageBackgroundRemovalModel | undefined,
     },
-  });
+  } as ImageBackgroundRemovalStepTemplate as StepInput;
 
   if (!sourceCtx) return step;
   return { ...step, resolvedSource: buildResolvedSource(sourceImage.url, sourceCtx) };
@@ -1108,7 +1116,7 @@ async function createStepInputs(
       break;
 
     case 'img2img:remove-background':
-      rawResult = await createImageRemoveBackgroundInput(
+      rawResult = createImageRemoveBackgroundInput(
         data as LooseGenerationData,
         metadataCtx.sourceCtx
       );
@@ -1343,6 +1351,8 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
+  /** `capsGenerationOutput`: the output is held to PG-13. */
+  capOutput: boolean;
 }> {
   data = expandAvatarData(data);
 
@@ -1368,6 +1378,12 @@ export async function createWorkflowStepsFromGraph({
       acceptBoostRequired
     )
   );
+  const capOutput = capsGenerationOutput({
+    isPrivateGeneration,
+    workflow: data.workflow,
+    baseModels: enrichedResources.map((r) => r.baseModel),
+    ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+  });
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -1411,6 +1427,17 @@ export async function createWorkflowStepsFromGraph({
     // as Nullable<Int32>, so a generated seed above 2^31-1 fails orchestrator
     // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
+    // Handlers branch on the checkpoint's base model, so prefer the stored one over the client's.
+    ...('model' in data && data.model
+      ? {
+          model: {
+            ...data.model,
+            baseModel:
+              enrichedResources.find((r) => r.id === data.model?.id)?.baseModel ??
+              data.model.baseModel,
+          },
+        }
+      : {}),
   };
 
   // Convert graph output to legacy {resources, params} format for storage.
@@ -1591,6 +1618,7 @@ export async function createWorkflowStepsFromGraph({
       tags: extraTags,
       hasTipEligibleResource,
       boostRequired,
+      capOutput,
     };
   });
 }
@@ -1612,6 +1640,7 @@ export async function createWorkflowStepsFromGraph({
  * with its token-derived `isGreen`/`isModerator` in the router). Resource
  * enrichment, canGenerate/availability gating, and POI detection still run
  * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ * Callers must apply `capOutput` to the submit body.
  */
 export async function createWorkflowStepsFromGraphInput({
   input,
@@ -1627,7 +1656,11 @@ export async function createWorkflowStepsFromGraphInput({
   isWhatIf?: boolean;
   isGreen?: boolean;
   inputGate: GenerationInputGate;
-}): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
+}): Promise<{
+  steps: WorkflowStepTemplate[];
+  workflowMetadata?: Record<string, unknown>;
+  capOutput: boolean;
+}> {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, user?.id, inputGate);
   if (!isWhatIf)
@@ -1643,7 +1676,7 @@ export async function createWorkflowStepsFromGraphInput({
   // It is intentionally `undefined` on whatIf — the caller must only attach it to
   // the REAL submit body, mirroring `generateFromGraph` (see below). Return it so
   // the App-Blocks submit path can carry it; the normal path bakes it in directly.
-  const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
+  const { steps, workflowMetadata, capOutput } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     user: user && { ...user, tier: externalCtx.user.tier },
@@ -1651,7 +1684,7 @@ export async function createWorkflowStepsFromGraphInput({
     sourceImageIds,
     isGreen,
   });
-  return { steps, workflowMetadata };
+  return { steps, workflowMetadata, capOutput };
 }
 
 type SnippetsPayloadShape = {
@@ -1955,21 +1988,28 @@ export async function generateFromGraph({
       // XGuard scan against the same input so moderators can review whether
       // XGuard would have agreed — feeds the "should XGuard replace the
       // legacy gate?" decision. Doesn't gate the rethrow.
-      createXGuardModerationRequest({
-        mode: 'prompt',
-        entityType: 'prompt',
-        positivePrompt: promptText,
-        negativePrompt,
-        userId,
-        recordForReview: true,
-      }).catch((e) => {
-        logToAxiom({
-          type: 'error',
-          name: 'generation-xguard-scan',
-          message: (e as Error).message,
+      //
+      // Not when the audit could not run (its retry-able 503, see isPromptCheckUnavailable):
+      // nothing blocked the prompt, so there is no verdict for XGuard to compare against, and
+      // `recordForReview` would queue a moderator review item for a prompt nobody refused.
+      // PROMPT_CHECK_FAIL_CLOSED=off restores the scan on that 503 too.
+      if (!isPromptCheckUnavailable(err)) {
+        createXGuardModerationRequest({
+          mode: 'prompt',
+          entityType: 'prompt',
+          positivePrompt: promptText,
+          negativePrompt,
           userId,
-        }).catch();
-      });
+          recordForReview: true,
+        }).catch((e) => {
+          logToAxiom({
+            type: 'error',
+            name: 'generation-xguard-scan',
+            message: (e as Error).message,
+            userId,
+          }).catch();
+        });
+      }
       throw err;
     }
   }
@@ -2008,6 +2048,7 @@ export async function generateFromGraph({
     tags: assemblyTags,
     hasTipEligibleResource,
     boostRequired,
+    capOutput,
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -2042,10 +2083,6 @@ export async function generateFromGraph({
   ].filter(isDefined);
 
   const tips = buildWorkflowTips({ civitaiTip, creatorTip, hasTipEligibleResource });
-
-  // Check if private generation (from workflow metadata)
-  const isPrivateGeneration = !!(workflowMetadata as { isPrivateGeneration?: boolean })
-    ?.isPrivateGeneration;
 
   // Silent checkpoint substitutions recorded by the validation at the top of
   // this function (#3520 / #3665). Read off THIS request's per-request collector
@@ -2138,11 +2175,7 @@ export async function generateFromGraph({
       experimental,
       metadata,
       callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
-      ...workflowOutputRestrictions({
-        workflow: data.workflow,
-        isPrivateGeneration,
-        allowMatureContent,
-      }),
+      ...outputRestrictions(capOutput, allowMatureContent),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       // Always an idempotency key: the form sends one per click, an API caller may send none,
@@ -2328,6 +2361,7 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
+import { getModel3DPreviewNsfwLevel } from '~/shared/orchestrator/model3d-output';
 import {
   exceedsNsfwLevel,
   isMature,
@@ -2708,6 +2742,7 @@ type StepWithOutput = WorkflowStep & {
     // job (e.g. LTX 2.3). Each slot uses Seed + slotIndex.
     additionalVideos?: VideoBlob[] | null;
     blobs?: ImageBlob[];
+    image?: ImageBlob;
     // Audio steps bundle a cover image into a VideoBlob when they have one, so the
     // container type varies per result — discriminate on blob.type, not on $type.
     blob?: ImageBlob | VideoBlob | AudioBlob;
@@ -2769,6 +2804,8 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
     case 'imageUpscaler':
     case 'preprocessImage':
       return output.blob ? [{ ...(output.blob as ImageBlob), type: 'image' as const }] : [];
+    case 'imageBackgroundRemoval':
+      return output.image ? [{ ...output.image, type: 'image' as const }] : [];
     case 'videoGen': {
       // LTX 2.3 batches multiple videos in a single job — primary in `video`,
       // remainder in `additionalVideos` (each slot uses Seed + slotIndex).
@@ -2823,22 +2860,9 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
   }
 }
 
-/**
- * Max rating across a workflow's `model3DPreview` render images. The
- * orchestrator never rates the mesh blob itself (`nsfwLevel: null`) — the
- * chained 2D preview render carries the result's effective rating, so it must
- * be propagated onto the `model3d` output for the client's NSFW gates
- * (yellow-Buzz unlock, enableNsfw, siteRestricted) to apply.
- */
-export function getModel3DPreviewNsfwLevel(
-  steps: WorkflowStep[] | null | undefined
-): NsfwLevel | undefined {
-  const previews = (steps ?? []).filter((s) => s.$type === 'model3DPreview') as Array<{
-    output?: { images?: ImageBlob[] };
-  }>;
-  if (!previews.length) return undefined;
-  return maxNsfwLevel(previews.flatMap((s) => (s.output?.images ?? []).map((i) => i?.nsfwLevel)));
-}
+// `getModel3DPreviewNsfwLevel` lives in `~/shared/orchestrator/model3d-output` so the App
+// Blocks producers apply the same propagation; re-exported for existing importers.
+export { getModel3DPreviewNsfwLevel };
 
 /**
  * Formats step outputs into normalized images array
@@ -3241,11 +3265,26 @@ function formatStep(
 export async function assertUnlockReleasesOutput({
   token,
   workflowId,
+  outsideComicEditor = false,
 }: {
   token: string;
   workflowId: string;
+  /** Callers outside the comic editor skip the per-panel unlock claim, so a comic panel's workflow is refused. */
+  outsideComicEditor?: boolean;
 }) {
+  // The owner-token read first, so a foreign id fails here alike, comic panel or not.
   const workflow = await getWorkflow({ token, path: { workflowId } });
+  // By the panel row, not a tag the owner can edit. This path takes no claim, so any path that
+  // removes a panel row or clears its workflowId must first wait out the panel's unlock claim, as
+  // the comic deletes do.
+  if (outsideComicEditor) {
+    // primary: the panel row is written at submit, just before its workflow can reach the queue.
+    const panel = await dbWrite.comicPanel.findFirst({
+      where: { workflowId },
+      select: { id: true },
+    });
+    if (panel) throw throwBadRequestError('Unlock this from the comic editor.');
+  }
   if (workflow.allowMatureContent === true)
     throw throwBadRequestError('This generation is already unlocked.');
   // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only
@@ -3270,20 +3309,16 @@ export async function assertUnlockReleasesOutput({
   if (cap && matureLevels.every((level) => exceedsNsfwLevel(level, cap))) throw capRefusal();
 }
 
-type UnlockViewer = { domain: ColorDomain; showNsfw: boolean };
+type UnlockViewer = { domain: ColorDomain };
 
 /**
- * Generation submits `allowMatureContent: false` on the green domain and for users with mature
- * content off; an unlock there would charge yellow Buzz for outputs they cannot be shown.
+ * Generation submits `allowMatureContent: false` on the green domain; an unlock there would charge
+ * yellow Buzz for outputs it cannot show.
  */
-export function assertUnlockAllowed({ domain, showNsfw }: UnlockViewer) {
+export function assertUnlockAllowed({ domain }: UnlockViewer) {
   if (domain === 'green')
     throw throwBadRequestError(
       'Mature content cannot be unlocked on this site. Open it on civitai.red to unlock.'
-    );
-  if (!showNsfw)
-    throw throwBadRequestError(
-      'Enable mature content in your account settings to unlock this generation.'
     );
 }
 
@@ -3295,7 +3330,7 @@ export async function updateWorkflow({
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser; viewer: UnlockViewer }) {
   if (props.allowMatureContent === true) {
     assertUnlockAllowed(viewer);
-    await assertUnlockReleasesOutput(props);
+    await assertUnlockReleasesOutput({ ...props, outsideComicEditor: true });
   }
   const workflow = await clientUpdateWorkflow({ ...props, throwOnError: true });
   const [formatted] = await formatGenerationResponse2([workflow], user);
@@ -3303,7 +3338,7 @@ export async function updateWorkflow({
 }
 
 export async function formatGenerationResponse2(
-  workflows: Workflow[],
+  rawWorkflows: Workflow[],
   user?: { id?: number; isModerator?: boolean; tier?: string },
   {
     acceptBoostRequired = false,
@@ -3315,6 +3350,10 @@ export async function formatGenerationResponse2(
     skipResourceEnrichment?: boolean;
   } = {}
 ): Promise<NormalizedWorkflow[]> {
+  // A training run's weights are moderators-only on every workflow read (`withoutTrainingWeightHandles`).
+  const workflows = rawWorkflows.map((workflow) =>
+    withoutTrainingWeightHandles(workflow, { isModerator: user?.isModerator })
+  );
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
   const allResourceRefs: Array<{ id: number; epoch?: number }> = [];
@@ -3699,11 +3738,14 @@ export type WorkflowStatusUpdate = Awaited<ReturnType<typeof getWorkflowStatusUp
 export async function getWorkflowStatusUpdate({
   token,
   workflowId,
+  isModerator,
 }: {
   token: string;
   workflowId: string;
+  isModerator?: boolean;
 }) {
-  const result = await getWorkflow({ token, path: { workflowId } });
+  const fetched = await getWorkflow({ token, path: { workflowId } });
+  const result = fetched && withoutTrainingWeightHandles(fetched, { isModerator });
   if (result) {
     const wfMeta = (result.metadata ?? {}) as Record<string, unknown>;
     const wfParams = (wfMeta.params ?? {}) as Record<string, unknown>;

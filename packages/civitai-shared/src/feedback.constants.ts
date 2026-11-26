@@ -29,6 +29,10 @@
 // coding agent with an API token. Its rows are deduplicated on a server-computed fingerprint held
 // in `context.server`, so the generic inputs refuse it for the same reason they refuse `app-block`:
 // a row written there would carry no fingerprint and never be counted.
+//
+// `knights` is written by the Knights of New Order app (`apps/knights`, `POST /feedback`), which shares this
+// Postgres and writes its rows directly, not through feedback.create. It applies the same message bound and the same
+// 5/hour numbers, counted over the user's `knights` rows. The generic inputs still accept it.
 export const FEEDBACK_AREAS = [
   'bitdex-image-feed',
   'apps-marketplace',
@@ -36,6 +40,7 @@ export const FEEDBACK_AREAS = [
   'app-block',
   'apps-platform',
   'semantic-image-search',
+  'knights',
   'orchestration',
 ] as const;
 
@@ -95,6 +100,26 @@ export const APP_FEEDBACK_READERS =
  * `*_feedback_app_listing`. A value added here and not there fails the owner's write with a
  * constraint violation; `feedback.schema.test.ts` reads the CHECK back out of the SQL and compares.
  */
+/**
+ * The moderator triage status, `Feedback.status`, as the `Feedback_status_check` CHECK in
+ * `20260813180000_feedback` allows it. Shared so the moderator queue and the main app's triage API
+ * validate one list: a value only one of them accepts is a write the database refuses.
+ */
+export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
+
+export type FeedbackTriageStatus = (typeof FEEDBACK_STATUSES)[number];
+
+/**
+ * `Feedback.context` key holding the HQ sync HOLD: `{ at, by }`, written by the moderator queue's
+ * triage writes when a row moves BACK to `new`, removed when a row moves to any other status. The
+ * HQ status sync (`feedback-hq-sync`) skips a held row, so a moderator's reset is not undone by
+ * its next run. No column: `context` is jsonb, so this needs no migration.
+ */
+export const FEEDBACK_SYNC_HOLD_KEY = 'syncHold';
+
+/** Longest text one triage API call may append to the moderator-internal `triageNote`. */
+export const FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH = 2000;
+
 export const FEEDBACK_OWNER_STATUSES = ['acknowledged', 'resolved', 'wont_fix'] as const;
 
 export type FeedbackOwnerStatus = (typeof FEEDBACK_OWNER_STATUSES)[number];

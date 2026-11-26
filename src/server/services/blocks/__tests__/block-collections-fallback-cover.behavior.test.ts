@@ -13,10 +13,22 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
+// The cached gallery level of a held post's model; by default no post is held.
+const coverLevels = vi.hoisted(() => ({ held: new Map<number, number>() }));
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getHeldLevelsByPost: async (postIds: number[]) =>
+    new Map(
+      postIds
+        .filter((id) => coverLevels.held.has(id))
+        .map((id) => [id, { level: coverLevels.held.get(id)! }])
+    ),
+}));
 
 import {
   getFallbackCoverImages,
   getModelRestrictedImageIds,
+  mapImageItemToMedia,
 } from '~/server/services/blocks/block-collections.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -70,10 +82,10 @@ async function insertImage(id: number, row: Row) {
   };
   const r = { ...CLEAN, ...image } as Record<string, unknown>;
   if (post !== null) {
-    const p = { publishedAt: '2026-01-01', availability: 'Public', ...post };
+    const p = { publishedAt: '2026-01-01', availability: 'Public', modelVersionId: null, ...post };
     await holder.db.exec(`
-      INSERT INTO "Post" (id, "publishedAt", availability)
-      VALUES (${id}, ${lit(p.publishedAt)}, ${lit(p.availability)});
+      INSERT INTO "Post" (id, "publishedAt", availability, "modelVersionId")
+      VALUES (${id}, ${lit(p.publishedAt)}, ${lit(p.availability)}, ${lit(p.modelVersionId)});
     `);
   }
   await holder.db.exec(`
@@ -111,8 +123,18 @@ beforeAll(async () => {
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "publishedAt" timestamp(3),
-      availability "Availability" NOT NULL DEFAULT 'Public'
+      availability "Availability" NOT NULL DEFAULT 'Public',
+      "modelVersionId" int
     );
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, minor boolean NOT NULL, "sfwOnly" boolean NOT NULL, "gallerySettings" jsonb
+    );
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    -- Model 4 is SFW-only with PG stored.
+    INSERT INTO "Model" VALUES
+      (1, false, false, NULL), (2, false, true, NULL), (3, true, false, NULL),
+      (4, false, true, '{"level": 1}');
+    INSERT INTO "ModelVersion" VALUES (11, 1), (12, 2), (13, 3), (14, 4);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       url text NOT NULL,
@@ -147,6 +169,7 @@ beforeEach(async () => {
     return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
   }) as never);
   await holder.db.exec(`TRUNCATE "Image", "CollectionItem", "Post";`);
+  coverLevels.held.clear();
 });
 
 describe('getFallbackCoverImages against Postgres', () => {
@@ -229,6 +252,49 @@ describe('getFallbackCoverImages against Postgres', () => {
   });
 });
 
+describe("getFallbackCoverImages on a minor or SFW-only model's post", () => {
+  const onVersion = (modelVersionId: number, nsfwLevel: number) => ({
+    nsfwLevel,
+    post: { modelVersionId },
+  });
+
+  it.each([
+    ['SFW-only', 12],
+    ['minor', 13],
+  ])('skips a newest mature item on a %s model at a mature ceiling', async (_kind, versionId) => {
+    await insertImage(1, onVersion(versionId, 1));
+    await insertImage(2, onVersion(versionId, 4));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+  });
+
+  it('keeps a newest mature item on an unflagged model', async () => {
+    await insertImage(1, onVersion(11, 1));
+    await insertImage(2, onVersion(11, 4));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-2');
+  });
+
+  it("takes the next item when the newest is above its model's stored gallery level", async () => {
+    await insertImage(1, onVersion(14, 1));
+    await insertImage(2, onVersion(14, 2));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+  });
+
+  it('serves no cover when the cached gallery level is stricter than the stored one', async () => {
+    await insertImage(1, onVersion(12, 1));
+    await insertImage(2, onVersion(12, 2));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    coverLevels.held.set(2, 1);
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).has(10)).toBe(false);
+  });
+});
+
 describe('getModelRestrictedImageIds against Postgres', () => {
   it('returns only the mature images on a restricted base model', async () => {
     await insertImage(1, { nsfwLevel: 4, modelRestricted: true });
@@ -248,5 +314,35 @@ describe('getModelRestrictedImageIds against Postgres', () => {
     vi.mocked(dbMock.dbRead.$queryRaw).mockClear();
     expect((await getModelRestrictedImageIds([])).size).toBe(0);
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+// The real mapper (not a copy): `addedAt` comes from the COLLECTION ITEM's createdAt, never the
+// image's, and `duration` from the video's metadata. Image and item dates differ on purpose.
+describe('mapImageItemToMedia — addedAt and duration', () => {
+  const image = {
+    id: 77,
+    url: 'abc',
+    type: 'video',
+    width: 640,
+    height: 360,
+    nsfwLevel: 1,
+    metadata: { duration: 42.5 },
+    createdAt: new Date('2020-01-01T00:00:00.000Z'),
+    user: { id: 9, username: 'someone' },
+  };
+
+  it('carries the collection item time and the video length', () => {
+    const media = mapImageItemToMedia(image, {
+      createdAt: new Date('2026-03-04T05:06:07.000Z'),
+    });
+    expect(media.addedAt).toBe('2026-03-04T05:06:07.000Z');
+    expect(media.duration).toBe(42.5);
+  });
+
+  it('an image item has no duration key; a missing item time is null', () => {
+    const media = mapImageItemToMedia({ ...image, type: 'image' }, { createdAt: null });
+    expect(media.addedAt).toBeNull();
+    expect('duration' in media).toBe(false);
   });
 });

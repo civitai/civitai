@@ -2,13 +2,14 @@
   import { browser } from '$app/environment';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconDownload } from '@tabler/icons-svelte';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
+  import { IconPhotoOff } from '@tabler/icons-svelte';
+  import { WITHHELD_REFUSED } from '$lib/held-media';
   import TrainingDataSheet from '$lib/components/TrainingDataSheet.svelte';
+  import ModelPreviewFileRow from '$lib/components/ModelPreviewFileRow.svelte';
   import type { LightboxItem } from '$lib/lightbox';
-  import { bytes, dateTime } from '$lib/format';
+  import { dateTime } from '$lib/format';
   import type { ModelPreview } from '$lib/server/model-preview.service';
   import { SSR_PENDING } from '$lib/ssr-pending';
 
@@ -56,28 +57,14 @@
   // moderator's disk. The sheet unpacks the zip in memory and releases it on close.
   let trainingVersion = $state<{ id: number; title: string } | null>(null);
   let trainingOpen = $state(false);
-  const isTrainingData = (f: { type: string }) => f.type === 'Training Data';
 
+  const viewable = (p: ModelPreview) => p.images.filter((i) => !i.restricted);
   const lightboxItems = (p: ModelPreview): LightboxItem[] =>
-    p.images.map((i) => ({
+    viewable(p).map((i) => ({
       id: i.url,
       type: i.type,
       caption: `${i.type === 'video' ? 'Video' : 'Image'} #${i.id}${i.blocked ? ' · already removed' : ''}`,
     }));
-
-  // Clean files say nothing: a column of "Success" badges would bury the one that is not.
-  const scanState = (f: { pickleScan: string; virusScan: string }) => {
-    if (f.pickleScan === 'Danger' || f.virusScan === 'Danger')
-      return {
-        label: f.virusScan === 'Danger' ? 'Virus detected' : 'Unsafe pickle',
-        class: 'border-red-500/40 bg-red-500/15 text-red-300',
-      };
-    const amber = 'border-amber-500/40 bg-amber-500/10 text-amber-300';
-    if (f.pickleScan === 'Error' || f.virusScan === 'Error') return { label: 'Scan failed', class: amber };
-    if (f.pickleScan !== 'Success' || f.virusScan !== 'Success')
-      return { label: 'Not scanned yet', class: amber };
-    return null;
-  };
 
   const reportSummary = (byStatus: Record<string, number>) =>
     Object.entries(byStatus)
@@ -107,8 +94,13 @@
       {#if p.images.length}
         <!-- One row that scrolls sideways, so the versions and description stay in view. -->
         <div class="flex gap-1.5 overflow-x-auto pb-1">
-          {#each p.images as image, i (image.id)}
+          {#each p.images as image (image.id)}
             <div class="relative size-40 shrink-0 overflow-hidden rounded-md border bg-muted/40">
+              {#if image.restricted}
+                <div class="grid size-full place-items-center text-dark-2" title={WITHHELD_REFUSED}>
+                  <IconPhotoOff size={24} aria-label={WITHHELD_REFUSED} />
+                </div>
+              {:else}
               <!-- `anim={false}`: a still frame. On a video `EdgeVideo` then never plays by itself —
                    poster and play icon, nothing fetched until hovered, no loop — and leaves the click to
                    this button. Its default autoplays what is in view and loops it, and a grid of those
@@ -118,11 +110,10 @@
                 type="button"
                 class="h-full w-full"
                 aria-label={`Open ${image.type} #${image.id}`}
-                onclick={() => (openIndex = i)}
+                onclick={() => (openIndex = viewable(p).findIndex((v) => v.id === image.id))}
               >
-                <EdgeMedia
-                  src={image.url}
-                  type={image.type}
+                <CdnOrRetractedMedia
+                  item={image}
                   width={320}
                   anim={false}
                   class="h-full w-full object-cover"
@@ -144,6 +135,7 @@
                 <span class="absolute inset-x-0 bottom-0 bg-black/70 px-1 text-center text-[10px]">
                   Removed
                 </span>
+              {/if}
               {/if}
             </div>
           {/each}
@@ -173,42 +165,16 @@
             {#if v.files.length}
               <ul class="divide-y text-xs">
                 {#each v.files as file (file.id)}
-                  {@const flagged = scanState(file)}
-                  <li class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5">
-                    <span class="min-w-0 flex-1 truncate font-mono" title={file.name}>{file.name}</span>
-                    <span class="text-muted-foreground">
-                      {file.type}{file.format ? ` · ${file.format}` : ''} · {bytes(file.sizeKB)}
-                    </span>
-                    {#if file.visibility !== 'Public'}<Badge variant="outline">{file.visibility}</Badge>{/if}
-                    {#if flagged}<Badge class={flagged.class}>{flagged.label}</Badge>{/if}
-                    {#if isTrainingData(file)}
-                      {#if canViewTrainingData}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          class="h-6 px-2 text-xs"
-                          onclick={() => {
-                            trainingVersion = { id: v.id, title: `Training data · ${v.name}` };
-                            trainingOpen = true;
-                          }}
-                        >
-                          View
-                        </Button>
-                      {/if}
-                    {:else}
-                      <!-- The site's own download route, by file id, on the moderator's civitai.com
-                           session — so the file they get is the one listed, scan state and all. -->
-                      <a
-                        href={`${civitaiUrl}/api/download/models/${v.id}?fileId=${file.id}`}
-                        class="link inline-flex items-center"
-                        aria-label={`Download ${file.name}`}
-                        title="Download from Civitai"
-                      >
-                        <IconDownload size={14} />
-                      </a>
-                    {/if}
-                  </li>
+                  <ModelPreviewFileRow
+                    {file}
+                    versionId={v.id}
+                    {civitaiUrl}
+                    {canViewTrainingData}
+                    onview={() => {
+                      trainingVersion = { id: v.id, title: `Training data · ${v.name}` };
+                      trainingOpen = true;
+                    }}
+                  />
                 {/each}
               </ul>
             {:else}

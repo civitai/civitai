@@ -116,7 +116,11 @@ const { mockEnv, mockDevOauth } = vi.hoisted(() => ({
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/dev-tunnel-oauth.service', () => mockDevOauth);
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
+vi.mock('~/server/db/client', () => ({
+  dbWrite: mockDbWrite,
+  // The minter's own level narrows the dev token; an all-levels author leaves the ceiling as is.
+  dbRead: { user: { findUnique: async () => ({ showNsfw: true, browsingLevel: 31 }) } },
+}));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -505,6 +509,7 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
       userId: MOD.user.id,
       clientId: 'appdev-4242-my-app',
       scopes: ['ai:write:budgeted', 'user:read:self'],
+      impersonatedBy: null,
     });
   });
 

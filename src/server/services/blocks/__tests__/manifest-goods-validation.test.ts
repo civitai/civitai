@@ -17,7 +17,7 @@ import { BLOCK_GOOD_MAX_PRICE_BUZZ } from '~/shared/constants/block-goods.consta
 
 // `goods:*` map to SKIP_OAUTH_CHECK, so the bitmask is irrelevant to them —
 // deliberately left at 0 so a test that passes did not do so via an OAuth bit.
-const APP: AppContext = { allowedScopes: 0, allowedOrigins: ['https://test.civit.ai'] };
+const APP: AppContext = { allowedScopes: 0n, allowedOrigins: ['https://test.civit.ai'] };
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {

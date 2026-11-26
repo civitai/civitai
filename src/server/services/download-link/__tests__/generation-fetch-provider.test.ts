@@ -18,7 +18,6 @@ const { world } = vi.hoisted(() => ({
     files: [] as Record<string, any>[],
     paidAccess: new Map<number, { endsAt: Date | null }>(),
     inReview: new Set<number>(),
-    removedWithOwner: new Set<number>(),
   },
 }));
 
@@ -31,7 +30,6 @@ vi.mock('~/server/services/download-link/moderator-review.reads', async (importO
   ...(await importOriginal<typeof ReviewReads>()),
   readModeratorFlags: async (_db: unknown, id: number) => ({
     inReview: world.inReview.has(id),
-    removedWithOwner: world.removedWithOwner.has(id),
   }),
 }));
 vi.mock('~/server/services/hot-reads-5.reads', async (importOriginal) => ({
@@ -150,7 +148,6 @@ beforeEach(() => {
   world.files.length = 0;
   world.paidAccess.clear();
   world.inReview.clear();
-  world.removedWithOwner.clear();
   clearGateReadCache();
 });
 
@@ -204,15 +201,6 @@ describe('a provider is refused', () => {
     const id = version();
     world.inReview.add(id);
     expect(await asProvider(id)).toEqual({ ok: false, error: 'in-review' });
-  });
-
-  it("a draft kept after its owner's content was removed", async () => {
-    const id = version({ status: 'Draft', modelStatus: 'Draft' });
-    // Control: the same draft is served without the flag.
-    expect(await asProvider(id)).toMatchObject({ ok: true });
-    world.removedWithOwner.add(id);
-    clearGateReadCache();
-    expect(await asProvider(id)).toEqual({ ok: false, error: 'not-found' });
   });
 
   it('a failed scan', async () => {
