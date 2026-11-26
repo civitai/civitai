@@ -9,7 +9,7 @@ import {
 import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
-import { isSearchRefusedError } from '~/components/Search/search-refusal';
+import { shownRefusalOf } from '~/components/Search/search-refusal';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -48,16 +48,11 @@ function SearchableArticlesFeed(props: Props) {
   const filters = useInfiniteArticleFilters(props);
   const searchText = useFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(
-    searchText,
-    'articles_semantic',
-    'semantic'
-  );
+  const { refusal } = useSearchRefusal(searchText, 'articles_semantic', 'semantic');
   const search = useSemanticArticleFeed(filters, refusal ? undefined : searchText);
   useScrollToTopOnChange(search.searchKey);
-  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
-  if (shownRefusal)
-    return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
+  const shown = shownRefusalOf(refusal, search.error, search.serverRefusal);
+  if (shown) return <SearchRefusalNotice {...shown} />;
   return searchText ? (
     <ArticlesFeed {...props} search={{ text: searchText, ...search }} />
   ) : (

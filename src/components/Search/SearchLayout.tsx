@@ -143,17 +143,14 @@ export function SearchLayout({
   }, []);
 
   // The search pages refuse only these two, as they always have; the feed refuses more.
-  const { refusal, profanityMatches } = useSearchRefusal(
-    searchQuery,
-    parsedQuery?.sortBy,
-    'siteSearch'
-  );
+  const { refusal } = useSearchRefusal(searchQuery, parsedQuery?.sortBy, 'siteSearch');
   const refusedQuery = useSearchAvailabilityStore((state) => state.refusedQuery);
   const shownRefusal =
     refusal === 'illegal' || refusal === 'profanity'
       ? refusal
       : !!searchQuery && refusedQuery?.trim() === searchQuery.trim()
-      ? 'profanity'
+      ? // The server refused it: profanity, or a semantic page refused by any check.
+        'policy'
       : undefined;
   const isSearchUnavailable = useSearchAvailabilityStore((state) => state.unavailable);
 
@@ -178,7 +175,7 @@ export function SearchLayout({
           {shownRefusal ? (
             <SearchLayout.Root>
               <SearchLayout.Content>
-                <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />
+                <SearchRefusalNotice refusal={shownRefusal} />
               </SearchLayout.Content>
             </SearchLayout.Root>
           ) : (

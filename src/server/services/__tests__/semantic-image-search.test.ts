@@ -930,7 +930,12 @@ describe('the query audit and the browsing level', () => {
       candidateSource: source,
       refuseNarrowing: true,
     });
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+    });
     expect(calls).toHaveLength(0);
   });
 
@@ -1048,7 +1053,13 @@ describe('the query audit and the browsing level', () => {
   it('refuses a minor query for a moderator, before asking the index', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(result).toEqual({
+      items: [],
+      nextCursor: undefined,
+      correctedQuery: undefined,
+      refused: true,
+      refusedBy: 'minor',
+    });
     expect(calls).toHaveLength(0);
   });
 
@@ -1577,6 +1588,8 @@ describe('search by uploaded image', () => {
   it('returns nothing for an upload above the viewer, without asking the index', async () => {
     const { page, calls } = await run(R, PG | 2);
     expect(page.items).toEqual([]);
+    // A level refusal of the upload, not of any words: not marked refused.
+    expect(page).toMatchObject({ refused: false });
     expect(calls).toHaveLength(0);
     expect(h.recordAudit).toHaveBeenLastCalledWith(
       expect.objectContaining({ searchPath: 'refused_upload_level', resultIds: [] })
