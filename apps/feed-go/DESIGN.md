@@ -3804,3 +3804,52 @@ capture writes (`scripts/feed-bench/README.md`; optional `endpoint`, `path`, `qu
 other endpoints) and prints per endpoint the rows, the distinct signatures, the share of traffic the
 top N hold, and the bytes a corpus keeping K cases per signature would take. It makes no network
 call; a capture row says only whether the client was signed in, so the viewer is `user` or `anon`.
+
+### 19.7 Eval mode (`FEED_GO_EVAL_MODE`, default off; `FEED_GO_EVAL_NOW`)
+
+A pod the replay harness runs cases against, never one serving users. Code: `internal/config/eval.go`
+(`LoadEval`), `internal/clock`, `server.handBack`. Off, nothing here changes what the service does.
+
+**The hand-back stub.** With eval mode on, every request a public route would hand to the Node app
+is answered here instead: status **599**, an empty body, `X-Feed-Go-Served: node`, and
+**`X-Feed-Go-Handback-Reason: <reason>`**, the `feed_go_fallback_total` reason the request fell back
+for (`model-getall-off`, `origin`, `bulkhead`, `deadline`, `region-blocked`, …), or **`error`** for a
+compute error, which has no reason. 599 is outside every status the app or this service answers, so a
+stub can never be read as an answer: the harness records a case Go hands back as a gap with its
+reason, and never replays it to Node through this pod. Every public route ends a request it does not
+answer at `handBack` (the one caller of the proxy), so no route can reach an upstream past the stub:
+`TestEvalModeStubsEveryPublicRoute` drives every route `PublicMux` mounts (a ledger of the route
+set), and `TestProxyViaIsCalledOnlyFromHandBack` pins that the proxy has no other caller. The
+fallback URLs still decide which REST routes are mounted (as they do off), but are never dialled; a
+pod with none still listens publicly and answers the tRPC routes' stubs. A client gone before the
+hand-back (`canceled`) is answered nothing, as off. Answers written here rather than handed back
+(`FEED_GO_ANSWER_REGION_BLOCKED`'s 451, `FEED_GO_INFINITE_ANSWER_FEED_UNAVAILABLE`'s 503) are
+answers, not hand-backs, and are written as off.
+
+**Never sampled.** The internal shadow and Go-first probe routes are not mounted (404), and startup
+refuses eval mode beside any switch that sends this pod's traffic, or a copy of it, to the Node app or
+to the corpus (`config.EvalConflicts`): `FEED_GO_SHADOW_WORKERS` (the shadow's only switch on this
+side), `FEED_GO_SERVE_PARITY_SAMPLE_RATE`, `FEED_GO_EVAL_CAPTURE` and `FEED_GO_EVAL_CAPTURE_SERVE_RATE`
+(§19.6). Each must be unset or an explicit off (`0`, `false`, `no`, `off`); junk counts as on, so the
+refusal errs towards not starting. A `FEED_GO_EVAL_MODE` that is neither on (`true`, `1`, `yes`) nor
+off (unset, `false`, `0`, `no`) is refused too: a typo must not leave an eval pod proxying, nor a
+serving pod stubbing.
+
+**The clock.** `FEED_GO_EVAL_NOW` (RFC3339) freezes `clock.Now` at startup; it is refused without eval
+mode (a frozen clock on a serving pod would serve stale answers) and when it does not parse. Frozen,
+not offset: a corpus run answers every case at one instant however long the run takes and in whatever
+order the cases run, so two runs of one corpus compute the same answers. `clock.Now` is read wherever
+the time decides what an answer holds: publish and schedule filters (`feed` gallery, image.getInfinite,
+both `/api/v1/images` paths; model.getAll; `/api/v1/models`; the promotions window), cache-entry
+staleness (`hydrate`'s ordered, batch, official-models and showcase reads; the new-creators board),
+session-token times (`auth.Verifier.tokenNow`) and API-key expiry, and every dated region rule (one
+helper, `server.regionMatches`). What paces this process stays on the wall clock: durations, memo
+TTLs (blocked tags, flags), the key set's refetch and staleness, log rate limits, the search circuit,
+write budgets, and the miss computer's `cachedAt` stamps and recent-answer memo: freezing them would
+freeze the process, not the answer. `internal/clock`'s ledger test pins every `clock.Now` read by file
+(a read put back on `time.Now` fails it), and the `TestEvalClockReaches*` tests (auth, feed, hydrate,
+server) show each package's answer move with the frozen instant, at instants the wall clock cannot
+reach.
+
+Not in scope here: what the eval pod reads (its stores, flags, caches) and whether its cache
+write-back is on are the harness's environment's to set.

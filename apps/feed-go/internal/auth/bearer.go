@@ -30,6 +30,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
@@ -87,7 +88,7 @@ func (k *APIKeys) now() time.Time {
 	if k.Now != nil {
 		return k.Now()
 	}
-	return time.Now()
+	return clock.Now()
 }
 
 type redactedKey struct{}

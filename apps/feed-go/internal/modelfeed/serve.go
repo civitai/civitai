@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -130,7 +131,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 		// A flag in the state production does not run: not ported (DESIGN.md §15.3).
 		return nil, fallback.New("flag-off-state")
 	}
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}

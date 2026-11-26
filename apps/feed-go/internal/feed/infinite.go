@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -946,7 +947,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	if useIndex && d.Feed == nil {
 		return nil, fallback.New("index-feed-unconfigured")
 	}
-	now := time.Now()
+	now := clock.Now()
 	if d.Now != nil {
 		now = d.Now()
 	}

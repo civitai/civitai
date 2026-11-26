@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
@@ -54,7 +55,7 @@ func (b *NewCreatorBoards) UserIDs(ctx context.Context, boardID string) ([]int, 
 	if err != nil {
 		return nil, fallback.Wrap("new-creators-read-failed", err)
 	}
-	now := time.Now
+	now := clock.Now
 	if b.Now != nil {
 		now = b.Now
 	}

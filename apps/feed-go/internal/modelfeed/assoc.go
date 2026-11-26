@@ -2,11 +2,11 @@ package modelfeed
 
 import (
 	"context"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -163,7 +163,7 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 			fv = &feed.Viewer{ID: viewer.ID, IsModerator: viewer.IsModerator}
 		}
 		if on, known := d.Promotions.For(fv, false); on || !known {
-			now := time.Now()
+			now := clock.Now()
 			if d.Now != nil {
 				now = d.Now()
 			}

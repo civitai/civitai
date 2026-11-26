@@ -7,6 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/jskeys"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -83,7 +84,7 @@ func (r *OrderedRead) Entries() map[int]OrderedEntry {
 	if len(r.cmds) == 0 {
 		return out
 	}
-	now := time.Now()
+	now := clock.Now()
 	if r.p.Now != nil {
 		now = r.p.Now()
 	}

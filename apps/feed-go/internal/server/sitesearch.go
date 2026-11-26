@@ -267,7 +267,7 @@ func (s *Server) searchCompute(serving bool) func(context.Context, *http.Request
 				}
 			}
 		}
-		restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+		restricted := regionMatches(s.RegionRules, r)
 		sess := sitesearch.Session{}
 		if user != nil {
 			sess = sitesearch.Session{
@@ -450,7 +450,7 @@ func (s *Server) serveSearchLabelled(w http.ResponseWriter, r *http.Request) {
 		// A blocked region is always handed back, whatever AnswerRegionBlocked says: the handler applies
 		// the policy after MixedAuthEndpoint, so Node's 451 here carries the wrapper's Vary, CORS and
 		// Cache-Control headers, and a method other than POST is its 405 first.
-		if browsing.IsRegionRestricted(s.RegionBlockRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now()) {
+		if regionMatches(s.RegionBlockRules, r) {
 			err = errRegionBlocked
 		} else {
 			r = r.WithContext(withSearchCharge(r.Context(), charge)) //nolint:contextcheck // derived from the request's own context (which carries the span when tracing is on)
@@ -472,8 +472,7 @@ func (s *Server) serveSearchLabelled(w http.ResponseWriter, r *http.Request) {
 	if !s.serveFallback(ctx, span, start, EndpointSearch, err) {
 		return
 	}
-	w.Header().Set(ServedByHeader, ServedByNode)
-	s.proxyVia(s.SearchFallback, w, r, EndpointSearch)
+	s.handBack(s.SearchFallback, w, r, EndpointSearch, err)
 }
 
 // writeSearch writes a computed answer as Node writes its JSON: the headers, Next's JSON Content-Type

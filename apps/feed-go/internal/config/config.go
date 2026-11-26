@@ -56,6 +56,8 @@ type Config struct {
 	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
 	// [0, 1] or junk reads as 0.
 	ServeParityRate float64
+	// Eval is eval mode (FEED_GO_EVAL_MODE, FEED_GO_EVAL_NOW; LoadEval, DESIGN.md §19.7). Off by default.
+	Eval Eval
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
@@ -415,6 +417,11 @@ func Load() (*Config, error) {
 	c.Tracing = tracing.FromEnv(os.Getenv)
 	c.FallbackLogPerMinute = max(intEnv("FEED_GO_FALLBACK_LOG_PER_MIN", 0), 0)
 	c.ErrorLogPerMinute = positiveIntEnv("FEED_GO_ERROR_LOG_PER_MIN", 60)
+	eval, err := LoadEval(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	c.Eval = eval
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {
 		return nil, err
