@@ -173,12 +173,17 @@ export async function submitModel3DPreview(
     },
   } as unknown as WorkflowStepTemplate;
   // On the system token: a render submitted with the user's own token is charged to them.
-  const { data, error } = await submitWorkflow({
+  const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
     query: { wait: PREVIEW_WAIT_SECONDS },
     body: { tags: ['civitai', 'model3d', 'post-rating'], metadata, steps: [step], currencies: [] },
   });
-  if (!data?.id) throw new Model3dPreviewRejectedError(error);
+  if (!data?.id) {
+    // Only a 4xx says nothing was created; a 5xx may come after the workflow already was.
+    const status = response?.status ?? 0;
+    if (status >= 400 && status < 500) throw new Model3dPreviewRejectedError(error);
+    throw new Error(`model3DPreview submit failed (${status})`);
+  }
   return { workflowId: data.id as string, state: previewState(data) };
 }
 
