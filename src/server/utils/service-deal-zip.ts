@@ -14,6 +14,7 @@ import {
   SERVICE_ZIP_MODEL_EXTENSIONS,
   SERVICE_ZIP_RATIO_FLOOR_BYTES,
   SERVICE_ZIP_VIDEO_EXTENSIONS,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_VIDEO_IN_ZIP,
 } from '~/shared/constants/creator-services.constants';
 import type { getS3Client } from '~/utils/s3-utils';
@@ -163,6 +164,7 @@ export function entryRefusal(
     return 'Model files cannot be inside a .zip. Deliver each as its own file.';
   if (isIn(SERVICE_ZIP_VIDEO_EXTENSIONS, extension)) return VIDEO_REFUSAL;
   if (isIn(UNSCANNABLE_IMAGE_EXTENSIONS, extension)) return IMAGE_FORMAT_REFUSAL;
+  if (extension === 'pdf') return SERVICE_FINAL_PDF_REFUSAL;
 
   const cap = isIn(SERVICE_ZIP_IMAGE_EXTENSIONS, extension)
     ? SERVICE_ZIP_MAX_IMAGE_BYTES
@@ -286,6 +288,9 @@ function isOggAudio(head: Buffer) {
   return streams > 0;
 }
 
+const PDF_HEADER = Buffer.from('%PDF-');
+const PDF_HEADER_WINDOW = 1024;
+
 /** What the first bytes of an entry are, whatever its name says. */
 /**
  * `tsAnywhere: false` looks for a transport stream only where a file of one starts (byte 0, or 4
@@ -294,10 +299,12 @@ function isOggAudio(head: Buffer) {
 export function sniffEntry(
   head: Buffer,
   { tsAnywhere = true } = {}
-): EntryKind | 'video' | 'archive' | 'unscannable' {
+): EntryKind | 'video' | 'archive' | 'unscannable' | 'pdf' {
   const at = (offset: number, text: string) =>
     head.subarray(offset, offset + text.length).toString('latin1') === text;
   const bytes = (...values: number[]) => values.every((value, i) => head[i] === value);
+  // Ahead of the rest: a reader finds the header anywhere in the first 1 KB.
+  if (head.subarray(0, PDF_HEADER_WINDOW).includes(PDF_HEADER)) return 'pdf';
   // Ahead of the image signatures: a player finds the stream behind any header.
   if (isMpegTs(head, tsAnywhere) || id3TagLength(head)) return 'video';
   if (
@@ -687,6 +694,7 @@ export async function readEntry(
     if (found === 'video') throw new ZipRejectedError(VIDEO_REFUSAL);
     if (found === 'archive') throw new ZipRejectedError(NESTED_REFUSAL);
     if (found === 'unscannable') throw new ZipRejectedError(IMAGE_FORMAT_REFUSAL);
+    if (found === 'pdf') throw new ZipRejectedError(SERVICE_FINAL_PDF_REFUSAL);
     // A file named like an image that is not one is refused rather than judged by its name. An
     // image behind a tag is not one either: what is scanned must be the bytes as delivered.
     if ((declaredImage && found !== 'image') || (found === 'image' && sniffed.tags))

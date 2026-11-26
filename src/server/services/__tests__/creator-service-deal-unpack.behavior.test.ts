@@ -817,8 +817,10 @@ describe('judging a file by what it is', () => {
       Buffer.from('endstream\nendobj\n'),
       Buffer.from(end, 'latin1'),
     ]);
-  const pdfThen = (media: Buffer) =>
-    Buffer.concat([Buffer.from('%PDF-1.7\n'), media, Buffer.from('\n%%EOF\n')]);
+  /** A PDF with no byte outside ASCII, which a text check alone would take as text. */
+  const asciiPdf = Buffer.from(
+    '%PDF-1.4\n1 0 obj\n<< >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n'
+  );
   it.each([
     [
       'a PNG behind 1 KB of text, called notes.txt',
@@ -831,21 +833,6 @@ describe('judging a file by what it is', () => {
       'bytes that are not UTF-8, called notes.md',
       'notes.md',
       Buffer.from([0x68, 0x69, 0xc3, 0x28]),
-    ],
-    ['a .pdf that does not start with its header', 'brief.pdf', Buffer.concat([JUNK, PNG_BYTES()])],
-    ['a .pdf whose header line is followed by a zip', 'brief.pdf', pdfThen(PK)],
-    ['a .pdf whose header line is followed by a PNG', 'brief.pdf', pdfThen(PNG_BYTES())],
-    [
-      'a .pdf whose header runs straight into a PNG',
-      'brief.pdf',
-      Buffer.concat([Buffer.from('%PDF-'), PNG_BYTES(), Buffer.from('\n%%EOF\n')]),
-    ],
-    ['a .pdf with no %%EOF', 'brief.pdf', pdf({ end: 'trailer\n' })],
-    ['a .pdf with more than padding after its %%EOF', 'brief.pdf', pdf({ end: '%%EOF\nzz' })],
-    [
-      'a .pdf whose %%EOF is more than 1 KB from its end',
-      'brief.pdf',
-      Buffer.concat([pdf(), JUNK, Buffer.from('more')]),
     ],
   ])('refuses %s, which would be delivered unscanned', async (_n, name, content) => {
     const dealId = await accepted();
@@ -874,17 +861,39 @@ describe('judging a file by what it is', () => {
     expect(await entries(fileId)).toEqual([]);
   });
 
-  it('refuses a zip whose brief.pdf is not a PDF', async () => {
+  // Uploads refuse a .pdf; a Final stored before that, or a PDF under another name, stops here.
+  it.each([
+    ['a .pdf stored before uploads refused it', 'brief.pdf', pdf()],
+    ['a PDF called notes.txt', 'notes.txt', asciiPdf],
+    [
+      'a PDF behind a line of text, called notes.txt',
+      'notes.txt',
+      Buffer.concat([Buffer.from('read me first\n'), asciiPdf]),
+    ],
+  ])('refuses %s as a Final', async (_n, name, content) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'notes.txt', content);
+    await q(`UPDATE "ServiceDealFile" SET "fileName" = $2 WHERE id = $1`, [fileId, name]);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await fileRow(fileId)).failReason).toMatch(/PDF files can't be delivered/);
+    expect(await entries(fileId)).toEqual([]);
+  });
+
+  it.each([
+    ['a PDF called brief.pdf', 'brief.pdf', pdf()],
+    ['a PDF called docs/notes.txt', 'docs/notes.txt', asciiPdf],
+    ['a brief.pdf that holds plain text', 'brief.pdf', Buffer.from('plain words')],
+  ])('refuses a zip holding %s', async (_n, name, data) => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [
       { name: 'a.png', data: IMAGE_A },
-      { name: 'brief.pdf', data: pdfThen(PNG_BYTES()) },
+      { name, data },
     ]);
     expect(await unpack.unpackFinals()).toBe(1);
-    expect(await fileRow(fileId)).toMatchObject({
-      scanStatus: 'Failed',
-      failReason: "A document in the archive isn't what its name says.",
-    });
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await fileRow(fileId)).failReason).toMatch(/PDF files can't be delivered/);
     expect(await entries(fileId)).toEqual([]);
   });
 
@@ -895,29 +904,23 @@ describe('judging a file by what it is', () => {
       { name: 'docs/notes.txt', data: Buffer.from('Résumé — notes ✓\n'.repeat(100)) },
       // Inflated 16 KB at a time, so the ✓ arrives split across two chunks.
       { name: 'docs/long.txt', data: Buffer.from(`${'a'.repeat(16383)}✓`) },
-      { name: 'brief.pdf', data: pdf() },
     ]);
     expect(await unpack.unpackFinals()).toBe(1);
     expect((await fileRow(fileId)).failReason).toBeNull();
     expect((await entries(fileId)).map((e) => e.path)).toEqual(['a.png']);
   });
 
-  it.each([
-    ['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))],
-    ['a .pdf with a JPEG and a deflated stream in its body', 'brief.pdf', pdf()],
-    [
-      'a .pdf padded with NULs after its %%EOF',
-      'brief.pdf',
-      pdf({ start: '%PDF-1.4\r\n', end: '%%EOF\r\n\u0000\u0000\u0000' }),
-    ],
-  ])('delivers %s', async (_n, name, content) => {
-    const dealId = await accepted();
-    const fileId = await final(dealId, name, content);
-    serveHeads();
-    expect(await unpack.unpackFinals()).toBe(1);
-    expect((await fileRow(fileId)).failReason).toBeNull();
-    expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
-  });
+  it.each([['a UTF-8 .txt', 'notes.txt', Buffer.from('Résumé — notes, ✓ done\n'.repeat(200))]])(
+    'delivers %s',
+    async (_n, name, content) => {
+      const dealId = await accepted();
+      const fileId = await final(dealId, name, content);
+      serveHeads();
+      expect(await unpack.unpackFinals()).toBe(1);
+      expect((await fileRow(fileId)).failReason).toBeNull();
+      expect((await fileRow(fileId)).unpackedAt).not.toBeNull();
+    }
+  );
 
   it('leaves plain documents without entries, and takes a model file that is a zip', async () => {
     const dealId = await accepted();

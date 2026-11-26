@@ -48,6 +48,7 @@ import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   SERVICE_FINAL_EXTENSIONS,
+  SERVICE_FINAL_PDF_REFUSAL,
   SERVICE_FINAL_VIDEO_EXTENSIONS,
   SERVICE_FINAL_VIDEO_TOO_LARGE,
   SERVICE_FINAL_MAX_BYTES,
@@ -136,6 +137,7 @@ export const isFinalVideoName = (fileName: string) =>
 /** Refuses a Final we cannot inspect: an unknown type, or an archive other than a plain .zip. */
 export function assertFinalFileType(fileName: string, { video = true } = {}) {
   const extension = fileExtension(cleanFileName(fileName));
+  if (extension === 'pdf') throw throwBadRequestError(SERVICE_FINAL_PDF_REFUSAL);
   if (
     !(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension) ||
     (!video && isFinalVideoName(fileName))

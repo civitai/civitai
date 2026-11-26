@@ -409,6 +409,16 @@ describe('requesting an upload', () => {
       await expect(upload(dealId, { fileName: name })).resolves.toBeTruthy();
   });
 
+  it('refuses a PDF Final, whatever the case of its extension', async () => {
+    const dealId = await accepted();
+    for (const name of ['brief.pdf', 'Brief.PDF'])
+      await expect(upload(dealId, { fileName: name })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/PDF files can't be delivered/),
+      });
+    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
+  });
+
   it('holds a preview to image types and size, and not to a service that takes none', async () => {
     const none = await accepted('None');
     await expect(
