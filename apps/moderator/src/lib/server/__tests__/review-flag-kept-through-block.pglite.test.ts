@@ -795,7 +795,6 @@ describe('an explicit unblock of an image an account deletion blocked', () => {
 });
 
 describe('the CSAM review flag and every accept but the CSAM review', () => {
-  // Removed or live, the owner deleted or not.
   const ROWS = [
     { id: 61, owner: 7, ingestion: 'Blocked', blockedFor: 'moderated' },
     { id: 62, owner: 7, ingestion: 'Scanned', blockedFor: null },

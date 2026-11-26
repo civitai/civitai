@@ -47,7 +47,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     const skipped = found.filter((x) => !liftableByUnblock(x)).map((x) => x.id);
     const candidates = found.filter(liftableByUnblock);
     if (candidates.length === 0) {
-      return res.status(200).json({ images: 0, skipped });
+      return res.status(200).json({ images: 0, restored: [], skipped });
     }
 
     // Counted and tracked only as the service restored them: it re-checks each image itself, and one
@@ -62,7 +62,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     }
     const images = candidates.filter((x) => restoredIds.has(x.id));
     if (images.length === 0) {
-      return res.status(200).json({ images: 0, skipped });
+      return res.status(200).json({ images: 0, restored: [], skipped });
     }
     const imageIdsToUpdate = images.map((x) => x.id);
 
@@ -90,6 +90,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({
       images: images.length,
+      restored: imageIdsToUpdate,
       skipped,
     });
   } catch (e) {

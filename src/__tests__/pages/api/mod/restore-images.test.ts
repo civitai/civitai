@@ -61,7 +61,7 @@ describe('/api/mod/restore-images', () => {
     const body = await restore([1, 2]);
 
     expect(h.unblock.mock.calls.map(([arg]) => arg.ids)).toEqual([[2]]);
-    expect(body).toEqual({ images: 1, skipped: [1] });
+    expect(body).toEqual({ images: 1, restored: [2], skipped: [1] });
   });
 
   it('skips an image under the CSAM review flag, blocked or not, and restores the others', async () => {
@@ -70,7 +70,7 @@ describe('/api/mod/restore-images', () => {
     const body = await restore([1, 2, 3]);
 
     expect(h.unblock.mock.calls.map(([arg]) => arg.ids)).toEqual([[3]]);
-    expect(body).toEqual({ images: 1, skipped: [1, 2] });
+    expect(body).toEqual({ images: 1, restored: [3], skipped: [1, 2] });
   });
 
   it('restores nothing when every image is CSAM-blocked', async () => {
@@ -79,7 +79,7 @@ describe('/api/mod/restore-images', () => {
     const body = await restore([1]);
 
     expect(h.unblock).not.toHaveBeenCalled();
-    expect(body).toEqual({ images: 0, skipped: [1] });
+    expect(body).toEqual({ images: 0, restored: [], skipped: [1] });
   });
 
   it('skips an image the replica has not yet seen CSAM-blocked', async () => {
@@ -89,7 +89,7 @@ describe('/api/mod/restore-images', () => {
     const body = await restore([1]);
 
     expect(h.unblock).not.toHaveBeenCalled();
-    expect(body).toEqual({ images: 0, skipped: [1] });
+    expect(body).toEqual({ images: 0, restored: [], skipped: [1] });
   });
 
   it('counts only the images the service restored', async () => {
@@ -99,7 +99,7 @@ describe('/api/mod/restore-images', () => {
 
     const body = await restore([2, 3]);
 
-    expect(body).toEqual({ images: 1, skipped: [] });
+    expect(body).toEqual({ images: 1, restored: [3], skipped: [] });
     expect(h.trackImages.mock.calls[0][0].map((e: { imageId: number }) => e.imageId)).toEqual([3]);
   });
 });

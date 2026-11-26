@@ -1350,6 +1350,7 @@ export async function handleUnblockImages({
   const images = found.filter((image) => liftableByUnblock(image) && !csamIds.has(image.id));
   const kept: number[] = [];
   const restoredAll: number[] = [];
+  const liftedAll: typeof images = [];
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
@@ -1360,10 +1361,8 @@ export async function handleUnblockImages({
     }, {});
 
     const imageTagsForReview = await getImagTagsForReviewByImageIds(ids);
-    const [, ...written] = await Promise.all([
-      // Drops its blocks' deferred effects unfired.
-      dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
-      ...Object.entries(grouped).map(
+    const written = await Promise.all(
+      Object.entries(grouped).map(
         ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
           UPDATE "Image" SET
             "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
@@ -1388,25 +1387,33 @@ export async function handleUnblockImages({
             AND ${liftableByUnblockSql}
           RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
-      ),
-      upsertTagsOnImageNew(
-        imageTagsForReview.map(({ imageId, tagId }) => ({
-          imageId,
-          tagId,
-          disabled: true,
-          needsReview: false,
-        }))
-      ),
-    ]);
+      )
+    );
 
-    // From the UPDATE's RETURNING, so a row it skipped (a CSAM block racing in) is neither.
-    const rows = written
-      .flat()
-      .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row);
+    // Every follow-up acts on the rows the UPDATE wrote, from its RETURNING: a row it skipped (a CSAM
+    // block or review flag racing in) keeps its deferred effects, review tags and blocklist entry.
+    const rows = written.flat();
     const keptIds = new Set(rows.filter((row) => row.keptBlocked).map((row) => row.id));
     const restoredIds = rows.filter((row) => !row.keptBlocked).map((row) => row.id);
-    const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
+    const writtenIds = new Set(rows.map((row) => row.id));
+    const lifted = images.filter((image) => writtenIds.has(image.id));
+    const liftedIds = lifted.map((image) => image.id);
+    liftedAll.push(...lifted);
+    const postIds = uniq(lifted.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
+      // Drops its blocks' deferred effects unfired.
+      liftedIds.length &&
+        dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${liftedIds}::int[])`,
+      upsertTagsOnImageNew(
+        imageTagsForReview
+          .filter(({ imageId }) => writtenIds.has(imageId))
+          .map(({ imageId, tagId }) => ({
+            imageId,
+            tagId,
+            disabled: true,
+            needsReview: false,
+          }))
+      ),
       resetBlockedNsfwLevel(restoredIds),
       dropBlockedImageDeleteQueue(restoredIds),
       restartBlockedImageDeleteClock([...keptIds]),
@@ -1420,18 +1427,18 @@ export async function handleUnblockImages({
           action: SearchIndexUpdateQueueAction.Delete,
         }),
       // The unblock SQL above can rewrite "minor", which no trigger watches.
-      queueDocumentsForImageMinorChanges({ minorImageIds: ids }),
-      deleteImagTagsForReviewByImageIds(ids),
-      bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined), {
+      queueDocumentsForImageMinorChanges({ minorImageIds: liftedIds }),
+      deleteImagTagsForReviewByImageIds(liftedIds),
+      bulkRemoveBlockedImages(lifted.map(({ pHash }) => pHash).filter(isDefined), {
         step: 'unblock',
-        imageIds: ids,
+        imageIds: liftedIds,
         actorUserId: moderatorId,
       }),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
       // `tosViolation`. Unblock flips those, but `processImageScanWorkflow`
       // (where the standard re-queue lives) isn't on this code path —
       // re-queue here so the search index re-evaluates visibility.
-      queueComicsForPanelImages(ids),
+      queueComicsForPanelImages(liftedIds),
     ]);
     // Bust after the writes above land so a concurrent reader can't refill the cache from pre-update rows.
     if (postIds.length) await bustCachesForPosts(postIds);
@@ -1456,7 +1463,9 @@ export async function handleUnblockImages({
   });
 
   // Resolve any pending appeals for images that were in appeal review
-  const appealImageIds = images.filter((img) => img.needsReview === 'appeal').map((img) => img.id);
+  const appealImageIds = liftedAll
+    .filter((img) => img.needsReview === 'appeal')
+    .map((img) => img.id);
 
   if (appealImageIds.length > 0) {
     await resolveEntityAppeal({
@@ -1468,7 +1477,7 @@ export async function handleUnblockImages({
   }
 
   // Prevent remix-source audit job from re-flagging accepted images
-  await markRemixSourceReviewed(images);
+  await markRemixSourceReviewed(liftedAll);
 
   // Kept apart: a row kept blocked while its owner is deleted was not restored.
   const keptSet = new Set(kept);

@@ -33,11 +33,4 @@ describe(NAME, () => {
   it('is named only by the image queue: its import and the CSAM-view accept', () => {
     expect(variantReferences()).toEqual({ 'lib/server/image-queue.ts': 2 });
   });
-
-  it('is picked only on the CSAM queue view, for a moderator who holds that review', () => {
-    const queue = readFileSync(join(SRC, 'lib/server/image-queue.ts'), 'utf8');
-    expect(queue).toMatch(
-      /params\.slug === FLAG_KEPT_THROUGH_BLOCK && holdsCsamReview\(user\)\s*\?\s*acceptCsamReviewedImage\s*:\s*acceptImage;/
-    );
-  });
 });

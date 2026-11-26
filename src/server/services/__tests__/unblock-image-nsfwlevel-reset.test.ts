@@ -196,6 +196,10 @@ const { queueDocumentsForImageMinorChanges, queueDocumentsForBlockedImages } = a
   '~/server/services/image-models-reindex.service'
 );
 const { resolveEntityAppeal } = await import('../report.service');
+const { deleteImagTagsForReviewByImageIds } = await import(
+  '~/server/services/image-review.service'
+);
+const { queueComicsForPanelImages } = await import('~/server/services/nsfwLevels.service');
 const { createNotification } = await import('../notification.service');
 const { refundMultiAccountTransaction } = await import('../buzz.service');
 const { logToAxiom } = await import('~/server/logging/client');
@@ -879,7 +883,18 @@ describe('handleUnblockImages and the CSAM review flag', () => {
     const raw = pgliteRaw(pg);
     const capture = dbWrite.$queryRaw.getMockImplementation();
     const captureExec = dbWrite.$executeRaw.getMockImplementation();
-    dbWrite.$executeRaw.mockImplementation((() => Promise.resolve(0)) as never);
+    const deferredDrops: unknown[] = [];
+    dbWrite.$executeRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (strings.join('').includes('DELETE FROM "ImageDeferredBlockEffect"'))
+        deferredDrops.push(values[0]);
+      return Promise.resolve(0);
+    }) as never);
+    vi.mocked(deleteImagTagsForReviewByImageIds).mockClear();
+    vi.mocked(queueComicsForPanelImages).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
     dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
       const text = strings.join('');
       if (/AS "keptBlocked"/.test(text)) return raw.queryRaw(strings, ...values);
@@ -907,7 +922,17 @@ describe('handleUnblockImages and the CSAM review flag', () => {
       const { rows } = await pg.query(
         `SELECT id, "needsReview", "blockedFor", ingestion::text AS ingestion FROM "Image" ORDER BY id`
       );
-      return { restored: result.restored.map((x) => x.id), rows };
+      // The ids each follow-up was handed.
+      const followUps = {
+        deferredDrops,
+        reviewTags: vi.mocked(deleteImagTagsForReviewByImageIds).mock.calls.map(([ids]) => ids),
+        comics: vi.mocked(queueComicsForPanelImages).mock.calls.map(([ids]) => ids),
+        minor: vi
+          .mocked(queueDocumentsForImageMinorChanges)
+          .mock.calls.map(([arg]) => (arg as { minorImageIds?: number[] }).minorImageIds)
+          .filter(Boolean),
+      };
+      return { restored: result.restored.map((x) => x.id), rows, followUps };
     } finally {
       if (capture) dbWrite.$queryRaw.mockImplementation(capture);
       if (captureExec) dbWrite.$executeRaw.mockImplementation(captureExec);
@@ -925,9 +950,16 @@ describe('handleUnblockImages and the CSAM review flag', () => {
   });
 
   it('leaves them as they were from the UPDATE alone, when the reads before it miss the flag', async () => {
-    const { restored, rows } = await unblockAll(true);
+    const { restored, rows, followUps } = await unblockAll(true);
     expect(restored).toEqual([5]);
     expect(rows.slice(0, 4)).toEqual(FLAGGED_ROWS);
+    // A row the UPDATE skipped gets none of the unblock's follow-ups.
+    expect(followUps).toEqual({
+      deferredDrops: [[5]],
+      reviewTags: [[5]],
+      comics: [[5]],
+      minor: [[5]],
+    });
   });
 });
 

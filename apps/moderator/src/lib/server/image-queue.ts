@@ -341,8 +341,8 @@ function shownFlags(value: FormDataEntryValue | null): Map<number, string | null
 
 /** The CSAM queue's own view clears the CSAM review flag for a moderator who holds that review; every
  *  other queue, and `/reports/image` (no `slug`), leaves the flag on. */
-const acceptFrom = (params: { slug?: string }, user: App.Locals['user']) =>
-  params.slug === FLAG_KEPT_THROUGH_BLOCK && holdsCsamReview(user)
+const acceptFrom = (params: { slug?: string } | undefined, user: App.Locals['user']) =>
+  params?.slug === FLAG_KEPT_THROUGH_BLOCK && holdsCsamReview(user)
     ? acceptCsamReviewedImage
     : acceptImage;
 
