@@ -7,7 +7,10 @@ import type { DB } from '@civitai/db-schema/kysely';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModerationService from '~/server/services/commentv3/moderation.service';
 import type * as MirrorService from '~/server/services/feature-pages/mirror.service';
-import { unactionReportLiftingScanHide } from '@civitai/db-queries/feature-page-comments';
+import {
+  readFpMirrorFacts,
+  unactionReportLiftingScanHide,
+} from '@civitai/db-queries/feature-page-comments';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
@@ -277,6 +280,39 @@ describe("a moderator's dismissal of the scan's report", () => {
       changed.id,
     ]);
     await heldOpen(changed.id, changed.reportId, 'version');
+  });
+
+  it('3c. the mirror and the dismissal agree on author standing: banned, muted, deleted, missing', async () => {
+    const standing = async (id: number) =>
+      (await readFpMirrorFacts(kysely(), [id]))[0].authorInStanding;
+    // No such user: the foreign key forbids it, so it is set aside to reach the LEFT JOIN's case.
+    const authorOf = async (id: number, userId: number) => {
+      await q(`SET session_replication_role = replica`);
+      await q(`UPDATE "CommentV3" SET "userId" = $2 WHERE id = $1`, [id, userId]);
+      await q(`SET session_replication_role = origin`);
+      await q(`UPDATE "FeaturePageCommentMirror" SET "userId" = $2 WHERE "commentId" = $1`, [
+        id,
+        userId,
+      ]);
+    };
+    const cases: [string, (id: number) => Promise<unknown>][] = [
+      ['banned', () => q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [AUTHOR])],
+      ['muted', () => q(`UPDATE "User" SET muted = true WHERE id = $1`, [AUTHOR])],
+      ['deleted', () => q(`UPDATE "User" SET "deletedAt" = now() WHERE id = $1`, [AUTHOR])],
+      ['missing', (id) => authorOf(id, 999)],
+    ];
+    for (const [why, apply] of cases) {
+      const { id, reportId } = await hiddenByScan(`${why} author`);
+      expect(await standing(id)).toBe(true);
+      await apply(id);
+      expect({ why, standing: await standing(id) }).toEqual({ why, standing: false });
+      await heldOpen(id, reportId, 'author');
+      await q(
+        `UPDATE "User" SET "bannedAt" = NULL, muted = false, "deletedAt" = NULL WHERE id = $1`,
+        [AUTHOR]
+      );
+      await authorOf(id, AUTHOR);
+    }
   });
 
   it("4. lifts nothing for the system user, a replayed or re-ruled report, a person's report, or the main app's bulk path", async () => {
