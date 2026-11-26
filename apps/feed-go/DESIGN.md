@@ -3848,8 +3848,11 @@ endpoints are captured (`evalcapture.Supported`); every other endpoint is skippe
   both rows queued), `deduped` (sample row queued, not admitted), `dropped` (a row refused by a full or
   closed writer queue, a T3 capture with every worker busy, a viewer that could not be resolved, or a
   request that built no case). Seeded at 0 for the endpoints each source captures (shadow and serve:
-  the four first-wave endpoints; serve-parity: the three tRPC ones). A batch the writer later fails
-  to insert is not in this count: it is logged (`eval capture insert failed`).
+  the four first-wave endpoints; serve-parity: the three tRPC ones). It counts rows queued; a row the
+  writers drop afterwards (a batch ClickHouse refused after its retries, shutdown) is counted in
+  `feed_go_eval_capture_rows_dropped_total{table,reason}` (chwrite's reasons, seeded) and the failure
+  logged (`eval capture insert failed`). A case is queued before its sample, and the sample names it
+  only once it is queued: a sample never carries the id of a case that was not.
 - **Never blocks.** T1 and T2 run on their sample's or replay's goroutine; T3 copies what it needs
   and returns; `Record` only queues (`chwrite.Writer.Add` never waits; a full queue drops the row).
   At shutdown the writers flush after the taps have stopped.

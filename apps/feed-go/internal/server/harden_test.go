@@ -700,7 +700,9 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
 		"feed_go_cache_miss_total": true,
 		// The search guard is one per process, used by the list route alone.
-		"feed_go_search_rejected_total": true}
+		"feed_go_search_rejected_total": true,
+		// A writer's batch mixes endpoints: its dropped rows are per table.
+		"feed_go_eval_capture_rows_dropped_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {

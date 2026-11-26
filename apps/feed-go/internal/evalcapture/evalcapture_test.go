@@ -348,6 +348,10 @@ func TestRecordFullQueueDrops(t *testing.T) {
 	if o := r.Record(anonSample(1, "match")); o != OutcomeDropped {
 		t.Errorf("case refused: %q, want dropped", o)
 	}
+	// Its sample is still written, naming no case: no sample points at a case that was never queued.
+	if ss := samples.samples(); len(ss) != 1 || ss[0].CaseID != 0 {
+		t.Fatalf("samples after a refused case: %+v, want one with case id 0", ss)
+	}
 	cases.refuse = false
 	if o := r.Record(anonSample(2, "match")); o != OutcomeWritten {
 		t.Errorf("after a refused case the slot is free again: %q", o)
@@ -525,5 +529,36 @@ func TestRecordRedactsSearchText(t *testing.T) {
 		if got := redactSearchText(in); got != want {
 			t.Errorf("redactSearchText(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A batch ClickHouse refuses reaches WriterConfig.Dropped with its table and chwrite's reason.
+func TestNewWritersDroppedCarriesTheTable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	var mu sync.Mutex
+	got := map[string]int{}
+	samples, cases, err := NewWriters(WriterConfig{URL: srv.URL + "/evaldb", Dropped: func(table string, n int, reason string) {
+		mu.Lock()
+		defer mu.Unlock()
+		got[table+"/"+reason] += n
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples.Add(SampleRow{Endpoint: "infinite"})
+	cases.Add(CaseRow{Endpoint: "infinite"})
+	cases.Add(CaseRow{Endpoint: "as-posts"})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = samples.Close(ctx)
+	_ = cases.Close(ctx)
+	mu.Lock()
+	defer mu.Unlock()
+	if got["samples/http_4xx"] != 1 || got["cases/http_4xx"] != 2 || len(got) != 2 {
+		t.Errorf("dropped %v, want samples/http_4xx 1 and cases/http_4xx 2", got)
 	}
 }

@@ -324,6 +324,16 @@ func TestEvalCaptureSeeded(t *testing.T) {
 			}
 		}
 	}
+	if n := testutil.CollectAndCount(m.EvalCaptureRowsDropped); n != 2*7 {
+		t.Errorf("feed_go_eval_capture_rows_dropped_total has %d series, want 14", n)
+	}
+	for _, table := range []string{"samples", "cases"} {
+		for _, reason := range []string{"queue_full", "marshal", "http_4xx", "http_other", "http_5xx", "transport", "shutdown"} {
+			if v, found := metricValue(t, reg, "feed_go_eval_capture_rows_dropped_total", map[string]string{"table": table, "reason": reason}); !found || v != 0 {
+				t.Errorf("rows_dropped{%s,%s} = %v found=%v, want a 0 series", table, reason, v, found)
+			}
+		}
+	}
 	if _, found := metricValue(t, reg, "feed_go_eval_capture_total", map[string]string{"feed_endpoint": "v1-models-id", "source": "serve-parity", "outcome": "written"}); found {
 		t.Error("serve-parity never replays v1-models-id, but its series exists")
 	}

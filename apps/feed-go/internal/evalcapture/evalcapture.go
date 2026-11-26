@@ -302,12 +302,8 @@ func (r *Recorder) Record(s Sample) string {
 		Weight: s.Weight, ProdResult: s.ProdResult, FallbackReason: s.FallbackReason, DiffCategories: categories,
 		HeaderResult: s.HeaderResult, GoVersion: r.cfg.GoVersion,
 	}
-	if admit != nil {
-		row.CaseID = caseID
-	}
-	sampleQueued := r.cfg.Samples.Add(row)
 	if admit == nil {
-		if !sampleQueued {
+		if !r.cfg.Samples.Add(row) {
 			return OutcomeDropped
 		}
 		return OutcomeDeduped
@@ -326,13 +322,17 @@ func (r *Recorder) Record(s Sample) string {
 			cr.NodeHeaders[k] = v
 		}
 	}
+	// The case first, and the sample names it only once it is queued: a sample never carries the id of
+	// a case that was not (case_id 0 then, as for a capture not admitted).
 	if !r.cfg.Cases.Add(cr) {
 		// The case never reached the queue: its admission is handed back, so a later request can
 		// take the slot.
 		r.release(admit)
+		r.cfg.Samples.Add(row)
 		return OutcomeDropped
 	}
-	if !sampleQueued {
+	row.CaseID = caseID
+	if !r.cfg.Samples.Add(row) {
 		return OutcomeDropped
 	}
 	return OutcomeWritten
@@ -440,8 +440,9 @@ const (
 // names the database), _USER and _PASSWORD, for an INSERT-only login.
 type WriterConfig struct {
 	URL, Username, Password string
-	// Dropped and OnError are chwrite.Config's (called concurrently, must not block).
-	Dropped func(n int, reason string)
+	// Dropped is chwrite.Config's, with the table (SamplesTable or CasesTable) the rows were for;
+	// OnError is chwrite.Config's. Both are called concurrently and must not block.
+	Dropped func(table string, n int, reason string)
 	OnError func(err error)
 }
 
@@ -460,9 +461,13 @@ func NewWriters(cfg WriterConfig) (samples, cases *chwrite.Writer, err error) {
 	q.Set("date_time_input_format", "best_effort")
 	u.RawQuery = q.Encode()
 	mk := func(table string) (*chwrite.Writer, error) {
+		var dropped func(int, string)
+		if cfg.Dropped != nil {
+			dropped = func(n int, reason string) { cfg.Dropped(table, n, reason) }
+		}
 		return chwrite.New(chwrite.Config{
 			URL: u.String(), Username: cfg.Username, Password: cfg.Password, Table: table,
-			MaxRetries: 2, Dropped: cfg.Dropped, OnError: cfg.OnError,
+			MaxRetries: 2, Dropped: dropped, OnError: cfg.OnError,
 		})
 	}
 	if samples, err = mk(SamplesTable); err != nil {

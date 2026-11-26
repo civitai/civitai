@@ -21,6 +21,11 @@ func newEvalCapture(cfg *config.Config, srv *server.Server, log *slog.Logger) (s
 		// A failed batch's error can quote rows: stripped requests and signed-out Node answers only
 		// (evalcapture.Record), so it may be logged.
 		OnError: func(err error) { log.Warn("eval capture insert failed", "err", err) },
+		// Every dropped row is counted, a batch ClickHouse refused included (rows queued are
+		// feed_go_eval_capture_total's).
+		Dropped: func(table string, n int, reason string) {
+			srv.Metrics.EvalCaptureRowsDropped.WithLabelValues(table, reason).Add(float64(n))
+		},
 	})
 	if err != nil {
 		return nil, nil, err

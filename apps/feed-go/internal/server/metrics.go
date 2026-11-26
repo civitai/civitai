@@ -124,6 +124,11 @@ type Metrics struct {
 	// source: evalcapture.Sources, outcome: evalcapture.Outcomes; evalcapture.go). Seeded per source
 	// for the endpoints it captures.
 	EvalCapture *prometheus.CounterVec
+	// EvalCaptureRowsDropped counts the eval capture's rows its writers dropped, by table (samples |
+	// cases) and chwrite reason (feed_go_eval_capture_rows_dropped_total): a batch ClickHouse refused
+	// after its retries included, which feed_go_eval_capture_total (rows queued) cannot see. Not per
+	// endpoint: a batch mixes endpoints.
+	EvalCaptureRowsDropped *prometheus.CounterVec
 	// FeedUnavailable counts the image.getInfinite 503s written here for a failed feed-service call
 	// (outcome feed_unavailable), by why the call failed (feed_go_feed_unavailable_total: endpoint,
 	// reason, detail; feedUnavailableCause). Not seeded: the series appear with the first failure.
@@ -185,6 +190,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_eval_capture_total",
 			Help: "Eval capture taps (DESIGN.md §19.6) by source (shadow | serve-parity | serve) and outcome: written (admitted: sample and case rows queued), deduped (sample row queued, not admitted), dropped (a row not queued, or nothing capturable).",
 		}, []string{EndpointLabel, "source", "outcome"}),
+		EvalCaptureRowsDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_eval_capture_rows_dropped_total",
+			Help: "Eval capture rows the ClickHouse writers dropped, by table (samples | cases) and reason (queue_full, marshal, http_4xx, http_5xx, http_other, transport, shutdown).",
+		}, []string{"table", "reason"}),
 		ServeParity: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_serve_parity_total",
 			Help: "Serve-side parity replays (a served answer re-asked of the Node app after the response), by outcome: compared, dropped_queue, skipped_bulkhead, skipped_credential, skipped_closing, upstream_error, upstream_status, timeout, bad_body.",
@@ -378,7 +387,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}
 	}
 	reg.MustRegister(m.ShadowViewer, m.ShadowResponseViewer)
-	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity, m.EvalCapture,
+	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, shadowResults, shadowDiffs, shadowResponse, m.ShadowDropped, m.ServeParity, m.EvalCapture, m.EvalCaptureRowsDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight, m.SearchRejected,

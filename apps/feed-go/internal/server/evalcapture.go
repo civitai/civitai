@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/chwrite"
 	"github.com/civitai/civitai/apps/feed-go/internal/evalcapture"
 	"github.com/civitai/civitai/apps/feed-go/internal/evalcorpus"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -73,7 +74,17 @@ func (m *Metrics) seedEvalCapture() {
 			}
 		}
 	}
+	for _, table := range []string{evalcapture.SamplesTable, evalcapture.CasesTable} {
+		for _, reason := range EvalCaptureDropReasons {
+			m.EvalCaptureRowsDropped.WithLabelValues(table, reason)
+		}
+	}
 }
+
+// EvalCaptureDropReasons are chwrite's drop reasons, the reason values of
+// feed_go_eval_capture_rows_dropped_total.
+var EvalCaptureDropReasons = []string{chwrite.ReasonQueueFull, chwrite.ReasonMarshal, chwrite.ReasonHTTP4xx,
+	chwrite.ReasonHTTPOther, chwrite.ReasonHTTP5xx, chwrite.ReasonTransport, chwrite.ReasonShutdown}
 
 // evalCaptureEndpoints are the endpoints a source captures: every first-wave endpoint (all are shadowed
 // and have public routes), less the ones serve-parity does not replay.
