@@ -26,7 +26,7 @@ import {
 export type BearerTokenOptions = {
   /** Accept a client-credentials token; only the catalog endpoints pass this. */
   allowClientCredentialsOnly?: boolean;
-  /** Accept a recipe-runner token. Only a runner mint path may pass this; a ledger test lists callers. */
+  /** Accept a recipe-runner token. Only the runner mint passes this (guard `no-runner-mint-bearer-outside-mint`). */
   allowRunnerMint?: boolean;
 };
 
@@ -70,6 +70,12 @@ export async function getBearerTokenUser(
       return null;
   }
   return user;
+}
+
+/** The token of an `Authorization: Bearer <token>` header, or null. */
+export function bearerTokenFromHeader(header: unknown): string | null {
+  if (typeof header !== 'string') return null;
+  return /^Bearer\s+(\S+)$/i.exec(header.trim())?.[1] ?? null;
 }
 
 /**

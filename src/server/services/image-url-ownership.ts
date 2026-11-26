@@ -483,6 +483,34 @@ type KeyIssuerArgs = {
 };
 
 /**
+ * The keys among `keys` with an issue record or a logged upload request, i.e. minted by the current
+ * upload path, and to one of `issuedTo` when given. A store that cannot be read records nothing,
+ * so its keys are left out.
+ */
+export async function recordedKeys(
+  keys: string[],
+  { issuedTo, now = new Date() }: { issuedTo?: number[]; now?: Date } = {}
+) {
+  const recorded = new Set<string>();
+  let readFailed = false;
+  // Looked up MAX_KEYS at a time, as keyIssuers caps one lookup.
+  for (let i = 0; i < keys.length; i += MAX_KEYS) {
+    const chunk = keys.slice(i, i + MAX_KEYS);
+    // Records are written lowercased; the key is returned as given.
+    const lower = [...new Set(chunk.map((k) => k.toLowerCase()))];
+    const fromRecord = await ownersFromRedis(lower, now);
+    const logged = await ownersFromClickhouse(lower.filter((k) => !fromRecord.owners.has(k)));
+    readFailed ||= fromRecord.readFailed || logged.failed;
+    const owners = new Map([...fromRecord.owners, ...logged.owners]);
+    for (const key of chunk) {
+      const owner = owners.get(key.toLowerCase());
+      if (owner !== undefined && (!issuedTo || issuedTo.includes(owner))) recorded.add(key);
+    }
+  }
+  return { recorded, readFailed };
+}
+
+/**
  * The upload keys in `urls` that were issued to someone other than `userId` and `alsoIssuedTo`,
  * and those with no issue record and no `Image` row of theirs.
  */

@@ -90,6 +90,7 @@ import {
   CSAM_REVIEW_FLAG,
   unblockedMetadataSql,
   scanKeepsRowSql,
+  blockedMediaListConditions,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -2709,16 +2710,18 @@ export function feedViewer(input: {
 
 /** A feed item's thumbnail fields for its viewer. */
 export function feedThumbnailFields(
-  thumbnail: { url: string; nsfwLevel: number; blockMarked?: boolean } | undefined,
+  thumbnail:
+    | { url: string; nsfwLevel: number; blockMarked?: boolean; ownerMediaAllowed?: boolean }
+    | undefined,
   imageNsfwLevel: number,
   creatorId: number,
   viewer: { ownerId?: number; isModerator: boolean }
 ) {
+  const ownersOwn = creatorId === viewer.ownerId && thumbnail?.ownerMediaAllowed === true;
   return {
     nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, imageNsfwLevel),
     thumbnailUrl:
-      thumbnail &&
-      (thumbnail.blockMarked === false || creatorId === viewer.ownerId || viewer.isModerator)
+      thumbnail && (thumbnail.blockMarked === false || ownersOwn || viewer.isModerator)
         ? thumbnail.url
         : undefined,
   };
@@ -3048,8 +3051,7 @@ const getAllImagesUncaptured = async (
     AND.push(
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${ownerId})`
     );
-    // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
-    AND.push(...imageBlockedForConditions({ userId: ownerId }));
+    AND.push(...blockedMediaListConditions({ userId: ownerId }));
   }
 
   if (disablePoi) {
@@ -4713,7 +4715,13 @@ export const getImage = async ({
 }) => {
   const AND = [
     Prisma.sql`i.id = ${id}`,
-    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, shownReviewImageLevels }),
+    ...imageVisibilityConditions({
+      userId,
+      isModerator,
+      ownerSeesHeld,
+      shownReviewImageLevels,
+      ownerKeepsBlockedRow: true,
+    }),
   ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
@@ -5273,7 +5281,7 @@ export const getImagesForPosts = async ({
         : Prisma.sql`i."ingestion" != 'Blocked'`
     );
   }
-  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
+  imageWhere.push(...blockedMediaListConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
@@ -6171,7 +6179,8 @@ export const getEntityCoverImage = async ({
     seesReportListed,
     ownerSeesReportListed: true,
   });
-  // A blocked or ToS-violating cover is its owner's and moderators' alone.
+  // A blocked cover is moderators' alone, plus its owner's where `ownerMediaAllowedSql` allows the
+  // media; a ToS-violating one is its owner's and moderators'.
   const coverNotBlocked = Prisma.join(
     [
       Prisma.sql`(i."tosViolation" IS NOT TRUE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean)`,

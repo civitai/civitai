@@ -385,7 +385,10 @@ describe('a recipe-runner token is refused on block REST routes', () => {
   it('answers 401 and never runs the handler', async () => {
     const { handler, wrapped } = route(BUZZ_READ);
     const res = makeRes();
-    await wrapped(makeReq(await signRunner({ mintOrigin: 'runner' })) as never, res as never);
+    await wrapped(
+      makeReq(await signRunner({ mintOrigin: 'runner', runId: 'run_x' })) as never,
+      res as never
+    );
     expect(res.statusCode).toBe(401);
     expect(handler).not.toHaveBeenCalled();
   });

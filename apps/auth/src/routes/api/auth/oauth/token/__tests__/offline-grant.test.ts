@@ -355,7 +355,11 @@ describe('flag on: the offline grant', () => {
   });
 
   it('unticking the line clears an earlier grant, deletes that app’s refresh tokens, and issues none', async () => {
-    consent({ offlineGrantedAt: new Date(NOW.getTime() - DAY) });
+    consent({
+      offlineGrantedAt: new Date(NOW.getTime() - DAY),
+      offlineBuzzLimit: 200,
+      offlineBuzzPeriod: 'week',
+    });
     const held = legacyRefresh(new Date(NOW.getTime() + 20 * DAY));
     const otherClient = legacyRefresh(new Date(NOW.getTime() + 20 * DAY), USER, OTHER_CLIENT);
     const otherUser = legacyRefresh(new Date(NOW.getTime() + 20 * DAY), OTHER_USER, CLIENT);
@@ -363,7 +367,11 @@ describe('flag on: the offline grant', () => {
     const res = await exchangeCode(await authorize(params, { remember: 'true' }));
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('refresh_token');
-    expect(h.tables.OauthConsent[0].offlineGrantedAt).toBeNull();
+    expect(h.tables.OauthConsent[0]).toMatchObject({
+      offlineGrantedAt: null,
+      offlineBuzzLimit: null,
+      offlineBuzzPeriod: null,
+    });
     expect(row(held)).toBeUndefined();
     expect(row(otherClient)).toBeDefined();
     expect(row(otherUser)).toBeDefined();
@@ -419,6 +427,15 @@ describe('flag on: the offline grant', () => {
     const res = await exchangeCode(redirect);
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('refresh_token');
+  });
+
+  it('re-approving under an unbroken grant keeps its start time', async () => {
+    const earlier = new Date(NOW.getTime() - 3 * DAY);
+    consent({ offlineGrantedAt: earlier });
+    await authorize(authorizeParams(`offline_access ${TokenScope.ModelsRead}`), {
+      offline: 'true',
+    });
+    expect(h.tables.OauthConsent[0].offlineGrantedAt).toEqual(earlier);
   });
 
   it('re-consent keeps a custom (multi-budget) cap when the fields are left blank, and busts nothing', async () => {

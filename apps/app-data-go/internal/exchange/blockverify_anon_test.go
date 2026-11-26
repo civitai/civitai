@@ -61,6 +61,7 @@ func TestASignedOutTokenKeepsEveryOtherCheck(t *testing.T) {
 		"dev":                 {siteToken(t, with(map[string]any{"dev": true})), "dev token"},
 		"review":              {siteToken(t, with(map[string]any{"reviewRunForReal": true})), "review token"},
 		"private run":         {siteToken(t, with(map[string]any{"privateRun": true})), "private run"},
+		"runner":              {siteToken(t, with(map[string]any{"mintOrigin": "runner"})), "runner token"},
 		"too old":             {siteToken(t, with(map[string]any{"iat": verifyNow.Unix() - 2000, "exp": verifyNow.Unix() + 60})), "too old"},
 		"no blockId":          {siteToken(t, map[string]any{"sub": "anon"}), "claim shape"},
 		"bad max level":       {siteToken(t, with(map[string]any{"maxBrowsingLevel": -1})), "claim shape"},

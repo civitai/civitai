@@ -1,4 +1,5 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
+import { ownerMediaAllowed } from '~/server/common/image-block-marker';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import {
@@ -146,13 +147,16 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
+import { isProbeableMediaKey } from '~/server/utils/created-image-media-probe';
 import {
   assertContentLinkHoldWritable,
   classifyUnlinkedContentUrls,
+  CONTENT_LINK_DEFERRAL_BACKSTOP_MS,
   contentLinkHoldCounter,
   type ContentLinkHold,
   getContentLinkHold,
   nextContentLinkHold,
+  probeContentUploads,
   sameContentLinkHold,
   writeContentLinkHold,
 } from '~/server/services/article-content-link-hold';
@@ -164,6 +168,8 @@ import {
   imageUrlUnavailableError,
   isUnfinishedUploadUrl,
   keyIssuers,
+  MAX_KEYS,
+  recordedKeys,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -319,9 +325,12 @@ export const getArticles = async ({
   forceHidePrivate,
   eventDecorationViewer,
   reportListedViewer = { seesReportListed: false },
+  asModerator = !!sessionUser?.isModerator,
 }: GetInfiniteArticlesSchema & {
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
+  /** `actsAsModerator(ctx)`: a moderator on a scoped key gets no blocked cover. */
+  asModerator?: boolean;
   include?: Array<'cosmetics'>;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
   // routes whose response is never cached for another viewer.
@@ -698,12 +707,15 @@ export const getArticles = async ({
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const cover = coverImages.find((x) => x.id === article.coverId);
-        const coverImage = isArticleImageViewable(
+        const viewable = isArticleImageViewable(
           cover,
           articleImageViewer(sessionUser, article.userId)
         )
           ? cover
           : undefined;
+        // Nor does its author get a cover whose block refuses them the media (`ownerMediaAllowed`).
+        const coverImage =
+          viewable && !asModerator && !ownerMediaAllowed(viewable) ? undefined : viewable;
         const match = articleStats[article.id];
 
         return {
@@ -711,6 +723,7 @@ export const getArticles = async ({
           // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
             (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
+            (!!viewable && !coverImage) ||
             (!!cover &&
               !coverImage &&
               (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
@@ -936,7 +949,9 @@ export const getArticleById = async ({
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
       where: { entityId: id, entityType: ImageConnectionType.Article, ...connectionImageExists },
-      include: { image: { select: { ...articleContentImageSelect, minor: true } } },
+      include: {
+        image: { select: { ...articleContentImageSelect, blockedFor: true, minor: true } },
+      },
     });
 
     const articleCategories = await getCategoryTags('article');
@@ -964,8 +979,12 @@ export const getArticleById = async ({
       !!image &&
       (listedHidden.has(image.id) ||
         modelHidesArticleImage(image, withheldByModel, userId, article.userId));
-    const coverHidden = hiddenByModel(article.coverImage);
-    const bannerHidden = hiddenByModel(article.bannerImage);
+    // A cover or banner whose block refuses its owner the media (`ownerMediaAllowed`) is withheld
+    // from them as one its model holds is; the block notice is `getArticleScanStatus`'s.
+    const ownerRefused = (image: Parameters<typeof ownerMediaAllowed>[0] | null) =>
+      !!image && !isModerator && !ownerMediaAllowed(image);
+    const coverHidden = hiddenByModel(article.coverImage) || ownerRefused(article.coverImage);
+    const bannerHidden = hiddenByModel(article.bannerImage) || ownerRefused(article.bannerImage);
     const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
     const coverImage = viewableArticleImage(coverWithheld ? null : article.coverImage, viewer);
     const bannerImage = viewableArticleImage(
@@ -980,23 +999,30 @@ export const getArticleById = async ({
     const bannerImageWithheld = isOwner && bannerHidden;
 
     // Report-listed media, and media nobody but its owner and moderators may get, leave the body;
-    // csam-held media leaves it for the owner too.
+    // csam-held media, and media whose block refuses its owner (`ownerMediaAllowed`), leave it for
+    // the owner too.
     const keptImages = bodyImages.filter(
       (image) =>
         !listedHidden.has(image.id) &&
         (isModerator ||
-          (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
+          (userId === article.userId ? !withheldFromAuthor(image) : isServableBodyImage(image)))
     );
-    // On the edit form a listed body image is placeholdered, not dropped, so a save keeps it; it
-    // stays withheld so the strip below catches any other spelling of it.
-    const listedUrls = bodyImages
-      .filter((image) => listedHidden.has(image.id))
+    // On the edit form a listed body image, and one withheld from its author, is placeholdered, not
+    // dropped, so a save keeps it; it stays withheld so the strip below catches any other spelling
+    // of it.
+    const placeholderedUrls = bodyImages
+      .filter(
+        (image) =>
+          listedHidden.has(image.id) || (isOwner && !isModerator && withheldFromAuthor(image))
+      )
       .map((image) => image.url);
-    const placeholdered = edit && (isOwner || !!isModerator) ? listedUrls : [];
+    const placeholdered = edit && (isOwner || !!isModerator) ? placeholderedUrls : [];
     const withheld = bodyImages
       .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
-    const contentImages = keptImages.map(withoutMinorFlag);
+    const contentImages = keptImages.map(({ blockedFor: _blockedFor, ...image }) =>
+      withoutMinorFlag(image)
+    );
     const nonOwner = !isModerator && userId !== article.userId;
     const body =
       placeholdered.length && article.content
@@ -1181,8 +1207,9 @@ export const upsertArticle = async ({
       if (!article?.content) throw throwBadRequestError('An article needs a body');
       data.content = article.content;
     }
-    // A listed body image the saver may not see goes back in: in place for an edit-form
-    // placeholder, which only the edit form may delete, else at the end of the body.
+    // A listed body image the saver may not see, and one withheld from the author saving their own
+    // article (`withheldFromAuthor`), goes back in: in place for an edit-form placeholder, which only
+    // the edit form may delete, else at the end of the body.
     const sent = data.content;
     if (
       sent.includes(WITHHELD_MEDIA_TYPE) ||
@@ -1195,8 +1222,11 @@ export const upsertArticle = async ({
         { userId, ...reportListedViewer },
         dbWrite
       );
+      const authorSaves = !isModerator && article?.userId === userId;
       const hiddenUrls = new Set(
-        connected.filter((c) => hidden.has(c.image.id)).map((c) => c.image.url)
+        connected
+          .filter((c) => hidden.has(c.image.id) || (authorSaves && withheldFromAuthor(c.image)))
+          .map((c) => c.image.url)
       );
       const restored = restoreWithheldMedia(sent, article?.content, hiddenUrls);
       const kept = editForm ? restored : keepWithheldMedia(restored, article?.content, hiddenUrls);
@@ -1313,8 +1343,9 @@ export const upsertArticle = async ({
       });
     }
 
-    // A save that leaves out a cover or banner its model or the report-listed rule hides from this
-    // editor keeps it: the edit form never had it to send back (getArticleById).
+    // A save that leaves out a cover or banner its model, the report-listed rule or its block
+    // (`ownerMediaAllowed`) hides from this editor keeps it: the edit form never had it to send back
+    // (getArticleById).
     if (article) {
       const stored = [
         coverId === null ? article.coverId : null,
@@ -1339,6 +1370,13 @@ export const upsertArticle = async ({
             .filter((image) => modelHidesArticleImage(image, withheld, userId, article.userId))
             .map((image) => image.id),
         ]);
+        if (!isModerator)
+          // primary: it decides what this save keeps, beside the holds read above.
+          for (const image of await dbWrite.image.findMany({
+            where: { id: { in: stored } },
+            select: { id: true, ingestion: true, blockedFor: true },
+          }))
+            if (!ownerMediaAllowed(image)) hiddenIds.add(image.id);
         if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
           coverId = undefined;
         if (bannerId === null && article.bannerId && hiddenIds.has(article.bannerId))
@@ -2464,8 +2502,23 @@ function connectedArticleImages(articleId: number) {
       entityType: ImageConnectionType.Article,
       ...connectionImageExists,
     },
-    select: { image: { select: { id: true, url: true } } },
+    select: {
+      image: {
+        select: { id: true, url: true, needsReview: true, ingestion: true, blockedFor: true },
+      },
+    },
   });
+}
+
+/**
+ * A body image withheld from the article's own author beyond the report-listed rule: held for csam
+ * review, or under a block that refuses its owner the media (`ownerMediaAllowed`). getArticleById
+ * strips it (a placeholder on the edit form) and upsertArticle puts it back.
+ */
+function withheldFromAuthor(
+  image: { needsReview: string | null } & Parameters<typeof ownerMediaAllowed>[0]
+) {
+  return isCsamHeldBodyImage(image) || !ownerMediaAllowed(image);
 }
 
 /** `queueImageDeletes`, except that an image listed on a report is never queued for cleanup. */
@@ -2525,14 +2578,57 @@ export async function linkArticleContentImages({
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
+      // A deferral for a missing upload never ends in a refusal. A deferred bare key is probed
+      // whatever its issue record says and stays deferred until it is proved present, or, past the
+      // backstop, proved absent: then it is classified as never held unless its key is recorded.
+      // A deferred url with no answer this run (store unreadable, past the cap) stays deferred.
+      const wasRefused = new Set(previousHold?.refused ?? []);
+      const wasDeferred = new Set(previousHold?.deferred ?? []);
+      const candidates = unlinked.filter(
+        (url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url) && isProbeableMediaKey(url)
+      );
+      const deferredCandidates = candidates.filter((url) => wasDeferred.has(url));
+      // A new key is probed only when the current upload path issued it to the owner or editor;
+      // any other key links as before. Past one lookup's worth, the rest link as before too.
+      const { recorded } = await recordedKeys(
+        [...deferredCandidates, ...candidates.filter((url) => !wasDeferred.has(url))].slice(
+          0,
+          MAX_KEYS
+        ),
+        { issuedTo: [ownerId, userId], now }
+      );
+      const probeable = [
+        ...deferredCandidates,
+        ...candidates.filter((url) => !wasDeferred.has(url) && recorded.has(url)),
+      ];
+      const { absent, present } = await probeContentUploads(probeable);
+      // Past the backstop a still-absent url is classified and linked as on main.
+      const pastBackstop =
+        !!previousHold?.deferredSince &&
+        now.getTime() - previousHold.deferredSince.getTime() >= CONTENT_LINK_DEFERRAL_BACKSTOP_MS;
+      const released = new Set(
+        pastBackstop ? [...absent].filter((url) => wasDeferred.has(url)) : []
+      );
+      const stillDeferred = probeable.filter(
+        (url) =>
+          !released.has(url) && (absent.has(url) || (wasDeferred.has(url) && !present.has(url)))
+      );
+      const unsettled = new Set(stillDeferred);
       const classified = await classifyUnlinkedContentUrls({
-        urls: unlinked,
+        urls: unlinked.filter((url) => !unsettled.has(url)),
         ownerId,
         editorId: userId,
-        wasHeld: new Set([...(previousHold?.deferred ?? []), ...(previousHold?.refused ?? [])]),
+        // Held, an unrecorded key is refused; a released one with no record is not.
+        wasHeld: new Set(
+          [...wasDeferred, ...wasRefused].filter((url) => !released.has(url) || recorded.has(url))
+        ),
         now,
       });
-      hold = nextContentLinkHold(previousHold, { ...classified, editorId: userId }, now);
+      hold = nextContentLinkHold(
+        previousHold,
+        { ...classified, deferred: [...classified.deferred, ...stillDeferred], editorId: userId },
+        now
+      );
     }
   }
   const held = new Set([...(hold?.deferred ?? []), ...(hold?.refused ?? [])]);
@@ -2739,7 +2835,14 @@ function extractScanFailure(scanJobs: Prisma.JsonValue): {
   };
 }
 
-export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
+/**
+ * `viewerIsModerator`: a moderator on a session or a full-access key. Anyone else, the author
+ * included, gets no url for an image whose block refuses its owner the media (`ownerMediaAllowed`).
+ */
+export async function getArticleScanStatus({
+  id,
+  viewerIsModerator = false,
+}: GetByIdInput & { viewerIsModerator?: boolean }): Promise<{
   total: number;
   scanned: number;
   blocked: number;
@@ -2749,20 +2852,20 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   images: {
     blocked: Array<{
       id: number;
-      url: string;
+      url: string | null;
       ingestion: ImageIngestionStatus;
       blockedFor: string | null;
       nsfwLevelLocked: boolean;
     }>;
     error: Array<{
       id: number;
-      url: string;
+      url: string | null;
       ingestion: ImageIngestionStatus;
       nsfwLevelLocked: boolean;
       failureClass: string | null;
       reason: string | null;
     }>;
-    pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+    pending: Array<{ id: number; url: string | null; ingestion: ImageIngestionStatus }>;
   };
   textModeration: ArticleTextModerationStatus;
   /** Why the scan could not finish, in the owner's words; null when nothing failed. */
@@ -2826,6 +2929,9 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
 
   const images = connections.map((c) => c.image);
   for (const own of ownImages) if (!images.some((image) => image.id === own.id)) images.push(own);
+  // A scan error keeps the block reason, so the error list is held to the same rule.
+  const mediaUrl = (image: (typeof images)[number]) =>
+    viewerIsModerator || ownerMediaAllowed(image) ? image.url : null;
 
   const total = images.length;
   const scannedImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Scanned);
@@ -2865,7 +2971,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     images: {
       blocked: blockedImages.map((i) => ({
         id: i.id,
-        url: i.url,
+        url: mediaUrl(i),
         ingestion: i.ingestion,
         blockedFor: i.blockedFor,
         nsfwLevelLocked: i.nsfwLevelLocked,
@@ -2874,7 +2980,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
         const { failureClass, reason } = extractScanFailure(i.scanJobs);
         return {
           id: i.id,
-          url: i.url,
+          url: mediaUrl(i),
           ingestion: i.ingestion,
           nsfwLevelLocked: i.nsfwLevelLocked,
           failureClass,
@@ -2883,7 +2989,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       }),
       pending: pendingImages.map((i) => ({
         id: i.id,
-        url: i.url,
+        url: mediaUrl(i),
         ingestion: i.ingestion,
       })),
     },

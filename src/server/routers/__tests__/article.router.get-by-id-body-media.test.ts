@@ -154,11 +154,13 @@ describe('article.getById body media', () => {
     expect(sent(ABOVE_LEVEL)).toBe(true);
   });
 
-  it('🔴 the owner gets their own unscanned, blocked and violation media, but not csam-held', async () => {
+  it('🔴 the owner gets their own unscanned and violation media, but not blocked or csam-held', async () => {
     const sent = await getById(owner);
 
-    for (const id of [SERVABLE, ABOVE_LEVEL, PENDING, BLOCKED, VIOLATION, UNLINKED])
+    for (const id of [SERVABLE, ABOVE_LEVEL, PENDING, VIOLATION, UNLINKED])
       expect(sent(id)).toBe(true);
+    // A block refuses its owner the media (`ownerMediaAllowed`).
+    expect(sent(BLOCKED)).toBe(false);
     expect(sent(CSAM_HELD)).toBe(false);
   });
 

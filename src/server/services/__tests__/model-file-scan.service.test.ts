@@ -18,6 +18,7 @@ const mockBustSetNx = redisMock.redis.setNxKeepTtlWithEx;
 
 const {
   mockGetWorkflow,
+  mockHeadBlob,
   mockDeleteFilesForModelVersionCache,
   mockCreateNotification,
   mockModelsSearchIndexQueueUpdate,
@@ -50,6 +51,7 @@ const {
   }
   return {
     mockGetWorkflow: vi.fn(),
+    mockHeadBlob: vi.fn(),
     mockDeleteFilesForModelVersionCache: vi.fn().mockResolvedValue(undefined),
     mockCreateNotification: vi.fn().mockResolvedValue(undefined),
     mockModelsSearchIndexQueueUpdate: vi.fn().mockResolvedValue(undefined),
@@ -75,6 +77,7 @@ const {
 vi.mock('@civitai/orchestration-client', async () => ({
   ...(await import('../orchestrator/__tests__/civitai-client.stub')).civitaiClientStub(),
   getWorkflow: mockGetWorkflow,
+  headBlob: mockHeadBlob,
   submitWorkflow: vi.fn(),
   createCivitaiClient: vi.fn(),
   WorkflowStatus: { Pending: 'Pending', Running: 'Running', Completed: 'Completed' },
@@ -1415,6 +1418,181 @@ describe('model-file-scan.service', () => {
         dataset();
         mockTrainingDataObjectUnchanged.mockReset().mockResolvedValue(true);
         mockDbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
+      });
+
+      describe('with an archiveExtraction step (an uploaded zip, rated from its entries)', () => {
+        type Entry = {
+          path: string;
+          mediaType: string;
+          air?: string;
+          blob?: { nsfwLevel?: string };
+        };
+        const extracted = (entries: Entry[], rejected: { path: string; reason: string }[] = []) =>
+          mockGetWorkflow.mockResolvedValue({
+            data: {
+              metadata: {
+                fileId: 1,
+                scan: 'training-data-blob',
+                url: ZIP,
+                etag: '"e1"',
+                size: 2048,
+              },
+              steps: [
+                { $type: 'modelClamScan', output: { status: 'clean', scannedFileCount: 3 } },
+                {
+                  $type: 'archiveExtraction',
+                  output: {
+                    entries: entries.map((e, i) => ({
+                      air: `urn:air:other:other:orchestrator:blob@k${i}`,
+                      size: 1,
+                      blob: {},
+                      ...e,
+                    })),
+                    rejected,
+                  },
+                },
+              ],
+            },
+          });
+        /** The rating the completing write stores, read off its bound values. */
+        const writtenRating = () => {
+          const call = mockDbWrite.$executeRaw.mock.calls.at(-1) as unknown[] | undefined;
+          if (!call) return undefined;
+          const patch = (call.slice(1) as unknown[]).find(
+            (v) => typeof v === 'string' && v.includes('fullyRated')
+          ) as string;
+          return { rating: JSON.parse(patch) as { nsfwLevel?: number; fullyRated: boolean } };
+        };
+        const header = vi.fn();
+        beforeEach(() => {
+          mockDbWrite.$executeRaw.mockReset().mockResolvedValue(1);
+          header.mockReset().mockReturnValue(null);
+          mockHeadBlob.mockReset().mockImplementation(async () => {
+            const level = header();
+            return {
+              response: new Response(null, { headers: level ? { 'x-nsfw-level': level } : {} }),
+            };
+          });
+        });
+
+        it('stores the OR of the media levels, ignoring captions, on a row that is not a Studio dataset', async () => {
+          extracted([
+            { path: '01.png', mediaType: 'image', blob: { nsfwLevel: 'pg' } },
+            { path: '01.txt', mediaType: 'text' },
+            { path: '02.png', mediaType: 'image', blob: { nsfwLevel: 'r' } },
+          ]);
+          await deliver();
+          const written = writtenRating();
+          expect(written?.rating).toEqual({ nsfwLevel: 1 | 4, fullyRated: true });
+          // The stored scan result keeps the extraction's entries as counts.
+          const stored = mockDbWrite.modelFile.update.mock.calls[0][0].data.rawScanResult;
+          expect(stored.steps[1].output).toEqual({ entries: 3, rejected: 0 });
+          // The write names the row it read; its guards run on Postgres in the .sql.behavior test.
+          expect(mockDbWrite.$executeRaw.mock.calls.at(-1)).toContain(ZIP);
+        });
+
+        it("reads an entry's level from the blob's x-nsfw-level header when the entry has none", async () => {
+          header.mockReturnValue('pg');
+          extracted([{ path: '01.png', mediaType: 'image' }]);
+          await deliver();
+          expect(writtenRating()?.rating).toEqual({ nsfwLevel: 1, fullyRated: true });
+        });
+
+        it('stays not fully rated when an entry has no level anywhere, or one was rejected', async () => {
+          extracted([{ path: '01.png', mediaType: 'image' }]);
+          await deliver();
+          expect(writtenRating()?.rating).toEqual({ fullyRated: false });
+
+          mockDbWrite.$executeRaw.mockClear();
+          extracted(
+            [{ path: '01.png', mediaType: 'image', blob: { nsfwLevel: 'pg' } }],
+            [{ path: '02.png', reason: 'tooLarge' }]
+          );
+          await deliver();
+          expect(writtenRating()?.rating).toEqual({ nsfwLevel: 1, fullyRated: false });
+        });
+
+        it('keeps the virus verdict when only the extraction step failed, and writes no rating', async () => {
+          mockGetWorkflow.mockResolvedValue({
+            data: {
+              metadata: {
+                fileId: 1,
+                scan: 'training-data-blob',
+                url: ZIP,
+                etag: '"e1"',
+                size: 2048,
+              },
+              steps: [
+                {
+                  $type: 'modelClamScan',
+                  status: 'succeeded',
+                  output: { status: 'clean', scannedFileCount: 3 },
+                },
+                // A partial output: only a finished step's entries are a rating.
+                {
+                  $type: 'archiveExtraction',
+                  status: 'failed',
+                  output: { entries: [{ mediaType: 'image', blob: { nsfwLevel: 'pg' } }] },
+                },
+              ],
+            },
+          });
+          await deliver('failed');
+          expect(mockDbWrite.modelFile.update.mock.calls[0]?.[0].data.virusScanResult).toBe(
+            ScanResultCode.Success
+          );
+          expect(writtenRating()).toBeUndefined();
+        });
+
+        it('still fails the scan when the virus scan step itself did not finish', async () => {
+          mockGetWorkflow.mockResolvedValue({
+            data: {
+              metadata: {
+                fileId: 1,
+                scan: 'training-data-blob',
+                url: ZIP,
+                etag: '"e1"',
+                size: 2048,
+              },
+              steps: [
+                { $type: 'modelClamScan', status: 'failed' },
+                { $type: 'archiveExtraction', status: 'succeeded', output: { entries: [] } },
+              ],
+            },
+          });
+          await deliver('failed');
+          expect(mockDbWrite.modelFile.update.mock.calls[0]?.[0].data).toEqual({
+            scanRequestedAt: expect.any(Date),
+          });
+          expect(writtenRating()).toBeUndefined();
+        });
+
+        it('writes no rating when the virus scan did not clear the zip', async () => {
+          mockGetWorkflow.mockResolvedValue({
+            data: {
+              metadata: {
+                fileId: 1,
+                scan: 'training-data-blob',
+                url: ZIP,
+                etag: '"e1"',
+                size: 2048,
+              },
+              steps: [
+                { $type: 'modelClamScan', output: { status: 'infected', scannedFileCount: 3 } },
+                { $type: 'archiveExtraction', output: { entries: [], rejected: [] } },
+              ],
+            },
+          });
+          await deliver();
+          expect(writtenRating()).toBeUndefined();
+        });
+      });
+
+      it('writes no rating for a scan with no extraction step', async () => {
+        mockDbWrite.$executeRaw.mockReset().mockResolvedValue(1);
+        scanned({ scannedFileCount: 12 });
+        await deliver();
+        expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
       });
 
       it('checks a clean verdict against the object it scanned', async () => {

@@ -11,7 +11,7 @@ export type SimpleBuzzLimit = {
 
 export const SIMPLE_BUZZ_LIMIT_PERIODS = ['day', 'week', 'month'] as const;
 
-const PERIOD_DAYS: Record<SimpleBuzzLimit['period'], number> = {
+export const SIMPLE_BUZZ_LIMIT_PERIOD_DAYS: Record<SimpleBuzzLimit['period'], number> = {
   day: 1,
   week: 7,
   month: 30,
@@ -43,7 +43,12 @@ export function simpleBuzzLimitToBudgets(
 ): SimpleSlidingBudget[] | null {
   if (!simple) return null;
   return [
-    { type: 'sliding', limit: simple.limit, window: 'day', unit: PERIOD_DAYS[simple.period] },
+    {
+      type: 'sliding',
+      limit: simple.limit,
+      window: 'day',
+      unit: SIMPLE_BUZZ_LIMIT_PERIOD_DAYS[simple.period],
+    },
   ];
 }
 
