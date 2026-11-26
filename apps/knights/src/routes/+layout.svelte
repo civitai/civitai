@@ -6,8 +6,9 @@
   import AppHeader from '$lib/AppHeader.svelte';
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
-  import type { WhatsNew } from '$lib/whats-new';
+  import { updatesCopy, type WhatsNew } from '$lib/whats-new';
   import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
+  import { provideUpdates } from '$lib/updates.svelte';
   import { provideVotesSent } from '$lib/votes-sent.svelte';
   import { provideLiveStatus } from '$lib/live-status.svelte';
   import type { LayoutData } from './$types';
@@ -40,6 +41,16 @@
     userId: () => data.userId,
     path: () => page.url.pathname,
   });
+  // Entries the player has not seen open once by themselves on /home and /play, never over the launch dialog or the
+  // content warning; the header button opens them at any time.
+  const updates = provideUpdates({
+    updates: () => data.updates,
+    userId: () => data.userId,
+    autoOpen: () =>
+      (page.route.id === '/home' || page.route.id === '/play') &&
+      !whatsNew &&
+      page.data.needsConsent !== true,
+  });
   let fit = $derived(page.route.id === '/play');
 </script>
 
@@ -55,7 +66,7 @@
       isPlayer={data.isPlayer}
       feedbackOpen={data.feedbackOpen}
       {status}
-      recapUnseen={data.recapUnseen}
+      hasUpdates={!!data.updates}
       goldPerBuzz={data.goldPerBuzz}
       ladder={data.ladder}
       badges={data.badges}
@@ -67,6 +78,11 @@
   </div>
   {#if whatsNew && whatsNewDialog.showing}
     <WhatsNewDialog copy={whatsNew} onclose={whatsNewDialog.close} />
+  {:else if data.updates && updates.open}
+    <WhatsNewDialog
+      copy={updatesCopy(data.updates.entries, updates.unseen)}
+      onclose={updates.close}
+    />
   {/if}
 {/if}
 
