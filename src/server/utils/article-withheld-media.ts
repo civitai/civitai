@@ -42,6 +42,9 @@ function linkSlices(html: string): LinkSlice[] {
 
 const attribute = (name: string) =>
   new RegExp(`\\s${name}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+)`, 'gi');
+const escapeAttribute = (value: string) =>
+  value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 /** The opening tag with its first `from` attribute swapped in place for `replacement` (raw). */
 function swapAttribute(tag: string, from: string, replacement: string, drop: string) {
   let swapped = false;
@@ -170,9 +173,7 @@ export function restoreWithheldMedia(
     const link = storedLinks[index];
     if (!link || usedLinks.has(index) || !namesBodyMedia(link.href, keys)) throw refuse();
     usedLinks.add(index);
-    const storedTag = storedHtml!.slice(link.start, link.end);
-    const href = attribute('href').exec(storedTag)?.[0].trim();
-    if (!href) throw refuse();
+    const href = `href="${escapeAttribute(link.href!)}"`;
     return {
       start,
       end,

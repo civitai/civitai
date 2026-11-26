@@ -132,3 +132,25 @@ describe('a link to a hidden image on the edit form', () => {
     );
   });
 });
+
+describe('a link ref with nothing behind it', () => {
+  it.each([
+    ['past the stored links', '<p><a data-withheld-href="7">it</a></p>', '<p>no links</p>'],
+    ['on a body with nothing stored', '<p><a data-withheld-href="0">it</a></p>', null],
+  ])('🔴 is refused %s', (_, saved, storedBody) => {
+    expect(() => restoreWithheldMedia(saved, storedBody, hidden)).toThrow(
+      'This article body names an image it does not hold'
+    );
+  });
+
+  it("🔴 restores the stored link's href, not text from another attribute", () => {
+    const href = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${HIDDEN}/original=true`;
+    const tricky = `<p><a data-id="x href=javascript:alert(1)" href="${href}">it</a></p>`;
+    const restored = restoreWithheldMedia(
+      '<p><a data-withheld-href="0">it</a></p>',
+      tricky,
+      hidden
+    );
+    expect(restored).toBe(`<p><a href="${href}">it</a></p>`);
+  });
+});

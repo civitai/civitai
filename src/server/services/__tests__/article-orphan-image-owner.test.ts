@@ -415,7 +415,8 @@ describe('a save from the edit form with a body image listed on a report', () =>
   const LISTED = { id: 40, url: '44444444-aaaa-4bbb-8ccc-444444444444' };
   const SHOWN = { id: 41, url: '55555555-aaaa-4bbb-8ccc-555555555555' };
   const img = (url: string) =>
-    `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${url}/w">`;
+    // As the save sanitizer writes it, which is how a stored body holds it.
+    `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${url}/w" />`;
   const body = `<p>a</p>${img(SHOWN.url)}<p>b ${img(LISTED.url)}</p>`;
   // As the edit form read sends it to an editor who may not see the listed image.
   const editForm = `<p>a</p>${img(
@@ -533,6 +534,16 @@ describe('a save from the edit form with a body image listed on a report', () =>
       )
     );
     expect(savedContent()).not.toContain('data-withheld-href');
+    // The restored link went through the save sanitizer.
+    expect(savedContent()).toMatch(/<a [^>]*rel="ugc"[^>]*>see<\/a>/);
+  });
+
+  it('🔴 refuses a link ref that names no stored link, and writes nothing', async () => {
+    const dangling = `${editForm}<p><a data-withheld-href="9">see</a></p>`;
+    await expect(upsert(dangling, { editForm: true })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
   });
 
   it('🔴 keeps the listed image when a save from outside the edit form leaves it out', async () => {

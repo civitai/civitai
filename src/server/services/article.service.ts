@@ -1,4 +1,5 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import {
   keepWithheldMedia,
@@ -978,8 +979,8 @@ export const getArticleById = async ({
     const coverImageWithheld = isOwner && coverHidden;
     const bannerImageWithheld = isOwner && bannerHidden;
 
-    // Media nobody but its owner and moderators may get leaves the body, and csam-held media
-    // leaves it for the owner too.
+    // Report-listed media, and media nobody but its owner and moderators may get, leave the body;
+    // csam-held media leaves it for the owner too.
     const keptImages = bodyImages.filter(
       (image) =>
         !listedHidden.has(image.id) &&
@@ -1198,9 +1199,9 @@ export const upsertArticle = async ({
         connected.filter((c) => hidden.has(c.image.id)).map((c) => c.image.url)
       );
       const restored = restoreWithheldMedia(sent, article?.content, hiddenUrls);
-      data.content = editForm
-        ? restored
-        : keepWithheldMedia(restored, article?.content, hiddenUrls);
+      const kept = editForm ? restored : keepWithheldMedia(restored, article?.content, hiddenUrls);
+      // What was put back skipped the input sanitizer, so the whole body goes through it again.
+      data.content = kept === sent ? sent : sanitizeHtml(kept, { allowBlurbs: true });
     }
 
     if (data.content) {

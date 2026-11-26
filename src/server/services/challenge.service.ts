@@ -380,9 +380,6 @@ const challengeCardQuery = Prisma.sql`
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
     LEFT JOIN "User" ju ON ju.id = cj."userId"`;
 
-// Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
-// ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
-// of the two is shown as the author is a client concern (see getChallengeDisplayUser).
 /** The challenge covers a card or list may show, as the challenge's own cover read does. */
 async function getChallengeCoverImages(coverImageIds: number[], viewerId: number | undefined) {
   if (!coverImageIds.length) return [];
@@ -420,6 +417,9 @@ function coverWithinSite<
     : cover;
 }
 
+// Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
+// ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
+// of the two is shown as the author is a client concern (see getChallengeDisplayUser).
 async function mapChallengeRowsToCards(
   items: ChallengeCardRow[],
   site: SiteViewer
