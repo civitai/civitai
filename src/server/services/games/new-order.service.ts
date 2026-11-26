@@ -637,15 +637,11 @@ async function processImageRating({
     // refused above.
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
-      // The replica can lag a raise made since this round began.
-      const primaryLevel = consensus
-        ? (
-            await dbWrite.image.findUnique({
-              where: { id: imageId },
-              select: { nsfwLevel: true },
-            })
-          )?.nsfwLevel ?? image.nsfwLevel
-        : image.nsfwLevel;
+      const primaryImage =
+        consensus &&
+        // primary: the replica can lag a raise made since this round began.
+        (await dbWrite.image.findUnique({ where: { id: imageId }, select: { nsfwLevel: true } }));
+      const primaryLevel = primaryImage ? primaryImage.nsfwLevel : image.nsfwLevel;
       // Guard against excessive down-rating: allow down-rating by at most 1 level,
       // escalate to Inquisitor (mod) queue if the distance is greater
       const isExcessiveDownRating =
