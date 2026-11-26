@@ -72,11 +72,11 @@ func TestEvalModeStubsEveryPublicRoute(t *testing.T) {
 		V1ImagesPath:                        "v1-images-off",
 		SearchPath + "/":                    "search-off",
 	}
-	var got []string
+	got := make([]string, 0, len(want))
 	for _, rt := range publicRoutes(s) {
 		got = append(got, rt.pattern)
 	}
-	var wantPatterns []string
+	wantPatterns := make([]string, 0, len(want))
 	for p := range want {
 		wantPatterns = append(wantPatterns, p)
 	}
@@ -220,7 +220,7 @@ func TestProxyViaIsCalledOnlyFromHandBack(t *testing.T) {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		src, err := os.ReadFile(f)
+		src, err := os.ReadFile(f) //nolint:gosec // G304: a file of this package's own directory, from filepath.Glob
 		if err != nil {
 			t.Fatal(err)
 		}
