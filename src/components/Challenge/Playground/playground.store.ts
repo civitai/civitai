@@ -13,6 +13,7 @@ export type JudgeDraft = {
   reviewPrompt?: string | null;
   reviewTemplate?: string | null;
   winnerSelectionPrompt?: string | null;
+  collectionPrompt?: string | null;
   userSelectable?: boolean;
   judgingEngine?: JudgingEngineKey;
 };

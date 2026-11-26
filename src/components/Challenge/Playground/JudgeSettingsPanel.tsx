@@ -73,6 +73,7 @@ export function JudgeSettingsPanel() {
   const currentReviewPrompt = draft?.reviewPrompt ?? judge?.reviewPrompt ?? '';
   const currentReviewTemplate = draft?.reviewTemplate ?? judge?.reviewTemplate ?? '';
   const currentWinnerPrompt = draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? '';
+  const currentCollectionPrompt = draft?.collectionPrompt ?? judge?.collectionPrompt ?? '';
   const currentUserSelectable = draft?.userSelectable ?? judge?.userSelectable ?? false;
   // An unrecognised stored value shows as the default rather than emptying the select — the same
   // fallback the judging path applies, so the picker never disagrees with what will actually run.
@@ -92,6 +93,7 @@ export function JudgeSettingsPanel() {
       reviewPrompt: currentReviewPrompt || null,
       reviewTemplate: currentReviewTemplate || null,
       winnerSelectionPrompt: currentWinnerPrompt || null,
+      collectionPrompt: currentCollectionPrompt || null,
       userSelectable: currentUserSelectable,
       judgingEngine: currentJudgingEngine,
     });
@@ -113,6 +115,7 @@ export function JudgeSettingsPanel() {
       reviewPrompt: currentReviewPrompt || null,
       reviewTemplate: currentReviewTemplate || null,
       winnerSelectionPrompt: currentWinnerPrompt || null,
+      collectionPrompt: currentCollectionPrompt || null,
       active: judge.active,
       userSelectable: false,
       judgingEngine: currentJudgingEngine,
@@ -184,6 +187,18 @@ export function JudgeSettingsPanel() {
             onChange={(e) => {
               if (selectedJudgeId != null)
                 updateDraft(selectedJudgeId, { contentPrompt: e.currentTarget.value || null });
+            }}
+          />
+          <Textarea
+            label="Collection Prompt"
+            description="Used for the challenge collection's name and description"
+            autosize
+            minRows={3}
+            maxRows={10}
+            value={currentCollectionPrompt ?? ''}
+            onChange={(e) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { collectionPrompt: e.currentTarget.value || null });
             }}
           />
           <Textarea
