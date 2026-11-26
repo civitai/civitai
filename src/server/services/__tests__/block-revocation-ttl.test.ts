@@ -37,7 +37,7 @@ const MINT_PER_KIND: Record<Kind, Parameters<typeof BlockTokenService.sign>[0]> 
     ...baseInput,
     scopes: ['ai:write:budgeted'],
     buzzBudget: 40,
-    runner: { runId: 'run_ttl' },
+    runner: { runId: 'run_ttl', authorizationId: 'rra_ttl', runKey: 'run_ttl' },
   },
 };
 

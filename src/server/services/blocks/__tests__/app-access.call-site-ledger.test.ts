@@ -403,6 +403,14 @@ const GATE_LEDGER: Record<string, string> = {
     'NO mod bypass: the figure is the app-wide document-store usage (every user’s data in ' +
     'the app) measured against limits only the owner manages, so it is an owner-only read. ' +
     'The router passes ctx.user.id and takes no input, so no other user’s set is reachable.',
+  'src/server/services/blocks/runner-submit.service.ts':
+    'NOT a caller-identity gate: the caller is a recipe runner acting on a user’s offline ' +
+    'grant. readRunnerAppBlock calls resolveCanonicalListingOwner to answer WHO PUBLISHED ' +
+    'the app, so a ban on that account refuses the app’s runner submits (civitai/civitai#10573). ' +
+    '🔴 Owner only, on purpose, and NO mod bypass: a banned COLLABORATOR is not the publisher, ' +
+    'and stopping every user’s runs of an app because one editor was banned would be a ' +
+    'moderation action against one account taking down another account’s product, the rule ' +
+    'publisher-ban-revocation already follows.',
 };
 
 /**
