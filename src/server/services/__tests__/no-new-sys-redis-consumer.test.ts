@@ -36,8 +36,6 @@ const BASELINE: string[] = [
   'src/server/api-routes/admin/banking-change-notice.ts',
   'src/server/api-routes/admin/klein9b-notice.ts',
   'src/pages/api/download/models/[modelVersionId].ts',
-  'src/pages/api/generation/history/callback.ts',
-  'src/pages/api/generation/history/index.ts',
   'src/pages/api/internal/redis-sys-usage.ts',
   'src/server/api-routes/mod/flip-phases.ts',
   'src/server/api-routes/mod/new-order/rate-limit-config.ts',
