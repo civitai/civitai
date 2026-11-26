@@ -633,6 +633,37 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
+  it('gives no key of a selection whose image was blocked since, and keeps a clean one', async () => {
+    const unlock = async (blockedFor: string | null) => {
+      selectedPanel();
+      givenWorkflow(bothRated, { allowMatureContent: true });
+      dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+      const stored = dbMock.dbWrite.comicPanel.update.getMockImplementation()!;
+      dbMock.dbWrite.comicPanel.update.mockImplementation((async (args: never) => ({
+        ...(await stored(args)),
+        imageUrl: 'picked',
+        image: {
+          userId: USER_ID,
+          nsfwLevel: 1,
+          modelRestricted: false,
+          tosViolation: false,
+          needsReview: null,
+          ingestion: blockedFor ? 'Blocked' : 'Scanned',
+          blockedFor,
+        },
+      })) as never);
+      const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+      return {
+        imageUrl: result.imageUrl,
+        keyed: ('candidates' in result ? result.candidates : []).filter((c) => 'key' in c && c.key)
+          .length,
+        picked: result.candidateImages.includes('picked'),
+      };
+    };
+    expect(await unlock('moderated')).toEqual({ imageUrl: null, keyed: 0, picked: false });
+    expect(await unlock(null)).toEqual({ imageUrl: 'picked', keyed: 2, picked: true });
+  });
+
   it('collects the slots of an unlock already paid for, without charging again', async () => {
     selectedPanel();
     givenWorkflow(bothRated, { allowMatureContent: true }, { unlocked: true });
@@ -852,7 +883,7 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     });
 
     it('by duplicatePanel', async () => {
-      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(source as never);
+      dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(source as never);
 
       await caller()
         .duplicatePanel({ panelId: PANEL_ID })

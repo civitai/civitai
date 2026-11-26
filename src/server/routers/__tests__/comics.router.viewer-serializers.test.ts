@@ -20,8 +20,6 @@ const LEDGER: Record<string, string> = {
   reorderPanels: '{ success }',
   pollPanelStatus:
     "the running workflow's status and candidate keys, which have no Image row until one is selected (accepted hazard)",
-  unlockPanelGeneration:
-    'the keys this unlock just downloaded and the slots it kept, as pollPanelStatus (accepted hazard)',
   iterateGenerate: 'the workflow id, size and cost; no panel',
   planChapterPanels: 'planned panel prompts',
   publishChapter: 'the chapter row, without its panels',

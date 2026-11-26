@@ -463,7 +463,7 @@ describe('the panel debug view, an update and a duplicate of a blocked panel', (
 
   it('debug info gives the owner no image or candidate key of a blocked panel', async () => {
     const debug = async (image: object) => {
-      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(panelRow(image) as never);
+      dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(panelRow(image) as never);
       const { panel } = await callerFor(UPLOADER).getPanelDebugInfo({ panelId: 7 });
       return { imageUrl: panel.imageUrl, keys: keysOf(panel.metadata) };
     };
@@ -489,7 +489,7 @@ describe('the panel debug view, an update and a duplicate of a blocked panel', (
   });
 
   it('refuses to duplicate a blocked panel', async () => {
-    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(panelRow(blocked()) as never);
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(panelRow(blocked()) as never);
     await expect(callerFor(UPLOADER).duplicatePanel({ panelId: 7 } as never)).rejects.toMatchObject(
       {
         code: 'BAD_REQUEST',
@@ -661,7 +661,7 @@ describe('more panel and reference reads', () => {
     expect(metadata.candidateImages.map((c) => c.key ?? null)).toEqual(['panel-key', null]);
     expect(metadata.sourceImageUrl).toBeUndefined();
 
-    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue({
       id: 7,
       status: 'Ready',
       prompt: 'p',
@@ -682,8 +682,8 @@ describe('more panel and reference reads', () => {
     } as never);
     const { panel } = await callerFor(UPLOADER).getPanelDebugInfo({ panelId: 7 });
     expect(panel.metadata).toEqual({
-      candidateImages: [{ key: 'panel-key' }, {}],
-      other: 1,
+      candidateImages: [{ key: 'panel-key', nsfwLevel: null }, { nsfwLevel: null }],
+      hasSourceImage: true,
     });
   });
 });
@@ -734,7 +734,7 @@ describe('the rest of the panel and reference responses', () => {
 
   it('a duplicate of a clean panel carries no candidate key that backs a blocked image', async () => {
     const duplicate = async (blocked: boolean) => {
-      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({
+      dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue({
         id: 7,
         projectId: 3,
         chapterPosition: 0,
@@ -844,5 +844,128 @@ describe('the rest of the panel and reference responses', () => {
     dbMock.dbWrite.comicReference.findMany.mockResolvedValue([reference()] as never);
     const { references } = await callerFor(UPLOADER).getProjectShell({ id: 3 });
     expect(references.map(shownImages)).toEqual([cleanOnly]);
+  });
+});
+
+describe('a stored context key never leaves a panel response', () => {
+  const blockedRow = (url: string) => ({
+    url,
+    ...blockedImage(BlockedReason.Moderated),
+    nsfwLevel: NsfwLevel.PG,
+  });
+  /** Metadata of a panel generated with a context panel whose image was blocked since. */
+  const withContext = () => ({
+    candidateImages: [{ key: 'clean-key' }],
+    previousPanelImageUrl: 'ctx-blocked',
+    referencePanelImageUrl: 'ctx-blocked',
+    referenceImages: [{ url: 'ctx-blocked', width: 1, height: 1 }],
+  });
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 7,
+    projectId: 3,
+    chapterPosition: 0,
+    position: 0,
+    status: 'Ready',
+    prompt: 'p',
+    enhancedPrompt: null,
+    imageUrl: 'panel-key',
+    imageId: 2,
+    workflowId: null,
+    errorMessage: null,
+    metadata: withContext(),
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    references: [],
+    image: { ...cleanImage },
+    chapter: { project: { userId: OWNER, id: 3, baseModel: 'Flux1' } },
+    ...over,
+  });
+  /** The context key is gone, and the clean candidate key (the control) is kept. */
+  const contextFree = (metadata: unknown) => ({
+    leaksContext: JSON.stringify(metadata).includes('ctx-blocked'),
+    keys: (metadata as { candidateImages: { key?: string }[] }).candidateImages.map(
+      (c) => c.key ?? null
+    ),
+  });
+  const clean = { leaksContext: false, keys: ['clean-key'] };
+  const givenContextBlocked = () =>
+    dbMock.dbWrite.image.findMany.mockResolvedValue([blockedRow('ctx-blocked')] as never);
+
+  it('by updatePanel', async () => {
+    givenContextBlocked();
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(row() as never);
+    dbMock.dbWrite.comicPanel.update.mockResolvedValue(row() as never);
+    const updated = await callerFor(UPLOADER).updatePanel({ panelId: 7, status: 'Generating' });
+    expect(contextFree(updated.metadata)).toEqual(clean);
+  });
+
+  it('by duplicatePanel, in its response and in the row it writes', async () => {
+    givenContextBlocked();
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(row() as never);
+    dbMock.dbWrite.comicPanel.create.mockClear();
+    dbMock.dbWrite.comicPanel.create.mockImplementation((async ({ data }: { data: object }) => ({
+      id: 9,
+      ...data,
+    })) as never);
+    const copy = await callerFor(UPLOADER).duplicatePanel({ panelId: 7 } as never);
+    expect(contextFree(copy.metadata)).toEqual(clean);
+    const [[{ data }]] = dbMock.dbWrite.comicPanel.create.mock.calls as unknown as [
+      [{ data: { metadata: unknown } }]
+    ][];
+    expect(contextFree(data.metadata)).toEqual(clean);
+  });
+
+  it('by selectPanelImage', async () => {
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(row({ imageUrl: null }) as never);
+    dbMock.dbWrite.image.findMany
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([blockedRow('ctx-blocked')] as never);
+    dbMock.dbWrite.comicPanel.update.mockResolvedValue(row({ imageUrl: 'clean-key' }) as never);
+    const panel = await callerFor(UPLOADER).selectPanelImage({
+      panelId: 7,
+      selectedImageKey: 'clean-key',
+    });
+    expect(contextFree(panel.metadata)).toEqual(clean);
+  });
+
+  it('by replacePanelImage', async () => {
+    givenContextBlocked();
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(
+      row({ image: { url: 'panel-key', ...cleanImage } }) as never
+    );
+    const panel = await callerFor(UPLOADER).replacePanelImage({
+      panelId: 7,
+      imageUrl: 'panel-key',
+    });
+    expect(contextFree(panel.metadata)).toEqual(clean);
+  });
+
+  it('by getPanelDebugInfo', async () => {
+    givenContextBlocked();
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(row() as never);
+    const { panel } = await callerFor(UPLOADER).getPanelDebugInfo({ panelId: 7 });
+    expect(contextFree(panel.metadata)).toEqual(clean);
+  });
+
+  it('by createPanelFromImage', async () => {
+    givenContextBlocked();
+    dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+      project: { userId: OWNER },
+    } as never);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      id: 5,
+      userId: OWNER,
+      url: 'img',
+      ingestion: 'Scanned',
+      blockedFor: null,
+    } as never);
+    dbMock.dbWrite.comicPanel.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.comicPanel.create.mockResolvedValue(row() as never);
+    const panel = await callerFor(UPLOADER).createPanelFromImage({
+      projectId: 3,
+      chapterPosition: 0,
+      imageId: 5,
+    });
+    expect(contextFree(panel.metadata)).toEqual(clean);
   });
 });

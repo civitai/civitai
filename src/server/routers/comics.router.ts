@@ -64,7 +64,11 @@ import {
   type RestrictableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comics/panel-metadata';
+import {
+  panelSourceImageUrl,
+  viewerPanelMetadata,
+  type ViewerCandidate,
+} from '~/server/services/comics/panel-metadata';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
@@ -702,12 +706,12 @@ async function assertReferencePanelImageUnblocked(
 type ViewerCtx = Parameters<typeof actsAsModerator>[0];
 type PanelImageRow = Parameters<typeof blockLeavesMedia>[0];
 type PanelMediaRow = { imageUrl: string | null; metadata: unknown };
-/** How a read that shows panels (getChapter) builds their display metadata; without it a panel keeps
- *  its stored metadata, less the keys a block refuses. */
+/** How a read builds panel metadata: by default for the panel's owner, with every source image the
+ *  block leaves them. getChapter passes its own, for a moderator reading another owner's chapter. */
 type PanelDisplay<P> = {
-  isOwner: boolean;
-  keepSourceImage: (value: string) => boolean;
-  withheld: (panel: P) => boolean;
+  isOwner?: boolean;
+  keepSourceImage?: (value: string) => boolean;
+  withheld?: (panel: P) => boolean;
 };
 
 const candidateKeyOf = (entry: unknown) =>
@@ -719,7 +723,7 @@ const candidateKeyOf = (entry: unknown) =>
     ? (entry as { key: string }).key
     : null;
 
-/** Every stored image key in a panel's `metadata`: its candidates' keys and its source image. */
+/** The stored image keys `viewerPanelMetadata` can return: its candidates' keys and its source. */
 function storedImageKeys(metadata: unknown) {
   const candidates = (metadata as { candidateImages?: unknown } | null)?.candidateImages;
   const keys = Array.isArray(candidates) ? candidates.map(candidateKeyOf) : [];
@@ -727,23 +731,15 @@ function storedImageKeys(metadata: unknown) {
 }
 
 /** The panel media of every comics response goes through here or `panelForViewer`; the
- *  `comics.router.viewer-serializers` guard holds each procedure to it. A panel whose image
- *  `blockLeavesMedia` refuses the viewer gives no image, candidate key or source; any other panel
- *  loses each candidate key and source that backs an Image the viewer may not be served. */
+ *  `comics.router.viewer-serializers` guard holds each procedure to it. Metadata is always the
+ *  `viewerPanelMetadata` allowlist, so a stored key it does not list never leaves. A panel whose
+ *  image `blockLeavesMedia` refuses the viewer gives no image, candidate key or source; any other
+ *  panel loses each candidate key and source that backs an Image the viewer may not be served. */
 async function panelsForViewer<P extends PanelMediaRow & { image?: PanelImageRow | null }>(
   panels: P[],
   ctx: ViewerCtx,
-  display: PanelDisplay<P>
-): Promise<(P & { metadata: Record<string, unknown> | null })[]>;
-async function panelsForViewer<P extends PanelMediaRow & { image?: PanelImageRow | null }>(
-  panels: P[],
-  ctx: ViewerCtx
-): Promise<P[]>;
-async function panelsForViewer<P extends PanelMediaRow & { image?: PanelImageRow | null }>(
-  panels: P[],
-  ctx: ViewerCtx,
-  display?: PanelDisplay<P>
-) {
+  { isOwner = true, keepSourceImage = () => true, withheld = () => false }: PanelDisplay<P> = {}
+): Promise<(P & { metadata: Record<string, unknown> | null })[]> {
   const moderator = actsAsModerator(ctx);
   const mediaRefused = (panel: P) =>
     !!panel.image && !blockLeavesMedia(panel.image, ctx.user?.id, moderator);
@@ -755,32 +751,32 @@ async function panelsForViewer<P extends PanelMediaRow & { image?: PanelImageRow
         ...panel,
         imageUrl: null,
         metadata: viewerPanelMetadata(panel.metadata, {
-          isOwner: display?.isOwner ?? true,
+          isOwner,
           keepSourceImage: () => false,
           withheld: true,
         }),
       };
-    const metadata = display
-      ? viewerPanelMetadata(panel.metadata, {
-          isOwner: display.isOwner,
-          keepSourceImage: (value) => !refused.has(value) && display.keepSourceImage(value),
-          withheld: display.withheld(panel),
-          keepCandidateKey: (key) => !refused.has(key),
-        })
-      : withoutRefusedKeys(panel.metadata, refused);
-    return { ...panel, metadata };
+    return {
+      ...panel,
+      metadata: viewerPanelMetadata(panel.metadata, {
+        isOwner,
+        keepSourceImage: (value) => !refused.has(value) && keepSourceImage(value),
+        withheld: withheld(panel),
+        keepCandidateKey: (key) => !refused.has(key),
+      }),
+    };
   });
 }
 
-/** One panel as `panelsForViewer` gives it, with `image` (its Image's block row, null when it has
- *  none) used to decide and left out of the result. */
+/** One panel as `panelsForViewer` gives it to its owner, with `image` (its Image's block row, null
+ *  when it has none) used to decide and left out of the result. */
 async function panelForViewer<P extends PanelMediaRow>(
   panel: P,
   image: PanelImageRow | null,
   ctx: ViewerCtx
 ) {
-  const [{ image: _image, metadata, ...shown }] = await panelsForViewer([{ ...panel, image }], ctx);
-  return { ...shown, metadata: metadata as unknown };
+  const [{ image: _image, ...shown }] = await panelsForViewer([{ ...panel, image }], ctx);
+  return shown;
 }
 
 /** The stored keys in `values` whose Image rows the viewer may not be served: each row must pass
@@ -797,26 +793,6 @@ async function refusedImageKeys(values: string[], ctx: ViewerCtx) {
       )
       .map((row) => row.url)
   );
-}
-
-/** A panel's stored `metadata` with each candidate key and the source image in `refused` taken out.
- *  Other keys are left as they are. */
-function withoutRefusedKeys(metadata: unknown, refused: Set<string>) {
-  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return metadata;
-  if (!refused.size) return metadata;
-  const record = metadata as Record<string, unknown>;
-  const out: Record<string, unknown> = { ...record };
-  if (Array.isArray(record.candidateImages))
-    out.candidateImages = record.candidateImages.map((entry) => {
-      const key = candidateKeyOf(entry);
-      if (!key || !refused.has(key)) return entry;
-      if (typeof entry === 'string') return { nsfwLevel: null };
-      const { key: _key, ...rest } = entry as Record<string, unknown>;
-      return rest;
-    });
-  const source = panelSourceImageUrl(metadata);
-  if (source && refused.has(source)) delete out.sourceImageUrl;
-  return out;
 }
 
 /** Refuses copying a panel whose image a block refuses the viewer: the copy would carry its media. */
@@ -2174,7 +2150,8 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(duplicatePanelSchema)
     .mutation(async ({ ctx, input }) => {
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: a block that landed seconds ago must not be copied through replica lag.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: {
           chapter: { include: { project: { select: { userId: true } } } },
@@ -2191,6 +2168,16 @@ export const comicsRouter = router({
       if (panel.status !== ComicPanelStatus.Ready || !panel.imageUrl) {
         throw throwBadRequestError('Only completed panels with an image can be duplicated.');
       }
+
+      // The copy holds only what the owner may be served: never a withheld key.
+      const { hasSourceImage: _derived, ...copyable } =
+        (
+          await panelForViewer(
+            { imageUrl: panel.imageUrl, metadata: withoutUnlockClaim(panel.metadata) },
+            panel.image,
+            ctx
+          )
+        ).metadata ?? {};
 
       const newPanel = await dbWrite.$transaction(async (tx) => {
         // Shift subsequent panels positions +1
@@ -2214,7 +2201,7 @@ export const comicsRouter = router({
             imageId: panel.imageId,
             position: panel.position + 1,
             status: panel.imageUrl ? ComicPanelStatus.Ready : ComicPanelStatus.Pending,
-            metadata: withoutUnlockClaim(panel.metadata),
+            metadata: copyable as Prisma.InputJsonObject,
           },
         });
 
@@ -2943,7 +2930,8 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ panelId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: a block that landed seconds ago must not reach the owner through replica lag.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: {
           chapter: {
@@ -3742,10 +3730,11 @@ export const comicsRouter = router({
             status: updated.status,
             imageUrl: updated.imageUrl,
           });
+          const shown = await panelForViewer(updated, null, ctx);
           return {
             id: updated.id,
             status: updated.status,
-            imageUrl: updated.imageUrl,
+            imageUrl: shown.imageUrl,
             candidateImages: [] as string[],
           };
         }
@@ -3843,7 +3832,7 @@ export const comicsRouter = router({
 
         // A selection stays selected: only the slots change.
         const keepsSelection = panel.status === ComicPanelStatus.Ready && !!panel.imageUrl;
-        const updated = await dbWrite.comicPanel.update({
+        const { image, ...updated } = await dbWrite.comicPanel.update({
           where: { id: panel.id },
           data: {
             status: keepsSelection ? panel.status : ComicPanelStatus.AwaitingSelection,
@@ -3852,7 +3841,11 @@ export const comicsRouter = router({
               candidateImages: newCandidates,
             },
           },
+          include: { image: { select: panelImageVisibilitySelect } },
         });
+        // A kept selection can back an Image blocked since: its key goes out only as the block allows.
+        const shown = await panelForViewer(updated, image, ctx);
+        const shownCandidates = (shown.metadata?.candidateImages ?? []) as ViewerCandidate[];
         sendComicPanelSignal(ctx.user!.id, {
           panelId: updated.id,
           projectId: panel.projectId,
@@ -3861,24 +3854,22 @@ export const comicsRouter = router({
         return {
           id: updated.id,
           status: updated.status,
-          imageUrl: updated.imageUrl,
+          imageUrl: shown.imageUrl,
           // Per-slot detail with the orchestrator's nsfwLevel so the picker
           // can blur mature candidates by default. Locked entries lose any
           // ephemeral preview URL here — the unlock response shouldn't need
           // them since the workflow restriction was just lifted.
-          candidates: newCandidates.map((c) =>
-            'requiresUnlock' in c
+          candidates: shownCandidates.map((c) =>
+            c.requiresUnlock
               ? {
                   requiresUnlock: true as const,
                   blockedReason: c.blockedReason,
                   blurredPreviewUrl: null as string | null,
-                  nsfwLevel: c.nsfwLevel ?? null,
+                  nsfwLevel: c.nsfwLevel,
                 }
-              : { key: c.key, nsfwLevel: c.nsfwLevel ?? null }
+              : { key: c.key, nsfwLevel: c.nsfwLevel }
           ),
-          candidateImages: newCandidates
-            .filter((c): c is { key: string; nsfwLevel?: number } => 'key' in c)
-            .map((c) => c.key),
+          candidateImages: shownCandidates.flatMap((c) => (c.key ? [c.key] : [])),
         };
       } catch (error) {
         if (claim && !chargeMayLand)
