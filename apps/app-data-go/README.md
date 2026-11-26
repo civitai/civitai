@@ -9,8 +9,15 @@ count arithmetic and the open questions are in [DESIGN.md](DESIGN.md).
 ```
 GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&keyPrefix=P]
 Authorization: Bearer <the app's hub access token for the user>
-→ {"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
+→ {"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"version"?:N,"data":{…}}]}
 ```
+
+A private item's `version` is the document's store version, the number a write's `ifVersion` is
+compared against (an app reads a document, then writes it with `ifVersion: doc.version`). `rev` is
+kept beside it and stays opaque: on the registry path it is a digest, not a version. A registry item
+carries `version` once the adapter's private feed sends it (body format `k3`); until then the field
+is omitted, and the SDK reads version `0`, which no stored document has, so a write built from it is
+refused `version_conflict`, never applied.
 
 A read is answered from a per-user stream on the registry adapter, opened lazily with a token this
 service exchanges from the user's own, as the adapter's relay (the origin judges it). When no stream

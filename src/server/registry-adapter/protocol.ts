@@ -32,7 +32,8 @@ export interface Entity {
   /**
    * What a shared-collection LEVEL STREAM's entity carries beside its body (`level-feed.ts`): the
    * document's `version`, its `createdAt` and `updatedAt` (ISO 8601). A plain document: no author,
-   * no tallies, no marks. Set only by the level feed, sent by the HTTP binding only, as `key` is.
+   * no tallies, no marks. Set by the level feed, sent by the HTTP binding only, as `key` is. The
+   * private feed (`private-feed.ts`) sets `version` too, never the timestamps.
    */
   version?: number;
   createdAt?: string;

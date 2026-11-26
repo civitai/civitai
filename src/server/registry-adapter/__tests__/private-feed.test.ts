@@ -1014,6 +1014,29 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     );
   });
 
+  it("each record carries its document's store version (the number a write's ifVersion is compared against)", async () => {
+    // Versions distinct from each other and from every seq.
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      { key: 'entry-1', recordId: OWNER_RECORD, version: 6, seq: 41, data: { t: OWNER_CANARY } },
+      {
+        key: 'entry-7c',
+        recordId: OWNER_RECORD_2,
+        version: 13,
+        seq: 88,
+        data: { t: OWNER_CANARY_2 },
+      },
+    ]);
+    const { events } = await snapshotOf('owner-own');
+    expect(
+      upsertEntities(events)
+        .map((e) => ({ key: e.key, version: e.version }))
+        .sort((a, b) => ((a.key as string) < (b.key as string) ? -1 : 1))
+    ).toEqual([
+      { key: 'entry-1', version: 6 },
+      { key: 'entry-7c', version: 13 },
+    ]);
+  });
+
   it('live names the head its snapshot read; a poll whose head moved sends a progress with it, after its changes', async () => {
     const run = subscribe(
       composeAdapter(entities, publicFeed(), privateFeed()),
@@ -1150,6 +1173,59 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     expect(upsertEntities(events).map((e) => ({ urn: e.urn, key: e.key, seq: e.seq }))).toEqual([
       { urn: OWNER_URN, key: 'entry-1', seq: 41 },
     ]);
+  });
+
+  it('🔴 a cursor saved under k2 (keys and seqs, no version) resumes as a change: every record is sent again with its version', async () => {
+    const owner = await principalOf('owner-own');
+    const binding = requestBinding({ schema: SCHEMA, urns: [] }, owner.subject);
+    const adapter = composeAdapter(entities, publicFeed(), privateFeed());
+    const first = subscribe(adapter, owner);
+    await settle(first);
+    first.stop();
+    wake();
+    await first.done;
+    const schemas = upsertEntities(first.events)[0].schemas;
+    const raw = unbindCursor(
+      (first.events.find((e) => e.type === 'live') as { cursor: string }).cursor,
+      binding
+    );
+    const digest = /^p1\.([0-9a-f]{32})$/.exec(raw)?.[1] as string;
+    const resume = async () => {
+      const run = subscribe(adapter, await principalOf('owner-own'), bindCursor(raw, binding));
+      await settle(run);
+      run.stop();
+      wake();
+      await run.done;
+      return run.events;
+    };
+
+    // Control: the cursor as this release saved it resumes with nothing to send but `live`.
+    expect((await resume()).map((e) => e.type)).toEqual(['live']);
+
+    // The same state as the k2 release saved it: its read digest and revs, its head kept.
+    const state = JSON.parse((await store.get(digest)) as string) as Record<string, unknown>;
+    state.read = sha256Hex(sortedKeyJson({ f: 'k2', read: [[OWNER_RECORD, 3, 41]] })).slice(0, 32);
+    const k2Rev = sha256Hex(
+      sortedKeyJson({
+        f: 'k2',
+        key: 'entry-1',
+        seq: 41,
+        rev: docRev({ version: 3, data: { t: OWNER_CANARY } }, schemas),
+      })
+    ).slice(0, 16);
+    state.served = [[OWNER_URN, k2Rev]];
+    await store.put(digest, sortedKeyJson(state), `${SCHEMA}#x`);
+
+    const events = await resume();
+    expect(events.map((e) => e.type)).toEqual(['live', 'upsert']);
+    expect(
+      upsertEntities(events).map((e) => ({
+        urn: e.urn,
+        key: e.key,
+        seq: e.seq,
+        version: e.version,
+      }))
+    ).toEqual([{ urn: OWNER_URN, key: 'entry-1', seq: 41, version: 3 }]);
   });
 });
 
