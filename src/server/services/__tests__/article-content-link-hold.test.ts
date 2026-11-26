@@ -55,8 +55,13 @@ const {
   UNFINISHED_UPLOAD_MESSAGE,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } = await import('~/server/services/image-url-ownership');
-const { deferContentUrls, MAX_UPLOAD_PROBES, nextContentLinkHold, writeContentLinkHold } =
-  await import('~/server/services/article-content-link-hold');
+const {
+  deferContentUrls,
+  MAX_UPLOAD_PROBES,
+  nextContentLinkHold,
+  probeContentUploads,
+  writeContentLinkHold,
+} = await import('~/server/services/article-content-link-hold');
 const { settleContentLinkHolds, CONTENT_LINK_DEFERRAL_BACKSTOP_MS } = await import(
   '~/server/jobs/article-content-link-hold'
 );
@@ -856,5 +861,29 @@ describe('deferring urls found absent by the bulk migration', () => {
     expect((await hold())?.refused).toEqual([KEY]);
     await defer([KEY2], content);
     expect(await hold()).toMatchObject({ refused: [KEY], deferred: [KEY2] });
+  });
+});
+
+describe('probing a slow store', () => {
+  it('starts no probe past the time budget', async () => {
+    const keys = Array.from(
+      { length: 12 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    const answer = s3Send.getMockImplementation();
+    s3Send.mockImplementation((async (...args: Parameters<NonNullable<typeof answer>>) => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return answer?.(...args);
+    }) as never);
+    s3Send.mockClear();
+    try {
+      const { present } = await probeContentUploads(keys, { budgetMs: 100 });
+      // Rounds of 4 start at about 0ms and 60ms; none starts after 100ms.
+      expect(s3Send.mock.calls.length).toBeGreaterThan(0);
+      expect(s3Send.mock.calls.length).toBeLessThan(keys.length);
+      expect(present.size).toBe(s3Send.mock.calls.length);
+    } finally {
+      s3Send.mockImplementation(answer as never);
+    }
   });
 });

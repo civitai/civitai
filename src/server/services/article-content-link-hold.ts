@@ -116,23 +116,28 @@ export async function classifyUnlinkedContentUrls({
 const UPLOAD_PROBE_CONCURRENCY = 4;
 /** Bounds a link's probes: the settle job re-links each held article every run. The rest link unprobed. */
 export const MAX_UPLOAD_PROBES = 32;
+/** No probe starts past this, so a slow store costs a save at most this plus one probe deadline. */
+export const UPLOAD_PROBE_BUDGET_MS = 4000;
 
 /**
  * What the image store says of each url's upload: `absent` (a row for it would 404 at the scanner,
  * so it is deferred instead) or `present`. A url in neither got no answer: an unreadable store
- * proves nothing, and the first such answer stops the probing, so a degraded store costs a save
- * one probe deadline.
+ * proves nothing, and the first such answer stops the probing, as does the time budget.
  */
 export async function probeContentUploads(
   urls: string[],
-  { max = MAX_UPLOAD_PROBES }: { max?: number } = {}
+  {
+    max = MAX_UPLOAD_PROBES,
+    budgetMs = UPLOAD_PROBE_BUDGET_MS,
+  }: { max?: number; budgetMs?: number } = {}
 ) {
   const absent = new Set<string>();
   const present = new Set<string>();
+  const stopAt = Date.now() + budgetMs;
   let unreadable = false;
   await limitConcurrency(
     urls.slice(0, max).map((url) => async () => {
-      if (unreadable) return;
+      if (unreadable || Date.now() >= stopAt) return;
       const verdict = await probeCreatedImageMedia(url);
       if (verdict === 'absent') absent.add(url);
       else if (verdict === 'unknown') unreadable = true;

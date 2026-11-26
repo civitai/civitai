@@ -34,9 +34,8 @@ import { getImageUploadProbeBackend, headObject } from '~/utils/s3-utils';
  *
  * 🔴 This module answers a question; it does not act on the answer. `createImage` only logs
  * the verdict: rejecting an image creation is a NEW failure mode on a working user-facing
- * path, gated on the `absent` rate measured against a real denominator. Article linking
- * (`probeContentUploads`) and scan-failure classing (`markImageScanError`) act on
- * `absent` only, and treat `unknown` as no answer.
+ * path, gated on the `absent` rate measured against a real denominator. A caller that acts
+ * on `absent` must treat `unknown` as no answer.
  */
 
 /**
