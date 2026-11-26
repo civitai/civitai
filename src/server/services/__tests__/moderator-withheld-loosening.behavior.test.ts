@@ -380,8 +380,27 @@ describe('article.rescanImage', () => {
     await notForbidden(rescan(CLEAN, true));
   });
 
-  it("refuses the owner's rescan of their own withheld image", async () => {
-    await forbidden(rescan(WITHHELD, false));
+  it("refuses the owner's rescan of their own withheld image as it refuses any other", async () => {
+    const row = (id: number, blockedFor: string | null) => ({
+      id,
+      userId: OWNER,
+      ingestion: blockedFor ? 'Blocked' : 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: false,
+      blockedFor,
+      needsReview: null,
+    });
+    // An image the article may not rescan for an ordinary reason: it is blocked.
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(row(CLEAN, 'tos') as never);
+    const ordinary = await settle(rescan(CLEAN, false));
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(row(WITHHELD, null) as never);
+    const withheld = await settle(rescan(WITHHELD, false));
+
+    expect(withheld).toBeInstanceOf(TRPCError);
+    expect((withheld as TRPCError).code).toBe((ordinary as TRPCError).code);
+    expect((withheld as TRPCError).message).toBe((ordinary as TRPCError).message);
+    expect((withheld as TRPCError).message).not.toContain(String(WITHHELD));
+    expect(dbMock.dbWrite.image.updateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("passes the owner's rescan of their own clean image", async () => {

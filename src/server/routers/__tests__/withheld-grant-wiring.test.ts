@@ -103,7 +103,7 @@ const ENTRY_POINTS: Record<string, number> = {
   'src/server/routers/games.router.ts': 1,
   'src/server/routers/challenge.router.ts': 2,
   'src/server/routers/article.router.ts': 3,
-  'src/server/controllers/image.controller.ts': 2,
+  'src/server/controllers/image.controller.ts': 3,
   'src/server/controllers/tag.controller.ts': 1,
   'src/server/api-routes/mod/set-image-nsfw-level.ts': 1,
   'src/server/api-routes/mod/image/set-nsfw-level.ts': 1,

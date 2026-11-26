@@ -4006,7 +4006,7 @@ export async function rescanArticleImage({
     }));
   if (!belongs)
     throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
-  await assertMayLoosenImages([imageId], { csamReview });
+  if (isModerator) await assertMayLoosenImages([imageId], { csamReview });
 
   // --- Rate limit (owners only, mods bypass) ---
   const cacheKey = `${REDIS_KEYS.ARTICLE.RESCAN}:image:${imageId}` as const;
@@ -4033,7 +4033,10 @@ export async function rescanArticleImage({
     throwBadRequestError(
       'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
     );
-  if (!canRescanArticleImage(image, article.userId)) {
+  // The owner is refused a withheld image exactly as any other image the article cannot rescan.
+  const withheldFromOwner =
+    !isModerator && (await withheldImageIds([imageId], { csamReview })).has(imageId);
+  if (!canRescanArticleImage(image, article.userId) || withheldFromOwner) {
     if (image.ingestion === ImageIngestionStatus.Pending) return;
     throw refused();
   }
