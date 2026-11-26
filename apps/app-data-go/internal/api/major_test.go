@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -42,6 +43,9 @@ type majorAdapter struct {
 	record    registry.Entity
 	asked     []string // each subscription's schema, in order, prefixed "private:", "level:" or "viewer:"
 	open      []*stubStream
+	// flap: each private stream names the next major (current, then current+1, …), as a collection
+	// whose majors move faster than a read.
+	flap bool
 }
 
 func (a *majorAdapter) Subscribe(ctx context.Context, schema, tok string) (session.Stream, error) {
@@ -81,6 +85,9 @@ func (a *majorAdapter) SubscribeMeta(_ context.Context, schema, _ string, meta j
 	default:
 		a.asked = append(a.asked, "private:"+schema)
 		holds = schema == a.recordsAt
+		if a.flap {
+			defer func() { a.current++ }()
+		}
 		defer func() {
 			st.ev <- registry.Event{Type: registry.Live, Cursor: "b1.0a1b2c3d4e5f60718293a4b5.p1.0123456789abcdef0123456789abcdef",
 				Meta: a.meta("")}
@@ -182,7 +189,7 @@ func (s *stack) majorReadAs(t *testing.T, path, token string) majorGot {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &b)
 	g := majorGot{status: rec.Code, retry: rec.Header().Get("Retry-After"), body: rec.Body.String(), err: b.Error}
-	var ks, ds []string
+	ks, ds := make([]string, 0, len(b.Items)), make([]string, 0, len(b.Items))
 	for _, it := range b.Items {
 		ks, ds = append(ks, it.Key), append(ds, string(it.Data))
 	}
@@ -342,5 +349,64 @@ func TestANoMajorReadWithNoCurrentFallsBackToRESTWithTheWritesOff(t *testing.T) 
 	}
 	if g := s.get(t, notesPath+"?major=1", "civitai_erin"); g.ans.Source != "registry" || !strings.Contains(g.body, "E-STREAM") {
 		t.Fatalf("?major=1: %d %s; want the stream's record", g.status, g.body)
+	}
+}
+
+// A stream read again at the major the first one named, which names yet another major: the read is
+// `503 major_unknown`, never a third stream (the correction is made once).
+func TestACurrentMajorThatMovesAgainIsMajorUnknown(t *testing.T) {
+	a := &majorAdapter{private: true, current: 2, flap: true, recordsAt: notesV2, record: majorRecord(notesV2, "mine-6", "FLAP-CANARY")}
+	s := majorStack(t, a)
+	g := s.majorRead(t, notesPath)
+	if g.status != http.StatusServiceUnavailable || g.err != "major_unknown" || strings.Contains(g.body, "CANARY") {
+		t.Fatalf("a major that moved again: %d %s; want 503 major_unknown", g.status, g.body)
+	}
+	if got := a.subscribed(); strings.Join(got, " ") != "private:"+notesV1+" private:"+notesV2 {
+		t.Fatalf("subscribed %v; want @v1 then @v2 only", got)
+	}
+}
+
+// A hinted major the adapter does not resolve (`not_resolved`, as after a rollback) drops the hint:
+// the next read with no major opens at 1 again. An unhinted read's not_resolved keeps nothing.
+func TestANotResolvedHintedMajorIsForgotten(t *testing.T) {
+	s, f := newSharedStack(t)
+	s.reg.notPrivate["civitai_shared-n"] = true
+	s.srv.majors.set("todo-app", "notes", 3)
+	f.err = &session.EndedError{Reason: "not_resolved"}
+	g := s.shared(t, notesPath, "civitai_shared-n")
+	if g.status != http.StatusServiceUnavailable || g.err.Error != "not_resolved" {
+		t.Fatalf("not resolved: %d %s", g.status, g.body)
+	}
+	if f.args[0] != "todo-app/notes@3>0" {
+		t.Fatalf("read as %v; want the hinted @3 first", f.args)
+	}
+	if n := s.srv.majors.guess("todo-app", "notes"); n != 1 {
+		t.Fatalf("the hint after not_resolved: %d; want 1", n)
+	}
+}
+
+// The hints are bounded: past majorHintsMax collections they are all dropped, and a known one is
+// replaced in place.
+func TestTheMajorHintsAreBounded(t *testing.T) {
+	var h majorHints
+	for i := range majorHintsMax {
+		h.set("app", fmt.Sprintf("c%d", i), 2)
+	}
+	h.set("app", "c0", 4)
+	if h.guess("app", "c0") != 4 || h.guess("app", "c1") != 2 || len(h.m) != majorHintsMax {
+		t.Fatalf("at the bound: c0 %d, c1 %d, %d held", h.guess("app", "c0"), h.guess("app", "c1"), len(h.m))
+	}
+	h.set("app", "new", 5)
+	if h.guess("app", "new") != 5 || h.guess("app", "c1") != 1 || len(h.m) != 1 {
+		t.Fatalf("past the bound: new %d, c1 %d, %d held", h.guess("app", "new"), h.guess("app", "c1"), len(h.m))
+	}
+}
+
+// A named major no schema URN can carry for p's app is major_unknown, not a read.
+func TestANamedMajorNoURNCanCarryIsMajorUnknown(t *testing.T) {
+	var s Server
+	p := readParams{slug: "Not A Slug", collection: "notes", major: 1, implied: true}
+	if done, err := s.settle(&p, 2, 0, false); done || !errors.Is(err, errMajorUnknown) {
+		t.Fatalf("settle: %v %v; want errMajorUnknown", done, err)
 	}
 }
