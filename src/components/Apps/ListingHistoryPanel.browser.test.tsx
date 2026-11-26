@@ -38,6 +38,9 @@ const mocks = vi.hoisted(() => ({
   appBlocksFlag: true,
 }));
 
+// The reviewer byline's avatar reads the viewer; this harness has no session provider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: mocks.appBlocksFlag, appBlocksAuthor: true }),
 }));

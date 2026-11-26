@@ -73,8 +73,12 @@ export type DecisionReviewer = {
   account: { username: string | null; image: string | null } | null;
 };
 
-/** A request's `reviewedBy` relation, read through `reviewerBylineSelect`. */
+/**
+ * A request's `reviewedBy` relation, read through `reviewUserChipSelect`. Its `id` is read but
+ * never projected: `decisionReviewer` passes on the name and avatar only.
+ */
 export type DecisionReviewerRow = {
+  id?: number;
   username: string | null;
   image: string | null;
   deletedAt: Date | null;

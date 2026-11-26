@@ -6,7 +6,7 @@ import {
   type DecisionReviewer,
   type DecisionReviewerRow as ReviewerRow,
 } from '~/server/notifications/app-review-attribution';
-import { reviewerBylineSelect } from '~/server/selectors/review-user-chip.selector';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { redactDeployDetailForAuthor } from '~/shared/utils/review-boot-check';
@@ -290,7 +290,7 @@ export async function listListingHistory(opts: {
         rejectionReason: true,
         approvalNotes: true,
         changelog: true,
-        reviewedBy: { select: reviewerBylineSelect },
+        reviewedBy: { select: reviewUserChipSelect },
       },
     }),
     blockWhere
@@ -310,7 +310,7 @@ export async function listListingHistory(opts: {
             deployState: true,
             deployDetail: true,
             deployUpdatedAt: true,
-            reviewedBy: { select: reviewerBylineSelect },
+            reviewedBy: { select: reviewUserChipSelect },
           },
         })
       : Promise.resolve([]),
@@ -507,7 +507,7 @@ export async function listMyOrphanedSubmissions(opts: {
       reviewedAt: true,
       rejectionReason: true,
       approvalNotes: true,
-      reviewedBy: { select: reviewerBylineSelect },
+      reviewedBy: { select: reviewUserChipSelect },
     },
   });
   if (rows.length === 0) return [];

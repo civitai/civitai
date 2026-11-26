@@ -48,16 +48,3 @@ export const reviewUserChipSelect = {
   deletedAt: true,
   image: true,
 } as const satisfies Prisma.UserSelect;
-
-/**
- * The reviewer as an app's OWN TEAM sees them on a decided submission ("Reviewed by @name,
- * Civitai App Review"): name, avatar and the closed-account marker, and deliberately no `id` —
- * the developer-facing projections carry nothing about the moderator beyond what the byline
- * shows. `deletedAt` is load-bearing for the same reason as above: a closed account renders
- * as "Civitai App Review", never as a live, linked profile.
- */
-export const reviewerBylineSelect = {
-  username: true,
-  deletedAt: true,
-  image: true,
-} as const satisfies Prisma.UserSelect;
