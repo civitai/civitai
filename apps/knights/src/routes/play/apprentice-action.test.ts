@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const answerApprentice = vi.hoisted(() => vi.fn());
+const unsureApprentice = vi.hoisted(() => vi.fn());
 const acknowledgeCheckpoint = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
@@ -38,6 +39,7 @@ vi.mock('$lib/server/apprenticeship/runtime', () => ({
 }));
 vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
   answerApprentice,
+  unsureApprentice,
   acknowledgeCheckpoint,
   getApprentice: vi.fn(),
 }));
@@ -77,6 +79,7 @@ beforeEach(() => {
   getStanding.mockReset();
   getStanding.mockResolvedValue({ banned: false, muted: false });
   answerApprentice.mockReset();
+  unsureApprentice.mockReset();
   acknowledgeCheckpoint.mockReset();
 });
 
@@ -159,6 +162,31 @@ describe('apprentice action', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     answerApprentice.mockRejectedValue(new Error('down'));
     expect(await post(valid)).toMatchObject({ status: 500 });
+  });
+
+  it('refuses "Not sure" on a graded practice pair: it goes to the ledger as an answer, which turns it down', async () => {
+    answerApprentice.mockResolvedValue({ status: 'rejected', reason: 'bad-answer' });
+
+    expect(
+      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'unsure' })
+    ).toMatchObject({ status: 409, data: { message: 'That answer is not on offer.' } });
+    expect(answerApprentice).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ userId: 7, kind: 'yesno', referenceId: 5, answer: 'unsure' }),
+      expect.anything()
+    );
+  });
+
+  it('still records a Yes on a practice pair', async () => {
+    answerApprentice.mockResolvedValue({
+      status: 'recorded',
+      correct: true,
+      xp: 10,
+      promoted: false,
+    });
+    expect(
+      await post({ kind: 'yesno', referenceId: '5', version: 'v1', answer: 'yes' })
+    ).toMatchObject({ success: true, correct: true });
   });
 
   it('moves past a checkpoint for the signed-in player', async () => {

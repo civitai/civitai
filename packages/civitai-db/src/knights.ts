@@ -245,6 +245,14 @@ export async function removalLowersLevel(
 }
 
 /**
+ * `SET LOCAL jit = off` and `SET LOCAL max_parallel_workers_per_gather = 0` as one statement: one round trip instead of
+ * two. Exported so test harnesses can tell a read that ran with JIT off.
+ */
+export const JIT_OFF_STATEMENT =
+  "SELECT set_config('jit', 'off', true), set_config('max_parallel_workers_per_gather', '0', true)";
+const jitOff = (db: Kysely<DB>) => sql.raw(JIT_OFF_STATEMENT).execute(db);
+
+/**
  * Runs a read that applies `servableImageContent` with JIT and parallel workers off (SET LOCAL, so in a transaction: the
  * caller's, or one opened here). Its CSAM subplans inflate the planner's estimate far past the read's real cost, and for
  * that estimate a server compiles with JIT, or starts parallel workers, for longer than the read runs.
@@ -255,13 +263,11 @@ export async function readWithoutJit<T>(
 ): Promise<T> {
   // Already in a transaction: turn JIT and parallel workers off in it rather than nest one, which Kysely refuses.
   if (db.isTransaction) {
-    await sql`SET LOCAL jit = off`.execute(db);
-    await sql`SET LOCAL max_parallel_workers_per_gather = 0`.execute(db);
+    await jitOff(db);
     return read(db);
   }
   return db.transaction().execute(async (trx) => {
-    await sql`SET LOCAL jit = off`.execute(trx);
-    await sql`SET LOCAL max_parallel_workers_per_gather = 0`.execute(trx);
+    await jitOff(trx);
     return read(trx);
   });
 }

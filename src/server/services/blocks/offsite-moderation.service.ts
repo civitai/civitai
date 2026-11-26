@@ -787,6 +787,8 @@ export async function delistListing(opts: {
     // Keyed by the audit event id so each distinct hide (delist→relist→delist)
     // notifies once, without a fresh nonce.
     key: `app-listing-hidden:${eventId}`,
+    // A takedown names the team, never the moderator (see `listMyListingModerationEvents`).
+    attribution: { kind: 'team' },
     details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
   });
 

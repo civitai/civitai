@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { engage, seedImage, seedPlayer } from '../../../test/seed';
+import { engage, hideTagGroups, seedImage, seedPlayer, tagImage } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { castVote, ensureVotePartitions, getFeed, enqueueItem } from '../queue/queue.service';
 import {
@@ -36,7 +36,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   vi.restoreAllMocks();
   await pg.exec(
-    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayer","TagsOnImageDetails" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -450,6 +450,20 @@ describe("a hidden check on the player's own image", () => {
 
     expect(await answer(1, ref, '4')).toMatchObject({ status: 'rejected', reason: 'own-image' });
     expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=1`)).rows).toHaveLength(0);
+  });
+});
+
+describe('a hidden check on an image in a tag group the player hides', () => {
+  it('is served to other players only, and the answer is refused', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    const ref = await reference(10);
+    await tagImage(pg, 10, 5140);
+    await hideTagGroups(pg, 1, ['furry']);
+
+    expect(await pick(1)).toBeNull();
+    expect((await pick(2))?.referenceId).toBe(ref);
+    expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
   });
 });
 

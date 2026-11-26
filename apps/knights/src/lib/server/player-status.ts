@@ -108,19 +108,41 @@ export async function getPlayerStatus(
     .select(['rankType', 'exp', 'goldPending', 'goldEarned'])
     .where('userId', '=', userId)
     .executeTakeFirst();
-  const next = player && nextLadderEntry(player.rankType);
-  return player
-    ? statusFrom(player.rankType, player.exp, {
-        ...player,
-        goldSpendable: (await getGoldBalance(db, userId)).convertible,
-        daysPlayed: next && next.minDaysPlayed > 0 ? await daysPlayedOf(db, userId) : 0,
-        ledger: await ledgerOf(db, userId),
-        xpPending: await pendingXpOf(db, userId),
-        fervorLedger: await fervorLedgerOf(db, userId, now),
-        smites: await activeSmiteCount(db, userId),
-        heartBack: await heartBackOf(db, userId),
-      })
-    : null;
+  if (!player) return null;
+  const next = nextLadderEntry(player.rankType);
+  // Sequential on purpose: the live stats broadcast reads this for several voters at once, so a fan-out per call
+  // would take the pool's connections from the votes.
+  return statusFrom(player.rankType, player.exp, {
+    ...player,
+    goldSpendable: (await getGoldBalance(db, userId)).convertible,
+    daysPlayed: next && next.minDaysPlayed > 0 ? await daysPlayedOf(db, userId) : 0,
+    ledger: await ledgerOf(db, userId),
+    xpPending: await pendingXpOf(db, userId),
+    fervorLedger: await fervorLedgerOf(db, userId, now),
+    smites: await activeSmiteCount(db, userId),
+    heartBack: await heartBackOf(db, userId),
+  });
+}
+
+/**
+ * Rank and hearts only, in two reads, for a caller that only gates on them (the `/play/next` refill). Null when
+ * the user has no player row.
+ */
+export async function getRankAndSmites(
+  db: Kysely<DB>,
+  userId: number
+): Promise<{ rank: string; smites: number; maxSmites: number } | null> {
+  const player = await db
+    .selectFrom('NewOrderPlayer')
+    .select('rankType')
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  if (!player) return null;
+  return {
+    rank: player.rankType,
+    smites: await activeSmiteCount(db, userId),
+    maxSmites: SMITES.max,
+  };
 }
 
 /** A player with no row yet is an Acolyte at level 1. */

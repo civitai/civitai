@@ -1,11 +1,16 @@
 import type { AppListingModerationNotificationDetails } from '~/server/notifications/app-listing.notifications';
+import {
+  appReviewAttributionDetails,
+  type AppReviewAttribution,
+} from '~/server/notifications/app-review-attribution';
 
 /**
  * App Store Listings (W13) — owner-notification emit helper.
  *
  * A thin, best-effort wrapper the off-site listing/moderation services call AFTER
  * their transaction commits to notify the listing owner of a mod action. Kept in a
- * DEDICATED module whose ONLY static import is a TYPE (erased at compile), and which
+ * DEDICATED module whose only static imports are a TYPE (erased at compile) and the
+ * dependency-free `app-review-attribution` leaf, and which
  * DYNAMICALLY imports `createNotification` + `NotificationCategory` inside the async
  * body — so importing this helper adds ZERO runtime graph to a caller (mirrors the
  * services' own dynamic-import discipline for heavy deps). This keeps the service
@@ -32,6 +37,8 @@ export async function notifyAppListingOwner(opts: {
   /** Idempotency key — dedups repeat emissions of the same event to the same user. */
   key: string;
   details: AppListingModerationNotificationDetails;
+  /** Who decided; the approved / rejected / hidden copy names them ("Reviewed by …"). */
+  attribution?: AppReviewAttribution;
 }): Promise<void> {
   const [{ createNotification }, { NotificationCategory }] = await Promise.all([
     import('~/server/services/notification.service'),
@@ -42,6 +49,6 @@ export async function notifyAppListingOwner(opts: {
     category: NotificationCategory.System,
     type: opts.type,
     key: opts.key,
-    details: opts.details,
+    details: { ...opts.details, ...appReviewAttributionDetails(opts.attribution) },
   });
 }

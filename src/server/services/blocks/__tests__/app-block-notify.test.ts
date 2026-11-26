@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * `notifyAppBlockSubmitter` helper — forwards to `createNotification` with the right
  * shape via its dynamic import. Only the notifications client is mocked; the helper's
- * static import is a type (erased), so nothing else is pulled. `~/server/common/enums`
+ * static imports are a type (erased) and a dependency-free leaf, so nothing else is pulled. `~/server/common/enums`
  * is the REAL module (so we assert the actual `NotificationCategory.System` value).
  */
 
@@ -33,6 +33,7 @@ describe('notifyAppBlockSubmitter', () => {
         userId: 77,
         key: 'app-block-approved:req_1',
         details: { slug: 'cool-app', name: 'Cool App', version: '1.0.0' },
+        attribution: { kind: 'moderator', userId: 31 },
       },
       async () => true
     );
@@ -44,8 +45,22 @@ describe('notifyAppBlockSubmitter', () => {
       category: 'System',
       type: 'app-block-approved',
       key: 'app-block-approved:req_1',
-      details: { slug: 'cool-app', name: 'Cool App', version: '1.0.0' },
+      details: { slug: 'cool-app', name: 'Cool App', version: '1.0.0', reviewerUserId: 31 },
     });
+  });
+
+  it('records an automated decision as automated, with no reviewer id', async () => {
+    await notifyAppBlockSubmitter(
+      {
+        type: 'app-block-rejected',
+        userId: 5,
+        key: 'app-block-rejected:req_3',
+        details: { slug: 's', reason: 'nope' },
+        attribution: { kind: 'automated' },
+      },
+      async () => true
+    );
+    expect(sentDetails()).toEqual({ slug: 's', reason: 'nope', reviewedAutomatically: true });
   });
 
   it('carries the rejection reason through in details, and never asks about run pages', async () => {
@@ -56,6 +71,7 @@ describe('notifyAppBlockSubmitter', () => {
         userId: 5,
         key: 'app-block-rejected:req_2',
         details: { slug: 's', reason: 'nope' },
+        attribution: { kind: 'moderator', userId: 31 },
       },
       canOpen
     );
@@ -76,6 +92,7 @@ describe('notifyAppBlockSubmitter', () => {
           userId: 77,
           key: 'app-block-approved:req_1',
           details: { slug: 'cool-app', hasPage: true },
+          attribution: { kind: 'moderator', userId: 31 },
         },
         canOpen
       );
@@ -83,6 +100,7 @@ describe('notifyAppBlockSubmitter', () => {
       expect(sentDetails()).toEqual({
         slug: 'cool-app',
         hasPage: true,
+        reviewerUserId: 31,
         canOpenRunPage: answer,
       });
     }
@@ -95,6 +113,7 @@ describe('notifyAppBlockSubmitter', () => {
         userId: 77,
         key: 'app-block-approved:req_1',
         details: { slug: 'cool-app', hasPage: true },
+        attribution: { kind: 'moderator', userId: 31 },
       },
       async () => Promise.reject(new Error('flags unreadable'))
     );

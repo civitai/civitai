@@ -7,6 +7,7 @@ const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const voteRefused = vi.hoisted(() => vi.fn());
+const recordUnsure = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/metrics', async (original) => {
   const real = await original<typeof import('$lib/server/metrics')>();
   return { ...real, metrics: { ...real.metrics, voteRefused } };
@@ -38,6 +39,7 @@ vi.mock('$lib/server/hidden/hidden.service', () => ({
 }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote }));
+vi.mock('$lib/server/yesno/unsure', () => ({ recordUnsure }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0, stretch: 8 }) }));
 
@@ -45,9 +47,10 @@ const { sealItem } = await import('$lib/server/feed-token');
 const { skippedFor } = await import('$lib/server/skips');
 const { actions } = await import('./+page.server');
 
-const skip = (item: string, userId = 7) => {
+const skip = (item: string, userId = 7, extra: Record<string, string> = {}) => {
   const body = new FormData();
   body.set('item', item);
+  for (const [key, value] of Object.entries(extra)) body.set(key, value);
   return actions.skip({
     request: new Request('http://knights.test/play', { method: 'POST', body }),
     locals: { user: { id: userId } },
@@ -62,6 +65,8 @@ beforeEach(() => {
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
   voteRefused.mockReset();
+  recordUnsure.mockReset();
+  recordUnsure.mockResolvedValue(true);
 });
 
 describe('skip refusals', () => {
@@ -100,6 +105,40 @@ describe('skip action', () => {
       )
     );
     expect(new Set(results.map((r) => JSON.stringify(r))).size).toBe(1);
+  });
+
+  it('records a Not sure for the question when the skipped item is a yes/no question, and only then', async () => {
+    await skip(sealItem('secret', 7, { kind: 'yesno', id: 12 }));
+    expect(recordUnsure).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+      playerId: 7,
+      itemId: 12,
+      now: new Date('2026-12-15T12:00:00Z'),
+    });
+
+    recordUnsure.mockClear();
+    await skip(sealItem('secret', 7, { kind: 'queue', id: 13 }));
+    await skip(sealItem('secret', 7, { kind: 'hidden', id: 14 }));
+    expect(recordUnsure).not.toHaveBeenCalled();
+  });
+
+  it('records no Not sure when the player only dismissed a question other players settled, and still moves them on', async () => {
+    expect(await skip(sealItem('secret', 7, { kind: 'yesno', id: 12 }), 7, { settled: '1' })).toEqual({
+      success: true,
+    });
+    expect(recordUnsure).not.toHaveBeenCalled();
+    expect((await skippedFor(store.current as never, 7)).yesno).toEqual([12]);
+  });
+
+  it('answers a yes/no skip the same whether or not the Not sure was stored', async () => {
+    recordUnsure.mockResolvedValue(false);
+    expect(await skip(sealItem('secret', 7, { kind: 'yesno', id: 12 }))).toEqual({ success: true });
+  });
+
+  it('records no Not sure for a token that does not open, or for a muted player', async () => {
+    await skip('nonsense');
+    getStanding.mockResolvedValueOnce({ banned: false, muted: true });
+    await skip(sealItem('secret', 7, { kind: 'yesno', id: 12 }));
+    expect(recordUnsure).not.toHaveBeenCalled();
   });
 
   it('refuses a token that is forged or belongs to another player', async () => {

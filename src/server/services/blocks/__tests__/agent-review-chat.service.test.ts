@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   - happy path: returns the reply, calls getTextCompletion with the right model +
  *     a server-authored system-grounding message (+ NO client system injection)
  *   - LLM throws → clean BAD_GATEWAY (no leak)
+ *   - a reply cut at the token cap comes back `truncated`, and every reply fits the
+ *     history cap the next turn re-sends it under
  */
 
 const { mockEnv, mockGetAgentReport, mockGetTextCompletion } = vi.hoisted(() => ({
@@ -47,6 +49,7 @@ import {
   agentReviewChat,
   AGENT_REVIEW_CHAT_MODEL,
 } from '~/server/services/blocks/agent-review.service';
+import { agentReviewChatSchema } from '~/server/schema/blocks/publish-request.schema';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 
@@ -69,6 +72,7 @@ beforeEach(() => {
   mockGetTextCompletion.mockResolvedValue({
     content: 'grounded reply',
     usage: { promptTokens: 1, completionTokens: 1 },
+    finishReason: 'stop',
   });
 });
 afterEach(() => vi.restoreAllMocks());
@@ -98,7 +102,7 @@ describe('agentReviewChat — groundability guard', () => {
         publishRequestId: PUBREQ,
         messages: [{ role: 'user', content: 'hi' }],
       });
-      expect(res).toEqual({ reply: 'grounded reply' });
+      expect(res).toEqual({ reply: 'grounded reply', truncated: false });
       expect(mockGetTextCompletion).toHaveBeenCalledTimes(1);
     }
   );
@@ -132,13 +136,14 @@ describe('agentReviewChat — request shape', () => {
     mockGetTextCompletion.mockResolvedValue({
       content: 'Because buzz:read is used in wallet.js:10.',
       usage: { promptTokens: 1, completionTokens: 1 },
+      finishReason: 'stop',
     });
 
     const res = await agentReviewChat({
       publishRequestId: PUBREQ,
       messages: [{ role: 'user', content: 'why did you flag scope buzz:read?' }],
     });
-    expect(res).toEqual({ reply: 'Because buzz:read is used in wallet.js:10.' });
+    expect(res).toEqual({ reply: 'Because buzz:read is used in wallet.js:10.', truncated: false });
 
     const call = mockGetTextCompletion.mock.calls[0][0];
     expect(call.model).toBe(AGENT_REVIEW_CHAT_MODEL);
@@ -146,7 +151,8 @@ describe('agentReviewChat — request shape', () => {
     // call 404'd while the line above stayed green.
     expect(call.model).toBe('anthropic/claude-haiku-5.5');
     expect(call.temperature).toBe(0);
-    expect(typeof call.maxTokens).toBe('number');
+    // Pinned literal: at 1024 a detailed answer was cut off mid-sentence.
+    expect(call.maxTokens).toBe(4096);
     // A server-authored SYSTEM message is prepended, carrying the report summary
     // + the adversarial-data framing; the client's user turn follows.
     expect(call.messages[0].role).toBe('system');
@@ -198,5 +204,54 @@ describe('agentReviewChat — failure containment (no 500, no leak)', () => {
     } catch (e) {
       expect((e as Error).message).not.toContain('boom secret');
     }
+  });
+});
+
+describe('agentReviewChat — a reply that does not fit', () => {
+  const ask = () =>
+    agentReviewChat({ publishRequestId: PUBREQ, messages: [{ role: 'user', content: 'hi' }] });
+
+  it('a reply the model stopped at the token cap comes back truncated', async () => {
+    mockGetAgentReport.mockResolvedValue(REPORT());
+    mockGetTextCompletion.mockResolvedValue({
+      content: 'The first finding is in wallet.js:10, and the second',
+      usage: { promptTokens: 1, completionTokens: 4096 },
+      finishReason: 'length',
+    });
+    await expect(ask()).resolves.toEqual({
+      reply: 'The first finding is in wallet.js:10, and the second',
+      truncated: true,
+    });
+  });
+
+  it('a reply the model finished is not truncated', async () => {
+    mockGetAgentReport.mockResolvedValue(REPORT());
+    await expect(ask()).resolves.toEqual({ reply: 'grounded reply', truncated: false });
+  });
+
+  it('🔴 any reply can be re-sent as history on the next turn without failing validation', async () => {
+    mockGetAgentReport.mockResolvedValue(REPORT());
+    // Longer than the 32,000-character history cap, and not a multiple of it.
+    const long = 'wallet.js:10 '.repeat(3000); // 39,000 characters
+    mockGetTextCompletion.mockResolvedValue({
+      content: long,
+      usage: { promptTokens: 1, completionTokens: 1 },
+      finishReason: 'stop',
+    });
+    const res = await ask();
+    expect(res.truncated).toBe(true);
+    expect(res.reply).toHaveLength(32_000);
+    expect(long.startsWith(res.reply)).toBe(true);
+
+    // The seam: the reply goes straight back through the router's input schema.
+    const next = agentReviewChatSchema.safeParse({
+      publishRequestId: PUBREQ,
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: res.reply },
+        { role: 'user', content: 'continue' },
+      ],
+    });
+    expect(next.success).toBe(true);
   });
 });

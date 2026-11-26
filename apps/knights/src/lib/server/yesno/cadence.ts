@@ -7,15 +7,15 @@ import { unit } from '../hidden/hidden.service';
 type Executor = Kysely<DB> | Transaction<DB>;
 
 /**
- * The feed's rhythm for Knights and above: a gap of ratings (5, 8 or 10), then a burst of yes/no questions (1 to 5), each
+ * The feed's rhythm for Knights and above: a gap of ratings, then a burst of yes/no questions, each
  * length rolled anew.
  */
-export const BURSTS = { gaps: [5, 8, 10], burst: { min: 1, max: 5 } } as const;
+export const BURSTS = { gaps: [15, 18, 20], burst: { min: 5, max: 10 } } as const;
 
 /** One thing the player was served, oldest first: a yes/no question or not (a rating or a hidden check), and a stable key. */
 export type Served = { yesno: boolean; key: string };
 
-/** Enough history to see the longest run (a gap of 10) and the item that ended the run before it. */
+/** Enough history to see the longest run and the item that ended the run before it. */
 const HISTORY = Math.max(...BURSTS.gaps, BURSTS.burst.max) + 1;
 
 /**
@@ -47,25 +47,56 @@ const keyOf = (ref: ItemRef) =>
   ref.kind === 'yesno' ? `y${ref.id}` : `r${ref.kind === 'hidden' ? -ref.id : ref.id}`;
 
 /**
- * The player's recent votes, then the items already handed out ahead of them (oldest first) that have no vote yet. A hidden
- * check sits in the ledger under the negative of its reference id, so it keys the same either way.
+ * The player's recent votes and "Not sure" answers, oldest first, then the items already handed out ahead of them that have
+ * neither yet. A "Not sure" counts as a question served, so a run ends at its rolled length whatever the player answers. A
+ * hidden check sits in the ledger under the negative of its reference id, so it keys the same either way.
  */
 export async function servedHistory(
   db: Executor,
   userId: number,
   ahead: ItemRef[] = []
 ): Promise<Served[]> {
-  const rows = await db
-    .selectFrom('KnightsVote as v')
-    .leftJoin('KnightsQueueItem as i', 'i.id', 'v.itemId')
-    .select(['v.itemId', sql<boolean>`i."audience" IS NOT NULL`.as('yesno')])
-    .where('v.playerId', '=', userId)
-    .orderBy('v.createdAt', 'desc')
-    .limit(HISTORY)
-    .execute();
-  const voted: Served[] = rows
-    .reverse()
-    .map((row) => ({ yesno: row.yesno, key: `${row.yesno ? 'y' : 'r'}${row.itemId}` }));
+  const [votes, unsure] = await Promise.all([
+    db
+      .selectFrom('KnightsVote as v')
+      .leftJoin('KnightsQueueItem as i', 'i.id', 'v.itemId')
+      .select(['v.itemId', 'v.createdAt', sql<boolean>`i."audience" IS NOT NULL`.as('yesno')])
+      .where('v.playerId', '=', userId)
+      .orderBy('v.createdAt', 'desc')
+      .limit(HISTORY)
+      .execute(),
+    db
+      .selectFrom('KnightsUnsure as u')
+      .select(['u.itemId', 'u.createdAt'])
+      .where('u.playerId', '=', userId)
+      .where('u.itemId', 'is not', null)
+      .orderBy('u.createdAt', 'desc')
+      .limit(HISTORY)
+      .execute()
+      .catch((error) => {
+        // Best effort: serving must not stop over it. Without these rows the cadence counts votes only.
+        console.error('knights: could not read Not sure answers for the cadence', {
+          userId,
+          error,
+        });
+        return [];
+      }),
+  ]);
+  const recent = [
+    ...votes.map((row) => ({ at: row.createdAt.getTime(), yesno: row.yesno, itemId: row.itemId })),
+    ...unsure.map((row) => ({
+      at: row.createdAt.getTime(),
+      yesno: true,
+      itemId: row.itemId as number,
+    })),
+  ]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, HISTORY)
+    .reverse();
+  // A question answered "Not sure" and voted later (its skip aged out) was served once: it keeps its latest place.
+  const voted: Served[] = recent
+    .map((row) => ({ yesno: row.yesno, key: `${row.yesno ? 'y' : 'r'}${row.itemId}` }))
+    .filter((s, i, all) => all.findLastIndex((t) => t.key === s.key) === i);
   const recorded = new Set(voted.map((s) => s.key));
   const pending = ahead
     .map((ref) => ({ yesno: ref.kind === 'yesno', key: keyOf(ref) }))
