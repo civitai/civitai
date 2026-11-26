@@ -132,7 +132,7 @@ Queue producers (moderator enqueue endpoint, sampling, which takes an image once
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion, Buzz packs), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
-`@civitai/flipt` (access flag), `@civitai/redis` (a sys client for the guard's session revocation check, the seen-notice records, the legacy XP mirror and the leaderboard cache; a cache client, `getCacheRedis`, for the vote-limit gate, whose keys share the player's `{id}` hash tag, and the skip sets; new cached data goes on the cache client, never on the sys client, which holds only durable state),
+`@civitai/flipt` (access flag), `@civitai/redis` (a sys client for the guard's session revocation check, the seen-notice records, the legacy XP mirror and the leaderboard cache; a cache client, `getCacheRedis`, for the skip sets and the vote-limit gate (whose keys share the player's `{id}` hash tag); new cached data goes on the cache client, never on the sys client, which holds only durable state),
 `@civitai/moderation` (the tag review write-back client), `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the original game's level curve, which Knights no longer uses (see Progression), still used by the main app's `game-helpers.ts`). Add others when a task needs them.
 
 ## Deploy
