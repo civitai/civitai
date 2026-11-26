@@ -497,6 +497,23 @@ import {
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
 import {
+  checkRunnerBinding,
+  runnerSlotsSchema,
+  type RunnerBindingBody,
+} from '~/server/services/blocks/runner-binding';
+import {
+  readRunnerAttemptState,
+  reserveRunnerAttempt,
+  transitionRunnerAttempt,
+  type RunnerAttemptState,
+} from '~/server/services/blocks/runner-ledger.service';
+import {
+  claimRunnerSubmitJti,
+  prepareRunnerSubmit,
+  refuseRunnerSubmit,
+  type RunnerSubmit,
+} from '~/server/services/blocks/runner-submit.service';
+import {
   MEDIA_UPLOAD_BATCH_DISABLED_ERROR,
   MEDIA_UPLOAD_BATCH_MAX_BYTES,
   MEDIA_UPLOAD_BATCH_MAX_ITEMS,
@@ -1721,6 +1738,12 @@ type BlockBuzzReservation = {
   key: string;
   cap: number;
   consent: { total: number; key: string; cap: number; userId: number; appBlockId: string } | null;
+  /** A recipe runner's attempt in the ledger; `state` is where this submit last moved it. */
+  runner?: RunnerLeg;
+};
+type RunnerLeg = {
+  attemptId: string;
+  state: Extract<RunnerAttemptState, 'reserved' | 'submitting'>;
 };
 
 /**
@@ -1772,6 +1795,114 @@ type BlockBuzzReservation = {
  * REVOKED grant refuses — with the same refund.
  */
 async function reserveBlockBuzzSpendForClaims(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number,
+  runner?: RunnerSubmit
+): Promise<BlockBuzzReservation> {
+  if (claims.mintOrigin !== 'runner') return reservePlatformAndConsentLegs(claims, userId, cost);
+  // Only the customComfy arm passes the runner context; submitWorkflow refuses every other kind.
+  if (!runner) refuseRunnerSubmit(claims.runId, 'kind');
+  // The ledger first: a refused attempt touches no Redis leg.
+  const leg = await reserveRunnerLeg(claims, userId, cost, runner);
+  try {
+    return { ...(await reservePlatformAndConsentLegs(claims, userId, cost)), runner: leg };
+  } catch (e) {
+    await refundRunnerLeg(leg);
+    throw e;
+  }
+}
+
+/**
+ * A runner submit's answer carries its attempt as the ledger has it, so the runner can tell
+ * submitted, refunded (may retry), and unknown (held) apart. A throw after the attempt was
+ * reserved is answered the same way; a throw before it means no attempt exists.
+ */
+async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit: () => Promise<T>) {
+  const attempt = async () => {
+    if (!runner.attemptId) return null;
+    const state = await ledgerDb()
+      .then((db) => readRunnerAttemptState(db, runner.attemptId!))
+      .catch(() => null);
+    return { attemptId: runner.attemptId, state };
+  };
+  try {
+    const result = await submit();
+    return { ...result, runner: await attempt() };
+  } catch (e) {
+    if (!runner.attemptId) throw e;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        error: e instanceof Error ? e.message : 'runner submit failed',
+      },
+      runner: await attempt(),
+    };
+  }
+}
+
+/** The primary: the ledger is read and written there only. */
+async function ledgerDb() {
+  return (await import('~/server/db/kyselyDb')).kyselyWrite;
+}
+
+function logRunnerLedgerError(step: string, attemptId: string, error: unknown) {
+  logToAxiom({
+    name: 'runner-ledger',
+    type: 'error',
+    payload: { step, attemptId },
+    error: safeError(error),
+  });
+}
+
+/**
+ * Move the attempt from where this submit left it to `refunded`. True only when this call moved
+ * it; never throws (a failed move leaves the attempt counting against the cap, the safe side).
+ */
+async function refundRunnerLeg(leg: RunnerLeg): Promise<boolean> {
+  try {
+    return await transitionRunnerAttempt(await ledgerDb(), leg.attemptId, leg.state, 'refunded');
+  } catch (error) {
+    logRunnerLedgerError('refund', leg.attemptId, error);
+    return false;
+  }
+}
+
+/**
+ * Reserve the run's attempt in the ledger, the budget authority for runner spend: the offline cap,
+ * the authorization's per-run and per-period limits and one live attempt per run, all under the
+ * consent row lock. Refuses FORBIDDEN; a database error refuses too.
+ */
+async function reserveRunnerLeg(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number,
+  runner: RunnerSubmit
+): Promise<RunnerLeg> {
+  let result: Awaited<ReturnType<typeof reserveRunnerAttempt>>;
+  try {
+    result = await reserveRunnerAttempt(await ledgerDb(), {
+      userId,
+      clientId: runner.clientId,
+      authorizationId: runner.authorizationId,
+      runKey: runner.runKey,
+      runId: runner.runId,
+      appBlockId: claims.appBlockId,
+      amount: Math.ceil(cost),
+      externalId: composeBlockExternalId(claims.appBlockId, runner.runId),
+      now: new Date(),
+    });
+  } catch (error) {
+    logRunnerLedgerError('reserve', runner.runId, error);
+    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'runner ledger unavailable' });
+  }
+  if (!result.ok) refuseRunnerSubmit(runner.runId, result.refusal);
+  runner.attemptId = result.attemptId;
+  return { attemptId: result.attemptId, state: 'reserved' };
+}
+
+async function reservePlatformAndConsentLegs(
   claims: BlockTokenClaims,
   userId: number,
   cost: number
@@ -1901,13 +2032,22 @@ async function reserveBlockBuzzSpendForClaims(
  *
  * Best-effort per key, like `refundBlockBuzzSpend`: a lost refund OVER-counts, which
  * makes a cap stricter — the safe direction. Never throws into the caller.
+ *
+ * False only for a runner reservation whose attempt another writer already moved: that writer
+ * owns the refund, so the caller refunds no other leg either.
  */
 async function refundBlockBuzzReservation(
   reservation: BlockBuzzReservation,
   cost: number
-): Promise<void> {
+): Promise<boolean> {
+  if (reservation.runner) {
+    // The ledger first: only the writer that moves the attempt refunds the Redis legs. A lost
+    // transition means another writer did; a failed one leaves both counting (the safe side).
+    if (!(await refundRunnerLeg(reservation.runner))) return false;
+  }
   await refundBlockBuzzSpend(reservation.key, cost);
   if (reservation.consent) await refundBlockBuzzSpend(reservation.consent.key, cost);
+  return true;
 }
 
 /** True when the reservation's CONSENT leg exists and its running total is over the
@@ -8088,13 +8228,22 @@ export const blocksRouter = router({
         // Charset-restricted (audit 🟢): a UUID-ish alphabet so no control chars /
         // newlines / colons flow into the orchestrator `externalId`.
         idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),
+        /** A recipe runner's per-run values (binding v1); only with a runner token. */
+        runnerSlots: runnerSlotsSchema.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken, { admitRunner: true });
-      // shortcut: runner submits are refused until the runner attempt ledger reserves them.
+      let runner: RunnerSubmit | undefined;
       if (claims.mintOrigin === 'runner') {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'runner submit is not available' });
+        runner = await prepareRunnerSubmit({
+          claims,
+          bodyKind: input.body.kind,
+          idempotencyKey: input.idempotencyKey,
+          runnerSlots: input.runnerSlots,
+        });
+      } else if (input.runnerSlots !== undefined) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'runnerSlots needs a runner token' });
       }
       ctx.blockSubmitTelemetry.appBlockIdLabel = submitFailureAppBlockLabel(claims);
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
@@ -8137,12 +8286,15 @@ export const blocksRouter = router({
       // below stays byte-identical (we only ADD a branch); after this early
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
-        return await submitCustomComfyWorkflow({
-          ctx,
-          claims,
-          body: input.body,
-          idempotencyKey: input.idempotencyKey,
-        });
+        const submit = () =>
+          submitCustomComfyWorkflow({
+            ctx,
+            claims,
+            body: input.body as CustomComfyBody,
+            idempotencyKey: input.idempotencyKey,
+            runner,
+          });
+        return runner ? await withRunnerAttempt(runner, submit) : await submit();
       }
       // App Blocks TRAINING kind — charged against the viewer-CONFIRMED quote the
       // body names, not the token's per-call budget. Its idempotency key is that
@@ -11473,8 +11625,10 @@ async function submitCustomComfyWorkflow(opts: {
   body: CustomComfyBody;
   /** OPTIONAL client idempotency key (item 2, gen half) → orchestrator externalId. */
   idempotencyKey?: string;
+  /** A recipe runner's submit, from `prepareRunnerSubmit`. */
+  runner?: RunnerSubmit;
 }) {
-  const { ctx, claims, body, idempotencyKey } = opts;
+  const { ctx, claims, body, idempotencyKey, runner } = opts;
   // Namespaced idempotency externalId — same shape as the txt2img branch, and like
   // it ALWAYS SET (audit 🔴-1): a server-minted `bls<uuid>` when the block sends no
   // key, so `submitWorkflow`'s own 3× retry of the real submit can never create (and
@@ -11708,6 +11862,30 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
+  if (runner) {
+    // Derived from the request as sent, slot values filled in, so a value that changes the
+    // ceiling or the resources is refused here.
+    const binding = checkRunnerBinding(
+      body as RunnerBindingBody,
+      runner.slots,
+      { ceiling, resources: stepInput.resources },
+      runner.authorized
+    );
+    if (!binding.ok) {
+      logToAxiom({
+        name: 'runner-submit',
+        type: 'info',
+        payload: { outcome: 'refused', reason: 'runner_binding_mismatch', runId: runner.runId },
+      });
+      refuseRunnerSubmit(runner.runId, 'binding');
+    }
+    // After the binding check, so a mismatched request does not spend the token.
+    const fresh = await claimRunnerSubmitJti(claims.jti).catch(() => {
+      throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'runner submit unavailable' });
+    });
+    if (!fresh) refuseRunnerSubmit(runner.runId, 'replay');
+  }
+
   // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1) — same guard as the txt2img path. Taken
   //    BEFORE the cap reservation + orchestrator submit so two CONCURRENT same-key
   //    submits can't BOTH reserve + BOTH charge, and a replay can't double-INCR the
@@ -11715,7 +11893,9 @@ async function submitCustomComfyWorkflow(opts: {
   //    CLOSED on a redis error; a resolved submit FINALIZEs, every non-committed
   //    exit RELEASEs. The orchestrator externalId dedupe stays as a 2nd layer.
   let genClaimKey: string | null = null;
-  if (idempotencyKey) {
+  // Not for a runner: the ledger's one live attempt per run is its idempotency, and a replay
+  // must be refused there rather than answered from cache with no attempt.
+  if (idempotencyKey && !runner) {
     let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
     try {
       claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
@@ -11746,7 +11926,7 @@ async function submitCustomComfyWorkflow(opts: {
   // The reservation THROWS fail-closed on a redis error; release the claim first.
   let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
   try {
-    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling, runner);
   } catch (e) {
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     throw e;
@@ -11896,6 +12076,35 @@ async function submitCustomComfyWorkflow(opts: {
   // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
   // the author fee is skipped on one. Same hoist, same reason.
   let realizedPriceIsCap: boolean | null = null;
+  // A runner attempt is sent only by the submit that moves it to `submitting`. Not moved (the
+  // sweeper refunded a stalled attempt, or the ledger is down): never sent.
+  if (reservation.runner) {
+    const { attemptId } = reservation.runner;
+    const moved = await ledgerDb()
+      .then((db) => transitionRunnerAttempt(db, attemptId, 'reserved', 'submitting'))
+      .catch((error: unknown) => {
+        logRunnerLedgerError('submitting', attemptId, error);
+        return false;
+      });
+    if (!moved) {
+      if (await refundBlockBuzzReservation(reservation, ceiling)) {
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        if (devSessionReserve) {
+          const { refundDevSessionBuzz } = await import(
+            '~/server/services/blocks/dev-tunnel.service'
+          );
+          await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+        }
+      }
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      throw new TRPCError({ code: 'CONFLICT', message: 'runner attempt is no longer reserved' });
+    }
+    reservation.runner.state = 'submitting';
+  }
+
   // Captured just before the orchestrator submit → the server-side proxy for the
   // job's submit instant, so the settle-time wall-clock metric measures
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
@@ -11920,6 +12129,8 @@ async function submitCustomComfyWorkflow(opts: {
         // internal 3× retry of THIS call — collapses to the existing workflow on the
         // orchestrator → no second Buzz charge. Always present.
         externalId: blockExternalId,
+        // Tips are billed on top of the step's runtime and are not in a runner's reservation.
+        ...(runner ? { tips: { civitai: 0, creators: 0 } } : {}),
       },
     });
     snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
@@ -11927,15 +12138,30 @@ async function submitCustomComfyWorkflow(opts: {
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
     realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
-    await refundBlockBuzzReservation(reservation, ceiling);
-    if (appSpendReserve) {
+    if (reservation.runner && !isDefiniteOrchestratorSubmitRefusal(e)) {
+      // Ambiguous: the orchestrator may have created and charged the workflow. Held, never
+      // refunded: every leg keeps counting until the attempt is resolved by hand.
+      const { attemptId } = reservation.runner;
+      await ledgerDb()
+        .then((db) => transitionRunnerAttempt(db, attemptId, 'submitting', 'unknown'))
+        .catch((error: unknown) => logRunnerLedgerError('unknown', attemptId, error));
+      logToAxiom({
+        name: 'runner-attempt-unknown',
+        type: 'error',
+        payload: { attemptId, runId: runner?.runId },
+        error: safeError(e),
+      });
+      throw e;
+    }
+    const refunded = await refundBlockBuzzReservation(reservation, ceiling);
+    if (refunded && appSpendReserve) {
       const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
       await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
     }
     // F4 — mirror the daily/app refund for the dev-session reservation so a failed
     // submit doesn't permanently burn the session ceiling. Best-effort; present
     // only when an active dev tunnel was reserved above.
-    if (devSessionReserve) {
+    if (refunded && devSessionReserve) {
       const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
       await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
     }
@@ -11949,6 +12175,28 @@ async function submitCustomComfyWorkflow(opts: {
   // A resolved submit is money-COMMITTED. Cache the terminal result under the
   // idempotency key BEFORE the (awaited) settle-record persist below, so a lost-
   // response retry replays it even if that persist throws. Best-effort.
+  if (reservation.runner) {
+    const { attemptId } = reservation.runner;
+    const moved = await ledgerDb()
+      .then((db) =>
+        transitionRunnerAttempt(db, attemptId, 'submitting', 'submitted', {
+          workflowId: snapshot.workflowId,
+        })
+      )
+      .catch((error: unknown) => {
+        logRunnerLedgerError('submitted', attemptId, error);
+        return false;
+      });
+    // Still counted in `submitting`: the reconciler adopts it from the orchestrator's record.
+    if (!moved) {
+      logToAxiom({
+        name: 'runner-attempt-unrecorded',
+        type: 'error',
+        payload: { attemptId, workflowId: snapshot.workflowId },
+      });
+    }
+  }
+
   const genResult = { snapshot };
   if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 

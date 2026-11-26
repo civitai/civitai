@@ -3101,6 +3101,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // (capped). Present ⇒ the token was already used, so the submit is refused as a replay.
     // See `src/server/services/blocks/github-actions-oidc.service.ts`.
     ACTIONS_OIDC_JTI: 'blocks:actions-oidc-jti',
+    // One-use marker for a recipe-runner block token at submit: `${RUNNER_SUBMIT_JTI}:${jti}`, SET NX
+    // with the token's lifetime as TTL. The attempt ledger bounds a replay if it is evicted.
+    RUNNER_SUBMIT_JTI: 'blocks:runner-submit-jti',
     // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
     // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
     // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT

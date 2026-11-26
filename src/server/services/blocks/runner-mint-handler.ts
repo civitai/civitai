@@ -184,7 +184,11 @@ export async function handleRunnerMint(
     buzzBudget: grant.buzzBudget,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     viewerBrowsingLevel: await deps.viewerLevel(user.id),
-    runner: { runId: grant.runId },
+    runner: {
+      runId: grant.runId,
+      authorizationId: grant.authorizationId,
+      runKey: parsed.data.runner.runKey,
+    },
   });
   logToAxiom({
     name: 'block-token-runner-mint',

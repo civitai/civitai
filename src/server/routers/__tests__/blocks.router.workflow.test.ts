@@ -140,6 +140,25 @@ const {
 // divergence, so a flat "no divergence" line can be told apart from a detector
 // that never ran. Mocked so the outcome label is assertable; the real emitter is
 // fail-soft and would swallow everything silently.
+// The recipe runner's attempt ledger runs over real SQL (the applied migration) in PGlite.
+const { runnerPg, runnerFlag } = vi.hoisted(() => ({
+  runnerPg: { current: null as import('@electric-sql/pglite').PGlite | null },
+  runnerFlag: { offlineGrant: true },
+}));
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { kyselyWrite: pgliteKysely(() => runnerPg.current!) };
+});
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  return {
+    ...actual,
+    isFlipt: async (flag: string, ...rest: unknown[]) =>
+      flag === actual.FLIPT_FEATURE_FLAGS.OAUTH_OFFLINE_GRANT
+        ? runnerFlag.offlineGrant
+        : (actual.isFlipt as (...a: unknown[]) => Promise<boolean>)(flag, ...rest),
+  };
+});
 const { mockRecordStepPriceCheck, mockRecordSubmitFailure } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
   mockRecordSubmitFailure: vi.fn((_label: string, _reason: string) => undefined),
@@ -1015,13 +1034,29 @@ beforeEach(() => {
 });
 
 describe('runner block tokens (mintOrigin: runner)', () => {
-  it('submitWorkflow verifies with the runner opt-in, then refuses until runner submit exists', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims({ mintOrigin: 'runner' }));
+  it('submitWorkflow verifies with the runner opt-in, and refuses any kind but customComfy', async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        mintOrigin: 'runner',
+        runId: 'run_1',
+        authorizationId: 'rra_1',
+        runKey: 'run_1',
+      })
+    );
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
-      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'runner submit is not available' });
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'run_1' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'runner submit refused: kind' });
     expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok', { admitRunner: true });
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses runnerSlots on an ordinary token', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody(), runnerSlots: [] })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
@@ -6590,6 +6625,221 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       await expect(
         caller().estimateWorkflow({ blockToken: 'tok', body: ccBody() })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+  });
+
+  describe('submitWorkflow — recipe runner', () => {
+    const RUNNER_CLIENT = 'rcl_test';
+    const RUN = 'run_t1';
+    const LEDGER_MIGRATION =
+      'packages/civitai-db-schema/prisma/migrations/20271204120000_recipe_runner_ledger/migration.sql';
+
+    function runnerClaims(over: Record<string, unknown> = {}) {
+      return ccPageClaims({
+        blockInstanceId: `rbi_${RUNNER_CLIENT}`,
+        mintOrigin: 'runner',
+        runId: RUN,
+        authorizationId: 'rra_t',
+        runKey: RUN,
+        jti: 'jti_runner',
+        ...over,
+      });
+    }
+
+    async function authorizedHashes() {
+      const { runnerBindingHashes } = await import('~/server/services/blocks/runner-binding');
+      const { buildCustomComfyWorkflowInput } = await import(
+        '~/server/services/blocks/workflow.service'
+      );
+      const { getRecipe } = await import('~/server/services/blocks/recipes');
+      const recipe = getRecipe('seamless-pano-360')!;
+      const body = ccBody();
+      const r = runnerBindingHashes(body as never, [], {
+        ceiling: recipe.budgetFor(recipe.paramSchema.parse(body.params)).maxBuzz,
+        resources: buildCustomComfyWorkflowInput(recipe, body.params, {}).resources,
+      });
+      if (!r.ok) throw new Error(r.refusal);
+      return r.hashes;
+    }
+
+    async function attemptRows() {
+      return (
+        await runnerPg.current!.query<{
+          state: string;
+          workflow_id: string | null;
+          reserved_amount: number;
+        }>(
+          `SELECT state, workflow_id, reserved_amount FROM runner_run_attempts ORDER BY attempt_no`
+        )
+      ).rows;
+    }
+
+    beforeEach(async () => {
+      const { PGlite } = await import('@electric-sql/pglite');
+      const { readFileSync } = await import('node:fs');
+      runnerPg.current = new PGlite();
+      runnerFlag.offlineGrant = true;
+      await runnerPg.current.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY);
+        CREATE TABLE "OauthClient" (id text PRIMARY KEY, "userId" int, "isConfidential" boolean,
+          "skipConsent" boolean, grants text[], "accessMode" text);
+        CREATE TABLE app_blocks (id text PRIMARY KEY, app_id text, block_id text, status text);
+        CREATE TABLE "OauthConsent" (id serial PRIMARY KEY, "userId" int, "clientId" text,
+          "offlineGrantedAt" timestamp(3));
+        INSERT INTO "User" VALUES (42);
+        INSERT INTO "OauthClient" VALUES ('${RUNNER_CLIENT}', -1, true, false, '{authorization_code}', 'open');
+        INSERT INTO app_blocks VALUES ('apb_test', 'app_test', 'blk_test', 'approved');
+      `);
+      await runnerPg.current.exec(readFileSync(LEDGER_MIGRATION, 'utf8'));
+      const h = await authorizedHashes();
+      await runnerPg.current.query(
+        `INSERT INTO runner_client_bindings (runner_client_id, app_block_id, created_by_user_id)
+           VALUES ($1, 'apb_test', 1)`,
+        [RUNNER_CLIENT]
+      );
+      await runnerPg.current.query(
+        `INSERT INTO "OauthConsent" ("userId", "clientId", "offlineGrantedAt", "offlineBuzzLimit", "offlineBuzzPeriod")
+           VALUES (42, $1, now() - interval '2 days', 1000, 'week')`,
+        [RUNNER_CLIENT]
+      );
+      await runnerPg.current.query(
+        `INSERT INTO runner_run_authorizations (id, user_id, runner_client_id, kind, run_id,
+           recipe_version_hash, params_hash, max_amount_per_run, created_at, expires_at)
+         VALUES ('rra_t', 42, $1, 'single', $2, $3, $4, 200, now() - interval '1 hour', now() + interval '1 hour')`,
+        [RUNNER_CLIENT, RUN, h.recipeVersionHash, h.paramsHash]
+      );
+      dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({
+        status: 'approved',
+        approvedScopes: ['ai:write:budgeted'],
+        app: { user: { bannedAt: null } },
+        appListing: null,
+      } as never);
+    });
+    afterEach(async () => {
+      await runnerPg.current?.close();
+      runnerPg.current = null;
+    });
+
+    const submit = (over: Record<string, unknown> = {}) =>
+      caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: RUN, ...over });
+
+    it('submits once, with tips forced to zero, and records the attempt as submitted', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      const result = await submit();
+      expect(result.snapshot.workflowId).toBe('wf_cc_1');
+      expect(result).toMatchObject({ runner: { state: 'submitted' } });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.tips).toEqual({ civitai: 0, creators: 0 });
+      expect(await attemptRows()).toEqual([
+        { state: 'submitted', workflow_id: 'wf_cc_1', reserved_amount: 90 },
+      ]);
+    });
+
+    it('an ambiguous failure holds the attempt as unknown and refunds no leg', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      mockSubmitWorkflow.mockRejectedValue(new Error('socket hang up'));
+      const result = await submit();
+      expect(result).toMatchObject({ runner: { state: 'unknown' } });
+      expect((await attemptRows()).map((r) => r.state)).toEqual(['unknown']);
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+    });
+
+    it('a definite orchestrator refusal refunds the attempt and the Redis legs', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      const refused = new TRPCError({ code: 'BAD_REQUEST', message: 'invalid workflow' });
+      annotateOrchestratorSubmitFailure(refused, { attempt: 1, status: 400 });
+      mockSubmitWorkflow.mockRejectedValue(refused);
+      const result = await submit();
+      expect(result).toMatchObject({ runner: { state: 'refunded' } });
+      expect((await attemptRows()).map((r) => r.state)).toEqual(['refunded']);
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        90
+      );
+    });
+
+    it('a request that does not match its authorization is refused before any spend, without using the token', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      mockRedis.set.mockClear();
+      await expect(
+        submit({ body: ccBody({ params: { prompt: 'something else', engine: 'zimage-turbo' } }) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'runner submit refused: binding' });
+      expect(await attemptRows()).toEqual([]);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockRedis.set).not.toHaveBeenCalledWith(
+        expect.stringContaining('runner-submit-jti'),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it('refuses a replayed token', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      mockRedis.set.mockResolvedValueOnce(null as never);
+      await expect(submit()).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'runner submit refused: replay',
+      });
+      expect(await attemptRows()).toEqual([]);
+    });
+
+    it('refuses an idempotency key other than the run', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      await expect(submit({ idempotencyKey: 'other' })).rejects.toMatchObject({
+        message: 'runner submit refused: idempotency',
+      });
+    });
+
+    it('refuses when the app block lost its spend scope, or its publisher is banned', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      dbMock.dbWrite.appBlock.findUnique.mockResolvedValueOnce({
+        status: 'approved',
+        approvedScopes: ['user:read:self'],
+        app: { user: { bannedAt: null } },
+        appListing: null,
+      } as never);
+      await expect(submit()).rejects.toMatchObject({
+        message: 'runner submit refused: approved_scopes',
+      });
+      dbMock.dbWrite.appBlock.findUnique.mockResolvedValueOnce({
+        status: 'approved',
+        approvedScopes: ['ai:write:budgeted'],
+        app: { user: { bannedAt: new Date() } },
+        appListing: null,
+      } as never);
+      await expect(submit()).rejects.toMatchObject({
+        message: 'runner submit refused: publisher_banned',
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('refuses while the offline-grant flag is off', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      runnerFlag.offlineGrant = false;
+      await expect(submit()).rejects.toMatchObject({
+        message: 'runner submit refused: offline_flag',
+      });
+    });
+
+    it('a second submit for a run that already has a live attempt is refused by the ledger', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      await submit();
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims({ jti: 'jti_runner_2' }));
+      happyCcResources();
+      await expect(submit()).rejects.toMatchObject({
+        message: 'runner submit refused: run_live',
+      });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
     });
   });
 

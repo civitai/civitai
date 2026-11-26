@@ -404,7 +404,12 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
   });
 
   it('[REG] refuses a runner token by default, and admits it only on opt-in', async () => {
-    const token = await signRaw({ mintOrigin: 'runner', runId: 'run_x' });
+    const token = await signRaw({
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+    });
     expect(await verifyBlockToken(token)).toBeNull();
     expect(await verifyBlockToken(token, { admitRunner: false })).toBeNull();
     const admitted = await verifyBlockToken(token, { admitRunner: true });
@@ -412,26 +417,47 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(admitted?.mintOrigin).toBe('runner');
   });
 
-  it('[REG] a runner token needs a runId, and a runId needs the runner marker', async () => {
-    for (const runId of [undefined, '', 7]) {
+  it('[REG] a runner token needs its run claims, and each run claim needs the runner marker', async () => {
+    const runner = {
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+    };
+    for (const claim of ['runId', 'authorizationId', 'runKey'] as const) {
+      for (const value of [undefined, '', 7]) {
+        expect(
+          await verifyBlockToken(await signRaw({ ...runner, [claim]: value }), {
+            admitRunner: true,
+          }),
+          `${claim}=${JSON.stringify(value)}`
+        ).toBeNull();
+      }
       expect(
-        await verifyBlockToken(await signRaw({ mintOrigin: 'runner', runId }), {
-          admitRunner: true,
-        }),
-        `runId=${JSON.stringify(runId)}`
+        await verifyBlockToken(await signRaw({ [claim]: runner[claim] }), { admitRunner: true }),
+        `${claim} without the marker`
       ).toBeNull();
     }
-    expect(
-      await verifyBlockToken(await signRaw({ runId: 'run_x' }), { admitRunner: true })
-    ).toBeNull();
   });
 
   it('[REG] a runner token is refused once older than the runner lifetime, whatever its exp', async () => {
     const now = Math.floor(Date.now() / 1000);
     // Either side of the 180s runner lifetime (civitai/civitai#10543).
-    const old = await signRaw({ mintOrigin: 'runner', runId: 'run_x', iat: now - 240 });
+    const old = await signRaw({
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+      iat: now - 240,
+    });
     expect(await verifyBlockToken(old, { admitRunner: true })).toBeNull();
-    const fresh = await signRaw({ mintOrigin: 'runner', runId: 'run_x', iat: now - 60 });
+    const fresh = await signRaw({
+      mintOrigin: 'runner',
+      runId: 'run_x',
+      authorizationId: 'rra_x',
+      runKey: 'run_x',
+      iat: now - 60,
+    });
     expect(await verifyBlockToken(fresh, { admitRunner: true })).not.toBeNull();
   });
 
@@ -459,9 +485,18 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
       { privateRun: false },
     ]) {
       expect(
-        await verifyBlockToken(await signRaw({ mintOrigin: 'runner', runId: 'run_x', ...extra }), {
-          admitRunner: true,
-        }),
+        await verifyBlockToken(
+          await signRaw({
+            mintOrigin: 'runner',
+            runId: 'run_x',
+            authorizationId: 'rra_x',
+            runKey: 'run_x',
+            ...extra,
+          }),
+          {
+            admitRunner: true,
+          }
+        ),
         JSON.stringify(extra)
       ).toBeNull();
     }
@@ -484,9 +519,17 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     // runner rule and not the subject.
     expect(await verifyBlockToken(await sign({}), { admitRunner: true })).not.toBeNull();
     expect(
-      await verifyBlockToken(await sign({ mintOrigin: 'runner', runId: 'run_x' }), {
-        admitRunner: true,
-      })
+      await verifyBlockToken(
+        await sign({
+          mintOrigin: 'runner',
+          runId: 'run_x',
+          authorizationId: 'rra_x',
+          runKey: 'run_x',
+        }),
+        {
+          admitRunner: true,
+        }
+      )
     ).toBeNull();
   });
 

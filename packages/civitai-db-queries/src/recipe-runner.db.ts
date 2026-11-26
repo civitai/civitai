@@ -54,6 +54,9 @@ export interface RunnerAuthorizationRow {
   runnerClientId: string;
   kind: string;
   runId: string | null;
+  /** The binding hashes a runner submit must reproduce (binding v1). */
+  recipeVersionHash: string;
+  paramsHash: string;
   maxAmountPerRun: number;
   maxRunsPerPeriod: number | null;
   period: string | null;
@@ -109,7 +112,8 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
     authorization: (id) =>
       one<RunnerAuthorizationRow>(sql`
         SELECT id, user_id AS "userId", runner_client_id AS "runnerClientId", kind,
-               run_id AS "runId", max_amount_per_run AS "maxAmountPerRun",
+               run_id AS "runId", recipe_version_hash AS "recipeVersionHash",
+               params_hash AS "paramsHash", max_amount_per_run AS "maxAmountPerRun",
                max_runs_per_period AS "maxRunsPerPeriod", period,
                created_at AS "createdAt", expires_at AS "expiresAt", revoked_at AS "revokedAt"
         FROM runner_run_authorizations WHERE id = ${id}`),

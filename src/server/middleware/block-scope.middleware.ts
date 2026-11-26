@@ -226,6 +226,10 @@ export interface BlockTokenClaims {
   mintOrigin?: 'runner';
   /** The recipe run a runner token was minted for; present exactly when `mintOrigin` is. */
   runId?: string;
+  /** The run authorization a runner token spends under; present exactly when `mintOrigin` is. */
+  authorizationId?: string;
+  /** The single run id or standing trigger id the mint derived `runId` from; likewise. */
+  runKey?: string;
 }
 
 /**
@@ -1137,13 +1141,23 @@ export async function verifyBlockToken(
         // (b) Must be a member of the closed set.
         if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
       }
-      if (claims.runId !== undefined && claims.mintOrigin === undefined) return null;
+      if (
+        claims.mintOrigin === undefined &&
+        (claims.runId !== undefined ||
+          claims.authorizationId !== undefined ||
+          claims.runKey !== undefined)
+      ) {
+        return null;
+      }
       if (claims.mintOrigin !== undefined) {
         // Runner tokens carry none of the dev/review/private-run/anonymous markers.
         if (claims.mintOrigin !== 'runner') return null;
         if (options.admitRunner !== true) return null;
         if (claims.sub === ANON_SUBJECT) return null;
         if (typeof claims.runId !== 'string' || claims.runId === '') return null;
+        if (typeof claims.authorizationId !== 'string' || claims.authorizationId === '')
+          return null;
+        if (typeof claims.runKey !== 'string' || claims.runKey === '') return null;
         if (
           claims.dev !== undefined ||
           claims.reviewRunForReal !== undefined ||
