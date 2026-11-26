@@ -59,8 +59,8 @@ export async function assertMayLoosenImages(
   });
 }
 
-/** `assertMayLoosenImages` for a moderator. Anyone else gets the refusal of a write they may not
- *  make, which does not say why. */
+/** A moderator goes through `assertMayLoosenImages`. Anyone else is refused, without a reason,
+ *  only for an image withheld from a moderator without the grant. */
 export async function assertMayLoosenImagesAs(
   imageIds: number[],
   { isModerator, csamReview }: { isModerator?: boolean; csamReview: boolean }

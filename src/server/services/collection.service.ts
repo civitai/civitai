@@ -3080,7 +3080,7 @@ export const updateCollectionItemsStatus = async ({
   if (status === CollectionItemStatus.ACCEPTED && collectionItemIds.length > 0) {
     const imageItems = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
       SELECT id, "imageId" FROM "CollectionItem"
-      WHERE "collectionId" = ${collectionId} AND id IN (${Prisma.join(collectionItemIds)})
+      WHERE "collectionId" = ${collectionId} AND id = ANY(${collectionItemIds}::int[])
         AND "imageId" IS NOT NULL
     `;
     const imageIds = imageItems.map((item) => item.imageId);

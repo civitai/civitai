@@ -100,7 +100,8 @@ describe('tag.addTagVotes, through the router', () => {
   });
 
   it('records it with the grant', async () => {
-    await downvote(true).catch(() => undefined);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ count: 0 }]);
+    await expect(downvote(true)).resolves.toBeUndefined();
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 });

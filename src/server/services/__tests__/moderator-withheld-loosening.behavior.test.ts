@@ -513,7 +513,7 @@ describe('updateCollectionItemsStatus accepting contest entries', () => {
       const sql = strings.join('?');
       if (!sql.includes('SELECT id, "imageId" FROM "CollectionItem"'))
         return sql.includes('AS state') ? [{ imageId: CLEAN, state: 'scanning' }] : [];
-      const ids = values.find((v) => Array.isArray(v?.values))?.values as number[];
+      const ids = values.find((v) => Array.isArray(v)) as number[];
       return Object.entries(items)
         .filter(([, id]) => ids.includes(id))
         .map(([imageId, id]) => ({ id, imageId: Number(imageId) }));

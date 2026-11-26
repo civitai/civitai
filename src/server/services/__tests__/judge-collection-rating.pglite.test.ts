@@ -7,10 +7,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
-import {
-  CSAM_LINK_TABLES_SQL,
-  WITHHELD_TABLES_SQL,
-} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import { NOTHING_WITHHELD_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 /**
  * A judge's rating in a collection with `judgesApplyBrowsingLevel`, against real rows: it applies
@@ -48,12 +45,7 @@ let raw: ReturnType<typeof pgliteRaw>;
 
 beforeAll(async () => {
   withheld.db = new PGlite();
-  await withheld.db.exec(`
-    ${CSAM_LINK_TABLES_SQL}
-    ${WITHHELD_TABLES_SQL}
-    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, ingestion text, "needsReview" text,
-      "blockedFor" text, "userId" int, "pHash" bigint, "postId" int);
-  `);
+  await withheld.db.exec(NOTHING_WITHHELD_SQL);
   db = new PGlite();
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM

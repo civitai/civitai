@@ -12,10 +12,7 @@ import type * as HomeBlockCache from '~/server/services/home-block-cache.service
 
 const { createNotification } = vi.hoisted(() => ({ createNotification: vi.fn() }));
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
-import {
-  CSAM_LINK_TABLES_SQL,
-  WITHHELD_TABLES_SQL,
-} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import { NOTHING_WITHHELD_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 
 // The withheld rule reads its own database, where nothing is withheld.
 const withheld = vi.hoisted(() => ({ db: null as unknown as PGlite }));
@@ -25,12 +22,7 @@ vi.mock('~/server/db/kyselyDb', () => {
 });
 beforeAll(async () => {
   withheld.db = new PGlite();
-  await withheld.db.exec(`
-    ${CSAM_LINK_TABLES_SQL}
-    ${WITHHELD_TABLES_SQL}
-    CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, ingestion text, "needsReview" text,
-      "blockedFor" text, "userId" int, "pHash" bigint, "postId" int);
-  `);
+  await withheld.db.exec(NOTHING_WITHHELD_SQL);
 }, 60_000);
 
 vi.mock('~/server/services/notification.service', () => ({ createNotification }));

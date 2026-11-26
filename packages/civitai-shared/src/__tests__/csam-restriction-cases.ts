@@ -38,6 +38,14 @@ CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL, "denie
 CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
 `;
 
+/** The whole withheld rule over an empty "Image", for a suite that only needs nothing withheld. */
+export const NOTHING_WITHHELD_SQL = `
+${CSAM_LINK_TABLES_SQL}
+${WITHHELD_TABLES_SQL}
+CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, ingestion text, "needsReview" text,
+  "blockedFor" text, "userId" int, "pHash" bigint, "postId" int);
+`;
+
 const SIBLING = 990900001;
 const SIBLING_OWNER = 990910001;
 const POST = 990920001;
