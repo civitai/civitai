@@ -79,6 +79,7 @@ describe('submitTrainingDataScan', () => {
     expect(dbMock.dbWrite.modelFile.update).toHaveBeenCalledWith({
       where: { id: 56 },
       data: { scanRequestedAt: expect.any(Date) },
+      select: { metadata: true },
     });
     expect(dbMock.dbWrite.modelFile.update.mock.invocationCallOrder[0]).toBeLessThan(
       h.fetch.mock.invocationCallOrder[0]
@@ -112,12 +113,27 @@ describe('submitTrainingDataScan', () => {
         metadata,
         input: { model: 'urn:air:other:other:orchestrator:blob@BLOB1' },
       },
+      // An uploaded zip is rated from its entries (the webhook's extractionRating).
+      {
+        $type: 'archiveExtraction',
+        name: 'extract',
+        input: { sourceUrl: 'urn:air:other:other:orchestrator:blob@BLOB1', maxEntries: 2000 },
+      },
     ]);
     expect(body.callbacks).toEqual([
       expect.objectContaining({
         url: 'https://civitai.example/api/webhooks/model-file-scan-result?token=hook',
       }),
     ]);
+  });
+
+  it("doesn't rate a Studio dataset's zip, whose rating the archive writes", async () => {
+    dbMock.dbWrite.modelFile.update.mockResolvedValue({
+      metadata: { datasetArchive: { status: 'archived' }, nsfwLevel: 4, fullyRated: true },
+    });
+    await submitTrainingDataScan(TARGET);
+    const { body } = h.submitWorkflow.mock.calls[0][0];
+    expect(body.steps.map((s: { $type: string }) => s.$type)).toEqual(['modelClamScan']);
   });
 
   it.each([
