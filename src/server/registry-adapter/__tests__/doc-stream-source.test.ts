@@ -1,17 +1,20 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { DocStreamBlock } from '~/server/registry-adapter/catalog-source';
 import { readDocStreamApps } from '~/server/registry-adapter/catalog-source';
 import { liveDocStreamReadDeps } from '~/server/registry-adapter/catalog-source.live';
 import { docStreamResolvers } from '~/server/registry-adapter/doc-streams';
+import { storeOwnerEligibleWhere } from '~/server/services/blocks/app-listing.service';
 import type { CatalogApp, DocStreamApp } from '~/server/registry-adapter/entities';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 /**
  * The private, per-viewer and level document streams resolve an app from every approved on-site
- * block not deleted (`readDocStreamApps`), whatever its store listing's visibility; the registry
- * export resolves only from the public catalog. `docStreamResolvers` is what `main.ts` wires, so
- * a resolver moved back onto the public catalog fails here. Fixture values are pairwise distinct.
+ * block of an eligible owner (`readDocStreamApps`), whatever its store listing's visibility; the
+ * registry export resolves only from the public catalog. `docStreamResolvers` is what `main.ts`
+ * wires, so a resolver moved back onto the public catalog fails here. Fixture values are pairwise distinct.
  */
 
 const NS = 'urn:schema:apps.civitai.com';
@@ -194,28 +197,51 @@ describe('readDocStreamApps', () => {
 
 /**
  * The live read (`liveDocStreamReadDeps`): the block query is answered by a stand-in that honours
- * its `where`, so the filter itself decides which fixture rows come back.
+ * its `where`, so the filter itself decides which fixture rows come back; the owner query runs,
+ * unmodified, on PGlite over the same rows, so the store's owner rule itself decides.
  */
 describe('liveDocStreamReadDeps → readDocStreamApps → the resolvers', () => {
+  const ACTIVE_OWNER = 9101;
+  const BANNED_OWNER = 9202;
+  const DELETED_OWNER = 9303;
+
   type Row = ReturnType<typeof blockRow> & {
     externalUrl: string | null;
     appListing: { contentRating: string | null } | null;
+    ownerId: number;
   };
   let rows: Row[];
-  let deletedIds: string[];
-  let rawError: unknown;
+  let pg: PGlite;
+  const ownerStatements: Prisma.Sql[] = [];
 
   const row = (slug: string, id: string, over: Partial<Row> = {}): Row => ({
     ...blockRow(slug, id),
     externalUrl: null,
     appListing: { contentRating: 'pg13' },
+    ownerId: ACTIVE_OWNER,
     ...over,
   });
 
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "User" (id integer PRIMARY KEY, "bannedAt" timestamptz, "deletedAt" timestamptz);
+      CREATE TABLE "OauthClient" (id text PRIMARY KEY, "userId" integer NOT NULL);
+      CREATE TABLE app_blocks (id text PRIMARY KEY, app_id text NOT NULL, status text NOT NULL);
+      INSERT INTO "User" (id, "bannedAt", "deletedAt") VALUES
+        (${ACTIVE_OWNER}, NULL, NULL),
+        (${BANNED_OWNER}, now() - interval '1 hour', NULL),
+        (${DELETED_OWNER}, NULL, now() - interval '1 hour');
+    `);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pg.close();
+  });
+
   beforeEach(() => {
-    rawError = undefined;
-    deletedIds = [];
     rows = [];
+    ownerStatements.length = 0;
     dbMock.dbRead.appBlock.findMany.mockImplementation(
       async ({
         where,
@@ -229,10 +255,21 @@ describe('liveDocStreamReadDeps → readDocStreamApps → the resolvers', () => 
           .filter((r) => !('externalUrl' in where) || r.externalUrl === where.externalUrl)
           .map((r) => Object.fromEntries(Object.keys(select).map((k) => [k, r[k as keyof Row]])))
     );
-    dbMock.dbRead.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
-      expect(strings.join('?')).toContain('storage_deleted_at IS NOT NULL');
-      if (rawError) throw rawError;
-      return deletedIds.map((id) => ({ id }));
+    dbMock.dbRead.$queryRaw.mockImplementation(async (query: Prisma.Sql) => {
+      ownerStatements.push(query);
+      await pg.exec('TRUNCATE app_blocks, "OauthClient"');
+      for (const r of rows) {
+        await pg.query('INSERT INTO "OauthClient" (id, "userId") VALUES ($1, $2)', [
+          `oc_${r.id}`,
+          r.ownerId,
+        ]);
+        await pg.query('INSERT INTO app_blocks (id, app_id, status) VALUES ($1, $2, $3)', [
+          r.id,
+          `oc_${r.id}`,
+          r.status,
+        ]);
+      }
+      return (await pg.query(query.text, query.values as unknown[])).rows;
     });
     dbMock.dbRead.appBlockPublishRequest.findMany.mockImplementation(
       async ({ where }: { where: { appBlockId: { in: string[] } } }) =>
@@ -275,37 +312,47 @@ describe('liveDocStreamReadDeps → readDocStreamApps → the resolvers', () => 
     }
   });
 
-  it('🔴 an unapproved, suspended, external or storage-deleted block resolves on none', async () => {
+  it('🔴 an unapproved, suspended or external block resolves on none', async () => {
     rows = [
       row('pending-app', 'ab_pending_1', { status: 'pending' }),
       row('suspended-app', 'ab_suspended_2', { status: 'suspended' }),
       row('external-app', 'ab_external_3', { externalUrl: 'https://example.test/app' }),
-      row('deleted-app', 'ab_deleted_4'),
       // Positive control: the one row that must come back.
       row('kept-app', 'ab_kept_5'),
     ];
-    deletedIds = ['ab_deleted_4'];
     const r = await resolveAll();
     expect(r.ids).toEqual(['ab_kept_5']);
     expect(await r.private('kept-app')).toMatchObject({ appId: 'ab_kept_5' });
-    for (const slug of ['pending-app', 'suspended-app', 'external-app', 'deleted-app']) {
+    for (const slug of ['pending-app', 'suspended-app', 'external-app']) {
       expect(await r.private(slug)).toBeNull();
       expect(await r.level(slug)).toBeNull();
       expect(await r.viewer(slug)).toBeNull();
     }
   });
 
-  it('the deletion column not yet applied (42703): no block is read as deleted', async () => {
-    rows = [row('kept-app', 'ab_kept_5')];
-    rawError = Object.assign(new Error('column "storage_deleted_at" does not exist'), {
-      code: '42703',
-    });
-    expect((await resolveAll()).ids).toEqual(['ab_kept_5']);
+  it('🔴 an approved block whose owner is banned or deleted resolves on none', async () => {
+    rows = [
+      row('banned-app', 'ab_banned_6', { ownerId: BANNED_OWNER }),
+      row('gone-app', 'ab_gone_7', { ownerId: DELETED_OWNER }),
+      // Positive control: identical but for its owner.
+      row('owned-app', 'ab_owned_8'),
+    ];
+    const r = await resolveAll();
+    expect(r.ids).toEqual(['ab_owned_8']);
+    expect(await r.private('owned-app')).toMatchObject({ appId: 'ab_owned_8' });
+    expect(await r.level('owned-app')).toMatchObject({ appId: 'ab_owned_8' });
+    expect(await r.viewer('owned-app')).toMatchObject({ appId: 'ab_owned_8' });
+    for (const slug of ['banned-app', 'gone-app']) {
+      expect(await r.private(slug)).toBeNull();
+      expect(await r.level(slug)).toBeNull();
+      expect(await r.viewer(slug)).toBeNull();
+    }
   });
 
-  it('🔴 any other failure reading the deletions fails the read: a deleted app never resolves by default', async () => {
-    rows = [row('deleted-app', 'ab_deleted_4')];
-    rawError = Object.assign(new Error('connection reset'), { code: '08006' });
-    await expect(readDocStreamApps(liveDocStreamReadDeps())).rejects.toThrow('connection reset');
+  it('the owner rule is the store’s own, applied to the canonical owner (the app’s OauthClient)', async () => {
+    rows = [row('owned-app', 'ab_owned_8')];
+    await resolveAll();
+    expect(ownerStatements).toHaveLength(1);
+    expect(ownerStatements[0].sql).toContain(storeOwnerEligibleWhere(Prisma.sql`oc."userId"`).sql);
   });
 });

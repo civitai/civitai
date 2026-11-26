@@ -4,9 +4,10 @@
  *     entity: the app is listed in the public catalog, its block is approved, its enforced
  *     manifest opts the collection in (`registry: "public"`), and the major exists;
  *   - the private, per-viewer and level streams, from the document-stream read
- *     (`readDocStreamApps`): every approved on-site app not deleted, whatever its store listing's
- *     visibility. Those streams decide access themselves (their gates, `decide`, the token's
- *     claims), so the public listing is not their gate. {@link docStreamResolvers} wires both.
+ *     (`readDocStreamApps`): every approved on-site app of an eligible owner, whatever its
+ *     listing's visibility or status. Those streams decide access themselves (their gates,
+ *     `decide`, the token's claims), so the public listing is not their gate.
+ *     {@link docStreamResolvers} wires both.
  */
 import type { CatalogApp, DocStreamApp } from '~/server/registry-adapter/entities';
 import { appContentRating } from '~/server/registry-adapter/entities';

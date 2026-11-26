@@ -331,8 +331,8 @@ export type DocStreamBlock = CatalogBlock & { listingContentRating: string | nul
 
 export type DocStreamReadDeps = {
   /**
-   * Every approved, on-site block whose app is not deleted, whatever its store listing's
-   * visibility or whether it has one. Never an off-site (external) block.
+   * Every approved, on-site block whose owner is not banned or deleted, whatever its store
+   * listing's visibility or whether it has one. Never an off-site (external) block.
    */
   loadResolvableBlocks: () => Promise<DocStreamBlock[]>;
   loadApproved: CatalogReadDeps['loadApproved'];
@@ -340,10 +340,18 @@ export type DocStreamReadDeps = {
 
 /**
  * One read of the apps the private, per-viewer and level document streams resolve from
- * (`doc-streams.ts`). Unlike {@link readCatalog} it is NOT the public catalog: an approved app
- * whose listing is visible to moderators only, a cohort, or nobody resolves here, because those
- * streams make their own access decisions. Nothing read here is published as an entity, and the
- * registry export (`resolveFromCatalog`) stays on the public catalog.
+ * (`doc-streams.ts`). Unlike {@link readCatalog} it is NOT the public catalog: those streams make
+ * their own access decisions, so the block's status is the gate. Nothing read here is published
+ * as an entity, and the registry export (`resolveFromCatalog`) stays on the public catalog.
+ *
+ * Differences from the public catalog, each deliberate:
+ *   - the listing's visibility (moderators, private, cohort) is not a gate;
+ *   - the listing's status (draft, pending, rejected, removed) is not a gate, and an app with no
+ *     listing resolves;
+ *   - a block that has never deployed resolves;
+ *   - the public-catalog kill switch does not stop these streams.
+ * What still applies: the block is approved and on-site, and its owner is not banned or deleted
+ * (the store's owner rule).
  */
 export async function readDocStreamApps(deps: DocStreamReadDeps): Promise<DocStreamApp[]> {
   const blocks = await deps.loadResolvableBlocks();

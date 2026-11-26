@@ -2,6 +2,7 @@
  * The real reads behind {@link CatalogReadDeps} and {@link DocStreamReadDeps}. Read-only: the
  * catalog through the store's own listing service, everything else through the read client.
  */
+import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import type {
   CatalogReadDeps,
@@ -30,6 +31,7 @@ import {
   publicBetaMessage,
   publicConnectClientId,
   publicForkable,
+  storeOwnerEligibleWhere,
 } from '~/server/services/blocks/app-listing.service';
 import {
   actionsRunSourceBlockId,
@@ -45,10 +47,7 @@ import { readListingBetaManyForRender } from '~/server/services/blocks/app-listi
 import type { StoreSubListingRow } from '~/server/services/blocks/app-sub-listing-store.service';
 import { readStoreSubListingsOfParents } from '~/server/services/blocks/app-sub-listing-store.service';
 import { readListingIssueTrackerUrlsForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
-import {
-  isMissingColumnError,
-  readListingSourceRepoUrls,
-} from '~/server/services/blocks/app-listing-source-repo.service';
+import { readListingSourceRepoUrls } from '~/server/services/blocks/app-listing-source-repo.service';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -171,30 +170,29 @@ async function loadApprovedRequests(appBlockIds: string[]) {
 }
 
 /**
- * The ids of the blocks whose app was deleted (`app_blocks.storage_deleted_at`, a no-type column
- * read by raw SQL only). Its manual-apply migration absent, no app can have been deleted that way,
- * so the set is empty; any other failure fails the read, so a deleted app never resolves because
- * the deletion could not be read.
+ * The ids of the approved blocks whose owner may still have apps in the store: the store's owner
+ * rule (`storeOwnerEligibleWhere`: not banned, not deleted) applied to the block's canonical owner,
+ * its app's `OauthClient.userId` (`resolveCanonicalListingOwner`, on-site with a block). A banned
+ * or deleted owner's apps resolve on no document stream, as they leave the store.
  */
-async function readStorageDeletedBlockIds(): Promise<Set<string>> {
-  try {
-    const rows = await dbRead.$queryRaw<{ id: string }[]>`
-      SELECT id FROM app_blocks WHERE storage_deleted_at IS NOT NULL`;
-    return new Set(rows.map((r) => r.id));
-  } catch (err) {
-    if (isMissingColumnError(err)) return new Set();
-    throw err;
-  }
+async function readOwnerEligibleBlockIds(): Promise<Set<string>> {
+  const rows = await dbRead.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT ab.id FROM app_blocks ab
+    JOIN "OauthClient" oc ON oc.id = ab.app_id
+    WHERE ab.status = 'approved'
+      AND ${storeOwnerEligibleWhere(Prisma.sql`oc."userId"`)}`);
+  return new Set(rows.map((r) => r.id));
 }
 
 /**
- * The real reads behind {@link DocStreamReadDeps}: every approved, on-site block not deleted,
- * with its listing's rating, whatever the listing's visibility. Read-only, through the read client.
+ * The real reads behind {@link DocStreamReadDeps}: every approved, on-site block whose owner is
+ * eligible, with its listing's rating, whatever the listing's visibility. Read-only, through the
+ * read client.
  */
 export function liveDocStreamReadDeps(): DocStreamReadDeps {
   return {
     async loadResolvableBlocks() {
-      const [rows, deleted] = await Promise.all([
+      const [rows, eligible] = await Promise.all([
         dbRead.appBlock.findMany({
           where: { status: 'approved', externalUrl: null },
           select: {
@@ -207,12 +205,12 @@ export function liveDocStreamReadDeps(): DocStreamReadDeps {
             appListing: { select: { contentRating: true } },
           },
         }),
-        readStorageDeletedBlockIds(),
+        readOwnerEligibleBlockIds(),
       ]);
       return rows.flatMap(({ appListing, ...block }) =>
-        deleted.has(block.id)
-          ? []
-          : [{ ...block, listingContentRating: appListing?.contentRating ?? null }]
+        eligible.has(block.id)
+          ? [{ ...block, listingContentRating: appListing?.contentRating ?? null }]
+          : []
       );
     },
     loadApproved: loadApprovedRequests,
