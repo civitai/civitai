@@ -370,7 +370,7 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
 
   it.each([
     ['the scan flagged it', transcribed('Rain.', { flagged: true })],
-    ['it has no audio', transcribed('', { hasAudio: false })],
+    ['it has no audio', transcribed('Rain.', { hasAudio: false })],
     ['the transcript is blank', transcribed('  ')],
   ])('saves nothing when %s', async (_, parsed) => {
     dbMock.dbWrite.trackLyrics.findUnique.mockReset().mockResolvedValue(null);
@@ -391,12 +391,23 @@ describe("a clean song without lyrics, and the scan's transcript", () => {
     expect(dbMock.dbWrite.trackLyrics.createMany).not.toHaveBeenCalled();
   });
 
+  it('aligns nothing when no transcript was saved', async () => {
+    dbMock.dbWrite.trackLyrics.createMany.mockResolvedValue({ count: 0 } as never);
+
+    await run(transcribed('Rain.'), pending);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(orchestrator.align).not.toHaveBeenCalled();
+  });
+
   it('decides the song on its audio alone when the save fails', async () => {
     dbMock.dbWrite.trackLyrics.createMany.mockRejectedValue(new Error('db down'));
     dbMock.dbWrite.trackLyrics.findUnique.mockReset().mockResolvedValue(null);
 
     await run(transcribed('Rain.'), pending);
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
+    expect(orchestrator.align).not.toHaveBeenCalled();
     expect(lyricsScan.submit).not.toHaveBeenCalled();
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })

@@ -141,8 +141,7 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
   const image = await loadImageForScan(imageId);
   let lyrics = await readLyricsVerdict(imageId);
   if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return;
-  // A clean song without lyrics takes the scan's transcript, which then waits on its own scan. Only
-  // while the song is undecided: the lyrics verdict decides only such a song (above).
+  // Only while undecided: the lyrics verdict decides only such a song (above).
   if (
     !fromLyrics &&
     UNDECIDED.includes(image.ingestion) &&
