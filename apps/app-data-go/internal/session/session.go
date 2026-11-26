@@ -317,8 +317,9 @@ type Ack struct {
 	// URN is "" when the answer named no recordId.
 	URN  string
 	Body json.RawMessage
-	// Version, CreatedAt and UpdatedAt are a shared document's, as the write answered them (read by
-	// package shared's overlays; a private stream's entities carry none).
+	// Version is the document's store version as the write answered it: a private overlay carries it
+	// (Entity.Version, so a read-back answers the version the next write's ifVersion must name), and
+	// package shared's overlays read it. CreatedAt and UpdatedAt are a shared document's only.
 	Version              int64
 	CreatedAt, UpdatedAt string
 }
@@ -502,6 +503,7 @@ type overlay struct {
 	urn     string // the record's URN; "" when unknown
 	deleted bool
 	body    json.RawMessage
+	version int64     // the document's store version, as the write answered it; 0 when unknown
 	until   time.Time // dropped at this time, whether or not the stream caught up
 }
 
@@ -726,7 +728,7 @@ func (s *session) ack(a Ack, until time.Time, maxRecords, maxBytes int) (string,
 	kind := OverlayRecord
 	switch {
 	case !a.Deleted:
-		ov.urn, ov.body = a.URN, a.Body
+		ov.urn, ov.body, ov.version = a.URN, a.Body, a.Version
 	case had:
 		ov.urn, kind = prev.urn, OverlayDeleteMarker
 	case hasBase:
@@ -865,7 +867,7 @@ func (s *session) view(now time.Time) []registry.Entity {
 	for k, ov := range s.overlays {
 		if !ov.deleted {
 			// Opaque, and new at every write.
-			out = append(out, registry.Entity{URN: ov.urn, Key: k, Rev: "seq." + strconv.FormatInt(ov.seq, 10), Body: ov.body, Seq: ov.seq})
+			out = append(out, registry.Entity{URN: ov.urn, Key: k, Rev: "seq." + strconv.FormatInt(ov.seq, 10), Body: ov.body, Seq: ov.seq, Version: ov.version})
 		}
 	}
 	slices.SortFunc(out, func(a, b registry.Entity) int {
