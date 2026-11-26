@@ -9,7 +9,6 @@ vi.mock('@civitai/orchestration-client', async () => ({
   WorkflowStatus: {},
   TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },
 }));
-vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 
 const { createXGuardModerationRequest } = await import(
   '~/server/services/orchestrator/orchestrator.service'

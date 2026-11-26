@@ -1,24 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as ImageService from '~/server/services/image.service';
-import type * as SignalClient from '~/utils/signal-client';
-
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageService>()),
-  queueImageSearchIndexUpdate: vi.fn(() => Promise.resolve()),
-}));
-// The owner's editor is told of the new level through the signals service.
-vi.mock('~/utils/signal-client', async (importOriginal) => ({
-  ...(await importOriginal<typeof SignalClient>()),
-  signalClient: { send: vi.fn(async () => undefined) },
-}));
-vi.mock('../../../../event-engine-common/services/metrics', () => ({
-  MetricService: class {
-    fetch = vi.fn();
-  },
-}));
-vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
-vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
-
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
@@ -64,7 +44,9 @@ beforeEach(() => {
     'coverImageId' in where
       ? { imageId: SONG }
       : { coverImage: { ...coverRow(), postId: null } }) as never);
-  dbMock.dbWrite.image.findUnique.mockResolvedValue(songRow as never);
+  // What follows a rating is the scan side effects' own subject: the song's later read finds
+  // nothing, so none run here.
+  dbMock.dbWrite.image.findUnique.mockReset().mockResolvedValueOnce(songRow as never);
   dbMock.dbWrite.entityModeration.findMany.mockResolvedValue([]);
   dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 } as never);
 });

@@ -1,32 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as ImageService from '~/server/services/image.service';
-import type * as SignalClient from '~/utils/signal-client';
-
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageService>()),
-  queueImageSearchIndexUpdate: vi.fn(() => Promise.resolve()),
-}));
-// The owner's editor is told of the new level through the signals service.
-vi.mock('~/utils/signal-client', async (importOriginal) => ({
-  ...(await importOriginal<typeof SignalClient>()),
-  signalClient: { send: vi.fn(async () => undefined) },
-}));
-vi.mock('../../../../event-engine-common/services/metrics', () => ({
-  MetricService: class {
-    fetch = vi.fn();
-  },
-}));
-vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
-vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
-
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 
 /**
  * A song's lyrics profanity verdict (XGuard `mode: 'profanity'`): languageLevel 0, 1, 2 rate PG,
- * PG-13, R (decision L6 of the music synced-lyrics feature), null rates nothing, and the song is
- * re-rated with it.
+ * PG-13, R (decision L6 of the music synced-lyrics feature), and null rates nothing. That the
+ * level counts toward the song is `song-rating.test.ts`'s subject.
  */
 
 const SONG = 20;
@@ -70,18 +50,6 @@ describe('a lyrics profanity verdict', () => {
       where: { entityType: 'TrackLyricsLanguage', entityId: SONG, workflowId: 'wf-1' },
       data: { nsfwLevel: level },
     });
-  });
-
-  it('raises the song it rates', async () => {
-    w.entityModeration.findMany.mockResolvedValue([
-      { entityType: 'TrackLyricsLanguage', nsfwLevel: NsfwLevel.R, result: null },
-    ] as never);
-
-    await apply(2);
-
-    expect(w.image.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { nsfwLevel: NsfwLevel.R, nsfwLevelLocked: false } })
-    );
   });
 
   it('stores no level when the scoring failed: not rated is not clean', async () => {
