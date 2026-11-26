@@ -269,7 +269,6 @@ export const orchestratorRouter = router({
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     }),
-  // For sellers only: the deal binds it to one paid request, so it is not a general prompt tool.
   expandServiceDealPrompt: orchestratorEnhanceProcedure
     .use(isFlagProtected('creatorServices'))
     .use(rateLimit({ limit: 60, period: 3600 }))
@@ -282,6 +281,7 @@ export const orchestratorRouter = router({
         instructions: input.instructions,
         token: ctx.token,
         isGreen: ctx.domain === 'green',
+        isModerator: ctx.user.isModerator,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       })
     ),
