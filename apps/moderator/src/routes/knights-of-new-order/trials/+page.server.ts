@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
-import { withheldRows, withheldUrls } from '$lib/server/retracted-media';
+import { withheldRefusal, withheldRows, withheldUrls } from '$lib/server/retracted-media';
 import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import {
   addCoreImage,
@@ -11,6 +11,7 @@ import {
   getFreshItems,
   getSpotCheckItems,
   promoteToCore,
+  referenceImageIds,
   retireReference,
   spotCheckItem,
   updateCoreItem,
@@ -28,6 +29,7 @@ import {
   getYesNoReferences,
   setYesNoReferenceActive,
   updateYesNoReference,
+  yesNoReferenceImageIds,
 } from '$lib/server/knights/yesno-reference.service';
 import {
   getYesNoAxes,
@@ -203,12 +205,16 @@ async function run<S extends z.ZodType>(
   label: string,
   act: (
     input: z.infer<S>
-  ) => Promise<Outcome | { ok: true; agreed: boolean } | { ok: false; error: string }>
+  ) => Promise<Outcome | { ok: true; agreed: boolean } | { ok: false; error: string }>,
+  /** The images the action would grade Acolytes against; refused when any is withheld. */
+  images?: (input: z.infer<S>) => Promise<number[]>
 ) {
   requireAccess(event.locals.user, event.url.pathname);
   const input = parseForm(schema, await event.request.formData());
   if (typeof input === 'string') return fail(400, { error: input });
   try {
+    const refusal = images && (await withheldRefusal(event.locals.user, await images(input)));
+    if (refusal) return fail(403, { error: refusal });
     const result = await act(input);
     if (!result.ok) return fail(409, { error: result.error });
     return { success: true, agreed: 'agreed' in result ? result.agreed : undefined };
@@ -220,24 +226,49 @@ async function run<S extends z.ZodType>(
 
 export const actions: Actions = {
   add: (event) =>
-    run(event, forms.add, 'add the image', ({ image, ...rest }) =>
-      addCoreImage({ ...rest, imageId: image })
+    run(
+      event,
+      forms.add,
+      'add the image',
+      ({ image, ...rest }) => addCoreImage({ ...rest, imageId: image }),
+      async ({ image }) => [image]
     ),
-  update: (event) => run(event, forms.update, 'save the change', updateCoreItem),
+  update: (event) =>
+    run(event, forms.update, 'save the change', updateCoreItem, ({ id }) => referenceImageIds(id)),
   retire: (event) => run(event, forms.retire, 'retire the image', ({ id }) => retireReference(id)),
-  promote: (event) => run(event, forms.promote, 'promote the image', promoteToCore),
-  spotCheck: (event) => run(event, forms.spotCheck, 'record the rating', spotCheckItem),
-  addYesNo: (event) =>
-    run(event, forms.addYesNo, 'add the pair', ({ image, ...rest }) =>
-      addYesNoReference({ ...rest, imageId: image, createdBy: event.locals.user!.id })
+  promote: (event) =>
+    run(event, forms.promote, 'promote the image', promoteToCore, ({ id }) =>
+      referenceImageIds(id)
     ),
+  spotCheck: (event) =>
+    run(event, forms.spotCheck, 'record the rating', spotCheckItem, ({ id }) =>
+      referenceImageIds(id)
+    ),
+  addYesNo: (event) =>
+    run(
+      event,
+      forms.addYesNo,
+      'add the pair',
+      ({ image, ...rest }) =>
+        addYesNoReference({ ...rest, imageId: image, createdBy: event.locals.user!.id }),
+      async ({ image }) => [image]
+    ),
+  // Deactivating only takes a pair out of grading, so it stays open.
   toggleYesNo: (event) =>
-    run(event, forms.toggleYesNo, 'update the pair', ({ id, active }) =>
-      setYesNoReferenceActive(id, active)
+    run(
+      event,
+      forms.toggleYesNo,
+      'update the pair',
+      ({ id, active }) => setYesNoReferenceActive(id, active),
+      async ({ id, active }) => (active ? yesNoReferenceImageIds(id) : [])
     ),
   updateYesNo: (event) =>
-    run(event, forms.updateYesNo, 'save the pair', ({ id, ...rest }) =>
-      updateYesNoReference(id, rest)
+    run(
+      event,
+      forms.updateYesNo,
+      'save the pair',
+      ({ id, ...rest }) => updateYesNoReference(id, rest),
+      ({ id }) => yesNoReferenceImageIds(id)
     ),
   deleteYesNo: (event) =>
     run(event, forms.deleteYesNo, 'delete the pair', ({ id }) => deleteYesNoReference(id)),

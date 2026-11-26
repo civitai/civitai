@@ -75,6 +75,8 @@
       <p class="text-xs text-dark-2">
         Acolytes have answered this pair, so it can't be edited or deleted. Deactivate it to stop serving it.
       </p>
+    {:else if item.restricted}
+      <p class="text-sm text-dark-2">Withheld from you, so its answer is not editable here.</p>
     {:else}
       {#if save.error}<ErrorAlert message={save.error} />{/if}
       <form method="POST" action="?/updateYesNo" use:enhance={save.enhance} class="flex flex-col gap-2">
@@ -108,13 +110,15 @@
     {#if toggle.error}<ErrorAlert message={toggle.error} />{/if}
     {#if remove.error}<ErrorAlert message={remove.error} />{/if}
     <div class="flex flex-wrap gap-2">
-      <form method="POST" action="?/toggleYesNo" use:enhance={toggle.enhance}>
-        <input type="hidden" name="id" value={item.id} />
-        <input type="hidden" name="active" value={String(!item.active)} />
-        <Button type="submit" size="sm" variant="outline" disabled={toggle.submitting}
-          >{item.active ? 'Deactivate' : 'Activate'}</Button
-        >
-      </form>
+      {#if item.active || !item.restricted}
+        <form method="POST" action="?/toggleYesNo" use:enhance={toggle.enhance}>
+          <input type="hidden" name="id" value={item.id} />
+          <input type="hidden" name="active" value={String(!item.active)} />
+          <Button type="submit" size="sm" variant="outline" disabled={toggle.submitting}
+            >{item.active ? 'Deactivate' : 'Activate'}</Button
+          >
+        </form>
+      {/if}
       <form
         bind:this={deleteForm}
         method="POST"
