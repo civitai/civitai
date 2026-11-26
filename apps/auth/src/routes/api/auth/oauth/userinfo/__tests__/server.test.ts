@@ -54,8 +54,8 @@ describe('oauth/userinfo', () => {
     expect(((await res.json()) as { error: string }).error).toBe('invalid_token');
   });
 
-  // Deliberate, per auth's ruling on the runner consent copy ("reads your profile and email"): a
-  // runner token answers here. Do not fold it back into the client-credentials refusal.
+  // Deliberate (civitai/civitai#10562): the runner consent copy says it "reads your profile and
+  // email", so a runner token answers here. Do not fold it back into the client-credentials refusal.
   it('answers for a recipe-runner token (the runner bit lives in the wide column)', async () => {
     token(TokenScope.UserRead, {}, TokenScope.UserRead | TokenScope.RunnerMint);
     const res = await userinfo();

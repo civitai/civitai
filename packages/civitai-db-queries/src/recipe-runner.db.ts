@@ -11,6 +11,27 @@ export interface RunnerClientRow {
   grants: string[];
   accessMode: string;
 }
+/**
+ * A client that may hold runner tokens at all: Civitai-owned (`systemUserId`), confidential,
+ * consented, open (a disabled or testers-only client mints nothing), and no device flow.
+ * `grants` stores the URN; the bare name is refused too, so a hand-written row cannot slip past.
+ * The one copy of this rule: the auth hub's issuance and the main app's mint both call it.
+ */
+export function isRunnerClient(
+  client: RunnerClientRow | null | undefined,
+  systemUserId: number
+): boolean {
+  return (
+    client != null &&
+    client.userId === systemUserId &&
+    client.isConfidential === true &&
+    client.skipConsent === false &&
+    client.accessMode === 'open' &&
+    !client.grants.includes('urn:ietf:params:oauth:grant-type:device_code') &&
+    !client.grants.includes('device_code')
+  );
+}
+
 export interface RunnerBindingRow {
   appBlockId: string;
   status: string;

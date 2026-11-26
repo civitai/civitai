@@ -320,8 +320,9 @@ describe('introspect — active tokens', () => {
   });
 });
 
-// Auth's condition for active:true: the orchestrator grants AI spend only on the literal
-// AIServicesRead/AIServicesWrite scope names, so a runner token's scope must carry neither.
+// Deliberate (civitai/civitai#10562): a runner token reads active:true, on the condition that its
+// scope names neither AIServicesRead nor AIServicesWrite, the only names the orchestrator grants
+// AI spend on.
 describe('introspect — a recipe-runner token', () => {
   it('reads as active, with a scope that names no AIServices permission', async () => {
     const res = await post({
