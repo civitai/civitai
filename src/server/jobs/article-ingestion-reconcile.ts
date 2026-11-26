@@ -1,4 +1,5 @@
-import { sql } from 'kysely';
+import { sql, type Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { createJob } from '~/server/jobs/job';
@@ -287,11 +288,12 @@ export const articleIngestionReconcile = createJob(
  * recompute may have ended it, or written its own fields since.
  */
 async function updateErrorState(
+  db: Kysely<DB>,
   id: number,
   enteredAt: number,
   patch: Partial<ArticleIngestionErrorState>
 ) {
-  await kyselyWrite
+  await db
     .withoutPlugins()
     .updateTable('Article')
     .set({
@@ -313,8 +315,8 @@ async function textCheckOnPrimary(id: number) {
 }
 
 /** Moves an article the job could not act on to the back of the queue, so it cannot block the rest. */
-async function markChecked(id: number, checkedAt: number) {
-  await kyselyWrite
+async function markChecked(db: Kysely<DB>, id: number, checkedAt: number) {
+  await db
     .withoutPlugins()
     .updateTable('Article')
     .set({
@@ -338,21 +340,84 @@ async function runErrorRetries(now: Date) {
   });
 }
 
-/**
- * Published and Processing articles at ingestion Error, which the stuck-article query above does
- * not select. Each episode gets retry rounds on `INGESTION_ERROR_ROUND_DAYS`, then one
- * `article-ingestion-error-exhausted` warning log, and a daily recompute while it stays at Error.
- */
-async function retryErrorArticles(now: Date) {
+type ErrorArticle = {
+  ingestion: ArticleIngestionStatus;
+  userId: number;
+  coverId: number | null;
+  bannerId: number | null;
+  title: string;
+  content: string;
+  metadata: unknown;
+};
+
+/** The retry pass's boundaries: the database, the recompute, the image scanner and the text check. */
+export type ErrorRetryDeps = {
+  db: Kysely<DB>;
+  candidates: (limit: number) => Promise<{ id: number; ingestionError: unknown }[]>;
+  recomputeAndRead: (id: number) => Promise<ErrorArticle | null>;
+  readTextCheck: (
+    id: number
+  ) => Promise<{ status: EntityModerationStatus; retryCount: number } | null>;
+  retryImages: typeof retryArticleErrorImages;
+  resendText: (article: { id: number; title: string; content: string }) => Promise<void>;
+};
+
+const errorRetryDeps: ErrorRetryDeps = {
+  db: kyselyWrite,
   // Least recently checked first, so a backlog of exhausted episodes cannot starve newer ones.
-  const rows = await dbRead.$queryRaw<{ id: number; ingestionError: unknown }[]>`
+  candidates: (limit) => dbRead.$queryRaw<{ id: number; ingestionError: unknown }[]>`
     SELECT a.id, a.metadata->'ingestionError' AS "ingestionError"
     FROM "Article" a
     WHERE a.status IN (${ArticleStatus.Published}::"ArticleStatus", ${ArticleStatus.Processing}::"ArticleStatus")
       AND a.ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
     ORDER BY COALESCE((a.metadata->'ingestionError'->>'checkedAt')::bigint, 0), a.id
-    LIMIT ${ERROR_FETCH_LIMIT}
-  `;
+    LIMIT ${limit}
+  `,
+  recomputeAndRead: async (id) => {
+    // An input that recovered, or a hold a moderator lifted, needs no retry.
+    await updateArticleImageScanStatus([id]);
+    // primary: read-after-write of the recompute above, which may have written the episode.
+    return dbWrite.article.findUnique({
+      where: { id },
+      select: {
+        ingestion: true,
+        userId: true,
+        coverId: true,
+        bannerId: true,
+        title: true,
+        content: true,
+        metadata: true,
+      },
+    });
+  },
+  readTextCheck: textCheckOnPrimary,
+  retryImages: retryArticleErrorImages,
+  resendText: async ({ id, title, content }) => {
+    await submitTextModerationOrScan({
+      entityType: 'Article',
+      entityId: id,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: articleModerationText(title, content),
+          labels: ['nsfw'],
+          priority: 'low',
+          forceRescan: true,
+          rearmRetries: true,
+        }),
+    });
+  },
+};
+
+/**
+ * Published and Processing articles at ingestion Error, which the stuck-article query above does
+ * not select. Each episode gets retry rounds on `INGESTION_ERROR_ROUND_DAYS`, then one
+ * `article-ingestion-error-exhausted` warning log, and a daily recompute while it stays at Error.
+ */
+export async function retryErrorArticles(now: Date, deps: ErrorRetryDeps = errorRetryDeps) {
+  const rows = await deps.candidates(ERROR_FETCH_LIMIT);
   const due = rows
     .filter(
       ({ ingestionError }) =>
@@ -375,21 +440,7 @@ async function retryErrorArticles(now: Date) {
 
   for (const { id } of due) {
     try {
-      // An input that recovered, or a hold a moderator lifted, needs no retry.
-      await updateArticleImageScanStatus([id]);
-      // primary: read-after-write of the recompute above, which may have written the episode.
-      const article = await dbWrite.article.findUnique({
-        where: { id },
-        select: {
-          ingestion: true,
-          userId: true,
-          coverId: true,
-          bannerId: true,
-          title: true,
-          content: true,
-          metadata: true,
-        },
-      });
+      const article = await deps.recomputeAndRead(id);
       if (!article || article.ingestion !== ArticleIngestionStatus.Error) {
         counts.left++;
         continue;
@@ -397,23 +448,33 @@ async function retryErrorArticles(now: Date) {
       // The recompute records an episode for every article it leaves at Error.
       const state = readIngestionErrorState(article.metadata);
       if (!state) {
-        await markChecked(id, checkedAt);
+        await markChecked(deps.db, id, checkedAt);
         continue;
       }
       const step = ingestionErrorStep(state, checkedAt);
 
       if (step === 'exhaust') {
-        await updateErrorState(id, state.enteredAt, ingestionErrorPatch(step, state, checkedAt));
+        await updateErrorState(
+          deps.db,
+          id,
+          state.enteredAt,
+          ingestionErrorPatch(step, state, checkedAt)
+        );
         counts.exhausted++;
         logToAxiom({ name: 'article-ingestion-error-exhausted', type: 'warning', articleId: id });
         continue;
       }
       if (step !== 'round' || imageBudget <= 0) {
-        await updateErrorState(id, state.enteredAt, ingestionErrorPatch('check', state, checkedAt));
+        await updateErrorState(
+          deps.db,
+          id,
+          state.enteredAt,
+          ingestionErrorPatch('check', state, checkedAt)
+        );
         continue;
       }
 
-      const images = await retryArticleErrorImages({
+      const images = await deps.retryImages({
         article: {
           id,
           userId: article.userId,
@@ -433,29 +494,20 @@ async function retryErrorArticles(now: Date) {
       counts.images += images.sent;
 
       const moderation = articleHasText(article.title, article.content)
-        ? await textCheckOnPrimary(id)
+        ? await deps.readTextCheck(id)
         : null;
       const resendText = textCheckSpentRetries(moderation);
       if (resendText) {
-        await submitTextModerationOrScan({
-          entityType: 'Article',
-          entityId: id,
-          force: true,
-          xguard: () =>
-            submitTextModeration({
-              entityType: 'Article',
-              entityId: id,
-              content: articleModerationText(article.title, article.content),
-              labels: ['nsfw'],
-              priority: 'low',
-              forceRescan: true,
-              rearmRetries: true,
-            }),
-        });
+        await deps.resendText({ id, title: article.title, content: article.content });
         counts.texts++;
       }
 
-      await updateErrorState(id, state.enteredAt, ingestionErrorPatch(step, state, checkedAt));
+      await updateErrorState(
+        deps.db,
+        id,
+        state.enteredAt,
+        ingestionErrorPatch(step, state, checkedAt)
+      );
       counts.rounds++;
       logToAxiom({
         name: 'article-ingestion-reconcile',
@@ -474,7 +526,7 @@ async function retryErrorArticles(now: Date) {
         message: `error retry failed: ${(e as Error).message}`,
         articleId: id,
       });
-      await markChecked(id, checkedAt).catch(() => undefined);
+      await markChecked(deps.db, id, checkedAt).catch(() => undefined);
     }
   }
   return counts;

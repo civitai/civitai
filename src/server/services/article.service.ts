@@ -8,10 +8,7 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  TEXT_MODERATION_RETRY_LIMIT,
-  TEXT_MODERATION_RETRY_STATUSES,
-} from '~/server/jobs/text-moderation-retry.constants';
+import { TEXT_MODERATION_RETRY_STATUSES } from '~/server/jobs/text-moderation-retry.constants';
 import {
   hasBlockMarker,
   minorMatureHidden,
@@ -70,6 +67,7 @@ import {
   readIngestionErrorState,
   savedArticleMetadata,
   silentIngestionErrorState,
+  textCheckSpentRetries,
   type ArticleIngestionErrorState,
 } from '~/server/services/article-ingestion.helpers';
 import { articleIngestionErrorReason } from '~/shared/utils/article-ingestion-error';
@@ -2816,8 +2814,8 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       errorImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.Error).length,
       missingImages: errorImages.filter((i) => i.ingestion === ImageIngestionStatus.NotFound)
         .length,
-      textError:
-        required && !!moderation && TEXT_MODERATION_RETRY_STATUSES.includes(moderation.status),
+      // The same rule as the owner's notification: a check still being retried has not failed yet.
+      textError: required && textCheckSpentRetries(moderation),
     }),
   };
 }
@@ -3229,7 +3227,7 @@ export async function recomputeArticleIngestionInTx(
     ? silentIngestionErrorState(Date.now())
     : errorEpisode;
   // A text check the retry job is still retrying is not yet a failure worth telling the owner of.
-  const textSpent = textError && (textModeration?.retryCount ?? 0) >= TEXT_MODERATION_RETRY_LIMIT;
+  const textSpent = hasText && textCheckSpentRetries(textModeration);
   const reason = articleIngestionErrorReason({
     errorImages: errorImages - missingImages,
     missingImages,
@@ -3277,8 +3275,8 @@ export async function recomputeArticleIngestionInTx(
     WHERE id = ${articleId}
   `;
 
-  // Populate post-commit hints. Notifications dedupe via `key`, so re-notifying on repeated
-  // terminal-state recomputes is safe.
+  // Populate post-commit hints. Each notification dedupes by its key (the Error one also by
+  // `episode.notifiedAt`), so repeated recomputes are safe.
   let publishedNotificationUserId: number | null = null;
   let problemsNotification: { userId: number; blockedImages: number; errorImages: number } | null =
     null;
