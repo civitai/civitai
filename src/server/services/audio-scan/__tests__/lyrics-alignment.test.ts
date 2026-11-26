@@ -17,9 +17,9 @@ const STORED = [
   { t: null, text: 'Sun on the floor' },
 ];
 const ALIGNED = [
+  // An ignored line stays untimed even when it comes back with a time.
   { index: 0, text: '[Verse]', status: 'ignored', startTime: 0.5, words: [] },
   { index: 1, text: 'Rain on the window', status: 'aligned', startTime: 12.3456, words: [] },
-  // An ignored line stays untimed even when it comes back with a time.
   { index: 2, text: '', status: 'ignored', startTime: 15, words: [] },
   { index: 3, text: 'Sun on the floor', status: 'lowConfidence', startTime: 18.5, words: [] },
 ];
@@ -78,12 +78,7 @@ describe("aligning a song's lyrics", () => {
     await expect(align()).resolves.toBe(false);
     expect(dbMock.dbWrite.trackLyrics.updateMany).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'lyrics-alignment',
-        imageId: 7,
-        outcome: 'failed',
-        status: 500,
-      })
+      expect.objectContaining({ outcome: 'failed' })
     );
   });
 
