@@ -1,6 +1,13 @@
 import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import { findTrigger, withTrigger } from '$lib/training-trigger';
-import { asNsfwRating, ratingBreakdown, type NsfwRating, type RatingCount } from '$lib/nsfw-rating';
+import {
+  asNsfwRating,
+  isMatureNsfwLevel,
+  nsfwLevelLabel,
+  ratingBreakdown,
+  type NsfwRating,
+  type RatingCount,
+} from '$lib/nsfw-rating';
 export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
 import {
   KOHYA_PARAM_FIELDS,
@@ -278,8 +285,17 @@ export function kohyaSeedCard(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-const STATUS_FILTERS = ['all', 'labeled', 'unlabeled', 'mature', 'failed'] as const;
-/** `rating:<level>` shows the images the upload scan gave that one rating. */
+const STATUS_FILTERS = [
+  'all',
+  'labeled',
+  'unlabeled',
+  'mature',
+  'not-mature',
+  'not-rated',
+  'failed',
+] as const;
+/** `rating:<level>` shows the images the upload scan gave that one rating. `not-mature` and `not-rated`
+ *  are by the v2 verdict. */
 export type DatasetFilter = (typeof STATUS_FILTERS)[number] | `rating:${NsfwRating}`;
 
 export function asDatasetFilter(value: string): DatasetFilter | undefined {
@@ -298,6 +314,47 @@ export function matchesRatingFilter(img: Img, filter: DatasetFilter): boolean | 
   const rating = ratingOfFilter(filter);
   if (!rating) return undefined;
   return isTrainable(img) && asNsfwRating(img.nsfwLevel) === rating;
+}
+
+/** Mature by the v2 verdict when the image has one, else by its upload rating. */
+export function isImgMature(img: Img): boolean {
+  return isTrainable(img) && (img.v2Mature ?? isMatureNsfwLevel(img.nsfwLevel));
+}
+
+/** A tile's rating label: the v2 verdict when the image has one, else its upload rating. */
+export function imgRatingLabel(img: Img): string | undefined {
+  if (img.v2Mature !== undefined) return img.v2Mature ? 'Mature' : 'Not mature';
+  return nsfwLevelLabel(img.nsfwLevel);
+}
+
+/** Under a v2 filter, whether a trainable image matches it; undefined for any other filter. */
+export function matchesVerdictFilter(img: Img, filter: DatasetFilter): boolean | undefined {
+  if (filter === 'not-mature') return isTrainable(img) && img.v2Mature === false;
+  if (filter === 'not-rated') return isTrainable(img) && img.v2Mature === undefined;
+  return undefined;
+}
+
+/** Set each verdict on the image it names, in place: the Data step's label passes hold these same
+ *  objects, so a copy would orphan their results. Whether any image changed. */
+export function setVerdicts(images: Img[], verdicts: Record<string, boolean> | undefined): boolean {
+  let changed = false;
+  for (const img of images) {
+    const verdict = img.blobId !== undefined ? verdicts?.[img.blobId] : undefined;
+    if (typeof verdict !== 'boolean' || verdict === img.v2Mature) continue;
+    img.v2Mature = verdict;
+    changed = true;
+  }
+  return changed;
+}
+
+/** Apply a v2 rating answer: set its verdicts on `images` in place, and return Review's count unless
+ *  the answer says Review should keep its own (null). */
+export function applyRatingAnswer(
+  images: Img[],
+  answer: { matureCount: number | null; verdicts?: Record<string, boolean> }
+): number | undefined {
+  setVerdicts(images, answer.verdicts);
+  return answer.matureCount ?? undefined;
 }
 
 /** The rating filters to offer: each rating among the trainable images, plus the selected one at 0
@@ -342,6 +399,8 @@ export interface Img {
   blobUrl?: string;
   /** The scan's rating, when known — a mature one means Blue Buzz can't pay for a non-member's run. */
   nsfwLevel?: string;
+  /** The v2 verdict, once the server has one: it decides mature over `nsfwLevel`. */
+  v2Mature?: boolean;
   /** A block reason or upload error, shown on the tile. */
   message?: string;
   /** True while an auto-label workflow step for this image is in flight. */
