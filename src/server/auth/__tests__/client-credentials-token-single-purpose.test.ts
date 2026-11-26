@@ -137,6 +137,10 @@ function res() {
       r.body = payload;
       return r;
     },
+    send(payload: unknown) {
+      r.body = payload;
+      return r;
+    },
   });
   return r as typeof r & NextApiResponse;
 }
@@ -187,6 +191,17 @@ describe('getSessionFromBearerToken and a runner token', () => {
 
   it('getServerAuthSession (the tRPC and REST session) returns no session for it', async () => {
     expect(await getServerAuthSession({ req: req(RUNNER_TOKEN), res: res() })).toBeNull();
+  });
+
+  it('/api/v1/me answers 401 for it, and gets past authentication for an ordinary token', async () => {
+    const { default: me } = await import('~/pages/api/v1/me');
+    const refused = res();
+    await me(req(RUNNER_TOKEN) as never, refused);
+    expect(refused.statusCode).toBe(401);
+    // Control: the same route with an ordinary OAuth token is not refused at authentication.
+    const ordinary = res();
+    await me(req(ORDINARY_TOKEN) as never, ordinary);
+    expect(ordinary.statusCode).not.toBe(401);
   });
 
   it('AuthedEndpoint answers 401 for it and never runs the handler', async () => {

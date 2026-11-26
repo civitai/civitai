@@ -114,9 +114,9 @@ export const TokenScope = {
   // resource may list it.
   AppDataRead: 1n << 32n, // 4294967296
 
-  // Mint a recipe-runner block token for a user who granted the runner offline access. Opt-in,
-  // EXCLUDED from `Full` and from `ALL_SCOPES`, and in `NON_USER_SCOPES`: no grant issues it and no
-  // bearer route accepts it unless that path admits it by name (see `RUNNER_ONLY_SCOPES`).
+  // Reserved for a recipe-runner client's token. EXCLUDED from `Full` and from `ALL_SCOPES`, and in
+  // `NON_USER_SCOPES`: a grant issues it, and a bearer route accepts it, only on a path that admits
+  // it by name (see `RUNNER_ONLY_SCOPES`).
   RunnerMint: 1n << 33n, // 8589934592
 
   // All scopes

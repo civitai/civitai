@@ -56,7 +56,7 @@ const (
 	ScopeReadOnly int64 = 1<<0 | 1<<2 | 1<<5 | 1<<8 | 1<<11 | 1<<16 | 1<<17 | 1<<14 | 1<<21 | 1<<23
 	// ScopeClientCredentialsOnly is CLIENT_CREDENTIALS_ONLY_SCOPES: AppStoreCatalogWrite | DownloadLink.
 	ScopeClientCredentialsOnly int64 = 1<<28 | 1<<30
-	// ScopeRunnerOnly is RUNNER_ONLY_SCOPES: RunnerMint, accepted only by the app's block-token mint.
+	// ScopeRunnerOnly is RUNNER_ONLY_SCOPES: RunnerMint.
 	ScopeRunnerOnly int64 = 1 << 33
 )
 
@@ -309,7 +309,7 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 	if err != nil {
 		return nil, err
 	}
-	// A client-credentials or runner token resolves to no session (no caller here opts in).
+	// Unlike the Node app, nothing here opts in to a client-credentials or runner token.
 	if apiKey.scope&(ScopeClientCredentialsOnly|ScopeRunnerOnly) != 0 {
 		return nil, nil
 	}

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * A recipe-runner OAuth token (`RunnerMint`) resolves to no bearer session unless the caller
- * passes `allowRunnerMint`, which only the block-token mint route may do. Every non-test line
+ * passes `allowRunnerMint`, which only a runner mint path may do. Every non-test line
  * naming `allowRunnerMint` is counted here per file, so a new caller changes a count. Letting a
  * runner token authenticate anywhere else is a design change: make it there first, then here.
  */
@@ -28,7 +28,7 @@ function mentions(): Record<string, number> {
   return counts;
 }
 
-describe('runner tokens authenticate only at the block-token mint', () => {
+describe('runner tokens authenticate only where a runner mint path opts in', () => {
   it('every non-test line naming allowRunnerMint is in the ledger, at its count', () => {
     expect(mentions()).toEqual(LEDGER);
   });

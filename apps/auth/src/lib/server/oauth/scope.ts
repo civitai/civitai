@@ -7,6 +7,7 @@ import {
   NON_USER_SCOPES,
   parseTokenScope,
   readApiKeyScope,
+  RUNNER_ONLY_SCOPES,
   TokenScope,
   tokenScopeLabels,
 } from '@civitai/auth/token-scope';
@@ -21,6 +22,11 @@ export { hasScope };
 /** Whether `requested` carries a scope only the `client_credentials` grant may mint. */
 export function carriesClientCredentialsOnlyScope(requested: bigint): boolean {
   return (requested & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n;
+}
+
+/** Whether `scope` carries a recipe-runner-only scope; refused wherever a path does not admit it. */
+export function carriesRunnerOnlyScope(scope: bigint): boolean {
+  return (scope & RUNNER_ONLY_SCOPES) !== 0n;
 }
 
 /** Whether `requested` carries a scope no grant acting for a user may mint. */
