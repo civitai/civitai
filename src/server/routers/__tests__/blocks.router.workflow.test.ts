@@ -5,6 +5,9 @@ import { TRPCError } from '@trpc/server';
 // mock below. A `typeof import(...)` annotation there is an eslint error
 // (`consistent-type-imports`), so the type is imported up here instead.
 import type * as BlockStepsModule from '~/server/services/blocks/steps';
+import type { PGlite } from '@electric-sql/pglite';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as AppBlockRuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
 // Type-only: names the shape `vi.importActual()` returns for the settle service
 // in the pass-through seam tests below. An inline `typeof import(...)` there is an
 // eslint error (`consistent-type-imports`).
@@ -142,7 +145,7 @@ const {
 // fail-soft and would swallow everything silently.
 // The recipe runner's attempt ledger runs over real SQL (the applied migration) in PGlite.
 const { runnerPg, runnerFlag } = vi.hoisted(() => ({
-  runnerPg: { current: null as import('@electric-sql/pglite').PGlite | null },
+  runnerPg: { current: null as PGlite | null },
   runnerFlag: { offlineGrant: true },
 }));
 vi.mock('~/server/db/kyselyDb', async () => {
@@ -150,7 +153,7 @@ vi.mock('~/server/db/kyselyDb', async () => {
   return { kyselyWrite: pgliteKysely(() => runnerPg.current!) };
 });
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
     isFlipt: async (flag: string, ...rest: unknown[]) =>
@@ -171,9 +174,7 @@ const { mockRecordStepPriceCheck, mockRecordSubmitFailure } = vi.hoisted(() => (
 // `submitFailureAppBlockLabel` is the REAL one (it decides the label under test); the emitter is
 // mocked so the (label, reason) pair is assertable.
 vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('~/server/metrics/app-block-runtime.metrics')
-  >();
+  const actual = await importOriginal<typeof AppBlockRuntimeMetrics>();
   return {
     recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
     recordBlockPostSubjectRefusal: () => undefined,

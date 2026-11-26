@@ -43,7 +43,7 @@ export function isRunnerMintRequest(body: unknown): boolean {
 
 /** Per (runner client, user): a run needs one mint, so a burst is a bug or a replay. */
 const PER_USER_LIMIT = { max: 10, windowSeconds: 60 };
-/** Per address, before the credential is known. */
+/** Per address, before the credential is known. Generous: one runner address serves every user. */
 const PER_IP_LIMIT = { max: 1200, windowSeconds: 60 };
 /** Per runner client: every user it serves shares one ceiling. */
 const PER_CLIENT_LIMIT = { max: 600, windowSeconds: 60 };
@@ -103,7 +103,6 @@ export async function handleRunnerMint(
   const bearer = bearerTokenFromHeader(req.headers.authorization);
   if (!bearer) return refuse(401, 'no_bearer', 'Unauthorized');
 
-  // Generous: one runner address serves every user.
   const perIp = await checkFixedWindow(
     `block-token-runner-ip:${getTrustedClientIp(req) ?? 'unknown'}`,
     PER_IP_LIMIT.max,

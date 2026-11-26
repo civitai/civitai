@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { isSelfOnlyClientFor } from '@civitai/auth/self-only-client';
+import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
 import { constants } from '~/server/common/constants';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbWrite } from '~/server/db/client';
@@ -97,6 +98,14 @@ export async function disableOauthForBannedUser(
     } catch (error) {
       failed('disable self-only clients')(error);
     }
+  }
+
+  // Before the consents: a run authorization outlives its consent row otherwise.
+  try {
+    const { kyselyWrite } = await import('~/server/db/kyselyDb');
+    await revokeRunnerAuthorizations(kyselyWrite, { userId, clientId: null, reason: 'banned' });
+  } catch (error) {
+    failed('revoke run authorizations')(error);
   }
 
   let consents = 0;

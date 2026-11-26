@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, createPublicKey, KeyObject, randomBytes } from 'crypto';
+import { createHash, createPrivateKey, createPublicKey, randomBytes, type KeyObject } from 'crypto';
 import { SignJWT } from 'jose';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';

@@ -65,6 +65,19 @@ export interface RunnerAuthorizationRow {
   revokedAt: Date | null;
 }
 
+/** The columns `isRunnerClient` decides on. Pass a primary client. */
+export async function readRunnerClient(
+  db: Kysely<DB>,
+  clientId: string
+): Promise<RunnerClientRow | null> {
+  const row = await db
+    .selectFrom('OauthClient')
+    .select(['userId', 'isConfidential', 'skipConsent', 'grants', 'accessMode'])
+    .where('id', '=', clientId)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
 /** Reads the runner mint needs; see `decideRunnerMint` in the main app. */
 export interface RunnerMintReads {
   client(clientId: string): Promise<RunnerClientRow | null>;
@@ -92,10 +105,7 @@ export function runnerMintReads(db: Kysely<DB>): RunnerMintReads {
     return (rows[0] as T | undefined) ?? null;
   };
   return {
-    client: (clientId) =>
-      one<RunnerClientRow>(sql`
-        SELECT "userId", "isConfidential", "skipConsent", grants, "accessMode"
-        FROM "OauthClient" WHERE id = ${clientId}`),
+    client: (clientId) => readRunnerClient(db, clientId),
     binding: (clientId) =>
       one<RunnerBindingRow>(sql`
         SELECT app_block_id AS "appBlockId", status
@@ -174,20 +184,28 @@ export async function readRunnerBindingStatus(
   return row?.status ?? null;
 }
 
-export type RunnerAuthorizationRevokeReason = 'offline_declined' | 'disconnected';
+export type RunnerAuthorizationRevokeReason = 'offline_declined' | 'disconnected' | 'banned';
 
-/** Revoke every live run authorization the user gave the runner client; returns how many. */
+/**
+ * Revoke every live run authorization the user gave the runner client, or every runner client
+ * when `clientId` is null; returns how many.
+ */
 export async function revokeRunnerAuthorizations(
   db: Kysely<DB>,
-  opts: { userId: number; clientId: string; reason: RunnerAuthorizationRevokeReason; now?: Date }
+  opts: {
+    userId: number;
+    clientId: string | null;
+    reason: RunnerAuthorizationRevokeReason;
+    now?: Date;
+  }
 ): Promise<number> {
-  const result = await db
+  let query = db
     .withTables<RunnerTables>()
     .updateTable('runner_run_authorizations')
     .set({ revoked_at: opts.now ?? new Date(), revoked_reason: opts.reason })
     .where('user_id', '=', opts.userId)
-    .where('runner_client_id', '=', opts.clientId)
-    .where('revoked_at', 'is', null)
-    .executeTakeFirst();
+    .where('revoked_at', 'is', null);
+  if (opts.clientId !== null) query = query.where('runner_client_id', '=', opts.clientId);
+  const result = await query.executeTakeFirst();
   return Number(result.numUpdatedRows);
 }
