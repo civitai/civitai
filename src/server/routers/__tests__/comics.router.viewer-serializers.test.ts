@@ -4,8 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Every comics procedure that reads or writes panels or references returns their media through
- * `panelsForViewer` / `panelForViewer` / `referenceForViewer`, which hold it to the block rule,
- * or is listed here with why it returns none of that media.
+ * `panelsForViewer` / `panelForViewer` / `polledMediaForViewer` / `referenceForViewer`, which hold
+ * it to the block rule, or is listed here with why it returns none of that media. No row may be a
+ * hazard: a procedure that returns media goes through a serializer.
  */
 const LEDGER: Record<string, string> = {
   getMyProjects:
@@ -18,8 +19,6 @@ const LEDGER: Record<string, string> = {
   createReference: 'the new reference row, without images',
   deletePanel: '{ success }',
   reorderPanels: '{ success }',
-  pollPanelStatus:
-    "the running workflow's status and candidate keys, which have no Image row until one is selected (accepted hazard)",
   iterateGenerate: 'the workflow id, size and cost; no panel',
   planChapterPanels: 'planned panel prompts',
   publishChapter: 'the chapter row, without its panels',
@@ -30,7 +29,7 @@ const LEDGER: Record<string, string> = {
   addReferenceToProject: '{ success }',
 };
 
-const SERIALIZER = /\b(panelsForViewer|panelForViewer|referenceForViewer)\(/;
+const SERIALIZER = /\b(panelsForViewer|panelForViewer|polledMediaForViewer|referenceForViewer)\(/;
 const TOUCHES = /\.comic(Panel|Reference|ReferenceImage)\b|\b(panels|references|images): \{/;
 
 function procedures(source: string) {

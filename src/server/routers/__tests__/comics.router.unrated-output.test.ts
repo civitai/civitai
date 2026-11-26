@@ -893,7 +893,7 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     });
 
     it('by duplicateChapter', async () => {
-      dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+      dbMock.dbWrite.comicChapter.findUnique.mockResolvedValue({
         name: 'one',
         project: { userId: USER_ID },
         panels: [source],
@@ -959,5 +959,61 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
       /already unlocked/
     );
     expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('comics.pollPanelStatus - a selection whose image was blocked since', () => {
+  // The owner selected "picked" (an Image was made for it), a moderator blocked that Image, and the
+  // owner set the panel back to Generating, so the next poll reuses the stored candidate keys.
+  const poll = async (pickedBlocked: boolean) => {
+    givenPanel({
+      status: 'Generating',
+      imageUrl: 'picked',
+      imageId: 5,
+      image: {
+        userId: USER_ID,
+        nsfwLevel: 1,
+        modelRestricted: false,
+        ingestion: pickedBlocked ? 'Blocked' : 'Scanned',
+        blockedFor: pickedBlocked ? 'moderated' : null,
+      },
+      metadata: { quantity: 2, candidateImages: [{ key: 'picked' }, { key: 'other' }] },
+    });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'pg' })]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue(
+      (pickedBlocked
+        ? [
+            {
+              url: 'picked',
+              userId: USER_ID,
+              nsfwLevel: 1,
+              modelRestricted: false,
+              ingestion: 'Blocked',
+              blockedFor: 'moderated',
+            },
+          ]
+        : []) as never
+    );
+    const result = await caller().pollPanelStatus({ panelId: PANEL_ID });
+    return {
+      imageUrl: result.imageUrl,
+      keys: ('candidates' in result ? result.candidates ?? [] : []).map((c) =>
+        'key' in c ? c.key : null
+      ),
+      candidateImages: 'candidateImages' in result ? result.candidateImages : undefined,
+    };
+  };
+
+  it('never emits the blocked key, and still emits a clean one', async () => {
+    expect(await poll(true)).toEqual({
+      imageUrl: null,
+      keys: ['other'],
+      candidateImages: ['other'],
+    });
+    expect(await poll(false)).toEqual({
+      imageUrl: 'picked',
+      keys: ['picked', 'other'],
+      candidateImages: ['picked', 'other'],
+    });
   });
 });
