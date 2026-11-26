@@ -148,7 +148,7 @@ function previewState(workflow: {
   return { status: 'done', urls };
 }
 
-/** The orchestrator answered the submit without a workflow: nothing was asked for. */
+/** The orchestrator refused the submit with a 4xx: nothing was created, so the slot can be given back. */
 export class Model3dPreviewRejectedError extends Error {
   constructor(readonly answer: unknown) {
     super('model3DPreview submit rejected');

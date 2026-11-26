@@ -633,7 +633,7 @@ describe('3D post gate with a four-angle render', () => {
       submitPreview: async () => {
         // The window rolls over while the submit is out.
         now += MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.windowSeconds * 1000;
-        throw new Model3dPreviewRejectedError({ status: 503 });
+        throw new Model3dPreviewRejectedError({ status: 400 });
       },
       releasePreview,
     });
@@ -643,15 +643,18 @@ describe('3D post gate with a four-angle render', () => {
     expect(releasePreview.mock.calls[0][0]).not.toBe(previewWindowKey(now));
   });
 
-  it('a submit that returned keeps its slot', async () => {
+  it("a submit that returned keeps its slot and the user's claim", async () => {
     const releasePreview = vi.fn<Model3dRatingV2Deps['releasePreview']>(async () => undefined);
+    const refund = vi.fn(async () => undefined);
     const { deps: d } = deps([false], {
+      claimPreviewUser: async () => ({ refund }),
       submitPreview: async () => ({ workflowId: 'pv-1', state: { status: 'running' } }),
       setPendingPreview: async () => Promise.reject(new Error('redis down')),
       releasePreview,
     });
     expect(await post(d)).toBe(MODEL3D_PREVIEW_PENDING);
     expect(releasePreview).not.toHaveBeenCalled();
+    expect(refund).not.toHaveBeenCalled();
   });
 
   it('each window has its own key', () => {
