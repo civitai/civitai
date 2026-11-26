@@ -50,8 +50,7 @@ const userinfo: RequestHandler = async ({ request }) => {
     .executeTakeFirst();
 
   const tokenScope = apiKey ? apiKeyRowScope(apiKey) : null;
-  // A client-credentials token is single-purpose: it identifies no user here. A runner token does,
-  // as its consent screen says it reads the profile and email.
+  // A client-credentials token is single-purpose: it identifies no user here.
   if (
     !apiKey ||
     tokenScope === null ||

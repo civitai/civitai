@@ -19,6 +19,8 @@ const standing: RunnerAuthorizationRow = {
   runnerClientId: CLIENT,
   kind: 'standing',
   runId: null,
+  recipeVersionHash: 'r',
+  paramsHash: 'p',
   maxAmountPerRun: 50,
   maxRunsPerPeriod: 3,
   period: 'day',

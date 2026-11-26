@@ -1,5 +1,5 @@
 import { ActionIcon, getDefaultZIndex, Loader, Paper, Text, UnstyledButton } from '@mantine/core';
-import { IconCheck, IconLoader2, IconPhoto, IconX } from '@tabler/icons-react';
+import { IconBrush, IconCheck, IconLoader2, IconPhoto, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { RemixRun } from '~/components/Image/Remix/useRemixRuns';
 import { useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
@@ -103,8 +103,13 @@ export function RemixTrayView({
         aria-label={`Remix runs: ${inProgress} in progress, ${ready} ready`}
         aria-expanded={expanded}
         onClick={() => setExpanded((open) => !open)}
-        className="flex items-center gap-2 rounded-full bg-dark-6 px-3 py-2 text-sm font-semibold text-white shadow-lg"
+        // Blue with a white ring, not a dark fill: the image-page sidebar is dark.
+        className="flex items-center gap-2 rounded-full bg-blue-8 px-3 py-2 text-sm font-semibold text-white shadow-lg ring-2 ring-white"
       >
+        <span className="flex items-center gap-1">
+          <IconBrush size={16} />
+          Remix
+        </span>
         <span className="flex items-center gap-1" data-testid="remix-tray-in-progress">
           <IconLoader2 size={16} className={inProgress ? 'animate-spin' : undefined} />
           {inProgress}

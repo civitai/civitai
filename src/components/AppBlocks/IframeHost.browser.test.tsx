@@ -19,17 +19,6 @@ const mocks = vi.hoisted(() => ({
   report: vi.fn(),
 }));
 
-// IframeHost drives two tRPC queries at render (getEffectiveCheckpoint +
-// getShowcaseImages) and reads the debounced browsing level. None of that is
-// relevant to the block-render beacon under test, so stub them so the component
-// mounts network-free and the init handshake is ALLOWED to start immediately:
-//   - getEffectiveCheckpoint must report `isLoading: false` so `shouldStartInit`
-//     fires (the controller posts BLOCK_INIT and arms the readiness timeout).
-//   - getShowcaseImages returns no data (carousel is irrelevant here).
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // IframeHost now reads `appBlocks && appBlocksPages` (the run route's own
 // predicate) to decide whether the chrome may offer `/apps/run/<blockId>`
 // shortcuts; the real hook THROWS without a FeatureFlagsProvider (which this

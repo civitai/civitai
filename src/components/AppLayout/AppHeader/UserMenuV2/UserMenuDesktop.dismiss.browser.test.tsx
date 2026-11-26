@@ -8,10 +8,6 @@ import { renderWithProviders } from '../../../../../test/component-setup';
  * Mantine closes the menu on the outside mousedown, and the click that follows still lands on
  * whatever is under the pointer. On the home page that is often a full-width /pricing banner.
  */
-vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  useCurrentUser: () => null,
-}));
 vi.mock('./useResolvedUserMenu', () => ({
   useResolvedUserMenu: () => ({ signedIn: false, events: [], pinned: [], nodes: [] }),
 }));

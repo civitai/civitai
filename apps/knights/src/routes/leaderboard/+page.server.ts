@@ -9,7 +9,7 @@ import {
 } from '$lib/server/leaderboard';
 import { fervorCopy } from '$lib/server/leaderboard-view';
 import { boardCache } from '$lib/server/leaderboard-runtime';
-import { requireMember } from '$lib/server/membership';
+import { requireRequestMember } from '$lib/server/request-reads';
 import { PROGRESSION } from '$lib/server/progression/config';
 import { HELP_COOKIE } from '$lib/fervor-help';
 import { playerBadge } from '$lib/player-badge';
@@ -21,7 +21,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
   const civitaiUrl = civitaiSiteUrl();
   const now = new Date();
   const [status, board] = await Promise.all([
-    requireMember(db, locals.user.id),
+    requireRequestMember(db, locals),
     // Everyone's standings, cached for a while anyway: the replica's lag does not show.
     boardCache.get(now, () => queryBoard(dbRead, now)),
   ]);

@@ -1,55 +1,89 @@
+import type { FC, Ref } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Card, Center, Group, Loader, Stack, Text } from '@mantine/core';
+import { IconMessageQuestion } from '@tabler/icons-react';
+import type {
+  ChatBackend,
+  ChatConversation,
+  ChatConversationStore,
+  ChatExample,
+  CivitaiChat,
+} from '@civitai/components-chat/civitai-chat';
 import {
-  Alert,
-  Box,
-  Button,
-  Card,
-  Group,
-  Loader,
-  ScrollArea,
-  Stack,
-  Text,
-  Textarea,
-} from '@mantine/core';
-import { useState } from 'react';
-import { IconMessageQuestion, IconSend, IconAlertTriangle } from '@tabler/icons-react';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { trpc } from '~/utils/trpc';
+  REVIEW_AGENT_CHAT_HEADERS,
+  REVIEW_AGENT_CHAT_MODEL_ID,
+  REVIEW_AGENT_CHAT_URL,
+} from '~/shared/constants/review-agent-chat.constants';
+import chatClasses from '~/components/Apps/AppAssistant/AppAssistant.module.scss';
 
 /**
- * App Blocks — AGENTIC MOD CODE-REVIEW in-modal CHAT (P3). A child of
- * AgentReviewPanel, shown only while the agent POD is up (status running |
- * complete | cost-capped). Lets the moderator ask the SAME agent follow-up
- * questions about its review ("why did you flag scope X", "show the call site").
+ * App Blocks — AGENTIC MOD CODE-REVIEW chat: the moderator asks the review agent follow-up
+ * questions about its report ("why did you flag scope X", "show the call site").
  *
- * DARK: the parent panel only mounts under the `app-blocks-agentic-review` client
- * flag (fail-closed), and the `blocks.agentReviewChat` proc has its own
- * server-side flag gate → inert on merge until the Flipt flag exists.
+ * The `<civitai-chat>` element on a HOST BACKEND (`backend`, not `app`): no Civitai sign-in, no
+ * Buzz, no orchestration. Every reply goes to the moderator-only endpoint at
+ * `REVIEW_AGENT_CHAT_URL`, which authorizes the request, builds the prompt from the persisted
+ * report, runs the model with read-only tools over this request's report, diff and source, and
+ * streams the answer. The headers name the publish request and the report on screen.
  *
- * NON-STREAMING v1: each Send is one request/response turn (turns are slow,
- * 30–90s) — a "thinking…" indicator covers the wait; streaming SSE is a follow-up.
+ * NOTHING IS STORED: the store below keeps chats in memory, so a conversation lives as long as
+ * this panel does, as the chat always has.
  *
- * ADVISORY + ADVERSARIAL-SAFE: the reply is derived from an UNTRUSTED bundle, so
- * it is rendered through the shared `CustomMarkdown` (react-markdown) — which uses
- * NO `rehype-raw` and NO `dangerouslySetInnerHTML`, so raw HTML embedded in
- * adversarial agent output is escaped to inert text rather than parsed into live
- * DOM. That preserves the stored-XSS-at-render contract for adversarial LLM output
- * while letting normal markdown (bold, lists, code) format. User-typed messages
- * stay plain inert text — only the agent's own replies carry markdown.
+ * Page-wide `configureChat` is deliberately never called here (App Assistant's call would leak
+ * into this chat and this one into it); the limits that matter (model, output tokens, steps, tool
+ * output) are enforced by the endpoint, whatever the element sends.
+ *
+ * Adversarial output: the element renders replies through `marked` + DOMPurify (no `<img>`), and
+ * the endpoint neutralizes every `<` in the text it streams (`neutralizeChatMarkup`), so a
+ * prompt-injected reply cannot become HTML that loads a remote resource.
  */
 
-type ChatMessage = { role: 'user' | 'assistant'; content: string };
+const ChatTag = 'civitai-chat' as unknown as FC<{
+  ref: Ref<HTMLElement>;
+  scope: string;
+  layout: string;
+  className?: string;
+}>;
 
-/**
- * Client-side sliding window on the conversation SENT to the agent. The server
- * schema caps `messages` at 20 (agentReviewChatSchema.messages.max(20)), so a
- * long chat would otherwise fail the zod cap around the 11th user turn
- * (2N-1 > 20) with a raw BAD_REQUEST and dead-end. We keep the FULL history in
- * UI state (the mod still sees the whole scrollback) but only ever send the
- * last MAX_CHAT_HISTORY_SENT turns — comfortably under the server's 20, so the
- * cap can never be tripped and the chat works indefinitely. Older turns simply
- * drop out of the agent's context.
- */
-export const MAX_CHAT_HISTORY_SENT = 18;
+export const REVIEW_AGENT_CHAT_EXAMPLES: ChatExample[] = [
+  { title: 'Riskiest finding', prompt: 'Which finding in your report is the riskiest, and why?' },
+  { title: 'What changed', prompt: 'What does this version change, and does any of it worry you?' },
+];
+
+/** Conversations kept in memory for the life of the panel: nothing leaves the page. */
+export function createSessionConversationStore(): ChatConversationStore {
+  const chats = new Map<string, ChatConversation>();
+  return {
+    list: async () => ({
+      items: [...chats.values()]
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
+      next: null,
+    }),
+    load: async (id) => chats.get(id) ?? null,
+    save: async (conversation) => {
+      chats.set(conversation.id, structuredClone(conversation));
+    },
+    delete: async (id) => {
+      chats.delete(id);
+    },
+  };
+}
+
+/** The element's backend for one publish request (and the report on screen). */
+export function reviewAgentChatBackend(publishRequestId: string, reportId?: string): ChatBackend {
+  return {
+    url: REVIEW_AGENT_CHAT_URL,
+    model: REVIEW_AGENT_CHAT_MODEL_ID,
+    store: createSessionConversationStore(),
+    fetch: (input, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set(REVIEW_AGENT_CHAT_HEADERS.publishRequestId, publishRequestId);
+      if (reportId) headers.set(REVIEW_AGENT_CHAT_HEADERS.reportId, reportId);
+      return fetch(input, { ...init, headers, credentials: 'same-origin' });
+    },
+  };
+}
 
 export function AgentReviewChat({
   publishRequestId,
@@ -59,41 +93,33 @@ export function AgentReviewChat({
   /** The run on screen; the server grounds the answer on it. Omitted ⇒ the latest run. */
   reportId?: string;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
+  const ref = useRef<HTMLElement>(null);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const chatMut = trpc.blocks.agentReviewChat.useMutation();
-  const inFlight = chatMut.isPending;
-
-  const send = () => {
-    const content = input.trim();
-    if (!content || inFlight) return;
-    setError(null);
-    // Optimistically append the user's message; send the RUNNING conversation
-    // (the server prepends its own system grounding message).
-    const nextMessages: ChatMessage[] = [...messages, { role: 'user', content }];
-    setMessages(nextMessages);
-    setInput('');
-    // Slide a window over the SENT conversation so we stay under the server's
-    // .max(20) cap no matter how long the chat runs (see MAX_CHAT_HISTORY_SENT).
-    const sentMessages = nextMessages.slice(-MAX_CHAT_HISTORY_SENT);
-    chatMut.mutate(
-      { publishRequestId, messages: sentMessages, reportId },
-      {
-        onSuccess: (data) => {
-          setMessages((prev) => [
-            ...prev,
-            { role: 'assistant', content: data.reply || '(the agent returned an empty reply)' },
-          ]);
-        },
-        onError: (e) => {
-          // Keep the conversation intact; surface the error inline.
-          setError(e.message || 'The review agent did not respond.');
-        },
-      }
-    );
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Client-only: the element touches `customElements` and `window` at import.
+      await import('@civitai/components-chat/civitai-chat/define');
+      await customElements.whenDefined('civitai-chat');
+      if (cancelled || !ref.current) return;
+      // Set after upgrade: a property assigned before would shadow the element's accessor.
+      const el = ref.current as CivitaiChat;
+      // The endpoint builds the real prompt and ignores this; a short one keeps requests small.
+      el.systemPrompt = 'You are the App Blocks review agent.';
+      el.examples = REVIEW_AGENT_CHAT_EXAMPLES;
+      el.placeholder = 'Ask about this review…';
+      // Last: setting `backend` starts the chat.
+      el.backend = reviewAgentChatBackend(publishRequestId, reportId);
+      setReady(true);
+    })().catch(() => {
+      if (!cancelled) setError('The review chat could not start. Reload the page to try again.');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [publishRequestId, reportId]);
 
   return (
     <Card withBorder padding="xs" radius="sm" data-testid="agent-review-chat">
@@ -106,136 +132,28 @@ export function AgentReviewChat({
         </Group>
         <Text size="xs" c="dimmed">
           Ask the agent follow-up questions about its review (e.g. why a scope was flagged, or to
-          show a call site). Answers are advisory — you retain the approve / reject decision.
+          show a call site). It can read its report, the diff and the app&apos;s files. Answers are
+          advisory — you retain the approve / reject decision. The chat is not saved.
         </Text>
-
-        {messages.length > 0 && (
-          <ScrollArea.Autosize mah={260} type="auto">
-            <Stack gap={6} pr={6}>
-              {messages.length > MAX_CHAT_HISTORY_SENT && (
-                <Text size="xs" c="dimmed" ta="center" data-testid="chat-window-trim-note">
-                  Earlier messages are no longer included in the agent&apos;s context.
-                </Text>
-              )}
-              {messages.map((m, i) => {
-                const isUser = m.role === 'user';
-                return (
-                  <Group key={i} justify={isUser ? 'flex-end' : 'flex-start'} gap={0} wrap="nowrap">
-                    <Box
-                      data-testid={isUser ? 'chat-user-msg' : 'chat-agent-msg'}
-                      style={{
-                        maxWidth: '85%',
-                        minWidth: 0,
-                        borderRadius: 8,
-                        padding: '6px 10px',
-                        // Keep markdown (long paths, urls, code) inside the bubble
-                        // rather than blowing past its max-width.
-                        overflowWrap: 'anywhere',
-                      }}
-                      // Theme-aware bubble surface + text — matches the
-                      // `light-dark(...)` precedent in reviewDiffPanels.tsx. The old
-                      // fixed `gray.1` rendered a near-white agent bubble in dark
-                      // mode; these flip with the color scheme. User = filled accent.
-                      bg={
-                        isUser
-                          ? 'light-dark(var(--mantine-color-blue-6), var(--mantine-color-blue-8))'
-                          : 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5))'
-                      }
-                      c={
-                        isUser
-                          ? 'white'
-                          : 'light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0))'
-                      }
-                    >
-                      {isUser ? (
-                        // User-typed message — plain inert TEXT (no markdown),
-                        // matching the existing convention.
-                        <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {m.content}
-                        </Text>
-                      ) : (
-                        // Agent reply — markdown via the shared, XSS-safe
-                        // CustomMarkdown (react-markdown, NO rehype-raw / no
-                        // dangerouslySetInnerHTML): raw HTML in adversarial output is
-                        // escaped to inert text, normal markdown formats. `size="sm"`
-                        // sizing via the sm font-size var on the markdown container.
-                        // `disallowedElements={['img']}` drops markdown image syntax
-                        // (`![](https://…)`) — the agent bundle is adversarial and
-                        // prompt-injectable, and a rendered <img> would fire an
-                        // external fetch from the MODERATOR's browser (tracking
-                        // pixel / IP+UA leak). Links stay (protocol-sanitized +
-                        // click-gated).
-                        <div
-                          className="markdown-content"
-                          style={{
-                            fontSize: 'var(--mantine-font-size-sm)',
-                            overflowWrap: 'anywhere',
-                          }}
-                        >
-                          <CustomMarkdown disallowedElements={['img']}>{m.content}</CustomMarkdown>
-                        </div>
-                      )}
-                    </Box>
-                  </Group>
-                );
-              })}
-              {inFlight && (
-                <Group gap={6} justify="flex-start">
-                  <Loader size="xs" />
-                  <Text size="xs" c="dimmed">
-                    Thinking… (agent turns can take up to a minute)
-                  </Text>
-                </Group>
-              )}
-            </Stack>
-          </ScrollArea.Autosize>
-        )}
-
-        {messages.length === 0 && inFlight && (
-          <Group gap={6}>
-            <Loader size="xs" />
-            <Text size="xs" c="dimmed">
-              Thinking… (agent turns can take up to a minute)
-            </Text>
-          </Group>
-        )}
-
-        {error && (
-          <Alert color="red" variant="light" icon={<IconAlertTriangle size={14} />} py={6}>
+        {error ? (
+          <Alert color="red" variant="light">
             <Text size="xs">{error}</Text>
           </Alert>
+        ) : (
+          <div className="relative" style={{ height: 460 }}>
+            {!ready && (
+              <Center className="absolute inset-0">
+                <Loader size="sm" />
+              </Center>
+            )}
+            <ChatTag
+              ref={ref}
+              scope="app-review-agent"
+              layout="compact"
+              className={chatClasses.chat}
+            />
+          </div>
         )}
-
-        <Group gap={6} align="flex-end" wrap="nowrap">
-          <Textarea
-            aria-label="Ask the review agent"
-            placeholder="Why did you flag scope X?"
-            value={input}
-            onChange={(e) => setInput(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              // Enter sends; Shift+Enter inserts a newline.
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            disabled={inFlight}
-            autosize
-            minRows={1}
-            maxRows={4}
-            style={{ flex: 1 }}
-          />
-          <Button
-            size="xs"
-            variant="light"
-            leftSection={<IconSend size={14} />}
-            loading={inFlight}
-            disabled={inFlight || input.trim().length === 0}
-            onClick={send}
-          >
-            Send
-          </Button>
-        </Group>
       </Stack>
     </Card>
   );

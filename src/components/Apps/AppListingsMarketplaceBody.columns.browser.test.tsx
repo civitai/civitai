@@ -76,13 +76,6 @@ function makeCard(id: string, name: string, tagline: string | null = 'tag'): Lis
 
 const mocks = vi.hoisted(() => ({ items: [] as ListingCard[] }));
 
-// Same mock set, and the same reasons, as `AppListingsMarketplaceBody.browser.test.tsx`
-// — see the long notes there. In short: the card reads `useCurrentUser`, the filters
-// dropdown reads `useIsClient` + `useIsMobile` and both THROW without a provider, and
-// the flags factory must name BOTH flag hooks or the whole file fails to import and
-// reports `no tests` rather than a failure.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 // Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
 // a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({

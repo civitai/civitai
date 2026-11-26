@@ -130,7 +130,6 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: vi.fn() }),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 52 }) }));
 vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
 
 // Spread the real module first, for exactly the reason the `~/utils/trpc` mock
@@ -214,7 +213,7 @@ beforeEach(() => {
 });
 
 const openAndPick = async () => {
-  renderWithProviders(<RemixGallerySubmitModal hostImageId={HOST} />);
+  renderWithProviders(<RemixGallerySubmitModal hostImageId={HOST} />, { user: { id: 52 } });
   await page.getByTestId(`pick-${MINE}`).click();
 };
 

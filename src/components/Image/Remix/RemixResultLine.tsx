@@ -1,5 +1,4 @@
-import { ActionIcon, Button, Switch } from '@mantine/core';
-import { Tooltip } from '~/components/MantineOverlays';
+import { Button, Switch } from '@mantine/core';
 import { IconLayoutList, IconRotateClockwise } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 
@@ -27,22 +26,18 @@ export function RemixResultLine({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="remix-result-line">
-      <Tooltip label="Remix again" visibleFrom="sm">
-        <ActionIcon
-          variant="default"
-          size="lg"
-          aria-label="Remix again"
-          onClick={onRemixAgain}
-          disabled={remixAgainDisabled}
-        >
-          <IconRotateClockwise size={18} />
-        </ActionIcon>
-      </Tooltip>
-      <Tooltip label="Open in queue" visibleFrom="sm">
-        <ActionIcon variant="default" size="lg" aria-label="Open in queue" onClick={onOpenQueue}>
-          <IconLayoutList size={18} />
-        </ActionIcon>
-      </Tooltip>
+      {/* Labelled, not icon-only: a tooltip never shows on a phone. */}
+      <Button
+        variant="default"
+        leftSection={<IconRotateClockwise size={16} />}
+        onClick={onRemixAgain}
+        disabled={remixAgainDisabled}
+      >
+        Remix again
+      </Button>
+      <Button variant="default" leftSection={<IconLayoutList size={16} />} onClick={onOpenQueue}>
+        Open in queue
+      </Button>
       <div className="ml-auto flex items-center gap-3">
         {gallery && (
           <Switch

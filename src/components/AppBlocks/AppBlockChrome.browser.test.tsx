@@ -17,10 +17,6 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
  */
 const SESSION_OWNER_ID: number | null = null;
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => null,
-}));
-
 /**
  * The "Recently run" rows read each app's icon live from `appListings.getAppDetail`
  * (`ChromeRecentAppIcon`). `mocks.detailBySlug` is what that read answers per slug — a slug

@@ -42,7 +42,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({}),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, muted: false }) }));
 
 // eslint-disable-next-line import/first
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
@@ -60,7 +59,8 @@ describe('PostImageDropzone when the server refuses post.create', () => {
     renderWithProviders(
       <div data-testid="post-dropzone">
         <PostImageDropzone />
-      </div>
+      </div>,
+      { user: { id: 1, muted: false } }
     );
     const input = await vi.waitFor(() => {
       const el = document.querySelector<HTMLInputElement>(

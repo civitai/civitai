@@ -17,7 +17,6 @@ import { STORYLINES_INTRO_DISMISSED_KEY } from '~/components/Storyline/Storyline
  */
 
 const mocks = vi.hoisted(() => ({ feedInput: vi.fn() }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));

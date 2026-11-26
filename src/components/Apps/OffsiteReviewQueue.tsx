@@ -1015,7 +1015,7 @@ export function OffsiteReviewModalBody({
               autosize
               minRows={2}
               maxRows={6}
-              placeholder="Optional notes attached to the approval record."
+              placeholder="Optional. Sent to the developer with the approval notice, and shown on their app history."
               value={approvalNotes}
               onChange={(e) => setApprovalNotes(e.currentTarget.value)}
               disabled={busy}

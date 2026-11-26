@@ -11,6 +11,7 @@ import { pickYesNo } from '$lib/server/yesno/feed';
 import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { db, dbRead } from '$lib/server/db';
+import { playerPrefs } from '$lib/server/player-prefs';
 import { liveKey } from '$lib/server/live/live-key';
 import { itemKey, type PickedItem } from './optimistic';
 
@@ -27,7 +28,9 @@ export async function pickItem(
   /** Yes/no question ids already handed out ahead of the player, oldest first: the stretch counts them. */
   ahead?: number[],
   /** Every item already handed out ahead of the player, oldest first: the cadence counts them as served. */
-  served?: ItemRef[]
+  served?: ItemRef[],
+  /** The player's questions switch, when the caller already read it (a refill picks several items). */
+  yesNoOn?: boolean
 ): Promise<PickedItem | null> {
   // The replica may lag: an item judged a moment ago can come back, and castVote refuses it ('already-voted').
   const feed = await getFeed(dbRead, userId, { limit: 1, exclude: skipped?.queue });
@@ -37,6 +40,7 @@ export async function pickItem(
   // The tag review source is served on the same cadence when it is switched on, whatever the yes/no share.
   const due =
     (yesNo.share > 0 || yesNo.tagReview) &&
+    (yesNoOn ?? (await playerPrefs(db, userId, yesNo.playerDefault)).yesNo) &&
     (!feed || burstDue(await servedHistory(db, userId, served), burstRoller(secret, userId)));
   const offer = due
     ? await pickYesNo(db, {

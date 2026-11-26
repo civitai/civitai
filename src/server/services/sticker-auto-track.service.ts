@@ -70,9 +70,22 @@ export async function startStickerAutoTrack(input: {
             metadata,
             tags: ['sticker-track'],
             currencies: [],
+            // System-account workflows default to the Normal download lane, slow for the tracker's
+            // models. The orchestrator doesn't charge the boost to user 0. `tier: 'free'` would force Low.
+            downloadPriority: 'high',
             steps,
           },
         });
+        // The workflow id is otherwise only held by the polling client; log it so a run can be traced.
+        if (data?.id)
+          logToAxiom({
+            name: 'sticker-auto-track',
+            type: 'info',
+            message: 'auto-track run submitted',
+            workflowId: data.id,
+            userId: user.id,
+            imageId,
+          });
         return { id: data?.id, status: response?.status };
       },
       now: Date.now,

@@ -16,7 +16,7 @@ import {
   type Driver,
   type QueryResult,
 } from 'kysely';
-import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
+import { JIT_OFF_STATEMENT, SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { AbuseDetectionTables } from '../abuse-detection-tables';
 
 /**
@@ -102,7 +102,7 @@ export function pgliteDialect(
       const text = compiled.sql.trim().toLowerCase();
       if (text === 'begin') [inTransaction, jitOff] = [true, false];
       else if (text === 'commit' || text === 'rollback') [inTransaction, jitOff] = [false, false];
-      else if (text === 'set local jit = off') jitOff = inTransaction;
+      else if (text === JIT_OFF_STATEMENT.toLowerCase()) jitOff = inTransaction;
       else if (compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) && !(inTransaction && jitOff)) {
         jitViolations.push(compiled.sql.slice(0, 160));
         throw new Error(

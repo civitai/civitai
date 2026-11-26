@@ -48,9 +48,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   },
 }));
 let isModerator = false;
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, isModerator }),
-}));
 
 import { ImageResources } from './ImageResources';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -68,7 +65,8 @@ async function renderPanel() {
   renderWithProviders(
     <div style={{ width: PANEL_WIDTH }}>
       <ImageResources imageId={1} />
-    </div>
+    </div>,
+    { user: { id: 1, isModerator } }
   );
   await vi.waitFor(() => {
     expect(document.body.querySelector('li')).toBeTruthy();

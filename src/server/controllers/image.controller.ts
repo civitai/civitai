@@ -1,5 +1,5 @@
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
-import { withheldImageIds } from '~/server/services/moderator-withheld.service';
+import { assertMayLoosenImagesAs } from '~/server/services/moderator-withheld.service';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
@@ -1434,16 +1434,14 @@ export async function updateImageAcceptableMinorHandler({
       if (!item?.addedById || item.addedById !== item.image?.userId || item.addedById === userId)
         throw throwAuthorizationError();
       // Refused as any other entry the manager may not rule on: the reason is not theirs to see.
-      if (
-        input.acceptableMinor &&
-        (await withheldImageIds([input.id], { csamReview: false })).has(input.id)
-      )
-        throw throwAuthorizationError();
+      if (input.acceptableMinor)
+        await assertMayLoosenImagesAs([input.id], { isModerator: false, csamReview: false });
     }
 
     const image = await updateImageAcceptableMinor({
       ...input,
       csamReview: !!ctx.features?.csamReports,
+      isModerator: !!isModerator,
     });
     return image;
   } catch (error) {

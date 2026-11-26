@@ -71,10 +71,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'reporter' }),
-}));
-
 vi.mock('~/hooks/useCFImageUpload', () => ({
   useCFImageUpload: () => ({
     uploadToCF: mocks.uploadToCF,
@@ -124,7 +120,8 @@ const renderPrompt = () =>
       area="bitdex-image-feed"
       notice="We're testing a new system behind this feed."
       context={{ path: '/images', reportedSource: 'bitdex' }}
-    />
+    />,
+    { user: { id: 1, username: 'reporter' } }
   );
 
 const openPrompt = async () => {
@@ -429,7 +426,8 @@ describe('🔴 under StrictMode, as the app runs it', () => {
           notice="We're testing a new system behind this feed."
           context={{ path: '/images', reportedSource: 'bitdex' }}
         />
-      </StrictMode>
+      </StrictMode>,
+      { user: { id: 1, username: 'reporter' } }
     );
     await userEvent.click(page.getByRole('button', { name: 'Give feedback' }));
     await expect.element(page.getByPlaceholder('What looked wrong?')).toBeInTheDocument();

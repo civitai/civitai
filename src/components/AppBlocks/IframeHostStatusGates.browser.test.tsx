@@ -48,10 +48,6 @@ const mocks = vi.hoisted(() => ({
   balance: vi.fn(),
 }));
 
-// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
-// moderator gate; these suites render the real host without a CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
 // IframeHost reads `appBlocks && appBlocksPages` (the run route's own predicate) to
 // decide whether the chrome may offer `/apps/run/<blockId>` shortcuts; the real hook
 // THROWS without a FeatureFlagsProvider (which this scaffold does not mount). Dark

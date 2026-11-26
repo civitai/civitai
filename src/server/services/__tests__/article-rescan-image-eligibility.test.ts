@@ -2,7 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
-import { CSAM_LINK_TABLES_SQL } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import {
+  CSAM_LINK_TABLES_SQL,
+  WITHHELD_TABLES_SQL,
+} from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as ImageService from '~/server/services/image.service';
@@ -27,20 +30,7 @@ beforeAll(async () => {
     ${CSAM_LINK_TABLES_SQL}
     CREATE TABLE "Image" (id int PRIMARY KEY, url text NOT NULL, ingestion text, "needsReview" text,
       "blockedFor" text, "userId" int, "pHash" bigint, "postId" int);
-    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int, "userId" int, "publishedAt" timestamp);
-    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
-    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
-    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
-    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
-    CREATE TABLE "BlockedImage" (hash bigint, reason text);
-    CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
-    CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
-    CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
-    CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
-    CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
-    CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL, "deniedAt" timestamptz NOT NULL DEFAULT now(), "retractedAt" timestamptz DEFAULT now());
-    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
+    ${WITHHELD_TABLES_SQL}
     INSERT INTO "Image" (id, url, ingestion, "userId") VALUES (10, 'key-10', 'Scanned', 7), (30, 'key-30', 'Scanned', 7);
     INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (31, 'key-30', 'Blocked', 'CSAM', 8);
   `);

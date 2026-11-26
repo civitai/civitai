@@ -697,7 +697,10 @@ describe('BlockTokenService.sign — runner tokens', () => {
   it('stamps the marker and run id, lives 180 seconds, and the verifier admits it only on opt-in', async () => {
     const { BlockTokenService } = await import('../block-token.service');
     const { verifyBlockToken } = await import('~/server/middleware/block-scope.middleware');
-    const { token } = await BlockTokenService.sign({ ...base, runner: { runId: 'run_abc' } });
+    const { token } = await BlockTokenService.sign({
+      ...base,
+      runner: { runId: 'run_abc', authorizationId: 'rra_abc', runKey: 'run_abc' },
+    });
     const claims = claimsOf(token);
     expect(claims.mintOrigin).toBe('runner');
     expect(claims.runId).toBe('run_abc');
@@ -716,7 +719,7 @@ describe('BlockTokenService.sign — runner tokens', () => {
 
   it('refuses to sign a runner token for an anonymous subject or with dev, review or private-run', async () => {
     const { BlockTokenService } = await import('../block-token.service');
-    const runner = { runId: 'run_abc' };
+    const runner = { runId: 'run_abc', authorizationId: 'rra_abc', runKey: 'run_abc' };
     for (const over of [
       { userId: null },
       { dev: true },

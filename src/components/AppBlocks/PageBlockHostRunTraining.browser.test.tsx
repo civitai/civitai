@@ -27,7 +27,6 @@ const { previewMutate, consentMutate, submitMutate, uploadConsumerBlob } = vi.ho
   uploadConsumerBlob: vi.fn(),
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/Login/useSignInToUpload', () => ({
   useSignInToUpload: () => ({ signedOut: false, requireSignIn: () => false }),
 }));

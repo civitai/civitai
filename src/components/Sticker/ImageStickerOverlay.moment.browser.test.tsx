@@ -20,7 +20,6 @@ vi.mock('~/store/sticker-history.store', async (importOriginal) => ({
   useStickerHistoryStep: () => historyStep.value,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useFeatureFlags: () => flags,
@@ -67,7 +66,8 @@ const renderOnVideo = async (startTime: number) => {
     <div style={{ position: 'relative', width: 400, height: 400 }}>
       <video data-testid="media" style={{ width: 200, height: 200 }} />
       <ImageStickerOverlay imageId={IMAGE_ID} />
-    </div>
+    </div>,
+    { user: { id: 7 } }
   );
   await expect.element(page.getByTestId('media')).toBeInTheDocument();
   const video = page.getByTestId('media').element() as HTMLVideoElement;
@@ -131,7 +131,8 @@ describe('a moment sticker follows the video', () => {
       <div style={{ position: 'relative', width: 400, height: 400 }}>
         <video style={{ width: 200, height: 200 }} />
         <ImageStickerOverlay imageId={IMAGE_ID} />
-      </div>
+      </div>,
+      { user: { id: 7 } }
     );
     await expect.element(hidden()).toHaveTextContent('1');
 

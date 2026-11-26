@@ -115,14 +115,6 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showWarningNotification: (...a: unknown[]) => showWarning(...a),
 }));
 
-// The AgentReviewChat sub-panel reads `useCurrentUser()` (→ CivitaiSessionContext)
-// for its markdown link-rewrite. The network-free scaffold has no session provider,
-// so boundary-stub the hook (the standard pattern in the sibling AgentReviewChat
-// test). Null user is fine — the consumers only use `user?.id` (optional-chained).
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => null,
-}));
-
 vi.mock('~/utils/trpc', () => {
   const mutation =
     (name: string) =>
@@ -194,11 +186,6 @@ vi.mock('~/utils/trpc', () => {
         startAgentReview: { useMutation: mutation('startAgentReview') },
         listAgentReviews: { useQuery: () => ({ data: mocks.agentRuns }) },
         getAgentReviewModels: { useQuery: () => ({ data: mocks.agentModels }) },
-        // P3 — the panel mounts <AgentReviewChat> when the pod is up (running/
-        // complete/cost-capped); it calls agentReviewChat.useMutation. Stub it so
-        // the P2 lifecycle/report/sanitization tests (which now render the chat)
-        // don't crash. Chat behavior is covered in AgentReviewChat.browser.test.tsx.
-        agentReviewChat: { useMutation: mutation('agentReviewChat') },
       },
     },
   };
