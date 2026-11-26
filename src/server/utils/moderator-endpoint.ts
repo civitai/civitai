@@ -130,6 +130,58 @@ async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<
   };
 }
 
+/**
+ * The actor rule every moderator endpoint applies: a signed-in, unbanned moderator (not a
+ * moderation account) on a full-scope credential. Exported for a moderator route that cannot use
+ * `defineModeratorEndpoint` because it does not answer JSON (the review agent chat streams).
+ */
+export async function authorizeModerator(
+  req: NextApiRequest,
+  res: NextApiResponse
+): Promise<{ actor: SessionUser; apiKeyId: number | null } | { status: number; error: string }> {
+  const resolved = await resolveActor(req, res);
+  if ('error' in resolved) return resolved;
+  const { actor, fullCredential, apiKeyId } = resolved;
+  if (
+    !actor.isModerator ||
+    actor.bannedAt ||
+    refuseModerationAccountSession(actor, 'moderator-endpoint')
+  ) {
+    return { status: 403, error: 'Moderator role required' };
+  }
+  if (!fullCredential) return { status: 403, error: FULL_SCOPE_SESSION_REQUIRED };
+  return { actor, apiKeyId };
+}
+
+export type ModeratorStreamCtx = {
+  actor: SessionUser;
+  apiKeyId: number | null;
+  req: NextApiRequest;
+  res: NextApiResponse;
+};
+
+/**
+ * A moderator POST route that writes its own response (a stream) instead of returning JSON. The
+ * same actor rule as {@link defineModeratorEndpoint}, refused with the same statuses and body
+ * shape; the handler owns everything after it, input validation, limits and the response
+ * included. No audit row and no per-actor rate limit: a route that needs either uses
+ * `defineModeratorEndpoint`.
+ */
+export function defineModeratorStreamEndpoint(
+  handler: (ctx: ModeratorStreamCtx) => Promise<unknown>
+) {
+  return async function moderatorStreamEndpoint(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    const authorized = await authorizeModerator(req, res);
+    if ('error' in authorized)
+      return res.status(authorized.status).json({ error: authorized.error });
+    await handler({ ...authorized, req, res });
+  };
+}
+
 function collectInput(req: NextApiRequest): Record<string, unknown> {
   const query = req.query;
   const body = (req.body ?? {}) as Record<string, unknown>;
@@ -216,20 +268,11 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
       return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const resolved = await resolveActor(req, res);
-    if ('error' in resolved) return res.status(resolved.status).json({ error: resolved.error });
+    const authorized = await authorizeModerator(req, res);
+    if ('error' in authorized)
+      return res.status(authorized.status).json({ error: authorized.error });
 
-    const { actor, fullCredential, apiKeyId } = resolved;
-    if (
-      !actor.isModerator ||
-      actor.bannedAt ||
-      refuseModerationAccountSession(actor, 'moderator-endpoint')
-    ) {
-      return res.status(403).json({ error: 'Moderator role required' });
-    }
-    if (!fullCredential) {
-      return res.status(403).json({ error: FULL_SCOPE_SESSION_REQUIRED });
-    }
+    const { actor, apiKeyId } = authorized;
     if (def.privileged && !actor.permissions?.includes(def.privileged)) {
       return res
         .status(403)
