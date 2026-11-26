@@ -158,10 +158,12 @@
   .announcement {
     font: 600 14px/1.4 var(--io-font-ui);
   }
+  /* At least 24px tall to tap. */
   .action {
     display: block;
     width: fit-content;
-    margin-top: 6px;
+    margin-top: 2px;
+    padding: 3px 0;
     font: 600 14px/1.4 var(--io-font-ui);
   }
   .new {
