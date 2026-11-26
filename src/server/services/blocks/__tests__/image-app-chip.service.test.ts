@@ -112,6 +112,7 @@ describe('marker present → the chip', () => {
       id: IMAGE_ID,
       userId: 77,
       isModerator: false,
+      music: false,
       ownerSeesHeld: true,
     });
     expect(mockCanSeeMedia).toHaveBeenCalledWith(ctx, visibleRow);

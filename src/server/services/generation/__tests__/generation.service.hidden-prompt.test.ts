@@ -211,6 +211,7 @@ describe('getGenerationData - image visibility', () => {
       id: 1,
       userId: otherUser.id,
       isModerator: false,
+      music: false,
     });
   });
 
@@ -221,6 +222,7 @@ describe('getGenerationData - image visibility', () => {
       id: 1,
       userId: undefined,
       isModerator: undefined,
+      music: false,
     });
   });
 

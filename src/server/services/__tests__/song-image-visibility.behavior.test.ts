@@ -372,6 +372,13 @@ describe('reads that open an image by id (assertImageVisibleToViewer)', () => {
     expect(await opens({ id: OWNER }, false)).toEqual([...NO_SONGS, SONG]);
   });
 
+  it('opens no song but their own to a viewer when the caller leaves the flag out', async () => {
+    expect(await opens(undefined)).toEqual(NO_SONGS);
+    expect(await opens({ id: FAN })).toEqual(NO_SONGS);
+    expect(await opens({ id: OWNER })).toEqual([...NO_SONGS, SONG]);
+    expect(await opens({ id: MOD, isModerator: true })).toEqual(ALL);
+  });
+
   it('opens every song to a flagged viewer and to a moderator', async () => {
     expect(await opens({ id: STRANGER }, true)).toEqual(ALL);
     expect(await opens({ id: MOD, isModerator: true }, false)).toEqual(ALL);

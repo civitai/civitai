@@ -342,6 +342,7 @@ function assertVisible(imageId: number, caller: RemixAppCaller, confirmBlockOnPr
     id: imageId,
     userId: caller.user.id,
     isModerator: caller.user.isModerator,
+    music: !!caller.features?.music,
     confirmBlockOnPrimary,
   });
 }
@@ -575,13 +576,14 @@ async function quoteBuiltRun(
  */
 async function resolveTeamRemix(
   imageId: number,
-  caller: Pick<RemixAppCaller, 'user'>,
+  caller: Pick<RemixAppCaller, 'user' | 'features'>,
   { onPrimary }: { onPrimary: boolean }
 ) {
   const { userId: ownerId } = await assertImageVisibleToViewer({
     id: imageId,
     userId: caller.user.id,
     isModerator: caller.user.isModerator,
+    music: !!caller.features?.music,
     confirmBlockOnPrimary: onPrimary,
   });
   // Before a charge, the team rule again on the primary: a hat taken off or a join made seconds
