@@ -675,13 +675,17 @@ export async function resolveScanOutcome({
       axesTarget
     );
     // The caller's block write keeps a stored CSAM reason. Read the row as stored now, not as
-    // loaded: a moderator can lift that block while the scan runs.
-    const [stored] = await dbWrite.$queryRaw<{ blockedFor: string | null }[]>`
+    // loaded: a moderator can lift that block while the scan runs. A failed read falls back to the
+    // loaded copy, so a CSAM reason is never dropped for want of a read.
+    const stored = await dbWrite.$queryRaw<{ blockedFor: string | null }[]>`
       SELECT i."blockedFor" FROM "Image" i WHERE i.id = ${image.id}
-    `.catch(() => []);
+    `.then(
+      ([row]) => row?.blockedFor ?? null,
+      () => image.blockedFor
+    );
     return {
       ingestion: ImageIngestionStatus.Blocked,
-      blockedFor: stored?.blockedFor === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
+      blockedFor: stored === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
       reviewKey: null,
     };
   }

@@ -414,6 +414,25 @@ describe('the rating block', () => {
     expect(outcome.blockedFor).toBe('tos');
   });
 
+  it('🔴 keeps the loaded CSAM reason when the read of the row fails', async () => {
+    await blockImageFromRating({ imageId: CSAM, blockedReason: 'tos' });
+    const image = await loaded(CSAM);
+    const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('SELECT i."blockedFor" FROM "Image" i')
+        ? Promise.reject(new Error('primary unavailable'))
+        : route(strings, ...values)) as never);
+    const outcome = await resolveScanOutcome({
+      image,
+      blocked: { reason: 'tos' },
+      workflowId: 'wf',
+    });
+    expect(outcome.blockedFor).toBe('CSAM');
+  });
+
   // The orchestrator's rating can carry no reason (`mediaRating.blockedReason` undefined).
   it('blocks but keeps the stored reason when the rating gives none', async () => {
     await unblockBoth();
