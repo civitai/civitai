@@ -345,8 +345,6 @@ export async function getServableCoverCollectionIds(
   const ownImage = viewer?.id
     ? Prisma.sql`(i."userId" = ${viewer.id} AND ${ownerMediaAllowedSql('i')}) OR `
     : Prisma.empty;
-  // The image's owner sees their own past the rules above, but not past a block that refuses them
-  // the media, nor the gallery level of a model they don't own: that is the model owner's alone.
   const modelOwnerSql = viewer?.id ? Prisma.sql`hm."userId" = ${viewer.id}` : Prisma.sql`FALSE`;
   const servable = viewer?.isModerator
     ? Prisma.sql`TRUE`

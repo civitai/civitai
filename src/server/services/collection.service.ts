@@ -2064,7 +2064,8 @@ export const upsertCollection = async ({
 /**
  * Refuses an image as a collection cover when its block refuses its owner the media
  * (`ownerMediaAllowed`), since the cover serves it; a moderator view (`actsAsModerator`) may set it.
- * The visibility checks keep an owner's blocked row, so this is the one cover rule.
+ * The visibility checks keep an owner's blocked row, so without this an owner could set their own
+ * blocked image as a cover and have it served.
  */
 async function assertCoverMediaAllowed(
   imageId: number,

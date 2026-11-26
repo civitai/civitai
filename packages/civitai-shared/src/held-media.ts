@@ -51,7 +51,8 @@ export function heldItemImageSql(image: string): string {
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const owner = `${image}."userId"`;
-  // Same exempt reason as the main app's OWNER_MEDIA_EXEMPT_BLOCKS.
+  // Keep in step with the main app's OWNER_MEDIA_EXEMPT_BLOCKS (image-block-marker.ts): an image
+  // blocked for a reason added there and not here is still held here whenever its owner is held.
   return `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
