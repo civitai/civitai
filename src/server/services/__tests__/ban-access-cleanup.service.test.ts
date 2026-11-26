@@ -3,14 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { BanCleanupDeps } from '../ban-access-cleanup.service';
 
-// Run authorizations are revoked over real SQL.
-const { pgRef } = vi.hoisted(() => ({ pgRef: { current: null as PGlite | null } }));
-vi.mock('~/server/db/kyselyDb', async () => {
-  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
-  return { kyselyWrite: pgliteKysely(() => pgRef.current!) };
-});
+// Run authorizations are revoked over real SQL: `dbWrite.$executeRaw` runs against PGlite.
+const pgRef = { current: null as PGlite | null };
 
-const { disableOauthForBannedUser } = await import('../ban-access-cleanup.service');
+const { disableOauthForBannedUser, revokeRunnerAuthorizationsForBannedUser } = await import(
+  '../ban-access-cleanup.service'
+);
 
 const USER = 4242;
 const ASSISTANT = `appassist-${USER}`;
@@ -42,6 +40,15 @@ beforeEach(async () => {
       revoked_at TIMESTAMPTZ, revoked_reason TEXT
     );
   `);
+  dbMock.dbWrite.$executeRaw.mockImplementation(
+    (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+      (
+        await pgRef.current!.query(
+          strings.reduce((sql, part, i) => sql + '$' + i + part),
+          values
+        )
+      ).affectedRows) as never
+  );
   order = [];
   deps = {
     expireClientTokens: vi.fn(async (id: string) => void order.push(`expire:${id}`)),
@@ -51,6 +58,7 @@ beforeEach(async () => {
       async (cs: { id: string; priorMode: string }[]) =>
         void order.push(`mark:${cs.map((c) => `${c.id}=${c.priorMode}`)}`)
     ),
+    revokeRunnerAuthorizations: revokeRunnerAuthorizationsForBannedUser,
   };
   owned([{ id: ASSISTANT }, { id: DEV }, { id: THIRD_PARTY, name: 'Prompt Pal' }]);
   dbMock.dbWrite.apiKey.findMany.mockResolvedValue([{ userId: USER }, { userId: 99 }] as never);

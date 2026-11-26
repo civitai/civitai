@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { isSelfOnlyClientFor } from '@civitai/auth/self-only-client';
-import { revokeRunnerAuthorizations } from '@civitai/db-queries/recipe-runner';
 import { constants } from '~/server/common/constants';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbWrite } from '~/server/db/client';
@@ -23,13 +22,25 @@ export type BanCleanupDeps = {
   revokeCivitaiUserTokens: (args: { userId: number }) => Promise<unknown>;
   notifyModAlert: typeof notifyModAlert;
   markBanDisabledClients: (clients: { id: string; priorMode: string }[]) => Promise<void>;
+  revokeRunnerAuthorizations: (userId: number) => Promise<unknown>;
 };
+
+/**
+ * Every run authorization the user gave any recipe runner. Through Prisma like the rest of this
+ * leg, so every caller's tests already stub it.
+ */
+export function revokeRunnerAuthorizationsForBannedUser(userId: number) {
+  return dbWrite.$executeRaw`
+    UPDATE runner_run_authorizations SET revoked_at = now(), revoked_reason = 'banned'
+    WHERE user_id = ${userId} AND revoked_at IS NULL`;
+}
 
 const defaultDeps: BanCleanupDeps = {
   expireClientTokens,
   revokeCivitaiUserTokens,
   notifyModAlert,
   markBanDisabledClients,
+  revokeRunnerAuthorizations: revokeRunnerAuthorizationsForBannedUser,
 };
 
 export type OauthBanCleanup = {
@@ -102,8 +113,7 @@ export async function disableOauthForBannedUser(
 
   // Before the consents: a run authorization outlives its consent row otherwise.
   try {
-    const { kyselyWrite } = await import('~/server/db/kyselyDb');
-    await revokeRunnerAuthorizations(kyselyWrite, { userId, clientId: null, reason: 'banned' });
+    await deps.revokeRunnerAuthorizations(userId);
   } catch (error) {
     failed('revoke run authorizations')(error);
   }

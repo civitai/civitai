@@ -6746,6 +6746,86 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(result).toMatchObject({ runner: { state: 'unknown' } });
       expect((await attemptRows()).map((r) => r.state)).toEqual(['unknown']);
       expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('a refusal after the reserve refunds the attempt and every leg', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      mockReserveAppSpend.mockResolvedValueOnce({ allowed: false, reason: 'cap' });
+      const result = await submit();
+      expect(result).toMatchObject({
+        snapshot: { status: 'failed' },
+        runner: { state: 'refunded' },
+      });
+      expect((await attemptRows()).map((r) => r.state)).toEqual(['refunded']);
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        90
+      );
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('an attempt another writer moved first is never sent, and its legs are left to that writer', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyCcResources();
+      happySubmit();
+      // The per-app reserve runs after the ledger reserve: stand in for the sweeper there.
+      mockReserveAppSpend.mockImplementationOnce(async () => {
+        await runnerPg.current!.exec(`UPDATE runner_run_attempts SET state = 'refunded'`);
+        return { allowed: true, dailyKey: 'system:blocks:app-spend-cap:apb_test:day' };
+      });
+      const result = await submit();
+      expect(result).toMatchObject({
+        snapshot: { status: 'failed' },
+        runner: { state: 'refunded' },
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('inline arm: a filled slot passes the binding, a changed fixed input does not', async () => {
+      const { blockWorkflowBodySchema } = await import('~/server/schema/blocks/workflow.schema');
+      const { runnerBindingHashes } = await import('~/server/services/blocks/runner-binding');
+      const body = (text: string, width = 512) => ({
+        kind: 'customComfy' as const,
+        mode: 'inline' as const,
+        workflow: {
+          '1': {
+            class_type: 'EmptyLatentImage',
+            inputs: { width, height: 512, batch_size: 1 },
+          },
+          '2': { class_type: 'CLIPTextEncode', inputs: { text, clip: ['1', 1] } },
+        },
+        resources: [],
+        maxBuzz: 60,
+      });
+      const slots = [{ path: '/workflow/2/inputs/text', type: 'text' as const }];
+      const authorized = runnerBindingHashes(
+        blockWorkflowBodySchema.parse(body('a serene lake')) as never,
+        slots,
+        { ceiling: 60, resources: [] }
+      );
+      if (!authorized.ok) throw new Error(authorized.refusal);
+      await runnerPg.current!.query(
+        `UPDATE runner_run_authorizations SET recipe_version_hash = $1, params_hash = $2`,
+        [authorized.hashes.recipeVersionHash, authorized.hashes.paramsHash]
+      );
+      mockVerifyBlockToken.mockResolvedValue(runnerClaims());
+      happyUser();
+      mockGetResourceData.mockImplementation(async (ids: number[]) =>
+        ids.map((id) => ({ id, name: 'a resource', canGenerate: true, availability: 'Public' }))
+      );
+      mockGetHighestTierSubscription.mockResolvedValue(null);
+      happySubmit();
+      await expect(
+        submit({ body: body('a quiet harbour', 640), runnerSlots: slots })
+      ).rejects.toMatchObject({ message: 'runner submit refused: binding' });
+      const result = await submit({ body: body('a quiet harbour'), runnerSlots: slots });
+      expect(result).toMatchObject({ runner: { state: 'submitted' } });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
     });
 
     it('a definite orchestrator refusal refunds the attempt and the Redis legs', async () => {

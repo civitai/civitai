@@ -146,6 +146,7 @@ export async function prepareRunnerSubmit(
  */
 export async function claimRunnerSubmitJti(jti: string): Promise<boolean> {
   const key = `${REDIS_KEYS.BLOCKS.RUNNER_SUBMIT_JTI}:${jti}` as const;
-  const set = await redis.set(key, '1', { NX: true, EX: RUNNER_TOKEN_LIFETIME_SECONDS });
+  // Past the token's lifetime: the verifier still accepts it within its clock tolerance.
+  const set = await redis.set(key, '1', { NX: true, EX: RUNNER_TOKEN_LIFETIME_SECONDS + 60 });
   return set !== null;
 }

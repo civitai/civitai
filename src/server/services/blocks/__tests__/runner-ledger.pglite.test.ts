@@ -89,11 +89,38 @@ describe('reserveRunnerAttempt', () => {
     expect(await attempts()).toEqual([{ run_id: 'run_one', attempt_no: 1, state: 'reserved' }]);
   });
 
-  it('two reserves racing on one run leave exactly one attempt', async () => {
+  it('two concurrent reserves on one run leave exactly one attempt', async () => {
+    // PGlite serialises them, so the second is refused by the live-attempt read, not the index.
     const results = await Promise.all([reserve(), reserve()]);
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, refusal: 'run_live' }]);
     expect(await attempts()).toHaveLength(1);
+  });
+
+  it('a reserve that loses the insert race on the unique index refuses as run_live', async () => {
+    // Stands in for a concurrent reserve committing between this one's checks and its insert.
+    await pg.exec(`
+      CREATE FUNCTION lose_race() RETURNS trigger AS $$
+      BEGIN
+        RAISE unique_violation USING MESSAGE = 'runner_run_attempts_one_live_per_run';
+      END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER lose_race BEFORE INSERT ON runner_run_attempts
+        FOR EACH ROW EXECUTE FUNCTION lose_race();
+    `);
+    expect(await reserve()).toEqual({ ok: false, refusal: 'run_live' });
+  });
+
+  it('the partial unique index allows one live attempt per run, and more once settled out', async () => {
+    const row = (no: number, state: string) =>
+      pg.query(
+        `INSERT INTO runner_run_attempts (attempt_id, run_id, attempt_no, user_id, runner_client_id,
+           app_block_id, authorization_id, state, reserved_amount, external_id)
+         VALUES ($1, 'run_idx', $2, ${USER}, '${CLIENT}', '${APP_BLOCK}', 'rra_single', $3, 10, 'x')`,
+        [`att_idx_${no}`, no, state]
+      );
+    await row(1, 'refunded');
+    await row(2, 'unknown');
+    await expect(row(3, 'reserved')).rejects.toMatchObject({ code: '23505' });
   });
 
   it('refuses a run that already holds a live attempt, and allows a new one once it is refunded', async () => {

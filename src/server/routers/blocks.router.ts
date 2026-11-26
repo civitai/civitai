@@ -1835,7 +1835,7 @@ async function withRunnerAttempt<T extends object>(runner: RunnerSubmit, submit:
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
-        error: e instanceof Error ? e.message : 'runner submit failed',
+        error: e instanceof Error ? e.message : String(e),
       },
       runner: await attempt(),
     };
@@ -12036,8 +12036,8 @@ async function submitCustomComfyWorkflow(opts: {
         // above (the session reserve rolled ITSELF back on deny) and the G8
         // per-app reservation (present only for non-dev tokens; a token with
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
-        await refundBlockBuzzReservation(reservation, ceiling);
-        if (appSpendReserve) {
+        const refunded = await refundBlockBuzzReservation(reservation, ceiling);
+        if (refunded && appSpendReserve) {
           const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }

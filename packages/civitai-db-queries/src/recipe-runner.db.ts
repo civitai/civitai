@@ -184,28 +184,20 @@ export async function readRunnerBindingStatus(
   return row?.status ?? null;
 }
 
-export type RunnerAuthorizationRevokeReason = 'offline_declined' | 'disconnected' | 'banned';
+export type RunnerAuthorizationRevokeReason = 'offline_declined' | 'disconnected';
 
-/**
- * Revoke every live run authorization the user gave the runner client, or every runner client
- * when `clientId` is null; returns how many.
- */
+/** Revoke every live run authorization the user gave the runner client; returns how many. */
 export async function revokeRunnerAuthorizations(
   db: Kysely<DB>,
-  opts: {
-    userId: number;
-    clientId: string | null;
-    reason: RunnerAuthorizationRevokeReason;
-    now?: Date;
-  }
+  opts: { userId: number; clientId: string; reason: RunnerAuthorizationRevokeReason; now?: Date }
 ): Promise<number> {
-  let query = db
+  const result = await db
     .withTables<RunnerTables>()
     .updateTable('runner_run_authorizations')
     .set({ revoked_at: opts.now ?? new Date(), revoked_reason: opts.reason })
     .where('user_id', '=', opts.userId)
-    .where('revoked_at', 'is', null);
-  if (opts.clientId !== null) query = query.where('runner_client_id', '=', opts.clientId);
-  const result = await query.executeTakeFirst();
+    .where('runner_client_id', '=', opts.clientId)
+    .where('revoked_at', 'is', null)
+    .executeTakeFirst();
   return Number(result.numUpdatedRows);
 }
