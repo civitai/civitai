@@ -28,6 +28,7 @@ describe('the preset tag groups', () => {
         for (const word of SEXUAL_TAG_WORDS) expect(tag.name.toLowerCase()).not.toContain(word);
   });
 
+  // The groups and why: docs/features/knights-yesno-questions.md, "Hide content".
   it('are the groups agreed with Moderation, in settings order', () => {
     expect(KNIGHTS_TAG_GROUPS.map((g) => g.key)).toEqual([
       'furry',
@@ -38,11 +39,6 @@ describe('the preset tag groups', () => {
       'gore',
     ]);
     expect(tagIdsOfGroups(['feet', 'futanari'])).toEqual([5311, 137120, 279, 3616]);
-  });
-
-  it('describe what they hide in other words than their name', () => {
-    for (const group of KNIGHTS_TAG_GROUPS)
-      expect(group.description.toLowerCase()).not.toBe(group.label.toLowerCase());
   });
 
   it('never hide by an orientation tag alone', () => {

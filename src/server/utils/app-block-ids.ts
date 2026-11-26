@@ -179,3 +179,8 @@ export function newAppOwnershipEventId(): string {
 export function newAppOwnershipTransferId(): string {
   return `aot_${newUlid()}`;
 }
+
+/** A staff platform update (`app_platform_updates`). */
+export function newAppPlatformUpdateId(): string {
+  return `apu_${newUlid()}`;
+}

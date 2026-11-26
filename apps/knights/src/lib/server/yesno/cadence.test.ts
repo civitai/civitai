@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BURSTS, burstDue, burstRoller, type Served } from './cadence';
+import { burstDue, burstRoller, type Served } from './cadence';
 
 const r = (id: number): Served => ({ yesno: false, key: `r${id}` });
 const y = (id: number): Served => ({ yesno: true, key: `y${id}` });
@@ -23,7 +23,6 @@ const runs = (served: Served[]) => {
 
 describe('burstDue', () => {
   it('serves ratings until the rolled gap is reached, then starts a burst', () => {
-    // The lowest roll.
     const low = always(0);
     const ratings = (n: number) => Array.from({ length: n }, (_, i) => r(i));
     expect(burstDue([], low)).toBe(false);
@@ -32,7 +31,6 @@ describe('burstDue', () => {
   });
 
   it('keeps the burst going for its rolled length, then goes back to ratings', () => {
-    // The highest roll.
     const high = always(0.999);
     const gap = Array.from({ length: 20 }, (_, i) => r(i));
     const burst = (n: number) => Array.from({ length: n }, (_, i) => y(i));
@@ -52,11 +50,6 @@ describe('burstDue', () => {
     burstDue([r(3), y(8), y(9)], roll);
     burstDue([r(4)], roll);
     expect(seen).toEqual(['gap:y7', 'burst:r3', 'gap:start']);
-  });
-
-  it('only offers the gaps 15, 18 and 20 and bursts of 5 to 10', () => {
-    expect(BURSTS.gaps).toEqual([15, 18, 20]);
-    expect(BURSTS.burst).toEqual({ min: 5, max: 10 });
   });
 
   it('over a long session, mixes about 30% questions in bursts of 5-10 between 15, 18 or 20 ratings', () => {

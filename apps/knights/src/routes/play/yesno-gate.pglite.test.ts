@@ -11,7 +11,10 @@ import { importYesNo } from '$lib/server/yesno/import';
 import { runTagReview } from '$lib/server/yesno/tag-review';
 import { flagTag, resetTagReview, staffPaladin, X } from '$lib/server/yesno/tag-review.fixtures';
 
-const state = vi.hoisted(() => ({ db: undefined as unknown }));
+const state = vi.hoisted(() => ({
+  db: undefined as unknown,
+  config: { share: 1, tagReview: true, stretch: 8, playerDefault: true },
+}));
 vi.mock('$lib/server/db', () => ({
   get db() {
     return state.db;
@@ -23,11 +26,10 @@ vi.mock('$lib/server/db', () => ({
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn() }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => `cdn/${key}` }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
-vi.mock('$lib/server/yesno/runtime', () => ({
-  yesNoConfig: () => ({ share: 1, tagReview: true, stretch: 8, playerDefault: true }),
-}));
+vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ ...state.config }) }));
 
 const { pickItem } = await import('./next-item.server');
+const { actions: settings } = await import('../settings/+page.server');
 
 const NOW = new Date();
 const PALADIN = 1;
@@ -49,6 +51,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 
 beforeEach(async () => {
+  state.config = { share: 1, tagReview: true, stretch: 8, playerDefault: true };
   await resetTagReview(pg, [[10, 'nudity', 'Moderation', X]]);
   await pg.exec(
     `TRUNCATE "KnightsYesNoReference","KnightsApprenticeAnswer","KnightsPlayer" RESTART IDENTITY CASCADE`
@@ -119,7 +122,8 @@ async function dealt() {
   };
 }
 
-describe('the shared image gate on every yes/no path (Lead condition 1)', () => {
+// The rule: docs/features/knights-yesno-questions.md, "Serving": a question is offered only on an image `servableImage` accepts.
+describe('the shared image gate on every yes/no path', () => {
   it('deals a yes/no on every path while the image passes KnightsImageGate, and none once the gate excludes it', async () => {
     expect(await dealt()).toEqual({
       generated: GENERATED_IMAGE,
@@ -143,5 +147,41 @@ describe('the shared image gate on every yes/no path (Lead condition 1)', () => 
       prefetch: null,
       acolytePair: null,
     });
+  });
+});
+
+describe('the questions switch in Knights settings', () => {
+  const turn = (value: 'on' | 'off') => {
+    const body = new FormData();
+    body.set('questions', value);
+    return settings.questions({
+      locals: { user: { id: PALADIN } },
+      request: new Request('http://x', { method: 'POST', body }),
+    } as never);
+  };
+  const stored = async () =>
+    (
+      await pg.query<{ yesNoQuestions: boolean | null }>(
+        `SELECT "yesNoQuestions" FROM "KnightsPlayer" WHERE "playerId" = $1`,
+        [PALADIN]
+      )
+    ).rows[0]?.yesNoQuestions;
+  const dealsYesNo = async () =>
+    (await pickItem(PALADIN, 'Paladin', null))?.question.kind === 'bool';
+
+  it.each([
+    ['generated questions', { share: 1, tagReview: false }],
+    ['tag review', { share: 0, tagReview: true }],
+  ])('turned off, deals the player no %s until it is turned back on', async (_source, sources) => {
+    state.config = { ...state.config, ...sources };
+    expect(await dealsYesNo()).toBe(true);
+
+    expect(await turn('off')).toEqual({ questions: false });
+    expect(await stored()).toBe(false);
+    expect(await dealsYesNo()).toBe(false);
+
+    expect(await turn('on')).toEqual({ questions: true });
+    expect(await stored()).toBe(true);
+    expect(await dealsYesNo()).toBe(true);
   });
 });

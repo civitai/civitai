@@ -14,6 +14,8 @@ export const routes: ApiRoutes = {
   'apps/assistant-trace/transcript': () =>
     import('~/server/api-routes/mod/apps/assistant-trace/transcript'),
   'apps/refund-workflows': () => import('~/server/api-routes/mod/apps/refund-workflows'),
+  'apps/review-agent/v1/chat/completions': () =>
+    import('~/server/api-routes/mod/apps/review-agent/v1/chat/completions'),
   'apps/workflow-charges': () => import('~/server/api-routes/mod/apps/workflow-charges'),
   'audit/change-history': () => import('~/server/api-routes/mod/audit/change-history'),
   'ban-user': () => import('~/server/api-routes/mod/ban-user'),

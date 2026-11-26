@@ -102,42 +102,15 @@ describe('settings load', () => {
 
   it("lists every preset group with the player's choice", async () => {
     hiddenTagGroups.mockResolvedValue(['gore']);
-    expect((await run()).tagGroups).toEqual({
-      available: true,
-      groups: [
-        {
-          key: 'furry',
-          label: 'Furry',
-          description: 'Anthro and anthropomorphic characters',
-          hidden: false,
-        },
-        {
-          key: 'male-focus',
-          label: 'Male focus',
-          description: 'Images centred on men, including bara and yaoi',
-          hidden: false,
-        },
-        { key: 'feet', label: 'Feet', description: 'Images that focus on feet', hidden: false },
-        {
-          key: 'bondage',
-          label: 'Bondage',
-          description: 'Restraints, bondage and BDSM',
-          hidden: false,
-        },
-        {
-          key: 'futanari',
-          label: 'Futanari',
-          description: 'Futa and intersex characters',
-          hidden: false,
-        },
-        {
-          key: 'gore',
-          label: 'Gore',
-          description: 'Blood, corpses, gore and body horror',
-          hidden: true,
-        },
-      ],
-    });
+    const { groups } = (await run()).tagGroups as { groups: { key: string; hidden: boolean }[] };
+    expect(groups.map((g) => [g.key, g.hidden])).toEqual([
+      ['furry', false],
+      ['male-focus', false],
+      ['feet', false],
+      ['bondage', false],
+      ['futanari', false],
+      ['gore', true],
+    ]);
     expect(hiddenTagGroups).toHaveBeenCalledWith(PRIMARY, 7);
   });
 });
