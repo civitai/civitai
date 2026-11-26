@@ -10,8 +10,11 @@ const MODEL_OPTIONS = [
   { value: 'xiaomi/mimo-v2.5', label: 'MiMo v2.5 (xiaomi/mimo-v2.5)' },
   { value: 'x-ai/grok-4.3', label: 'Grok 4.3 (x-ai/grok-4.3)' },
   { value: 'openai/gpt-4o', label: 'GPT-4o (openai/gpt-4o)' },
-  { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (anthropic/claude-sonnet-4)' },
-  { value: 'anthropic/claude-3-5-haiku', label: 'Claude 3.5 Haiku (anthropic/claude-3-5-haiku)' },
+  {
+    value: 'anthropic/claude-sonnet-5.5',
+    label: 'Claude Sonnet 5.5 (anthropic/claude-sonnet-5.5)',
+  },
+  { value: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5 (anthropic/claude-haiku-5.5)' },
   { value: 'moonshotai/kimi-k2.5', label: 'Kimi K2.5 — text only (moonshotai/kimi-k2.5)' },
   {
     value: 'stepfun/step-3.5-flash',

@@ -18,8 +18,10 @@ export const AI_MODELS = {
   // Primary models for complex tasks
   GPT_4O: 'openai/gpt-4o',
   GPT_4O_MINI: 'openai/gpt-4o-mini',
-  CLAUDE_SONNET: 'anthropic/claude-sonnet-4',
-  CLAUDE_HAIKU: 'anthropic/claude-3-5-haiku',
+  // OpenRouter retires old Anthropic ids outright: a retired id 404s on every call. Every
+  // `anthropic/` entry here must be in LIVE_ANTHROPIC_IDS in __tests__/openrouter-models.test.ts.
+  CLAUDE_SONNET: 'anthropic/claude-sonnet-5.5',
+  CLAUDE_HAIKU: 'anthropic/claude-haiku-5.5',
 
   KIMI: 'moonshotai/kimi-k2.5',
   // DEAD, not merely deprecated: this id 404s with "Grok 4.1 Fast is deprecated" on every call
@@ -41,7 +43,7 @@ export const AI_MODELS = {
 
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',
-  VISION_FALLBACK: 'anthropic/claude-sonnet-4',
+  VISION_FALLBACK: 'anthropic/claude-sonnet-5.5',
 } as const;
 
 // eslint-disable-next-line @typescript-eslint/ban-types

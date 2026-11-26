@@ -106,7 +106,7 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
     })),
     {
       name: 'judge-playground',
-      version: 5,
+      version: 6,
       migrate: (persistedState, version) => {
         // Migration history:
         //   v0 -> v1: x-ai/grok-4.1-fast deprecated 2026-05-15
@@ -114,6 +114,7 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
         //   v2 -> v3: gpt-5-nano returned empty content on generateArticle; use gpt-4o-mini
         //   v3 -> v4: Qwen 35B retired from the orchestrator
         //   v4 -> v5: gpt-4o-mini and gpt-5-nano retired from the challenge pipeline
+        //   v5 -> v6: OpenRouter retired claude-sonnet-4 and claude-3-5-haiku (calls 404)
         // Every retired model lands on the pipeline default.
         const state = persistedState as Partial<PlaygroundState> | undefined;
         const retired = [
@@ -121,8 +122,10 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
           'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
           'openai/gpt-5-nano',
           'openai/gpt-4o-mini',
+          'anthropic/claude-sonnet-4',
+          'anthropic/claude-3-5-haiku',
         ];
-        if ((version ?? 0) < 5 && state?.aiModel && retired.includes(state.aiModel)) {
+        if ((version ?? 0) < 6 && state?.aiModel && retired.includes(state.aiModel)) {
           state.aiModel = 'civitai/qwen3.8';
         }
         return state;
