@@ -16,8 +16,9 @@
  * - `scan-locks`: the text scan's locks. The lock goes; the scan's marker stays, as on any unlocked
  *   scan rating, so the owner still cannot untick mature while the text stands.
  * - `profanity-locks`: the save-time profanity filter's locks: those with its marker, and the older
- *   ones it locked before it stamped a marker, read by the nsfw lock, its recorded `profanityMatches`
- *   and no marker of any kind. The lock and any marker go
+ *   ones it locked before it stamped a marker (the nsfw lock, its recorded `profanityMatches` and no
+ *   marker of any kind), taken only where the entity-change log records the filter setting that lock
+ *   and nothing changing it since. The lock and any marker go
  *   (the marker is parked in the record), and the same call submits a forced text scan of each changed
  *   id (the scan's earlier verdict was skipped under the lock), at most 200 a call. An R+ read stamps
  *   the scan's own marker; a clean read leaves the rating as it is. Each scan's outcome is recorded on
@@ -29,13 +30,15 @@
  * Excluded, and left locked: a model a moderator ruled on since the lock, one with a pending lock
  * review, a minor or poi model, one with a real-person or minor detection still pending, one already
  * reverted, and any model whose owner, now or before, has a CSAM report, an evidence hold, an account
- * hold or a SexualMinor ban. A profanity lock is also kept where a moderator ever acted on the model,
- * on anything (an unmarked lock has no time to read "since" from), where it holds any lock but nsfw,
- * or where its marker's time cannot be read.
+ * hold or a SexualMinor ban. For a profanity lock, a moderator's activity on the model of any kind,
+ * ever, replaces the ruled-since-the-lock rule (an unmarked lock has no time to read "since" from); a
+ * lock beside nsfw, a marker whose time cannot be read, and an unmarked lock the log does not
+ * attribute to the filter also keep it.
  */
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import * as z from 'zod';
+import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -139,12 +142,59 @@ export const exclusions = {
 } as const;
 
 /**
- * The profanity bucket's own exclusions. Most of its locks carry no marker, so no lock time to read
- * a moderator's ruling "since": any activity by a moderator on the model, ever and of any kind, keeps
- * the lock instead. So does any lock beside nsfw, a marker whose time cannot be read (a malformed
- * row), and a model not rated mature, which the re-scan after the unlock would rate.
+ * The unmarked profanity locks the entity-change log attributes to the filter: `attributed`, where
+ * its record of setting the nsfw lock is the last change to the lock or the rating; `superseded`,
+ * where anyone else (a moderator, the owner, another rule) changed either since. Moderator saves
+ * were not logged in ModActivity before 2026-10-20 and `profanityMatches` is recorded even where the
+ * filter did not lock, so an unmarked lock is taken only on this record.
  */
-const profanityExclusions = {
+export type Attribution = { attributed: number[]; superseded: number[] };
+
+/** No record read: every unmarked lock counts as unattributed and stays locked. */
+export const NO_ATTRIBUTION: Attribution = { attributed: [], superseded: [] };
+
+/** Reads the attribution from ClickHouse; throws, so nothing is written, when it cannot. */
+export async function readProfanityAttribution(): Promise<Attribution> {
+  if (!clickhouse) throw new Error('ClickHouse is not configured');
+  const rows = await clickhouse.$query<{ id: number | string; superseded: number | boolean }>`
+    WITH filter AS (
+      SELECT entityId, max(createdAt) AS at
+      FROM entityChangeEvents
+      WHERE entityType = 'Model' AND field = 'lockedProperties'
+        AND actorRole = 'system' AND reason = 'profanity-filter'
+        AND has(JSONExtract(newValue, 'Array(String)'), 'nsfw')
+        AND NOT has(JSONExtract(oldValue, 'Array(String)'), 'nsfw')
+      GROUP BY entityId
+    ), later AS (
+      SELECT DISTINCT e.entityId
+      FROM entityChangeEvents e INNER JOIN filter f ON f.entityId = e.entityId
+      WHERE e.entityType = 'Model' AND e.field IN ('lockedProperties', 'nsfw')
+        AND e.createdAt >= f.at
+        AND NOT (e.actorRole = 'system' AND e.reason = 'profanity-filter')
+    )
+    SELECT entityId AS id, entityId IN (SELECT entityId FROM later) AS superseded FROM filter
+  `;
+  const attributed: number[] = [];
+  const superseded: number[] = [];
+  for (const row of rows) {
+    const id = Number(row.id);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    (Number(row.superseded) ? superseded : attributed).push(id);
+  }
+  return { attributed, superseded };
+}
+
+/**
+ * The profanity bucket's own exclusions. An unmarked lock is kept unless the log attributes it to
+ * the filter (`Attribution`). An unmarked lock has no lock time to read a moderator's ruling "since"
+ * from, so any moderator activity on the model, ever and of any kind, keeps the lock instead. So does
+ * any lock beside nsfw, a marker whose time cannot be read (a malformed row), and a model not rated
+ * mature, which the re-scan after the unlock would rate.
+ */
+const profanityExclusionsOf = ({ attributed, superseded }: Attribution) => ({
+  unattributed: Prisma.sql`(${unmarkedProfanitySql}
+    AND NOT (m.id = ANY(${[...attributed, ...superseded]}::int[])))`,
+  attributionSuperseded: Prisma.sql`(${unmarkedProfanitySql} AND m.id = ANY(${superseded}::int[]))`,
   moderatorActed: Prisma.sql`EXISTS (
     SELECT 1 FROM "ModActivity" ma
     WHERE ma."entityType" = 'model' AND ma."entityId" = m.id
@@ -158,19 +208,21 @@ const profanityExclusions = {
     AND COALESCE(m.meta->'systemNsfwLock'->>'at', '') !~ '^\\d{4}-\\d{2}-\\d{2}T'
   )`,
   notMature: Prisma.sql`NOT m.nsfw`,
-} as const;
+});
 
-/** The bucket's exclusions: every shared one; for profanity locks, `moderatorActed` in place of
- *  `moderatorRuled`, and its own. */
-function exclusionsOf(bucket: Bucket): Record<string, Prisma.Sql> {
+/** The bucket's exclusions. */
+function exclusionsOf(
+  bucket: Bucket,
+  attribution: Attribution = NO_ATTRIBUTION
+): Record<string, Prisma.Sql> {
   if (bucket === 'scan-locks') return exclusions;
   const { moderatorRuled: _anchoredOnTheMarker, ...shared } = exclusions;
-  return { ...shared, ...profanityExclusions };
+  return { ...shared, ...profanityExclusionsOf(attribution) };
 }
 
 /** Which exclusions apply to model `id`, for the tests: one leg each, so a narrowed leg shows. */
-export async function exclusionsFor(id: number, bucket: Bucket) {
-  const legs = exclusionsOf(bucket);
+export async function exclusionsFor(id: number, bucket: Bucket, attribution?: Attribution) {
+  const legs = exclusionsOf(bucket, attribution);
   const names = Object.keys(legs);
   const [row] = await dbWrite.$queryRaw<Record<string, boolean>[]>`
     SELECT ${Prisma.join(
@@ -182,15 +234,15 @@ export async function exclusionsFor(id: number, bucket: Bucket) {
   return names.filter((name) => row?.[name]);
 }
 
-export const eligibleSql = (bucket: Bucket) =>
+export const eligibleSql = (bucket: Bucket, attribution?: Attribution) =>
   Prisma.sql`${lockSql(bucket)} AND NOT (${Prisma.join(
-    Object.values(exclusionsOf(bucket)),
+    Object.values(exclusionsOf(bucket, attribution)),
     ' OR '
   )})`;
 
 /** The dry-run count: the bucket, what is eligible, and each exclusion. */
-export function lockCountSql(bucket: Bucket) {
-  const legs = exclusionsOf(bucket);
+export function lockCountSql(bucket: Bucket, attribution?: Attribution) {
+  const legs = exclusionsOf(bucket, attribution);
   const columns = Object.entries(legs).map(
     ([name, leg]) => Prisma.sql`count(*) FILTER (WHERE ${leg})::int AS ${Prisma.raw(`"${name}"`)}`
   );
@@ -209,15 +261,22 @@ export function lockCountSql(bucket: Bucket) {
   `;
 }
 
-export async function countLocks(bucket: Bucket) {
-  const [row] = await dbWrite.$queryRaw<Record<string, number>[]>(lockCountSql(bucket));
+export async function countLocks(bucket: Bucket, attribution?: Attribution) {
+  const [row] = await dbWrite.$queryRaw<Record<string, number>[]>(
+    lockCountSql(bucket, attribution)
+  );
   return row;
 }
 
-export async function nextUnlockBatch(bucket: Bucket, afterId: number, limit: number) {
+export async function nextUnlockBatch(
+  bucket: Bucket,
+  afterId: number,
+  limit: number,
+  attribution?: Attribution
+) {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT m.id FROM "Model" m
-    WHERE m.id > ${afterId} AND ${eligibleSql(bucket)}
+    WHERE m.id > ${afterId} AND ${eligibleSql(bucket, attribution)}
     ORDER BY m.id
     LIMIT ${limit}
   `;
@@ -229,7 +288,7 @@ export async function nextUnlockBatch(bucket: Bucket, afterId: number, limit: nu
  * prior locks, rating and marker. A scan lock keeps its marker; a profanity lock's marker is parked in
  * the record (JSON null where it had none), so the re-scan can stamp the scan's own.
  */
-export async function unlockLocks(bucket: Bucket, ids: number[]) {
+export async function unlockLocks(bucket: Bucket, ids: number[], attribution?: Attribution) {
   if (!ids.length) return [];
   const meta =
     bucket === 'profanity-locks' ? Prisma.sql`(m.meta - 'systemNsfwLock')` : Prisma.sql`m.meta`;
@@ -243,7 +302,7 @@ export async function unlockLocks(bucket: Bucket, ids: number[]) {
           'priorNsfw', m.nsfw,
           'priorSystemNsfwLock', COALESCE(m.meta->'systemNsfwLock', 'null'::jsonb)
         ))
-    WHERE m.id = ANY(${ids}::int[]) AND ${eligibleSql(bucket)}
+    WHERE m.id = ANY(${ids}::int[]) AND ${eligibleSql(bucket, attribution)}
     RETURNING m.id
   `;
   return rows.map((r) => r.id);
@@ -462,7 +521,12 @@ export async function countUnlockedUnscanned() {
   return row?.count ?? 0;
 }
 
-const writeEffects = { bustPublicModelResponseCache, scanModelText, updateModelNsfwLevels };
+const writeEffects = {
+  bustPublicModelResponseCache,
+  readProfanityAttribution,
+  scanModelText,
+  updateModelNsfwLevels,
+};
 
 /**
  * Submits the forced scan of every model a profanity unlock changed, in the same call, since its owner
@@ -509,10 +573,13 @@ export async function runBackfill(
   const { bucket, action, dryRun, afterId } = input;
   const profanity = bucket === 'profanity-locks';
   const limit = profanity ? Math.min(input.limit, PROFANITY_BATCH_LIMIT) : input.limit;
+  // Read once per call, and used by both the batch query and the UPDATE's own re-check.
+  const attribution =
+    profanity && action === 'unlock' ? await effects.readProfanityAttribution() : NO_ATTRIBUTION;
   const ids =
     action === 'revert'
       ? await nextRevertBatch(bucket, afterId, limit)
-      : await nextUnlockBatch(bucket, afterId, limit);
+      : await nextUnlockBatch(bucket, afterId, limit, attribution);
   const nextAfterId = ids.length ? ids[ids.length - 1] : afterId;
   const skippedRatingChanged =
     // A scan of every unlocked model, so once per pass: on its first call.
@@ -524,8 +591,16 @@ export async function runBackfill(
     const counts =
       action === 'unlock'
         ? {
-            ...(await countLocks(bucket)),
-            ...(profanity ? { unlockedUnscanned: await countUnlockedUnscanned() } : {}),
+            ...(await countLocks(bucket, attribution)),
+            ...(profanity
+              ? {
+                  unlockedUnscanned: await countUnlockedUnscanned(),
+                  attributionRecords: {
+                    attributed: attribution.attributed.length,
+                    superseded: attribution.superseded.length,
+                  },
+                }
+              : {}),
           }
         : undefined;
     return {
@@ -541,7 +616,9 @@ export async function runBackfill(
   }
 
   const changed =
-    action === 'revert' ? await revertLocks(bucket, ids) : await unlockLocks(bucket, ids);
+    action === 'revert'
+      ? await revertLocks(bucket, ids)
+      : await unlockLocks(bucket, ids, attribution);
   const scans =
     profanity && action === 'unlock' && changed.length
       ? await scanUnlocked(changed, effects)
@@ -585,7 +662,7 @@ export default defineModeratorEndpoint('model.nsfwLockBackfill', {
     'action "revert" restores what meta.nsfwLockBackfill recorded and marks the model reverted.',
     'profanity-locks: at most 200 ids a call; an unlock submits a forced text scan of each changed id; one not submitted is locked again at its prior rating (scans.relocked; scans.ratingRestored where an owner change was undone). Benign skips (not-public, too-short) relock on every pass.',
     'profanity-locks revert: a model whose rating changed since the unlock is skipped and counted in skippedRatingChanged.',
-    'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable).',
+    'profanity-locks selects the filter marker or, for older locks, the nsfw lock + meta.profanityMatches with no marker (counts.byMarker, counts.byProfanityMatches); an unmarked lock is taken only where the entity-change log records the filter setting it and nothing changing the lock or rating since (counts.unattributed, counts.attributionSuperseded, counts.attributionRecords); it skips any model a moderator ever acted on (counts.moderatorActed), holding another lock (counts.otherLocks), or whose marker time cannot be read (counts.markerUnreadable). If ClickHouse cannot be read, the call fails and writes nothing.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
   input: backfillSchema,
