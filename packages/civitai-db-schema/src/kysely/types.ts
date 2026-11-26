@@ -4007,6 +4007,14 @@ export type KnightsPlayer = {
    * The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
    */
   recapPopupOptOut: Generated<boolean>;
+  /**
+   * The yes/no questions switch in Knights settings. Null follows the default saved on the moderator Config page.
+   */
+  yesNoQuestions: boolean | null;
+  /**
+   * Keys of the preset tag groups the player hides in Knights settings.
+   */
+  hiddenTagGroups: Generated<string[]>;
 };
 export type KnightsPlayerDay = {
   playerId: number;
@@ -4140,6 +4148,15 @@ export type KnightsShopPurchase = {
   createdAt: Generated<Timestamp>;
   lastAttemptAt: Timestamp | null;
   grantedAt: Timestamp | null;
+};
+export type KnightsUnsure = {
+  id: Generated<string>;
+  playerId: number;
+  itemId: number | null;
+  yesNoReferenceId: number | null;
+  questionKey: string;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
 };
 export type KnightsVote = {
   itemId: number;
@@ -7366,6 +7383,7 @@ export type DB = {
   KnightsShopItem: KnightsShopItem;
   KnightsShopItemChange: KnightsShopItemChange;
   KnightsShopPurchase: KnightsShopPurchase;
+  KnightsUnsure: KnightsUnsure;
   KnightsVote: KnightsVote;
   KnightsYesNoReference: KnightsYesNoReference;
   Leaderboard: Leaderboard;

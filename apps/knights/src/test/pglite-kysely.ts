@@ -14,7 +14,7 @@ import {
   type QueryResult,
 } from 'kysely';
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
-import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
+import { JIT_OFF_STATEMENT, SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   KNIGHTS_APP_FUNCTIONS,
@@ -29,6 +29,8 @@ const MIGRATIONS = [
   '20261210120000_knights_v2_tables',
   '20271120160000_knights_inquisitor_review',
   '20271125120000_knights_legacy_player_days',
+  '20271128120000_knights_player_question_settings',
+  '20271128120100_knights_unsure',
   '20271130120000_knights_queue_item_verdict_labelled',
   '20271130120100_knights_queue_item_verdict_unlabelled_idx',
 ].map((name) =>
@@ -538,7 +540,7 @@ function dialect(
       const run = async () => {
         const text = compiled.sql.trim().toLowerCase();
         if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
-        else if (text === 'set local jit = off') jitOff = transactions.open > 0;
+        else if (text === JIT_OFF_STATEMENT.toLowerCase()) jitOff = transactions.open > 0;
         else if (
           compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
           !(jitOff && transactions.open > 0)

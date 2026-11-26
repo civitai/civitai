@@ -187,6 +187,24 @@ describe('the stream', () => {
       .toHaveTextContent('Icon is 32px, needs 256px');
   });
 
+  test('a decided entry whose reviewer account is gone reads as the team', async () => {
+    // The named case renders the site's UserAvatar, which needs providers this harness does not
+    // mount; which case renders is `decisionReviewerByline`, pinned in the unit suite.
+    renderWithProviders(
+      <ListingHistoryPanelView
+        entries={[
+          entry({ id: 'rev_gone', status: 'approved', reviewer: { account: null } }),
+          entry({ id: 'rev_none', status: 'pending', version: '3.0.0', reviewer: null }),
+        ]}
+      />
+    );
+    const gone = page.getByTestId('apps-history-reviewer-rev_gone');
+    await expect.element(gone).toHaveTextContent('Reviewed by Civitai App Review');
+    expect(gone.element().querySelector('a')).toBeNull();
+    // Nobody has decided a pending request yet.
+    expect(page.getByTestId('apps-history-reviewer-rev_none').query()).toBeNull();
+  });
+
   test('an app with no history says so rather than rendering an empty box', async () => {
     renderWithProviders(<ListingHistoryPanelView entries={[]} />);
     await expect.element(page.getByTestId('apps-history-empty')).toBeInTheDocument();

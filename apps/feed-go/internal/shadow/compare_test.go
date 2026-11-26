@@ -1,6 +1,7 @@
 package shadow
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -58,8 +59,9 @@ func TestCompareFindsValueMissingAndAnnotationDiffs(t *testing.T) {
 
 // superjson.serialize writes an undefined object member as `null` annotated ["undefined"]
 // (transformValue: undefined -> null), and superjson.deserialize sets every annotated path back to
-// undefined (setDeep assigns `parent[lastKey]` unconditionally). This service's writer omits the
-// member and writes the same annotation, which deserializes to the same object. The first live shadow
+// undefined (setDeep assigns `parent[lastKey]` unconditionally). This service's writer now writes the
+// same bytes (asserted below); before 0.0.51 it omitted the member, which deserializes to the same
+// object, so an omitted member still matches (TestCompareOmittedUndefinedMember). The first live shadow
 // window counted every such member as missing-in-go (`images.*.tags`, `images.*.thumbnailUrl` on
 // every non-video image, `review` on every post without one): a comparator artifact, not a parity gap.
 func TestCompareAppliesUndefinedAnnotations(t *testing.T) {
@@ -80,6 +82,9 @@ func TestCompareAppliesUndefinedAnnotations(t *testing.T) {
 	// What superjson.serialize (2.x) writes for the same JS object, then JSON.stringify.
 	nodeEnv := []byte(`{"json":{"items":[{"postId":1,"images":[{"id":5,"tags":null,"tagIds":[3],"thumbnailUrl":null}],"review":null}]},` +
 		`"meta":{"values":{"items.0.images.0.tags":["undefined"],"items.0.images.0.thumbnailUrl":["undefined"],"items.0.review":["undefined"]},"v":1}}`)
+	if !bytes.Equal(goEnv, nodeEnv) {
+		t.Fatalf("not Node's bytes:\ngo:   %s\nnode: %s", goEnv, nodeEnv)
+	}
 	r, err := Compare(goEnv, nodeEnv)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +94,20 @@ func TestCompareAppliesUndefinedAnnotations(t *testing.T) {
 	}
 	if got := Classify(r, goEnv, nodeEnv); got != "match" {
 		t.Fatalf("classify = %s", got)
+	}
+}
+
+// The bytes a writer that omits an undefined member writes (feed-go before 0.0.51; a replayed capture)
+// still match Node's annotated null: both deserialize to the same object.
+func TestCompareOmittedUndefinedMember(t *testing.T) {
+	omitted := []byte(`{"json":{"items":[{"id":5}]},"meta":{"values":{"nextCursor":["undefined"],"items.0.tags":["undefined"]},"v":1}}`)
+	node := []byte(`{"json":{"items":[{"id":5,"tags":null}],"nextCursor":null},"meta":{"values":{"items.0.tags":["undefined"],"nextCursor":["undefined"]},"v":1}}`)
+	r, err := Compare(omitted, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Match {
+		t.Fatalf("an omitted undefined member must match an annotated null: %+v", r.Diffs)
 	}
 }
 

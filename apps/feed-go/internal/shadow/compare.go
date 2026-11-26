@@ -3,7 +3,8 @@
 // Both sides are superjson envelopes `{json, meta}`. The comparison is on DECODED values, which is what
 // the client renders: `json` trees compared structurally (object key order ignored, array order kept)
 // after the ["undefined"] annotations are applied as superjson.deserialize applies them (Node writes
-// an undefined member as `null` + annotation, this service omits it; both decode to undefined), and the
+// an undefined member as `null` + annotation, and so does this service's writer; one that omits the
+// member, as it did before 0.0.51, decodes to the same undefined), and the
 // `meta.values` annotation sets compared as sets (a Date annotated on one side only is a type
 // difference the client would see). `meta.referentialEqualities` is ignored: it changes object identity
 // after decode, never a value.
@@ -109,8 +110,9 @@ type undefinedValue struct{}
 // applyUndefined does what superjson's applyValueAnnotations does for the ["undefined"] annotations:
 // it sets each annotated path to undefined (setDeep assigns `parent[lastKey]` unconditionally, so the
 // key exists after decode whether or not the json carried it). superjson.serialize writes an
-// undefined object member as `null` plus the annotation; this service's writer omits the member and
-// writes the same annotation. Both decode to the same object, so the raw json alone must not be
+// undefined object member as `null` plus the annotation, as this service's writer now does too; a
+// writer that omits the member (this one before 0.0.51) and writes the same annotation decodes to
+// the same object, so the raw json alone must not be
 // compared at those paths. Every other annotation (Date) leaves the json value as is; the annotation
 // sets are compared separately.
 func applyUndefined(v any, ann map[string]string) any {

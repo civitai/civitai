@@ -70,6 +70,9 @@ export async function startStickerAutoTrack(input: {
             metadata,
             tags: ['sticker-track'],
             currencies: [],
+            // System-account workflows default to the Normal download lane, slow for the tracker's
+            // models. The orchestrator doesn't charge the boost to user 0. `tier: 'free'` would force Low.
+            downloadPriority: 'high',
             steps,
           },
         });

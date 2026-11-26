@@ -779,8 +779,12 @@ export async function listRepoTreeAtRef(
  * Forgejo's blobs endpoint returns the content base64-encoded inside a
  * JSON envelope; we decode here so the caller gets a plain Buffer.
  */
-export async function getBlobContent(slug: string, sha: string): Promise<Buffer> {
-  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${slug}/git/blobs/${sha}`);
+export async function getBlobContent(
+  slug: string,
+  sha: string,
+  org: string = FORGEJO_ORG
+): Promise<Buffer> {
+  const res = await fjFetch(`/api/v1/repos/${org}/${slug}/git/blobs/${sha}`);
   const blob = await unwrap<{ content: string; encoding: string }>(res);
   if (blob.encoding !== 'base64') {
     throw new Error(`Forgejo blob ${sha} returned unexpected encoding ${blob.encoding}`);
@@ -1360,12 +1364,7 @@ export async function getReviewRepoHeadSha(slug: string): Promise<string> {
  * webhook's org gate rejects this org as a second line, should a hook ever be added by hand.
  */
 export async function ensureSourceRepo(slug: string): Promise<{ created: boolean }> {
-  await ensureOrg({
-    username: FORGEJO_SOURCE_ORG,
-    full_name: 'Civitai Apps — developer source',
-    description:
-      'The git history of forked and App Assistant apps. Pushing here never builds or submits anything.',
-  });
+  await ensureSourceOrg();
   const repoRes = await fjFetch(
     `/api/v1/orgs/${FORGEJO_SOURCE_ORG}/repos`,
     {
@@ -1386,6 +1385,63 @@ export async function ensureSourceRepo(slug: string): Promise<{ created: boolean
     throw new Error(`Forgejo source repo create ${repoRes.status}: ${body.slice(0, 240)}`);
   }
   return { created: true };
+}
+
+function ensureSourceOrg(): Promise<void> {
+  return ensureOrg({
+    username: FORGEJO_SOURCE_ORG,
+    full_name: 'Civitai Apps — developer source',
+    description:
+      'The git history of forked and App Assistant apps. Pushing here never builds or submits anything.',
+  });
+}
+
+export type ForkBuildRepoResult =
+  | { kind: 'forked' }
+  /** A repo already has the name. `forkOfBuildRepo`: it is a fork of the app's build repo. */
+  | { kind: 'exists'; forkOfBuildRepo: boolean };
+
+/**
+ * Create `civitai-apps-src/<slug>` as a FORK of the build repo `civitai-apps/<slug>`, so the source
+ * repo holds the build repo's whole history and a branch cut from its `main` shares ancestry with
+ * any checkout of the build repo.
+ *
+ * Forgejo copies the git data only: no webhooks, collaborators, deploy keys or branch rules come
+ * with it, and a fork of a private repo is private. So the invariants of {@link ensureSourceRepo}
+ * hold (no push webhook; access is the explicit collaborator rows only).
+ *
+ * A 409 / 422 is a repo that already has the name; it is read back so the caller can tell its own
+ * earlier fork (a retry after a crash) from an unrelated repo.
+ */
+export async function forkBuildRepoIntoSourceOrg(slug: string): Promise<ForkBuildRepoResult> {
+  await ensureSourceOrg();
+  const res = await fjFetch(
+    `/api/v1/repos/${FORGEJO_ORG}/${encodeURIComponent(slug)}/forks`,
+    { method: 'POST', body: JSON.stringify({ organization: FORGEJO_SOURCE_ORG, name: slug }) },
+    commitTimeoutMs()
+  );
+  if (res.status === 409 || res.status === 422) {
+    await res.text().catch(() => '');
+    const got = await fjFetch(`/api/v1/repos/${FORGEJO_SOURCE_ORG}/${encodeURIComponent(slug)}`);
+    const repo = await unwrap<{ fork?: boolean; parent?: { full_name?: string } | null }>(got);
+    return {
+      kind: 'exists',
+      forkOfBuildRepo: repo?.fork === true && repo.parent?.full_name === `${FORGEJO_ORG}/${slug}`,
+    };
+  }
+  await unwrap<unknown>(res);
+  return { kind: 'forked' };
+}
+
+/** The parent commit ids of `sha`, in order (empty for a root commit). */
+export async function getCommitParents(org: string, slug: string, sha: string): Promise<string[]> {
+  const res = await fjFetch(
+    `/api/v1/repos/${org}/${encodeURIComponent(slug)}/git/commits/${encodeURIComponent(
+      sha
+    )}?stat=false&verification=false&files=false`
+  );
+  const commit = await unwrap<{ parents?: Array<{ sha?: string }> | null }>(res);
+  return (commit?.parents ?? []).map((p) => p.sha).filter((s): s is string => !!s);
 }
 
 /** The commit a branch points at, or `null` when the branch (or the repo) does not exist. */

@@ -103,7 +103,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   // Read from the database, not the session: a ban lands at once. Moderators are not exempt.
-  if ((await getStanding(db, result.user.id)).banned) {
+  const standing = getStanding(db, result.user.id);
+  event.locals.standing = standing;
+  if ((await standing).banned) {
     return withSetCookies(closedPage(result.user, 'banned'), result.setCookies);
   }
 

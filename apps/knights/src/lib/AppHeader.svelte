@@ -61,6 +61,7 @@
     ...(shopOpen ? [{ href: '/shop', label: 'Shop', icon: 'coins' as const }] : []),
     { href: '/leaderboard', label: 'Leaderboard', icon: 'crown' as const },
     { href: '/codex', label: 'Codex', icon: 'book-open' as const },
+    ...(isPlayer ? [{ href: '/settings', label: 'Settings', icon: 'settings' as const }] : []),
   ]);
 
   async function toggle() {
