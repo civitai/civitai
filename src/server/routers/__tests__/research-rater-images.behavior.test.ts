@@ -61,6 +61,8 @@ beforeAll(async () => {
     CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability");
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
     INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
+    CREATE TABLE "ImageTag" ("imageId" int, "tagId" int);
+    INSERT INTO "ImageTag" VALUES (${CLEAN}, 77);
     CREATE TABLE research_ratings ("userId" int, "imageId" int, "createdAt" timestamp);
     CREATE TABLE research_ratings_resets ("userId" int, "createdAt" timestamp);
     INSERT INTO "Image" (id, "postId", url, "acceptableMinor", "needsReview", "blockedFor", "tosViolation") VALUES
@@ -94,6 +96,23 @@ const sanityImages = async () =>
 
 describe('research.raterGetImages', () => {
   it('serves a published, reviewed image (control)', async () => {
+    expect(await raterImages()).toContain(CLEAN);
+  });
+
+  const trackWith = (filters: object) =>
+    redisMock.sysRedis.hGetAll.mockResolvedValueOnce({
+      t1: JSON.stringify({ startingPoint: 0, startTime: '2020-01-01T00:00:00Z', filters }),
+    });
+
+  it("serves only a tag track's tagged images", async () => {
+    trackWith({ tags: [77] });
+    expect(await raterImages()).toEqual([CLEAN]);
+    trackWith({ tags: [78] });
+    expect(await raterImages()).toEqual([]);
+  });
+
+  it('ignores a stored track still carrying the retired misaligned and ratingModel filters', async () => {
+    trackWith({ misaligned: true, ratingModel: 'any' });
     expect(await raterImages()).toContain(CLEAN);
   });
 

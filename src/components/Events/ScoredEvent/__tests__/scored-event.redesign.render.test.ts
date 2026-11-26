@@ -179,7 +179,7 @@ describe('hero team block (A6)', () => {
     expect(block.textContent).toBe("You're onTeam BlueRank#2Team points9,999,999Your hats999,999");
   });
 
-  // Ellie review (2026-10-09): a medium-opacity background, so the hero art doesn't show through.
+  // Design review (2026-10-09): a medium-opacity background, so the hero art doesn't show through.
   it('sits on its own part-transparent background over the hero art', () => {
     const block = hero({ team: 'Blue' }).querySelector('[data-testid="hero-team"]') as HTMLElement;
     expect(block.className.split(' ')).toEqual(

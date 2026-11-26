@@ -6,9 +6,7 @@ import (
 )
 
 // A signed-out viewer's block token (`sub: anon`) is verified by CheckAnonymous with every check
-// Check makes, and answers its slug, its app block and its browsing levels. Fails on origin/main:
-// there is no CheckAnonymous (the test does not compile); behaviourally, every anonymous token is
-// refused there (`anonymous`).
+// Check makes, and answers its slug, its app block and its browsing levels.
 func TestASignedOutTokenVerifiesAndAnswersItsClaims(t *testing.T) {
 	testKeys(t)
 	s := newJWKS(t, jwk(&siteKey.PublicKey, siteKid))

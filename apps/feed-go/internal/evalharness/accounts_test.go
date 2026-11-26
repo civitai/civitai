@@ -148,12 +148,12 @@ func TestLoadAccountsExpiredIsNotReplayable(t *testing.T) {
 	if !strings.Contains(warn.String(), "account member-owner: session token EXPIRED at 2026-11-26T03:00:00Z") {
 		t.Fatalf("warning %q", warn.String())
 	}
-	_, why := a.Resolve(Mapping{Role: RoleOwner, Cookie: true})
+	_, why := a.Resolve(Mapping{Role: RoleOwner, Cookie: true}, "")
 	if why != "account-expired:member-owner" {
 		t.Fatalf("resolve expired: %q", why)
 	}
 	// The other roles still resolve.
-	if c, why := a.Resolve(Mapping{Role: RoleDefault, Cookie: true}); why != "" || c.Identity.UserID != 7101 {
+	if c, why := a.Resolve(Mapping{Role: RoleDefault, Cookie: true}, ""); why != "" || c.Identity.UserID != 7101 {
 		t.Fatalf("default: %+v %q", c, why)
 	}
 }
@@ -223,20 +223,20 @@ func TestResolveCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	anon, why := a.Resolve(Mapping{})
+	anon, why := a.Resolve(Mapping{}, "")
 	if why != "" || anon.ViewerUsed != "anon" || anon.Cookie != "" || anon.Bearer != "" || anon.Identity.SearchText != "search-anon-q" {
 		t.Fatalf("anon %+v %q", anon, why)
 	}
-	owner, _ := a.Resolve(Mapping{Role: RoleOwner, Cookie: true})
+	owner, _ := a.Resolve(Mapping{Role: RoleOwner, Cookie: true}, "")
 	if owner.ViewerUsed != RoleOwner || !strings.HasPrefix(owner.Cookie, "eval-session=") || owner.Identity.CollectionID != 8402 {
 		t.Fatalf("owner %+v", owner)
 	}
-	key, _ := a.Resolve(Mapping{APIKey: true, Header: true})
+	key, _ := a.Resolve(Mapping{APIKey: true, Header: true}, "")
 	if key.ViewerUsed != "apikey:member-filtered" || key.Bearer != testAPIKey || key.QueryToken != "" || key.Cookie != "" ||
 		key.Identity.UserID != 7401 {
 		t.Fatalf("key %+v", key)
 	}
-	q, _ := a.Resolve(Mapping{APIKey: true, Query: true, Cookie: true})
+	q, _ := a.Resolve(Mapping{APIKey: true, Query: true, Cookie: true}, "")
 	if q.QueryToken != testAPIKey || q.Bearer != "" || !strings.HasPrefix(q.Cookie, "eval-session=") {
 		t.Fatalf("query key %+v", q)
 	}
@@ -245,7 +245,7 @@ func TestResolveCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, why := b.Resolve(Mapping{APIKey: true, Header: true}); why != "no-api-key" {
+	if _, why := b.Resolve(Mapping{APIKey: true, Header: true}, ""); why != "no-api-key" {
 		t.Fatalf("no key: %q", why)
 	}
 }
@@ -302,10 +302,10 @@ func TestLoadAccountsRefusesABadFile(t *testing.T) {
 	if err != nil || !strings.Contains(warn.String(), "account member-default: session token has no exp") || a.Role("member-extra") == nil {
 		t.Fatalf("%v %q", err, warn.String())
 	}
-	if c, _ := a.Resolve(Mapping{Role: RoleDefault, Cookie: true}); c.Cookie == "" || !strings.HasPrefix(c.Cookie, "__Secure-civ-token=") {
+	if c, _ := a.Resolve(Mapping{Role: RoleDefault, Cookie: true}, ""); c.Cookie == "" || !strings.HasPrefix(c.Cookie, "__Secure-civ-token=") {
 		t.Errorf("default cookie name: %q", strings.SplitN(c.Cookie, "=", 2)[0])
 	}
-	if _, why := a.Resolve(Mapping{Role: RoleOwner, Cookie: true}); why != "no-account:member-owner" {
+	if _, why := a.Resolve(Mapping{Role: RoleOwner, Cookie: true}, ""); why != "no-account:member-owner" {
 		t.Errorf("missing role: %q", why)
 	}
 }

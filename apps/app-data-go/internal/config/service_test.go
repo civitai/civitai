@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-// THE SERVICE CLIENT and the region flag. Fails on the commit before them: there is no
-// Config.Service, ForwardRegion nor NoServiceClientWarning (the test does not compile); there, the
-// level streams' token was minted as the relay client, which the hub refuses.
+// THE SERVICE CLIENT and the region flag.
 
 // sharedEnv is relayEnv with the writes on, so shared reads are on.
 func sharedEnv() map[string]string {

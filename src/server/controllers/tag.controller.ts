@@ -1,4 +1,5 @@
 import type { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
+import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
@@ -175,10 +176,17 @@ export const addTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => 
   }
 };
 
-export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema }) => {
+export const disableTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AdjustTagsSchema;
+  ctx: ProtectedContext;
+}) => {
   try {
-    await disableTags(input);
+    await disableTags({ ...input, csamReview: !!ctx.features?.csamReports });
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };

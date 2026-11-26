@@ -530,8 +530,9 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
-    // An abuse limit: the house meta names it and the wait, and carries no counts (the
-    // route's own top-level fields are kept as it always sent them).
+    // An abuse limit: the house meta names it and the wait, and carries no counts. The body
+    // keeps only the envelope, the route's own top-level `retryAfterSeconds` and the meta:
+    // the old top-level `limit` / `windowSeconds` are gone (`rateLimit` is what clients read).
     expect(res._getJSONData()).toMatchObject({
       message: 'Rate limit exceeded',
       code: 'TOO_MANY_REQUESTS',
@@ -542,6 +543,13 @@ describe('POST /api/v1/blocks/dev-token', () => {
       'kind',
       'retryAfterSeconds',
       'retryAt',
+    ]);
+    expect(Object.keys(res._getJSONData() as object).sort()).toEqual([
+      'code',
+      'error',
+      'message',
+      'rateLimit',
+      'retryAfterSeconds',
     ]);
     expect(mockSign).not.toHaveBeenCalled();
   });

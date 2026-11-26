@@ -423,7 +423,7 @@ func status16(s int) uint16 {
 
 // replay maps the viewer, builds the request and runs the sandwich; it fills row.ViewerUsed.
 func (r *runner) replay(ctx context.Context, c Case, row *ResultRow) (Outcome, Answer, Answer) {
-	creds, why := r.accounts.Resolve(MapViewer(c.Request.Viewer, c.Request.Credential))
+	creds, why := r.accounts.Resolve(MapViewer(c.Request.Viewer, c.Request.Credential), caseHost(c.Request))
 	if why != "" {
 		return Outcome{Verdict: VerdictNotReplayable, Reason: why}, Answer{}, Answer{}
 	}

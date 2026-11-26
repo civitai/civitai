@@ -28,7 +28,7 @@ const OWNER = 10;
 const OTHER = 12;
 const FILED_ON_OWNER = 13;
 
-function callerFor(user: { id: number } | undefined) {
+function callerFor(user: { id: number } | undefined, features: Record<string, boolean> = {}) {
   return imageRouter.createCaller({
     user: user && {
       ...user,
@@ -43,7 +43,7 @@ function callerFor(user: { id: number } | undefined) {
     req: { headers: {} },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
-    features: {},
+    features,
     track: { action: vi.fn(() => Promise.resolve(true)) },
   } as never);
 }
@@ -164,7 +164,9 @@ describe('image.rescan', () => {
         [id]
       )
     ).rows[0];
-  const moderator = () => callerFor({ id: 1, isModerator: true } as { id: number });
+  // Holds the withheld-media grant, so these cases test the rescan itself, not the withheld gate.
+  const moderator = () =>
+    callerFor({ id: 1, isModerator: true } as { id: number }, { csamReports: true });
 
   it('case 1', async () => {
     await moderator().rescan({ id: 101 });

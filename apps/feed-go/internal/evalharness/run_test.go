@@ -214,7 +214,7 @@ func TestRunEveryVerdict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &arms{t: t, ownerToken: accounts.Role(RoleOwner).token, nodeCalls: map[string]int{}, goCalls: map[string]int{}}
+	a := &arms{t: t, ownerToken: accounts.Role(RoleOwner).session("").token, nodeCalls: map[string]int{}, goCalls: map[string]int{}}
 	nodeSrv := httptest.NewServer(http.HandlerFunc(a.node))
 	defer nodeSrv.Close()
 	goSrv := httptest.NewServer(http.HandlerFunc(a.goArm))

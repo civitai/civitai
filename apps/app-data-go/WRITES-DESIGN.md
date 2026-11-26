@@ -867,6 +867,12 @@ On this service (no label carries a token, user, app, collection or key, as the 
 - `app_data_level_stream_records{bit}` against its bound, and `app_data_streams_open` against
   `MAX_STREAMS` (the alerts above);
 - `app_data_signed_out_reads_total{outcome}`;
+- `app_data_shared_refusals_total{reason}`: shared and signed-out reads answered `401`/`503` instead of
+  documents, by a fixed reason set (`metrics.SharedRefusalReasons`: the answer's code, with
+  `viewer_refused`, `block_mismatch`, `block_token_refused` and `signed_out_busy` naming causes whose
+  codes are shared or vague; a reason outside the set counts as `other`). Each such read is also one
+  `app_data_reads_total{source="registry"}` `refused`/`unavailable`/`floor_not_met`, and never an
+  `app_data_fallbacks_total` (whose reasons it reuses: a shared read never goes to REST);
 - **write-to-stream lag**, observed after cutover: the time from a write's acknowledgement to the first
   stream event at a sequence ≥ the write's, as a histogram. It sizes nothing; it measures how stale
   every other reader is.

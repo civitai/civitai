@@ -3727,9 +3727,10 @@ Node endpoint is deleted, the frozen corpus with Node's recorded answers is what
 to the Go endpoint whether it broke a caller.
 
 This section is what a case is, how cases are grouped, and what is never stored (§19.1–19.4), the
-capture that writes them (§19.6), the eval mode Go is replayed in (§19.7) and the harness that
-replays and reports them (§19.8). Code: `internal/evalcorpus` (pure, no I/O), `cmd/feed-eval`
-(`signatures`, offline; `run` and `publish`, the harness), the capture `internal/evalcapture` with
+capture that writes them (§19.6), the eval mode Go is replayed in (§19.7), the harness that
+replays and reports them (§19.8), the reconcile that holds the eval against production (§19.9) and
+the Tempo import that seeds the corpus (§19.10). Code: `internal/evalcorpus` (pure, no I/O), `cmd/feed-eval`
+(`signatures`, offline; `run`, `publish`, `reconcile` and `import-tempo`, the harness), the capture `internal/evalcapture` with
 its taps in `internal/server` (behind `FEED_GO_EVAL_CAPTURE`, default off), and the harness
 `internal/evalharness` (nothing runs unless invoked). The corpus itself lives in private storage,
 never in this repository: this repository holds the code and synthetic tests only.
@@ -4026,15 +4027,17 @@ scores by the selection's gallery default.
 **Run** (`FEED_EVAL_CLICKHOUSE_URL`, its path the database, `_USER`, `_PASSWORD`, all three required;
 `NODE_URL`, `GO_URL`; `FEED_EVAL_ACCOUNTS_FILE`). It reads `cases` and `samples` and writes only
 `results` (one row per case taken) and `runs` (one row when it ends). It never writes `cases`:
-pinning a case (the §19.6 harness rule) is a later subcommand. A row ClickHouse did not acknowledge
+pinning a case (the §19.6 harness rule) is `reconcile`'s (§19.9). A row ClickHouse did not acknowledge
 (refused, failed after retries, never queued) fails the run (non-zero exit, the rows lost per table).
 The live phase leaves `FEED_GO_EVAL_NOW` unset: the eval feed-go answers at the wall clock, as the
 live Node app does.
 
 - **Selection.** Per endpoint, one case per signature: signatures by traffic weight (the sum of
   `samples.weight` over `--lookback`, default 30 days; `corpus_from`/`corpus_to` on the run row),
-  at most `--cap` (default 1500); a signature's exemplar is the case with the least
-  `cityHash64(case_id, <run day>)`, so it rotates nightly and is fixed within a day. Every value is
+  at most `--cap` (default 1500); a signature's exemplar is a promoted case (origin `prod-mismatch`,
+  pinned: §19.9) when it has one, and among those (or all) the case with the least
+  `cityHash64(case_id, <run day>)`, so it rotates nightly and is fixed within a day, and a blind
+  spot's next run replays a case production mismatched on. Every value is
   a ClickHouse query parameter. Endpoints are interleaved, so a run cut short still covers each
   one's heaviest signatures.
 - **Viewer** (`MapViewer`, first rule wins): moderator or banned, `not_replayable`; a credential
@@ -4044,11 +4047,16 @@ live Node app does.
   member-owner, else hidden preferences member-filtered, else mature (`showNsfw`, or a level past
   `browsing.SFWLevels`) member-mature, else member-default. `results.viewer_used` records it.
 - **Accounts.** Member accounts (the mapping asks for the four roles above; the file may name more)
-  and one API key owned by one of them, secrets in mounted files the accounts file names, never logged. Each session token's `exp` is read unverified: within 5 days, a warning; past,
-  that account's cases are `not_replayable` (`account-expired:<role>`); no usable member account at
-  all, the run is refused (a signed-out-only run would read as coverage it is not). Expiring,
-  expired and exp-less accounts are also recorded in `runs.settings` (`accounts`: role, exp, state)
-  and listed on the index page; never a token.
+  and one API key owned by one of them, secrets in mounted files the accounts file names, never logged.
+  A session is minted per site, so an account may name one token per host (`sessionTokenFiles`:
+  hostname -> file) beside its default `sessionTokenFile`: a case is replayed with the token of the
+  longest host its stored Host equals or is a subdomain of, else the default, else it is
+  `not_replayable` (`no-session:<role>`). Each session token's `exp` is read unverified: within 5
+  days, a warning; past, the cases that token would replay are `not_replayable`
+  (`account-expired:<role>`); no usable member account at all, the run is refused (a
+  signed-out-only run would read as coverage it is not). Expiring, expired and exp-less tokens are
+  also recorded in `runs.settings` (`accounts`: role, host, exp, state) and listed on the index
+  page; never a token.
 - **Placeholders**, replaced in the stored text before anything decodes it: `$self` is the
   account's username under `username`/`user`, else its user id, a JSON number, or a decimal string
   where the path is annotated `bigint`; `$self-collection` its collection; `$search` its search
@@ -4097,3 +4105,92 @@ one is shown by design (a fallback reason or the harness's own; an answer's key 
 every value-bearing column, sent with every row selected or not, and asserts no page holds one,
 beside a positive control of what each page must show (token-shaped reason, category and path
 included); `TestReportTypesHoldNoValueField` pins the report types' fields.
+
+### 19.9 Reconcile (`feed-eval reconcile`)
+
+Production is the reference: "if it doesn't work in production, then that means there's an issue
+with our eval". `reconcile` runs nightly after `run`, with the same ClickHouse login, and holds the
+newest live run's results against the last `--window` (24 h) of production samples, sources
+`shadow` and `serve-parity` only (the two with a production comparison), match and mismatch results
+only (`evalcapture.MatchResults` / `MismatchResults`, the lists `OutcomeClass` reads). Code:
+`internal/evalharness/reconcile.go`. Per (endpoint, signature):
+
+- **Blind spot**: production's compared samples hold at least `--min-mismatches` (2) mismatches
+  **and** at least `--min-mismatch-share` (0.01) of them mismatch (both must hold: a lone mismatch
+  on a rare shape is 100 % of it), and the run has results for the signature, all `pass`. Its
+  mismatching samples' admitted cases (`case_id` ≠ 0, at most 64 read) are **promoted**: up to
+  `--promote-per-signature` (3; every promoted case of the signature counts, any night's: a case id
+  carries its capture day, so a lasting blind spot's candidates are new ids each night), at most `--max-promotions` (500) per
+  reconcile. A promotion is one server-side `INSERT … SELECT … FROM cases FINAL` per endpoint and
+  500 ids: the case's own columns byte for byte (request and Node answer never leave ClickHouse),
+  `origin = 'prod-mismatch'`, `pinned = 1` (never expires), its `first_seen`, and `last_seen` the
+  later of the reconcile's clock and its own + 1 ms: the §19.6 harness rule, so no feed-go copy can
+  outrank it. The statement skips a case already promoted (pinned and `prod-mismatch`; feed-go's
+  own `prod-mismatch` rows are pinned 0, so they are candidates), so a second reconcile writes
+  nothing again. The run then prefers the promoted case as the signature's exemplar (§19.8).
+  A signature over the thresholds that the run has no result for is counted (`mismatch_not_run`),
+  not flagged: there is no eval verdict to disagree with.
+- **Cannot reproduce**: a promoted case whose `last_seen` is before the run started (promoted
+  before it) and that passed in it. The eval cannot reproduce what production saw: the signature
+  is too coarse, the viewer was substituted (§19.8, Viewer), or time moved (§19.7, the database's
+  clock). Listed for a human to resolve; the case stays pinned until someone unpins it.
+- **Reverse**: the run found a `bug` on a signature production compared at least once in the
+  window with no mismatch: likely a replay artifact (the viewer substituted), listed for a human.
+
+**The summary, without a schema change.** The tables are fixed in infra; reconcile adds no column
+and no table. Its summary is one `runs` row with `phase = 'reconcile'` (run id
+`reconcile-<UTC>-<6 hex>`; `corpus_from`/`corpus_to` the sample window; images and snapshot empty),
+whose `settings` is `evalharness.ReconcileSummary`: the thresholds, the reconciled run id, the
+counts (one per class, `promoted`, `rows_written`, `already_promoted`, `candidate_missing`,
+`promotion_capped`, `mismatch_not_run`; a zero `--min-mismatch-share` or `--max-promotions` means
+the default, so `--dry-run` is how to promote nothing) and up to 200 findings per class, each an endpoint, a
+16-hex signature, production's compared and mismatching sample counts, the run's result count and
+16-hex case ids: no input value, no answer. `run` and `publish` select `phase = 'live'` only, so the
+row is invisible to them as a run. Every write is a POST acknowledged before the next
+(`evalharness.CHExec`): a refusal fails the reconcile, naming the status and ClickHouse's exception
+code, never its message (it can quote a row). `--dry-run` prints the summary and writes nothing.
+
+**Publish's "Prod/eval disagreement" section** reads the newest reconcile row (the runs query with
+the phase as its parameter): the index shows its counts and the run it read (flagged when not the
+run published), each endpoint page its findings on that endpoint. The summary is read back from a
+table and trusted for nothing: a finding is shown only under the endpoint it names exactly, a
+signature or case id that is not 16 hex digits is shown `(redacted)`, at most 5 case ids a row, from
+report types with no field for a value (`DisagreementRow`, `ReconcileHeader`, pinned by
+`TestReportTypesHoldNoValueField`; the canary test seeds the summary too).
+
+Tests: `TestReconcileClassifiesEachDisagreement` (an httptest ClickHouse that keeps `cases` and
+applies the promotion, one signature per rule and per near miss), `TestReconcileIsIdempotent`,
+`TestReconcileThresholdsAreBoth`, `TestReconcileCapsPromotions`. The fake mimics the statements; the
+SQL itself is pinned by its text and parameters and runs only against the real ClickHouse.
+
+### 19.10 Tempo import (`feed-eval import-tempo`)
+
+`go run ./cmd/feed-eval import-tempo --in <rows.jsonl> [--endpoint E] [--per-signature K] [--hosts …]
+[--dry-run]` writes the rows of a feed-bench Tempo capture (`scripts/feed-bench/README.md`:
+`{t, host, input, authed, durMs}`, plus §19.5's optional `endpoint`, `path`, `query`) as `cases` of
+`origin = 'tempo'`, so the corpus can start before the capture has run for days. Code:
+`cmd/feed-eval/importtempo.go`.
+
+- **Only the record's fields are read**: any other field on a line (a cookie, an authorization, an
+  address, a user agent) is never decoded. What is read goes through the capture's own strip and
+  signature (`evalcorpus.Capture`: credential-named input keys and query pairs dropped, the host
+  the only header, a query credential kept as its class) and `evalcapture.Stored` (search text
+  replaced by `$search`), the one way a stored request is built.
+- **The viewer**: a row says only whether the web client was signed in (`authed`: `user`, else
+  `anon`), never who. A signed-in row whose input holds a key Capture would test against the
+  viewer's own identity (`evalcorpus.MayNameViewer`: a top-level `userId`, `username`, `user`,
+  `collectionId` or `*UserIds` key, or a REST `username`/`userId` pair, whatever its value) is
+  refused and counted: nothing could keep the viewer's id out of it (§19.3). `MayNameViewer`
+  reads Capture's own key sets, and its test pins that it is true wherever Capture finds the viewer.
+- **Ids and versions**: `case_id` is `CaseID` over the record's UTC day prefixed `tempo:`
+  (`evalcapture.TempoCaseDay`), so an imported case never shares an id with a captured one;
+  `first_seen = last_seen =` the import's clock (TTL from the import), `pinned = 0`, no Node answer,
+  no `prod_result`. At most K (3) cases per (endpoint, signature), an identical case once.
+- No `samples` row is written (the harness login cannot), so an imported signature weighs 0 in the
+  run's selection until production samples it: it runs after the weighted signatures, within
+  `--cap`.
+
+Tests (`importtempo_test.go`): realistic synthetic rows with canaries in a `token`, `apiKey` and
+`sessionId` input key, a `token` query pair, a search text, a signed-in username and line-level
+cookie, authorization, address and agent fields, none of which reaches a case or the insert body,
+beside a positive control of what must; signatures are their shapes' hashes; K at three values.

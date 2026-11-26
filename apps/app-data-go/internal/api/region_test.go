@@ -13,8 +13,7 @@ import (
 // REGION through the handler (WRITES-DESIGN.md, "Region"): with APP_DATA_FORWARD_REGION on, the
 // edge's region headers on a viewer's read go on the private subscription opened for them, as the
 // adapter's region headers, so the adapter judges the viewer's region instead of holding everyone
-// behind this relay to SFW. Off, none is ever sent. Fails on the commit before it: there is no
-// session.Options.Region (the test does not compile), and no subscription carried a region header.
+// behind this relay to SFW. Off, none is ever sent.
 
 // regionStack is a registry stack with the region forwarded (on) or not, the private manager keyed
 // by region as main builds it.

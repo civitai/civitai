@@ -8,8 +8,6 @@ import (
 // THE `@me` ROUTES (viewer-keyed collections): forwarded to the site's own `@me` paths, the key
 // never named here; acknowledged at the key the site's answer names. Every case's slug, collection,
 // parent, seq and body are distinct.
-// Fails on origin/main: there is no `@me` route (PUT …/records/@me is the {key} route there, which
-// refuses `@me` as a key, 400 invalid record key).
 func TestTheViewersOwnDocumentRoutesAreForwarded(t *testing.T) {
 	log := &ackLog{}
 	r := newRig(t, func(f *Forwarder) { f.Acked = log.add })

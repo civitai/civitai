@@ -19,9 +19,7 @@ import (
 
 // THE SERVICE TOKEN through the handler: the real shared reader and its two real managers (built by
 // shared.NewReader, as main builds them), the level streams' token from a real token.Source against
-// a fake hub token endpoint. Only the API this test calls existed before the separate service client,
-// so it compiles on the commit before it: there a hub refusal answered `503 failed`, then
-// `503 cooling_down`, and a reader with no service token panicked on the first read.
+// a fake hub token endpoint.
 
 // adapterStub serves the per-viewer stream (mask PG|R) to any exchanged viewer token, and a live,
 // empty level stream to anything else; it counts the subscriptions it was asked for.
