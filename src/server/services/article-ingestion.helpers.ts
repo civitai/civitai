@@ -124,7 +124,8 @@ export const silentIngestionErrorState = (now: number): ArticleIngestionErrorSta
 });
 
 /**
- * What the reconcile job does with an article still at Error: `start` an episode it never recorded,
+ * What the reconcile job does with an article still at Error: `start` one with no episode (its
+ * recompute records one),
  * `round` when the next retry is due, `exhaust` a day after the last one (once its scans are back),
  * and otherwise `check` it once a day, since a moderator clearing a held image recomputes nothing.
  */

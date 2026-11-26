@@ -1854,7 +1854,11 @@ export async function applyArticleContentChange({
       const changed = !!locked && locked.content !== content;
       const resetting = shared && changed;
       const written = await tx.$executeRaw`UPDATE "Article" SET content = ${content}${
-        changed ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
+        changed
+          ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus", ${keepErrorEpisodeSql(
+              Date.now()
+            )}`
+          : Prisma.empty
       } WHERE id = ${id}${
         expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
       }`;
@@ -3213,8 +3217,16 @@ export async function recomputeArticleIngestionInTx(
     (current.status === ArticleStatus.Published || current.status === ArticleStatus.Processing) &&
     next === ArticleIngestionStatus.Error &&
     !inErrorEpisode;
+  // At Error from before episodes were recorded: a silent one keeps the hold past this recompute.
+  const recordSilentEpisode =
+    !errorEpisode &&
+    current.ingestion === ArticleIngestionStatus.Error &&
+    next !== ArticleIngestionStatus.Scanned &&
+    next !== ArticleIngestionStatus.Blocked;
   const episode: ArticleIngestionErrorState | null = startErrorEpisode
     ? { enteredAt: Date.now(), rounds: 0 }
+    : recordSilentEpisode
+    ? silentIngestionErrorState(Date.now())
     : errorEpisode;
   // A text check the retry job is still retrying is not yet a failure worth telling the owner of.
   const textSpent = textError && (textModeration?.retryCount ?? 0) >= TEXT_MODERATION_RETRY_LIMIT;
@@ -3238,7 +3250,7 @@ export async function recomputeArticleIngestionInTx(
   const episodeWrite =
     episode && notifyErrorEpisode
       ? { ...episode, notifiedAt: Date.now() }
-      : startErrorEpisode
+      : startErrorEpisode || recordSilentEpisode
       ? episode
       : null;
   if (episodeWrite) {
@@ -3512,25 +3524,29 @@ async function markArticleImagesForRescan(imageIds: number[], articleUserId: num
 }
 
 /**
- * Sends an article back to Rescan. One at Error keeps its episode, or gets a silent one when it has
- * none, so the review hold still applies when the rescan settles.
+ * `metadata` for a write that moves an article off Error without a recompute: one at Error keeps
+ * its episode, or gets a silent one when it has none, so the review hold still applies when the
+ * article settles.
  */
+export const keepErrorEpisodeSql = (now: number) => Prisma.sql`metadata = CASE
+  WHEN ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
+    AND metadata->'ingestionError' IS NULL
+  THEN jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${JSON.stringify(
+    silentIngestionErrorState(now)
+  )}::jsonb)
+  ELSE metadata
+END`;
+
 export async function markArticleForRescan(
   db: Pick<Prisma.TransactionClient, '$executeRaw'>,
   id: number
 ) {
-  const silent = JSON.stringify(silentIngestionErrorState(Date.now()));
   await db.$executeRaw`
     UPDATE "Article"
     SET ingestion = ${ArticleIngestionStatus.Rescan}::"ArticleIngestionStatus",
         "scanRequestedAt" = ${new Date()},
         "contentScannedAt" = NULL,
-        metadata = CASE
-          WHEN ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"
-            AND metadata->'ingestionError' IS NULL
-          THEN jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${silent}::jsonb)
-          ELSE metadata
-        END
+        ${keepErrorEpisodeSql(Date.now())}
     WHERE id = ${id}
   `;
 }

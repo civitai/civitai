@@ -304,6 +304,31 @@ describe('an Error episode ending', () => {
   });
 });
 
+describe('an article at Error from before episodes were recorded', () => {
+  it('gets a silent episode when it leaves Error for Pending, and stays hidden past a held image', async () => {
+    await seed({ ingestion: 'Error', content: { ingestion: 'Rescan' } });
+
+    const pending = await recompute();
+    expect(pending.ingestion).toBe('Pending');
+    expect(pending.metadata?.ingestionError).toMatchObject({ silent: true });
+
+    await h.pg.query(
+      `UPDATE "Image" SET ingestion = 'Scanned', "needsReview" = 'minor' WHERE id = $1`,
+      [CONTENT]
+    );
+    expect((await recompute()).ingestion).toBe('Error');
+  });
+
+  it('gets a silent episode while it stays at Error, and its owner is not told', async () => {
+    await seed({ ingestion: 'Error', content: { ingestion: 'Error' } });
+
+    const after = await recompute();
+
+    expect(after.metadata?.ingestionError).toMatchObject({ silent: true });
+    expect(after.notice).toBeNull();
+  });
+});
+
 describe('a rescan of an article at Error that has no recorded episode', () => {
   const rescanWrite = () => markArticleForRescan(h.prisma, ARTICLE);
 

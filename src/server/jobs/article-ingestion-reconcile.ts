@@ -19,7 +19,6 @@ import {
 import {
   ingestionErrorStep,
   readIngestionErrorState,
-  silentIngestionErrorState,
   textCheckSpentRetries,
   type ArticleIngestionErrorState,
 } from '~/server/services/article-ingestion.helpers';
@@ -282,28 +281,24 @@ export const articleIngestionReconcile = createJob(
 );
 
 /**
- * Writes the episode only if it is unchanged since it was read (`expected` is its `enteredAt`, or
- * null for none yet): a recompute may have ended it.
+ * Merges the job's own fields into the episode, only while it is the episode the job read: a
+ * recompute may have ended it, or written its own fields since.
  */
-async function writeErrorState(
+async function updateErrorState(
   id: number,
-  state: ArticleIngestionErrorState,
-  expected: number | null
+  enteredAt: number,
+  patch: Partial<ArticleIngestionErrorState>
 ) {
   await kyselyWrite
     .withoutPlugins()
     .updateTable('Article')
     .set({
-      metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{ingestionError}', ${JSON.stringify(
-        state
+      metadata: sql`jsonb_set(metadata, '{ingestionError}', (metadata->'ingestionError') || ${JSON.stringify(
+        patch
       )}::jsonb)`,
     })
     .where('id', '=', id)
-    .where(
-      expected === null
-        ? sql<boolean>`metadata->'ingestionError' IS NULL AND ingestion = ${ArticleIngestionStatus.Error}::"ArticleIngestionStatus"`
-        : sql<boolean>`(metadata->'ingestionError'->>'enteredAt')::bigint = ${expected}`
-    )
+    .where(sql<boolean>`(metadata->'ingestionError'->>'enteredAt')::bigint = ${enteredAt}`)
     .execute();
 }
 
@@ -335,11 +330,10 @@ async function retryErrorArticles(now: Date) {
     LIMIT ${ERROR_FETCH_LIMIT}
   `;
   const due = rows
-    .map(({ id, ingestionError }) => {
-      const state = readIngestionErrorState({ ingestionError });
-      return { id, state, step: ingestionErrorStep(state, now.getTime()) };
-    })
-    .filter(({ step }) => step !== 'wait')
+    .filter(
+      ({ ingestionError }) =>
+        ingestionErrorStep(readIngestionErrorState({ ingestionError }), now.getTime()) !== 'wait'
+    )
     .slice(0, ERROR_ARTICLES_PER_TICK);
 
   const counts = {
@@ -355,11 +349,11 @@ async function retryErrorArticles(now: Date) {
   let imageBudget = ERROR_IMAGES_PER_TICK;
   const checkedAt = now.getTime();
 
-  for (const { id, state, step } of due) {
+  for (const { id } of due) {
     try {
       // An input that recovered, or a hold a moderator lifted, needs no retry.
       await updateArticleImageScanStatus([id]);
-      // primary: read-after-write of the recompute above.
+      // primary: read-after-write of the recompute above, which may have written the episode.
       const article = await dbWrite.article.findUnique({
         where: { id },
         select: {
@@ -369,25 +363,26 @@ async function retryErrorArticles(now: Date) {
           bannerId: true,
           title: true,
           content: true,
+          metadata: true,
         },
       });
       if (!article || article.ingestion !== ArticleIngestionStatus.Error) {
         counts.left++;
         continue;
       }
+      // The recompute records an episode for every article it leaves at Error.
+      const state = readIngestionErrorState(article.metadata);
+      if (!state) continue;
+      const step = ingestionErrorStep(state, checkedAt);
 
-      if (!state) {
-        await writeErrorState(id, { ...silentIngestionErrorState(checkedAt), checkedAt }, null);
-        continue;
-      }
       if (step === 'exhaust') {
-        await writeErrorState(id, { ...state, exhaustedAt: checkedAt, checkedAt }, state.enteredAt);
+        await updateErrorState(id, state.enteredAt, { exhaustedAt: checkedAt, checkedAt });
         counts.exhausted++;
         logToAxiom({ name: 'article-ingestion-error-exhausted', type: 'warning', articleId: id });
         continue;
       }
-      if (step === 'check' || imageBudget <= 0) {
-        await writeErrorState(id, { ...state, checkedAt }, state.enteredAt);
+      if (step !== 'round' || imageBudget <= 0) {
+        await updateErrorState(id, state.enteredAt, { checkedAt });
         continue;
       }
 
@@ -436,11 +431,11 @@ async function retryErrorArticles(now: Date) {
         counts.texts++;
       }
 
-      await writeErrorState(
-        id,
-        { ...state, rounds: state.rounds + 1, lastRoundAt: checkedAt, checkedAt },
-        state.enteredAt
-      );
+      await updateErrorState(id, state.enteredAt, {
+        rounds: state.rounds + 1,
+        lastRoundAt: checkedAt,
+        checkedAt,
+      });
       counts.rounds++;
       logToAxiom({
         name: 'article-ingestion-reconcile',
