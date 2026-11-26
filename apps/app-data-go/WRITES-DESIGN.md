@@ -213,6 +213,11 @@ a second copy), and app-data-go follows a stream that names another major than t
 (once), remembering it per collection only as where the next read opens (`internal/api/major.go`).
 A stream that names none is read as before, at the major it opened (1 unless a stream named
 another), never refused: app-data-go and the registry adapter ship, and roll back, independently.
+One rule decides the major a request naming none uses, for both: a write naming no major is
+acknowledged (its read-your-writes overlay held) at the major the next no-major read of that
+collection opens, so the read-back's floor finds it. A read that moves releases the streams it alone
+opened at the first major. A hinted major the adapter no longer resolves is dropped (a level stream
+ends `not_resolved`; an empty, unnamed private stream there is checked against major 1).
 **Imports are not v1** (below).
 
 **The internal route.** The public route's path under an `internal` prefix, on the site, running

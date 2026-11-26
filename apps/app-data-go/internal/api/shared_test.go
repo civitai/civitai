@@ -48,6 +48,8 @@ func (f *fakeShared) Read(_ context.Context, v shared.Viewer, slug, collection s
 	return b, f.err
 }
 
+func (f *fakeShared) Release(shared.Viewer, string, string, int) {}
+
 func (f *fakeShared) reads() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

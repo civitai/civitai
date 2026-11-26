@@ -291,6 +291,8 @@ const (
 	// Neither cools its key down.
 	CloseCursorExpired = "cursor_expired"
 	CloseFloorReopen   = "floor_reopen"
+	// CloseReleased is a stream its one read released (Release): it does not cool its key down.
+	CloseReleased = "released"
 )
 
 // The `outcome` of a read whose floor its stream had not met (metrics.FloorOutcomes): its reopen met
@@ -482,6 +484,9 @@ type session struct {
 	ended    bool
 	err      error
 	lastRead time.Time
+	// reads counts the reads (View calls) that used this stream: Release closes only a stream no
+	// read but the releasing one used.
+	reads    int
 	checked  time.Time // the last exchange of the user's token, refused or not
 	checking bool      // a read is re-checking the user's token now
 	records  map[string]registry.Entity
@@ -530,6 +535,9 @@ func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) 
 		if err != nil {
 			return Snapshot{}, err
 		}
+		s.mu.Lock()
+		s.reads++
+		s.mu.Unlock()
 		ents, err := m.read(ctx, s, token)
 		switch {
 		case errors.Is(err, ErrCursorExpired) && !retried:
@@ -674,6 +682,30 @@ func (m *Manager) reopen(old *session, token, ip string) (*session, error) {
 		return nil, err
 	}
 	return m.open(old.k, token, m.opts.Now(), carried, ip), nil
+}
+
+// Release closes token's streams of schema (every region's) that no read but one has used: the read
+// releasing them, which opened them and is done with them (a read that moved to another schema
+// major). A stream any other read has used is kept, whoever opened it, and so is one that was open
+// before the releasing read. Its slots go back at once, as an idle close would give them back later.
+func (m *Manager) Release(token, schema string) {
+	id := sha256.Sum256([]byte(token))
+	var out []*session
+	m.mu.Lock()
+	for k, s := range m.sessions {
+		if k.token != id || k.schema != schema {
+			continue
+		}
+		s.mu.Lock()
+		if s.reads <= 1 {
+			out = append(out, s)
+		}
+		s.mu.Unlock()
+	}
+	m.mu.Unlock()
+	for _, s := range out {
+		m.end(s, CloseReleased, ErrClosed)
+	}
 }
 
 // Ack applies one acknowledged write of token to its open stream of schema. With none open there is
@@ -1126,7 +1158,7 @@ func (m *Manager) end(s *session, reason string, err error) {
 		m.opts.InvalidToken()
 	}
 	switch reason {
-	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown, CloseCursorExpired, CloseFloorReopen:
+	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown, CloseCursorExpired, CloseFloorReopen, CloseReleased:
 	case CloseNotPrivate:
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.NotPrivateCooldown)
 	default:

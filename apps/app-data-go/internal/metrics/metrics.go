@@ -29,6 +29,8 @@ var FallbackReasons = []string{
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
 var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen",
+	// A stream its one read released when it moved to another schema major (session.CloseReleased).
+	"released",
 	// A level stream whose service token was not minted (shared.CloseServiceToken*).
 	"service_token_refused", "service_token_unavailable"}
 

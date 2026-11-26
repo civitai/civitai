@@ -93,9 +93,11 @@ import (
 const RegistryOnlyHeader = "X-App-Data-Registry-Only"
 
 // Streams answers a read from a per-user stream (session.Manager), under a floor when minSeq > 0,
-// with the stream's latest meta (which names the collection's current major: major.go).
+// with the stream's latest meta (which names the collection's current major: major.go), and
+// releases a stream only the releasing read used (a read that moved to another major).
 type Streams interface {
 	View(ctx context.Context, token, schema string, minSeq int64) (session.Snapshot, error)
+	Release(token, schema string)
 }
 
 // Lister is the REST fallback (rest.Client).
@@ -159,6 +161,11 @@ func (s *Server) Handler() http.Handler {
 		if s.Shared != nil {
 			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me", s.mine)
 			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me/{parent}", s.mine)
+		}
+		// One rule for the major a request that names none uses, reads and writes alike (major.go): a
+		// write's acknowledgement is held at the major the next no-major read of it opens.
+		if w, ok := s.Writes.(impliedMajorUser); ok {
+			w.UseImpliedMajor(s.majors.guess)
 		}
 		s.Writes.Register(mux)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
 	"github.com/civitai/civitai/apps/app-data-go/internal/shared"
+	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
 
 // THE CURRENT MAJOR through the handler (major.go): the real handler, the real private-stream
@@ -43,6 +45,17 @@ type majorAdapter struct {
 	record    registry.Entity
 	asked     []string // each subscription's schema, in order, prefixed "private:", "level:" or "viewer:"
 	open      []*stubStream
+	// opened is each subscription's stream, prefixed as asked (openAt counts those still open).
+	opened map[*stubStream]string
+	// head is the head every Live names (headSet; else 40).
+	head    int64
+	headSet bool
+	// unresolvedAbove, when set, is the newest major the adapter resolves: a private stream of a
+	// higher major is empty and names nothing, as the private feed's `nothing()` is.
+	unresolvedAbove int
+	// blankAt, when set, is a schema whose private stream is empty and names nothing; failAt one
+	// whose every subscription is refused.
+	blankAt, failAt string
 	// flap: each private stream names the next major (current, then current+1, …), as a collection
 	// whose majors move faster than a read.
 	flap bool
@@ -53,17 +66,52 @@ func (a *majorAdapter) Subscribe(ctx context.Context, schema, tok string) (sessi
 }
 
 func (a *majorAdapter) meta(extra string) json.RawMessage {
-	if a.current == 0 {
-		return json.RawMessage(`{"head":{"seq":40}` + extra + `}`)
+	head := int64(40)
+	if a.headSet {
+		head = a.head
 	}
-	return json.RawMessage(fmt.Sprintf(`{"head":{"seq":40}%s,"currentMajor":%d}`, extra, a.current))
+	if a.current == 0 {
+		return json.RawMessage(fmt.Sprintf(`{"head":{"seq":%d}%s}`, head, extra))
+	}
+	return json.RawMessage(fmt.Sprintf(`{"head":{"seq":%d}%s,"currentMajor":%d}`, head, extra, a.current))
+}
+
+// openAt is how many streams asked as kind:schema are still open (not closed by the reader).
+func (a *majorAdapter) openAt(kind, schema string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for st, as := range a.opened {
+		select {
+		case <-st.done:
+		default:
+			if as == kind+":"+schema {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// majorOf is a schema URN's major.
+func majorOf(schema string) int {
+	n, _ := strconv.Atoi(schema[strings.LastIndex(schema, "@v")+2:])
+	return n
 }
 
 func (a *majorAdapter) SubscribeMeta(_ context.Context, schema, _ string, meta json.RawMessage) (session.Stream, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if schema == a.failAt {
+		a.asked = append(a.asked, "failed:"+schema)
+		return nil, &registry.Error{Code: registry.Unavailable, Message: "stub: refused"}
+	}
 	st := &stubStream{ev: make(chan registry.Event, 8), done: make(chan struct{})}
 	a.open = append(a.open, st)
+	if a.opened == nil {
+		a.opened = map[*stubStream]string{}
+	}
+	defer func() { a.opened[st] = a.asked[len(a.asked)-1] }()
 	holds := false
 	switch {
 	case meta != nil:
@@ -81,6 +129,12 @@ func (a *majorAdapter) SubscribeMeta(_ context.Context, schema, _ string, meta j
 	case !a.private:
 		a.asked = append(a.asked, "private:"+schema)
 		st.ev <- registry.Event{Type: registry.Live, Cursor: "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"}
+		return st, nil
+	case a.private && schema == a.blankAt,
+		a.unresolvedAbove > 0 && majorOf(schema) > a.unresolvedAbove:
+		// A major the adapter does not resolve: an empty stream, naming nothing.
+		a.asked = append(a.asked, "private:"+schema)
+		st.ev <- registry.Event{Type: registry.Live, Cursor: "b1.0a1b2c3d4e5f60718293a4b5.p1.empty"}
 		return st, nil
 	default:
 		a.asked = append(a.asked, "private:"+schema)
@@ -413,5 +467,158 @@ func TestANamedMajorNoURNCanCarryIsNotFollowed(t *testing.T) {
 	p := readParams{slug: "Not A Slug", collection: "notes", major: 1, implied: true}
 	if done := s.settle(&p, 2, false); !done || p.major != 1 {
 		t.Fatalf("settle: done %v at %d; want answered at 1", done, p.major)
+	}
+}
+
+// --- audit round 1 (🟡): each case runs on the API that existed before its fix, so it compiles there.
+
+// blockShaped is a token shaped as an App Block token (exchange.KindBlock): a floor is met by an
+// acknowledgement this replica holds for it (the SDK's read-after-write). Its claims segment is not
+// an anonymous one.
+const blockShaped = "aGVhZGVy.Y2xhaW1z.c2lnbmF0dXJl"
+
+// writeStack is majorStack with the writes acknowledged as main wires them (shared.AckBoth over the
+// private manager and the shared reader), a block token verified, and every token exchangeable.
+func writeStack(t *testing.T, a *majorAdapter) *stack {
+	t.Helper()
+	s := majorStack(t, a)
+	fwd := s.srv.Writes.(*writes.Forwarder)
+	fwd.Verify = func(context.Context, string) error { return nil }
+	fwd.Acked = shared.AckBoth(s.srv.Streams.(*session.Manager), s.srv.Shared.(*shared.Reader))
+	s.srv.Exchangeable = func(string) bool { return true }
+	s.h = s.srv.Handler()
+	return s
+}
+
+// 🟡 Y1. A write that names no major is acknowledged at the major a read that names none uses, so
+// the SDK's read-back (`?minSeq=` the write's seq) finds it held on the stream it reads: 200 with the
+// written record, before the adapter's next poll. Before the fix the write was held at @v1 while the
+// read went to @v2: `503 floor_not_met`.
+func TestANoMajorWriteIsReadBackAtTheMajorANoMajorReadUses(t *testing.T) {
+	for _, private := range []bool{true, false} {
+		t.Run(fmt.Sprintf("private=%v", private), func(t *testing.T) {
+			a := &majorAdapter{private: private, current: 2, headSet: true, head: 0, recordsAt: notesV2,
+				record: majorRecord(notesV2, "r-0", "V2-BASE")}
+			s := writeStack(t, a)
+			if g := s.majorReadAs(t, notesPath, blockShaped); g.status != http.StatusOK || g.keys != "r-0" {
+				t.Fatalf("first read: %d %s", g.status, g.body)
+			}
+			rec := s.call(t, http.MethodPut, notesPath+"/w-1", blockShaped, `{"data":{"title":"WRITTEN-CANARY"}}`)
+			var ack struct {
+				Seq int64 `json:"seq"`
+			}
+			if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &ack) != nil || ack.Seq < 1 {
+				t.Fatalf("write: %d %s", rec.Code, rec.Body.String())
+			}
+			g := s.majorReadAs(t, fmt.Sprintf("%s?minSeq=%d", notesPath, ack.Seq), blockShaped)
+			if g.status != http.StatusOK || !strings.Contains(g.body, "WRITTEN-CANARY") {
+				t.Fatalf("read-back at minSeq %d: %d %s; want 200 with the written record", ack.Seq, g.status, g.body)
+			}
+		})
+	}
+}
+
+// 🟡 Y2. A private read at a hinted major the adapter no longer resolves (its private stream there is
+// empty and names nothing) drops the hint and reads the major the adapter names: the record, and the
+// hint 2. Before the fix every such read answered empty at the stale @v3.
+func TestAPrivateReadDropsAHintTheAdapterNoLongerResolves(t *testing.T) {
+	a := &majorAdapter{private: true, current: 2, unresolvedAbove: 2, recordsAt: notesV2,
+		record: majorRecord(notesV2, "mine-9", "V2-AFTER-ROLLBACK")}
+	s := majorStack(t, a)
+	s.srv.majors.set("todo-app", "notes", 3)
+	for i := range 2 {
+		g := s.majorRead(t, notesPath)
+		if g.status != http.StatusOK || g.data != `{"title":"V2-AFTER-ROLLBACK"}` {
+			t.Fatalf("read %d at a stale hint 3: %d %s (asked %v); want the v2 record", i, g.status, g.body, a.subscribed())
+		}
+	}
+	if n := s.srv.majors.guess("todo-app", "notes"); n != 2 {
+		t.Fatalf("the hint after the adapter named 2: %d; want 2", n)
+	}
+	// The control: an empty, unnamed stream at a hint the adapter does resolve (its @v1 stream names
+	// the hinted major) keeps the hint and answers empty; the @v1 stream it asked is released.
+	b := &majorAdapter{private: true, current: 2, recordsAt: "none", blankAt: notesV2}
+	s2 := majorStack(t, b)
+	s2.srv.majors.set("todo-app", "notes", 2)
+	if g := s2.majorRead(t, notesPath); g.status != http.StatusOK || g.keys != "" {
+		t.Fatalf("an empty stream at a resolved hint: %d %s", g.status, g.body)
+	}
+	if n := s2.srv.majors.guess("todo-app", "notes"); n != 2 {
+		t.Fatalf("the hint after an empty stream at a resolved major: %d; want 2 kept", n)
+	}
+	if n := b.openAt("private", notesV1); n != 0 {
+		t.Fatalf("%d @v1 private streams still open after the check; want 0", n)
+	}
+}
+
+// 🟡 Y3. A read on a cold hint opens its guess's streams (@v1), then moves to the major they name:
+// the @v1 streams it alone used are released at once, not held against the stream caps until the
+// idle TTL. A stream another read used is kept (the explicit ?major=1 control).
+func TestAReadThatMovesReleasesTheGuessStreams(t *testing.T) {
+	for _, private := range []bool{true, false} {
+		t.Run(fmt.Sprintf("private=%v", private), func(t *testing.T) {
+			a := &majorAdapter{private: private, current: 2, recordsAt: notesV2, record: majorRecord(notesV2, "rel-1", "V2-REL")}
+			s := majorStack(t, a)
+			if g := s.majorRead(t, notesPath); g.status != http.StatusOK || g.keys != "rel-1" {
+				t.Fatalf("read: %d %s", g.status, g.body)
+			}
+			kinds := []string{"private"}
+			if !private {
+				kinds = []string{"level"}
+			}
+			for _, kind := range kinds {
+				if n := a.openAt(kind, notesV1); n != 0 {
+					t.Fatalf("%d %s @v1 streams still open after the read moved to @v2 (asked %v); want 0", n, kind, a.subscribed())
+				}
+				if n := a.openAt(kind, notesV2); n == 0 {
+					t.Fatalf("no %s @v2 stream open: the positive control (asked %v)", kind, a.subscribed())
+				}
+			}
+			if !private {
+				if n := a.openAt("viewer", "urn:schema:apps.civitai.com:todo-app/notes.viewer@v1"); n != 0 {
+					t.Fatalf("%d per-viewer @v1 streams still open; want 0", n)
+				}
+			}
+		})
+	}
+	t.Run("a stream another read used is kept", func(t *testing.T) {
+		a := &majorAdapter{private: true, current: 2, recordsAt: notesV1, record: majorRecord(notesV1, "old-1", "V1")}
+		s := majorStack(t, a)
+		if g := s.majorRead(t, notesPath+"?major=1"); g.status != http.StatusOK {
+			t.Fatalf("explicit read: %d %s", g.status, g.body)
+		}
+		if g := s.majorRead(t, notesPath); g.status != http.StatusOK {
+			t.Fatalf("no-major read: %d %s", g.status, g.body)
+		}
+		if n := a.openAt("private", notesV1); n != 1 {
+			t.Fatalf("%d @v1 streams open; want the explicit read's 1 kept", n)
+		}
+	})
+}
+
+// A stream a no-major read needs but cannot open (the move's target, or the @v1 check of a stale
+// hint) answers that stream's refusal, as any read whose stream cannot answer: never a read at
+// another major.
+func TestANoMajorReadWhoseNeededStreamFailsAnswersTheRefusal(t *testing.T) {
+	cases := []struct {
+		name string
+		a    *majorAdapter
+		hint int
+	}{
+		{"private, the move's target", &majorAdapter{private: true, current: 2, failAt: notesV2}, 0},
+		{"shared, the move's target", &majorAdapter{current: 2, failAt: notesV2}, 0},
+		{"private, the @v1 check of a stale hint", &majorAdapter{private: true, current: 2, unresolvedAbove: 2, failAt: notesV1}, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := majorStack(t, c.a)
+			if c.hint > 0 {
+				s.srv.majors.set("todo-app", "notes", c.hint)
+			}
+			g := s.majorRead(t, notesPath)
+			if g.status != http.StatusServiceUnavailable || g.retry != "1" {
+				t.Fatalf("%d %q %s (asked %v); want a 503 refusal", g.status, g.retry, g.body, c.a.subscribed())
+			}
+		})
 	}
 }

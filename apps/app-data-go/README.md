@@ -15,9 +15,12 @@ Authorization: Bearer <the app's hub access token for the user>
 A read that names no `major` reads the collection's **current** major when the adapter names it, as a
 write that names none is stamped with it: the adapter's private and level streams name it
 (`currentMajor` in their `meta`), and a stream that names another major than the one a read opened
-moves the read there. A stream that names none (an adapter without `currentMajor`) is read as before,
-at major 1, never refused, so app-data-go and the registry adapter each ship, and roll back,
-independently. An explicit `?major=N` reads major N. See `internal/api/major.go`.
+moves the read there (releasing the streams it opened at the first major). A stream that names none
+(an adapter without `currentMajor`) is read at the major the read opened at: the one the streams last
+named for the collection on this replica, else 1. It is never refused, so app-data-go and the
+registry adapter each ship, and roll back, independently. A write that names no major is
+acknowledged at that same major, so its read-back finds it. An explicit `?major=N` reads major N. See
+`internal/api/major.go`.
 
 A private item's `version` is the document's store version, the number a write's `ifVersion` is
 compared against (an app reads a document, then writes it with `ifVersion: doc.version`). `rev` is

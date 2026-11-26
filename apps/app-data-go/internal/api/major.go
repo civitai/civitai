@@ -33,8 +33,20 @@ import (
 // The hint is never trusted, only tried: a stream that names another major moves the read and the
 // hint. A newly approved major therefore corrects it at the next read of the collection: the
 // adapter re-reads every stream of a collection whose schema family changed and names the new major
-// in a `progress`. A hinted major the adapter no longer resolves (`not_resolved`) drops the hint.
-// The hints are bounded (majorHintsMax; past it they are all dropped and relearned).
+// in a `progress`. A hinted major the adapter no longer resolves drops the hint: level streams end
+// `not_resolved`; a private stream it does not resolve is empty and names nothing, so an empty,
+// unnamed private stream at a hinted major other than 1 asks major 1 (which every collection has):
+// one naming the hinted major keeps the hint (this viewer's stream is just empty), anything else
+// drops it and the read continues from major 1. A viewer the adapter refuses also drops it (both
+// streams name nothing): the next read relearns it. The hints are bounded (majorHintsMax; past it
+// they are all dropped and relearned).
+//
+// A read that moves releases the streams its guess opened, when no other read used them
+// (session.Manager.Release), so a cold hint does not hold two majors' streams against the caps.
+//
+// ONE RULE for the major a request that names none uses: a write's acknowledgement is held at the
+// same guess (writes.Forwarder.UseImpliedMajor, set from majorHints.guess by Handler), so the
+// read-back's floor finds it on the stream the read opens.
 //
 // An explicit `?major=N` is read exactly as before: at N, with no meta check.
 
@@ -103,6 +115,12 @@ func (s *Server) settle(p *readParams, current int, corrected bool) bool {
 	return p.at(current) != nil
 }
 
+// impliedMajorUser takes the rule for the major a request that names none uses (the write
+// forwarder, writes.Forwarder.UseImpliedMajor), so reads and writes share it.
+type impliedMajorUser interface {
+	UseImpliedMajor(rule func(slug, collection string) int)
+}
+
 // view reads p's private stream: at p.major as named, or, for a read with no major, at the current
 // major, p moved to it.
 func (s *Server) view(ctx context.Context, p *readParams) ([]registry.Entity, error) {
@@ -110,42 +128,74 @@ func (s *Server) view(ctx context.Context, p *readParams) ([]registry.Entity, er
 		snap, err := s.Streams.View(ctx, p.token, p.schema, p.minSeq)
 		return snap.Entities, err
 	}
-	for corrected := false; ; corrected = true {
-		snap, err := s.Streams.View(ctx, p.token, p.schema, 0)
-		switch {
-		case err != nil:
-			return nil, err
-		case !s.settle(p, shared.CurrentMajor(snap.Meta), corrected):
-			continue
-		case p.minSeq == 0:
-			return snap.Entities, nil
-		}
-		snap, err = s.Streams.View(ctx, p.token, p.schema, p.minSeq)
-		return snap.Entities, err
+	snap, err := s.Streams.View(ctx, p.token, p.schema, 0)
+	if err != nil {
+		return nil, err
 	}
+	current := shared.CurrentMajor(snap.Meta)
+	if current == 0 && len(snap.Entities) == 0 && p.major != 1 {
+		// An empty stream naming nothing at a hinted major: what the adapter sends for a major it
+		// does not resolve (or a viewer it refuses). Major 1, which every collection has, says which.
+		at1 := *p
+		_ = at1.at(1)
+		snap1, err := s.Streams.View(ctx, at1.token, at1.schema, 0)
+		if err != nil {
+			return nil, err
+		}
+		if c1 := shared.CurrentMajor(snap1.Meta); c1 == p.major {
+			// The hint holds: this viewer's stream at it is empty. The @v1 stream was only asked.
+			s.Streams.Release(at1.token, at1.schema)
+		} else {
+			// The hinted major is not the adapter's now: the hint is dropped, the read is major 1's.
+			s.majors.forget(p.slug, p.collection)
+			s.Streams.Release(p.token, p.schema)
+			*p, snap, current = at1, snap1, c1
+		}
+	}
+	if from := p.schema; !s.settle(p, current, false) {
+		// Moved: the stream the guess opened is released (when this read alone used it).
+		s.Streams.Release(p.token, from)
+		if snap, err = s.Streams.View(ctx, p.token, p.schema, 0); err != nil {
+			return nil, err
+		}
+		s.settle(p, shared.CurrentMajor(snap.Meta), true)
+	}
+	if p.minSeq == 0 {
+		return snap.Entities, nil
+	}
+	snap, err = s.Streams.View(ctx, p.token, p.schema, p.minSeq)
+	return snap.Entities, err
 }
 
-// sharedRead is view for a shared collection's board.
+// sharedRead is view for a shared collection's board. A hinted major the adapter does not resolve
+// ends the level streams `not_resolved`: the hint is dropped.
 func (s *Server) sharedRead(ctx context.Context, v shared.Viewer, p *readParams) (shared.Board, error) {
 	if !p.implied {
 		return s.Shared.Read(ctx, v, p.slug, p.collection, p.major, p.minSeq)
 	}
-	for corrected := false; ; corrected = true {
+	read := func() (shared.Board, error) {
 		b, err := s.Shared.Read(ctx, v, p.slug, p.collection, p.major, 0)
-		if err != nil {
-			var ended *session.EndedError
-			if errors.As(err, &ended) && ended.Reason == "not_resolved" && p.major != 1 {
-				// A hinted major the adapter does not resolve now: the next read guesses 1 again.
-				s.majors.forget(p.slug, p.collection)
-			}
+		var ended *session.EndedError
+		if errors.As(err, &ended) && ended.Reason == "not_resolved" && p.major != 1 {
+			// A hinted major the adapter does not resolve now: the next read guesses 1 again.
+			s.majors.forget(p.slug, p.collection)
+		}
+		return b, err
+	}
+	b, err := read()
+	if err != nil {
+		return shared.Board{}, err
+	}
+	if from := p.major; !s.settle(p, b.Current, false) {
+		// Moved: the streams the guess opened are released (those this read alone used).
+		s.Shared.Release(v, p.slug, p.collection, from)
+		if b, err = read(); err != nil {
 			return shared.Board{}, err
 		}
-		switch {
-		case !s.settle(p, b.Current, corrected):
-			continue
-		case p.minSeq == 0:
-			return b, nil
-		}
-		return s.Shared.Read(ctx, v, p.slug, p.collection, p.major, p.minSeq)
+		s.settle(p, b.Current, true)
 	}
+	if p.minSeq == 0 {
+		return b, nil
+	}
+	return s.Shared.Read(ctx, v, p.slug, p.collection, p.major, p.minSeq)
 }
