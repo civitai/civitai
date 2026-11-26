@@ -1296,8 +1296,9 @@ async function hydrateMyAppListings(
             appRating: r.appBlock?.contentRating,
             assetScans: scansByListingId.get(r.id) ?? [],
             // 🔴 A PRE-APPROVAL ON-SITE DRAFT (no backing block yet) reports NO link nudge: its
-            // links are manifest-governed and reach this row only at approve, so its empty
-            // columns say nothing about the submitted manifest — and this surface has no manifest
+            // links are manifest-governed: a newly minted draft carries the first submit's, but a
+            // reused draft keeps an earlier submit's until approve, so its columns do not reliably
+            // describe the submitted manifest — and this surface has no manifest
             // for it. The submit's own readiness reads the submitted manifest instead.
             links:
               kind === 'onsite' && !r.appBlockId ? {} : listingProblemLinksFrom(r.id, linkMaps),
