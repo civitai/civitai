@@ -186,43 +186,50 @@ async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
     .map((row) => row.userId);
 }
 
+/**
+ * Two reads: the servable open items, then per rank the players one of them waits for. Under one EXISTS per player the
+ * planner joined every Image and Post through the gate before probing the open items, and timed out in production.
+ */
 async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
-  const oldest = await db
-    .selectFrom('KnightsQueueItem')
-    .select((eb) => eb.fn.min('createdAt').as('at'))
-    .where('status', '=', 'Open')
-    .executeTakeFirst();
-  if (!oldest?.at) return [];
+  const worked = RANKS.flatMap((rank) =>
+    // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
+    rank === 'Acolyte' || rank === 'Inquisitor' ? [] : [{ rank, stages: stagesWorkedBy(rank) }]
+  ).filter(({ stages }) => stages.length > 0);
+  const stages = [...new Set(worked.flatMap((w) => w.stages))];
+  if (stages.length === 0) return [];
+  const waiting = await readWithoutJit(db, (trx) =>
+    servableItems(trx)
+      .where('i.minRank', 'in', stages)
+      .select(['i.imageId', 'i.questionKey', 'i.minRank', 'img.userId'])
+      .distinct()
+      .execute()
+  );
+  if (waiting.length === 0) return [];
+
   const activeFrom = utc(dayStart(addDays(day, -NOTIFY.activeDays)));
   const lastNudgeAfter = dateOf(addDays(day, -NOTIFY.inactiveNudgeDays));
   const found: number[] = [];
-  for (const rank of RANKS) {
-    const stages = stagesWorkedBy(rank);
-    // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
-    if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
-    const rows = await readWithoutJit(db, (trx) =>
-      recipients(trx, 'new-images', day)
-        .select('pl.userId')
-        .where('pl.rankType', '=', rank)
-        // Daily for players who voted recently; others at most once per window, to bring them back.
-        .where(
-          sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
+  for (const { rank, stages } of worked) {
+    const items = waiting.filter((w) => (stages as string[]).includes(w.minRank));
+    if (items.length === 0) continue;
+    const rows = await recipients(db, 'new-images', day)
+      .select('pl.userId')
+      .where('pl.rankType', '=', rank)
+      // Daily for players who voted recently; others at most once per window, to bring them back.
+      .where(
+        sql<boolean>`(exists (select 1 from "KnightsVote" a where a."playerId" = pl."userId" and a."createdAt" >= ${activeFrom})
           or not exists (select 1 from "KnightsNotificationSend" s where s."playerId" = pl."userId" and s."kind" = 'new-images' and s."day" > ${lastNudgeAfter}))`
-        )
-        .where((eb) =>
-          eb.exists(
-            servableItems(db)
-              .select(sql<number>`1`.as('one'))
-              .where('i.minRank', 'in', stages)
-              .where(sql<boolean>`img."userId" is distinct from pl."userId"`)
-              .where(
-                // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
-                sql<boolean>`not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = i."imageId" and j."questionKey" = i."questionKey")`
-              )
-          )
-        )
-        .execute()
-    );
+      )
+      .where(
+        // A re-queue of an image the player judged under any item is not waiting for them (`insertVote`).
+        sql<boolean>`exists (
+          select 1 from unnest(${items.map((w) => w.imageId)}::int[], ${items.map(
+          (w) => w.questionKey
+        )}::text[], ${items.map((w) => w.userId)}::int[]) as w("imageId", "questionKey", "userId")
+          where w."userId" is distinct from pl."userId"
+            and not exists (select 1 from "KnightsVote" j where j."playerId" = pl."userId" and j."imageId" = w."imageId" and j."questionKey" = w."questionKey"))`
+      )
+      .execute();
     found.push(...rows.map((r) => r.userId));
   }
   return found;
