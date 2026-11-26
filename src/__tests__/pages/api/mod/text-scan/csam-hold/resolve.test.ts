@@ -291,12 +291,10 @@ describe('textScan.resolveCsamHold', () => {
         actor: { id: 7, ip: undefined },
         fromStatuses: expect.any(Array),
       });
-      // A confirmed CSAM removal also actions a dismissed report, never an Actioned one again.
       const [{ fromStatuses }] = mocks.bulkSetCommentV3TosViolation.mock.calls[0] as [
         { fromStatuses: string[] }
       ];
-      expect(fromStatuses).toContain('Unactioned');
-      expect(fromStatuses).toContain('Pending');
+      expect(fromStatuses).toEqual(expect.arrayContaining(['Pending', 'Processing', 'Unactioned']));
       expect(fromStatuses).not.toContain('Actioned');
       expect(mocks.createStrike).not.toHaveBeenCalled();
       expect(mocks.toggleBan).not.toHaveBeenCalled();
