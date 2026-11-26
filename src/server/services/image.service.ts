@@ -378,12 +378,14 @@ import {
   type DeleteOutcome,
   type DeletedImage as DeletedImageWithFiles,
   type DeletedImageRow,
+  dealFileImageSql,
 } from '@civitai/db-queries/content-deletion';
 import {
   imagesPendingDeletion as readImagesPendingDeletion,
   releaseModeratorPendingDeletes,
 } from '@civitai/db-queries/pending-deletes';
-import type { RawBuilder } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { kyselyRead } from '~/server/db/kyselyDb';
@@ -1044,6 +1046,22 @@ const withDeleteTransaction = <T>(
     ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 120_000 })
     : run(kyselyOver(dbWrite));
 
+/**
+ * The system deletes that may remove a deal file's scan copy, besides any moderator delete: the deal
+ * pipeline's own and an account deletion's drain (`ACCOUNT_DELETION_DRAIN`), whose deal holds on
+ * its own. Any other actor, an unknown system one included, leaves such an image.
+ */
+const DEAL_FILE_IMAGE_DELETERS = new Set([
+  'creator-service-deal-unpack',
+  'creator-service-deal-file',
+  'creator-service-deal-review',
+  // ACCOUNT_DELETION_DRAIN, spelled out: its module imports this one. A test pins the two together.
+  'remove-deleted-user-images',
+]);
+
+/** In the DELETE's own WHERE, so an entry written after a check still keeps its image. */
+const notDealFileImage = sql<boolean>`NOT ${dealFileImageSql(sql.ref('Image.id'))}`;
+
 /** `deleteImages`, with the images it left for their child-safety case. */
 export async function deleteImagesWithOutcome(
   ids: number[],
@@ -1064,6 +1082,13 @@ export async function deleteImagesWithOutcome(
     }
 ): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
+  const keepsDealFileImages =
+    !moderatorDelete && !('system' in actor && DEAL_FILE_IMAGE_DELETERS.has(actor.system));
+  if (keepsDealFileImages && deletedById !== undefined)
+    await assertNotDealFileImages(uniq(ids), 'deleted', {
+      // A non-moderator deletes only their own rows, so only those may answer "delivery file".
+      ownerId: 'isModerator' in actor && actor.isModerator ? undefined : deletedById,
+    });
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
@@ -1080,8 +1105,13 @@ export async function deleteImagesWithOutcome(
         : imagesWithOpenReports(ids).catch(() => new Set(ids)),
     ]);
 
-    const callerWhere =
+    const asked =
       !onlyWhere || 'toOperationNode' in onlyWhere ? onlyWhere : fromPrismaSql<boolean>(onlyWhere);
+    const callerWhere = !keepsDealFileImages
+      ? asked
+      : asked
+      ? sql<boolean>`(${asked}) AND ${notDealFileImage}`
+      : notDealFileImage;
     const {
       deleted: rows,
       kept: caseKept,
@@ -5444,6 +5474,7 @@ export const getImagesByEntity = async ({
   userId,
   isModerator,
   ownerSeesHeld = false,
+  seesReportListed,
 }: {
   id?: number;
   ids?: number[];
@@ -5452,14 +5483,20 @@ export const getImagesByEntity = async ({
   include?: ['tags'];
   userId?: number;
   isModerator?: boolean;
-  /** The request carries the owner's view (`credentialViews`): `userId`'s held images show. */
+  /** The request carries the owner's view (`credentialViews`): `userId`'s held and listed images show. */
   ownerSeesHeld?: boolean;
+  seesReportListed: boolean;
 }) => {
   if (!id && (!ids || ids.length === 0)) {
     return [];
   }
 
-  const AND = entityImageVisibilityConditions({ userId, isModerator });
+  const AND = entityImageVisibilityConditions({
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed: ownerSeesHeld,
+  });
   if (!isModerator) AND.push(notHeldForReviewSql(ownerSeesHeld ? userId : undefined));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
@@ -6006,8 +6043,8 @@ export const getEntityCoverImage = async ({
   include?: ['tags'];
   // Covers follow the parent entity's visibility for this viewer; undefined is signed out.
   viewer: CoverImageViewer;
-  // A bounty's own images follow the bounty search index's exclusions (its uploader keeps theirs)
-  // unless this is set.
+  // Bounty, entry and article covers follow the bounty search index's exclusions (their uploader
+  // keeps theirs) unless this is set.
   seesReportListed?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
   // where the result is never cached for someone else.
@@ -6051,7 +6088,11 @@ export const getEntityCoverImage = async ({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
-  const bountyNotReportListed = notReportListedSql(signedIn ? viewerId ?? undefined : undefined);
+  // A report-listed image is its uploader's and `seesReportListed` viewers' alone, on every branch
+  // that can pick a bounty, entry or article cover.
+  const reportListedVisible = Prisma.sql`(${seesReportListed}::boolean OR ${notReportListedSql(
+    signedIn ? viewerId ?? undefined : undefined
+  )})`;
   // A blocked or ToS-violating cover is its owner's and moderators' alone.
   const coverNotBlocked = Prisma.join(
     [
@@ -6246,6 +6287,7 @@ export const getEntityCoverImage = async ({
               AND ${withinHeldGallery}
               AND ${baseModelAllowed}
               AND ${coverNotBlocked}
+              AND ${reportListedVisible}
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned'
               AND a.availability != 'Private')
@@ -6348,7 +6390,7 @@ export const getEntityCoverImage = async ({
             AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
-            AND (e."entityType" <> 'Bounty' OR ${seesReportListed}::boolean OR ${bountyNotReportListed})
+            AND ${reportListedVisible}
             AND (
               ${isModerator}::boolean
               -- canViewBounty
@@ -6483,6 +6525,7 @@ export const updateEntityImages = async ({
   if (linkIds.length > 0) {
     const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } });
     if (owned !== new Set(linkIds).size) throw throwAuthorizationError();
+    await assertNotDealFileImages(linkIds, 'used here');
   }
 
   // Counted before any write: links the form was not shown count too.

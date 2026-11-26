@@ -171,6 +171,36 @@ describe('createFliptClient', () => {
     });
   });
 
+  describe('readBoolean answers as isEnabledSync does once the client is initialized', () => {
+    it.each([
+      ['on', () => ({ enabled: true }), true],
+      ['off', () => ({ enabled: false }), false],
+      [
+        'a missing key',
+        () => {
+          throw new Error('unknown flag');
+        },
+        null,
+      ],
+    ] as const)('%s', async (_label, evaluate, expected) => {
+      evaluateBoolean.mockImplementation(evaluate as () => { enabled: boolean });
+      const flipt = createFliptClient({ ...baseConfig, onEvalError: () => {} });
+      await flipt.ensureInitialized();
+      expect(flipt.isEnabledSync('flag', 'app-1')).toBe(expected);
+      expect(await flipt.readBoolean('flag', 'app-1')).toBe(expected);
+    });
+
+    it('unreadable: both answer null when init fails with no snapshot', async () => {
+      init.mockImplementation(async () => {
+        throw new Error('boom');
+      });
+      const flipt = createFliptClient({ ...baseConfig, onInitError: () => {} });
+      await flipt.ensureInitialized().catch(() => undefined);
+      expect(flipt.isEnabledSync('flag', 'app-1')).toBeNull();
+      expect(await flipt.readBoolean('flag', 'app-1')).toBeNull();
+    });
+  });
+
   it('reports no variant match as null', async () => {
     evaluateVariant.mockImplementation(() => ({ match: false, variantKey: 'primary' }));
     const flipt = createFliptClient(baseConfig);

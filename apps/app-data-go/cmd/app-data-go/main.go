@@ -151,23 +151,27 @@ func run(log *slog.Logger) error {
 			ReopenEvery: cfg.AdapterPoll,
 			Floor:       func(outcome string) { m.FloorReopens.WithLabelValues(outcome).Inc() },
 			Overlaid:    func(kind string) { m.Overlays.WithLabelValues(kind).Inc() },
+			// The private feed judges the viewer's region too (WRITES-DESIGN.md, "Region").
+			Region: cfg.ForwardRegion,
 		})
 		srv.Streams = mgr
 		if cfg.SharedReads {
 			sub := session.ClientSubscriber{Client: &registry.Client{
 				BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
 			}}
-			// The level streams run under this service's own token (client credentials, the relay
-			// client), whatever subject a read names; one the registry refuses is re-minted.
-			svc := token.New(token.Config{URL: cfg.Relay.TokenURL, ClientID: cfg.Relay.ClientID,
-				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource, Scope: serviceTokenScope}, &http.Client{Timeout: exchangeTimeout})
+			// The level streams run under this service's own token, minted as its service client
+			// (client credentials), whatever subject a read names; one the registry refuses is
+			// re-minted. With no service client every shared read is refused
+			// service_client_unconfigured: never minted as the relay client, which the hub refuses.
+			serviceToken, serviceRefused := serviceSource(ctx, cfg, m, log.With("component", "service-token"))
 			var reader *shared.Reader
 			reader, levels, viewers = shared.NewReader(shared.Build{
 				Sub: sub, Budget: budget,
 				Level:          shared.Bounds{MaxStreams: cfg.LevelMaxStreams, MaxRecords: cfg.LevelMaxRecords, MaxBytes: cfg.LevelMaxBytes},
 				Viewer:         shared.Bounds{MaxStreams: cfg.ViewerMaxStreams, MaxRecords: cfg.ViewerMaxRecords, MaxBytes: cfg.ViewerMaxBytes},
-				ServiceToken:   svc.TokenExpiring,
-				ServiceRefused: svc.Invalidate,
+				ServiceToken:   serviceToken,
+				ServiceRefused: serviceRefused,
+				ForwardRegion:  cfg.ForwardRegion,
 				ViewerExchange: router.Exchange,
 				LevelMaxAge:    levelMaxAge,
 				IdleTTL:        cfg.IdleTTL, MaxAge: cfg.MaxAge, Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
@@ -229,7 +233,8 @@ func run(log *slog.Logger) error {
 		IdleTimeout:       100 * time.Second,
 	}
 	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "", "block_exchange", cfg.BlockExchange,
-		"writes", cfg.Writes, "max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken,
+		"writes", cfg.Writes, "shared_reads", cfg.SharedReads, "service_client", cfg.Service != nil, "forward_region", cfg.ForwardRegion,
+		"max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken,
 		"max_subscriptions", cfg.MaxSubscriptions, "cache_budget_bytes", cfg.CacheBudgetBytes)
 
 	served := make(chan error, 1)
@@ -252,6 +257,35 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// serviceSource is the level streams' service token and its invalidation, minted as cfg.Service at
+// the relay's token endpoint for the relay's resource, each fetch counted (metrics
+// ServiceTokenFetches); nil, nil without a service client. One token is minted at once in the
+// background, as a start-up self-check: its outcome is logged (never the token), and the token it
+// got is kept for the first level stream.
+func serviceSource(ctx context.Context, cfg *config.Config, m *metrics.Metrics, log *slog.Logger) (func(context.Context) (string, time.Time, error), func()) {
+	if cfg.Service == nil {
+		return nil, nil
+	}
+	svc := token.New(token.Config{URL: cfg.Relay.TokenURL, ClientID: cfg.Service.ClientID,
+		ClientSecret: cfg.Service.ClientSecret, Resource: cfg.Relay.Resource, Scope: serviceTokenScope}, &http.Client{Timeout: exchangeTimeout})
+	svc.OnFetch = m.ObserveServiceTokenFetch
+	go selfCheck(ctx, svc, log)
+	return svc.TokenExpiring, svc.Invalidate
+}
+
+// selfCheck mints the service token once and logs the outcome: never the token, and the error names
+// only the endpoint's status and OAuth error code (token.EndpointError).
+func selfCheck(ctx context.Context, svc *token.Source, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, exchangeTimeout)
+	defer cancel()
+	if _, err := svc.Token(ctx); err != nil {
+		log.Error("service token self-check failed: shared reads are refused until the hub mints it",
+			"outcome", token.Outcome(err), "err", err)
+		return
+	}
+	log.Info("service token self-check passed", "outcome", token.OutcomeOK)
 }
 
 // overlayTTL is how long an acknowledged write is shown over its stream: zero with the writes off.

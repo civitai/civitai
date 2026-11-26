@@ -156,6 +156,7 @@ import {
   isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import {
   JUDGE_RATING_METADATA_KEY,
   stripBlockProvenanceMetadata,
@@ -2072,6 +2073,7 @@ export const updateCollectionCoverImage = async ({
     isModerator,
     confirmBlockOnPrimary: true,
   });
+  await assertNotDealFileImages([imageId], 'used here');
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },

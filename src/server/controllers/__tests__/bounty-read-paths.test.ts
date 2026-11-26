@@ -1250,6 +1250,7 @@ describe("bounty entry images and the owner's view, against the real image query
         "tosViolation" boolean NOT NULL DEFAULT false
       );
       CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
       INSERT INTO "Image" (id, "needsReview", index) VALUES (${CLEAN}, NULL, 0), (${HELD}, 'csam', 1);
       INSERT INTO "ImageConnection" VALUES (${CLEAN}, 3, 'BountyEntry'), (${HELD}, 3, 'BountyEntry');
     `);

@@ -198,12 +198,14 @@ const MIGRATIONS = [
   '20261028130000_service_deal_event_reason_code',
   '20261028140000_creator_service_deal_file_state',
   '20261028150000_creator_service_max_nsfw_level',
+  '20261028160000_creator_service_deal_file_entries',
   '20261028170000_creator_service_offering_takedown',
   '20270106120000_service_offering_content_scan',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
   '20271125130000_service_deal_buyer_disclosure',
   '20271128130000_service_request_form',
+  '20271128140100_service_deal_file_entry_copy_delete_started_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );

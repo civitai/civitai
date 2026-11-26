@@ -6,7 +6,6 @@
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
@@ -14,8 +13,9 @@
   import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import YesNoPicker from './YesNoPicker.svelte';
   import type { YesNoReferenceItem } from '$lib/server/knights/yesno-reference.service';
+  import TrialMedia from './TrialMedia.svelte';
 
-  let { item }: { item: YesNoReferenceItem } = $props();
+  let { item }: { item: YesNoReferenceItem & { restricted: boolean } } = $props();
 
   const toggle = new FormState({ reload: true, onSuccess: null });
   const save = new FormState({
@@ -43,9 +43,8 @@
     : 'opacity-60'}"
 >
   <a href={imageLookupUrl(item.imageId)} class="shrink-0 self-start">
-    <EdgeMedia
-      src={item.imageKey}
-      name={item.imageName}
+    <TrialMedia
+      {item}
       width={240}
       alt="Image {item.imageId}"
       class="max-h-64 rounded-md"

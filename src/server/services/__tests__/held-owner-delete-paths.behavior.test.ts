@@ -126,6 +126,7 @@ const BASE_SCHEMA = `
     data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
     UNIQUE ("entityType", "entityId", type)
   );
+  CREATE TABLE "ServiceDealFileEntry" (id serial PRIMARY KEY, "imageId" int);
 `;
 
 beforeAll(async () => {
@@ -137,7 +138,7 @@ beforeAll(async () => {
 const reset = () =>
   holder.db.exec(`
     SET session_replication_role = replica;
-    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue";
+    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue", "ServiceDealFileEntry", "ServiceDealFile";
     SET session_replication_role = DEFAULT;
   `);
 
@@ -163,7 +164,7 @@ beforeEach(async () => {
     if (/FROM "PostText"/.test(sql.text))
       return sql.values.filter((v) => heldTextPosts.has(v as number)).map((postId) => ({ postId }));
     if (
-      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
+      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"JobQueue"|SELECT id FROM "Image" WHERE "postId"|FROM "ServiceDealFileEntry"/.test(
         sql.text
       )
     )
@@ -382,6 +383,63 @@ describe('an owner deleting their post keeps shop artwork only for a plain image
 });
 
 // The member limit lives in the shared delete; these pin that each service hands it the actor.
+describe('an image a deal file entry points at', () => {
+  beforeEach(() =>
+    holder.db.query(`INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES ($1)`, [imageOf(PLAIN)])
+  );
+
+  it('is refused to its owner, and the row and the file stay', async () => {
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await queuedFiles()).toEqual([]);
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
+  it.each<[string, Parameters<typeof deleteImages>[1]['actor']]>([
+    ['a moderator', { id: MODERATOR, isModerator: true }],
+    ["the deal pipeline's own cleanup", { system: 'creator-service-deal-unpack' }],
+    ["an account deletion's drain", { system: ACCOUNT_DELETION_DRAIN }],
+  ])('is deleted by %s', async (_, actor) => {
+    await deleteImages([imageOf(PLAIN)], { actor });
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+
+  it("answers a stranger's delete as it answers any other image of someone else's", async () => {
+    await deleteImages([imageOf(PLAIN)], { actor: { id: 4242, isModerator: false } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
+  it('is left by any other system delete, which deletes the rest of its batch', async () => {
+    const other = 3001;
+    await holder.db.query(`INSERT INTO "Image" (id, "userId", url) VALUES ($1, $2, 'key-other')`, [
+      other,
+      PLAIN,
+    ]);
+    await deleteImages([imageOf(PLAIN), other], { actor: { system: 'some-other-job' } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+    expect(await imageRow(other)).toBeUndefined();
+  });
+
+  it("is refused to its owner as a preview's copy, and the cleanup keeps it", async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await holder.db.query(`INSERT INTO "ServiceDealFile" ("imageId") VALUES ($1)`, [
+      imageOf(PLAIN),
+    ]);
+    await expect(
+      deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await deleteImages([imageOf(PLAIN)], { actor: { system: 'some-other-job' } });
+    expect(await imageRow(imageOf(PLAIN))).toBeDefined();
+  });
+
+  it('control: the owner still deletes an image no entry points at', async () => {
+    await holder.db.query(`DELETE FROM "ServiceDealFileEntry"`);
+    await deleteImages([imageOf(PLAIN)], { actor: { id: PLAIN, isModerator: false } });
+    expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+  });
+});
+
 describe("a member deleting another member's content", () => {
   const STRANGER = { id: 4242, isModerator: false };
 
@@ -1130,6 +1188,20 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
       expect(await imageRow(ORPHAN)).toBeUndefined();
       expect(await cleanup()).toBeUndefined();
+    });
+
+    it('stays, with its entry pointing at it, when a deal file entry points at it', async () => {
+      await holder.db.exec(`
+        UPDATE "Report" SET status = 'Actioned' WHERE id = 1;
+        INSERT INTO "ServiceDealFileEntry" ("imageId") VALUES (${ORPHAN});
+      `);
+      await runJob();
+
+      expect(await imageRow(ORPHAN)).toBeDefined();
+      expect(
+        (await holder.db.query(`SELECT 1 FROM "ServiceDealFileEntry" WHERE "imageId" = ${ORPHAN}`))
+          .rows
+      ).toHaveLength(1);
     });
 
     it('stays, and its cleanup goes, when something uses it again', async () => {

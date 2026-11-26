@@ -395,6 +395,32 @@ export const IMAGE_USES = {
 } as const satisfies Record<string, readonly [string, string]>;
 
 /**
+ * Where a deal file points at its scan copy: an entry of a Final or Attachment, and a preview (a
+ * rejected one's copy is kept as evidence). The copy is owned by its uploader, so no ownership check
+ * stops it; every deal-copy check is built from this list.
+ */
+export const DEAL_FILE_IMAGE_USES = {
+  serviceDealFileEntries: ['ServiceDealFileEntry', 'imageId'],
+  serviceDealFilePreviews: ['ServiceDealFile', 'imageId'],
+} as const satisfies Record<string, readonly [string, string]>;
+
+/**
+ * Uses of an image with no Prisma relation to `Image`, so the relation test cannot list them;
+ * `imageNotUsed` reads them beside `IMAGE_USES`.
+ */
+export const IMAGE_USES_WITHOUT_RELATION = { ...DEAL_FILE_IMAGE_USES };
+
+/** True in SQL when a deal file points at the image whose id is `id`. */
+export const dealFileImageSql = (id: RawBuilder<unknown> | ReturnType<typeof sql.ref>) =>
+  sql<boolean>`(${sql.join(
+    Object.values(DEAL_FILE_IMAGE_USES).map(
+      ([table, column]) =>
+        sql`EXISTS (SELECT 1 FROM ${sql.table(table)} d WHERE d.${sql.id(column)} = ${id})`
+    ),
+    sql` OR `
+  )})`;
+
+/**
  * The key a stored url names, lowercased; shop artwork columns hold whatever the client sent.
  * 🔴 Must match the expression indexes in migration `20261211120000_shop_artwork_key_indexes`
  * exactly, or every image create scans the shop artwork tables.
@@ -404,10 +430,10 @@ export const storedKeySql = (column: string) =>
 
 const key = (column: string) => sql.raw(storedKeySql(column));
 
-/** In no post, used nowhere in `IMAGE_USES` and its stored object not shop artwork. */
+/** In no post, used nowhere in `IMAGE_USES` (or without a relation) and its stored object not shop artwork. */
 export function imageNotUsed() {
   const id = sql.ref('Image.id');
-  const uses = Object.values(IMAGE_USES).map(
+  const uses = [...Object.values(IMAGE_USES), ...Object.values(IMAGE_USES_WITHOUT_RELATION)].map(
     ([table, column]) =>
       sql`NOT EXISTS (SELECT 1 FROM ${sql.table(table)} u WHERE u.${sql.id(column)} = ${id})`
   );

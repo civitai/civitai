@@ -357,6 +357,7 @@ export const getBountyEntriesHandler = async ({
         isModerator: ctx.user?.isModerator,
         userId: ctx.user?.id,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        seesReportListed: seesReportListed(ctx),
       }),
       getRequestImageFilter(ctx),
     ]);

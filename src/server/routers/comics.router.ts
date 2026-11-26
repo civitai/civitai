@@ -1,3 +1,4 @@
+import { assertNotDealFileImages } from '~/server/services/deal-file-image';
 import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
@@ -297,6 +298,7 @@ async function getOwnedImageOrThrow(imageId: number, userId: number) {
   if (!image || image.userId !== userId) {
     throw throwAuthorizationError();
   }
+  await assertNotDealFileImages([imageId], 'used here');
   return image;
 }
 

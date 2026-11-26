@@ -3238,6 +3238,9 @@ const REDIS_KEYS_UNPREFIXED = {
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
+    // Workflows the v2 rater rated mature (key :<workflowId>); a later post attempt keeps the gate
+    // without re-rating.
+    MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
   },
   TRAINING: {
     // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),
@@ -3271,6 +3274,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // expiry. Presenting a tombstoned token is reuse: the auth hub revokes the chain. See apps/auth
     // src/lib/server/oauth/offline-grant.ts.
     REFRESH_TOMBSTONES: 'packed:oauth:refresh-tombstone',
+    // A ban's mark on a self-only client it disabled: see src/server/services/oauth-ban-marker.ts.
+    BAN_DISABLED: 'oauth:ban-disabled',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
