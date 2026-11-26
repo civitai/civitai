@@ -24,6 +24,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/chread"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -303,6 +304,14 @@ func run(log *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	// Eval mode (DESIGN.md §19.7): the clock is frozen before anything reads it.
+	if !cfg.Eval.Now.IsZero() {
+		clock.Freeze(cfg.Eval.Now)
+	}
+	if cfg.Eval.Mode {
+		log.Warn("EVAL MODE: hand-backs answer the stub, shadow and probe routes are off; never serve users from this pod",
+			"FEED_GO_EVAL_MODE", true, "FEED_GO_EVAL_NOW", cfg.Eval.Now)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -651,6 +660,8 @@ func run(log *slog.Logger) error {
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 		Events:      &server.EventLog{Log: log, FallbackPerMinute: cfg.FallbackLogPerMinute, ErrorPerMinute: cfg.ErrorLogPerMinute},
+		// FEED_GO_EVAL_MODE (default off): hand-backs answer the stub, never the Node app.
+		EvalMode: cfg.Eval.Mode,
 	}
 	var prop propagation.TextMapPropagator
 	if tp != nil {
@@ -741,8 +752,8 @@ func run(log *slog.Logger) error {
 	// capture extends its own write deadline, so it is not cut by the internal write timeout).
 	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
-	// do not listen publicly at all.
-	if srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil || srv.SearchFallback != nil {
+	// do not listen publicly at all. An eval pod always listens: its hand-backs are the stub.
+	if srv.EvalMode || srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil || srv.SearchFallback != nil {
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))

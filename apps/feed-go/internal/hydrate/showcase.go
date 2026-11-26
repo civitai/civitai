@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 )
 
 // KeyVersionShowcase is REDIS_KEYS.CACHES.VERSION_SHOWCASE (packages/civitai-redis/src/client.ts):
@@ -103,7 +105,7 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, s
 		}
 		p = r.read.p
 	}
-	now := time.Now()
+	now := clock.Now()
 	if p != nil && p.Now != nil {
 		now = p.Now()
 	}

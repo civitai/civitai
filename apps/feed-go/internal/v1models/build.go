@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/clock"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
@@ -91,7 +92,7 @@ func (d *Deps) now() time.Time {
 	if d.Now != nil {
 		return d.Now()
 	}
-	return time.Now()
+	return clock.Now()
 }
 
 func (d *Deps) limit() int {

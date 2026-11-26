@@ -6,10 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
-	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -157,7 +155,7 @@ func (s *Server) trainingDataVouch(r *http.Request) (string, *v1models.TrainingD
 }
 
 func (s *Server) regionRestricted(r *http.Request) bool {
-	return browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	return regionMatches(s.RegionRules, r)
 }
 
 // computeV1Models answers a REST `/api/v1/models` request (the MixedAuthEndpoint handler) for a

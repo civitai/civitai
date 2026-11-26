@@ -19,22 +19,43 @@ import (
 // else. It never carries a debug route, whatever the pprof toggle says.
 func PublicMux(s *Server) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("/api/trpc/"+Procedure, s)
-	mux.HandleFunc("/api/trpc/"+ProcedureModelGetAll, s.ServeModelGetAllHTTP)
-	mux.HandleFunc("/api/trpc/"+ProcedureInfinite, s.ServeInfiniteHTTP)
-	if s.V1Fallback != nil {
-		mux.HandleFunc(V1ModelsPath, s.ServeV1ModelsHTTP)
-		// The subtree: `{id}`, and any deeper path, which the compute falls back on (`v1-models-path`).
-		mux.HandleFunc(V1ModelsPath+"/", s.ServeV1ModelsIDHTTP)
-	}
-	if s.V1ImagesFallback != nil {
-		// The exact path: nothing under /api/v1/images/ is this route (Node's are other pages).
-		mux.HandleFunc(V1ImagesPath, s.ServeV1ImagesHTTP)
-	}
-	if s.SearchFallback != nil {
-		mux.HandleFunc(SearchPath+"/", s.ServeSearchHTTP)
+	for _, rt := range publicRoutes(s) {
+		mux.Handle(rt.pattern, rt.handler)
 	}
 	return mux
+}
+
+// publicRoute is one pattern PublicMux mounts.
+type publicRoute struct {
+	pattern string
+	handler http.Handler
+}
+
+// publicRoutes is every route PublicMux mounts for s, in PublicMux's order. Each one ends a request it
+// does not answer at handBack, so eval mode's hand-back stub covers every public route (pinned by
+// TestEvalModeStubsEveryPublicRoute, which reads this list).
+func publicRoutes(s *Server) []publicRoute {
+	routes := []publicRoute{
+		{"/api/trpc/" + Procedure, s},
+		{"/api/trpc/" + ProcedureModelGetAll, http.HandlerFunc(s.ServeModelGetAllHTTP)},
+		{"/api/trpc/" + ProcedureInfinite, http.HandlerFunc(s.ServeInfiniteHTTP)},
+	}
+	// In eval mode every route is mounted, its upstream or not: the stub never dials one (handBack), and
+	// an unmounted route would answer the mux's 404, which a harness could read as Node's own 404.
+	if s.V1Fallback != nil || s.EvalMode {
+		routes = append(routes,
+			publicRoute{V1ModelsPath, http.HandlerFunc(s.ServeV1ModelsHTTP)},
+			// The subtree: `{id}`, and any deeper path, which the compute falls back on (`v1-models-path`).
+			publicRoute{V1ModelsPath + "/", http.HandlerFunc(s.ServeV1ModelsIDHTTP)})
+	}
+	if s.V1ImagesFallback != nil || s.EvalMode {
+		// The exact path: nothing under /api/v1/images/ is this route (Node's are other pages).
+		routes = append(routes, publicRoute{V1ImagesPath, http.HandlerFunc(s.ServeV1ImagesHTTP)})
+	}
+	if s.SearchFallback != nil || s.EvalMode {
+		routes = append(routes, publicRoute{SearchPath + "/", http.HandlerFunc(s.ServeSearchHTTP)})
+	}
+	return routes
 }
 
 // InternalMux is the internal listener's routes: metrics, liveness (/healthz), readiness (/readyz), the shadow endpoints, the Go-first
@@ -48,6 +69,11 @@ func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux
 	// shutdown can fail it without the liveness probe restarting the pod mid-drain.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.Handle("/readyz", &s.Readiness)
+	if s.EvalMode {
+		// An eval pod is never sampled: neither the shadow comparisons nor the Go-first probes are
+		// routed (config.LoadEval refuses the switches that would feed them).
+		return withPprofRoutes(mux, withPprof)
+	}
 	mux.HandleFunc("/internal/shadow/"+Procedure, s.ShadowHandler)
 	mux.HandleFunc("/internal/shadow"+V1ImagesPath, s.ShadowV1Handler)
 	mux.HandleFunc("/internal/shadow"+V1ModelsPath, s.ShadowV1ModelsHandler)
@@ -57,6 +83,11 @@ func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux
 	mux.HandleFunc("/internal/shadow/"+ProcedureAssociated, s.ShadowAssociatedHandler)
 	mux.HandleFunc("/internal/shadow"+SearchPath, s.ShadowSearchHandler)
 	mux.HandleFunc(ProbePathPrefix, s.ProbeHandler)
+	return withPprofRoutes(mux, withPprof)
+}
+
+// withPprofRoutes is mux with the net/http/pprof handlers under /debug/pprof/ when withPprof.
+func withPprofRoutes(mux *http.ServeMux, withPprof bool) *http.ServeMux {
 	if withPprof {
 		// Registered explicitly: importing net/http/pprof also registers these on http.DefaultServeMux,
 		// which this service never serves.
