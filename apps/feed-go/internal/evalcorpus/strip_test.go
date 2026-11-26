@@ -47,7 +47,8 @@ func TestStripRealisticRequest(t *testing.T) {
 		t.Errorf("credential %q, want header+query+session", c.Credential)
 	}
 	got := inputShape(t, c)
-	want := map[string]any{"$id": "id", "$credential-param": "present", "q:limit": "str:digits", "q:a": "nonempty"}
+	// `a=1;token=…` is dropped from the stored query, so it is not in the shape either.
+	want := map[string]any{"$id": "id", "$credential-param": "present", "q:limit": "str:digits"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("shape input %v, want %v", got, want)
 	}

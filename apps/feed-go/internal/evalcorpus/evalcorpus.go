@@ -128,7 +128,9 @@ const (
 )
 
 // Extra is what the caller knows of the answer, when it does (both optional, both small fixed sets
-// the caller chooses: e.g. Response "200" / "404" / "400", Outcome "served" / "fallback:<reason>").
+// the caller chooses). Both must describe the REFERENCE answer, Node's (e.g. Response "200" / "404" /
+// "400", Outcome the class of Node's result), never feed-go's: a signature that moved whenever a
+// feed-go handback was closed would split one calling shape across corpus generations.
 type Extra struct {
 	Response, Outcome string
 }
@@ -281,10 +283,14 @@ type selfMatcher struct {
 	matched bool
 }
 
-// userID reports whether v (a JSON number or a string of digits) is the viewer's user id.
+// userID reports whether v (a JSON number, or a string of digits, surrounding space and a leading `+`
+// allowed: what Number() would read as the id) is the viewer's user id.
 func (s *selfMatcher) userID(v any) bool {
 	if s.viewer.UserID == 0 {
 		return false
+	}
+	if str, isStr := v.(string); isStr {
+		v = strings.TrimPrefix(strings.TrimSpace(str), "+")
 	}
 	n, ok := intValue(v)
 	if ok && n == int64(s.viewer.UserID) {

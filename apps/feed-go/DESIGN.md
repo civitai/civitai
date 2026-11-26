@@ -3729,7 +3729,7 @@ trailing newline) of:
 | `host` | the domain color of the `Host` (green / blue / red), `other`, or `unmapped` (no host colors configured) |
 | `region` | `none` (no country header), `open`, `restricted` (REGION_RESTRICTION_CONFIG), `blocked` (REGION_BLOCK_CONFIG); the country read as the server reads it (`x-isuk`, then `cf-ipcountry`, `cf-region-code` for a US state) |
 | `credential` | REST only: `none`, or `header` / `query` / `session` joined with `+` (`Authorization` or the sampler's credential header; a non-empty `token` query value; a session cookie name) |
-| `response`, `outcome` | optional, supplied by the caller (e.g. the status class; served vs a fallback reason) |
+| `response`, `outcome` | optional, supplied by the caller, and always classes of the **Node** (reference) answer, never of Go's: a signature must not move when a Go handback is closed |
 
 The **signature** is xxhash64 of the shape's bytes as 16 lowercase hex digits (`github.com/cespare/xxhash/v2`,
 already in the module graph through the Prometheus client). It is not a security boundary: it only
@@ -3749,14 +3749,16 @@ becomes a new dimension without a code change here. The first rule that names a 
   `n` integer, `e` empty, `x` other; `entry:many` past four). image endpoints: `prioritizedUserIds`
   of exactly `[-1]` is `[-1]`. model.getAll: `types` and `baseModels` are counts; `$paging`
   (`none` / `page` / `cursor` / `both`); `$pin`, whether the official-checkpoint pin applies
-  (`none`, `first-page`, `later-page`: sort Hot with a base-model filter). `v1-models-id`: `$id`
+  (`none`, `first-page`, `later-page`: sort Hot with a base-model filter); `$checkpointFilter`
+  when `checkpointType` is set (`only` / `mixed` / `inert`: whether `types` lets the filter apply). `v1-models-id`: `$id`
   (`id`: what `v1models.ParseID` accepts; `invalid`; `absent`) and one `q:<key>` per query key.
 - **Shared rules.** `limit` literal in a small set of common values, else bucketed
   (`11-49`, `50-99`, `100-199`, `200+`); browsing-level bitmasks literal; `page` `1` / `2+`; enum
   keys (`sort`, `period`, `periodMode`, `checkpointType`, `status`, …) literal, a value that does
   not look like an enum `other`; enum lists (`types`, `include`, `reactions`, …) their sorted
   members; keys ending in `Id` presence (`id`, or `id:zero` / `id:neg` / `id:nonint` / `id:str`);
-  a superjson meta annotation `meta:<type>`.
+  a top-level superjson meta annotation `meta:<type>` (nested paths are ignored, as the server
+  ignores them).
 - **By type.** Booleans literal; `null`; a list `0` / `1` / `2+` and the kind of its members
   (`int`, `num`, `str`, `str-empty`, `obj`, `mixed`); a string `empty` / `blank` / `str:true` /
   `str:false` / `str:digits` / `nonempty`; a number `0` or `num`; an object `obj`.
@@ -3779,8 +3781,10 @@ also by `FuzzStrip`):
   credential-named key (and its meta annotation).
 - **No viewer id**: the descriptor has no user id or name. An input naming the viewer's own user id
   or username (`userId`, `username`, `user`, a `*UserIds` member) is stored with `$self`, one of the
-  viewer's collections (`collectionId`) with `$self-collection`; the replay substitutes the eval
-  account's own. Other users' ids (a creator's page) are public content and kept, so the case
+  viewer's collections (`collectionId`) with `$self-collection`; on REST, every `username` /
+  `userId` pair naming the viewer. The replay substitutes the eval account's own **before** decoding
+  the input (a placeholder under a `bigint` annotation is not a bigint). A stored tRPC input is always
+  re-encoded, never the raw text, so a repeated key cannot keep an earlier copy naming the viewer. Other users' ids (a creator's page) are public content and kept, so the case
   replays.
 - An input that does not decode is not stored at all (it cannot be searched for the viewer); a
   `[id]` path segment that is neither an id nor a plain token is stored as `$invalid`.

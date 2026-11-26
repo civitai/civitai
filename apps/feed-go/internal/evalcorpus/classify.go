@@ -432,6 +432,28 @@ func modelExtras(m map[string]any, shape map[string]any) {
 		}
 	}
 	shape["$pin"] = pin
+	// The checkpointType filter (modelfeed's query): applied only when `types` is empty or names
+	// Checkpoint, OR'ed with the other types when it names more. `types` itself is a count, so this
+	// is what tells those paths apart.
+	if ct, _ := m["checkpointType"].(string); ct != "" {
+		list, _ := m["types"].([]any)
+		hasCheckpoint, other := false, false
+		for _, t := range list {
+			if t == "Checkpoint" {
+				hasCheckpoint = true
+			} else {
+				other = true
+			}
+		}
+		switch {
+		case len(list) == 0 || (hasCheckpoint && !other):
+			shape["$checkpointFilter"] = "only"
+		case hasCheckpoint:
+			shape["$checkpointFilter"] = "mixed"
+		default:
+			shape["$checkpointFilter"] = "inert"
+		}
+	}
 }
 
 // trpcShape decodes a tRPC input and returns the input as stored and its shape. The stored input is
@@ -467,6 +489,27 @@ func trpcShape(raw string, self *selfMatcher, r rules) (stored string, shape map
 			rewrite[k] = nil
 		}
 	}
+	// Every key the stored input holds is checked for the viewer, an `undefined`-annotated one included
+	// (it is still in the stored text).
+	selfClass := map[string]string{}
+	for _, k := range sortedKeys(m) {
+		v := m[k]
+		switch {
+		case userIDKeys[k] && self.userID(v), usernameKeys[k] && self.username(v):
+			selfClass[k] = SelfPlaceholder
+			rewrite[k] = SelfPlaceholder
+		case collectionKeys[k] && self.collection(v):
+			selfClass[k] = SelfCollectionPlaceholder
+			rewrite[k] = SelfCollectionPlaceholder
+		}
+		if strings.HasSuffix(k, "UserIds") {
+			if list, ok := v.([]any); ok {
+				if replaced, did := replaceSelfIDs(list, self); did {
+					rewrite[k] = replaced
+				}
+			}
+		}
+	}
 	annotations := metaAnnotations(env["meta"])
 	for k, typ := range annotations {
 		if typ == "undefined" {
@@ -481,15 +524,8 @@ func trpcShape(raw string, self *selfMatcher, r rules) (stored string, shape map
 		}
 		// The self keys first: a value naming the viewer is replaced whatever else it is.
 		switch {
-		case userIDKeys[k] && self.userID(v):
-			shape[name] = SelfPlaceholder
-			rewrite[k] = SelfPlaceholder
-		case usernameKeys[k] && self.username(v):
-			shape[name] = SelfPlaceholder
-			rewrite[k] = SelfPlaceholder
-		case collectionKeys[k] && self.collection(v):
-			shape[name] = SelfCollectionPlaceholder
-			rewrite[k] = SelfCollectionPlaceholder
+		case selfClass[k] != "":
+			shape[name] = selfClass[k]
 		case annotations[k] != "":
 			shape[name] = "meta:" + enumLiteral(annotations[k])
 		case k == "cursor":
@@ -497,20 +533,12 @@ func trpcShape(raw string, self *selfMatcher, r rules) (stored string, shape map
 		default:
 			shape[name] = valueClass(r, k, v)
 		}
-		if strings.HasSuffix(k, "UserIds") {
-			if list, ok := v.([]any); ok {
-				if replaced, did := replaceSelfIDs(list, self); did {
-					rewrite[k] = replaced
-				}
-			}
-		}
 	}
 	if r.extra != nil {
 		r.extra(m, shape)
 	}
-	if len(rewrite) == 0 {
-		return raw, shape
-	}
+	// Always re-encoded, never the raw text: a raw input can repeat a key (JSON.parse and Go both
+	// keep the last), and an earlier copy naming the viewer would survive in the raw text.
 	out, ok := rewriteEnvelope(env, rewrite)
 	if !ok {
 		return "", shape
@@ -533,8 +561,10 @@ func replaceSelfIDs(list []any, self *selfMatcher) ([]any, bool) {
 	return out, replaced
 }
 
-// metaAnnotations is a superjson meta's top-level annotation per key: the type name of each
-// `values` entry (a nested path is attributed to its first segment).
+// metaAnnotations is a superjson meta's annotation per top-level key: the type name of each `values`
+// entry whose path is a top-level key. A nested path is ignored, as trpc.DecodeEnvelope ignores it
+// (so a nested `undefined` never removes its parent key, and two nested paths cannot race for one
+// key).
 func metaAnnotations(raw json.RawMessage) map[string]string {
 	out := map[string]string{}
 	if len(raw) == 0 {
@@ -552,8 +582,10 @@ func metaAnnotations(raw json.RawMessage) map[string]string {
 			continue
 		}
 		name, _ := typ[0].(string)
-		key, _, _ := strings.Cut(path, ".")
-		out[key] = name
+		if strings.Contains(path, ".") {
+			continue
+		}
+		out[path] = name
 	}
 	return out
 }
@@ -562,8 +594,11 @@ func metaAnnotations(raw json.RawMessage) map[string]string {
 // (nil: removed, with any meta annotation of theirs).
 func rewriteEnvelope(env map[string]json.RawMessage, rewrite map[string]any) (string, bool) {
 	var obj map[string]json.RawMessage
-	if json.Unmarshal(env["json"], &obj) != nil {
+	if raw, ok := env["json"]; ok && json.Unmarshal(raw, &obj) != nil {
 		return "", false
+	}
+	if obj == nil {
+		obj = map[string]json.RawMessage{}
 	}
 	for k, v := range rewrite {
 		if v == nil {
@@ -593,7 +628,7 @@ func rewriteEnvelope(env map[string]json.RawMessage, rewrite map[string]any) (st
 				for path := range values {
 					key, _, _ := strings.Cut(path, ".")
 					if v, ok := rewrite[key]; ok && v == nil {
-						delete(values, path)
+						delete(values, path) // a removed key's annotations, nested ones included
 					}
 				}
 				if vb, err := json.Marshal(values); err == nil {
@@ -642,8 +677,10 @@ func restShape(path, rawQuery string, self *selfMatcher) (id, storedQuery, store
 	}
 	counts := map[string]int{}
 	first := map[string]string{}
+	selfKeys := map[string]bool{}
 	for _, p := range splitQuery(rawQuery) {
-		if isCredentialName(p.key) {
+		// The pairs stripQuery drops, so the shape describes the query as stored.
+		if isCredentialName(p.key) || isCredentialName(lenientUnescape(p.raw)) {
 			shape["$credential-param"] = "present"
 			continue
 		}
@@ -651,14 +688,17 @@ func restShape(path, rawQuery string, self *selfMatcher) (id, storedQuery, store
 		if counts[p.key] == 1 {
 			first[p.key] = p.value
 		}
+		if restSelfValue(p, self) {
+			selfKeys[p.key] = true
+		}
 	}
 	for k, n := range counts {
 		name := "q:" + keyName(k)
 		switch {
+		case selfKeys[k]:
+			shape[name] = SelfPlaceholder
 		case n > 1:
 			shape[name] = "2+"
-		case usernameKeys[k] && self.username(first[k]):
-			shape[name] = SelfPlaceholder
 		default:
 			shape[name] = stringClass(first[k])
 		}
@@ -670,12 +710,19 @@ func restShape(path, rawQuery string, self *selfMatcher) (id, storedQuery, store
 	return id, storedQuery, storedPath, shape
 }
 
-// replaceSelfQuery is a raw query with each username pair naming the viewer set to SelfPlaceholder.
+// restSelfValue reports whether one query pair names the viewer: a username key holding their
+// username, or a user-id key holding their id.
+func restSelfValue(p queryPair, self *selfMatcher) bool {
+	return (usernameKeys[p.key] && self.username(p.value)) || (userIDKeys[p.key] && self.userID(p.value))
+}
+
+// replaceSelfQuery is a raw query with every pair naming the viewer (restSelfValue) set to
+// SelfPlaceholder, each repetition of the key included.
 func replaceSelfQuery(raw string, self *selfMatcher) string {
 	pairs := splitQuery(raw)
 	out := make([]string, len(pairs))
 	for i, p := range pairs {
-		if usernameKeys[p.key] && self.username(p.value) {
+		if restSelfValue(p, self) {
 			out[i] = url.QueryEscape(p.key) + "=" + url.QueryEscape(SelfPlaceholder)
 			continue
 		}
