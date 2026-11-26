@@ -32,12 +32,10 @@ async function defaultDeps(): Promise<RunnerPlatformUpdateDeps> {
     import('~/server/services/blocks/app-source-repo.service'),
   ]);
   return {
+    flagOn: () => updates.isPlatformUpdatesEnabled(),
     user: getRunnerDevTunnelUser,
-    enabled: async (user) =>
-      !!(await getFeatureFlagsAsync({ user })).appBlocks &&
-      (await updates.isPlatformUpdatesEnabled()),
-    listPending: ({ userId, slug }) =>
-      updates.listPendingPlatformUpdates({ userId, app: { slug } }),
+    appsEnabled: async (user) => !!(await getFeatureFlagsAsync({ user })).appBlocks,
+    listOpen: ({ userId, slug }) => updates.listOpenPlatformUpdates({ userId, app: { slug } }),
     verifyCommit: ({ userId, slug, commitSha }) =>
       updates.verifyPlatformUpdateCommit({ userId, app: { slug }, commitSha }),
     resolve: (args) => updates.resolvePlatformUpdate(args),

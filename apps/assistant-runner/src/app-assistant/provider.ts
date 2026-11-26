@@ -193,8 +193,9 @@ export interface AppAssistantToolsOptions {
   sourceSaves?(runId: string): (app: string) => Promise<void>;
   /**
    * civitai's staff platform updates with one run's grant (`CivitaiPlatformUpdates.forRun`): the
-   * open app's pending updates, brought into its sandbox as a reply opens and before a submit.
-   * Unset, or civitai answering none (the flag off, an older civitai), nothing happens.
+   * open app's open updates, brought into its sandbox as a reply opens and before a submit, and
+   * `platform_update_merged`. Unset: neither. civitai answering none (the flag off, an older
+   * civitai): nothing happens.
    */
   platformUpdates?(runId: string): PlatformUpdateSource;
   /**
@@ -245,7 +246,7 @@ export class AppAssistantTools implements ToolProvider {
   readonly #options: AppAssistantToolsOptions;
   /** Which conversations' apps had their `@civitai/sdk` upgrade tried: shared by every run. */
   readonly #sdkUpgrades: SdkUpgrades;
-  /** Conflicted platform updates handed to each conversation's assistant: shared by every run. */
+  /** Staff platform updates: the notices each conversation was given, shared by every run. */
   readonly #platformUpdates = new PlatformUpdates();
 
   constructor(options: AppAssistantToolsOptions) {
@@ -509,23 +510,21 @@ export class AppAssistantTools implements ToolProvider {
         { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
       );
       // A conflicted platform update the assistant was told to merge by hand: its report back.
-      const openKey = sandbox.active?.app ?? null;
-      const merged =
-        updateSource &&
-        openKey &&
-        this.#platformUpdates.handOffs(conversationId, openKey).length > 0
-          ? hostToolSet(
-              {
-                [PLATFORM_UPDATE_MERGED]: this.#platformUpdates.mergedTool({
-                  conversationId,
-                  currentApp: () => sandbox.active?.app ?? null,
-                  source: updateSource,
-                }),
-              },
-              sandboxTools,
-              { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
-            )
-          : {};
+      // Offered whenever civitai's platform updates are configured, not only when this reply's
+      // start handed one over: a submit's late apply can hand one over too, and the tool checks
+      // the id against civitai's open list at the call.
+      const merged = updateSource
+        ? hostToolSet(
+            {
+              [PLATFORM_UPDATE_MERGED]: this.#platformUpdates.mergedTool({
+                currentApp: () => sandbox.active?.app ?? null,
+                source: updateSource,
+              }),
+            },
+            sandboxTools,
+            { conversationId, findAttachment: () => undefined, resolveArgs: async (args) => args }
+          )
+        : {};
       const tools: ToolSet = { ...sandboxTools, ...page, ...docs, ...merged };
       // Aborts when the gate ends the reply on one of its own calls: its subagents stop with it.
       const replyEnded = new AbortController();

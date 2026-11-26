@@ -15,7 +15,8 @@ import { FakeSandboxService } from '../test-support/fake-sandbox';
 /**
  * The seam: platform updates as `AppAssistantTools.open` runs them at a reply's start, against the
  * fake sandbox service's real MCP tools. What the provider wires: the apply runs, its lines reach
- * the reply's instructions, and a conflict offers `platform_update_merged`, which reports back.
+ * the reply's instructions, and `platform_update_merged` is offered whenever platform updates are
+ * configured (a hand-off is rebuilt from civitai's open list, never from the runner's memory).
  */
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
@@ -41,8 +42,8 @@ beforeEach(async () => {
     return 'deleted';
   });
   fake.tools.set('run_command', (args) => {
-    const match = /\[ -e '([^']+)' \]/.exec(String(args.command));
-    const there = match ? files.has(match[1]) : false;
+    const match = /\[ -e '((?:[^']|'\\'')*)' \]/.exec(String(args.command));
+    const there = match ? files.has(match[1].replace(/'\\''/g, "'")) : false;
     return `exit_code: 0\ntimed_out: false\n---\n${there ? 'present' : 'absent'}\n`;
   });
   await fake.start();
@@ -57,7 +58,7 @@ afterEach(async () => {
 class Civitai implements PlatformUpdateSource {
   readonly resolved: string[] = [];
   lists = 0;
-  constructor(readonly updates: PendingPlatformUpdate[] | null) {}
+  constructor(public updates: PendingPlatformUpdate[] | null) {}
   async list() {
     this.lists++;
     return this.updates;
@@ -68,6 +69,11 @@ class Civitai implements PlatformUpdateSource {
     outcome: 'merged' | 'conflicted'
   ): Promise<PlatformUpdateResolve> {
     this.resolved.push(`${update.id}:${outcome}`);
+    if (this.updates)
+      this.updates =
+        outcome === 'merged'
+          ? this.updates.filter((u) => u.id !== update.id)
+          : this.updates.map((u) => (u.id === update.id ? { ...u, status: 'conflicted' } : u));
     return outcome === 'merged'
       ? { resolved: true, outcome, mergeCommitSha: 'c'.repeat(40) }
       : { resolved: true, outcome };
@@ -80,6 +86,7 @@ const UPDATE: PendingPlatformUpdate = {
   baseCommitSha: 'b'.repeat(40),
   reason: 'Fix the storage call',
   touchesManifest: false,
+  status: 'pending',
   by: { username: 'staffer' },
   verified: true,
   files: [{ path: 'src/a.ts', operation: 'update', base: 'a0\n', update: 'a1\n' }],
@@ -122,9 +129,8 @@ describe('platform updates as a reply opens', () => {
     expect(files.get('my-app/src/a.ts')).toBe('a1\n');
     expect(civitai.resolved).toEqual(['apu_1:merged']);
     expect(tools.instructions).toContain(
-      'staffer (verified Civitai staff) updated your app: Fix the storage call\nChanged: src/a.ts'
+      '["staffer (verified Civitai staff) updated your app: Fix the storage call","Changed: src/a.ts"]'
     );
-    expect(Object.keys(tools.tools)).not.toContain(PLATFORM_UPDATE_MERGED);
   });
 
   it('a conflict leaves the app’s file, and offers platform_update_merged, which records it merged', async () => {
@@ -143,6 +149,36 @@ describe('platform updates as a reply opens', () => {
     expect(civitai.resolved).toEqual(['apu_1:conflicted', 'apu_1:merged']);
   });
 
+  it('a runner started after the hand-off rebuilds it from civitai’s open list, and records the merge', async () => {
+    fake.add('my-app');
+    files.set('my-app/src/a.ts', 'a-mine\n');
+    // Handed over (and recorded conflicted) by an earlier runner; its scratch files are gone.
+    const civitai = new Civitai([{ ...UPDATE, status: 'conflicted' }]);
+    const tools = await open(civitai);
+    expect(files.get('my-app/scratch/platform-update-apu_1/update/src/a.ts')).toBe('a1\n');
+    expect(files.get('my-app/scratch/platform-update-apu_1/base/src/a.ts')).toBe('a0\n');
+    expect(tools.instructions).toContain('call platform_update_merged with { "id": "apu_1" }');
+    files.set('my-app/src/a.ts', 'a-mine\na1\n');
+    await expect(call(tools.tools, PLATFORM_UPDATE_MERGED, { id: 'apu_1' })).resolves.toBe(
+      'Saved, and recorded platform update apu_1 as merged (commit cccccccccccc).'
+    );
+    expect(civitai.resolved).toEqual(['apu_1:merged']);
+  });
+
+  it('platform_update_merged is offered with no hand-off at the reply’s start, for one a submit hands over', async () => {
+    fake.add('my-app');
+    files.set('my-app/src/a.ts', 'a-mine\n');
+    const civitai = new Civitai([]);
+    const tools = await open(civitai);
+    expect(tools.instructions).not.toContain('platform update');
+    expect(Object.keys(tools.tools)).toContain(PLATFORM_UPDATE_MERGED);
+    // Staff pushed one mid-reply, and the submit's apply handed it over: the tool records it.
+    civitai.updates = [{ ...UPDATE, status: 'conflicted' }];
+    await expect(call(tools.tools, PLATFORM_UPDATE_MERGED, { id: 'apu_1' })).resolves.toBe(
+      'Saved, and recorded platform update apu_1 as merged (commit cccccccccccc).'
+    );
+  });
+
   it('no platform-update source, or none pending: the reply opens as before', async () => {
     fake.add('my-app');
     files.set('my-app/src/a.ts', 'a0\n');
@@ -150,7 +186,8 @@ describe('platform updates as a reply opens', () => {
     for (const civitai of [undefined, none]) {
       const tools = await open(civitai);
       expect(tools.instructions).not.toContain('platform update');
-      expect(Object.keys(tools.tools)).not.toContain(PLATFORM_UPDATE_MERGED);
+      // Offered only when platform updates are configured.
+      expect(Object.keys(tools.tools).includes(PLATFORM_UPDATE_MERGED)).toBe(civitai !== undefined);
     }
     expect(none.lists).toBe(1);
     expect(files.get('my-app/src/a.ts')).toBe('a0\n');
