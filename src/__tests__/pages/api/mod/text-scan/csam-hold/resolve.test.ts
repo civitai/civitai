@@ -289,6 +289,7 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalledWith({
         ids: [55],
         actor: { id: 7, ip: undefined },
+        fromStatuses: ['Pending', 'Processing', 'Unactioned'],
       });
       expect(mocks.createStrike).not.toHaveBeenCalled();
       expect(mocks.toggleBan).not.toHaveBeenCalled();
