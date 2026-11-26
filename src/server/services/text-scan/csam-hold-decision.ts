@@ -146,8 +146,7 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
   const { entityType, entityId } = hold;
   switch (entityType) {
     case 'CommentV3':
-      // Every ToS report on the comment not yet Actioned, a dismissed one included, on purpose:
-      // keep fromStatuses here, the default leaves dismissed reports alone.
+      // Dismissed reports included on purpose; the default would skip them.
       await bulkSetCommentV3TosViolation({
         ids: [entityId],
         actor,
