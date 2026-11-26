@@ -61,6 +61,12 @@
  * below the cursor state's, or below the last one sent, means the namespace's seqs restarted (its
  * usage row was wiped: an app deleted and restored), and the stream is `cursor_expired`, at resume
  * and mid-stream, as the public feed's is.
+ *
+ * THE CURRENT MAJOR. Beside the head, a served stream's `meta` names the collection's current
+ * major, `currentMajor` (`CollectionStream.currentMajor`): on `live`, as the first poll resolved it, then in
+ * a `progress` whenever a poll resolves another (a major approved since). A stream that holds
+ * nothing names none. app-data-go reads it to answer a read that names no major at the current one
+ * (`apps/app-data-go/internal/api/major.go`).
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
@@ -139,7 +145,7 @@ export type PrivateDocSource = {
 /** A private collection major that resolves now: its app (by the catalog) and its family. */
 export type PrivateCollectionStream = Pick<
   CollectionStream,
-  'appId' | 'slug' | 'collection' | 'family'
+  'appId' | 'slug' | 'collection' | 'family' | 'currentMajor'
 >;
 
 /**
@@ -210,6 +216,21 @@ export const privateRev = (
 
 /** The `meta` a private stream's `live` and `progress` carry for a head (see the file comment). */
 export const headMeta = (seq: number): EventMeta => ({ head: { seq } });
+/**
+ * A private stream's `meta`: its head ({@link headMeta}) and, beside it, the collection's current
+ * major (`currentMajor`, `CollectionStream.currentMajor`) when the stream is served. Undefined when it names
+ * neither.
+ */
+export const privateMeta = (
+  head: number | undefined,
+  currentMajor: number | undefined
+): EventMeta | undefined =>
+  head === undefined && currentMajor === undefined
+    ? undefined
+    : {
+        ...(head !== undefined ? headMeta(head) : {}),
+        ...(currentMajor !== undefined ? { currentMajor } : {}),
+      };
 /** The cursor of a private stream that holds nothing; it names no stored state. */
 export const PRIVATE_EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^p1\.([0-9a-f]{32})$/;
@@ -324,7 +345,13 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     prev: PrivateState | null,
     reader: AdapterContext['reader'],
     audience: Audience
-  ): Promise<{ next: PrivateState; entities: Map<string, Entity>; head: number | null }> {
+  ): Promise<{
+    next: PrivateState;
+    entities: Map<string, Entity>;
+    head: number | null;
+    /** The collection's current major (`CollectionStream.currentMajor`); undefined when nothing is served. */
+    current?: number;
+  }> {
     const nothing = () => ({
       next: emptyState(schema, audience),
       entities: new Map<string, Entity>(),
@@ -366,6 +393,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     }
 
     const digest = familyDigest(family);
+    const current = stream.currentMajor;
     // Before the keyset, never after (see the file comment).
     const head = await opts.source.head(appId);
     // A head below the one this state was read at: the namespace was wiped and written again
@@ -384,7 +412,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       })
     ).slice(0, 32);
     if (prev && prev.appId === appId && prev.family === digest && prev.read === read) {
-      return { next: prev, entities: new Map(), head };
+      return { next: prev, entities: new Map(), head, current };
     }
 
     const claims = claimer(family, digest);
@@ -423,6 +451,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       },
       entities,
       head,
+      current,
     };
   }
 
@@ -447,11 +476,13 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     let state = loaded;
     let position = cursor;
     let pending: Awaited<ReturnType<typeof advance>> | null = first;
-    // The head `live` carried (the loaded state's), then the last one a `progress` carried.
+    // The head `live` carried (the loaded state's), then the last one a `progress` carried; and the
+    // current major beside it (the first poll's, which `live` carried).
     let sentHead = loaded.head ?? null;
+    let sentCurrent = first.current;
     while (!ctx.signal.aborted) {
       const before = state;
-      const { next, entities, head } =
+      const { next, entities, head, current } =
         pending ?? (await guarded(() => advance(schema, before, ctx.reader, audience)));
       pending = null;
       // The same, against the newest head this stream SENT (a head-only move is not saved in the
@@ -485,11 +516,13 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
           position = nextCursor;
         }
       }
-      // After the poll's changes, so a consumer holds all of them when it reads the head.
-      if (head !== null && head !== sentHead) {
+      // After the poll's changes, so a consumer holds all of them when it reads the head. A new
+      // current major (a major approved since) is sent the same way, beside the head.
+      if (head !== null && (head !== sentHead || current !== sentCurrent)) {
         if (ctx.signal.aborted) return;
         sentHead = head;
-        yield { progress: position, meta: headMeta(head) };
+        sentCurrent = current;
+        yield { progress: position, meta: privateMeta(head, current) as EventMeta };
       }
       await opts.sleep(opts.pollMs, ctx.signal);
     }
@@ -521,9 +554,12 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       const state = await guarded(() => load(schema, cursor, ctx.reader, audience));
       const first = await guarded(() => advance(schema, state, ctx.reader, audience));
       // `live` carries the head of the state the cursor names: what the consumer holds once it is
-      // live. The first poll's changes, and its head, follow it.
+      // live. The first poll's changes, and its head, follow it. Beside the head, the collection's
+      // current major as the first poll resolved it: a property of the collection now, not of the
+      // state, so a state saved before it was named still names it at once.
+      const liveMeta = privateMeta(state.head, first.current);
       return Object.assign(follow(schema, cursor, state, first, ctx, audience), {
-        ...(state.head !== undefined ? { liveMeta: headMeta(state.head) } : {}),
+        ...(liveMeta !== undefined ? { liveMeta } : {}),
       });
     },
   };

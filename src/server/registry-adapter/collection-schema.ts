@@ -27,8 +27,10 @@ import type { MajorDerivation, MigrateStep } from '~/server/services/apps/storag
 // The majors themselves live in the shared module; re-exported for the adapter's own importers.
 export {
   HEAD_STEP,
+  currentCollectionMajors,
   deriveCollectionMajors,
   isAdditive,
+  manifestHistory,
   migrateSteps,
 } from '~/server/services/apps/storage-schema-majors';
 export type {

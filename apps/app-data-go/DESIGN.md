@@ -26,7 +26,12 @@ Authorization: Bearer <the app's hub access token for the user>
 
 1. Validate `slug`, `collection` and `major`, and build the collection's schema URN,
    `urn:schema:apps.civitai.com:<slug>/<collection>@v<major>` (`internal/urn`, pinned to the adapter's
-   `registryUrn` by golden vectors).
+   `registryUrn` by golden vectors). With no `major`, the read is of the collection's CURRENT major:
+   it opens the stream at the major the streams last named for the collection on this replica (1 the
+   first time), and the stream's `meta` names the current one (`currentMajor`, which the adapter's
+   private and level feeds send on `live` and `progress`). A stream that names another major is read
+   again at it, once; one that names none is answered at the major it was opened at (`internal/api/major.go`, THE CURRENT MAJOR). Neither service needs
+   the other released first.
 2. If the registry path is on and the token is one the hub can exchange (below), read the token's
    stream for that schema (`internal/session`). A read:
 

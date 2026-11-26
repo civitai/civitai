@@ -40,7 +40,12 @@ func (f *fakeShared) Read(_ context.Context, v shared.Viewer, slug, collection s
 	defer f.mu.Unlock()
 	f.viewer = append(f.viewer, v)
 	f.args = append(f.args, fmt.Sprintf("%s/%s@%d>%d", slug, collection, major, minSeq))
-	return f.board, f.err
+	b := f.board
+	if b.Current == 0 {
+		// The streams name the major read as current, as the adapter does for a collection's newest.
+		b.Current = major
+	}
+	return b, f.err
 }
 
 func (f *fakeShared) reads() int {
@@ -124,7 +129,8 @@ func TestASharedCollectionIsPagedFromTheSharedPath(t *testing.T) {
 		it.CreatedAt != "c-p:2" || it.UpdatedAt != "u-p:2" || it.Rev != "r-p:2" {
 		t.Fatalf("a presented document: %+v", it)
 	}
-	if f.args[0] != "todo-app/notes@1>7" || f.viewer[0].Token != "civitai_shared-a" || f.viewer[0].Anonymous != nil {
+	// No major: an unfloored read learns the current major (major.go), then the floored read at it.
+	if strings.Join(f.args, " ") != "todo-app/notes@1>0 todo-app/notes@1>7" || f.viewer[0].Token != "civitai_shared-a" || f.viewer[0].Anonymous != nil {
 		t.Fatalf("read as %v %+v", f.args, f.viewer)
 	}
 	subs := s.reg.subs.Load()

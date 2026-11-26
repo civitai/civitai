@@ -3,6 +3,10 @@
 //	GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&keyPrefix=P]
 //	    Authorization: Bearer <the app's hub access token for the signed-in user>
 //
+// `major` names the collection schema major read; a read that names none reads the collection's
+// current major when the adapter's streams name it (major.go, THE CURRENT MAJOR), and otherwise the
+// major it opened at (1 unless a stream named another).
+//
 // Every private record of one collection of the app `slug` names that the token's user may read
 // through the token's app: the app's own collection when slug is the app itself, or another app's
 // collection the user granted this app. Which of the two is never the client's to say: both paths
@@ -88,9 +92,11 @@ import (
 // allow it.
 const RegistryOnlyHeader = "X-App-Data-Registry-Only"
 
-// Streams answers a read from a per-user stream (session.Manager), under a floor when minSeq > 0.
+// Streams answers a read from a per-user stream (session.Manager), under a floor when minSeq > 0,
+// with the stream's latest meta (which names the collection's current major: major.go) and a Lease
+// on a stream the read opened.
 type Streams interface {
-	ReadAt(ctx context.Context, token, schema string, minSeq int64) ([]registry.Entity, error)
+	View(ctx context.Context, token, schema string, minSeq int64) (session.Snapshot, error)
 }
 
 // Lister is the REST fallback (rest.Client).
@@ -129,6 +135,7 @@ type Server struct {
 	Anonymous func(ctx context.Context, token string) (exchange.AnonymousClaims, error)
 
 	shared sharedSchemas
+	majors majorHints
 }
 
 // Routes registers a set of routes on the API's mux.
@@ -153,6 +160,11 @@ func (s *Server) Handler() http.Handler {
 		if s.Shared != nil {
 			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me", s.mine)
 			mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/@me/{parent}", s.mine)
+		}
+		// One rule for the major a request that names none uses, reads and writes alike (major.go): a
+		// write's acknowledgement is held at the major the next no-major read of it opens.
+		if w, ok := s.Writes.(impliedMajorUser); ok {
+			w.UseImpliedMajor(s.majors.guess)
 		}
 		s.Writes.Register(mux)
 	}
@@ -238,8 +250,11 @@ type readParams struct {
 	schema           string
 	slug, collection string
 	major            int
-	minSeq           int64
-	token            string
+	// implied: the read named no major, so it reads the collection's current one (major.go), and
+	// major is the guess it opens first.
+	implied bool
+	minSeq  int64
+	token   string
 }
 
 // params reads the schema, the floor (writes on only) and the token, or answers the refusal and
@@ -247,14 +262,15 @@ type readParams struct {
 func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time) (readParams, bool) {
 	var p readParams
 	q := r.URL.Query()
-	major := 1
+	// No major: the current one (major.go), opened at the last one the streams named.
+	major, implied := s.majors.guess(r.PathValue("slug"), r.PathValue("collection")), true
 	if raw := q.Get("major"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
 			s.refuse(w, start, http.StatusBadRequest, "bad_request", "major must be an integer", "bad_request")
 			return p, false
 		}
-		major = n
+		major, implied = n, false
 	}
 	if raw, given := q["minSeq"]; given && s.Writes != nil {
 		if len(raw) != 1 || !minSeqRE.MatchString(raw[0]) {
@@ -268,7 +284,7 @@ func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time)
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
 		return p, false
 	}
-	p.schema, p.slug, p.collection, p.major = schema, r.PathValue("slug"), r.PathValue("collection"), major
+	p.schema, p.slug, p.collection, p.major, p.implied = schema, r.PathValue("slug"), r.PathValue("collection"), major, implied
 	token, ok := bearer(r)
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
@@ -307,7 +323,7 @@ func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.LiveWait)
 	defer cancel()
-	ents, err := s.Streams.ReadAt(ctx, p.token, p.schema, p.minSeq)
+	ents, err := s.view(ctx, &p)
 	switch {
 	case errors.Is(err, session.ErrNotPrivate) && s.Shared != nil:
 		s.shared.mark(p.schema, time.Now())
@@ -405,7 +421,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		reason = "token_not_exchangeable"
 	default:
 		lctx, lcancel := context.WithTimeout(ctx, s.LiveWait)
-		ents, err := s.Streams.ReadAt(lctx, token, p.schema, p.minSeq)
+		ents, err := s.view(lctx, &p)
 		lcancel()
 		// An empty answer is not trusted: the origin answers a token it refuses with an empty
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.

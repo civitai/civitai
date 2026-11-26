@@ -243,6 +243,39 @@ type Snapshot struct {
 	// Head is the latest head the stream named, when HasHead (only with OverlayTTL set).
 	Head    int64
 	HasHead bool
+	// Lease is the stream this read OPENED, for it to release once it is done with it (Lease.Release);
+	// the zero Lease when the read took a stream already open.
+	Lease Lease
+}
+
+// Lease is one read's claim on the stream it opened. Release closes that stream only while it is
+// still the one open for its key and no read but the opener's has taken it: a stream another read
+// opened, or took, or is taking, is never closed by it.
+type Lease struct {
+	m *Manager
+	s *session
+}
+
+// Release closes the leased stream if no other read has taken it (see Lease), at once, as an idle
+// close would later: its slots go back, and its key does not cool down. The zero Lease does nothing.
+func (l Lease) Release() {
+	if l.s == nil {
+		return
+	}
+	m, s := l.m, l.s
+	m.mu.Lock()
+	s.mu.Lock()
+	mine := m.sessions[s.k] == s && s.reads == 1
+	s.mu.Unlock()
+	if !mine {
+		m.mu.Unlock()
+		return
+	}
+	st, ok := m.endLocked(s, CloseReleased, ErrClosed)
+	m.mu.Unlock()
+	if ok {
+		m.finish(s, st, CloseReleased)
+	}
 }
 
 // Why a read was not answered from a stream. Each is a reason to read REST instead.
@@ -291,6 +324,9 @@ const (
 	// Neither cools its key down.
 	CloseCursorExpired = "cursor_expired"
 	CloseFloorReopen   = "floor_reopen"
+	// CloseReleased is a stream the read that opened it released (Lease.Release), no other read having
+	// taken it: it does not cool its key down.
+	CloseReleased = "released"
 )
 
 // The `outcome` of a read whose floor its stream had not met (metrics.FloorOutcomes): its reopen met
@@ -482,6 +518,9 @@ type session struct {
 	ended    bool
 	err      error
 	lastRead time.Time
+	// reads counts the reads (View calls) that took this stream, counted as each takes it (under the
+	// manager's lock, in session): a Lease releases its stream only while this is its own one read.
+	reads    int
 	checked  time.Time // the last exchange of the user's token, refused or not
 	checking bool      // a read is re-checking the user's token now
 	records  map[string]registry.Entity
@@ -526,7 +565,7 @@ func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) 
 	// The viewer's address (exchange.ClientIP) goes with a stream this read opens, to its exchange.
 	ip := exchange.ClientIP(ctx)
 	for retried := false; ; retried = true {
-		s, err := m.session(k, token, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+		s, opened, err := m.session(k, token, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -543,32 +582,43 @@ func (m *Manager) View(ctx context.Context, token, schema string, minSeq int64) 
 				return Snapshot{}, err
 			}
 		}
+		var lease Lease
+		if opened != nil && opened == s {
+			lease = Lease{m: m, s: s}
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return Snapshot{Entities: ents, Meta: s.meta, Head: s.head, HasHead: s.hasHead}, nil
+		return Snapshot{Entities: ents, Meta: s.meta, Head: s.head, HasHead: s.hasHead, Lease: lease}, nil
 	}
 }
 
-func (m *Manager) session(k key, token, ip string) (*session, error) {
+// session takes k's stream for one read and counts the read on it, both under m.mu (so a Lease,
+// deciding under m.mu, sees every read that has taken the stream), opening it when none is open;
+// opened is the stream when this call opened it, else nil.
+func (m *Manager) session(k key, token, ip string) (s *session, opened *session, err error) {
 	now := m.opts.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, ErrClosed
+		return nil, nil, ErrClosed
 	}
-	if s := m.sessions[k]; s != nil {
-		return s, nil
-	}
-	if until, ok := m.cooling[k]; ok && now.Before(until) {
-		if cause := m.coolCause[k]; cause != nil {
-			return nil, errors.Join(ErrCoolingDown, cause)
+	if s = m.sessions[k]; s == nil {
+		if until, ok := m.cooling[k]; ok && now.Before(until) {
+			if cause := m.coolCause[k]; cause != nil {
+				return nil, nil, errors.Join(ErrCoolingDown, cause)
+			}
+			return nil, nil, ErrCoolingDown
 		}
-		return nil, ErrCoolingDown
+		if err := m.room(k); err != nil {
+			return nil, nil, err
+		}
+		s = m.open(k, token, now, nil, ip) //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+		opened = s
 	}
-	if err := m.room(k); err != nil {
-		return nil, err
-	}
-	return m.open(k, token, now, nil, ip), nil //nolint:contextcheck // a stream outlives the read that opened it: it runs on the manager's own context
+	s.mu.Lock()
+	s.reads++
+	s.mu.Unlock()
+	return s, opened, nil
 }
 
 // room checks the caps for opening k and, when they admit it, takes its share of the Budget: open
@@ -1103,11 +1153,20 @@ func (s *session) markLive() {
 // dropped, and its stream is cancelled. A failure puts its key in cooldown.
 func (m *Manager) end(s *session, reason string, err error) {
 	m.mu.Lock()
+	st, ok := m.endLocked(s, reason, err)
+	m.mu.Unlock()
+	if ok {
+		m.finish(s, st, reason)
+	}
+}
+
+// endLocked is end's part under m.mu: false when s had already ended. finish must follow, without
+// m.mu, with the stream it answers.
+func (m *Manager) endLocked(s *session, reason string, err error) (Stream, bool) {
 	s.mu.Lock()
 	if s.ended {
 		s.mu.Unlock()
-		m.mu.Unlock()
-		return
+		return nil, false
 	}
 	s.ended, s.err, s.records, s.bytes = true, err, nil, 0
 	s.overlays, s.overlayBytes = nil, 0
@@ -1126,7 +1185,7 @@ func (m *Manager) end(s *session, reason string, err error) {
 		m.opts.InvalidToken()
 	}
 	switch reason {
-	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown, CloseCursorExpired, CloseFloorReopen:
+	case CloseIdle, CloseAge, CloseExpiry, CloseShutdown, CloseCursorExpired, CloseFloorReopen, CloseReleased:
 	case CloseNotPrivate:
 		m.cooling[s.k] = m.opts.Now().Add(m.opts.NotPrivateCooldown)
 	default:
@@ -1137,7 +1196,11 @@ func (m *Manager) end(s *session, reason string, err error) {
 			m.coolCause[s.k] = err
 		}
 	}
-	m.mu.Unlock()
+	return st, true
+}
+
+// finish is end's part without m.mu: the stream cancelled and closed, the close counted, done closed.
+func (m *Manager) finish(s *session, st Stream, reason string) {
 	s.cancel()
 	if st != nil {
 		_ = st.Close()

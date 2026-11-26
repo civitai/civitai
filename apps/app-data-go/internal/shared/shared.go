@@ -77,7 +77,8 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
 
-// Views answers a stream's records and meta (session.Manager.View).
+// Views answers a stream's records and meta (session.Manager.View), with a Lease on a stream the
+// read opened.
 type Views interface {
 	View(ctx context.Context, token, schema string, minSeq int64) (session.Snapshot, error)
 }
@@ -196,6 +197,13 @@ type Board struct {
 	// KeyedBy is the collection's `keyedBy` as the per-viewer stream names it ("" for none, and for a
 	// signed-out read).
 	KeyedBy string
+	// Leases are the streams this read opened (session.Snapshot.Lease), for it to release when it is
+	// done with this major (a read that moved to another): each closes only a stream no other read
+	// has taken.
+	Leases []session.Lease
+	// Current is the collection's current major as every level stream read names it (level-feed.ts
+	// levelMeta `currentMajor`); 0 when one names none or two name different majors.
+	Current int
 }
 
 // Viewer is who reads.
@@ -312,7 +320,12 @@ func (r *Reader) Read(ctx context.Context, v Viewer, slug, collection string, ma
 		}
 		return nil
 	}
-	board := Board{KeyedBy: meta.KeyedBy}
+	board := Board{KeyedBy: meta.KeyedBy, Current: agreedCurrent(views)}
+	for _, sn := range append(slices.Clone(views), own) {
+		if sn.Lease != (session.Lease{}) {
+			board.Leases = append(board.Leases, sn.Lease)
+		}
+	}
 	// low is the lowest head among the streams read; known only when every one of them named one.
 	low, read, headless := int64(0), 0, false
 	head := func(s session.Snapshot) {
@@ -551,6 +564,9 @@ func readViewerMeta(raw json.RawMessage) viewerMeta {
 type levelMeta struct {
 	Block     string
 	Truncated bool
+	// CurrentMajor is the collection's current major; 0 when the meta names none (or one no schema
+	// URN can carry).
+	CurrentMajor int
 }
 
 func readLevelMeta(raw json.RawMessage) levelMeta {
@@ -561,7 +577,38 @@ func readLevelMeta(raw json.RawMessage) levelMeta {
 	if len(raw) == 0 || json.Unmarshal(raw, &m) != nil {
 		return levelMeta{}
 	}
-	return levelMeta{Block: m.Block, Truncated: m.Truncated}
+	return levelMeta{Block: m.Block, Truncated: m.Truncated, CurrentMajor: CurrentMajor(raw)}
+}
+
+// CurrentMajor is the `currentMajor` a stream's meta names (the adapter's doc-streams.ts
+// collectionFamily), or 0 when it names none, or anything but a major a schema URN can carry. Read on
+// its own, so a malformed one never hides the rest of the meta.
+func CurrentMajor(raw json.RawMessage) int {
+	var m struct {
+		CurrentMajor json.RawMessage `json:"currentMajor"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &m) != nil || len(m.CurrentMajor) == 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(string(m.CurrentMajor))
+	if err != nil || n < 1 || n > urn.MaxMajor {
+		return 0
+	}
+	return n
+}
+
+// agreedCurrent is the current major every level stream read names; 0 when none was read, one names
+// none, or two name different majors.
+func agreedCurrent(views []session.Snapshot) int {
+	current := 0
+	for i, lv := range views {
+		c := readLevelMeta(lv.Meta).CurrentMajor
+		if c == 0 || (i > 0 && c != current) {
+			return 0
+		}
+		current = c
+	}
+	return current
 }
 
 // Overlays holds each token's acknowledged writes to shared collections, by (token, schema) and key.

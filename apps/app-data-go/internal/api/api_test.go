@@ -46,8 +46,16 @@ type fakeRegistry struct {
 	wide       atomic.Int32 // subscriptions whose token holds more than AppDataRead
 	notPrivate map[string]bool
 	schemas    sync.Map // token → schema last asked
+	asked      sync.Map // "<token> <schema>" → true, for every schema a token's stream was asked for
 	// heads is the head a token's Live names in its meta, as the adapter's private feed does.
 	heads map[string]int64
+	// current is the major a token's Live names as the collection's current one (`currentMajor`, as
+	// the adapter's private feed does); a token absent names 1, and one in noCurrent names none.
+	current   map[string]int
+	noCurrent map[string]bool
+	// recordsAt, when set for a token, is the one schema whose stream holds its records; every
+	// other schema's stream of it is empty (a body the adapter claims for one major only).
+	recordsAt map[string]string
 	// regions are the region headers each of a token's subscriptions carried, in order, as
 	// "cf-ipcountry,cf-region-code,x-isuk".
 	regions map[string][]string
@@ -57,7 +65,8 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
 	f := &fakeRegistry{records: map[string][]registry.Entity{}, stall: map[string]bool{},
 		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}, heads: map[string]int64{},
-		regions: map[string][]string{}}
+		regions: map[string][]string{}, current: map[string]int{}, noCurrent: map[string]bool{},
+		recordsAt: map[string]string{}}
 	t.Cleanup(func() {
 		if n := f.raw.Load(); n != 0 {
 			t.Errorf("🔴 the adapter was shown %d tokens the hub did not issue", n)
@@ -82,12 +91,27 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			_, _ = io.WriteString(w, `{"error":"invalid_token"}`)
 			return
 		}
-		f.schemas.Store(tok, r.URL.Query().Get("schema"))
+		schema := r.URL.Query().Get("schema")
+		f.schemas.Store(tok, schema)
+		f.asked.Store(tok+" "+schema, true)
 		ch := make(chan string, 16)
 		f.mu.Lock()
 		// The adapter's wire form: every cursor wrapped as b1.<24 hex binding>.<inner>.
 		recs, stall, cursor := f.records[tok], f.stall[tok], "b1.0a1b2c3d4e5f60718293a4b5.p1.empty"
-		head, hasHead := f.heads[tok]
+		if at, ok := f.recordsAt[tok]; ok && at != schema {
+			recs = nil
+		}
+		meta := map[string]any{}
+		if head, ok := f.heads[tok]; ok {
+			meta["head"] = map[string]int64{"seq": head}
+		}
+		if !f.noCurrent[tok] && !f.notPrivate[tok] {
+			current, ok := f.current[tok]
+			if !ok {
+				current = 1
+			}
+			meta["currentMajor"] = current
+		}
 		if f.notPrivate[tok] {
 			cursor = "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"
 		}
@@ -102,8 +126,9 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		}
 		switch {
 		case stall:
-		case hasHead:
-			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q,\"meta\":{\"head\":{\"seq\":%d}}}\n\n", cursor, head)
+		case len(meta) > 0:
+			raw, _ := json.Marshal(meta)
+			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q,\"meta\":%s}\n\n", cursor, raw)
 		default:
 			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q}\n\n", cursor)
 		}

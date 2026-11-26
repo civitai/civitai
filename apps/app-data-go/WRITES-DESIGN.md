@@ -205,7 +205,19 @@ none named means current. The site decides it: this service forwards a named `ma
 parameter (shape-checked only) and relays the answer, and the site validates it against the
 collection's current major (`resolveSchemaMajor`, `doc-store-schema-major.ts`) and answers
 `409 stale_major`, the same major it stamps on every write (`withSchemaMajor`,
-`doc-store-api.ts:825-833`). No copy of the current major is kept here, so none can be stale.
+`doc-store-api.ts:825-833`). No copy of the current major is kept here for a write, so none can be
+stale. A READ that names no major is likewise of the current major when the adapter names it: every
+private and level stream names `currentMajor` in its `live` and `progress` meta, by the store's own
+rule (`currentCollectionMajors` over `manifestHistory`, in `doc-streams.ts` `collectionFamily`, never
+a second copy), and app-data-go follows a stream that names another major than the one it opened
+(once), remembering it per collection only as where the next read opens (`internal/api/major.go`).
+A stream that names none is read at the major it opened (1 unless a stream named
+another), never refused: app-data-go and the registry adapter ship, and roll back, independently.
+One rule decides the major a request naming none uses, for both: a write naming no major is
+acknowledged (its read-your-writes overlay held) at the major the next no-major read of that
+collection opens, so the read-back's floor finds it. A read that moves releases the streams it alone
+opened at the first major. A hinted major the adapter no longer resolves is dropped (a level stream
+ends `not_resolved`; an empty, unnamed private stream there is checked against major 1).
 **Imports are not v1** (below).
 
 **The internal route.** The public route's path under an `internal` prefix, on the site, running

@@ -140,7 +140,7 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request, start time.Time, 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.LiveWait)
 	defer cancel()
-	b, err := s.Shared.Read(ctx, v, p.slug, p.collection, p.major, p.minSeq)
+	b, err := s.sharedRead(ctx, v, &p)
 	if err != nil {
 		s.sharedError(w, start, err, v.Anonymous != nil)
 		return shared.Board{}, v, false
