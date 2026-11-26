@@ -150,6 +150,21 @@ describe("updatePostImage — a song's title and remix setting", () => {
     expect(dbMock.dbWrite.image.update.mock.calls[0][0].data).not.toHaveProperty('title');
   });
 
+  // The title is scanned with the song's lyrics (TrackLyrics), so a new one is scanned again.
+  it("sends the song's lyrics and new title to be scanned again", async () => {
+    dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ text: 'la la' } as never);
+
+    await update({ title: 'Night Drive' });
+
+    await vi.waitFor(() =>
+      expect(dbMock.dbWrite.entityModeration.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { entityType_entityId: { entityType: 'TrackLyrics', entityId: SONG } },
+        })
+      )
+    );
+  });
+
   it('clears the title when it is emptied', async () => {
     await update({ title: '   ' });
 

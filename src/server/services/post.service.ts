@@ -2366,6 +2366,8 @@ export const updatePostImage = async (
     ...(title ? [writeSongTitle(image.id, title)] : title === '' ? [clearSongTitle(image.id)] : []),
     ...(allowRemix !== undefined ? [writeSongAllowRemix(image.id, allowRemix)] : []),
   ]);
+  // The title is scanned with the lyrics (a song without lyrics sends nothing); not awaited, as at post time.
+  if (title !== undefined) submitTrackLyricsScan({ imageId: image.id }).catch(handleLogError);
   // Blocked for missing metadata: another scan, decided on the row as it stands now.
   const requeued = shouldIngest ? await requeueUnverifiedImages([image.id]) : [];
   // Parallelize independent cache refreshes — none read what others write.

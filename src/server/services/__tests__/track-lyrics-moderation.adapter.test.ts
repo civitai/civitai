@@ -59,6 +59,19 @@ describe('the TrackLyrics text-scan profile', () => {
       fields: [{ heading: 'Lyrics', text: 'la la' }],
     });
   });
+
+  it("scans the song's title with its lyrics, so the title's level counts too", async () => {
+    w.trackLyrics.findMany.mockResolvedValue([
+      { imageId: 7, text: 'la la', image: { userId: 3, metadata: { title: 'Night drive' } } },
+    ] as never);
+
+    const subjects = await getTextScanProfile('TrackLyrics')!.load([7]);
+
+    expect(subjects.get(7)?.fields).toEqual([
+      { heading: 'Title', text: 'Night drive' },
+      { heading: 'Lyrics', text: 'la la' },
+    ]);
+  });
 });
 
 describe('the TrackLyrics moderation adapter', () => {

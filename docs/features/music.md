@@ -412,6 +412,10 @@ blocks it. The song's own scan writes it when it decides the song (`decideSong`)
 changes: the cover's scan lands, a moderator removes the cover, or a lyrics or language verdict lands
 on a decided song.
 
+The song's title (`Image.metadata.title`) is a field of the lyrics text-scan subject
+(`track-lyrics.profile.ts`), so its level counts with theirs; a title edit sends the lyrics for a
+new verdict. A song without lyrics has no such scan yet, so its title is not scanned.
+
 The language level comes from XGuard's profanity mode on the lyrics text, sent when the lyrics are
 saved at post time (`submitTrackLyricsLanguageScan`) under its own `EntityModeration` row,
 `TrackLyricsLanguage`. Its `languageLevel` 0, 1 and 2 are stored as PG, PG-13 and R on that row's
