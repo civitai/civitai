@@ -239,8 +239,6 @@ async function previewAngles(
       return now - pending.at > PREVIEW_EXPIRY_SECONDS * 1000 ? [] : 'pending';
     }
   } else {
-    // A result is rendered once per user for as long as its pending entry lives, within the global
-    // window.
     if (!(await deps.claimPreview().catch(() => false))) return [];
     try {
       const submitted = await deps.submitPreview(mesh, {
