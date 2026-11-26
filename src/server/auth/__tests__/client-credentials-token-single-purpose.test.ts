@@ -324,6 +324,14 @@ describe('the runner mint path of /api/v1/block-tokens', () => {
     expect(r.body).toMatchObject({ rateLimit: { id: 'apps.block-token-runner-mint' } });
   });
 
+  it('refuses an address over the per-IP limit before reading the credential', async () => {
+    redisMock.redis.incrBy.mockResolvedValue(1201);
+    const r = await mint(RUNNER_TOKEN, body);
+    expect(r.statusCode).toBe(429);
+    expect(r.body).toMatchObject({ rateLimit: { id: 'apps.block-token-runner-mint-ip' } });
+    expect(dbMock.dbWrite.apiKey.findFirst).not.toHaveBeenCalled();
+  });
+
   it('refuses a muted user, and a system account', async () => {
     sessionUser({ muted: true });
     expect((await mint(RUNNER_TOKEN, body)).body.reason).toBe('user_restricted');
