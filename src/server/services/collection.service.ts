@@ -1,3 +1,7 @@
+import {
+  assertMayLoosenImages,
+  withheldImageIds,
+} from '~/server/services/moderator-withheld.service';
 import { Prisma } from '@prisma/client';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
 import { queueNeverScannedRescan } from '~/server/services/judge-collection-rescan.service';
@@ -3005,10 +3009,12 @@ export const updateCollectionItemsStatus = async ({
   isModerator,
   isSystem,
   rejectionDetail,
+  csamReview = false,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  csamReview?: boolean;
   /**
    * In-process callers (the AI review job) act as the system user, which holds no contributor row.
    * Never accept this from a tRPC input.
@@ -3021,7 +3027,8 @@ export const updateCollectionItemsStatus = async ({
    */
   rejectionDetail?: string;
 }) => {
-  const { collectionId, collectionItemIds, status, rejectionReason } = input;
+  const { collectionId, status, rejectionReason } = input;
+  let { collectionItemIds } = input;
 
   const isRejection = status === CollectionItemStatus.REJECTED;
   const persistedReason = isRejection ? rejectionReason ?? null : null;
@@ -3133,7 +3140,7 @@ export const updateCollectionItemsStatus = async ({
     status === CollectionItemStatus.ACCEPTED || status === CollectionItemStatus.REJECTED;
 
   // Capture prior state before the status write so we only notify on real transitions.
-  const priorItems =
+  let priorItems =
     isReviewOutcome && collectionItemIds.length > 0
       ? await dbWrite.collectionItem.findMany({
           where: { id: { in: collectionItemIds }, collectionId },
@@ -3150,6 +3157,21 @@ export const updateCollectionItemsStatus = async ({
           },
         })
       : [];
+
+  if (status === CollectionItemStatus.ACCEPTED && priorItems.length > 0) {
+    const imageIds = priorItems.flatMap((item) => (item.imageId ? [item.imageId] : []));
+    if (isModerator && !isSystem) await assertMayLoosenImages(imageIds, { csamReview });
+    else {
+      const withheld = await withheldImageIds(imageIds, { csamReview: false });
+      if (withheld.size && !isSystem) throw throwAuthorizationError();
+      // The AI review accepts the rest and leaves a withheld entry as it is.
+      const isWithheld = (item: { imageId: number | null }) =>
+        item.imageId !== null && withheld.has(item.imageId);
+      const withheldItemIds = new Set(priorItems.filter(isWithheld).map((item) => item.id));
+      collectionItemIds = collectionItemIds.filter((id) => !withheldItemIds.has(id));
+      priorItems = priorItems.filter((item) => !isWithheld(item));
+    }
+  }
 
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`

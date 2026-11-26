@@ -655,6 +655,7 @@ export const updateCollectionItemsStatusHandler = async ({
       input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      csamReview: !!ctx.features?.csamReports,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -82,6 +82,7 @@ const { rescanChallenge, playgroundReviewImage } = await import(
 );
 const { rescanArticleImage } = await import('~/server/services/article.service');
 const { disableTags } = await import('~/server/services/tag.service');
+const { updateCollectionItemsStatus } = await import('~/server/services/collection.service');
 
 const forbidden = (p: Promise<unknown>) =>
   expect(p).rejects.toSatisfy((e) => e instanceof TRPCError && e.code === 'FORBIDDEN');
@@ -441,5 +442,86 @@ describe('tag.disableTags on images', () => {
       disableTags({ tags: [1], entityIds: [CLEAN], entityType: 'image', csamReview: false })
     );
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalled();
+  });
+});
+
+describe('updateCollectionItemsStatus accepting contest entries', () => {
+  const COLLECTION = 900;
+  const MANAGER = 8;
+  const items = { [WITHHELD]: 1, [CLEAN]: 2 } as const;
+  beforeEach(() => {
+    dbMock.dbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION,
+      type: 'Image',
+      mode: 'Contest',
+      name: 'Contest',
+      metadata: {},
+    } as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION,
+        read: 'Public',
+        write: 'Review',
+        userId: OWNER,
+        type: 'Image',
+        mode: 'Contest',
+        collaborationDisabledAt: null,
+        contributorPermissions: ['MANAGE'],
+        hasAcceptedSeat: true,
+      },
+    ]);
+    dbMock.dbWrite.collectionItem.findMany.mockImplementation((async (args: any) =>
+      Object.entries(items)
+        .filter(([, id]) => args.where.id.in.includes(id))
+        .map(([imageId, id]) => ({
+          id,
+          imageId: Number(imageId),
+          addedById: null,
+          status: 'REVIEW',
+          rejectionReason: null,
+          rejectionDetail: null,
+          articleId: null,
+          modelId: null,
+          postId: null,
+        }))) as never);
+  });
+  const accept = (
+    imageIds: number[],
+    who: { isModerator?: boolean; isSystem?: boolean; csamReview?: boolean }
+  ) =>
+    updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION,
+        collectionItemIds: imageIds.map((id) => items[id as keyof typeof items]),
+        status: 'ACCEPTED' as never,
+      },
+      userId: MANAGER,
+      ...who,
+    });
+  const acceptedItemIds = () =>
+    (dbMock.dbWrite.$executeRaw.mock.calls[0]?.[8] as { values: number[] } | undefined)?.values;
+
+  it('refuses a moderator without the grant, and writes nothing', async () => {
+    await forbidden(accept([CLEAN, WITHHELD], { isModerator: true }));
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('accepts it for a moderator with the grant, and a clean entry for any moderator', async () => {
+    await accept([CLEAN, WITHHELD], { isModerator: true, csamReview: true });
+    expect(acceptedItemIds()).toEqual([items[CLEAN], items[WITHHELD]]);
+    vi.clearAllMocks();
+    await accept([CLEAN], { isModerator: true });
+    expect(acceptedItemIds()).toEqual([items[CLEAN]]);
+  });
+
+  it('refuses a contest manager with the generic refusal', async () => {
+    const refused = await settle(accept([WITHHELD], {}));
+    expect(refused).toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('lets the AI review accept the clean entries and leave the withheld one', async () => {
+    await accept([CLEAN, WITHHELD], { isSystem: true });
+    expect(acceptedItemIds()).toEqual([items[CLEAN]]);
   });
 });
