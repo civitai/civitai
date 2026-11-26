@@ -1,4 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -69,7 +71,8 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false,
       -- The rest of what the image page reads.
       name text, url text, height int, width int, index int, hash text, "hideMeta" boolean DEFAULT false,
-      "createdAt" timestamp DEFAULT now(), "mimeType" text, "scannedAt" timestamp, type text, meta jsonb
+      "createdAt" timestamp DEFAULT now(), "mimeType" text, "scannedAt" timestamp, type text, meta jsonb,
+      "firstVisibleAt" timestamp
     );
     CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text);
     CREATE TABLE "Post" (
@@ -107,6 +110,14 @@ beforeAll(async () => {
     );
     CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL UNIQUE);
   `);
+  const triggers = readFileSync(
+    path.resolve(
+      __dirname,
+      '../../../../packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql'
+    ),
+    'utf8'
+  );
+  await db.exec(triggers.match(/CREATE OR REPLACE FUNCTION image_sort_at\([\s\S]*?\$\$;/)![0]);
   const raw = pgliteRaw(db);
   const answer = async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
     Array.isArray(first)
