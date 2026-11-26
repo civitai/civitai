@@ -2442,17 +2442,20 @@ export async function linkArticleContentImages({
     previousHold = await getContentLinkHold(dbWrite, articleId);
     const unlinked = await contentUrlsWithoutRows(content);
     if (unlinked.length) {
+      // Probed first: an absent upload is only deferred, never refused for having been held.
+      const wasRefused = new Set(previousHold?.refused ?? []);
+      const absent = new Set(
+        await urlsWithAbsentUploads(
+          unlinked.filter((url) => !wasRefused.has(url) && !isUnfinishedUploadUrl(url))
+        )
+      );
       const classified = await classifyUnlinkedContentUrls({
-        urls: unlinked,
+        urls: unlinked.filter((url) => !absent.has(url)),
         ownerId,
         editorId: userId,
-        wasHeld: new Set([...(previousHold?.deferred ?? []), ...(previousHold?.refused ?? [])]),
+        wasHeld: new Set([...(previousHold?.deferred ?? []), ...wasRefused]),
         now,
       });
-      const sorted = new Set([...classified.refused, ...classified.deferred]);
-      const absent = await urlsWithAbsentUploads(
-        unlinked.filter((url) => !sorted.has(url) && !isUnfinishedUploadUrl(url))
-      );
       hold = nextContentLinkHold(
         previousHold,
         { ...classified, deferred: [...classified.deferred, ...absent], editorId: userId },

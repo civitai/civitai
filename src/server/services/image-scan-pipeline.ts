@@ -302,7 +302,6 @@ export async function markImageScanError({
   failureClass: string;
 }> {
   let failureClass = classifyImageScanFailure({ reason, failureType, middleware, failedSteps });
-  // An upload the store says does not exist never scans, whatever the reason reads as.
   const uploadAbsent =
     failureClass !== ImageScanFailureClass.Permanent && (await scanUploadAbsent(imageId));
   if (uploadAbsent) failureClass = ImageScanFailureClass.Permanent;

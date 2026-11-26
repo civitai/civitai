@@ -114,16 +114,17 @@ export async function classifyUnlinkedContentUrls({
 }
 
 const UPLOAD_PROBE_CONCURRENCY = 4;
+/** Bounds one call's probes (the settle job re-links each held article every run); the rest link unprobed. */
+export const MAX_UPLOAD_PROBES = 32;
 
 /**
- * The urls whose upload the image store says does not exist. A row for one is scanned, 404s at
- * the scanner and sits in Error for good, so it is deferred instead and linked once it appears. A
- * store that cannot be read proves nothing, and the url links as before.
+ * The urls whose upload the image store says does not exist. A row for one 404s at the scanner,
+ * so it is deferred instead. An unreadable store proves nothing: those urls link as before.
  */
 export async function urlsWithAbsentUploads(urls: string[]) {
   const absent: string[] = [];
   await limitConcurrency(
-    urls.map((url) => async () => {
+    urls.slice(0, MAX_UPLOAD_PROBES).map((url) => async () => {
       if ((await probeCreatedImageMedia(url)) === 'absent') absent.push(url);
     }),
     UPLOAD_PROBE_CONCURRENCY
@@ -195,4 +196,37 @@ export async function writeContentLinkHold(
           AND md5(COALESCE(a.content, '')) = md5(${content})
       `;
   return written > 0;
+}
+
+/**
+ * Adds `urls` to the article's deferred urls, keeping what its hold already holds and whom it
+ * settles against; `editorId` only when it has none.
+ */
+export async function deferContentUrls({
+  articleId,
+  content,
+  urls,
+  editorId,
+  now,
+}: {
+  articleId: number;
+  content: string;
+  urls: string[];
+  editorId: number;
+  now: Date;
+}) {
+  const previous = await getContentLinkHold(dbWrite, articleId);
+  return writeContentLinkHold(dbWrite, {
+    articleId,
+    content,
+    hold: nextContentLinkHold(
+      previous,
+      {
+        refused: previous?.refused ?? [],
+        deferred: [...new Set([...(previous?.deferred ?? []), ...urls])],
+        editorId: previous?.editorId ?? editorId,
+      },
+      now
+    ),
+  });
 }

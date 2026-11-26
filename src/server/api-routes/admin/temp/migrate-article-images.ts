@@ -16,10 +16,8 @@ import {
   recomputeArticleIngestion,
 } from '~/server/services/article.service';
 import {
-  getContentLinkHold,
-  nextContentLinkHold,
+  deferContentUrls,
   urlsWithAbsentUploads,
-  writeContentLinkHold,
 } from '~/server/services/article-content-link-hold';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -37,7 +35,7 @@ type MigrationStats = {
   articlesSkipped: number;
   /** Migrated articles with content keys that have no issue record. */
   articlesWithUnrecordedKeys: number;
-  /** Content urls with no upload in the image store: no row, held on their article instead. */
+  /** Content urls with no upload in the image store: no row created, deferred on their article (dry run counts them only). */
   uploadsAbsent: number;
   errors: number;
 };
@@ -425,45 +423,43 @@ async function processBatch(
 
   // Before the recompute, so it keeps these articles off public until the settle job links them.
   const now = new Date();
+  const unheld = new Set<number>();
   for (const article of articles) {
     const deferred = getContentMedia(article.content)
       .map((item) => item.url)
       .filter((url) => absent.has(url));
     if (!deferred.length) continue;
     try {
-      const previous = await getContentLinkHold(dbWrite, article.id);
-      await writeContentLinkHold(dbWrite, {
+      await deferContentUrls({
         articleId: article.id,
         content: article.content,
-        hold: nextContentLinkHold(
-          previous,
-          {
-            refused: previous?.refused ?? [],
-            deferred: [...new Set([...(previous?.deferred ?? []), ...deferred])],
-            editorId: article.userId,
-          },
-          now
-        ),
+        urls: deferred,
+        editorId: article.userId,
+        now,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       log(`  ⚠️  article ${article.id}: hold write for absent uploads failed: ${msg}`);
       stats.errors++;
+      // Recomputed without its hold, it could go public over a url with no row.
+      unheld.add(article.id);
     }
   }
 
   // Recompute every article in the batch. Articles with images flip to
   // Pending (webhook recomputes them back to Scanned once scans complete);
   // text-only articles stay wherever their text-moderation state puts them.
-  const recomputeTasks = batchIds.map((articleId) => async () => {
-    try {
-      await recomputeArticleIngestion(articleId);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown error';
-      log(`  ⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
-      stats.errors++;
-    }
-  });
+  const recomputeTasks = batchIds
+    .filter((articleId) => !unheld.has(articleId))
+    .map((articleId) => async () => {
+      try {
+        await recomputeArticleIngestion(articleId);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        log(`  ⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
+        stats.errors++;
+      }
+    });
   await limitConcurrency(recomputeTasks, concurrency);
 
   stats.articlesProcessed += articles.length;

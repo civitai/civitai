@@ -55,9 +55,8 @@ const {
   UNFINISHED_UPLOAD_MESSAGE,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } = await import('~/server/services/image-url-ownership');
-const { nextContentLinkHold, writeContentLinkHold } = await import(
-  '~/server/services/article-content-link-hold'
-);
+const { deferContentUrls, MAX_UPLOAD_PROBES, nextContentLinkHold, writeContentLinkHold } =
+  await import('~/server/services/article-content-link-hold');
 const { settleContentLinkHolds, CONTENT_LINK_DEFERRAL_BACKSTOP_MS } = await import(
   '~/server/jobs/article-content-link-hold'
 );
@@ -772,11 +771,62 @@ describe('a url whose upload is not in the image store', () => {
     expect((await hold())?.deferred).toEqual([KEY2]);
   });
 
+  it('probes a bounded number of urls per link, linking the rest as before', async () => {
+    const keys = Array.from(
+      { length: MAX_UPLOAD_PROBES + 1 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    for (const key of keys) {
+      await recordUploadKeyOwner(key, AUTHOR);
+      store.absent.add(key);
+    }
+    const content = `<p>${keys.map(img).join('')}</p>`;
+    await givenArticle({ content });
+    s3Send.mockClear();
+    await link({ content });
+    expect(s3Send).toHaveBeenCalledTimes(MAX_UPLOAD_PROBES);
+    expect((await hold())?.deferred).toHaveLength(MAX_UPLOAD_PROBES);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('stays deferred, not refused, across settles when its key has no issue record', async () => {
+    const content = `<p>${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    store.absent.add(KEY2);
+    await link({ content });
+    await settleContentLinkHolds(at(10 * MINUTE));
+    await settleContentLinkHolds(at(20 * MINUTE));
+    expect(await hold()).toMatchObject({ deferred: [KEY2], refused: [] });
+    expect(await ingestion()).toBe('Pending');
+  });
+
   it('control: links as before when the store cannot be read', async () => {
     store.absent.add(KEY);
     store.down = true;
     await link();
     expect(await rows()).toEqual([KEY]);
     expect(await hold()).toBeNull();
+  });
+});
+
+describe('deferring urls found absent by the bulk migration', () => {
+  const defer = (urls: string[], content = CONTENT) =>
+    deferContentUrls({ articleId: ARTICLE_ID, content, urls, editorId: AUTHOR, now: T0 });
+
+  it('holds the article off public until they settle', async () => {
+    expect(await defer([KEY])).toBe(true);
+    expect((await hold())?.deferred).toEqual([KEY]);
+    await recomputeArticleIngestion(ARTICLE_ID);
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('keeps what the hold already refused and deferred', async () => {
+    const content = `<p>${img(KEY)}${img(KEY2)}</p>`;
+    await givenArticle({ content });
+    await recordUploadKeyOwner(KEY, OTHER);
+    await link({ content });
+    expect((await hold())?.refused).toEqual([KEY]);
+    await defer([KEY2], content);
+    expect(await hold()).toMatchObject({ refused: [KEY], deferred: [KEY2] });
   });
 });

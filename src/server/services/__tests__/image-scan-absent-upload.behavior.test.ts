@@ -97,6 +97,12 @@ describe('a scan failure on an image whose upload is not in the store', () => {
     expect(await storedClass()).toBe('transient');
   });
 
+  it('control: stays transient when the image row cannot be read', async () => {
+    store.absent.add(KEY);
+    dbMock.dbRead.image.findUnique.mockRejectedValueOnce(new Error('replica down'));
+    expect((await fail()).failureClass).toBe('transient');
+  });
+
   it('control: stays transient when the store cannot be read', async () => {
     store.absent.add(KEY);
     store.down = true;
