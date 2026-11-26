@@ -15,6 +15,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { SONG_LYRICS_MAX_LENGTH } from '~/server/common/constants';
 import {
   saveGeneratedTrackLyrics,
+  saveTranscribedTrackLyrics,
   sendTrackLyricsScan,
 } from '~/server/services/audio-scan/track-lyrics';
 import { TEXT_SCAN_ENTITY_GONE } from '~/server/services/text-scan/route';
@@ -117,5 +118,64 @@ describe('saving generated lyrics', () => {
     const { text: stored, lines } = saved();
     expect(stored).toBe('y'.repeat(SONG_LYRICS_MAX_LENGTH));
     expect(lines).toEqual([{ t: null, text: stored }]);
+  });
+});
+
+describe("saving a song's transcript as its lyrics", () => {
+  beforeEach(() => {
+    dbMock.dbWrite.trackLyrics.createMany.mockResolvedValue({ count: 1 } as never);
+  });
+
+  it('stores one line per sentence, keeping its line breaks, untimed and marked transcribed', async () => {
+    await expect(
+      saveTranscribedTrackLyrics({
+        imageId: 7,
+        transcript: 'City lights are fading. Every wave remembers!  Hold on?\nTill the morning',
+      })
+    ).resolves.toBe(true);
+
+    expect(dbMock.dbWrite.trackLyrics.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          imageId: 7,
+          text: 'City lights are fading.\nEvery wave remembers!\nHold on?\nTill the morning',
+          lines: [
+            { t: null, text: 'City lights are fading.' },
+            { t: null, text: 'Every wave remembers!' },
+            { t: null, text: 'Hold on?' },
+            { t: null, text: 'Till the morning' },
+          ],
+          source: 'transcribed',
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('keeps lyrics written meanwhile, reporting nothing saved', async () => {
+    dbMock.dbWrite.trackLyrics.createMany.mockResolvedValue({ count: 0 } as never);
+
+    await expect(saveTranscribedTrackLyrics({ imageId: 7, transcript: 'Rain.' })).resolves.toBe(
+      false
+    );
+  });
+
+  it('saves nothing for a blank transcript', async () => {
+    await expect(saveTranscribedTrackLyrics({ imageId: 7, transcript: ' \n ' })).resolves.toBe(
+      false
+    );
+    expect(dbMock.dbWrite.trackLyrics.createMany).not.toHaveBeenCalled();
+  });
+
+  it('cuts a transcript over the cap at its last whole line', async () => {
+    const sentence = `${'a'.repeat(99)}.`;
+    const transcript = Array(Math.ceil(SONG_LYRICS_MAX_LENGTH / 100) + 5)
+      .fill(sentence)
+      .join(' ');
+    await saveTranscribedTrackLyrics({ imageId: 7, transcript });
+
+    const { text } = dbMock.dbWrite.trackLyrics.createMany.mock.calls[0][0].data[0];
+    expect(text.length).toBeLessThanOrEqual(SONG_LYRICS_MAX_LENGTH);
+    expect(text.endsWith(sentence)).toBe(true);
   });
 });

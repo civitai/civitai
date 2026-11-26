@@ -1,13 +1,16 @@
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { alignTrackLyrics } from '~/server/services/audio-scan/lyrics-alignment';
 import { songLevel } from '~/server/services/audio-scan/song-rating';
 import { songVerdict } from '~/server/services/audio-scan/song-scan';
 import {
   readLyricsVerdict,
+  saveTranscribedTrackLyrics,
   sendTrackLyricsScan,
   submitTrackLyricsScan,
   type LyricsVerdict,
 } from '~/server/services/audio-scan/track-lyrics';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import {
   applyIngestionSideEffects,
@@ -106,6 +109,22 @@ async function awaitLyrics({
   }
 }
 
+/**
+ * Gives a song without lyrics the scan's transcript as its lyrics, then times them. A failed save
+ * leaves the song without lyrics, decided on its audio alone; a failed alignment leaves them untimed.
+ */
+async function promoteTranscript(imageId: number, transcript: string) {
+  try {
+    if (!(await saveTranscribedTrackLyrics({ imageId, transcript }))) return;
+  } catch (error) {
+    handleLogError(error as Error);
+    return;
+  }
+  // primary: the song row this callback is deciding
+  const image = await dbWrite.image.findUnique({ where: { id: imageId }, select: { url: true } });
+  if (image) alignTrackLyrics({ imageId, url: image.url }).catch(handleLogError);
+}
+
 type SongDecision = {
   imageId: number;
   workflowId: string;
@@ -126,9 +145,22 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
   const image = await loadImageForScan(imageId);
   // A later lyrics verdict (a rescan, an edited title) re-rates a decided song; it never decides one.
   if (fromLyrics && !UNDECIDED.includes(image.ingestion)) return rerateSong(imageId);
-  const lyrics = await readLyricsVerdict(imageId);
+  let lyrics = await readLyricsVerdict(imageId);
   // A song without lyrics never waits on its title's verdict: that only re-rates it.
   if (fromLyrics && lyrics.state === 'none') return rerateSong(imageId);
+  // Never on a rescan: a later verdict only re-rates a decided song (above), so lyrics it blocked
+  // could not block the song.
+  if (
+    !fromLyrics &&
+    UNDECIDED.includes(image.ingestion) &&
+    lyrics.state === 'none' &&
+    audio.ok &&
+    audio.hasAudio &&
+    !audio.flagged
+  ) {
+    await promoteTranscript(imageId, audio.result.lyrics);
+    lyrics = await readLyricsVerdict(imageId);
+  }
   const verdict = songVerdict(audio, lyrics.state !== 'none');
 
   if (verdict.action === 'retry') {
