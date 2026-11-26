@@ -32,11 +32,10 @@ import { getImageUploadProbeBackend, headObject } from '~/utils/s3-utils';
  * not, and nothing here establishes whether this half or the client half leaves more rows
  * uncovered — both are partial in different directions.
  *
- * 🔴 OBSERVE-ONLY. This module answers a question; it does not act on the answer. The
- * caller logs the verdict and continues. Rejecting an image creation is a NEW failure mode
- * on a working user-facing path, and the only honest way to size it is to let the `absent`
- * rate accumulate against a real denominator first. Enforcement is deliberately a separate
- * change, gated on that measurement.
+ * 🔴 This module answers a question; it does not act on the answer. `createImage` only logs
+ * the verdict: rejecting an image creation is a NEW failure mode on a working user-facing
+ * path, gated on the `absent` rate measured against a real denominator. A caller that acts
+ * on `absent` must treat `unknown` as no answer.
  */
 
 /**
