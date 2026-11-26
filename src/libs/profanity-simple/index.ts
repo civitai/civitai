@@ -158,8 +158,7 @@ export class SimpleProfanityFilter {
     this.nsfwWords = getCachedNsfwWords(this.options.moderatorBlocklist);
 
     // A managed list is the only source of blocked words. The library's English dataset loads only
-    // with the shipped list: flag off, the browser, and the server's fallback when the managed row
-    // can't be used, so each of those blocks what it blocked before.
+    // with the shipped list (flag off, browser, server fallback).
     this.dataset = new DataSet();
     if (this.options.moderatorBlocklist == null) this.dataset.addAll(englishDataset);
 

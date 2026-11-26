@@ -53,7 +53,7 @@ const libraryWords = [
 /**
  * Deliberate: with a managed list, the moderators' list is the only source of blocked words, and
  * the library's English dataset is not loaded. Before deleting this, read why: the library list
- * could not be edited and carried substring over-matches no moderator could remove.
+ * could not be edited and carried substring over-matches no moderator could remove (civitai/civitai#10526).
  */
 describe('a managed list replaces the library dataset too', () => {
   it('flags no library word the managed list does not carry', () => {
