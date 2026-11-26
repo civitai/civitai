@@ -15,6 +15,7 @@ vi.mock('$lib/server/knights/yesno-reference.service', () => ({
   getYesNoReferences: vi.fn(),
   getYesNoQuestions: vi.fn(),
   getYesNoReferenceCount: vi.fn(),
+  yesNoReferenceImageIds: vi.fn(async () => []),
 }));
 vi.mock('$lib/server/knights/coreset.service', () => ({
   addCoreImage: vi.fn(),
@@ -26,8 +27,10 @@ vi.mock('$lib/server/knights/coreset.service', () => ({
   retireReference: vi.fn(),
   spotCheckItem: vi.fn(),
   updateCoreItem: vi.fn(),
+  referenceImageIds: vi.fn(async () => []),
 }));
-vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn() }));
+// Acting as a moderator with the media grant: withheld.pglite.test.ts covers the refusal itself.
+vi.mock('$lib/server/access', () => ({ requireAccess: vi.fn(), canAccess: () => true }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions } from '../+page.server';

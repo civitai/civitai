@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-11-19
+lastmod: 2026-11-26
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.com](https://civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -264,7 +264,7 @@ Any content that violates one of the following terms above but has been self-cen
 
 - 18.2 **Exceptions.** Although we are agreeing to arbitrate most disputes between us, nothing in these Terms will be deemed to waive, preclude, or otherwise limit the right of either party to: (a) bring an individual action in small claims court; (b) pursue an enforcement action through the applicable federal, state, or local agency if that action is available; (c) seek injunctive relief in a court of law in aid of arbitration; or (d) to file suit in a court of law to address an intellectual property infringement claim.
 
-- 18.3 **Opt-Out.** If you do not wish to resolve disputes by binding arbitration, you may opt out of the provisions of this Section 18 (Dispute Resolution and Arbitration) within 30 days after the date that you agree to these Terms by sending a letter to Civit AI, Inc., Attention: Legal Department – Arbitration Opt-Out, 447 Sutter St, Ste 405 PMB1283, San Francisco, CA 94108, that specifies: your full legal name, the email address associated with your Account on the Service, and a statement that you wish to opt out of arbitration (“Opt-Out Notice”). Once Civitai receives your Opt-Out Notice, this Section 18 (Dispute Resolution and Arbitration) will be void and any action arising out of these Terms will be resolved as set forth in Section 19.2 (Governing Law). The remaining provisions of these Terms will not be affected by your Opt-Out Notice.
+- 18.3 **Opt-Out.** If you do not wish to resolve disputes by binding arbitration, you may opt out of the provisions of this Section 18 (Dispute Resolution and Arbitration) within 30 days after the date that you agree to these Terms by sending a letter to Civit AI, Inc., Attention: Legal Department – Arbitration Opt-Out, 447 Sutter St, Ste 405 PMB1283, San Francisco, CA 94108, or by sending an email to compliance@civitai.com with the subject line “Arbitration Opt-Out”, that specifies: your full legal name, the email address associated with your Account on the Service, and a statement that you wish to opt out of arbitration (“Opt-Out Notice”). Once Civitai receives your Opt-Out Notice, this Section 18 (Dispute Resolution and Arbitration) will be void and any action arising out of these Terms will be resolved as set forth in Section 19.2 (Governing Law). The remaining provisions of these Terms will not be affected by your Opt-Out Notice.
 
 - 18.4 **Arbitrator.** This arbitration agreement, and any arbitration between us, is subject the Federal Arbitration Act and will be administered by the American Arbitration Association (“AAA”) under its Consumer Arbitration Rules (collectively, “AAA Rules”) as modified by these Terms. The AAA Rules and filing forms are available online at www.adr.org, by calling the AAA at +1-800-778-7879, or by contacting Civitai.
 

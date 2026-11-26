@@ -109,7 +109,8 @@ func TestCuratedShowcaseGuardFallsBack(t *testing.T) {
 				}
 				return nil
 			}
-		}, "v1-models-curated-showcase"},
+			// A read failure, never a curation: its own counted reason.
+		}, "v1-models-showcase-miss-failed"},
 		{"no entry", func(w *testWorld) { w.entries[showcaseKey6001] = nil }, nil, "v1-models-showcase-miss"},
 		// Past the cache's hour the Node reader that wins the revalidate lock rebuilds the entry from
 		// the database: after a curation whose refresh failed, the curated list.

@@ -1,13 +1,18 @@
 import { TRPCError } from '@trpc/server';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest } from 'next';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   anglesMature,
   getModel3DPostBlock,
   model3DPostImages,
+  model3dRatingV2Deps,
   rateModel3DByV2,
   clearStamp,
   MODEL3D_PREVIEW_PENDING,
+  MODEL3D_PREVIEW_V2_GLOBAL_LIMIT,
+  Model3dPreviewRejectedError,
+  previewWindowKey,
   MODEL3D_RATING_V2_GLOBAL_LIMIT,
   PREVIEW_EXPIRY_SECONDS,
   MODEL3D_RATING_V2_RATE_LIMIT,
@@ -50,7 +55,12 @@ function deps(verdicts: (boolean | null)[], overrides: Partial<Model3dRatingV2De
       rememberClear: async () => undefined,
       pendingPreview: async () => null,
       setPendingPreview: async () => undefined,
-      claimPreview: async () => true,
+      exclusive: async (_u, _w, op) => op(),
+      clearPendingPreview: async () => undefined,
+      takeRetry: async () => false,
+      claimPreviewUser: async () => ({ refund: async () => undefined }),
+      claimPreview: async () => 'window-1',
+      releasePreview: async () => undefined,
       submitPreview: async () => ({ workflowId: 'pv-1', state: { status: 'done', urls: [] } }),
       readPreview: async () => ({ status: 'done', urls: [] }),
       now: () => 1_000_000,
@@ -421,7 +431,7 @@ describe('3D post gate with a four-angle render', () => {
     const submitPreview = vi.fn<Model3dRatingV2Deps['submitPreview']>();
     const setPendingPreview = vi.fn<Model3dRatingV2Deps['setPendingPreview']>();
     const { deps: d } = deps([false], {
-      claimPreview: async () => false,
+      claimPreview: async () => null,
       submitPreview,
       setPendingPreview,
     });
@@ -594,10 +604,192 @@ describe('3D post gate with a four-angle render', () => {
     expect(old.rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual([hosted(0)]);
   });
 
+  it("the user's own render limit is claimed before the shared window, and its refusal blocks the post", async () => {
+    const order: string[] = [];
+    const submitPreview = vi.fn<Model3dRatingV2Deps['submitPreview']>();
+    const { rate, deps: d } = deps([false], {
+      claimPreviewUser: async () => {
+        order.push('user');
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'renders: slow down' });
+      },
+      claimPreview: async () => {
+        order.push('global');
+        return 'window-1';
+      },
+      submitPreview,
+    });
+    await expect(post(d)).rejects.toThrow('renders: slow down');
+    expect(order).toEqual(['user']);
+    expect(submitPreview).not.toHaveBeenCalled();
+    expect(rate).not.toHaveBeenCalled();
+  });
+
+  it('a submit that throws gives its slot back to the window it was counted in', async () => {
+    const releasePreview = vi.fn<Model3dRatingV2Deps['releasePreview']>(async () => undefined);
+    let now = 1_000_000;
+    const { deps: d } = deps([true], {
+      now: () => now,
+      claimPreview: async () => previewWindowKey(now),
+      submitPreview: async () => {
+        // The window rolls over while the submit is out.
+        now += MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.windowSeconds * 1000;
+        throw new Model3dPreviewRejectedError({ status: 400 });
+      },
+      releasePreview,
+    });
+    expect(await post(d)).toMatch(/rated mature/);
+    expect(releasePreview).toHaveBeenCalledTimes(1);
+    expect(releasePreview).toHaveBeenCalledWith(previewWindowKey(1_000_000));
+    expect(releasePreview.mock.calls[0][0]).not.toBe(previewWindowKey(now));
+  });
+
+  it("a submit that returned keeps its slot and the user's claim", async () => {
+    const releasePreview = vi.fn<Model3dRatingV2Deps['releasePreview']>(async () => undefined);
+    const refund = vi.fn(async () => undefined);
+    const { deps: d } = deps([false], {
+      claimPreviewUser: async () => ({ refund }),
+      submitPreview: async () => ({ workflowId: 'pv-1', state: { status: 'running' } }),
+      setPendingPreview: async () => Promise.reject(new Error('redis down')),
+      releasePreview,
+    });
+    expect(await post(d)).toBe(MODEL3D_PREVIEW_PENDING);
+    expect(releasePreview).not.toHaveBeenCalled();
+    expect(refund).not.toHaveBeenCalled();
+  });
+
+  it('an empty render is asked for once more, then the existing previews decide', async () => {
+    const spent = new Set<string>();
+    let entry: { workflowId: string; at: number } | null = {
+      workflowId: 'pv-1',
+      at: 1_000_000 - 1000,
+    };
+    const submitPreview = vi.fn<Model3dRatingV2Deps['submitPreview']>(async () => ({
+      workflowId: 'pv-2',
+      state: { status: 'running' },
+    }));
+    const takeRetry = vi.fn<Model3dRatingV2Deps['takeRetry']>(async (u, w) =>
+      spent.has(`${u}:${w}`) ? false : !!spent.add(`${u}:${w}`)
+    );
+    const store = {
+      pendingPreview: async () => entry,
+      setPendingPreview: async (
+        _u: number,
+        _w: string,
+        value: { workflowId: string; at: number }
+      ) => {
+        entry = value;
+      },
+      clearPendingPreview: async () => {
+        entry = null;
+      },
+      readPreview: async () => ({ status: 'done' as const, urls: [] }),
+      takeRetry,
+      submitPreview,
+    };
+    expect(await post(deps([], store).deps)).toBe(MODEL3D_PREVIEW_PENDING);
+    expect(submitPreview).toHaveBeenCalledTimes(1);
+    expect(entry).toEqual({ workflowId: 'pv-2', at: 1_000_000 });
+    const later = deps([true], store);
+    expect(await post(later.deps)).toMatch(/rated mature/);
+    expect(submitPreview).toHaveBeenCalledTimes(1);
+    expect(later.rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual([hosted(0)]);
+  });
+
+  it('a click while another is asking claims nothing and submits nothing', async () => {
+    const claimPreviewUser = vi.fn<Model3dRatingV2Deps['claimPreviewUser']>(async () => ({
+      refund: async () => undefined,
+    }));
+    const claimPreview = vi.fn<Model3dRatingV2Deps['claimPreview']>(async () => 'window-1');
+    const submitPreview = vi.fn<Model3dRatingV2Deps['submitPreview']>();
+    const busy = deps([], {
+      exclusive: async () => null,
+      claimPreviewUser,
+      claimPreview,
+      submitPreview,
+    });
+    expect(await post(busy.deps)).toBe(MODEL3D_PREVIEW_PENDING);
+    expect(claimPreviewUser).not.toHaveBeenCalled();
+    expect(claimPreview).not.toHaveBeenCalled();
+    expect(submitPreview).not.toHaveBeenCalled();
+  });
+
+  it('a click that gets the lock after another asked reads that render instead of asking again', async () => {
+    let reads = 0;
+    const submitPreview = vi.fn<Model3dRatingV2Deps['submitPreview']>();
+    const claimPreviewUser = vi.fn<Model3dRatingV2Deps['claimPreviewUser']>(async () => ({
+      refund: async () => undefined,
+    }));
+    const { deps: d } = deps([], {
+      // Empty on the first read, then the other click's entry inside the lock.
+      pendingPreview: async () => (reads++ === 0 ? null : { workflowId: 'pv-1', at: 1_000_000 }),
+      submitPreview,
+      claimPreviewUser,
+    });
+    expect(await post(d)).toBe(MODEL3D_PREVIEW_PENDING);
+    expect(submitPreview).not.toHaveBeenCalled();
+    expect(claimPreviewUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the global window refuses', { claimPreview: async () => null }],
+    [
+      'the submit is rejected',
+      {
+        submitPreview: async () => Promise.reject(new Model3dPreviewRejectedError({ status: 400 })),
+      },
+    ],
+  ])("when %s, the user's own render is given back", async (_, overrides) => {
+    const refund = vi.fn(async () => undefined);
+    const { deps: d } = deps([true], { claimPreviewUser: async () => ({ refund }), ...overrides });
+    expect(await post(d)).toMatch(/rated mature/);
+    expect(refund).toHaveBeenCalledTimes(1);
+  });
+
+  it('a submit lost in transit keeps both the user claim and the slot', async () => {
+    const refund = vi.fn(async () => undefined);
+    const releasePreview = vi.fn<Model3dRatingV2Deps['releasePreview']>(async () => undefined);
+    const { deps: d } = deps([true], {
+      claimPreviewUser: async () => ({ refund }),
+      submitPreview: async () => Promise.reject(new TypeError('fetch failed')),
+      releasePreview,
+    });
+    expect(await post(d)).toMatch(/rated mature/);
+    expect(refund).not.toHaveBeenCalled();
+    expect(releasePreview).not.toHaveBeenCalled();
+  });
+
+  it('a lock that cannot be taken because the store is down falls back instead of waiting', async () => {
+    let reads = 0;
+    const { rate, deps: d } = deps([true], {
+      exclusive: async () => null,
+      pendingPreview: async () => {
+        if (reads++ === 0) return null;
+        throw new Error('redis down');
+      },
+    });
+    expect(await post(d)).toMatch(/rated mature/);
+    expect(rate.mock.calls[0][0].items.map((i) => i.mediaUrl)).toEqual([hosted(0)]);
+  });
+
+  it('a click that loses the retry while another re-renders waits for that render', async () => {
+    let reads = 0;
+    const { rate, deps: d } = deps([true], {
+      // The old render, then the other click's re-render in its place.
+      pendingPreview: async () =>
+        reads++ === 0
+          ? { workflowId: 'pv-1', at: 1_000_000 }
+          : { workflowId: 'pv-2', at: 1_000_000 },
+      readPreview: async () => ({ status: 'done', urls: [] }),
+      takeRetry: async () => false,
+    });
+    expect(await post(d)).toBe(MODEL3D_PREVIEW_PENDING);
+    expect(rate).not.toHaveBeenCalled();
+  });
+
   // No render back falls to the renders the result already has; never a pass on no rating at all.
   it.each([
     ['the render failed', {}],
-    ['the global window refused', { claimPreview: async () => false }],
+    ['the global window refused', { claimPreview: async () => null }],
     ['the submit threw', { submitPreview: async () => Promise.reject(new Error('down')) }],
     [
       'the render expired',
@@ -634,5 +826,51 @@ describe('3D post gate with a four-angle render', () => {
     const { deps: d } = deps([], { matureLevel: async () => null, submitPreview });
     expect(await post(d)).toBeUndefined();
     expect(submitPreview).not.toHaveBeenCalled();
+  });
+});
+
+describe('the four-angle render store', () => {
+  const store = new Map<string, number | string>();
+  beforeEach(() => {
+    store.clear();
+    redisMock.redis.incrBy.mockImplementation(async (key: string, by: number) => {
+      const next = Number(store.get(key) ?? 0) + by;
+      store.set(key, next);
+      return next;
+    });
+    redisMock.redis.ttl.mockImplementation(async (key: string) => (store.has(key) ? 100 : -2));
+    redisMock.redis.expire.mockResolvedValue(true);
+    redisMock.redis.del.mockImplementation(async (key: string) => Number(store.delete(key)));
+    redisMock.redis.set.mockImplementation(
+      async (key: string, value: string, opts?: { NX?: boolean }) => {
+        if (opts?.NX && store.has(key)) return null;
+        store.set(key, value);
+        return '1';
+      }
+    );
+  });
+
+  it('claims a slot in the window it is in, refuses past the cap, and gives it back there', async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const key = await model3dRatingV2Deps.claimPreview();
+    expect(key).toBe(previewWindowKey(1_000_000));
+    store.set(key!, MODEL3D_PREVIEW_V2_GLOBAL_LIMIT.max);
+    expect(await model3dRatingV2Deps.claimPreview()).toBeNull();
+    store.set(key!, 3);
+    await model3dRatingV2Deps.releasePreview(key!);
+    expect(store.get(key!)).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it('a slot given back to a window that has gone leaves no key behind', async () => {
+    await model3dRatingV2Deps.releasePreview('model3d:preview-v2:global:1');
+    expect(store.has('model3d:preview-v2:global:1')).toBe(false);
+  });
+
+  // One re-render per user and result (civitai/civitai#10523).
+  it('a result gets one retry per user', async () => {
+    expect(await model3dRatingV2Deps.takeRetry(7, 'wf-1')).toBe(true);
+    expect(await model3dRatingV2Deps.takeRetry(7, 'wf-1')).toBe(false);
+    expect(await model3dRatingV2Deps.takeRetry(8, 'wf-1')).toBe(true);
   });
 });

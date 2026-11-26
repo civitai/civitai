@@ -1623,7 +1623,7 @@ async function inChunks(
   /** Attribution for the chunk that just landed. Runs INSIDE the loop on purpose: written after it,
    *  a later chunk's timeout returns early and the images already actioned end up with no record of
    *  who actioned them — the exact thing the per-image rows exist to prevent. */
-  onSent?: (chunk: number[]) => Promise<void>
+  onSent?: (chunk: number[], body: Record<string, unknown>) => Promise<void>
 ): Promise<CountResult> {
   let affected = 0;
   for (let i = 0; i < imageIds.length; i += CHUNK) {
@@ -1636,7 +1636,7 @@ async function inChunks(
     const count = countOf(result.body, ['images']);
     affected += count;
     // A chunk that matched nothing gets no attribution: those ids do not exist.
-    if (count > 0) await onSent?.(chunk);
+    if (count > 0) await onSent?.(chunk, result.body);
   }
   return { ok: true, count: affected };
 }
@@ -1742,6 +1742,18 @@ export async function removeAllImagesForUser(input: {
   return { ok: true, count: countOf(result.body, ['images']) };
 }
 
+/** The ids of `chunk` that `/api/mod/restore-images` restored. It skips one only the CSAM review may
+ *  restore and keeps one blocked while its owner is deleted; neither is a restore to log. A response
+ *  from before `restored` existed falls back to its `skipped` list. */
+export function restoredIdsOf(chunk: number[], body: Record<string, unknown>) {
+  if (Array.isArray(body.restored)) {
+    const restored = new Set(body.restored);
+    return chunk.filter((id) => restored.has(id));
+  }
+  const skipped = new Set(Array.isArray(body.skipped) ? body.skipped : []);
+  return chunk.filter((id) => !skipped.has(id));
+}
+
 export async function restoreImages(input: {
   imageIds: number[];
   moderatorId: number;
@@ -1758,9 +1770,9 @@ export async function restoreImages(input: {
         { imageIds: chunk, userId: input.moderatorId },
         'Image restore'
       ),
-    (chunk) =>
+    (chunk, body) =>
       Promise.all(
-        chunk.map((id) =>
+        restoredIdsOf(chunk, body).map((id) =>
           recordModActivity({
             userId: input.moderatorId,
             entityType: 'image',

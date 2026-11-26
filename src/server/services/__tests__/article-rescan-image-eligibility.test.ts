@@ -24,7 +24,11 @@ vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
   submitTextModerationOrScan: vi.fn(async () => undefined),
 }));
 
-import { rescanArticle, rescanArticleImage } from '~/server/services/article.service';
+import {
+  rescanArticle,
+  rescanArticleImage,
+  retryArticleErrorImages,
+} from '~/server/services/article.service';
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -293,4 +297,55 @@ describe('rescanArticleImage', () => {
       expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
     }
   );
+});
+
+describe("retryArticleErrorImages, the reconcile job's retry round", () => {
+  const FAILED = image(30, { ingestion: 'Error' });
+  const MISSING = image(31, { ingestion: 'NotFound' });
+  const retry = (over: Partial<Parameters<typeof retryArticleErrorImages>[0]> = {}) =>
+    retryArticleErrorImages({
+      article: { id: ARTICLE_ID, userId: AUTHOR, coverId: null, bannerId: null },
+      includeNotFound: true,
+      budget: 10,
+      fullBudget: true,
+      ...over,
+    });
+
+  // Agreed with the Moderation Lead (#10522): the retry never re-submits an image under review.
+  it('never re-submits a failed image a moderator has yet to review', async () => {
+    storeImages({ connected: [image(32, { ingestion: 'Error', needsReview: 'minor' })] });
+
+    expect(await retry()).toEqual({ sent: 0, deferred: false });
+    expect(await requeued()).toEqual([]);
+  });
+
+  it('re-submits the same failed image once nothing awaits review', async () => {
+    storeImages({ connected: [image(32, { ingestion: 'Error' })] });
+
+    expect(await retry()).toEqual({ sent: 1, deferred: false });
+    expect(await requeued()).toEqual([32]);
+  });
+
+  it('re-submits only failed images: a scanned or blocked one is left as it is', async () => {
+    storeImages({ connected: [CLEAN, BLOCK_REASON_ONLY, FAILED] });
+
+    await retry();
+
+    expect(await requeued()).toEqual([FAILED.id]);
+  });
+
+  it('leaves a missing image alone after the first round', async () => {
+    storeImages({ connected: [FAILED, MISSING] });
+
+    await retry({ includeNotFound: false });
+
+    expect(await requeued()).toEqual([FAILED.id]);
+  });
+
+  it('sends nothing when the images exceed what is left of the tick', async () => {
+    storeImages({ connected: [FAILED, MISSING] });
+
+    expect(await retry({ budget: 1, fullBudget: false })).toEqual({ sent: 0, deferred: true });
+    expect(await requeued()).toEqual([]);
+  });
 });

@@ -131,6 +131,8 @@ export type ArticleMetadata = {
   challengeType?: string;
   entryPrizeRequirements?: number;
   unpublishedReason?: string;
+  /** `ArticleIngestionErrorState`, as far as the article page reads it. */
+  ingestionError?: { rounds: number; exhaustedAt?: number };
   customMessage?: string;
   unpublishedAt?: string;
   unpublishedBy?: number;

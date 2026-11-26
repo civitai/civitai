@@ -684,6 +684,15 @@ export const toggleBanUserSchema = z.object({
   removeMedia: z.boolean().optional(),
   removeModels: z.boolean().optional(),
   removeComments: z.boolean().optional(),
+  /** The state to end in. Absent flips; already in it, nothing is written. */
+  setTo: z.boolean().optional(),
+});
+
+export type ToggleMuteInput = z.infer<typeof toggleMuteSchema>;
+export const toggleMuteSchema = z.object({
+  id: z.number(),
+  /** The state to end in. Absent flips; already in it, nothing is written. */
+  setTo: z.boolean().optional(),
 });
 
 export type GetBanContentPreviewInput = z.infer<typeof getBanContentPreviewSchema>;

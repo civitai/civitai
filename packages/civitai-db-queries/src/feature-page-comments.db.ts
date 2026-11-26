@@ -11,6 +11,13 @@ import { csamHoldLockKey, csamQueueHeldText } from '@civitai/shared/held-url';
 const rows = async <R>(db: Kysely<DB>, text: string, parameters: unknown[] = []) =>
   (await db.executeQuery<R>(CompiledQuery.raw(text, parameters))).rows;
 
+/**
+ * Whether the comment author `u` (a "User" alias, possibly from a LEFT JOIN) is in standing: there,
+ * not deleted, banned or muted. False, never null, for a missing author.
+ */
+const fpAuthorInStanding = (u: string) =>
+  `(${u}.id IS NOT NULL AND ${u}."deletedAt" IS NULL AND ${u}."bannedAt" IS NULL AND NOT ${u}.muted)`;
+
 export type FpMirrorFactsRow = {
   commentId: number;
   userId: number;
@@ -37,8 +44,7 @@ export type FpMirrorFactsRow = {
   parentUrn: string | null;
   authorExists: boolean;
   authorDeletedAt: Date | null;
-  bannedAt: Date | null;
-  muted: boolean | null;
+  authorInStanding: boolean;
   username: string | null;
   csamHeld: boolean;
   /**
@@ -82,8 +88,8 @@ const FACTS = `
          c."createdAt", c."entityId" AS "topicId",
          COALESCE(c."replyToId", c."parentId") AS "parentId",
          t.urn AS "subjectUrn", pm.urn AS "parentUrn",
-         u.id IS NOT NULL AS "authorExists", u."deletedAt" AS "authorDeletedAt", u."bannedAt",
-         u.muted, u.username,
+         u.id IS NOT NULL AS "authorExists", u."deletedAt" AS "authorDeletedAt",
+         ${fpAuthorInStanding('u')} AS "authorInStanding", u.username,
          ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS "csamHeld"
   FROM "FeaturePageCommentMirror" m
   LEFT JOIN "CommentV3" c ON c.id = m."commentId"
@@ -617,7 +623,7 @@ export async function unactionReportLiftingScanHide(
         `SELECT COALESCE(m."modHideOrigin" = 'foreign', false) AS foreign,
            ${openPersonReport('m."commentId"', '$2')} AS reported,
            COALESCE(m."leaseUntil" > now(), false) AS pushing,
-           (u.id IS NULL OR u."deletedAt" IS NOT NULL OR u."bannedAt" IS NOT NULL OR u.muted) AS author,
+           NOT ${fpAuthorInStanding('u')} AS author,
            ${csamQueueHeldText('CommentV3', 'm."commentId"')} AS held,
            m."scanHiddenVersion" IS DISTINCT FROM m.version AS version
          FROM "FeaturePageCommentMirror" m
@@ -675,7 +681,7 @@ export async function unactionReportLiftingScanHide(
            AND m."goneCause" IS NULL AND m."removeWantedAt" IS NULL
            AND m."modHideOrigin" IS DISTINCT FROM 'foreign'
            AND (m."leaseUntil" IS NULL OR m."leaseUntil" < now())
-           AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL AND NOT u.muted
+           AND ${fpAuthorInStanding('u')}
            AND NOT ${csamQueueHeldText('CommentV3', 'm."commentId"')}
            AND NOT ${openPersonReport('m."commentId"', '$3')}
        ), shown AS (

@@ -64,6 +64,7 @@ export function JudgeSettingsPanel() {
 
   const draft =
     selectedJudgeId != null && selectedJudgeId > 0 ? drafts[selectedJudgeId] : undefined;
+  const hasDraft = draft != null && Object.keys(draft).length > 0;
 
   // Derive current values: draft overrides server data
   const currentName = draft?.name ?? judge?.name ?? '';
@@ -73,6 +74,7 @@ export function JudgeSettingsPanel() {
   const currentReviewPrompt = draft?.reviewPrompt ?? judge?.reviewPrompt ?? '';
   const currentReviewTemplate = draft?.reviewTemplate ?? judge?.reviewTemplate ?? '';
   const currentWinnerPrompt = draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? '';
+  const currentCollectionPrompt = draft?.collectionPrompt ?? judge?.collectionPrompt ?? '';
   const currentUserSelectable = draft?.userSelectable ?? judge?.userSelectable ?? false;
   // An unrecognised stored value shows as the default rather than emptying the select — the same
   // fallback the judging path applies, so the picker never disagrees with what will actually run.
@@ -92,6 +94,7 @@ export function JudgeSettingsPanel() {
       reviewPrompt: currentReviewPrompt || null,
       reviewTemplate: currentReviewTemplate || null,
       winnerSelectionPrompt: currentWinnerPrompt || null,
+      collectionPrompt: currentCollectionPrompt || null,
       userSelectable: currentUserSelectable,
       judgingEngine: currentJudgingEngine,
     });
@@ -113,6 +116,7 @@ export function JudgeSettingsPanel() {
       reviewPrompt: currentReviewPrompt || null,
       reviewTemplate: currentReviewTemplate || null,
       winnerSelectionPrompt: currentWinnerPrompt || null,
+      collectionPrompt: currentCollectionPrompt || null,
       active: judge.active,
       userSelectable: false,
       judgingEngine: currentJudgingEngine,
@@ -187,6 +191,18 @@ export function JudgeSettingsPanel() {
             }}
           />
           <Textarea
+            label="Collection Prompt"
+            description="Used for the challenge collection's name and description"
+            autosize
+            minRows={3}
+            maxRows={10}
+            value={currentCollectionPrompt ?? ''}
+            onChange={(e) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { collectionPrompt: e.currentTarget.value || null });
+            }}
+          />
+          <Textarea
             label="Review Prompt"
             description="Used for image review scoring"
             autosize
@@ -250,6 +266,20 @@ export function JudgeSettingsPanel() {
           <ModelSelector />
         </Stack>
       </ScrollArea>
+      {hasDraft && (
+        <Group mx="sm" gap="xs" justify="space-between" wrap="nowrap">
+          <Text size="xs" c="yellow">
+            Unsaved edits: Save and Duplicate will use them.
+          </Text>
+          <Button
+            variant="subtle"
+            size="compact-xs"
+            onClick={() => selectedJudgeId != null && clearDraft(selectedJudgeId)}
+          >
+            Discard edits
+          </Button>
+        </Group>
+      )}
       <Group m="sm" gap="xs" wrap="nowrap">
         <Button
           leftSection={<IconDeviceFloppy size={16} />}
