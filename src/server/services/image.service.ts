@@ -7,6 +7,7 @@ import { ilikeContains } from '~/server/utils/ilike';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
+import { moderatorWithheldSql } from '@civitai/shared/retracted-media-tier';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -6958,15 +6959,59 @@ export async function updateImageNsfwLevel({
   return nsfwLevel;
 }
 
+/**
+ * A moderator's rating of several images, all or nothing on what is withheld from them: every item
+ * that lowers a rating is checked before the first write, so a refusal writes none of them.
+ */
+export async function setImagesNsfwLevel({
+  items,
+  userId,
+  csamReview,
+  status,
+}: {
+  items: { imageId: number; nsfwLevel: NsfwLevel }[];
+  userId: number;
+  csamReview: boolean;
+  status?: UpdateImageNsfwLevelOutput['status'];
+}) {
+  // primary: the current level decides which items lower a rating.
+  const current = await dbWrite.image.findMany({
+    where: { id: { in: items.map((item) => item.imageId) } },
+    select: { id: true, nsfwLevel: true },
+  });
+  const levels = new Map(current.map((image) => [image.id, image.nsfwLevel]));
+  await assertMayLoosenImages(
+    items
+      .filter((item) => item.nsfwLevel < (levels.get(item.imageId) ?? 0))
+      .map((item) => item.imageId),
+    { csamReview }
+  );
+  const imageIds: number[] = [];
+  for (const item of items) {
+    await updateImageNsfwLevel({
+      id: item.imageId,
+      nsfwLevel: item.nsfwLevel,
+      userId,
+      isModerator: true,
+      csamReview,
+      ...(status && { status }),
+    });
+    imageIds.push(item.imageId);
+  }
+  return imageIds;
+}
+
 export type KnightsNsfwLevelResult =
   | { applied: true }
   | { applied: false; reason: 'missing' | 'blocked' | 'locked'; currentLevel: number | null };
 
 /**
  * Writes a Knights consensus rating, but only onto an image nobody has taken out of the vote's
- * hands: it exists, carries no block marker, and is unlocked or locked by an earlier Knights vote.
- * The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a read
- * and the write cannot be overwritten.
+ * hands: it exists, carries no block marker, is unlocked or locked by an earlier Knights vote, and
+ * is not withheld from a moderator without the grant when the vote would lower it (a vote holds no
+ * grant). The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a
+ * read and the write cannot be overwritten. A withheld lowering answers `locked`, which the Knights
+ * app routes to a moderator at the current level.
  */
 export async function setImageNsfwLevelFromKnights({
   id,
@@ -6989,6 +7034,10 @@ export async function setImageNsfwLevelFromKnights({
       AND (
         NOT i."nsfwLevelLocked"
         OR COALESCE(i."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}
+      )
+      AND NOT (
+        ${nsfwLevel} < i."nsfwLevel"
+        AND ${Prisma.raw(moderatorWithheldSql('i', { csamReview: false }))}
       )
     RETURNING i."postId"
   `;

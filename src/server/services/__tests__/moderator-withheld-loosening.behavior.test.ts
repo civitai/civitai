@@ -69,8 +69,13 @@ beforeEach(() => {
 const { assertMayLoosenImages, withheldImageIds } = await import(
   '~/server/services/moderator-withheld.service'
 );
-const { updateImageNsfwLevel, toggleImageFlag, updateImageAcceptableMinor, resolveIngestionError } =
-  await import('~/server/services/image.service');
+const {
+  setImagesNsfwLevel,
+  updateImageNsfwLevel,
+  toggleImageFlag,
+  updateImageAcceptableMinor,
+  resolveIngestionError,
+} = await import('~/server/services/image.service');
 const { rescanImageById } = await import('~/server/services/image-rescan.service');
 const { rescanChallenge, playgroundReviewImage } = await import(
   '~/server/services/challenge.service'
@@ -138,6 +143,39 @@ describe('updateImageNsfwLevel', () => {
     current(WITHHELD);
     await settle(set(WITHHELD, 16));
     expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('setImagesNsfwLevel (the moderator image.setNsfwLevel endpoint)', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([
+      { id: CLEAN, nsfwLevel: 8 },
+      { id: WITHHELD, nsfwLevel: 8 },
+    ] as never);
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      metadata: {},
+      postId: null,
+      nsfwLevel: 8,
+    } as never);
+  });
+  const rate = (withheldLevel: number) =>
+    setImagesNsfwLevel({
+      items: [
+        { imageId: CLEAN, nsfwLevel: 1 },
+        { imageId: WITHHELD, nsfwLevel: withheldLevel },
+      ],
+      userId: 1,
+      csamReview: false,
+    });
+
+  it('writes nothing when a later item would lower a withheld image', async () => {
+    await forbidden(rate(1));
+    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+  });
+
+  it('writes every item when the withheld one is raised', async () => {
+    await settle(rate(16));
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { updateImageNsfwLevel } from '~/server/services/image.service';
+import { setImagesNsfwLevel } from '~/server/services/image.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { imageId, nsfwLevel } from '~/server/schema/moderator/image';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
@@ -28,19 +28,12 @@ export default defineModeratorEndpoint('image.setNsfwLevel', {
       ),
   }),
   async handler(input, ctx) {
-    const csamReview = !!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports;
-    const imageIds: number[] = [];
-    for (const item of input.items) {
-      await updateImageNsfwLevel({
-        id: item.imageId,
-        nsfwLevel: item.nsfwLevel,
-        userId: ctx.actor.id,
-        isModerator: true,
-        csamReview,
-        ...(input.status && { status: input.status }),
-      });
-      imageIds.push(item.imageId);
-    }
+    const imageIds = await setImagesNsfwLevel({
+      items: input.items,
+      userId: ctx.actor.id,
+      csamReview: !!getFeatureFlags({ user: ctx.actor, req: ctx.req }).csamReports,
+      status: input.status,
+    });
     return { count: imageIds.length, affected: { imageIds } };
   },
 });
