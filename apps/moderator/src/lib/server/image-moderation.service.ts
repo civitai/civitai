@@ -267,15 +267,7 @@ export class ImageNotFoundError extends Error {
   }
 }
 
-export async function acceptImage({
-  imageId,
-  removeMinorFlag = false,
-  userId,
-  deferAppealEmail = false,
-  restoreRemoved = false,
-  keepModeratorRemoved = false,
-  shownNeedsReview,
-}: {
+type AcceptImageInput = {
   imageId: number;
   removeMinorFlag?: boolean;
   userId: number;
@@ -290,7 +282,32 @@ export async function acceptImage({
   /** The review flag a queue page showed. When given (and this is not a report verdict), an image whose
    *  flag has changed since is not accepted, and this throws `ImageChangedError`. */
   shownNeedsReview?: string | null;
-}): Promise<ClosedAppeal | undefined> {
+};
+
+/** Accepts an image. An image under the CSAM review flag is left as it is: only the CSAM review
+ *  clears that flag, through `acceptCsamReviewedImage`. */
+export function acceptImage(input: AcceptImageInput) {
+  return acceptImageUnder(input, false);
+}
+
+/** The CSAM queue's accept, the one path that clears the CSAM review flag. Called only from that
+ *  queue's own view, behind `holdsCsamReview`. */
+export function acceptCsamReviewedImage(input: Omit<AcceptImageInput, 'restoreRemoved'>) {
+  return acceptImageUnder(input, true);
+}
+
+async function acceptImageUnder(
+  {
+    imageId,
+    removeMinorFlag = false,
+    userId,
+    deferAppealEmail = false,
+    restoreRemoved = false,
+    keepModeratorRemoved = false,
+    shownNeedsReview,
+  }: AcceptImageInput,
+  clearsCsamReview: boolean
+): Promise<ClosedAppeal | undefined> {
   const readImage = (db: Kysely<DB>) =>
     db
       .selectFrom('Image')
@@ -341,6 +358,9 @@ export async function acceptImage({
     })
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+    .$if(!clearsCsamReview, (qb) =>
+      qb.where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+    )
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
     // A stale accept would lift an image whose child-safety case keeps a moderator's pending delete.
     .$if(checksShown, (qb) =>
@@ -374,8 +394,8 @@ export async function acceptImage({
       if (now && now.needsReview !== shownNeedsReview) throw new ImageChangedError(imageId);
     }
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
-    if (keepModeratorRemoved) {
-      // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
+    // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
+    if (keepModeratorRemoved || !clearsCsamReview) {
       const flagged = await dbWrite
         .selectFrom('Image')
         .select('id')
@@ -383,6 +403,8 @@ export async function acceptImage({
         .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
         .executeTakeFirst();
       if (flagged) throw new CsamReviewImageError(imageId);
+    }
+    if (keepModeratorRemoved) {
       const removed = await dbWrite
         .selectFrom('Image')
         .select(
