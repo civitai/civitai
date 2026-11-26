@@ -13,10 +13,12 @@
 -- or NULL when it was routed to the moderator queue or to the developer side.
 -- It records who was told at the time, so it carries no FK.
 --
--- Applied MANUALLY per environment; nothing auto-applies it. The application
+-- Applied MANUALLY per environment; nothing auto-applies it. The reply thread
 -- does not read or write this table while the `app-review-replies` Flipt flag
--- is off, so it is safe to deploy the code before this is applied. Apply it
--- before turning the flag on.
+-- is off. The personal-data export reads every registered table regardless of
+-- the flag: until this is applied, an export marks this one file unavailable
+-- (the rest of the export is unaffected). Apply it before (or with) the deploy,
+-- and in any case before turning the flag on.
 --
 -- Idempotent: safe to run more than once.
 

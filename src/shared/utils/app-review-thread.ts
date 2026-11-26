@@ -129,15 +129,12 @@ export function reviewThreadDeveloperUrl(subjectId: string): string {
 }
 
 /**
- * Where a moderator reads the thread: the review page's Conversation tab for a version request,
- * and the queue's Replies tab (which opens the thread inline) for a listing request, which has no
- * review page.
+ * Where a moderator reads the thread: the queue's Replies tab, which opens it inline
+ * (`?thread=`). For every kind, not only a listing request (which has no review page): the
+ * review page 404s for a WITHDRAWN version request, and a thread on one must still be
+ * answerable. A version request's review page also has the thread, on its Conversation tab.
  */
 export function reviewThreadModeratorUrl(subjectId: string): string {
-  const ref = parseReviewSubjectId(subjectId);
-  if (ref?.kind === 'version') {
-    return `/apps/review/${encodeURIComponent(subjectId)}?tab=conversation`;
-  }
   return `/apps/review?tab=replies&thread=${encodeURIComponent(subjectId)}`;
 }
 

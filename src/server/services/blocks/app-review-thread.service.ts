@@ -39,7 +39,8 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
  * paged); a moderator's message goes to the developer side (`routeReply`).
  *
  * Every caller is behind the `appReviewReplies` flag (the router's procedures), so nothing here
- * touches the table while it is off.
+ * touches the table while it is off. (The personal-data export reads the table on its own,
+ * unflagged, through the export registry.)
  */
 
 /** Typed failures. Duck-typed by the router's `mapOffsiteError` via `name`. */
@@ -72,7 +73,7 @@ type ReviewThreadSubjectRow = {
   approvalNotes: string | null;
   submittedByUserId: number;
   reviewedByUserId: number | null;
-  /** The listing's current owner, for a store-listing request with a listing. */
+  /** The app listing's canonical owner (either kind), when the request has a listing. */
   listingOwnerUserId: number | null;
   reviewer: DecisionReviewer | null;
 };
@@ -90,10 +91,24 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
         approvalNotes: true,
         submittedByUserId: true,
         reviewedByUserId: true,
+        appBlockId: true,
         reviewedBy: { select: reviewUserChipSelect },
       },
     });
     if (!row) return null;
+    // The app's canonical owner is on the developer side too, not only the version's submitter
+    // (an owner who did not submit this version is offered the conversation on its history). A
+    // first version has no block yet; its submitter is its owner.
+    let versionOwnerUserId: number | null = null;
+    if (row.appBlockId) {
+      const listing = await dbRead.appListing.findUnique({
+        where: { appBlockId: row.appBlockId },
+        select: { id: true },
+      });
+      if (listing) {
+        versionOwnerUserId = (await resolveListingAccess(listing.id, null))?.ownerUserId ?? null;
+      }
+    }
     return {
       ref,
       slug: row.slug,
@@ -104,7 +119,7 @@ async function loadSubject(ref: ReviewThreadSubjectRef): Promise<ReviewThreadSub
       approvalNotes: row.approvalNotes,
       submittedByUserId: row.submittedByUserId,
       reviewedByUserId: row.reviewedByUserId,
-      listingOwnerUserId: null,
+      listingOwnerUserId: versionOwnerUserId,
       reviewer: decisionReviewer(row.status, row.reviewedBy),
     };
   }

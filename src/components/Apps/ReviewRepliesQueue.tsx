@@ -20,9 +20,9 @@ export type ReplyAwaitingRow = {
 /**
  * The queue's Replies tab: every submission whose latest message is its developer's, oldest
  * first. "Waiting in the queue" is a reply nobody individual was notified of (the reviewer is
- * gone, no longer a moderator, or the review was automated). A version request opens on its
- * review page's Conversation tab; a listing request, which has no review page, opens here
- * (`?thread=<id>`). Rendered only while `features.appReviewReplies` is on.
+ * gone, no longer a moderator, or the review was automated). Every thread opens here, inline
+ * (`?thread=<id>`), including one on a withdrawn version request, whose review page 404s.
+ * Rendered only while `features.appReviewReplies` is on.
  */
 export function ReviewRepliesQueue({ threadId }: { threadId?: string | null }) {
   const features = useFeatureFlags();

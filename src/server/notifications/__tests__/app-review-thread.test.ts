@@ -219,10 +219,11 @@ describe('thread links', () => {
     expect(reviewThreadDeveloperUrl('pubreq_01HZX4ABCD')).toBe(
       '/apps/submissions/pubreq_01HZX4ABCD'
     );
+    // Inline on the queue's Replies tab for every kind: the review page 404s for a withdrawn
+    // version request, whose thread must still be answerable.
     expect(reviewThreadModeratorUrl('pubreq_01HZX4ABCD')).toBe(
-      '/apps/review/pubreq_01HZX4ABCD?tab=conversation'
+      '/apps/review?tab=replies&thread=pubreq_01HZX4ABCD'
     );
-    // A listing request has no review page: the queue's Replies tab opens it.
     expect(reviewThreadModeratorUrl('alpr_01HZX4ABCD')).toBe(
       '/apps/review?tab=replies&thread=alpr_01HZX4ABCD'
     );
@@ -260,7 +261,7 @@ describe('the reply notifications', () => {
     expect(prepared?.message).toBe(
       'A developer replied about your review of "Pixel Pal": Fixed the spend prompt.'
     );
-    expect(prepared?.url).toBe('/apps/review/pubreq_01HZX4ABCD?tab=conversation');
+    expect(prepared?.url).toBe('/apps/review?tab=replies&thread=pubreq_01HZX4ABCD');
     expect(prepared?.emailButtonLabel).toBe('Open the conversation');
     expect(prepared?.byline).toBeUndefined();
     // No display name: the slug.
