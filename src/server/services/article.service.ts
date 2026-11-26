@@ -1,6 +1,16 @@
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { ownerMediaAllowed } from '~/server/common/image-block-marker';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { kyselyOver } from '~/server/db/prisma-kysely';
+import {
+  keepWithheldMedia,
+  restoreWithheldMedia,
+  withheldMediaPlaceholders,
+} from '~/server/utils/article-withheld-media';
+import {
+  WITHHELD_HREF_ATTRIBUTE,
+  WITHHELD_MEDIA_TYPE,
+} from '~/shared/constants/withheld-media.constants';
 import type { EventViewer } from '~/server/events/event-access';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
@@ -23,12 +33,14 @@ import type { ReportListedViewer } from '~/server/services/report-listed-visibil
 import {
   getReportListedHiddenImageIds,
   reportListedVisibleSql,
+  SIGNED_OUT_REPORT_LISTED,
 } from '~/server/services/report-listed-visibility';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import {
   CSAM_HELD_REVIEW,
   isCsamHeldBodyImage,
   isServableBodyImage,
+  readerArticleBody,
   removeBodyMedia,
 } from '~/server/utils/article-body-media';
 import { eventEngine } from '~/server/events';
@@ -52,7 +64,10 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { OFFICIAL_ARTICLE_TAG } from '~/shared/constants/article.constants';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
-import { articleDetailSelect } from '~/server/selectors/article.selector';
+import {
+  articleContentImageSelect,
+  articleDetailSelect,
+} from '~/server/selectors/article.selector';
 import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import type {
   ContentDecorationCosmetic,
@@ -103,10 +118,8 @@ import {
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
-import {
-  getModelWithheldImageIds,
-  imageAllowedByItsModelSql,
-} from '~/server/services/collection-cover-visibility';
+import { getArticleImageHolds } from '~/server/services/article-image-holds';
+import { imageAllowedByItsModelSql } from '~/server/services/collection-cover-visibility';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -868,20 +881,6 @@ export const isArticleProcessing = async ({ id }: GetByIdInput) => {
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
-/** A body image's row, with what `RenderRichText`'s `imageGuard` needs to guard it by level. */
-export const articleContentImageSelect = {
-  id: true,
-  url: true,
-  ingestion: true,
-  nsfwLevel: true,
-  userId: true,
-  hash: true,
-  width: true,
-  height: true,
-  needsReview: true,
-  tosViolation: true,
-  modelRestricted: true,
-} satisfies Prisma.ImageSelect;
 
 /**
  * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
@@ -902,7 +901,9 @@ export const getArticleById = async ({
   userId,
   isModerator,
   reportListedViewer = { seesReportListed: false },
+  edit = false,
 }: GetByIdInput & {
+  edit?: boolean;
   userId?: number;
   isModerator?: boolean;
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
@@ -949,14 +950,17 @@ export const getArticleById = async ({
     // owner does; card and feed covers still withhold them from moderators.
     const viewer = isModerator ? 'owner' : articleImageViewer({ id: userId }, article.userId);
     // A cover or banner its model withholds is shown only to moderators, and to the article's
-    // owner when they uploaded it; one listed on a CsamReport follows `reportListedViewer`. The
-    // edit form learns of one it may not see from the `...Withheld` flags, and a save that
-    // leaves it out keeps it (upsertArticle).
+    // owner when they uploaded it. Any image listed on a CsamReport follows `reportListedViewer`.
+    // The edit form learns of a cover or banner it may not see from the `...Withheld` flags, and a
+    // save that leaves it out keeps it (upsertArticle).
     const ownImageIds = [article.coverImage?.id, article.bannerImage?.id].filter(isDefined);
-    const [withheldByModel, listedHidden] = await Promise.all([
-      isModerator ? new Set<number>() : getModelWithheldImageIds(ownImageIds),
-      getReportListedHiddenImageIds(ownImageIds, { userId, ...reportListedViewer }),
-    ]);
+    const bodyImages = imageConnections.map((conn) => conn.image);
+    const { withheldByModel, listedHidden } = await getArticleImageHolds({
+      coverIds: ownImageIds,
+      bodyIds: bodyImages.map((image) => image.id),
+      viewer: { userId, ...reportListedViewer },
+      skipModel: isModerator,
+    });
     const hiddenByModel = (image: { id: number; userId: number } | null) =>
       !!image &&
       (listedHidden.has(image.id) ||
@@ -976,26 +980,36 @@ export const getArticleById = async ({
     const coverImageWithheld = isOwner && coverHidden;
     const bannerImageWithheld = isOwner && bannerHidden;
 
-    // Media nobody but its owner and moderators may get leaves the body, and csam-held media
-    // leaves it for the owner too.
-    const bodyImages = imageConnections.map((conn) => conn.image);
-    const keptImages = isModerator
-      ? bodyImages
-      : bodyImages.filter((image) =>
-          userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)
-        );
+    // Report-listed media, and media nobody but its owner and moderators may get, leave the body;
+    // csam-held media leaves it for the owner too.
+    const keptImages = bodyImages.filter(
+      (image) =>
+        !listedHidden.has(image.id) &&
+        (isModerator ||
+          (userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)))
+    );
+    // On the edit form a listed body image is placeholdered, not dropped, so a save keeps it; it
+    // stays withheld so the strip below catches any other spelling of it.
+    const listedUrls = bodyImages
+      .filter((image) => listedHidden.has(image.id))
+      .map((image) => image.url);
+    const placeholdered = edit && (isOwner || !!isModerator) ? listedUrls : [];
     const withheld = bodyImages
       .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
     const contentImages = keptImages.map(withoutMinorFlag);
     const nonOwner = !isModerator && userId !== article.userId;
-    const content =
-      isModerator || !article.content
-        ? article.content
-        : removeBodyMedia(article.content, {
-            withheld,
-            keepEdgeMedia: nonOwner ? new Set(contentImages.map((image) => image.url)) : undefined,
-          });
+    const body =
+      placeholdered.length && article.content
+        ? withheldMediaPlaceholders(article.content, new Set(placeholdered))
+        : article.content;
+    const content = !body
+      ? body
+      : nonOwner
+      ? readerArticleBody(body, bodyImages, listedHidden).content
+      : isModerator && !withheld.length
+      ? body
+      : removeBodyMedia(body, { withheld });
     // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
     // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
     // branch let any author store a doc with node types the renderer has no schema entry for
@@ -1075,6 +1089,18 @@ function viewableArticleImage(
 const ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE =
   'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.';
 
+/**
+ * A save answers with the body only as the caller sent it, and with none when it sent none: the
+ * stored body can hold images the saver may not see.
+ */
+function articleSaveAnswer<T extends { content: string | null }>(
+  saved: T,
+  sentContent: string | undefined
+): Omit<T, 'content'> & { content?: string } {
+  const { content: _stored, ...rest } = saved;
+  return sentContent === undefined ? rest : { ...rest, content: sentContent };
+}
+
 export const upsertArticle = async ({
   id,
   userId,
@@ -1086,11 +1112,11 @@ export const upsertArticle = async ({
   scanContent,
   scheduledAt,
   reportListedViewer = { seesReportListed: false },
+  editForm = false,
   ...data
 }: UpsertArticleInput & {
   userId: number;
   isModerator?: boolean;
-  /** The editor's report-listed view, as getArticleById applied it to the edit form. */
   reportListedViewer?: Omit<ReportListedViewer, 'userId'>;
   metadata?: ArticleMetadata;
   scanContent?: boolean;
@@ -1151,6 +1177,34 @@ export const upsertArticle = async ({
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
     }
 
+    const sentContent = data.content;
+    if (data.content === undefined) {
+      if (!article?.content) throw throwBadRequestError('An article needs a body');
+      data.content = article.content;
+    }
+    // A listed body image the saver may not see goes back in: in place for an edit-form
+    // placeholder, which only the edit form may delete, else at the end of the body.
+    const sent = data.content;
+    if (
+      sent.includes(WITHHELD_MEDIA_TYPE) ||
+      sent.includes(WITHHELD_HREF_ATTRIBUTE) ||
+      (article?.content && sent !== article.content)
+    ) {
+      const connected = article ? await connectedArticleImages(article.id) : [];
+      const hidden = await getReportListedHiddenImageIds(
+        connected.map((c) => c.image.id),
+        { userId, ...reportListedViewer },
+        dbWrite
+      );
+      const hiddenUrls = new Set(
+        connected.filter((c) => hidden.has(c.image.id)).map((c) => c.image.url)
+      );
+      const restored = restoreWithheldMedia(sent, article?.content, hiddenUrls);
+      const kept = editForm ? restored : keepWithheldMedia(restored, article?.content, hiddenUrls);
+      // What was put back skipped the input sanitizer, so the whole body goes through it again.
+      data.content = kept === sent ? sent : sanitizeHtml(kept, { allowBlurbs: true });
+    }
+
     if (data.content) {
       await assertArticleContentUrlsUsable({
         content: data.content,
@@ -1204,6 +1258,7 @@ export const upsertArticle = async ({
       restrictToBlurbIds,
     });
     data.content = expansion.html;
+    const body = expansion.html;
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
@@ -1267,10 +1322,12 @@ export const upsertArticle = async ({
         bannerId === null ? article.bannerId : null,
       ].filter(isDefined);
       if (stored.length) {
-        const [withheld, listedHidden] = await Promise.all([
-          isModerator ? new Set<number>() : getModelWithheldImageIds(stored, dbWrite),
-          getReportListedHiddenImageIds(stored, { userId, ...reportListedViewer }, dbWrite),
-        ]);
+        const { withheldByModel: withheld, listedHidden } = await getArticleImageHolds({
+          coverIds: stored,
+          viewer: { userId, ...reportListedViewer },
+          skipModel: isModerator,
+          db: dbWrite,
+        });
         const owners = withheld.size
           ? await dbWrite.image.findMany({
               where: { id: { in: [...withheld] } },
@@ -1306,6 +1363,7 @@ export const upsertArticle = async ({
         const article = await tx.article.create({
           data: {
             ...data,
+            content: body,
             publishedAt,
             scheduledAt: scheduledAtWrite,
             coverId,
@@ -1425,7 +1483,7 @@ export const upsertArticle = async ({
         });
       }
 
-      return result;
+      return articleSaveAnswer(result, sentContent);
     }
 
     // article is guaranteed non-null here since the `if (id)` block above fetches it
@@ -1695,7 +1753,7 @@ export const upsertArticle = async ({
         coverId !== undefined && article.coverId !== coverId ? article.coverId : null,
         bannerId !== undefined && article.bannerId !== bannerId ? article.bannerId : null,
       ].filter(isDefined);
-      await queueImageDeletes(kyselyOver(dbWrite), replaced, { ownerId: result.userId });
+      await queueArticleImageDeletes(dbWrite, replaced, { ownerId: result.userId });
     } catch (error) {
       handleLogError(error as Error, 'article-replaced-image-cleanup', { articleId: id });
     }
@@ -1733,7 +1791,7 @@ export const upsertArticle = async ({
     const hasModeratorOverride =
       !isModerator && article != null && article.moderatorNsfwLevel != null;
 
-    return { ...result, hasModeratorOverride };
+    return { ...articleSaveAnswer(result, sentContent), hasModeratorOverride };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     if (
@@ -2103,7 +2161,7 @@ export const deleteArticleById = async ({
       });
 
       // A cover or banner saved since the read is checked too, though it was not locked.
-      await queueImageDeletes(kyselyOver(tx), [...imageIds, ...articleOwnImageIds(deleted)], {
+      await queueArticleImageDeletes(tx, [...imageIds, ...articleOwnImageIds(deleted)], {
         ownerId: article.userId,
         // A moderator deleting their own article deletes it as its owner.
         moderatorDelete: !!isModerator && article.userId !== userId,
@@ -2399,6 +2457,32 @@ async function assertNoShopArtworkInContent(
   if (shopUrls.size) throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
 }
 
+function connectedArticleImages(articleId: number) {
+  // primary: a replica read can lag the body this save overwrites.
+  return dbWrite.imageConnection.findMany({
+    where: {
+      entityId: articleId,
+      entityType: ImageConnectionType.Article,
+      ...connectionImageExists,
+    },
+    select: { image: { select: { id: true, url: true } } },
+  });
+}
+
+/** `queueImageDeletes`, except that an image listed on a report is never queued for cleanup. */
+async function queueArticleImageDeletes(
+  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  imageIds: number[],
+  options: Parameters<typeof queueImageDeletes>[2]
+) {
+  const listed = await getReportListedHiddenImageIds(imageIds, SIGNED_OUT_REPORT_LISTED, db);
+  await queueImageDeletes(
+    kyselyOver(db),
+    imageIds.filter((imageId) => !listed.has(imageId)),
+    options
+  );
+}
+
 /**
  * Link article content images to article entity
  * Creates Image entities and ImageConnections for all embedded images
@@ -2571,7 +2655,7 @@ export async function linkArticleContentImages({
       });
     }
 
-    await queueImageDeletes(kyselyOver(tx), orphanedIds, { ownerId });
+    await queueArticleImageDeletes(tx, orphanedIds, { ownerId });
 
     // In the same transaction as the rows, so a failed write leaves held urls without rows.
     const holdWritten =

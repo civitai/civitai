@@ -1,3 +1,4 @@
+import { prefixCacheKey } from '@civitai/redis';
 import { REDIS_TIMEOUT_MS, within } from './redis-timeout';
 import type { ItemKind, ItemRef } from './feed-token';
 
@@ -32,7 +33,7 @@ redis.call('EXPIRE', KEYS[1], ARGV[4])
 return 1`;
 const LIST = `return redis.call('ZRANGE', KEYS[1], 0, -1)`;
 
-const keyOf = (userId: number) => `knights:skipped:${userId}`;
+const keyOf = (userId: number) => prefixCacheKey(`knights:skipped:${userId}`);
 
 export function redisSkipStore(client: () => EvalClient): SkipStore {
   return {

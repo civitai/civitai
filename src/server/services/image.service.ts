@@ -106,7 +106,7 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
-  notReportListedSql,
+  reportListedImageSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
   isReviewImageBlockedForViewer,
@@ -3518,7 +3518,7 @@ const getAllImagesUncaptured = async (
       ${imageOnSiteSql()} as "onSite",
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
-      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
+      image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -4772,7 +4772,7 @@ export const getImage = async ({
       u."deletedAt",
       u."profilePictureId",
       COALESCE(p."availability", 'Public') "availability",
-      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
+      image_sort_at(p."publishedAt", i."scannedAt", i."createdAt", i."firstVisibleAt") "publishedAt",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -6172,9 +6172,11 @@ export const getEntityCoverImage = async ({
 
   // A report-listed image is its uploader's and `seesReportListed` viewers' alone, on every branch
   // that can pick a bounty, entry or article cover.
-  const reportListedVisible = Prisma.sql`(${seesReportListed}::boolean OR ${notReportListedSql(
-    signedIn ? viewerId ?? undefined : undefined
-  )})`;
+  const reportListedVisible = reportListedImageSql({
+    userId: signedIn ? viewerId ?? undefined : undefined,
+    seesReportListed,
+    ownerSeesReportListed: true,
+  });
   // A blocked cover is moderators' alone, plus its owner's where `ownerMediaAllowedSql` allows the
   // media; a ToS-violating one is its owner's and moderators'.
   const coverNotBlocked = Prisma.join(

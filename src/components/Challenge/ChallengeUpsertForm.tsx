@@ -81,6 +81,23 @@ import {
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputContentRatingSelect = withController(ContentRatingSelect);
 
+// The `{ error }` on the object (not just the refine) is what surfaces the message when the
+// field is `undefined`: an undefined object fails the object check before `.refine()` runs. A
+// cover the editor may not see comes with its id and no url; saving keeps it.
+export const challengeCoverImageSchema = z
+  .object(
+    {
+      id: z.number().optional(),
+      url: z.string(),
+      restricted: z.boolean().optional(),
+      hash: z.string().nullish(),
+      width: z.number().nullish(),
+      height: z.number().nullish(),
+    },
+    { error: 'Cover image is required' }
+  )
+  .refine((val) => !!val.url || val.id != null, { error: 'Cover image is required' });
+
 // Form schema - extends server schema with flattened prize fields for UI
 // judgeId is overridden to string|null because Mantine Select uses string values
 // Note: cannot use .refine() here because useForm casts schema to ZodObject to access .shape
@@ -97,21 +114,7 @@ const schema = upsertChallengeBaseSchema
     themeElements: z.string().optional(),
     judgeId: z.string().nullish().default('1'),
     eventId: z.string().nullish().default(null),
-    // The `{ error }` on the object (not just the refine) is what surfaces the message when the
-    // field is `undefined` — an undefined object fails the object check before `.refine()` runs.
-    coverImage: z
-      .object(
-        {
-          id: z.number().optional(),
-          url: z.string(),
-          restricted: z.boolean().optional(),
-          hash: z.string().nullish(),
-          width: z.number().nullish(),
-          height: z.number().nullish(),
-        },
-        { error: 'Cover image is required' }
-      )
-      .refine((val) => !!val.url, { error: 'Cover image is required' }),
+    coverImage: challengeCoverImageSchema,
     prize1Buzz: z.number().min(0).default(5000),
     prize2Buzz: z.number().min(0).default(2500),
     prize3Buzz: z.number().min(0).default(1000),
@@ -128,7 +131,12 @@ const schema = upsertChallengeBaseSchema
     // `shouldUnregister` drops the unmounted field — a required z.date() would fail user submits.
     visibleAt: z.date().optional(),
     // User-variant-only fields (unused by the moderator submit path)
-    entryFee: z.number().int().min(CHALLENGE_MIN_ENTRY_FEE).max(CHALLENGE_MAX_ENTRY_FEE).default(CHALLENGE_MIN_ENTRY_FEE),
+    entryFee: z
+      .number()
+      .int()
+      .min(CHALLENGE_MIN_ENTRY_FEE)
+      .max(CHALLENGE_MAX_ENTRY_FEE)
+      .default(CHALLENGE_MIN_ENTRY_FEE),
     initialPrizeBuzz: z.number().int().min(0).max(CHALLENGE_MAX_INITIAL_PRIZE).default(0),
     maxParticipants: z.number().int().min(1).max(100_000).optional(),
     buzzType: z.enum(['green', 'yellow']).default('yellow'),
@@ -208,7 +216,10 @@ export function resolveModJudgingCategoriesSubmission(
   if (!customizeCategories) return { success: true, data: null };
   const result = challengeJudgingCategoriesInputSchema.safeParse(categories);
   if (!result.success) {
-    return { success: false, message: result.error.issues[0]?.message ?? 'Invalid judging categories' };
+    return {
+      success: false,
+      message: result.error.issues[0]?.message ?? 'Invalid judging categories',
+    };
   }
   return { success: true, data: result.data };
 }
@@ -365,7 +376,10 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       await router.push(`/challenges/${result.id}`);
     },
     onError: (error) => {
-      showErrorNotification({ title: 'Unable to create challenge', error: new Error(error.message) });
+      showErrorNotification({
+        title: 'Unable to create challenge',
+        error: new Error(error.message),
+      });
     },
   });
 
@@ -448,11 +462,15 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         return;
       }
 
-      const categoriesResult = challengeJudgingCategoriesInputSchema.safeParse(data.judgingCategories);
+      const categoriesResult = challengeJudgingCategoriesInputSchema.safeParse(
+        data.judgingCategories
+      );
       if (!categoriesResult.success) {
         showErrorNotification({
           title: 'Invalid judging categories',
-          error: new Error(categoriesResult.error.issues[0]?.message ?? 'Invalid judging categories'),
+          error: new Error(
+            categoriesResult.error.issues[0]?.message ?? 'Invalid judging categories'
+          ),
         });
         return;
       }
@@ -891,7 +909,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 </SimpleGrid>
                 <Divider label="Prize split (must total 100%)" />
                 <SimpleGrid cols={3}>
-                  <InputNumber 
+                  <InputNumber
                     name="dist1"
                     label="1st Place %"
                     min={1}
@@ -931,167 +949,180 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
 
             {!isUser && (
               <>
-            <Group justify="space-between" wrap="wrap">
-              <Title order={4}>Prizes</Title>
-              <CurrencyBadge
-                currency={Currency.BUZZ}
-                type={selectedBuzzType}
-                unitAmount={totalPrizePool}
-                size="lg"
-              />
-            </Group>
-
-            {/* Prize Mode Toggle */}
-            <InputSegmentedControl
-              name="prizeMode"
-              data={[
-                { label: 'Fixed Prizes', value: PrizeMode.Fixed },
-                { label: 'Dynamic Pool', value: PrizeMode.Dynamic },
-              ]}
-              disabled={isActive || isReadOnly}
-            />
-
-            <div className={prizeMode === PrizeMode.Fixed ? '' : 'hidden'}>
-              <SimpleGrid cols={{ base: 1, xs: 3 }}>
-                <InputNumber
-                  name="prize1Buzz"
-                  label="1st Place"
-                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
-                  currency={Currency.BUZZ}
-                  min={0}
-                  step={100}
-                  disabled={isReadOnly}
-                />
-                <InputNumber
-                  name="prize2Buzz"
-                  label="2nd Place"
-                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
-                  currency={Currency.BUZZ}
-                  min={0}
-                  step={100}
-                  disabled={isReadOnly}
-                />
-                <InputNumber
-                  name="prize3Buzz"
-                  label="3rd Place"
-                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
-                  currency={Currency.BUZZ}
-                  min={0}
-                  step={100}
-                  disabled={isReadOnly}
-                />
-              </SimpleGrid>
-            </div>
-
-            <div className={prizeMode === PrizeMode.Dynamic ? '' : 'hidden'}>
-              <Stack gap="md">
-                {/* Base Prize Pool */}
-                <InputNumber
-                  name="basePrizePool"
-                  label="Base Prize Pool"
-                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
-                  currency={Currency.BUZZ}
-                  min={0}
-                  step={100}
-                  disabled={isActive || isReadOnly}
-                />
-
-                {/* Growth Rule */}
-                <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                  <InputNumber
-                    name="buzzPerAction"
-                    label="Buzz Per Trigger"
-                    leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
+                <Group justify="space-between" wrap="wrap">
+                  <Title order={4}>Prizes</Title>
+                  <CurrencyBadge
                     currency={Currency.BUZZ}
-                    min={0}
-                    step={1}
-                    disabled={isActive || isReadOnly}
+                    type={selectedBuzzType}
+                    unitAmount={totalPrizePool}
+                    size="lg"
                   />
-                  <InputSelect
-                    name="poolTrigger"
-                    label="Growth Trigger"
-                    data={[
-                      { value: PoolTrigger.Entry, label: 'Per Entry' },
-                      { value: PoolTrigger.User, label: 'Per Unique User' },
-                    ]}
-                    disabled={isActive || isReadOnly}
-                  />
-                </SimpleGrid>
+                </Group>
 
-                {/* Pool Cap */}
-                <InputNumber
-                  name="maxPrizePool"
-                  label="Max Prize Pool (optional)"
-                  description="Leave empty for unlimited growth"
-                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
-                  currency={Currency.BUZZ}
-                  min={0}
-                  step={100}
+                {/* Prize Mode Toggle */}
+                <InputSegmentedControl
+                  name="prizeMode"
+                  data={[
+                    { label: 'Fixed Prizes', value: PrizeMode.Fixed },
+                    { label: 'Dynamic Pool', value: PrizeMode.Dynamic },
+                  ]}
                   disabled={isActive || isReadOnly}
                 />
 
-                {/* Distribution */}
-                <SimpleGrid cols={3}>
-                  <InputNumber
-                    name="dist1"
-                    label="1st Place %"
-                    min={1}
-                    max={100}
-                    allowNegative={false}
-                    clampBehavior="blur"
-                    disabled={isActive || isReadOnly}
-                  />
-                  <InputNumber
-                    name="dist2"
-                    label="2nd Place %"
-                    min={1}
-                    max={100}
-                    allowNegative={false}
-                    clampBehavior="blur"
-                    disabled={isActive || isReadOnly}
-                  />
-                  <InputNumber
-                    name="dist3"
-                    label="3rd Place %"
-                    min={1}
-                    max={100}
-                    allowNegative={false}
-                    clampBehavior="blur"
-                    disabled={isActive || isReadOnly}
-                  />
-                </SimpleGrid>
-                <Group gap="md" wrap="wrap">
-                  <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
-                    {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%
-                    {totalPct === 100 ? ' \u2713' : ' (must equal 100%)'}
-                  </Text>
-                  {totalPct === 100 && dynamicDisplayPool > 0 && (
-                    <Text size="sm" c="dimmed">
-                      1st: {Math.floor((dynamicDisplayPool * (dist1 || 0)) / 100).toLocaleString()}
-                      {' / '}2nd:{' '}
-                      {Math.floor((dynamicDisplayPool * (dist2 || 0)) / 100).toLocaleString()}
-                      {' / '}3rd:{' '}
-                      {Math.floor((dynamicDisplayPool * (dist3 || 0)) / 100).toLocaleString()}
-                      {' buzz'}
-                    </Text>
-                  )}
-                </Group>
-              </Stack>
-            </div>
+                <div className={prizeMode === PrizeMode.Fixed ? '' : 'hidden'}>
+                  <SimpleGrid cols={{ base: 1, xs: 3 }}>
+                    <InputNumber
+                      name="prize1Buzz"
+                      label="1st Place"
+                      leftSection={
+                        <CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />
+                      }
+                      currency={Currency.BUZZ}
+                      min={0}
+                      step={100}
+                      disabled={isReadOnly}
+                    />
+                    <InputNumber
+                      name="prize2Buzz"
+                      label="2nd Place"
+                      leftSection={
+                        <CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />
+                      }
+                      currency={Currency.BUZZ}
+                      min={0}
+                      step={100}
+                      disabled={isReadOnly}
+                    />
+                    <InputNumber
+                      name="prize3Buzz"
+                      label="3rd Place"
+                      leftSection={
+                        <CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />
+                      }
+                      currency={Currency.BUZZ}
+                      min={0}
+                      step={100}
+                      disabled={isReadOnly}
+                    />
+                  </SimpleGrid>
+                </div>
 
-            <Divider />
+                <div className={prizeMode === PrizeMode.Dynamic ? '' : 'hidden'}>
+                  <Stack gap="md">
+                    {/* Base Prize Pool */}
+                    <InputNumber
+                      name="basePrizePool"
+                      label="Base Prize Pool"
+                      leftSection={
+                        <CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />
+                      }
+                      currency={Currency.BUZZ}
+                      min={0}
+                      step={100}
+                      disabled={isActive || isReadOnly}
+                    />
 
-            {/* Participation Prize - both modes */}
-            <InputNumber
-              name="entryPrizeBuzz"
-              label="Participation Prize (per valid entry)"
-              description="Optional buzz reward for all valid entries"
-              leftSection={<CurrencyIcon currency="BUZZ" type="blue" size={16} />}
-              currency={Currency.BUZZ}
-              min={0}
-              step={10}
-              disabled={isReadOnly}
-            />
+                    {/* Growth Rule */}
+                    <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                      <InputNumber
+                        name="buzzPerAction"
+                        label="Buzz Per Trigger"
+                        leftSection={
+                          <CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />
+                        }
+                        currency={Currency.BUZZ}
+                        min={0}
+                        step={1}
+                        disabled={isActive || isReadOnly}
+                      />
+                      <InputSelect
+                        name="poolTrigger"
+                        label="Growth Trigger"
+                        data={[
+                          { value: PoolTrigger.Entry, label: 'Per Entry' },
+                          { value: PoolTrigger.User, label: 'Per Unique User' },
+                        ]}
+                        disabled={isActive || isReadOnly}
+                      />
+                    </SimpleGrid>
+
+                    {/* Pool Cap */}
+                    <InputNumber
+                      name="maxPrizePool"
+                      label="Max Prize Pool (optional)"
+                      description="Leave empty for unlimited growth"
+                      leftSection={
+                        <CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />
+                      }
+                      currency={Currency.BUZZ}
+                      min={0}
+                      step={100}
+                      disabled={isActive || isReadOnly}
+                    />
+
+                    {/* Distribution */}
+                    <SimpleGrid cols={3}>
+                      <InputNumber
+                        name="dist1"
+                        label="1st Place %"
+                        min={1}
+                        max={100}
+                        allowNegative={false}
+                        clampBehavior="blur"
+                        disabled={isActive || isReadOnly}
+                      />
+                      <InputNumber
+                        name="dist2"
+                        label="2nd Place %"
+                        min={1}
+                        max={100}
+                        allowNegative={false}
+                        clampBehavior="blur"
+                        disabled={isActive || isReadOnly}
+                      />
+                      <InputNumber
+                        name="dist3"
+                        label="3rd Place %"
+                        min={1}
+                        max={100}
+                        allowNegative={false}
+                        clampBehavior="blur"
+                        disabled={isActive || isReadOnly}
+                      />
+                    </SimpleGrid>
+                    <Group gap="md" wrap="wrap">
+                      <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
+                        {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%
+                        {totalPct === 100 ? ' \u2713' : ' (must equal 100%)'}
+                      </Text>
+                      {totalPct === 100 && dynamicDisplayPool > 0 && (
+                        <Text size="sm" c="dimmed">
+                          1st:{' '}
+                          {Math.floor((dynamicDisplayPool * (dist1 || 0)) / 100).toLocaleString()}
+                          {' / '}2nd:{' '}
+                          {Math.floor((dynamicDisplayPool * (dist2 || 0)) / 100).toLocaleString()}
+                          {' / '}3rd:{' '}
+                          {Math.floor((dynamicDisplayPool * (dist3 || 0)) / 100).toLocaleString()}
+                          {' buzz'}
+                        </Text>
+                      )}
+                    </Group>
+                  </Stack>
+                </div>
+
+                <Divider />
+
+                {/* Participation Prize - both modes */}
+                <InputNumber
+                  name="entryPrizeBuzz"
+                  label="Participation Prize (per valid entry)"
+                  description="Optional buzz reward for all valid entries"
+                  leftSection={<CurrencyIcon currency="BUZZ" type="blue" size={16} />}
+                  currency={Currency.BUZZ}
+                  min={0}
+                  step={10}
+                  disabled={isReadOnly}
+                />
               </>
             )}
           </Stack>
@@ -1242,9 +1273,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   label="Customize judging categories"
                   description="Replace the default scoring rubric with your own weighted categories."
                   checked={customizeCategories}
-                  onChange={(event) =>
-                    handleCustomizeCategoriesChange(event.currentTarget.checked)
-                  }
+                  onChange={(event) => handleCustomizeCategoriesChange(event.currentTarget.checked)}
                   disabled={isActive || isReadOnly}
                 />
                 {customizeCategories ? (
@@ -1267,8 +1296,8 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <Divider label="Categories" />
                 <Text size="sm" c="dimmed">
                   These categories and how they&apos;re scored are shown publicly so entrants know
-                  exactly how they&apos;ll be judged. The defaults below are a sensible starting point
-                  — adjust or replace them however you like (weights must total 100%).
+                  exactly how they&apos;ll be judged. The defaults below are a sensible starting
+                  point — adjust or replace them however you like (weights must total 100%).
                 </Text>
                 <CategoryWeights disabled={isActive || isReadOnly} />
               </>
@@ -1329,7 +1358,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           </Button>
           <Button
             type="submit"
-            loading={form.formState.isSubmitting || upsertMutation.isPending || upsertUserMutation.isPending}
+            loading={
+              form.formState.isSubmitting ||
+              upsertMutation.isPending ||
+              upsertUserMutation.isPending
+            }
             disabled={isReadOnly}
             fullWidth
             className="sm:w-auto"

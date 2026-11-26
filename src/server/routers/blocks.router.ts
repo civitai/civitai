@@ -8091,7 +8091,11 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      const claims = await authorizeBlockBridgeToken(input.blockToken, { admitRunner: true });
+      // shortcut: runner submits are refused until the runner attempt ledger reserves them.
+      if (claims.mintOrigin === 'runner') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'runner submit is not available' });
+      }
       ctx.blockSubmitTelemetry.appBlockIdLabel = submitFailureAppBlockLabel(claims);
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
       const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);

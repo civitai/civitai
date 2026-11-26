@@ -2,11 +2,14 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { holdSearchShowcase, withoutListedImages } from '~/server/search-index/models.search-index';
 import {
-  holdSearchShowcase,
-  reportListedImageIds,
-  withoutListedImages,
-} from '~/server/search-index/models.search-index';
+  getReportListedHiddenImageIds,
+  SIGNED_OUT_REPORT_LISTED,
+} from '~/server/services/report-listed-visibility';
+
+const reportListedImageIds = (ids: number[], db: never) =>
+  getReportListedHiddenImageIds(ids, SIGNED_OUT_REPORT_LISTED, db);
 
 // A model's search document is shared by every searcher: an image listed on a CSAM report, whatever
 // the report's state, is left out of it. The lookup runs on Postgres.

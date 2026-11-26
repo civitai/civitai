@@ -210,6 +210,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
+          editForm: true,
           userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.

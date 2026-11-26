@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { imageBlockedForConditions } from '~/server/common/image-visibility';
-import { notReportListedSql } from '~/server/services/report-listed-visibility';
+import { reportListedImageSql } from '~/server/services/report-listed-visibility';
 
 export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
@@ -109,11 +109,11 @@ export function entityImageVisibilityConditions({
   if (!isModerator) AND.push(ownerMediaSql(userId));
   AND.push(imageNotRestrictedSql({ viewerId: userId }));
   AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
-  if (!seesReportListed) AND.push(notReportListedSql(ownerSeesReportListed ? userId : undefined));
+  AND.push(reportListedImageSql({ userId, seesReportListed, ownerSeesReportListed }));
   return AND;
 }
 
-export { notReportListedSql };
+export { reportListedImageSql };
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on

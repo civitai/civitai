@@ -111,6 +111,16 @@ describe('resolveCoverImageId — an image restricted by its base model', () => 
     ).resolves.toBe(42);
   });
 
+  it('keeps the current cover sent back with no url, as an editor who may not see it sends it', async () => {
+    const deps = makeDeps({ assertUsableAsCover: refuse() });
+    await expect(
+      resolveCoverImageId(
+        { coverImage: { ...coverImage, id: 42, url: '' }, userId: 7, currentCoverId: 42 },
+        deps
+      )
+    ).resolves.toBe(42);
+  });
+
   it('refuses a reused row', async () => {
     const deps = makeDeps({
       findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: true }),

@@ -12,7 +12,11 @@ import {
   type OAuthRateLimitBucket,
 } from '$lib/server/oauth/rate-limit';
 import { basicCredentials, parseBody } from '$lib/server/oauth/http';
-import { apiKeyRowScope, carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
+import {
+  apiKeyRowScope,
+  carriesClientCredentialsOnlyScope,
+  carriesRunnerOnlyScope,
+} from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
 import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
 import { introspectAccessTokenJwt, isAnyIntrospector } from '$lib/server/oauth/jwt-introspection';
@@ -124,11 +128,13 @@ export const POST: RequestHandler = async ({ request }) => {
     .where('User.bannedAt', 'is', null)
     .executeTakeFirst();
 
-  // A client-credentials token is single-purpose, so it reads as inactive like an unknown one.
+  // A client-credentials or runner token is single-purpose, so it reads as inactive like an
+  // unknown one.
   if (
     !row ||
     isMemorializedFlags(row.flags) ||
-    carriesClientCredentialsOnlyScope(apiKeyRowScope(row))
+    carriesClientCredentialsOnlyScope(apiKeyRowScope(row)) ||
+    carriesRunnerOnlyScope(apiKeyRowScope(row))
   ) {
     return json({ active: false }, { headers: NO_STORE });
   }
