@@ -3240,6 +3240,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // without re-rating.
     MODEL3D_RATING_V2_MATURE: 'generation:model3d-rating-v2-mature',
     MODEL3D_PREVIEW_V2_PENDING: 'generation:model3d-preview-v2-pending',
+    MODEL3D_PREVIEW_V2_RETRY: 'generation:model3d-preview-v2-retry',
     MODEL3D_RATING_V2_CLEAR: 'generation:model3d-rating-v2-clear',
   },
   TRAINING: {
