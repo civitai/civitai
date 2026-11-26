@@ -68,8 +68,10 @@ export const getUserProfileHandler = async ({
       username: input.username,
       isModerator: actsAsModerator(ctx),
       sessionUserId: ctx.user?.id,
+      sessionUsername: ctx.user?.username,
       eventViewer: eventViewerOf(ctx),
       domain: ctx.domain,
+      fromReplica: true,
     });
 
     if (ctx.user && !ctx.user.isModerator) {
