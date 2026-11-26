@@ -55,11 +55,8 @@ type Entity struct {
 	// sent beside its key by the same feed (body format k2). Zero when the entity carries none: every
 	// other entity, and a private one from an adapter before k2.
 	Seq int64 `json:"seq,omitempty"`
-	// Version is the document's store version (the number a write's ifVersion is compared against),
-	// sent beside its key by the adapter's level streams (src/server/registry-adapter/level-feed.ts)
-	// and its private feed (private-feed.ts, body format k3); zero on every other entity, and on a
-	// private one from an adapter before k3. CreatedAt and UpdatedAt are a shared document's, sent
-	// by the level streams only.
+	// Version, CreatedAt and UpdatedAt are a shared document's, sent beside its key by the adapter's
+	// level streams (src/server/registry-adapter/level-feed.ts); zero on every other entity.
 	Version   int64  `json:"version,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
