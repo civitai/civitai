@@ -211,3 +211,80 @@ export function describeSemanticAuditContract({
     });
   });
 }
+
+type UnauditedRun = (
+  ranked: number[],
+  opts: { user?: SessionUser; guard?: GuardRead; correctedQuery?: string }
+) => { result: Promise<object> };
+
+/**
+ * The refused-page contract of a semantic search without the audit (challenges, crucibles), run
+ * against that service's own harness. `refuseWords` sets its word audit to a real-people refusal;
+ * `refuseCorrection` refuses only the spelling correction `'corrected'`, as blocked words.
+ */
+export function describeUnauditedRefusedPage({
+  index,
+  run,
+  refuseWords,
+  refuseCorrection,
+}: {
+  index: string;
+  run: UnauditedRun;
+  refuseWords: () => void;
+  refuseCorrection: () => void;
+}) {
+  describe(`${index}: a refused page`, () => {
+    const MOD = { id: 1, isModerator: true } as SessionUser;
+    const VIEWER = { id: 7 } as SessionUser;
+    const NO_MATCH = { items: [], nextCursor: undefined, correctedQuery: undefined };
+    const enforceFlag: GuardRead = {
+      outcome: 'flag',
+      rules: ['block:rule_a'],
+      mode: 'enforce',
+      version: 'v1',
+      refused: true,
+    };
+    const minusRefused = (page: object) => {
+      const { refused, ...rest } = page as { refused?: unknown };
+      return rest;
+    };
+
+    it('marks a page with no matches as not refused', async () => {
+      expect(await run([], { user: VIEWER }).result).toEqual({ ...NO_MATCH, refused: false });
+    });
+
+    it.each([
+      ['by the word audit', refuseWords, undefined],
+      ['by the search service', () => undefined, enforceFlag],
+    ])('is, %s, a no-match page plus `refused` for a non-moderator', async (_, setup, guard) => {
+      setup();
+      const page = await run(guard ? [] : [1], { user: VIEWER, guard }).result;
+      expect(page).toMatchObject({ refused: true });
+      expect(minusRefused(page)).toEqual(NO_MATCH);
+      expect(Object.hasOwn(page, 'refusedBy')).toBe(false);
+    });
+
+    it('names the check to a moderator', async () => {
+      refuseWords();
+      expect(await run([1], { user: MOD }).result).toMatchObject({
+        refused: true,
+        refusedBy: 'real people',
+      });
+    });
+
+    it("names the search service's check to a moderator", async () => {
+      expect(await run([], { user: MOD, guard: enforceFlag }).result).toMatchObject({
+        refused: true,
+        refusedBy: 'query guard',
+      });
+    });
+
+    it('names a refused spelling correction to a moderator', async () => {
+      refuseCorrection();
+      expect(await run([1], { user: MOD, correctedQuery: 'corrected' }).result).toMatchObject({
+        refused: true,
+        refusedBy: 'blocked words',
+      });
+    });
+  });
+}
