@@ -292,6 +292,7 @@ export async function resolveSharedContext(
   op: SharedOp
 ): Promise<SharedContext> {
   const resolved = await resolveBlockToken(blockToken, {
+    admitRunner: false,
     // 🔴 APPROVAL FIRST, then revocation — the reverse of the bridge and per-user storage.
     // For an instance that is both revoked and not approved this path answers
     // `app block is not approved` where those two answer `block instance revoked`, and it

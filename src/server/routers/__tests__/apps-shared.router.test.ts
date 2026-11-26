@@ -2440,7 +2440,7 @@ describe('REST entry shape — the six exported write functions carry the full l
     await expect(call()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     // The token string this surface receives is the ONLY credential, so a body
     // that reached the DB before verifying it would be an unauthenticated write.
-    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam');
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam', { admitRunner: false });
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
   });

@@ -1014,6 +1014,28 @@ beforeEach(() => {
     }))) as never);
 });
 
+// The submit hold below is lifted by the runner attempt ledger (runner submit path).
+describe('runner block tokens (mintOrigin: runner)', () => {
+  it('submitWorkflow verifies with the runner opt-in, then refuses until runner submit exists', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ mintOrigin: 'runner' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'runner submit is not available' });
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok', { admitRunner: true });
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('pollWorkflow verifies without the runner opt-in', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok', { admitRunner: false });
+  });
+});
+
 describe('blocks.pollWorkflow', () => {
   it('returns a snapshot for a valid token + workflowId', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());

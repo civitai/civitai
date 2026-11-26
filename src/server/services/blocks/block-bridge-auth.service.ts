@@ -141,8 +141,12 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
  * change to make is a limiter keyed on something available pre-verification, not a
  * reshuffle of these three steps.
  */
-export async function authorizeBlockBridgeToken(blockToken: string): Promise<BlockTokenClaims> {
+export async function authorizeBlockBridgeToken(
+  blockToken: string,
+  { admitRunner = false }: { admitRunner?: boolean } = {}
+): Promise<BlockTokenClaims> {
   const resolved = await resolveBlockToken(blockToken, {
+    admitRunner,
     order: 'revocation-first',
     approval: 'bridge',
     consent: 'strip',
@@ -206,6 +210,8 @@ export type BlockTokenRefusal =
   | 'consent_unavailable';
 
 export interface ResolveBlockTokenOptions {
+  /** Accept a `mintOrigin: 'runner'` token (see `verifyBlockToken`). */
+  admitRunner: boolean;
   order: BlockTokenStepOrder;
   approval: BlockTokenApprovalPolicy;
   consent: BlockTokenConsentMode;
@@ -285,7 +291,7 @@ export async function resolveBlockToken(
 ): Promise<BlockTokenResolution> {
   const refuse = (refusal: BlockTokenRefusal): BlockTokenResolution => ({ ok: false, refusal });
 
-  const claims = await verifyBlockToken(blockToken);
+  const claims = await verifyBlockToken(blockToken, { admitRunner: options.admitRunner });
   if (!claims) return refuse('invalid_token');
 
   let slug: string | null = null;
