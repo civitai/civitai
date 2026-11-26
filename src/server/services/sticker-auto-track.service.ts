@@ -76,6 +76,16 @@ export async function startStickerAutoTrack(input: {
             steps,
           },
         });
+        // The workflow id is otherwise only held by the polling client; queue-wait metrics join on it.
+        if (data?.id)
+          logToAxiom({
+            name: 'sticker-auto-track',
+            type: 'info',
+            message: 'auto-track run submitted',
+            workflowId: data.id,
+            userId: user.id,
+            imageId,
+          });
         return { id: data?.id, status: response?.status };
       },
       now: Date.now,
