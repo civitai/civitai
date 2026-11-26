@@ -1235,8 +1235,6 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     const events = await resume();
     expect(events.map((e) => e.type)).toEqual(['live', 'upsert', 'progress']);
     expect(positions(events)).toEqual([
-      // A state saved before heads were kept names no head, but the collection's current major
-      // is the first poll's, so `live` names it at once.
       { type: 'live', meta: { currentMajor: 1 } },
       { type: 'progress', meta: { head: { seq: 97 }, currentMajor: 1 } },
     ]);

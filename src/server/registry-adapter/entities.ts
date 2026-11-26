@@ -6,11 +6,11 @@ import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, isKnownRating } from '~/server/registry-adapter/audience';
 import type { Entity } from '~/server/registry-adapter/protocol';
 import {
-  HEAD_STEP,
   JSON_SCHEMA_DIALECT,
   collectionSchemaDocuments,
   deriveCollectionMajors,
   exportedCollections,
+  manifestHistory,
 } from '~/server/registry-adapter/collection-schema';
 import type { ListingStoreFields } from '~/server/registry-adapter/catalog-source';
 import type { ApprovedRelease } from '~/server/registry-adapter/release';
@@ -384,10 +384,7 @@ export function buildEntities(
     const publishable = block !== null && block.status === 'approved';
 
     const derivation = publishable
-      ? deriveCollectionMajors([
-          ...app.approved.map((r) => ({ id: r.id, manifest: r.manifest })),
-          { id: HEAD_STEP, manifest: block.manifest },
-        ])
+      ? deriveCollectionMajors(manifestHistory(app.approved, block.manifest))
       : null;
 
     const exported = publishable

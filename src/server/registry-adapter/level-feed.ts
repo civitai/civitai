@@ -297,10 +297,8 @@ export const levelRev = (d: LevelStreamDocument, schemas: readonly string[]) =>
  * consumer can tell a key below the window's floor, which may exist, from a key that does not.
  * The mode is fixed by the level for the stream's whole life (`none` is served only while levels
  * are off, a bit only while they are on; any change ends the stream), so it is derived, never
- * stored. Beside them the collection's current major, `currentMajor` (`CollectionStream.currentMajor`), as
- * the latest poll resolved it: app-data-go reads a shared collection that a read names no major of
- * at it (`apps/app-data-go/internal/api/major.go`). Not stored either: a property of the collection
- * now, so a state saved before it was named still names it on its next `live`.
+ * stored. Beside them, `currentMajor` as the latest poll resolved it. Not stored: a state saved
+ * before it was named must still name it.
  */
 const levelMeta = (
   state: Pick<LevelState, 'seq' | 'level' | 'appBlockId' | 'truncated'>,
