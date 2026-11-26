@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { tryCivitaiInternalUrl } from './civitai-url';
+import { mainAppHostFetch } from './main-app-fetch';
 
 // HARD RULE: a spoke→main callback is allowed ONLY where main owns a fan-out the spoke cannot
 // reproduce without becoming a second source of truth. Port everything else as a direct Kysely
@@ -69,7 +70,7 @@ async function postSync(body: unknown, logContext: unknown, strict = false): Pro
   }
 
   try {
-    const res = await fetch(`${base}/api/internal/search-index-update?token=${token}`, {
+    const res = await mainAppHostFetch(`${base}/api/internal/search-index-update?token=${token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),

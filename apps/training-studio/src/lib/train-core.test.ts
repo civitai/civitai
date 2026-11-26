@@ -1899,6 +1899,48 @@ describe('dataset maturity under the v2 rating', () => {
     }
   );
 
+  it("hands back a stored verdict only for a blob this caller's HEAD could read", async () => {
+    headBlob.mockReset();
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, { status: path.blobId === 'theirs.png' ? 403 : 204 }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['mine.png', 'theirs.png'],
+      ratingAt(1, { 'mine.png': { mature: false }, 'theirs.png': { mature: true } })
+    );
+    expect(count.verdicts).toEqual({ 'mine.png': false });
+  });
+
+  it('counts where the v2 verdict and the upload rating disagree, each way', async () => {
+    headBlob.mockReset();
+    const upload: Record<string, string> = {
+      'a.png': 'R',
+      'b.png': 'PG',
+      'c.png': 'R',
+      'd.png': 'PG',
+    };
+    headBlob.mockImplementation(async ({ path }: { path: { blobId: string } }) => ({
+      response: new Response(null, {
+        status: 204,
+        headers: { 'x-nsfw-level': upload[path.blobId]! },
+      }),
+    }));
+    const count = await countDatasetMature(
+      client,
+      ['a.png', 'b.png', 'c.png', 'd.png'],
+      ratingAt(1, {
+        'a.png': { mature: false },
+        'b.png': { mature: true },
+        'c.png': { mature: true },
+      })
+    );
+    expect(count.v2NotMatureUploadMature).toBe(1);
+    expect(count.v2MatureUploadNotMature).toBe(1);
+    expect(count.verdicts).toEqual({ 'a.png': false, 'b.png': true, 'c.png': true });
+    expect(count.mature).toBe(2);
+  });
+
   const pricedMature = { meta: { name: 'test', matureCount: 1 } };
 
   it('a dataset v2 rates mature, priced as mature, is charged Blue then Yellow with no unlock', async () => {
