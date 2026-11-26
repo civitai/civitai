@@ -52,6 +52,16 @@ export function isCommitSha(value: string): boolean {
 /** The most bytes one source commit may carry (the fork seed's uncompressed cap). */
 export const SOURCE_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 
+/**
+ * Whether `path` is a file a source repo never holds: what the CLI's package leaves out
+ * (`cliLeavesOut`) or a fork's seed leaves out (`forkSeedExclusionReason`). Matched as those two
+ * lists match (mostly case-sensitive); {@link platformUpdatePathRefusal} also checks the
+ * lowercased path.
+ */
+export function sourceRepoNeverHolds(path: string): boolean {
+  return cliLeavesOut(path) || !!forkSeedExclusionReason(path);
+}
+
 /** git's blob id of `content`: sha1("blob <len>\0" + bytes). */
 export function gitBlobSha(content: Buffer): string {
   return createHash('sha1').update(`blob ${content.byteLength}\0`).update(content).digest('hex');
@@ -96,7 +106,7 @@ export function sourceFilesFromExport(
   for (const entry of entries) {
     if (!entry.path.startsWith(prefix) || entry.path.endsWith('/')) continue;
     const rel = entry.path.slice(prefix.length).replace(/^\/+/, '');
-    if (!rel || cliLeavesOut(rel) || forkSeedExclusionReason(rel)) continue;
+    if (!rel || sourceRepoNeverHolds(rel)) continue;
     // A path git would refuse, or one that escapes the tree.
     if (rel.split('/').some((s) => s === '' || s === '.' || s === '..')) continue;
     total += entry.content.byteLength;
@@ -272,8 +282,11 @@ export type PlatformUpdateChange =
 
 /**
  * Why `path` may not be written by a platform update, or `null` when it may: a path git would
- * refuse or that escapes the tree, and anything a source repo never holds (`cliLeavesOut`,
- * `forkSeedExclusionReason`: env files, keys, credentials, dependencies, build output).
+ * refuse or that escapes the tree, and anything a source repo never holds
+ * ({@link sourceRepoNeverHolds}: env files, keys, credentials, dependencies, build output),
+ * in ANY letter case (`.ENV`, `.Env.local`, `Node_Modules/…`): a checkout on a case-insensitive
+ * file system reads those as the lowercase name. The shared lists themselves (fork seed, App
+ * Assistant export) are unchanged.
  */
 export function platformUpdatePathRefusal(path: string): string | null {
   if (!path || path.length > 400) return 'is empty or too long';
@@ -282,7 +295,7 @@ export function platformUpdatePathRefusal(path: string): string | null {
     return 'is not a relative repo path';
   if (path.split('/').some((s) => s === '' || s === '.' || s === '..'))
     return 'is not a relative repo path';
-  if (cliLeavesOut(path) || forkSeedExclusionReason(path))
+  if (sourceRepoNeverHolds(path) || sourceRepoNeverHolds(path.toLowerCase()))
     return 'is a file a source repo never holds';
   return null;
 }

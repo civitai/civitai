@@ -35,6 +35,7 @@ import {
   planAssistantCommit,
   planReplaceCommit,
   sourceFilesFromExport,
+  sourceRepoNeverHolds,
   treeFromMap,
   treeOf,
   type BlobTree,
@@ -320,6 +321,11 @@ async function ensureSourceRepoLocked(args: {
   ownerUserId: number;
   origin: SourceRepoOrigin;
   seed?: { files: SourceFile[]; message: string };
+  /**
+   * Create the repo as a fork of the slug's BUILD repo (its whole history) instead of an empty repo.
+   * Exclusive with `seed`.
+   */
+  forkBuildRepo?: true;
   forkedFrom?: { appBlockId: string; commitSha: string };
 }): Promise<EnsureSourceRepoResult> {
   if (!SOURCE_SLUG_RE.test(args.slug)) return { kind: 'refused' };
@@ -330,14 +336,36 @@ async function ensureSourceRepoLocked(args: {
   if (!gate.ok) return { kind: 'refused' };
 
   const forgejo = await import('~/server/services/blocks/forgejo.service');
-  await forgejo.ensureSourceRepo(args.slug);
-  const current = treeFromMap(
-    await forgejo.listRepoTree(args.slug, SOURCE_MAIN_BRANCH, FORGEJO_SOURCE_ORG)
-  );
-  let tree = current;
+  let tree: BlobTree;
   let seedSha: string | null = null;
-  if (args.seed) {
-    const plan = planReplaceCommit(current, args.seed.files);
+  if (args.forkBuildRepo) {
+    const fork = await forgejo.forkBuildRepoIntoSourceOrg(args.slug);
+    // A repo under the name that is not our fork of the build repo (an empty one an earlier create
+    // left behind, or anything else) shares no history with the build repo: never seed on top of it.
+    if (fork.kind === 'exists' && !fork.forkOfBuildRepo) {
+      log('warning', 'a repo that is not a fork of the build repo has the name', {
+        slug: args.slug,
+      });
+      return { kind: 'refused' };
+    }
+    const head = await forgejo.getBranchHead(FORGEJO_SOURCE_ORG, args.slug, SOURCE_MAIN_BRANCH);
+    if (!head) return { kind: 'refused' };
+    // App Assistant's base is what it can see of `main`: a file a source repo never holds (the
+    // build repo's history may have one) is not in the base, so a save never plans a delete of it.
+    tree = Object.fromEntries(
+      Object.entries(
+        treeFromMap(await forgejo.listRepoTreeAtRef(args.slug, head, FORGEJO_SOURCE_ORG))
+      ).filter(([path]) => !sourceRepoNeverHolds(path))
+    );
+    seedSha = head;
+  } else {
+    await forgejo.ensureSourceRepo(args.slug);
+    tree = treeFromMap(
+      await forgejo.listRepoTree(args.slug, SOURCE_MAIN_BRANCH, FORGEJO_SOURCE_ORG)
+    );
+  }
+  if (args.seed && !args.forkBuildRepo) {
+    const plan = planReplaceCommit(tree, args.seed.files);
     if (plan.operations.length) {
       const result = await forgejo.commitOperations({
         org: FORGEJO_SOURCE_ORG,
@@ -779,23 +807,27 @@ export async function sourceRepoGoverningBlockId(row: SourceRepoRow): Promise<st
   return (await governingBlock(row))?.id ?? null;
 }
 
-export type SeedFromApprovedResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };
+export type SeedFromBuildRepoResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };
 
 /**
- * Create `slug`'s source repo seeded from the app block's LATEST APPROVED version (its build-repo
- * snapshot, read, never written), as the backfill does for a fork, the fork lineage from
+ * Create `slug`'s source repo for a staff platform update, as a FORK of the app's build repo: the
+ * build repo's whole history, `main` where the build repo's `main` is (the build repo is read,
+ * never written). An update branch cut from it therefore shares history with an owner's existing
+ * checkout of the build repo, and merges into it like any branch would.
+ *
+ * Only for an app with an approved version (a live app); the fork lineage is recorded from
  * `app_blocks.fork_of_*` when the block has one. Idempotent like {@link ensureSourceRepoLocked};
  * call it holding the slug's lock.
  */
-export async function seedSourceRepoFromApprovedLocked(args: {
+export async function seedSourceRepoFromBuildRepoLocked(args: {
   slug: string;
   appBlockId: string;
   ownerUserId: number;
-}): Promise<SeedFromApprovedResult> {
+}): Promise<SeedFromBuildRepoResult> {
   const approved = await dbRead.appBlockPublishRequest.findFirst({
     where: { appBlockId: args.appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
     orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
-    select: { forgejoCommitSha: true, version: true },
+    select: { forgejoCommitSha: true },
   });
   if (!approved?.forgejoCommitSha) return { kind: 'no-approved-version' };
   const lineageRows = (await dbRead.$queryRaw`SELECT
@@ -819,27 +851,11 @@ export async function seedSourceRepoFromApprovedLocked(args: {
           parentAppBlockId: fork.parentAppBlockId,
         }
       : null;
-  const files = await seedFilesFor({
-    slug: args.slug,
-    ownerUserId: args.ownerUserId,
-    kind: 'approved-fork',
-    seedCommitSha: approved.forgejoCommitSha,
-    seedRepoSlug: args.slug,
-    lineage,
-    version: approved.version,
-  });
   return ensureSourceRepoLocked({
     slug: args.slug,
     ownerUserId: args.ownerUserId,
     origin: 'backfill',
-    seed: {
-      files,
-      message: approvedSeedCommitMessage({
-        version: approved.version,
-        approvedCommitSha: approved.forgejoCommitSha,
-        lineage,
-      }),
-    },
+    forkBuildRepo: true,
     ...(lineage
       ? {
           forkedFrom: {

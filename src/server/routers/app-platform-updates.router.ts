@@ -18,7 +18,9 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * Owner half — `listPending`, `verifyCommit`, `resolve` — is what `civitai app pull` / submit and
  * the App Assistant runner call. `AppBlocksSubmit`, the bit the CLI's other app commands require
  * (see `blocks.getMyForgejoCloneInfo`), so the CLI's OAuth login token reaches them; the service
- * then requires edit access to the app (owner or ACCEPTED collaborator, no moderator bypass).
+ * then requires edit access to the app (owner or ACCEPTED collaborator, no moderator bypass). Unlike
+ * that procedure there is no developer-terms check: these read and report on the caller's own app
+ * and mint no credential.
  *
  * Staff half — `push`, `supersede`, `modList` — is `moderatorProcedure` (session or Full personal
  * key only), and carries no scope annotation: a scoped token must never carry moderator reach.
@@ -35,15 +37,13 @@ const svc = () => import('~/server/services/blocks/app-platform-update.service')
 const NOT_ENABLED = () =>
   new TRPCError({ code: 'FORBIDDEN', message: 'Platform updates are not enabled' });
 
-type OwnerCtx = {
-  user: { id: number; bannedAt?: Date | null };
-  features?: { appBlocks?: boolean };
-};
+type OwnerCtx = { features?: { appBlocks?: boolean } };
 
-/** Whether the owner half answers for this caller at all. A banned account is refused outright. */
+/**
+ * Whether the owner half answers for this caller at all. A banned account never gets here:
+ * `protectedProcedure`'s `isAuthed` refuses it first.
+ */
 async function ownerEnabled(ctx: OwnerCtx): Promise<boolean> {
-  if (ctx.user.bannedAt)
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'Account is not eligible to manage apps' });
   if (!ctx.features?.appBlocks) return false;
   return (await svc()).isPlatformUpdatesEnabled();
 }

@@ -1,7 +1,7 @@
 -- App Blocks: platform updates. One row per change Civitai staff (a moderator) pushed to someone
 -- else's app: a commit on its own branch of the app's SOURCE repo (`civitai-apps-src/<slug>`),
 -- never the build repo. The owner's CLI and App Assistant read the pending rows and merge the
--- branch. The row is what makes an update "from verified Civitai staff": a commit's author and
+-- recorded commit. The row is what makes an update "from verified Civitai staff": a commit's author and
 -- trailers are text anyone can write, so nothing reads them as proof.
 --
 -- Append-only audit trail: rows are never deleted; a status change records who made it and when.
@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS "app_platform_updates" (
     "commit_sha" TEXT NOT NULL,
     -- [{ "path": "...", "operation": "create" | "update" | "delete" }]
     "paths" JSONB NOT NULL,
-    -- true when this update created the source repo (seeded from the latest approved version).
+    -- true when the update changes block.manifest.json or a storage hook file it declares.
+    "touches_manifest" BOOLEAN NOT NULL DEFAULT false,
+    -- true when this update created the source repo (a fork of the build repo).
     "seeded_source_repo" BOOLEAN NOT NULL DEFAULT false,
     -- 'pending' | 'merged' | 'conflicted' | 'superseded'
     "status" TEXT NOT NULL DEFAULT 'pending',

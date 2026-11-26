@@ -27,6 +27,11 @@ export type AppPlatformUpdateNotificationDetails = {
   byUsername: string;
   /** The moderator's reason, rendered verbatim. */
   reason: string;
+  /**
+   * The update changes the app's manifest (scopes, permissions, storage) or a storage hook file.
+   * Absent reads as false.
+   */
+  touchesManifest?: boolean;
 };
 
 export const appPlatformUpdateNotifications = createNotificationProcessor({
@@ -41,6 +46,10 @@ export const appPlatformUpdateNotifications = createNotificationProcessor({
         message:
           `${details.byUsername} (verified Civitai staff) pushed an update to your app ` +
           `"${details.slug}": ${details.reason} ` +
+          (details.touchesManifest
+            ? `It changes your app's manifest or a storage hook, which decide what your app is ` +
+              `allowed to do. `
+            : '') +
           `It is merged into your app the next time you pull it or open it in the App Assistant, ` +
           `if it applies cleanly.`,
         url: OWNER_SUBMISSIONS_URL,

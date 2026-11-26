@@ -9,6 +9,7 @@ import {
   planAssistantCommit,
   planPlatformUpdateCommit,
   planReplaceCommit,
+  platformUpdatePathRefusal,
   platformUpdateCommitMessage,
   PlatformUpdatePlanError,
   sourceFilesFromExport,
@@ -17,6 +18,7 @@ import {
   SourceFilesError,
 } from '~/server/services/blocks/app-source-repo.plan';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
+import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 
 /**
  * Source repos — the pure decisions: what a commit changes (the compare-and-set plan), what its
@@ -248,6 +250,29 @@ describe('platform updates', () => {
         new PlatformUpdatePlanError(message)
       );
     }
+  });
+
+  it('refuses those paths in any letter case, while the shared fork-seed list stays as it was', () => {
+    for (const path of [
+      '.ENV',
+      '.Env.local',
+      'src/.ENV.production',
+      'Node_Modules/x/index.js',
+      '.GIT/config',
+      '.SSH/id_rsa',
+      'ID_RSA',
+      '.NPMRC',
+      'Dist/app.js',
+      'SCRATCH/notes.md',
+    ]) {
+      expect(platformUpdatePathRefusal(path)).toBe('is a file a source repo never holds');
+    }
+    // Positive control: ordinary paths with capitals are still writable.
+    for (const path of ['README.md', 'src/Env.ts', 'src/Components/Gallery.tsx'])
+      expect(platformUpdatePathRefusal(path)).toBeNull();
+    // The shared list is untouched: a fork's seed and an App Assistant save match it as before.
+    expect(forkSeedExclusionReason('.ENV')).toBeNull();
+    expect(forkSeedExclusionReason('.env')).toBe('env');
   });
 
   it('commit message: summary, the reason as the body, and the trailers last', () => {

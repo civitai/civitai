@@ -13,7 +13,8 @@ import type * as FliptClient from '~/server/flipt/client';
 /**
  * Staff platform updates end to end: the real services and router, against
  *   - the real `app_platform_updates` + `app_source_repos` migrations in PGlite (every raw query);
- *   - a FAKE git host at the HTTP boundary (global `fetch`), with the contents API's
+ *   - a FAKE git host at the HTTP boundary (global `fetch`), modelled as a commit graph (parents,
+ *     forks that share history, a 3-way `merge` for an owner's checkout), with the contents API's
  *     compare-and-set (a stale blob sha or an existing path refuses the commit);
  *   - fixtures for the Prisma model reads (blocks, users, seats, approved versions);
  *   - the notifications client stub (setup.ts), observed rather than replaced.
@@ -23,12 +24,14 @@ import type * as FliptClient from '~/server/flipt/client';
  *   - a reason is required;
  *   - a push writes one commit on its own branch (main untouched), the Platform-Update trailers,
  *     the record, and the owner's notification;
- *   - an app with no source repo gets one seeded from its latest approved version first, and the
- *     build repo is only read;
+ *   - an app with no source repo gets one as a FORK of its build repo first (the build repo is
+ *     only read), so an owner's existing checkout of the build repo merges the update cleanly;
+ *   - the record names the commit's real parent, and whether the update touches the manifest;
  *   - the owner list returns only this app's PENDING updates, to the owner or an accepted
  *     collaborator only;
- *   - "verified staff" comes from the record and the author's moderator status, never from a
- *     commit's text.
+ *   - "verified staff" comes from the record and the author's standing now (moderator, not
+ *     banned), never from a commit's text; a superseded update is not verified;
+ *   - supersede, modList, conflicted → merged, and the flag off for every owner procedure.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -66,31 +69,114 @@ const blob = (content: string) =>
 let commitSeq = 0;
 const nextSha = () => (++commitSeq).toString(16).padStart(40, '0');
 
-type Branch = { head: string; files: Record<string, string> };
+type Files = Record<string, string>;
+type Commit = { parents: string[]; files: Files };
+type Branch = { head: string; files: Files };
 
+/** The outcome of `git merge <theirs>` into a checkout at `ours`, modelled on git's 3-way merge. */
+type MergeOutcome =
+  | { kind: 'unrelated' }
+  | { kind: 'conflict'; paths: string[] }
+  | { kind: 'clean'; files: Files };
+
+/**
+ * The git host, modelled as a commit graph: every commit has parents and a full tree, a branch is
+ * a name for a commit, and a fork copies the parent repo's refs (so the two share history).
+ */
 class FakeGit {
   orgs = new Set<string>();
-  repos = new Map<string, Map<string, Branch>>();
+  objects = new Map<string, Commit>();
+  refs = new Map<string, Map<string, string>>();
+  forkOf = new Map<string, string>();
   commits: Array<{ sha: string; branch: string; message: string; author: unknown }> = [];
   writes: Array<{ method: string; path: string }> = [];
   calls: Array<{ method: string; path: string }> = [];
+  /** Runs inside a contents-API write, after the request arrived and before it applies. */
+  beforeCommit: (() => void) | null = null;
 
-  branch(org: string, slug: string, name = 'main') {
-    return this.repos.get(`${org}/${slug}`)?.get(name) ?? null;
+  private commit(parents: string[], files: Files, sha = nextSha()) {
+    this.objects.set(sha, { parents, files: { ...files } });
+    return sha;
   }
 
-  addRepo(org: string, slug: string, files: Record<string, string>, head = nextSha()) {
+  branch(org: string, slug: string, name = 'main'): Branch | null {
+    const head = this.refs.get(`${org}/${slug}`)?.get(name);
+    return head ? { head, files: { ...this.objects.get(head)!.files } } : null;
+  }
+
+  parents(sha: string) {
+    return this.objects.get(sha)?.parents ?? null;
+  }
+
+  addRepo(org: string, slug: string, files: Files, head = nextSha()) {
     this.orgs.add(org);
-    this.repos.set(`${org}/${slug}`, new Map([['main', { head, files: { ...files } }]]));
+    this.commit([], files, head);
+    this.refs.set(`${org}/${slug}`, new Map([['main', head]]));
   }
 
-  /** A developer's `git push`: a commit with any message, straight onto the branch. */
-  devPush(org: string, slug: string, change: Record<string, string>, message: string) {
-    const b = this.branch(org, slug)!;
-    b.files = { ...b.files, ...change };
-    b.head = nextSha();
-    this.commits.push({ sha: b.head, branch: 'main', message, author: { name: 'Civitai' } });
-    return b.head;
+  /** A `git push` of one commit with any message onto `branch`, by anyone with push access. */
+  devPush(org: string, slug: string, change: Files, message: string, branch = 'main') {
+    const before = this.branch(org, slug, branch)!;
+    const sha = this.commit([before.head], { ...before.files, ...change });
+    this.refs.get(`${org}/${slug}`)!.set(branch, sha);
+    this.commits.push({ sha, branch, message, author: { name: 'Civitai' } });
+    return sha;
+  }
+
+  /** A commit that exists only in someone's local checkout (never pushed). */
+  localCommit(parent: string, change: Files) {
+    return this.commit([parent], { ...this.objects.get(parent)!.files, ...change });
+  }
+
+  private ancestors(sha: string): Set<string> {
+    const seen = new Set<string>();
+    const stack = [sha];
+    while (stack.length) {
+      const c = stack.pop()!;
+      if (seen.has(c)) continue;
+      seen.add(c);
+      stack.push(...(this.objects.get(c)?.parents ?? []));
+    }
+    return seen;
+  }
+
+  private reachable(repo: string, sha: string) {
+    return [...(this.refs.get(repo)?.values() ?? [])].some((h) => this.ancestors(h).has(sha));
+  }
+
+  /** `git merge <theirs>` in a checkout whose HEAD is `ours`. */
+  merge(ours: string, theirs: string): MergeOutcome {
+    const theirAncestors = this.ancestors(theirs);
+    // The nearest common ancestor, walking back from `ours` (the histories here are linear).
+    const queue = [ours];
+    let base: string | null = null;
+    for (const seen = new Set<string>(); queue.length; ) {
+      const c = queue.shift()!;
+      if (seen.has(c)) continue;
+      seen.add(c);
+      if (theirAncestors.has(c)) {
+        base = c;
+        break;
+      }
+      queue.push(...(this.objects.get(c)?.parents ?? []));
+    }
+    if (!base) return { kind: 'unrelated' };
+    const [b, o, t] = [base, ours, theirs].map((x) => this.objects.get(x)!.files);
+    const files: Files = {};
+    const conflicts: string[] = [];
+    for (const path of new Set([...Object.keys(b), ...Object.keys(o), ...Object.keys(t)])) {
+      const pick =
+        o[path] === t[path]
+          ? o[path]
+          : o[path] === b[path]
+          ? t[path]
+          : t[path] === b[path]
+          ? o[path]
+          : null;
+      if (pick === null) conflicts.push(path);
+      else if (pick !== undefined) files[path] = pick;
+    }
+    return conflicts.length ? { kind: 'conflict', paths: conflicts } : { kind: 'clean', files };
   }
 
   async handle(url: URL, init: RequestInit): Promise<Response> {
@@ -112,40 +198,59 @@ class FakeGit {
     }
     if ((m = p.match(/^\/api\/v1\/orgs\/([^/]+)\/repos$/)) && method === 'POST') {
       const key = `${m[1]}/${body.name}`;
-      if (this.repos.has(key)) return json(409, {});
-      this.repos.set(
-        key,
-        new Map([['main', { head: nextSha(), files: { 'README.md': `# ${body.name}\n` } }]])
-      );
+      if (this.refs.has(key)) return json(409, {});
+      const head = this.commit([], { 'README.md': `# ${body.name}\n` });
+      this.refs.set(key, new Map([['main', head]]));
       return json(201, { name: body.name });
+    }
+    if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/forks$/)) && method === 'POST') {
+      const source = `${m[1]}/${decodeURIComponent(m[2])}`;
+      const target = `${body.organization}/${body.name}`;
+      if (!this.refs.has(source)) return json(404, {});
+      if (this.refs.has(target)) return json(409, {});
+      this.refs.set(target, new Map(this.refs.get(source)!));
+      this.forkOf.set(target, source);
+      return json(202, { full_name: target });
+    }
+    if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)$/)) && method === 'GET') {
+      const key = `${m[1]}/${decodeURIComponent(m[2])}`;
+      if (!this.refs.has(key)) return json(404, {});
+      const parent = this.forkOf.get(key);
+      return json(200, { fork: !!parent, parent: parent ? { full_name: parent } : null });
     }
     if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/branches\/(.+)$/))) {
       const b = this.branch(m[1], m[2], decodeURIComponent(m[3]));
       return b ? json(200, { commit: { id: b.head } }) : json(404, {});
     }
+    if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/git\/commits\/([^/]+)$/))) {
+      const sha = decodeURIComponent(m[3]);
+      if (!this.reachable(`${m[1]}/${m[2]}`, sha)) return json(404, {});
+      return json(200, { sha, parents: this.parents(sha)!.map((x) => ({ sha: x })) });
+    }
     if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/git\/trees\/([^/]+)$/))) {
       const ref = decodeURIComponent(m[3]);
-      const b = [...(this.repos.get(`${m[1]}/${m[2]}`)?.values() ?? [])].find(
-        (x) => x.head === ref
-      );
-      if (!b) return json(404, {});
+      if (!this.reachable(`${m[1]}/${m[2]}`, ref)) return json(404, {});
+      const files = this.objects.get(ref)!.files;
       const page = Number(url.searchParams.get('page') ?? '1');
       const tree =
         page === 1
-          ? Object.entries(b.files).map(([fp, c]) => ({ path: fp, type: 'blob', sha: blob(c) }))
+          ? Object.entries(files).map(([fp, c]) => ({ path: fp, type: 'blob', sha: blob(c) }))
           : [];
-      return json(200, { tree, total_count: Object.keys(b.files).length });
+      return json(200, { tree, total_count: Object.keys(files).length });
     }
     if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/git\/blobs\/([^/]+)$/))) {
-      for (const branches of this.repos.values())
-        for (const b of branches.values())
-          for (const c of Object.values(b.files))
-            if (blob(c) === m[3])
-              return json(200, { content: Buffer.from(c).toString('base64'), encoding: 'base64' });
+      for (const c of this.objects.values())
+        for (const content of Object.values(c.files))
+          if (blob(content) === m[3])
+            return json(200, {
+              content: Buffer.from(content).toString('base64'),
+              encoding: 'base64',
+            });
       return json(404, {});
     }
     if ((m = p.match(/^\/api\/v1\/repos\/([^/]+)\/([^/]+)\/contents$/)) && method === 'POST') {
       const [org, slug] = [m[1], m[2]];
+      this.beforeCommit?.();
       const base = this.branch(org, slug, body.branch);
       if (!base) return json(404, {});
       const files = { ...base.files };
@@ -168,8 +273,8 @@ class FakeGit {
       }
       const target = body.new_branch ?? body.branch;
       if (body.new_branch && this.branch(org, slug, body.new_branch)) return json(422, {});
-      const sha = nextSha();
-      this.repos.get(`${org}/${slug}`)!.set(target, { head: sha, files });
+      const sha = this.commit([base.head], files);
+      this.refs.get(`${org}/${slug}`)!.set(target, sha);
       this.commits.push({ sha, branch: target, message: body.message, author: body.author });
       return json(201, { commit: { sha } });
     }
@@ -191,7 +296,6 @@ const OTHER = 7102;
 const EDITOR = 7103;
 const SLUG = 'pixel-garden';
 const OTHER_SLUG = 'moon-garden';
-const APPROVED = 'ab'.repeat(20);
 const REASON = 'Bump @civitai/app-sdk to 2.4.0: the old floor stops working on Dec 1.';
 
 const users: Record<number, { username: string; isModerator: boolean }> = {
@@ -283,13 +387,16 @@ beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
     SET TIME ZONE 'UTC';
-    CREATE TABLE "User" (id INT PRIMARY KEY, username TEXT, "isModerator" BOOLEAN NOT NULL);
+    CREATE TABLE "User" (
+      id INT PRIMARY KEY, username TEXT, "isModerator" BOOLEAN NOT NULL,
+      "bannedAt" TIMESTAMPTZ, "deletedAt" TIMESTAMPTZ
+    );
     CREATE TABLE app_blocks (
       id TEXT PRIMARY KEY, block_id TEXT, fork_of_app_block_id TEXT, fork_of_commit_sha TEXT
     );
   `);
   for (const [id, u] of Object.entries(users))
-    await pg.query(`INSERT INTO "User" VALUES ($1, $2, $3)`, [
+    await pg.query(`INSERT INTO "User" (id, username, "isModerator") VALUES ($1, $2, $3)`, [
       Number(id),
       u.username,
       u.isModerator,
@@ -303,7 +410,8 @@ afterAll(() => pg.close());
 
 beforeEach(async () => {
   await pg.exec(`TRUNCATE app_platform_updates, app_source_repos;
-    UPDATE "User" SET "isModerator" = (id IN (${MOD}, ${EX_MOD}));`);
+    UPDATE "User" SET "isModerator" = (id IN (${MOD}, ${EX_MOD})), "bannedAt" = NULL,
+      "deletedAt" = NULL;`);
   flags.platformUpdates = true;
   commitSeq = 0;
   git = new FakeGit();
@@ -453,7 +561,9 @@ describe('push', () => {
         { path: 'src/sdk-shim.ts', operation: 'create' },
         { path: 'package.json', operation: 'update' },
       ],
+      touchesManifest: false,
     });
+    expect(git.parents(result.commitSha)).toEqual([result.baseCommitSha]);
     // main is untouched; the branch holds main plus the change.
     expect(git.branch(SRC, SLUG)).toEqual(mainBefore);
     expect(git.branch(SRC, SLUG, branch)!.files).toEqual({
@@ -492,6 +602,7 @@ describe('push', () => {
         { path: 'src/sdk-shim.ts', operation: 'create' },
         { path: 'package.json', operation: 'update' },
       ],
+      touches_manifest: false,
       seeded_source_repo: false,
       status: 'pending',
       merge_commit_sha: null,
@@ -503,7 +614,13 @@ describe('push', () => {
       userId: OWNER,
       type: 'app-platform-update',
       key: `app-platform-update:${result.id}`,
-      details: { slug: SLUG, updateId: result.id, byUsername: 'mod-ana', reason: REASON },
+      details: {
+        slug: SLUG,
+        updateId: result.id,
+        byUsername: 'mod-ana',
+        reason: REASON,
+        touchesManifest: false,
+      },
     });
   });
 
@@ -524,51 +641,115 @@ describe('push', () => {
 });
 
 describe('an app with no source repo', () => {
-  it('is seeded from its latest approved version, then the update goes on top', async () => {
-    git.addRepo(
-      BUILD,
-      SLUG,
-      {
-        'block.manifest.json': '{"blockId":"pixel-garden"}',
-        'package.json': PKG_OLD,
-        '.env': 'K=1',
-      },
-      APPROVED
-    );
-    approved.ab_app = { forgejoCommitSha: APPROVED, version: '1.2.0' };
+  /**
+   * The build repo with two commits of history (the approved version is its head), and an owner's
+   * checkout of it with one local commit of their own on top (to a file the update leaves alone).
+   */
+  function buildRepoWithOwnerCheckout() {
+    git.addRepo(BUILD, SLUG, {
+      'block.manifest.json': '{"blockId":"pixel-garden"}',
+      'package.json': PKG_OLD,
+      'README.md': '# Pixel Garden\n',
+      '.env': 'K=1',
+    });
+    const head = git.devPush(BUILD, SLUG, { 'src/app.ts': 'export const v = 2;\n' }, 'v1.2.0');
+    approved.ab_app = { forgejoCommitSha: head, version: '1.2.0' };
+    const ownerCheckout = git.localCommit(head, { 'README.md': '# Pixel Garden (mine)\n' });
+    return { head, ownerCheckout };
+  }
+
+  it('is created as a fork of the build repo, so the owner’s build-repo checkout merges the update cleanly', async () => {
+    const { head, ownerCheckout } = buildRepoWithOwnerCheckout();
+    const buildBefore = git.branch(BUILD, SLUG);
 
     const result = await pushAsMod();
     expect(result.seededSourceRepo).toBe(true);
 
-    // The seed: exactly the approved files, minus what a source repo never holds (.env).
-    const main = git.branch(SRC, SLUG)!;
-    expect(main.files).toEqual({
-      'block.manifest.json': '{"blockId":"pixel-garden"}',
-      'package.json': PKG_OLD,
-    });
-    expect(git.commits.map((c) => [c.branch, c.message])).toEqual([
-      ['main', `Import v1.2.0\n\nApproved-Commit: ${APPROVED}`],
-      [
-        result.branch,
-        expect.stringMatching(/^Platform update: add src\/sdk-shim.ts, update package.json\n/),
-      ],
+    // The source repo's main IS the build repo's main: one history, no new root commit.
+    expect(git.branch(SRC, SLUG)!.head).toBe(head);
+    expect(result.baseCommitSha).toBe(head);
+    expect(git.parents(result.commitSha)).toEqual([head]);
+    expect(git.commits.filter((c) => c.branch !== 'main').map((c) => c.branch)).toEqual([
+      result.branch,
     ]);
-    expect(result.baseCommitSha).toBe(main.head);
-    expect(git.branch(SRC, SLUG, result.branch)!.files).toEqual({
-      'block.manifest.json': '{"blockId":"pixel-garden"}',
-      'package.json': PKG_NEW,
-      'src/sdk-shim.ts': 'export {};\n',
+
+    // 🔴 The claim: the owner's checkout (build-repo history plus a local commit) merges the
+    // recorded commit cleanly, keeping their change and taking the update's.
+    expect(git.merge(ownerCheckout, result.commitSha)).toEqual({
+      kind: 'clean',
+      files: {
+        'block.manifest.json': '{"blockId":"pixel-garden"}',
+        'package.json': PKG_NEW,
+        'README.md': '# Pixel Garden (mine)\n',
+        '.env': 'K=1',
+        'src/app.ts': 'export const v = 2;\n',
+        'src/sdk-shim.ts': 'export {};\n',
+      },
     });
-    // The build repo is read, never written.
-    expect(git.writes.filter((w) => w.path.includes(`/${BUILD}/`))).toEqual([]);
+    // Negative control for the merge model: a branch with its own root (what an "import" seed
+    // makes) shares no history with the checkout, and git refuses it.
+    git.addRepo('elsewhere', 'unrelated', { 'package.json': PKG_NEW });
+    expect(git.merge(ownerCheckout, git.branch('elsewhere', 'unrelated')!.head)).toEqual({
+      kind: 'unrelated',
+    });
+
+    // The build repo is read, never written: the only call to it is the fork, and its refs are
+    // as they were.
+    expect(git.writes.filter((w) => w.path.includes(`/${BUILD}/`))).toEqual([
+      { method: 'POST', path: `/api/v1/repos/${BUILD}/${SLUG}/forks` },
+    ]);
+    expect(git.branch(BUILD, SLUG)).toEqual(buildBefore);
 
     const repo = (
-      await pg.query(`SELECT slug, owner_user_id, app_block_id, origin FROM app_source_repos`)
-    ).rows;
+      await pg.query(
+        `SELECT slug, owner_user_id, app_block_id, origin, assistant_tree, last_assistant_commit_sha
+         FROM app_source_repos`
+      )
+    ).rows as Array<Record<string, unknown>>;
     expect(repo).toEqual([
-      { slug: SLUG, owner_user_id: OWNER, app_block_id: 'ab_app', origin: 'backfill' },
+      {
+        slug: SLUG,
+        owner_user_id: OWNER,
+        app_block_id: 'ab_app',
+        origin: 'backfill',
+        // App Assistant's base leaves out what a source repo never holds (`.env`).
+        assistant_tree: {
+          'block.manifest.json': blob('{"blockId":"pixel-garden"}'),
+          'package.json': blob(PKG_OLD),
+          'README.md': blob('# Pixel Garden\n'),
+          'src/app.ts': blob('export const v = 2;\n'),
+        },
+        last_assistant_commit_sha: head,
+      },
     ]);
-    expect((await updateRows())[0]).toMatchObject({ seeded_source_repo: true, status: 'pending' });
+    expect((await updateRows())[0]).toMatchObject({
+      seeded_source_repo: true,
+      status: 'pending',
+      base_commit_sha: head,
+    });
+  });
+
+  it('an update to the same file the owner changed is a conflict, not a silent overwrite', async () => {
+    const { head } = buildRepoWithOwnerCheckout();
+    const ownerCheckout = git.localCommit(head, { 'package.json': '{"mine":true}' });
+    const result = await pushAsMod();
+    expect(git.merge(ownerCheckout, result.commitSha)).toEqual({
+      kind: 'conflict',
+      paths: ['package.json'],
+    });
+  });
+
+  it('a repo under the name that is not a fork of the build repo is never seeded on top of', async () => {
+    buildRepoWithOwnerCheckout();
+    // A repo an earlier, interrupted create left behind: no row, not a fork.
+    git.addRepo(SRC, SLUG, { 'README.md': '# stray\n' });
+    await expect(pushAsMod()).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'The app’s source repo could not be created; try again',
+    });
+    expect(git.commits).toEqual(git.commits.filter((c) => c.branch === 'main'));
+    expect((await pg.query(`SELECT * FROM app_source_repos`)).rows).toEqual([]);
+    expect(await updateRows()).toEqual([]);
   });
 
   it('with no approved version either, nothing is created', async () => {
@@ -578,6 +759,79 @@ describe('an app with no source repo', () => {
     });
     expect(git.writes).toEqual([]);
     expect((await pg.query(`SELECT * FROM app_source_repos`)).rows).toEqual([]);
+  });
+});
+
+describe('the record', () => {
+  it('names the commit’s ACTUAL parent when main moved between the read and the write', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD, 'README.md': 'r\n' });
+    const readHead = git.branch(SRC, SLUG)!.head;
+    let moved: string | null = null;
+    git.beforeCommit = () => {
+      git.beforeCommit = null;
+      // A developer push to a file the update does not touch: the compare-and-set lets it through.
+      moved = git.devPush(SRC, SLUG, { 'README.md': 'r2\n' }, 'docs');
+    };
+    const result = await pushAsMod();
+    expect(moved).not.toBeNull();
+    expect(moved).not.toBe(readHead);
+    expect(git.parents(result.commitSha)).toEqual([moved]);
+    expect(result.baseCommitSha).toBe(moved);
+    expect((await updateRows())[0]).toMatchObject({ base_commit_sha: moved });
+  });
+
+  it('touchesManifest: the manifest, and a storage hook file the manifest declares', async () => {
+    const manifest = JSON.stringify({
+      blockId: SLUG,
+      storage: { collections: { notes: { hook: { file: 'hooks/notes.js', sha256: 'x' } } } },
+    });
+    await existingSourceRepo({
+      'package.json': PKG_OLD,
+      'block.manifest.json': manifest,
+      'hooks/notes.js': 'export default () => true;\n',
+    });
+    const push = (changes: Parameters<typeof svc.pushPlatformUpdate>[0]['changes']) =>
+      svc.pushPlatformUpdate({ staffUserId: MOD, app: { slug: SLUG }, reason: REASON, changes });
+
+    const plain = await push([put('package.json', PKG_NEW)]);
+    const hook = await push([put('hooks/notes.js', 'export default () => false;\n')]);
+    const man = await push([put('block.manifest.json', manifest.replace('notes', 'memos'))]);
+    expect([plain, hook, man].map((r) => r.touchesManifest)).toEqual([false, true, true]);
+
+    const listed = (await caller(OWNER).listPending({ slug: SLUG })).updates;
+    expect(listed.map((u) => [u.id, u.paths, u.touchesManifest])).toEqual([
+      [plain.id, [{ path: 'package.json', operation: 'update' }], false],
+      [hook.id, [{ path: 'hooks/notes.js', operation: 'update' }], true],
+      [man.id, [{ path: 'block.manifest.json', operation: 'update' }], true],
+    ]);
+    expect(
+      createNotification.mock.calls.map(
+        (c) => (c[0] as { details: { touchesManifest: boolean } }).details.touchesManifest
+      )
+    ).toEqual([false, true, true]);
+  });
+
+  it('touchesManifest is true when the manifest on main cannot be parsed', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD, 'block.manifest.json': '{not json' });
+    expect((await pushAsMod()).touchesManifest).toBe(true);
+  });
+
+  it('a path a source repo never holds is refused in any letter case', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    for (const p of ['.ENV', '.Env.local'])
+      await expect(
+        svc.pushPlatformUpdate({
+          staffUserId: MOD,
+          app: { slug: SLUG },
+          reason: REASON,
+          changes: [put(p, 'K=1')],
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: `${p} is a file a source repo never holds`,
+      });
+    expect(git.commits).toEqual([]);
+    expect(await updateRows()).toEqual([]);
   });
 });
 
@@ -612,6 +866,14 @@ describe('the owner API', () => {
       commitSha: r.commitSha,
       baseCommitSha: r.baseCommitSha,
       reason: i === 0 ? REASON : 'Add the missing privacy link.',
+      paths:
+        i === 0
+          ? [
+              { path: 'src/sdk-shim.ts', operation: 'create' },
+              { path: 'package.json', operation: 'update' },
+            ]
+          : [{ path: 'PRIVACY.md', operation: 'create' }],
+      touchesManifest: false,
       status: 'pending',
       by: { username: 'mod-ana', verifiedStaff: true },
       createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
@@ -693,5 +955,183 @@ describe('🔴 "verified staff" comes from the record, never from commit text', 
       verified: false,
       update: { id: pushed.id, by: { username: 'ex-mod-bo', verifiedStaff: false } },
     });
+  });
+});
+
+describe('verifyCommit answers false for an update that is no longer staff’s', () => {
+  it('a superseded update is not verified (its author still is staff)', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const pushed = await pushAsMod();
+    // Positive control: verified before the withdrawal, through the same call.
+    expect(
+      await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })
+    ).toMatchObject({ verified: true });
+    await caller(MOD).supersede({ id: pushed.id });
+    expect(
+      await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })
+    ).toMatchObject({
+      verified: false,
+      update: { id: pushed.id, status: 'superseded', by: { verifiedStaff: true } },
+    });
+  });
+
+  it('an author who is banned now is not verified, though still flagged a moderator', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const pushed = await pushAsMod(EX_MOD);
+    await pg.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [EX_MOD]);
+    expect(
+      await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })
+    ).toMatchObject({
+      verified: false,
+      update: { id: pushed.id, by: { username: 'ex-mod-bo', verifiedStaff: false } },
+    });
+    expect((await caller(OWNER).listPending({ slug: SLUG })).updates[0].by.verifiedStaff).toBe(
+      false
+    );
+  });
+
+  it('a commit someone added on top of the update branch is not verified; the record keeps the staff commit', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const pushed = await pushAsMod();
+    const onTop = git.devPush(
+      SRC,
+      SLUG,
+      { 'src/extra.ts': 'export const x = 1;\n' },
+      'more changes',
+      pushed.branch
+    );
+    expect(git.branch(SRC, SLUG, pushed.branch)!.head).toBe(onTop);
+    expect(await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: onTop })).toEqual({
+      verified: false,
+      update: null,
+    });
+    expect((await caller(OWNER).listPending({ slug: SLUG })).updates).toMatchObject([
+      { id: pushed.id, commitSha: pushed.commitSha },
+    ]);
+  });
+});
+
+describe('supersede and modList (staff)', () => {
+  it('supersede withdraws a pending update: off the owner list, repeat is a no-op, merged refuses', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const pushed = await pushAsMod();
+    await expect(caller(NOT_MOD).supersede({ id: pushed.id })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(await caller(MOD).supersede({ id: pushed.id })).toEqual({
+      id: pushed.id,
+      status: 'superseded',
+    });
+    expect((await updateRows())[0]).toMatchObject({
+      status: 'superseded',
+      resolved_by_user_id: MOD,
+    });
+    expect(await caller(OWNER).listPending({ slug: SLUG })).toEqual({ updates: [] });
+    expect(await caller(EX_MOD).supersede({ id: pushed.id })).toEqual({
+      id: pushed.id,
+      status: 'superseded',
+    });
+    // The no-op left the record as the first supersede wrote it.
+    expect((await updateRows())[0]).toMatchObject({ resolved_by_user_id: MOD });
+    // An owner cannot resolve a withdrawn update.
+    await expect(
+      caller(OWNER).resolve({ id: pushed.id, outcome: 'merged', mergeCommitSha: 'e'.repeat(40) })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    const merged = await pushAsMod();
+    await caller(OWNER).resolve({
+      id: merged.id,
+      outcome: 'merged',
+      mergeCommitSha: 'f'.repeat(40),
+    });
+    await expect(caller(MOD).supersede({ id: merged.id })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'This update is already merged',
+    });
+  });
+
+  it('modList: every update of the app, newest first, with who pushed and the merge commit', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const a = await pushAsMod();
+    const b = await pushAsMod(EX_MOD);
+    const c = await pushAsMod();
+    await caller(MOD).supersede({ id: a.id });
+    await caller(OWNER).resolve({ id: b.id, outcome: 'merged', mergeCommitSha: '9'.repeat(40) });
+    // Order by created_at: make it strictly increasing regardless of clock resolution.
+    for (const [i, id] of [a.id, b.id, c.id].entries())
+      await pg.query(
+        `UPDATE app_platform_updates SET created_at = '2027-01-01T00:00:0${i}Z' WHERE id = $1`,
+        [id]
+      );
+    await expect(caller(OWNER).modList({ slug: SLUG })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    const { updates } = await caller(MOD).modList({ slug: SLUG });
+    expect(updates.map((u) => [u.id, u.status, u.staffUserId, u.mergeCommitSha])).toEqual([
+      [c.id, 'pending', MOD, null],
+      [b.id, 'merged', EX_MOD, '9'.repeat(40)],
+      [a.id, 'superseded', MOD, null],
+    ]);
+    flags.platformUpdates = false;
+    expect(await caller(MOD).modList({ slug: SLUG })).toEqual({ updates: [] });
+  });
+});
+
+describe('resolve: conflicted, then merged by hand', () => {
+  it('pending → conflicted → merged; repeating conflicted is a no-op', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const pushed = await pushAsMod();
+    expect(
+      (await caller(OWNER).resolve({ id: pushed.id, outcome: 'conflicted' })).update
+    ).toMatchObject({ status: 'conflicted' });
+    expect((await updateRows())[0]).toMatchObject({
+      status: 'conflicted',
+      merge_commit_sha: null,
+      resolved_by_user_id: OWNER,
+    });
+    // Still offered? No: the owner list is PENDING only; a conflicted update waits for the owner.
+    expect(await caller(OWNER).listPending({ slug: SLUG })).toEqual({ updates: [] });
+    expect(
+      (await caller(EDITOR).resolve({ id: pushed.id, outcome: 'conflicted' })).update
+    ).toMatchObject({ status: 'conflicted' });
+    // The no-op wrote nothing: the resolver is still the owner.
+    expect((await updateRows())[0]).toMatchObject({ resolved_by_user_id: OWNER });
+
+    const MERGE = '7'.repeat(40);
+    expect(
+      (
+        await caller(EDITOR).resolve({
+          id: pushed.id,
+          outcome: 'merged',
+          mergeCommitSha: MERGE,
+        })
+      ).update
+    ).toMatchObject({ status: 'merged' });
+    expect((await updateRows())[0]).toMatchObject({
+      status: 'merged',
+      merge_commit_sha: MERGE,
+      resolved_by_user_id: EDITOR,
+    });
+  });
+});
+
+describe('the flag off, for the owner procedures', () => {
+  it('verifyCommit answers not verified and resolve refuses, even for a real update', async () => {
+    await existingSourceRepo({ 'package.json': PKG_OLD });
+    const pushed = await pushAsMod();
+    flags.platformUpdates = false;
+    expect(await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })).toEqual({
+      verified: false,
+      update: null,
+    });
+    await expect(
+      caller(OWNER).resolve({ id: pushed.id, outcome: 'conflicted' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Platform updates are not enabled' });
+    expect((await updateRows())[0]).toMatchObject({ status: 'pending' });
+    // Positive control: the same calls answer once the flag is back on.
+    flags.platformUpdates = true;
+    expect(
+      await caller(OWNER).verifyCommit({ slug: SLUG, commitSha: pushed.commitSha })
+    ).toMatchObject({ verified: true });
   });
 });

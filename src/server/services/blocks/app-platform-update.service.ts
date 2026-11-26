@@ -4,14 +4,18 @@
  *
  * DELIVERY. The change is ONE commit on its own branch (`platform-update/<id>`) of the app's SOURCE
  * repo (`civitai-apps-src/<slug>`), cut from `main`. Never the build repo: a push there would file
- * a publish request in the owner's name and withdraw the one they have pending. An app with no
- * source repo yet gets one first, seeded from its latest approved version.
+ * a publish request in the owner's name and withdraw the one they have pending.
+ *
+ * An app with no source repo yet gets one first: a FORK of its build repo (its whole history), so
+ * the update branch shares history with an owner's existing checkout of the build repo.
  *
  * THE RECORD IS THE PROOF. Each update is a row in `app_platform_updates` written by the server
  * after the commit landed, carrying the moderator's user id from the session. The commit's author
  * and its `Platform-Update*` trailers are text anyone with push access can write, so nothing here
  * reads them: `verifiedStaff` is true only for a commit that has a row, whose author account is a
- * moderator now ({@link ownerView}).
+ * moderator now, and not banned or deleted ({@link ownerView}). The recorded `commitSha` is what a
+ * client merges, never whatever the branch points at later: the branch is ordinary git, the
+ * record is the server's.
  *
  * AUDIT. The table is append-only (no delete path exists); every status change records who made
  * it and when, and every write is also logged.
@@ -58,6 +62,11 @@ export const PLATFORM_UPDATE_MAX_BYTES = 8 * 1024 * 1024;
 
 export type PlatformUpdateStatus = 'pending' | 'merged' | 'conflicted' | 'superseded';
 
+export type PlatformUpdatePath = { path: string; operation: 'create' | 'update' | 'delete' };
+
+/** The app's manifest, at the root of its source repo. */
+export const MANIFEST_PATH = 'block.manifest.json';
+
 /** The global switch. Off, absent or Flipt unreachable ⇒ off. */
 export async function isPlatformUpdatesEnabled(): Promise<boolean> {
   return isFlipt(PLATFORM_UPDATES_FLAG).catch(() => false);
@@ -82,6 +91,8 @@ export type UpdateRow = {
   branch: string;
   baseCommitSha: string;
   commitSha: string;
+  paths: PlatformUpdatePath[];
+  touchesManifest: boolean;
   status: PlatformUpdateStatus;
   mergeCommitSha: string | null;
   seededSourceRepo: boolean;
@@ -90,6 +101,8 @@ export type UpdateRow = {
   /** The staff account as it is NOW (joined at read time); null when it no longer exists. */
   staffUsername: string | null;
   staffIsModerator: boolean | null;
+  staffBannedAt: Date | null;
+  staffDeletedAt: Date | null;
 };
 
 async function tableAvailable(): Promise<boolean> {
@@ -104,10 +117,12 @@ async function tableAvailable(): Promise<boolean> {
 
 const ROW_COLUMNS = Prisma.sql`u."id", u."app_block_id" AS "appBlockId", u."slug",
   u."staff_user_id" AS "staffUserId", u."reason", u."branch",
-  u."base_commit_sha" AS "baseCommitSha", u."commit_sha" AS "commitSha", u."status",
+  u."base_commit_sha" AS "baseCommitSha", u."commit_sha" AS "commitSha", u."paths",
+  u."touches_manifest" AS "touchesManifest", u."status",
   u."merge_commit_sha" AS "mergeCommitSha", u."seeded_source_repo" AS "seededSourceRepo",
   u."created_at" AS "createdAt", u."resolved_at" AS "resolvedAt",
-  s."username" AS "staffUsername", s."isModerator" AS "staffIsModerator"`;
+  s."username" AS "staffUsername", s."isModerator" AS "staffIsModerator",
+  s."bannedAt" AS "staffBannedAt", s."deletedAt" AS "staffDeletedAt"`;
 
 type RowFilter =
   | { kind: 'pending-for-app'; appBlockId: string }
@@ -158,10 +173,18 @@ async function readRows(
 export type OwnerPlatformUpdate = {
   id: string;
   branch: string;
+  /** The update's commit. A client merges THIS sha, never the branch's tip. */
   commitSha: string;
-  /** The `main` commit the update's branch was cut from. */
+  /** The parent of `commitSha`: the `main` commit the update's branch was cut from. */
   baseCommitSha: string;
   reason: string;
+  /** Every path the update's commit changes, as the server committed it. */
+  paths: PlatformUpdatePath[];
+  /**
+   * The update changes `block.manifest.json` (the app's scopes, permissions and storage
+   * declarations) or a storage hook file the manifest declares: what the app may do.
+   */
+  touchesManifest: boolean;
   status: PlatformUpdateStatus;
   by: { username: string | null; verifiedStaff: boolean };
   /** ISO-8601. */
@@ -170,7 +193,8 @@ export type OwnerPlatformUpdate = {
 
 /**
  * 🔴 `verifiedStaff` is derived from the RECORD (this row exists, written by the server for a
- * moderator session) and the author account's moderator status NOW. Never from commit text.
+ * moderator session) and the author account as it is NOW: a moderator, not banned, not deleted.
+ * Never from commit text.
  */
 export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
   return {
@@ -179,8 +203,13 @@ export function ownerView(row: UpdateRow): OwnerPlatformUpdate {
     commitSha: row.commitSha,
     baseCommitSha: row.baseCommitSha,
     reason: row.reason,
+    paths: Array.isArray(row.paths) ? row.paths : [],
+    touchesManifest: row.touchesManifest === true,
     status: row.status,
-    by: { username: row.staffUsername ?? null, verifiedStaff: row.staffIsModerator === true },
+    by: {
+      username: row.staffUsername ?? null,
+      verifiedStaff: row.staffIsModerator === true && !row.staffBannedAt && !row.staffDeletedAt,
+    },
     createdAt: new Date(row.createdAt).toISOString(),
   };
 }
@@ -244,8 +273,9 @@ export async function listPendingPlatformUpdates(args: {
 
 /**
  * Is `commitSha` a platform update to this app? `verified` is true only when the server has a
- * record of it and its author is a moderator; a commit that merely CLAIMS to be one (its author
- * or `Platform-Update*` trailers) answers `{ verified: false, update: null }`.
+ * record of it, the update was not withdrawn (`superseded`), and its author is staff now
+ * ({@link ownerView}'s `verifiedStaff`). A commit that merely CLAIMS to be one (its author or
+ * `Platform-Update*` trailers) answers `{ verified: false, update: null }`.
  */
 export async function verifyPlatformUpdateCommit(args: {
   userId: number;
@@ -258,7 +288,7 @@ export async function verifyPlatformUpdateCommit(args: {
   const row = rows?.[0];
   if (!row) return { verified: false, update: null };
   const update = ownerView(row);
-  return { verified: update.by.verifiedStaff, update };
+  return { verified: update.by.verifiedStaff && update.status !== 'superseded', update };
 }
 
 export type ResolveOutcome = 'merged' | 'conflicted';
@@ -335,12 +365,13 @@ export type PushPlatformUpdateResult = {
   commitSha: string;
   baseCommitSha: string;
   seededSourceRepo: boolean;
-  paths: Array<{ path: string; operation: 'create' | 'update' | 'delete' }>;
+  paths: PlatformUpdatePath[];
+  touchesManifest: boolean;
 };
 
 /**
- * Commit `changes` to a new `platform-update/<id>` branch of the app's source repo (seeding the
- * repo from the latest approved version first when it has none), record the update, and tell the
+ * Commit `changes` to a new `platform-update/<id>` branch of the app's source repo (creating the
+ * repo first, as a fork of the build repo, when it has none), record the update, and tell the
  * owner. Holds the slug's source-repo writer lock, the one the App Assistant's saves take.
  *
  * Refuses: an account that is not a moderator; a blank or too-long reason; no changes, too many,
@@ -420,6 +451,7 @@ export async function pushPlatformUpdate(args: {
       updateId: result.id,
       byUsername: staff.username ?? 'Civitai staff',
       reason,
+      touchesManifest: result.touchesManifest,
     });
   } catch (err) {
     log('warning', 'owner notification failed', {
@@ -446,7 +478,7 @@ async function pushLocked(args: {
   let row = read.row;
   let seeded = false;
   if (!row) {
-    const seed = await repo.seedSourceRepoFromApprovedLocked({
+    const seed = await repo.seedSourceRepoFromBuildRepoLocked({
       slug: app.slug,
       appBlockId: app.id,
       ownerUserId: args.ownerUserId,
@@ -514,17 +546,27 @@ async function pushLocked(args: {
       message: 'The app’s source repo changed while the update was written; try again',
     });
 
-  const paths = [
+  const paths: PlatformUpdatePath[] = [
     ...plan.added.map((path) => ({ path, operation: 'create' as const })),
     ...plan.updated.map((path) => ({ path, operation: 'update' as const })),
     ...plan.deleted.map((path) => ({ path, operation: 'delete' as const })),
   ];
+  const touchesManifest = await updateTouchesManifest({
+    slug: app.slug,
+    current,
+    changedPaths: paths.map((p) => p.path),
+  });
+  // The commit's ACTUAL parent: `main` may have moved between the read above and the write (the
+  // compare-and-set refuses only a change to a file this update touches).
+  const parent = await commitParent(app.slug, commit.sha);
+  const baseCommitSha = parent ?? base;
   try {
     await dbWrite.$executeRaw`INSERT INTO "app_platform_updates"
         ("id", "app_block_id", "slug", "staff_user_id", "reason", "branch", "base_commit_sha",
-         "commit_sha", "paths", "seeded_source_repo", "status")
+         "commit_sha", "paths", "touches_manifest", "seeded_source_repo", "status")
       VALUES (${id}, ${app.id}, ${app.slug}, ${args.staffUserId}, ${args.reason}, ${branch},
-              ${base}, ${commit.sha}, ${JSON.stringify(paths)}::jsonb, ${seeded}, 'pending')`;
+              ${baseCommitSha}, ${commit.sha}, ${JSON.stringify(paths)}::jsonb,
+              ${touchesManifest}, ${seeded}, 'pending')`;
   } catch (err) {
     // The branch exists but nothing lists it: unrecorded, it is never offered to the owner.
     log('error', 'record failed after commit', {
@@ -541,10 +583,73 @@ async function pushLocked(args: {
     slug: app.slug,
     branch,
     commitSha: commit.sha,
-    baseCommitSha: base,
+    baseCommitSha,
     seededSourceRepo: seeded,
     paths,
+    touchesManifest,
   };
+}
+
+/** The first parent of `sha` in the slug's source repo; `null` (logged) when it cannot be read. */
+async function commitParent(slug: string, sha: string): Promise<string | null> {
+  const forgejo = await import('~/server/services/blocks/forgejo.service');
+  try {
+    return (await forgejo.getCommitParents(FORGEJO_SOURCE_ORG, slug, sha))[0] ?? null;
+  } catch (err) {
+    log('warning', 'could not read the update commit back; recording main as read', {
+      slug,
+      commitSha: sha,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * The storage hook files `manifest` declares (`storage.collections.<name>.hook.file`), as repo
+ * paths. Read from the RAW declaration, valid or not, as the push path's hook pin does.
+ */
+async function declaredHookFiles(manifest: unknown): Promise<Set<string>> {
+  const { declaredStorageHookCollections } = await import('~/server/services/apps/storage-hooks');
+  const files = new Set<string>();
+  for (const { raw } of declaredStorageHookCollections(manifest)) {
+    const file =
+      raw && typeof raw === 'object' && typeof (raw as { file?: unknown }).file === 'string'
+        ? (raw as { file: string }).file
+        : null;
+    if (file) files.add(file.replace(/^\.\//, ''));
+  }
+  return files;
+}
+
+/**
+ * Whether the update changes what the app may do: `block.manifest.json` itself (scopes,
+ * permissions, storage declarations), or a storage hook file the manifest on `main` declares (the
+ * manifest is unchanged in that case, so `main`'s is the branch's). A manifest that cannot be read
+ * or parsed answers `true`: the owner is told to look rather than told it is safe.
+ */
+async function updateTouchesManifest(args: {
+  slug: string;
+  current: Record<string, string>;
+  changedPaths: string[];
+}): Promise<boolean> {
+  if (args.changedPaths.includes(MANIFEST_PATH)) return true;
+  const manifestBlob = args.current[MANIFEST_PATH];
+  if (!manifestBlob) return false;
+  let manifest: unknown;
+  try {
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+    const bytes = await forgejo.getBlobContent(args.slug, manifestBlob, FORGEJO_SOURCE_ORG);
+    manifest = JSON.parse(bytes.toString('utf8'));
+  } catch (err) {
+    log('warning', 'could not read the manifest to classify an update', {
+      slug: args.slug,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return true;
+  }
+  const hooks = await declaredHookFiles(manifest);
+  return args.changedPaths.some((p) => hooks.has(p));
 }
 
 async function notifyOwner(opts: {
@@ -553,6 +658,7 @@ async function notifyOwner(opts: {
   updateId: string;
   byUsername: string;
   reason: string;
+  touchesManifest: boolean;
 }): Promise<void> {
   const [{ createNotification }, { NotificationCategory }] = await Promise.all([
     import('~/server/services/notification.service'),
@@ -568,6 +674,7 @@ async function notifyOwner(opts: {
       updateId: opts.updateId,
       byUsername: opts.byUsername,
       reason: opts.reason,
+      touchesManifest: opts.touchesManifest,
     },
   });
 }

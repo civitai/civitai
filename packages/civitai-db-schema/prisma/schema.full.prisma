@@ -5341,6 +5341,7 @@ model AppPlatformUpdate {
   baseCommitSha    String    @map("base_commit_sha")
   commitSha        String    @map("commit_sha")
   paths            Json
+  touchesManifest  Boolean   @default(false) @map("touches_manifest")
   seededSourceRepo Boolean   @default(false) @map("seeded_source_repo")
   status           String    @default("pending")
   mergeCommitSha   String?   @map("merge_commit_sha")
