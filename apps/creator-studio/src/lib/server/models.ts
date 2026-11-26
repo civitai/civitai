@@ -73,22 +73,18 @@ export async function countComFaceReadyModels(userId: number) {
   return Number(row?.count ?? 0);
 }
 
-function siteListingParts(alias: string, publicVersionKnown = false) {
+function siteListingParts(alias: string) {
   const m = sql.raw(`${alias}.`);
-  const publicVersion = publicVersionKnown ? sql`true` : hasPublicVersionSql(alias);
   return {
-    listed: sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${publicVersion} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`,
+    listed: sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`,
     onCom: sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`,
     hiddenOnRed: sql`(${m}"minor" or ${hasTagSql(alias, childBrowsingTagIds)})`,
   };
 }
 
-/**
- * Listed on civitai.com or civitai.red: the union of the `siteFilterSql` sites. Pass `publicVersionKnown` only when
- * the query already restricts to models with a published public version, to skip that per-model EXISTS.
- */
-export function shownOnSomeSiteSql(alias: string, { publicVersionKnown = false } = {}) {
-  const { listed, onCom, hiddenOnRed } = siteListingParts(alias, publicVersionKnown);
+/** Listed on civitai.com or civitai.red: the union of the `siteFilterSql` sites. */
+export function shownOnSomeSiteSql(alias: string) {
+  const { listed, onCom, hiddenOnRed } = siteListingParts(alias);
   return sql<boolean>`(${listed} and (${onCom} or not ${hiddenOnRed}))`;
 }
 

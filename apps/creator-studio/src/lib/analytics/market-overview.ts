@@ -11,7 +11,7 @@ export const PRICE_BANDS = [0, 100, 250, 500, 1000, 2500] as const;
 
 export const OTHER_ECOSYSTEM = 'Other';
 
-// Model types with a bucket of their own; every other type is 'Other'. The free-side SQL reads the same list.
+// Model types with a bucket of their own; every other type is 'Other'.
 export const NAMED_TYPES = ['LORA', 'Checkpoint'] as const;
 
 export type Rating = 'sfw' | 'nsfw';
@@ -29,16 +29,6 @@ export type GatedRow = {
   terms: unknown;
 };
 
-/** One fine cell of free models, counted in SQL. */
-export type FreeCellRow = {
-  rating: Rating;
-  type: TypeBucket;
-  ecosystem: string;
-  models: number;
-  versions: number;
-  sellers: number;
-};
-
 export type MarketFilters = {
   rating?: Rating;
   access?: Access;
@@ -46,17 +36,22 @@ export type MarketFilters = {
   ecosystem?: string;
 };
 
-type CellKey = { rating: Rating; type: TypeBucket; ecosystem: string };
-type PaidEntry = CellKey & { modelId: number; access: Access; band: number };
+type PaidEntry = {
+  modelId: number;
+  rating: Rating;
+  type: TypeBucket;
+  ecosystem: string;
+  access: Access;
+  band: number;
+};
 
 /** Server-side only: holds model ids. The browser gets `marketView` output. */
 export type MarketSnapshot = {
   paid: PaidEntry[];
-  free: (CellKey & { models: number; versions: number })[];
   /** Seller count of every cell kept, for `assertFloor`. Never sent. */
   cellSellers: Record<string, number>;
   ecosystems: string[];
-  suppressed: { paid: number; free: number };
+  suppressed: number;
   builtAt: string;
 };
 
@@ -74,20 +69,14 @@ export function priceBand(price: number): number {
   return band;
 }
 
-const paidKey = (e: Omit<PaidEntry, 'modelId'>) =>
-  `p|${e.rating}|${e.type}|${e.ecosystem}|${e.access}|${e.band}`;
-const freeKey = (e: CellKey) => `f|${e.rating}|${e.type}|${e.ecosystem}`;
+const cellKey = (e: Omit<PaidEntry, 'modelId'>) =>
+  `${e.rating}|${e.type}|${e.ecosystem}|${e.access}|${e.band}`;
 
+// Paid as the site's "Hide paid" filter reads it: a free-generation gate with no download tier is free.
 const isPaid = (r: GatedRow) =>
   !resolveModelVersionPricing({
     paidAccess: { endsAt: r.endsAt, terms: r.terms as ModelVersionTerms },
   }).free;
-
-/** Models with an active gate where no gate charges anything: they count as free, as the site's "Hide paid" reads them. */
-export function gatedFreeModelIds(rows: GatedRow[]): number[] {
-  const paid = new Set(rows.filter(isPaid).map((r) => r.modelId));
-  return [...new Set(rows.filter((r) => !paid.has(r.modelId)).map((r) => r.modelId))];
-}
 
 /**
  * Which ecosystems are shown by name: those with at least the floor of paid sellers over the whole catalogue.
@@ -107,86 +96,67 @@ export function namedEcosystems(rows: GatedRow[]): Set<string> {
   );
 }
 
-export const displayEcosystem = (baseModel: string | null, named: Set<string>) => {
-  const eco = getBaseModelGroup(baseModel ?? '');
-  return named.has(eco) ? eco : OTHER_ECOSYSTEM;
-};
-
 /** Applies the floor, cell by cell, and keeps only what survives. */
-export function buildMarketSnapshot(
-  gated: GatedRow[],
-  free: FreeCellRow[],
-  named: Set<string>,
-  now = new Date()
-): MarketSnapshot {
-  const paidCells = new Map<string, { sellers: Set<number>; entries: PaidEntry[] }>();
+export function buildMarketSnapshot(gated: GatedRow[], now = new Date()): MarketSnapshot {
+  const named = namedEcosystems(gated);
+  const cells = new Map<string, { sellers: Set<number>; entries: PaidEntry[] }>();
   for (const r of gated.filter(isPaid)) {
+    const eco = getBaseModelGroup(r.baseModel ?? '');
     const entry: Omit<PaidEntry, 'modelId'> = {
       rating: ratingOf(r.nsfwLevel),
       type: typeBucketOf(r.type),
-      ecosystem: displayEcosystem(r.baseModel, named),
+      ecosystem: named.has(eco) ? eco : OTHER_ECOSYSTEM,
       access: r.timeframeDays == null ? 'permanent' : 'early',
       band: priceBand(accessPrice(r.terms as ModelVersionTerms) ?? 0),
     };
-    const k = paidKey(entry);
-    const cell = paidCells.get(k) ?? { sellers: new Set<number>(), entries: [] };
+    const k = cellKey(entry);
+    const cell = cells.get(k) ?? { sellers: new Set<number>(), entries: [] };
     cell.sellers.add(r.ownerId);
     cell.entries.push({ ...entry, modelId: r.modelId });
-    paidCells.set(k, cell);
+    cells.set(k, cell);
   }
 
   const cellSellers: Record<string, number> = {};
   const paid: PaidEntry[] = [];
-  let suppressedPaid = 0;
-  for (const [k, cell] of paidCells) {
+  let suppressed = 0;
+  for (const [k, cell] of cells) {
     if (cell.sellers.size < MIN_SELLERS_PER_CELL) {
-      suppressedPaid++;
+      suppressed++;
       continue;
     }
     cellSellers[k] = cell.sellers.size;
     paid.push(...cell.entries);
   }
 
-  const kept = free.filter((c) => c.sellers >= MIN_SELLERS_PER_CELL);
-  for (const c of kept) cellSellers[freeKey(c)] = c.sellers;
-
-  const ecosystems = [...new Set([...paid, ...kept].map((e) => e.ecosystem))].sort((a, b) =>
+  const ecosystems = [...new Set(paid.map((e) => e.ecosystem))].sort((a, b) =>
     a === OTHER_ECOSYSTEM ? 1 : b === OTHER_ECOSYSTEM ? -1 : a.localeCompare(b)
   );
-
   const snapshot: MarketSnapshot = {
     paid,
-    free: kept.map(({ rating, type, ecosystem, models, versions }) => ({
-      rating,
-      type,
-      ecosystem,
-      models,
-      versions,
-    })),
     cellSellers,
     ecosystems,
-    suppressed: { paid: suppressedPaid, free: free.length - kept.length },
+    suppressed,
     builtAt: now.toISOString(),
   };
   assertFloor(snapshot);
   return snapshot;
 }
 
-/** Throws when any figure the snapshot could show comes from a cell under the floor. */
+/** Backstop: throws when any figure the snapshot could show comes from a cell under the floor. */
 export function assertFloor(s: MarketSnapshot) {
-  const ok = (k: string) => (s.cellSellers[k] ?? 0) >= MIN_SELLERS_PER_CELL;
-  if (s.paid.some((e) => !ok(paidKey(e))) || s.free.some((e) => !ok(freeKey(e))))
+  if (s.paid.some((e) => (s.cellSellers[cellKey(e)] ?? 0) < MIN_SELLERS_PER_CELL))
     throw new Error('market overview: a cell under the seller floor reached the snapshot');
 }
 
 export type MarketView = {
-  paid: { models: number; versions: number; early: number; permanent: number };
-  free: { models: number; versions: number };
-  /** Share of models in view that are paid; null with no models. */
-  paidShare: number | null;
+  models: number;
+  versions: number;
+  early: number;
+  permanent: number;
   histogram: { min: number; max: number | null; versions: number }[];
   ecosystems: { key: string; label: string }[];
-  suppressed: { paid: number; free: number };
+  /** Hidden cells across the whole catalogue, not only this view. */
+  suppressed: number;
   builtAt: string;
 };
 
@@ -194,27 +164,18 @@ const ecosystemLabel = (key: string) =>
   key === OTHER_ECOSYSTEM ? 'Other ecosystems' : (ecosystemByKey.get(key)?.displayName ?? key);
 
 export function marketView(s: MarketSnapshot, f: MarketFilters): MarketView {
-  const matches = (e: CellKey) =>
-    (!f.rating || e.rating === f.rating) &&
-    (!f.type || e.type === f.type) &&
-    (!f.ecosystem || e.ecosystem === f.ecosystem);
-
-  const paid = s.paid.filter((e) => matches(e) && (!f.access || e.access === f.access));
-  const free = s.free.filter(matches);
-  const paidModels = new Set(paid.map((e) => e.modelId)).size;
-  const freeModels = free.reduce((n, c) => n + c.models, 0);
-  const all = paidModels + freeModels;
-
+  const paid = s.paid.filter(
+    (e) =>
+      (!f.rating || e.rating === f.rating) &&
+      (!f.type || e.type === f.type) &&
+      (!f.ecosystem || e.ecosystem === f.ecosystem) &&
+      (!f.access || e.access === f.access)
+  );
   return {
-    paid: {
-      models: paidModels,
-      versions: paid.length,
-      early: paid.filter((e) => e.access === 'early').length,
-      permanent: paid.filter((e) => e.access === 'permanent').length,
-    },
-    free: { models: freeModels, versions: free.reduce((n, c) => n + c.versions, 0) },
-    // Free models have no access kind, so a share under an access filter would compare unlike sets.
-    paidShare: all && !f.access ? paidModels / all : null,
+    models: new Set(paid.map((e) => e.modelId)).size,
+    versions: paid.length,
+    early: paid.filter((e) => e.access === 'early').length,
+    permanent: paid.filter((e) => e.access === 'permanent').length,
     histogram: PRICE_BANDS.map((min, i) => ({
       min,
       max: PRICE_BANDS[i + 1] ?? null,

@@ -113,8 +113,6 @@ beforeAll(async () => {
     ...[31, 32, 33].map((owner) =>
       model({ owner, gate: { terms: { generation: { free: true } } } })
     ),
-    // Ungated free SDXL LoRAs: 2 sellers, which with the 3 gated-free sellers makes 5.
-    ...[34, 35].map((owner) => model({ owner })),
     // NSFW-only and not minor: listed on civitai.red alone, and counted.
     ...[61, 62, 63, 64, 65].map((owner) =>
       model({ owner, nsfwLevel: 16, gate: { terms: download(150) } })
@@ -124,10 +122,6 @@ beforeAll(async () => {
       model({ owner, gate: { terms: download(150), timeframeDays: 7, endsAt: '2099-01-01' } })
     ),
     model({ owner: 76, gate: { terms: download(150), timeframeDays: 7, endsAt: '2020-01-01' } }),
-    // Free NSFW LoRAs from 5 sellers: a free cell of their own.
-    ...[91, 92, 93, 94, 95].map((owner) => model({ owner, nsfwLevel: 16 })),
-    // Free Checkpoints from only 4 sellers: a free cell under the floor.
-    ...[81, 82, 83, 84].map((owner) => model({ owner, type: 'Checkpoint' })),
     // Never counted: a poi model and a private one.
     model({ owner: 85, gate: { terms: download(150) } }),
     model({ owner: 86, gate: { terms: download(150) } }),
@@ -145,16 +139,9 @@ beforeAll(async () => {
     UPDATE "Model" SET poi = true WHERE "userId" = 85;
     UPDATE "Model" SET availability = 'Private' WHERE "userId" = 86;
   `);
-  // A free model with a second public version and a draft one: two versions counted.
-  const twoVersions = model({ owner: 35 });
-  await holder.db.exec(`
-    ${twoVersions.sql}
-    INSERT INTO "ModelVersion" (id, "modelId", "baseModel") VALUES (9996, ${twoVersions.modelId}, '${SDXL}');
-    INSERT INTO "ModelVersion" (id, "modelId", "baseModel", status) VALUES (9995, ${twoVersions.modelId}, '${SDXL}', 'Draft');
-  `);
-  // A free-generation model that also sells a version in a hidden band is paid, not free.
+  // A free-generation model that also sells a version in a hidden band.
   const mixed = model({ owner: 51, gate: { terms: { generation: { free: true } } } });
-  // A free model whose only gate is on an unpublished draft is free.
+  // A model whose only gate is on an unpublished draft is not paid.
   const drafted = model({ owner: 52 });
   await holder.db.exec(`
     ${mixed.sql}
@@ -180,34 +167,20 @@ describe('Creator Studio paid-model market overview', () => {
     const view = marketView(snapshot, {});
     // The 5 Pony versions are in no total, and neither are the draft and the model no site lists, though both
     // share the SDXL cell's price.
-    expect(view.paid.versions).toBe(22);
-    expect(view.paid.permanent).toBe(17);
-    expect(view.paid.early).toBe(5);
+    expect(view.versions).toBe(22);
+    expect(view.permanent).toBe(17);
+    expect(view.early).toBe(5);
     expect(view.histogram.map((b) => b.versions)).toEqual([0, 16, 0, 6, 0, 0]);
-    expect(marketView(snapshot, { rating: 'nsfw' }).paid.versions).toBe(5);
-    expect(marketView(snapshot, { rating: 'sfw' }).paid.versions).toBe(17);
+    expect(marketView(snapshot, { rating: 'nsfw' }).versions).toBe(5);
+    expect(marketView(snapshot, { rating: 'sfw' }).versions).toBe(17);
     // The Pony cell, and the top-band cell that holds one seller.
-    expect(snapshot.suppressed.paid).toBe(2);
-    expect(marketView(snapshot, { ecosystem: 'Pony' }).paid.versions).toBe(0);
+    expect(snapshot.suppressed).toBe(2);
+    expect(marketView(snapshot, { ecosystem: 'Pony' }).versions).toBe(0);
   });
 
   it('counts a model with versions in two cells once', async () => {
     const view = marketView(await readMarketSnapshot({} as never), {});
-    expect(view.paid.models).toBe(21);
-  });
-
-  it('counts free generation as free, a model with any paid version as paid, and a draft gate as no gate', async () => {
-    const view = marketView(await readMarketSnapshot({} as never), {});
-    // 3 free-generation models, 3 ungated (one with two public versions), the one gated only on a draft and the
-    // expired window; not the mixed one, and not the 4-seller Checkpoint cell.
-    expect(view.free.models).toBe(13);
-    expect(view.free.versions).toBe(14);
-    expect(view.paidShare).toBeCloseTo(21 / 34);
-    expect(marketView(snapshot0(), { rating: 'nsfw' }).free.models).toBe(5);
-    expect(marketView(snapshot0(), { rating: 'sfw' }).free.models).toBe(8);
-    expect(marketView(snapshot0(), { type: 'Checkpoint' }).free.models).toBe(0);
-    expect(snapshot0().suppressed.free).toBe(1);
-    expect(marketView(snapshot0(), { access: 'early' }).paidShare).toBeNull();
+    expect(view.models).toBe(21);
   });
 
   it('refuses a snapshot that holds a cell under the floor', async () => {
@@ -215,7 +188,7 @@ describe('Creator Studio paid-model market overview', () => {
     const [first] = Object.keys(snapshot.cellSellers);
     expect(() =>
       assertFloor({ ...snapshot, cellSellers: { ...snapshot.cellSellers, [first]: 4 } })
-    ).toThrow();
+    ).toThrow(/seller floor/);
   });
 });
 
@@ -291,6 +264,6 @@ describe('market overview endpoint', () => {
       )
     )) as Response;
     expect(res.headers.get('cache-control')).toBe('private, no-store');
-    expect((await res.json()).paid.versions).toBe(22);
+    expect((await res.json()).versions).toBe(22);
   });
 });

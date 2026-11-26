@@ -123,27 +123,19 @@
       {#each [0, 1, 2, 3] as i (i)}<Skeleton class="h-16" />{/each}
     </div>
   {:then view}
-    {#if view.paid.models + view.free.models === 0}
+    {#if view.models === 0}
       <p class="flex h-24 items-center justify-center text-sm text-dark-2">
         No buckets with 5 or more sellers match these filters.
       </p>
     {:else}
       {@const maxBand = Math.max(1, ...view.histogram.map((b) => b.versions))}
-      <div class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {@render tile(
-          'Paid models',
-          num(view.paid.models),
-          `${num(view.paid.versions)} paid versions`
-        )}
+      <div class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {@render tile('Paid models', num(view.models))}
+        {@render tile('Paid versions', num(view.versions))}
         {@render tile(
           'Early access / permanent',
-          `${num(view.paid.early)} / ${num(view.paid.permanent)}`,
+          `${num(view.early)} / ${num(view.permanent)}`,
           'paid versions'
-        )}
-        {@render tile('Free models', num(view.free.models), `${num(view.free.versions)} versions`)}
-        {@render tile(
-          'Paid share of models',
-          view.paidShare === null ? '–' : `${(view.paidShare * 100).toFixed(1)}%`
         )}
       </div>
 
@@ -164,8 +156,7 @@
 
     <p class="mt-3 text-xs text-dark-2">
       Figures are of the buckets shown: a bucket with fewer than 5 sellers is hidden and counted in
-      no total ({num(view.suppressed.paid + view.suppressed.free)} hidden across all of Civitai). A model with any paid version
-      counts as paid, and its free versions aren't counted.
+      no total ({num(view.suppressed)} hidden across all of Civitai).
     </p>
   {:catch err}
     <div class="flex h-24 flex-col items-center justify-center gap-2 text-sm text-dark-2">

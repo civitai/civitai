@@ -1,7 +1,5 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
-import { sfwBrowsingLevelsFlag } from '@civitai/shared';
-import { baseModelGroups, baseModels } from '@civitai/shared/basemodel.constants';
 import { safeError } from '@civitai/axiom';
 import type { SessionUser } from '@civitai/auth';
 import { dbRead } from '$lib/server/db';
@@ -11,14 +9,9 @@ import { modFallbackFlagEnabled } from '$lib/server/main-app-flags';
 import { shownOnSomeSiteSql } from '$lib/server/models';
 import {
   buildMarketSnapshot,
-  displayEcosystem,
-  gatedFreeModelIds,
-  NAMED_TYPES,
-  namedEcosystems,
-  type FreeCellRow,
-  type GatedRow,
   marketView,
   parseMarketFilters,
+  type GatedRow,
   type MarketSnapshot,
 } from '$lib/analytics/market-overview';
 
@@ -45,57 +38,8 @@ export async function readGatedRows(db: Db): Promise<GatedRow[]> {
   return rows.map((r) => ({ ...r, nsfwLevel: Number(r.nsfwLevel) }));
 }
 
-/**
- * Free models, one fine cell each by the ecosystem of one of their public versions: no active gate on a public
- * version, or only gates that charge nothing (`gatedFree`). The ecosystem is mapped in SQL before
- * `count(distinct)`, because seller counts per raw base model do not add up.
- */
-export async function readFreeCells(
-  db: Db,
-  named: Set<string>,
-  gatedFree: number[]
-): Promise<FreeCellRow[]> {
-  const names = [...new Set([...baseModels, ...baseModelGroups])];
-  const ecoMap = sql.join(names.map((n) => sql`(${n}::text, ${displayEcosystem(n, named)}::text)`));
-  const namedTypes = sql.join(NAMED_TYPES.map((t) => sql.lit(t)));
-  const { rows } = await sql<FreeCellRow>`
-    with eco(base, ecosystem) as (values ${ecoMap}),
-    -- One pass over public versions instead of per-model subqueries.
-    v as (
-      select mv."modelId",
-        count(*)::int as versions,
-        max(mv."baseModel") as base,
-        bool_or(pa."entityId" is not null) as gated
-      from "ModelVersion" mv
-      left join "PaidAccess" pa on pa."entityId" = mv.id and ${LIVE_GATE}
-      where ${PUBLIC_VERSION}
-      group by mv."modelId"
-    ),
-    fm as (
-      select m.id, m."userId", v.base, v.versions,
-        case when (m."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0 then 'sfw' else 'nsfw' end as rating,
-        case when m.type::text in (${namedTypes}) then m.type::text else 'Other' end as type
-      from v join "Model" m on m.id = v."modelId"
-      where m."deletedAt" is null and ${shownOnSomeSiteSql('m', { publicVersionKnown: true })}
-        and (not v.gated or m.id = any(${gatedFree}::int[]))
-    )
-    select fm.rating, fm.type, coalesce(eco.ecosystem, 'Other') as ecosystem,
-      count(*)::int as models, sum(fm.versions)::int as versions,
-      count(distinct fm."userId")::int as sellers
-    from fm left join eco on eco.base = fm.base
-    group by 1, 2, 3
-  `.execute(db);
-  return rows;
-}
-
 export async function readMarketSnapshot(db: Db): Promise<MarketSnapshot> {
-  const gated = await readGatedRows(db);
-  const named = namedEcosystems(gated);
-  return buildMarketSnapshot(
-    gated,
-    await readFreeCells(db, named, gatedFreeModelIds(gated)),
-    named
-  );
+  return buildMarketSnapshot(await readGatedRows(db));
 }
 
 const READ_TIMEOUT = sql`set local statement_timeout = '10s'`;
@@ -115,8 +59,7 @@ const marketCache = createCache({
       payload: {
         ms: Date.now() - started,
         paid: snapshot.paid.length,
-        free: snapshot.free.length,
-        suppressed: snapshot.suppressed.paid + snapshot.suppressed.free,
+        suppressed: snapshot.suppressed,
       },
     });
     return snapshot;
