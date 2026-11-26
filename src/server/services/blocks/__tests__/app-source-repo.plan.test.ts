@@ -7,7 +7,10 @@ import {
   gitBlobSha,
   isTrailerSafe,
   planAssistantCommit,
+  planPlatformUpdateCommit,
   planReplaceCommit,
+  platformUpdateCommitMessage,
+  PlatformUpdatePlanError,
   sourceFilesFromExport,
   sourceRepoHttpUrl,
   treeOf,
@@ -206,5 +209,77 @@ describe('sourceRepoHttpUrl', () => {
       expect(sourceRepoHttpUrl(host, 'civitai-apps-src', 'my-app')).toBe(
         'https://git.example.test/civitai-apps-src/my-app.git'
       );
+  });
+});
+
+describe('platform updates', () => {
+  const tree = { 'package.json': gitBlobSha(buf('old')), 'README.md': gitBlobSha(buf('r')) };
+  const put = (path: string, c: string) => ({ operation: 'put' as const, path, content: buf(c) });
+
+  it('plans create / update / delete against the blobs main holds, skipping unchanged bytes', () => {
+    const plan = planPlatformUpdateCommit(tree, [
+      put('package.json', 'new'),
+      put('README.md', 'r'),
+      put('src/new.ts', 'n'),
+    ]);
+    expect(plan.operations.map((o) => [o.operation, o.path, 'sha' in o ? o.sha : null])).toEqual([
+      ['update', 'package.json', gitBlobSha(buf('old'))],
+      ['create', 'src/new.ts', null],
+    ]);
+    const del = planPlatformUpdateCommit(tree, [{ operation: 'delete', path: 'README.md' }]);
+    expect(del.operations).toEqual([
+      { operation: 'delete', path: 'README.md', sha: gitBlobSha(buf('r')) },
+    ]);
+  });
+
+  it('refuses a delete of a missing path, a path named twice, and paths a source repo never holds', () => {
+    for (const [changes, message] of [
+      [[{ operation: 'delete', path: 'gone.ts' }], 'gone.ts does not exist on main'],
+      [[put('a.ts', '1'), put('a.ts', '2')], 'a.ts is named more than once'],
+      [[put('.env', 'K=1')], '.env is a file a source repo never holds'],
+      [
+        [put('node_modules/x/index.js', '1')],
+        'node_modules/x/index.js is a file a source repo never holds',
+      ],
+      [[put('../escape.ts', '1')], '../escape.ts is not a relative repo path'],
+      [[put('/abs.ts', '1')], '/abs.ts is not a relative repo path'],
+    ] as const) {
+      expect(() => planPlatformUpdateCommit(tree, changes as never)).toThrow(
+        new PlatformUpdatePlanError(message)
+      );
+    }
+  });
+
+  it('commit message: summary, the reason as the body, and the trailers last', () => {
+    const plan = planPlatformUpdateCommit(tree, [put('package.json', 'new')]);
+    expect(
+      platformUpdateCommitMessage({
+        plan,
+        updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+        byUsername: 'mod-ana',
+        reason: '  Bump the SDK.\r\nThe old floor stops working on Dec 1.\u0007  ',
+      })
+    ).toBe(
+      'Platform update: update package.json\n\n' +
+        'Bump the SDK.\nThe old floor stops working on Dec 1.\n\n' +
+        'Platform-Update: apu_01JABCDEFGHJKMNPQRSTVWXYZ0\n' +
+        'Platform-Update-By: mod-ana\n' +
+        'Reason: Bump the SDK. The old floor stops working on Dec 1.'
+    );
+  });
+
+  it('a reason no trailer can carry (non-ASCII) stays in the body and its trailer is left out', () => {
+    const plan = planPlatformUpdateCommit(tree, [put('package.json', 'new')]);
+    expect(
+      platformUpdateCommitMessage({
+        plan,
+        updateId: 'apu_01JABCDEFGHJKMNPQRSTVWXYZ0',
+        byUsername: 'mod-ana',
+        reason: 'Mise à jour du SDK',
+      })
+    ).toBe(
+      'Platform update: update package.json\n\nMise à jour du SDK\n\n' +
+        'Platform-Update: apu_01JABCDEFGHJKMNPQRSTVWXYZ0\nPlatform-Update-By: mod-ana'
+    );
   });
 });

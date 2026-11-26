@@ -12,6 +12,8 @@ export const routers = {
     import('~/server/routers/app-feedback.router').then((m) => m.appFeedbackRouter),
   appCollaborators: () =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter),
+  appPlatformUpdates: () =>
+    import('~/server/routers/app-platform-updates.router').then((m) => m.appPlatformUpdatesRouter),
   appStorage: () => import('~/server/routers/app-storage.router').then((m) => m.appStorageRouter),
   appHibernation: () =>
     import('~/server/routers/app-hibernation.router').then((m) => m.appHibernationRouter),

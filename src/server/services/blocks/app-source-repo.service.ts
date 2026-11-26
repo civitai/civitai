@@ -247,7 +247,7 @@ const LOCK_POLL_MS = 500;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Run `fn` holding the slug's writer lock, or return `null` when it stays held for 30 s. */
-async function withSourceRepoLock<T>(slug: string, fn: () => Promise<T>): Promise<T | null> {
+export async function withSourceRepoLock<T>(slug: string, fn: () => Promise<T>): Promise<T | null> {
   const key = `${REDIS_KEYS.BLOCKS.SOURCE_REPO_LOCK}:${slug}` as const;
   const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
@@ -768,6 +768,87 @@ export async function listBackfillCandidates(): Promise<BackfillCandidate[]> {
     }
   }
   return out;
+}
+
+/**
+ * The id of the app block that governs `row` (binding an unbound row the way access does), or
+ * `null` when no block under the slug is the repo owner's. A staff writer compares it with the
+ * block it was asked to update, so a squatted slug's repo is never written for another app.
+ */
+export async function sourceRepoGoverningBlockId(row: SourceRepoRow): Promise<string | null> {
+  return (await governingBlock(row))?.id ?? null;
+}
+
+export type SeedFromApprovedResult = EnsureSourceRepoResult | { kind: 'no-approved-version' };
+
+/**
+ * Create `slug`'s source repo seeded from the app block's LATEST APPROVED version (its build-repo
+ * snapshot, read, never written), as the backfill does for a fork, the fork lineage from
+ * `app_blocks.fork_of_*` when the block has one. Idempotent like {@link ensureSourceRepoLocked};
+ * call it holding the slug's lock.
+ */
+export async function seedSourceRepoFromApprovedLocked(args: {
+  slug: string;
+  appBlockId: string;
+  ownerUserId: number;
+}): Promise<SeedFromApprovedResult> {
+  const approved = await dbRead.appBlockPublishRequest.findFirst({
+    where: { appBlockId: args.appBlockId, status: 'approved', forgejoCommitSha: { not: null } },
+    orderBy: [{ reviewedAt: 'desc' }, { submittedAt: 'desc' }],
+    select: { forgejoCommitSha: true, version: true },
+  });
+  if (!approved?.forgejoCommitSha) return { kind: 'no-approved-version' };
+  const lineageRows = (await dbRead.$queryRaw`SELECT
+        ab."fork_of_app_block_id" AS "parentAppBlockId",
+        ab."fork_of_commit_sha" AS "parentCommitSha",
+        parent."block_id" AS "parentSlug"
+      FROM "app_blocks" ab
+      LEFT JOIN "app_blocks" parent ON parent."id" = ab."fork_of_app_block_id"
+      WHERE ab."id" = ${args.appBlockId} AND ab."fork_of_commit_sha" IS NOT NULL
+      LIMIT 1`) as Array<{
+    parentAppBlockId: string | null;
+    parentCommitSha: string;
+    parentSlug: string | null;
+  }>;
+  const fork = lineageRows[0];
+  const lineage =
+    fork?.parentSlug && fork.parentAppBlockId
+      ? {
+          parentSlug: fork.parentSlug,
+          parentCommitSha: fork.parentCommitSha,
+          parentAppBlockId: fork.parentAppBlockId,
+        }
+      : null;
+  const files = await seedFilesFor({
+    slug: args.slug,
+    ownerUserId: args.ownerUserId,
+    kind: 'approved-fork',
+    seedCommitSha: approved.forgejoCommitSha,
+    seedRepoSlug: args.slug,
+    lineage,
+    version: approved.version,
+  });
+  return ensureSourceRepoLocked({
+    slug: args.slug,
+    ownerUserId: args.ownerUserId,
+    origin: 'backfill',
+    seed: {
+      files,
+      message: approvedSeedCommitMessage({
+        version: approved.version,
+        approvedCommitSha: approved.forgejoCommitSha,
+        lineage,
+      }),
+    },
+    ...(lineage
+      ? {
+          forkedFrom: {
+            appBlockId: lineage.parentAppBlockId,
+            commitSha: lineage.parentCommitSha,
+          },
+        }
+      : {}),
+  });
 }
 
 /** The files a candidate is seeded with. */
