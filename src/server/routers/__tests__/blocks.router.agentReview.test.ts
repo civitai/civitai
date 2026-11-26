@@ -379,6 +379,50 @@ describe('blocks.agentReviewChat', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
+
+  // A previous reply is re-sent as history on every later turn. A detailed answer runs well
+  // past the moderator's 4,000-character message cap, and used to fail the next turn.
+  const withPreviousReply = (reply: string) => ({
+    publishRequestId: PUBREQ,
+    messages: [
+      { role: 'user' as const, content: 'walk me through every finding' },
+      { role: 'assistant' as const, content: reply },
+      { role: 'user' as const, content: 'continue' },
+    ],
+  });
+
+  it('🔴 a long previous assistant reply is accepted as history, not rejected BAD_REQUEST', async () => {
+    const reply = 'x'.repeat(16_000);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.agentReviewChat(withPreviousReply(reply))).resolves.toEqual({
+      reply: 'because scope X is used in wallet.js:10',
+    });
+    expect(mockAgentReviewChat.mock.calls[0][0].messages[1]).toEqual({
+      role: 'assistant',
+      content: reply,
+    });
+  });
+
+  it('an assistant message takes up to 32,000 characters; one more is rejected', async () => {
+    const cap = 32_000; // pinned literal, not the exported constant
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.agentReviewChat(withPreviousReply('x'.repeat(cap)))).resolves.toBeTruthy();
+    await expect(
+      caller.agentReviewChat(withPreviousReply('x'.repeat(cap + 1)))
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockAgentReviewChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('a moderator message is still capped at 4,000 characters', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.agentReviewChat({
+        publishRequestId: PUBREQ,
+        messages: [{ role: 'user', content: 'x'.repeat(4001) }],
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockAgentReviewChat).not.toHaveBeenCalled();
+  });
 });
 
 describe('agent review CONNECT lane — gated on its own flag', () => {
